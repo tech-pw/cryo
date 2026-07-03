@@ -190,7 +190,7 @@ def _collect_report_data(session: Session) -> DailyReportData:
 
         for a in anomalies:
             all_anomalies.append(a)
-            if a.severity in ("high", "critical"):
+            if a.severity in ("warning", "critical"):
                 critical_anomalies.append({
                     "table": f"{schema_name}.{table_name}",
                     "metric": a.metric,

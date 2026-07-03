@@ -286,7 +286,7 @@ export interface AIProviderRead {
 export interface AIProviderWrite {
   name: string;
   provider_type: string;
-  api_key: string;
+  api_key?: string;  // Optional for updates (leave blank to keep existing)
   model: string;
   config?: Record<string, unknown>;
   enabled?: boolean;
@@ -355,7 +355,7 @@ export interface SlackConfigRead {
 
 export interface SlackConfigWrite {
   name: string;
-  webhook_url: string;
+  webhook_url?: string;  // Optional for updates (leave blank to keep existing)
   channel?: string | null;
   daily_report_enabled?: boolean;
   daily_report_cron?: string;

@@ -1352,7 +1352,7 @@ const AIProviderDrawer = ({
           const body: AIProviderWrite & { id?: string } = {
             name: values.name,
             provider_type: values.provider_type,
-            api_key: values.api_key,
+            api_key: values.api_key || undefined, // Don't send empty string (keeps existing)
             model: values.model,
             config: Object.keys(config).length > 0 ? config : undefined,
             enabled: values.enabled,
@@ -1515,7 +1515,7 @@ const SlackDrawer = ({
         onFinish={(values) => {
           const body: SlackConfigWrite & { id?: string } = {
             name: values.name,
-            webhook_url: values.webhook_url,
+            webhook_url: values.webhook_url || undefined, // Don't send empty string (keeps existing)
             channel: values.channel || undefined,
             daily_report_enabled: values.daily_report_enabled,
             daily_report_cron: values.daily_report_cron,
