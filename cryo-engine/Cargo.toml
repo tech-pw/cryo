@@ -17,19 +17,15 @@ serde_json = "1"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# Apache Iceberg
-iceberg = "0.4"
-iceberg-catalog-rest = "0.4"
+# Apache Iceberg (use git main for latest fixes)
+iceberg = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
 
-# Apache DataFusion for query execution
-datafusion = "45"
-
-# Parquet/Arrow support
-parquet = { version = "55", features = ["async"] }
-arrow = "55"
+# Arrow/Parquet - rely on iceberg's versions via re-exports where possible
+# We don't include direct arrow/parquet deps to avoid version conflicts
 
 # Object storage
-object_store = { version = "0.12", features = ["aws"] }
+object_store = { version = "0.11", features = ["aws"] }
 
 # Error handling
 anyhow = "1"
@@ -49,3 +45,6 @@ uuid = { version = "1", features = ["serde", "v4"] }
 lto = true
 codegen-units = 1
 strip = true
+
+[profile.dev]
+debug = 0

@@ -16,7 +16,7 @@ import {
   runMaintenance
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
-import { EmptyState, PageHeader, StatStrip } from "../components/common";
+import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { SavingsByOperation } from "../components/SavingsByOperation";
 import { PlanPreview } from "../components/PlanPreview";
@@ -24,6 +24,19 @@ import { GradePill, HealthBadge, PriorityTag, StatusTag } from "../components/st
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatDuration, formatGb, formatNumber, formatTime } from "../lib/format";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
+
+const provenanceLabel = (provenance?: string | null): string => {
+  switch (provenance) {
+    case "assignment":
+      return "manually assigned";
+    case "rule":
+      return "matched a rule";
+    case "none":
+      return "no preset assigned";
+    default:
+      return "unknown";
+  }
+};
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
@@ -76,7 +89,7 @@ export const TableDetail = () => {
       const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id) ?? presets.data?.[0];
       const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
       if (!destinationId) {
-        throw new Error("No destination configured. Add one under Connections or run make seed-config.");
+        throw new Error("No engine configured. Add one under Connections or run make seed-config.");
       }
       return runMaintenance(api, {
         table_ids: [tableId],
@@ -145,8 +158,15 @@ export const TableDetail = () => {
                   <Descriptions.Item label="Snapshots">{formatNumber(stats?.total_snapshots)}</Descriptions.Item>
                   <Descriptions.Item label="Manifests">{formatNumber(stats?.manifest_count)}</Descriptions.Item>
                   <Descriptions.Item label="Delete files">{formatNumber(stats?.total_delete_files)}</Descriptions.Item>
-                  <Descriptions.Item label="Effective preset">
-                    {effectivePreset.data?.preset_name ?? "None"} ({effectivePreset.data?.provenance ?? "unknown"})
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Effective preset"
+                        tooltip="The maintenance preset that will actually run on this table, and how it got assigned."
+                      />
+                    }
+                  >
+                    {effectivePreset.data?.preset_name ?? "None"} ({provenanceLabel(effectivePreset.data?.provenance)})
                   </Descriptions.Item>
                 </Descriptions>
               </Space>
@@ -175,17 +195,55 @@ export const TableDetail = () => {
                     { label: "Now", value: formatCurrency(tableCost.data.current_monthly_cost_usd) },
                     {
                       label: "After maintenance",
-                      value: formatCurrency(tableCost.data.projected_monthly_cost_usd)
+                      value: formatCurrency(tableCost.data.projected_monthly_cost_usd),
+                      tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
                     },
                     { label: "Savings / mo", value: formatCurrency(tableCost.data.projected_savings_usd_month) },
-                    { label: "Reclaimable", value: formatBytesGb(tableCost.data.reclaimable_bytes) }
+                    {
+                      label: "Reclaimable storage",
+                      value: formatBytesGb(tableCost.data.reclaimable_bytes),
+                      tooltip: "Disk space maintenance would free up on this table."
+                    }
                   ]}
                 />
                 <Descriptions size="small" column={2}>
-                  <Descriptions.Item label="Live">{formatBytesGb(tableCost.data.live_bytes)}</Descriptions.Item>
-                  <Descriptions.Item label="Dead">{formatBytesGb(tableCost.data.dead_bytes)}</Descriptions.Item>
-                  <Descriptions.Item label="Metadata">{formatBytesGb(tableCost.data.metadata_bytes)}</Descriptions.Item>
-                  <Descriptions.Item label="Orphans">{formatBytesGb(tableCost.data.orphan_bytes)}</Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel label="Live" tooltip="Data still referenced by the table's current snapshot." />
+                    }
+                  >
+                    {formatBytesGb(tableCost.data.live_bytes)}
+                  </Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Dead"
+                        tooltip="Data superseded by newer snapshots — reclaimed once old snapshots expire."
+                      />
+                    }
+                  >
+                    {formatBytesGb(tableCost.data.dead_bytes)}
+                  </Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Metadata"
+                        tooltip="Manifests, snapshots, and other Iceberg metadata overhead — not the actual data."
+                      />
+                    }
+                  >
+                    {formatBytesGb(tableCost.data.metadata_bytes)}
+                  </Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Orphans"
+                        tooltip="Files on storage that no snapshot or manifest references anymore — safe to delete."
+                      />
+                    }
+                  >
+                    {formatBytesGb(tableCost.data.orphan_bytes)}
+                  </Descriptions.Item>
                 </Descriptions>
                 {tableCost.data.query_request_savings_usd_month > 0 ? (
                   <Typography.Text type="secondary">

@@ -81,7 +81,7 @@ export const CostSavings = () => {
     mutationFn: (tableId: UUID) => {
       const preset = presets.data?.[0];
       const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
-      if (!destinationId) throw new Error("No destination configured");
+      if (!destinationId) throw new Error("No engine configured");
       return runMaintenance(api, {
         table_ids: [tableId],
         destination_id: destinationId,
@@ -115,10 +115,23 @@ export const CostSavings = () => {
           <StatStrip
             items={[
               { label: "S3 monthly now", value: formatCurrency(data.totals.current_monthly_cost_usd) },
-              { label: "After maintenance", value: formatCurrency(data.totals.projected_monthly_cost_usd) },
+              {
+                label: "After maintenance",
+                value: formatCurrency(data.totals.projected_monthly_cost_usd),
+                tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
+              },
               { label: "Monthly savings", value: formatCurrency(data.totals.projected_savings_usd_month) },
-              { label: "Reclaimable storage", value: formatBytesGb(data.totals.reclaimable_bytes) },
-              { label: "Precision coverage", value: `${metadataCoverage}%` }
+              {
+                label: "Reclaimable storage",
+                value: formatBytesGb(data.totals.reclaimable_bytes),
+                tooltip: "Disk space maintenance would free up — dead/expired data, orphan files, and metadata bloat."
+              },
+              {
+                label: "Precision coverage",
+                value: `${metadataCoverage}%`,
+                tooltip:
+                  "Share of tables where these cost figures come from a real metadata or storage scan, rather than a rough per-GB estimate."
+              }
             ]}
           />
           <Row gutter={[12, 12]}>

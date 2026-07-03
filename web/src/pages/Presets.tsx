@@ -86,7 +86,7 @@ export const Presets = () => {
           },
           { title: "Mode", dataIndex: "mode" },
           {
-            title: "Destination",
+            title: "Engine",
             render: (_, row) => destinations.data?.find((item) => item.id === row.destination_id)?.name ?? row.destination_id
           },
           { title: "Priority", dataIndex: "priority", align: "right" },
@@ -184,7 +184,7 @@ const PresetDrawer = ({
         <Form.Item name="description" label="Description">
           <Input />
         </Form.Item>
-        <Form.Item name="destination_id" label="Destination" rules={[{ required: true }]}>
+        <Form.Item name="destination_id" label="Engine" rules={[{ required: true }]}>
           <Select options={destinations.map((item) => ({ label: item.name, value: item.id }))} />
         </Form.Item>
         <Space className="full-width" size={12}>

@@ -31,7 +31,7 @@ export const Connections = () => {
     mutationFn: (body: SourceWrite) =>
       sourceDrawer && sourceDrawer !== "new" ? patchSource(api, sourceDrawer.id, body) : createSource(api, body),
     onSuccess: () => {
-      message.success("Source saved");
+      message.success("Lakehouse saved");
       setSourceDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["sources"] });
     },
@@ -44,7 +44,7 @@ export const Connections = () => {
         ? patchDestination(api, destinationDrawer.id, body)
         : createDestination(api, body),
     onSuccess: () => {
-      message.success("Destination saved");
+      message.success("Engine saved");
       setDestinationDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["destinations"] });
     },
@@ -61,14 +61,14 @@ export const Connections = () => {
     <div>
       <PageHeader
         title="Connections"
-        subtitle="Read-side Iceberg catalogs are separate from write-side maintenance destinations."
+        subtitle="Lakehouses are where your Iceberg data lives. Engines are what actually runs maintenance on it."
       />
       {testResult ? (
         <Alert
           className="page-alert"
           type={testResult.ok ? "success" : "warning"}
           showIcon
-          message={testResult.ok ? "Destination capacity check passed" : "Destination capacity check returned warnings"}
+          message={testResult.ok ? "Engine capacity check passed" : "Engine capacity check returned warnings"}
           description={<pre className="inline-json">{JSON.stringify(testResult, null, 2)}</pre>}
           closable
           onClose={() => setTestResult(null)}
@@ -78,11 +78,16 @@ export const Connections = () => {
         items={[
           {
             key: "sources",
-            label: "Sources",
+            label: "Lakehouses",
             children: (
               <Space direction="vertical" size={12} className="full-width">
+                <Typography.Paragraph type="secondary" className="tab-intro">
+                  The Iceberg catalogs your data lakehouse lives in — REST catalog, Hive Metastore, or
+                  Glue. Cryo reads these to discover tables and scan health. Read-only: nothing here
+                  ever runs maintenance, it only tells Cryo what tables exist.
+                </Typography.Paragraph>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setSourceDrawer("new")}>
-                  New source
+                  New lakehouse
                 </Button>
                 <Table<SourceRead>
                   size="small"
@@ -110,18 +115,23 @@ export const Connections = () => {
                       )
                     }
                   ]}
-                  locale={{ emptyText: <EmptyState title="No sources" description="Add a catalog to scan Iceberg tables." /> }}
+                  locale={{ emptyText: <EmptyState title="No lakehouses connected" description="Connect a catalog to start scanning Iceberg tables." /> }}
                 />
               </Space>
             )
           },
           {
             key: "destinations",
-            label: "Destinations",
+            label: "Engines",
             children: (
               <Space direction="vertical" size={12} className="full-width">
+                <Typography.Paragraph type="secondary" className="tab-intro">
+                  The processing engines that actually run maintenance — a Trino coordinator or a
+                  Spark/EMR cluster. Presets and manual runs target one of these to do the real work
+                  (compaction, snapshot expiry, orphan cleanup).
+                </Typography.Paragraph>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setDestinationDrawer("new")}>
-                  New destination
+                  New engine
                 </Button>
                 <Table<DestinationRead>
                   size="small"
@@ -153,7 +163,7 @@ export const Connections = () => {
                       )
                     }
                   ]}
-                  locale={{ emptyText: <EmptyState title="No destinations" description="Add Trino or Spark execution targets for maintenance." /> }}
+                  locale={{ emptyText: <EmptyState title="No engines connected" description="Add a Trino or Spark engine to run maintenance." /> }}
                 />
               </Space>
             )
@@ -190,7 +200,7 @@ const SourceDrawer = ({
   onSave: (body: SourceWrite) => void;
 }) => (
   <ConnectionDrawer
-    title={value && value !== "new" ? "Edit source" : "New source"}
+    title={value && value !== "new" ? "Edit lakehouse" : "New lakehouse"}
     open={Boolean(value)}
     onClose={onClose}
     initial={{
@@ -218,7 +228,7 @@ const DestinationDrawer = ({
   onSave: (body: DestinationWrite) => void;
 }) => (
   <ConnectionDrawer
-    title={value && value !== "new" ? "Edit destination" : "New destination"}
+    title={value && value !== "new" ? "Edit engine" : "New engine"}
     open={Boolean(value)}
     onClose={onClose}
     initial={{
