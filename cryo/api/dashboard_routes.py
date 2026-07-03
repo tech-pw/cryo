@@ -15,6 +15,7 @@ from cryo.api.deps import require_viewer
 from cryo.db.models import AuditLog, QueryLog, QueryPattern, Table, TablePartition, TableStats, TableStatsHistory
 from cryo.db.session import get_session
 from cryo.domain.enums import JobStatus
+from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
@@ -598,4 +599,100 @@ def get_cost_attribution(
         total_cost_usd=0.0,
         unattributed_cost_usd=0.0,
         month=month,
+    )
+
+
+# ===================== S3 Intelligent-Tiering =====================
+
+
+class S3TieringRecommendationRead(BaseModel):
+    """S3 Intelligent-Tiering recommendation."""
+
+    table_id: UUID
+    table_name: str
+    current_size_gb: float
+    avg_file_size_kb: float
+    days_since_last_access: int
+    current_monthly_cost_usd: float
+    intelligent_tiering_monthly_cost_usd: float
+    estimated_annual_savings_usd: float
+    recommendation: str
+    reason: str
+
+
+class S3TieringResponse(BaseModel):
+    """Response for S3 Intelligent-Tiering recommendations."""
+
+    recommendations: list[S3TieringRecommendationRead]
+    total_potential_savings_usd: float
+
+
+@router.get("/s3-tiering-recommendations", response_model=S3TieringResponse)
+def get_s3_tiering_recommendations(
+    session: Annotated[Session, Depends(get_session)],
+    _principal: Annotated[dict, Depends(require_viewer)],
+    min_size_gb: float = Query(100.0, description="Minimum table size in GB"),
+    lookback_days: int = Query(90, description="Days to look back for access patterns"),
+) -> S3TieringResponse:
+    """
+    Get S3 Intelligent-Tiering recommendations for all large tables.
+    
+    Returns tables that would benefit from enabling S3 Intelligent-Tiering,
+    sorted by estimated annual savings.
+    """
+    recommendations = get_all_tiering_recommendations(
+        session=session,
+        min_size_gb=min_size_gb,
+        lookback_days=lookback_days,
+    )
+    
+    total_savings = sum(r.estimated_annual_savings_usd for r in recommendations)
+    
+    return S3TieringResponse(
+        recommendations=[
+            S3TieringRecommendationRead(
+                table_id=UUID(r.table_id),
+                table_name=r.table_name,
+                current_size_gb=r.current_size_gb,
+                avg_file_size_kb=r.avg_file_size_kb,
+                days_since_last_access=r.days_since_last_access,
+                current_monthly_cost_usd=r.current_monthly_cost_usd,
+                intelligent_tiering_monthly_cost_usd=r.intelligent_tiering_monthly_cost_usd,
+                estimated_annual_savings_usd=r.estimated_annual_savings_usd,
+                recommendation=r.recommendation,
+                reason=r.reason,
+            )
+            for r in recommendations
+        ],
+        total_potential_savings_usd=total_savings,
+    )
+
+
+@router.get("/tables/{table_id}/s3-tiering", response_model=S3TieringRecommendationRead)
+def get_table_s3_tiering(
+    table_id: UUID,
+    session: Annotated[Session, Depends(get_session)],
+    _principal: Annotated[dict, Depends(require_viewer)],
+    lookback_days: int = Query(90, description="Days to look back for access patterns"),
+) -> S3TieringRecommendationRead:
+    """
+    Get S3 Intelligent-Tiering recommendation for a specific table.
+    """
+    rec = analyze_table_for_tiering(
+        session=session,
+        table_id=str(table_id),
+        lookback_days=lookback_days,
+    )
+    
+    return S3TieringRecommendationRead(
+        table_id=UUID(rec.table_id),
+        table_name=rec.table_name,
+        current_size_gb=rec.current_size_gb,
+        avg_file_size_kb=rec.avg_file_size_kb,
+        days_since_last_access=rec.days_since_last_access,
+        current_monthly_cost_usd=rec.current_monthly_cost_usd,
+        intelligent_tiering_monthly_cost_usd=rec.intelligent_tiering_monthly_cost_usd,
+        estimated_annual_savings_usd=rec.estimated_annual_savings_usd,
+        recommendation=rec.recommendation,
+        reason=rec.reason,
     )
