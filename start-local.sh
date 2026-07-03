@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+# Start the local Cryo stack: Docker infra + API, web UI, worker, and governor.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
+PID_DIR="${PID_DIR:-$ROOT_DIR/.local/pids}"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/.local/logs}"
+NPM="${NPM:-npm}"
+
+API_HOST="${API_HOST:-127.0.0.1}"
+API_PORT="${API_PORT:-8000}"
+WEB_HOST="${WEB_HOST:-127.0.0.1}"
+WEB_PORT="${WEB_PORT:-5173}"
+
+SEED_CONFIG="${SEED_CONFIG:-1}"
+SEED_TABLES="${SEED_TABLES:-0}"
+SEED_FIXTURES="${SEED_FIXTURES:-0}"
+START_WEB="${START_WEB:-1}"
+START_WORKER="${START_WORKER:-0}"
+START_GOVERNOR="${START_GOVERNOR:-0}"
+START_SCHEDULER="${START_SCHEDULER:-0}"
+DOCKER_DOWN_ON_STOP="${DOCKER_DOWN_ON_STOP:-0}"
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+warn() {
+  printf 'warning: %s\n' "$*" >&2
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./start-local.sh [command]
+
+Commands:
+  start     Start Docker infra and Cryo app processes (default)
+  stop      Stop Cryo app processes (optionally Docker with DOCKER_DOWN_ON_STOP=1)
+  status    Show Docker and Cryo process status
+  logs      Tail Cryo app logs (api, web, worker, governor, scheduler)
+
+Environment:
+  SEED_CONFIG=1          Upsert local source/destination/preset rows
+  SEED_TABLES=0          Seed demo Iceberg tables after Docker is up
+  SEED_FIXTURES=0        Also seed fragmented fixture tables
+  START_WEB=1            Start Vite dev server
+  START_WORKER=0         Start maintenance worker (not implemented yet)
+  START_GOVERNOR=0       Start load-aware governor (not implemented yet)
+  START_SCHEDULER=0      Start scheduler (off by default for ad-hoc dev)
+  DOCKER_DOWN_ON_STOP=0  Stop Docker stack when running ./start-local.sh stop
+  API_PORT=8000          FastAPI port
+  WEB_PORT=5173          Vite dev server port
+EOF
+}
+
+require_docker() {
+  command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH"
+  docker compose version >/dev/null 2>&1 || die "docker compose is not available"
+}
+
+ensure_dirs() {
+  mkdir -p "$PID_DIR" "$LOG_DIR"
+}
+
+ensure_venv() {
+  if [[ ! -d "$VENV_DIR" ]]; then
+    command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "$PYTHON_BIN not found; install Python 3.12 or set PYTHON_BIN"
+    log "Creating virtual environment at $VENV_DIR"
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+  fi
+
+  # shellcheck disable=SC1091
+  source "$VENV_DIR/bin/activate"
+
+  if ! python -c "import cryo, uvicorn" >/dev/null 2>&1; then
+    log "Installing backend dependencies"
+    python -m pip install --upgrade pip -q
+    python -m pip install -e ".[dev]" -q
+  fi
+}
+
+ensure_web_deps() {
+  if [[ ! -d "$ROOT_DIR/web/node_modules" ]]; then
+    log "Installing frontend dependencies"
+    "$NPM" --prefix "$ROOT_DIR/web" install
+  fi
+}
+
+wait_for_url() {
+  local name="$1"
+  local url="$2"
+  local attempts="${3:-60}"
+
+  log "Waiting for $name at $url"
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      log "$name is ready"
+      return 0
+    fi
+    sleep 2
+  done
+
+  die "$name did not become ready in time ($url)"
+}
+
+wait_for_container_health() {
+  local service="$1"
+  local name="$2"
+  local attempts="${3:-60}"
+  local container_id=""
+  local status=""
+
+  log "Waiting for $name container health"
+  for ((i = 1; i <= attempts; i++)); do
+    container_id="$(docker compose ps -q "$service")"
+    if [[ -n "$container_id" ]]; then
+      status="$(
+        docker inspect \
+          --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$container_id" 2>/dev/null || true
+      )"
+      if [[ "$status" == "healthy" || "$status" == "running" ]]; then
+        log "$name is ready"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+
+  die "$name did not become ready in time"
+}
+
+start_docker() {
+  log "Starting Docker services"
+  docker compose up -d
+
+  wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
+  wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
+  wait_for_url "Trino" "http://localhost:8080/v1/info"
+  wait_for_container_health "postgres" "Postgres"
+  wait_for_container_health "redis" "Redis"
+  wait_for_container_health "spark" "Spark runner"
+}
+
+migrate_db() {
+  log "Running database migrations"
+  alembic upgrade head
+}
+
+seed_config() {
+  if [[ "$SEED_CONFIG" != "1" ]]; then
+    log "Skipping Cryo config seed (SEED_CONFIG=$SEED_CONFIG)"
+    return 0
+  fi
+
+  log "Seeding local Cryo source, destination, and preset"
+  PYTHONPATH="$ROOT_DIR" python "$ROOT_DIR/scripts/seed_local_config.py"
+}
+
+seed_tables() {
+  if [[ "$SEED_TABLES" != "1" ]]; then
+    log "Skipping Iceberg table seed (SEED_TABLES=$SEED_TABLES)"
+    return 0
+  fi
+
+  log "Seeding demo Iceberg tables"
+  python "$ROOT_DIR/scripts/create_test_tables.py"
+
+  if [[ "$SEED_FIXTURES" == "1" ]]; then
+    log "Seeding fragmented partition fixture tables"
+    python "$ROOT_DIR/scripts/create_partition_fixture_tables.py"
+  fi
+}
+
+is_running() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null
+}
+
+start_process() {
+  local name="$1"
+  local required="${2:-1}"
+  shift 2
+  local pid_file="$PID_DIR/${name}.pid"
+  local log_file="$LOG_DIR/${name}.log"
+
+  if is_running "$pid_file"; then
+    log "$name already running (pid $(cat "$pid_file"))"
+    return 0
+  fi
+
+  : >"$log_file"
+  nohup bash -c '
+    cd "$1"
+    # shellcheck disable=SC1091
+    source "$2/bin/activate"
+    shift 2
+    exec "$@"
+  ' bash "$ROOT_DIR" "$VENV_DIR" "$@" >>"$log_file" 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  echo "$pid" >"$pid_file"
+  sleep 1
+
+  if ! is_running "$pid_file"; then
+    rm -f "$pid_file"
+    if [[ "$required" == "1" ]]; then
+      warn "$name failed to start; see $log_file"
+      tail -n 20 "$log_file" >&2 || true
+      return 1
+    fi
+    warn "$name is unavailable; see $log_file"
+    return 0
+  fi
+
+  log "Started $name (pid $(cat "$pid_file"), log $log_file)"
+}
+
+start_app_processes() {
+  start_process api 1 \
+    uvicorn cryo.api.app:create_app --factory --reload --host "$API_HOST" --port "$API_PORT"
+
+  if [[ "$START_WEB" == "1" ]]; then
+    ensure_web_deps
+    start_process web 1 \
+      "$NPM" --prefix "$ROOT_DIR/web" run dev -- --host "$WEB_HOST" --port "$WEB_PORT"
+  fi
+
+  if [[ "$START_WORKER" == "1" ]]; then
+    start_process worker 0 python -m cryo.worker.worker
+  fi
+
+  if [[ "$START_GOVERNOR" == "1" ]]; then
+    start_process governor 0 python -m cryo.governor.governor
+  fi
+
+  if [[ "$START_SCHEDULER" == "1" ]]; then
+    start_process scheduler 0 python -m cryo.scheduler.scheduler
+  fi
+}
+
+wait_for_app() {
+  wait_for_url "Cryo API" "http://${API_HOST}:${API_PORT}/docs" 30
+  if [[ "$START_WEB" == "1" ]]; then
+    wait_for_url "Cryo web UI" "http://${WEB_HOST}:${WEB_PORT}/" 30
+  fi
+}
+
+print_summary() {
+  cat <<EOF
+
+Cryo local stack is running.
+
+Application:
+  Web UI     http://${WEB_HOST}:${WEB_PORT}/
+  API        http://${API_HOST}:${API_PORT}/
+  API docs   http://${API_HOST}:${API_PORT}/docs
+
+Infrastructure:
+  MinIO API       http://localhost:9000
+  MinIO console   http://localhost:9001  (minioadmin / minioadmin)
+  Iceberg REST    http://localhost:8181
+  Trino           http://localhost:8080
+  Postgres        localhost:5432  (cryo / cryo / cryo)
+  Redis           localhost:6379
+
+Useful commands:
+  ./start-local.sh status
+  ./start-local.sh logs
+  ./start-local.sh stop
+  make scan
+  SEED_TABLES=1 SEED_FIXTURES=1 ./start-local.sh start
+
+Local API auth header:
+  Authorization: Bearer admin
+EOF
+}
+
+stop_process() {
+  local name="$1"
+  local pid_file="$PID_DIR/${name}.pid"
+
+  if ! is_running "$pid_file"; then
+    rm -f "$pid_file"
+    return 0
+  fi
+
+  local pid
+  pid="$(cat "$pid_file")"
+  log "Stopping $name (pid $pid)"
+  kill "$pid" 2>/dev/null || true
+
+  for _ in $(seq 1 10); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$pid_file"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  warn "Force stopping $name (pid $pid)"
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$pid_file"
+}
+
+stop_app_processes() {
+  stop_process scheduler
+  stop_process governor
+  stop_process worker
+  stop_process web
+  stop_process api
+}
+
+cmd_status() {
+  require_docker
+  ensure_dirs
+
+  log "Docker services"
+  docker compose ps
+
+  printf '\n'
+  log "Cryo app processes"
+  local name
+  for name in api web worker governor scheduler; do
+    local pid_file="$PID_DIR/${name}.pid"
+    if is_running "$pid_file"; then
+      printf '  %-10s running (pid %s, log %s/%s.log)\n' "$name" "$(cat "$pid_file")" "$LOG_DIR" "$name"
+    else
+      printf '  %-10s stopped\n' "$name"
+    fi
+  done
+}
+
+cmd_logs() {
+  ensure_dirs
+  if compgen -G "$LOG_DIR/*.log" >/dev/null; then
+    tail -f "$LOG_DIR"/*.log
+  else
+    die "No logs found in $LOG_DIR (start the stack first)"
+  fi
+}
+
+cmd_start() {
+  require_docker
+  ensure_dirs
+  ensure_venv
+  start_docker
+  migrate_db
+  seed_config
+  seed_tables
+  start_app_processes
+  wait_for_app
+  print_summary
+}
+
+cmd_stop() {
+  ensure_dirs
+  stop_app_processes
+
+  if [[ "$DOCKER_DOWN_ON_STOP" == "1" ]]; then
+    require_docker
+    log "Stopping Docker services"
+    docker compose down
+  else
+    log "Docker services left running (set DOCKER_DOWN_ON_STOP=1 to stop them)"
+  fi
+}
+
+main() {
+  local command="${1:-start}"
+  case "$command" in
+    start)
+      cmd_start
+      ;;
+    stop)
+      cmd_stop
+      ;;
+    status)
+      cmd_status
+      ;;
+    logs)
+      cmd_logs
+      ;;
+    -h | --help | help)
+      usage
+      ;;
+    *)
+      die "Unknown command: $command (try ./start-local.sh --help)"
+      ;;
+  esac
+}
+
+main "$@"

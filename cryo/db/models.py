@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TIMESTAMP
+
+from cryo.db.base import Base
+
+JsonDict = dict[str, Any]
+JsonList = list[JsonDict]
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Source(TimestampMixin, Base):
+    __tablename__ = "sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    secret_ref: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    tables: Mapped[list[Table]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
+
+
+class Destination(TimestampMixin, Base):
+    __tablename__ = "destinations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    engine: Mapped[str] = mapped_column(Text, nullable=False)
+    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    secret_ref: Mapped[str | None] = mapped_column(Text)
+    offpeak_start: Mapped[int | None] = mapped_column(Integer)
+    offpeak_end: Mapped[int | None] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    presets: Mapped[list[Preset]] = relationship(back_populates="destination")
+    jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="destination")
+
+
+class Table(Base):
+    __tablename__ = "tables"
+    __table_args__ = (UniqueConstraint("source_id", "schema_name", "table_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id"), nullable=False
+    )
+    schema_name: Mapped[str] = mapped_column(Text, nullable=False)
+    table_name: Mapped[str] = mapped_column(Text, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    source: Mapped[Source] = relationship(back_populates="tables")
+    stats: Mapped[TableStats | None] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    partitions: Mapped[list[TablePartition]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    history: Mapped[list[TableStatsHistory]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    assignment: Mapped[TableAssignment | None] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="table")
+    audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="table")
+
+
+class TableStats(Base):
+    __tablename__ = "table_stats"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), primary_key=True
+    )
+    scan_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    needs_compaction: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    compaction_priority: Mapped[str] = mapped_column(Text, nullable=False)
+    grade: Mapped[str] = mapped_column(Text, nullable=False)
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_files: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    small_files_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_partitions: Mapped[int | None] = mapped_column(Integer)
+    max_files_per_partition: Mapped[int | None] = mapped_column(Integer)
+    avg_files_per_partition: Mapped[float | None] = mapped_column(Float)
+    partition_skew_ratio: Mapped[float | None] = mapped_column(Float)
+    total_records: Mapped[int | None] = mapped_column(BigInteger)
+    total_size_gb: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_file_size_mb: Mapped[float | None] = mapped_column(Float)
+    total_snapshots: Mapped[int | None] = mapped_column(Integer)
+    total_delete_files: Mapped[int | None] = mapped_column(Integer)
+    delete_file_pct: Mapped[float | None] = mapped_column(Float)
+    manifest_count: Mapped[int | None] = mapped_column(Integer)
+    partition_col: Mapped[str | None] = mapped_column(Text)
+    partition_col_type: Mapped[str | None] = mapped_column(Text)
+    write_distribution_mode: Mapped[str | None] = mapped_column(Text)
+    has_sort_order: Mapped[bool | None] = mapped_column(Boolean)
+    target_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    estimated_monthly_s3_cost_usd: Mapped[float | None] = mapped_column(Float)
+    query_count_30d: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+    table: Mapped[Table] = relationship(back_populates="stats")
+
+
+class TablePartition(Base):
+    __tablename__ = "table_partitions"
+    __table_args__ = (
+        Index("ix_table_partitions_table_scan", "table_id", "scan_at"),
+        Index("ix_table_partitions_values_gin", "partition_values", postgresql_using="gin"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    scan_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    partition_value: Mapped[str | None] = mapped_column(Text)
+    partition_values: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    partition_fields: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    partition_spec_id: Mapped[int | None] = mapped_column(Integer)
+    partition_path: Mapped[str | None] = mapped_column(Text)
+    partition_key: Mapped[str | None] = mapped_column(Text)
+    base_column: Mapped[str | None] = mapped_column(Text)
+    base_column_type: Mapped[str | None] = mapped_column(Text)
+    transform: Mapped[str | None] = mapped_column(Text)
+    files_per_partition: Mapped[int | None] = mapped_column(Integer)
+    small_files_in_partition_count: Mapped[int | None] = mapped_column(Integer)
+    partition_size_gb: Mapped[float | None] = mapped_column(Float)
+    compaction_status: Mapped[str | None] = mapped_column(Text)
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+    table: Mapped[Table] = relationship(back_populates="partitions")
+
+
+class TableStatsHistory(Base):
+    __tablename__ = "table_stats_history"
+    __table_args__ = (Index("ix_table_stats_history_table_scan", "table_id", "scan_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    scan_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    small_files_count: Mapped[int | None] = mapped_column(BigInteger)
+    total_files: Mapped[int | None] = mapped_column(BigInteger)
+    total_size_gb: Mapped[float | None] = mapped_column(Float)
+    grade: Mapped[str | None] = mapped_column(Text)
+    overall_score: Mapped[int | None] = mapped_column(Integer)
+
+    table: Mapped[Table] = relationship(back_populates="history")
+
+
+class Preset(TimestampMixin, Base):
+    __tablename__ = "presets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.destinations.id"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'standard'"))
+    operations: Mapped[JsonList] = mapped_column(JSONB, nullable=False)
+    params: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    schedule_cron: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("100"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    guardrails: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+
+    destination: Mapped[Destination] = relationship(back_populates="presets")
+    rules: Mapped[list[PresetRule]] = relationship(
+        back_populates="preset", cascade="all, delete-orphan"
+    )
+    assignments: Mapped[list[TableAssignment]] = relationship(back_populates="preset")
+    runs: Mapped[list[MaintenanceRun]] = relationship(back_populates="preset")
+
+
+class PresetRule(Base):
+    __tablename__ = "preset_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    preset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.presets.id", ondelete="CASCADE"), nullable=False
+    )
+    predicate: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    preset: Mapped[Preset] = relationship(back_populates="rules")
+
+
+class TableAssignment(Base):
+    __tablename__ = "table_assignments"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), primary_key=True
+    )
+    preset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.presets.id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_by: Mapped[str | None] = mapped_column(Text)
+    assigned_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    table: Mapped[Table] = relationship(back_populates="assignment")
+    preset: Mapped[Preset] = relationship(back_populates="assignments")
+
+
+class MaintenanceRun(Base):
+    __tablename__ = "runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    preset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.presets.id")
+    )
+    trigger: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'running'"))
+    deadline_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    summary: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+    preset: Mapped[Preset | None] = relationship(back_populates="runs")
+    jobs: Mapped[list[MaintenanceJob]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class MaintenanceJob(Base):
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_run_status", "run_id", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+    )
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.destinations.id"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    plan: Mapped[JsonDict | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    engine_ref: Mapped[str | None] = mapped_column(Text)
+    replica: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[MaintenanceRun] = relationship(back_populates="jobs")
+    table: Mapped[Table] = relationship(back_populates="jobs")
+    destination: Mapped[Destination] = relationship(back_populates="jobs")
+    audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_table_ts", "table_id", "ts"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.jobs.id"))
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    engine: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+
+    table: Mapped[Table | None] = relationship(back_populates="audit_entries")
+    job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
+
+
+__all__ = [
+    "AuditLog",
+    "Destination",
+    "MaintenanceJob",
+    "MaintenanceRun",
+    "Preset",
+    "PresetRule",
+    "Source",
+    "Table",
+    "TableAssignment",
+    "TablePartition",
+    "TableStats",
+    "TableStatsHistory",
+]
