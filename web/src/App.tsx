@@ -8,7 +8,8 @@ import {
   HistoryOutlined,
   MoonOutlined,
   SettingOutlined,
-  SunOutlined
+  SunOutlined,
+  ThunderboltOutlined
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Button, ConfigProvider, Layout, Menu, Select, Space, Tooltip, Typography, theme } from "antd";
@@ -20,8 +21,10 @@ import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { Connections } from "./pages/Connections";
 import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
+import { JobDetail } from "./pages/JobDetail";
 import LayoutOptimization from "./pages/LayoutOptimization";
 import { Presets } from "./pages/Presets";
+import { QueryPerformance } from "./pages/QueryPerformance";
 import { Runs } from "./pages/Runs";
 import { TableDetail } from "./pages/TableDetail";
 import { TableExplorer } from "./pages/TableExplorer";
@@ -39,6 +42,7 @@ const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
+  { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
@@ -92,10 +96,12 @@ const Shell = () => {
             <Route path="/cost" element={<CostSavings />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
+            <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/optimize" element={<LayoutOptimization />} />
             <Route path="/presets" element={<Presets />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/runs/:runId" element={<Runs />} />
+            <Route path="/jobs/:jobId" element={<JobDetail />} />
             <Route path="/connections" element={<Connections />} />
           </Routes>
         </Layout.Content>

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cryo import __version__
+from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(extensions_router)
     app.include_router(phase8_router)
+    app.include_router(dashboard_router)
     return app
 
 
