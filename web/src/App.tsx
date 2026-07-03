@@ -16,6 +16,7 @@ import {
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Button, ConfigProvider, Layout, Menu, Select, Space, Tooltip, Typography, theme } from "antd";
+import type { MenuProps } from "antd";
 import { useMemo } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, roleOptions, useAuth } from "./lib/auth";
@@ -60,6 +61,36 @@ const navItems = [
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
+const navGroups: MenuProps["items"] = [
+  {
+    type: "group",
+    label: "Overview",
+    children: [navItems[0], navItems[7]]
+  },
+  {
+    type: "group",
+    label: "Inventory",
+    children: [navItems[1], navItems[2], navItems[3]]
+  },
+  {
+    type: "group",
+    label: "Operations",
+    children: [navItems[8], navItems[9], navItems[10]]
+  },
+  {
+    type: "group",
+    label: "Insights",
+    children: [navItems[4], navItems[5], navItems[6]]
+  },
+  {
+    type: "group",
+    label: "Settings",
+    children: [navItems[11]]
+  }
+];
+
+const routeSelectionAliases = new Map([["/jobs", "/runs"]]);
+
 const ThemeToggle = () => {
   const { theme, toggleTheme } = useTheme();
   return (
@@ -77,10 +108,10 @@ const ThemeToggle = () => {
 const Shell = () => {
   const location = useLocation();
   const { token, setToken } = useAuth();
-  const selectedKey = useMemo(
-    () => navItems.find((item) => location.pathname.startsWith(item.key))?.key ?? "/health",
-    [location.pathname]
-  );
+  const selectedKey = useMemo(() => {
+    const alias = [...routeSelectionAliases.entries()].find(([route]) => location.pathname.startsWith(route))?.[1];
+    return alias ?? navItems.find((item) => location.pathname.startsWith(item.key))?.key ?? "/health";
+  }, [location.pathname]);
 
   return (
     <Layout className="app-shell">
@@ -89,7 +120,7 @@ const Shell = () => {
           <SettingOutlined />
           <span>Cryo</span>
         </div>
-        <Menu mode="inline" selectedKeys={[selectedKey]} items={navItems} />
+        <Menu mode="inline" selectedKeys={[selectedKey]} items={navGroups} />
       </Layout.Sider>
       <Layout>
         <Layout.Header className="topbar">
