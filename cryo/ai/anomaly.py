@@ -34,7 +34,10 @@ def detect_anomalies(
     baseline_rows = history[:-1]
 
     for metric in metrics:
-        series = [_float(row.get(metric)) for row in baseline_rows if row.get(metric) is not None]
+        raw_series = [
+            _float(row.get(metric)) for row in baseline_rows if row.get(metric) is not None
+        ]
+        series: list[float] = [v for v in raw_series if v is not None]
         current = _float(latest.get(metric))
         if current is None or len(series) < 2:
             continue

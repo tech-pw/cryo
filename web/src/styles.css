@@ -1,16 +1,57 @@
+/* IBM Plex Sans & Mono fonts */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 :root {
+  /* Light theme tokens */
   --bg: #ffffff;
+  --layout-bg: #f3f5f8;
+  --surface-sunken: #f6f8fb;
   --panel: #f3f5f8;
   --panel-strong: #eef1f6;
-  --ink: #1c2433;
+  --ink: #131b24;
+  --ink-soft: #545f6d;
+  --ink-faint: #8791a0;
   --muted: #5c667a;
-  --line: #d5dbe6;
+  --line: #e1e6ed;
+  --line-strong: #c7d0dc;
   --primary: #3d6fd4;
-  --accent: #d97706;
+  --primary-hover: #3566c8;
+  --primary-soft: #e8effc;
+  --focus-ring: rgba(61, 111, 212, 0.35);
+  
+  /* Sidebar is always dark */
+  --sidebar-bg: #0c121b;
+  --sidebar-text: #c7d2de;
+  --sidebar-text-active: #ffffff;
+  --sidebar-accent: #3d6fd4;
+  --sidebar-hover: #141c28;
+}
+
+[data-theme="dark"] {
+  --bg: #0b0f16;
+  --layout-bg: #0b0f16;
+  --surface-sunken: #0e141f;
+  --panel: #0e141f;
+  --panel-strong: #141c28;
+  --ink: #e7ecf3;
+  --ink-soft: #a6b2c0;
+  --ink-faint: #6e7a8a;
+  --muted: #a6b2c0;
+  --line: #202a38;
+  --line-strong: #2e3b4c;
+  --primary: #5b9ce8;
+  --primary-hover: #6faaf0;
+  --primary-soft: #16283f;
+  --focus-ring: rgba(91, 156, 232, 0.4);
 }
 
 html {
   color-scheme: light;
+}
+
+[data-theme="dark"] html,
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
@@ -20,17 +61,53 @@ html {
 body {
   margin: 0;
   min-width: 1100px;
-  background: var(--panel);
+  background: var(--layout-bg);
   color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-variant-numeric: tabular-nums;
+}
+
+/* Focus ring for accessibility */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .app-shell {
   min-height: 100vh;
 }
 
+/* Always-dark sidebar */
 .side-nav {
-  border-right: 1px solid var(--line);
+  background: var(--sidebar-bg) !important;
+  border-right: 1px solid #202a38;
+}
+
+.side-nav .ant-menu {
+  background: transparent !important;
+}
+
+.side-nav .ant-menu-item {
+  color: var(--sidebar-text) !important;
+  margin: 2px 8px !important;
+  border-radius: 6px !important;
+}
+
+.side-nav .ant-menu-item:hover {
+  background: var(--sidebar-hover) !important;
+  color: var(--sidebar-text-active) !important;
+}
+
+.side-nav .ant-menu-item-selected {
+  background: rgba(61, 111, 212, 0.15) !important;
+  color: var(--sidebar-text-active) !important;
+  border-left: 2px solid var(--sidebar-accent);
+  margin-left: 6px !important;
+  padding-left: 22px !important;
+}
+
+.side-nav .ant-menu-item-selected::after {
+  display: none;
 }
 
 .brand {
@@ -39,7 +116,7 @@ body {
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  color: var(--ink);
+  color: var(--sidebar-text-active);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -167,6 +244,14 @@ body {
   box-shadow: 0 10px 28px rgb(28 36 51 / 14%);
 }
 
+[data-theme="dark"] .bulk-bar {
+  box-shadow: 0 10px 28px rgb(0 0 0 / 45%);
+}
+
+[data-theme="dark"] .chart-frame .recharts-default-tooltip {
+  box-shadow: 0 4px 12px rgb(0 0 0 / 45%) !important;
+}
+
 .fleet-table .ant-table-cell {
   white-space: nowrap;
 }
@@ -212,7 +297,7 @@ body {
 .json-block,
 .inline-json {
   margin: 0;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.55;
 }
@@ -238,7 +323,7 @@ body {
 
 .mono-input textarea,
 textarea.mono-input {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
 }
 
@@ -258,6 +343,21 @@ textarea.mono-input {
 .log-list .ant-list-item {
   gap: 10px;
   justify-content: flex-start;
+}
+
+@keyframes log-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.log-list .ant-list-item {
+  animation: log-line-in 150ms ease-out;
 }
 
 .drift-list {

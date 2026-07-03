@@ -4,8 +4,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from cryo.domain.predicates import evaluate_predicate
 from cryo.domain.enums import Mode
+from cryo.domain.predicates import evaluate_predicate
 
 
 @dataclass(frozen=True)

@@ -2,11 +2,50 @@
 name = "cryo-engine"
 version = "0.1.0"
 edition = "2021"
+description = "Native Rust execution engine for Cryo Iceberg maintenance"
+license = "Apache-2.0"
 
 [[bin]]
 name = "cryo-engine"
 path = "src/main.rs"
 
 [dependencies]
+# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Apache Iceberg
+iceberg = "0.4"
+iceberg-catalog-rest = "0.4"
+
+# Apache DataFusion for query execution
+datafusion = "45"
+
+# Parquet/Arrow support
+parquet = { version = "55", features = ["async"] }
+arrow = "55"
+
+# Object storage
+object_store = { version = "0.12", features = ["aws"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

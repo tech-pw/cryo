@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -61,24 +62,81 @@ def run_scan(
     cost_full_scan: bool = False,
     now: datetime | None = None,
     source_factory: Any = source_catalog_for,
+    parallel_tables: int | None = None,
 ) -> ScanSummary:
+    """Run a scan pass over assigned tables.
+    
+    Args:
+        session: Database session for persisting results.
+        settings: Scanner settings.
+        source_id: Optional filter to scan only one source.
+        chunk_id: Which chunk this scanner instance handles (0-indexed).
+        num_chunks: Total number of scanner chunks (for distributed scanning).
+        full_scan: If True, rescan tables already scanned today.
+        cost_full_scan: If True, run storage-truth orphan scans.
+        now: Override scan timestamp (for testing).
+        source_factory: Factory function for creating catalog instances.
+        parallel_tables: Number of tables to scan in parallel within this chunk.
+            None = use settings.scan_parallel_tables (default).
+            0 = serial, >0 = parallel with that many workers.
+            Parallel mode uses separate DB sessions per table to avoid conflicts.
+    """
     settings = settings or get_settings()
     total_chunks = num_chunks or settings.scan_num_chunks
+    effective_parallel = (
+        parallel_tables if parallel_tables is not None else settings.scan_parallel_tables
+    )
     scan_at = now or datetime.now(UTC)
     if scan_at.tzinfo is None:
         scan_at = scan_at.replace(tzinfo=UTC)
 
     candidates = _discover_candidates(session, source_id=source_id, source_factory=source_factory)
     assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
-    scanned = skipped = failed = 0
 
     logger.info(
-        "Scanner chunk %s/%s assigned %s of %s discovered tables",
+        "Scanner chunk %s/%s assigned %s of %s discovered tables (parallel=%s)",
         chunk_id,
         total_chunks,
         len(assigned),
         len(candidates),
+        effective_parallel,
     )
+
+    if effective_parallel > 0 and len(assigned) > 1:
+        return _run_scan_parallel(
+            assigned,
+            settings=settings,
+            full_scan=full_scan,
+            cost_full_scan=cost_full_scan,
+            scan_at=scan_at,
+            max_workers=effective_parallel,
+            total_discovered=len(candidates),
+        )
+
+    return _run_scan_serial(
+        session,
+        assigned,
+        settings=settings,
+        full_scan=full_scan,
+        cost_full_scan=cost_full_scan,
+        scan_at=scan_at,
+        total_discovered=len(candidates),
+    )
+
+
+def _run_scan_serial(
+    session: Session,
+    assigned: list[ScanCandidate],
+    *,
+    settings: Settings,
+    full_scan: bool,
+    cost_full_scan: bool,
+    scan_at: datetime,
+    total_discovered: int,
+) -> ScanSummary:
+    """Scan tables serially within the current session."""
+    scanned = skipped = failed = 0
+
     for candidate in assigned:
         table_row = upsert_table(
             session,
@@ -128,7 +186,91 @@ def run_scan(
             )
 
     return ScanSummary(
-        discovered=len(candidates),
+        discovered=total_discovered,
+        assigned=len(assigned),
+        scanned=scanned,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
+def _run_scan_parallel(
+    assigned: list[ScanCandidate],
+    *,
+    settings: Settings,
+    full_scan: bool,
+    cost_full_scan: bool,
+    scan_at: datetime,
+    max_workers: int,
+    total_discovered: int,
+) -> ScanSummary:
+    """Scan tables in parallel using separate DB sessions per table."""
+    scanned = skipped = failed = 0
+
+    def scan_one(candidate: ScanCandidate) -> str:
+        """Scan a single table, returning 'scanned', 'skipped', or 'failed'."""
+        with SessionLocal() as table_session:
+            table_row = upsert_table(
+                table_session,
+                source_id=candidate.source.id,
+                schema_name=candidate.schema_name,
+                table_name=candidate.table_name,
+            )
+            if not full_scan and already_scanned_today(
+                table_session, table_id=table_row.id, now=scan_at
+            ):
+                return "skipped"
+
+            try:
+                analysis = analyze_catalog_table(
+                    candidate.catalog,
+                    candidate.schema_name,
+                    candidate.table_name,
+                    scan_at=scan_at,
+                    small_file_mb=settings.scan_small_file_mb,
+                    file_size_threshold_mb=settings.scan_needs_compaction_threshold,
+                    settings=settings,
+                )
+                analysis = _apply_orphan_scan(
+                    table_session,
+                    candidate=candidate,
+                    table_id=table_row.id,
+                    analysis=analysis,
+                    settings=settings,
+                    scan_at=scan_at,
+                    cost_full_scan=cost_full_scan,
+                )
+                persist_table_analysis(
+                    table_session,
+                    source_id=candidate.source.id,
+                    analysis=analysis,
+                    table=table_row,
+                )
+                table_session.commit()
+                return "scanned"
+            except Exception:
+                table_session.rollback()
+                logger.exception(
+                    "Failed to scan %s.%s from source %s",
+                    candidate.schema_name,
+                    candidate.table_name,
+                    candidate.source.name,
+                )
+                return "failed"
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(assigned))) as executor:
+        futures = {executor.submit(scan_one, candidate): candidate for candidate in assigned}
+        for future in as_completed(futures):
+            result = future.result()
+            if result == "scanned":
+                scanned += 1
+            elif result == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+
+    return ScanSummary(
+        discovered=total_discovered,
         assigned=len(assigned),
         scanned=scanned,
         skipped=skipped,
@@ -143,6 +285,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--num-chunks", type=int)
     parser.add_argument("--full-scan", action="store_true")
     parser.add_argument("--cost-full-scan", action="store_true")
+    parser.add_argument(
+        "--parallel-tables",
+        type=int,
+        default=0,
+        help="Number of tables to scan in parallel (0=serial, default=0)",
+    )
     args = parser.parse_args(argv)
     if args.num_chunks is not None and args.num_chunks <= 0:
         parser.error("--num-chunks must be positive")
@@ -150,6 +298,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--chunk-id must be non-negative")
     if args.num_chunks is not None and args.chunk_id >= args.num_chunks:
         parser.error("--chunk-id must be less than --num-chunks")
+    if args.parallel_tables < 0:
+        parser.error("--parallel-tables must be non-negative")
     return args
 
 
@@ -164,6 +314,7 @@ def main(argv: list[str] | None = None) -> None:
             num_chunks=args.num_chunks,
             full_scan=args.full_scan,
             cost_full_scan=args.cost_full_scan,
+            parallel_tables=args.parallel_tables,
         )
     logger.info("Scanner finished: %s", summary)
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,10 +9,9 @@ from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 from cryo.engines.spark.emr import (
+    SUCCESS_STATES,
     EMRServerlessClient,
     EMRServerlessConfig,
-    JobRunState,
-    SUCCESS_STATES,
 )
 from cryo.engines.spark.sql import render
 

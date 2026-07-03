@@ -30,6 +30,10 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
         return TrinoEngine(config=dict(config))
 
     if engine_type is EngineType.SPARK_EMR:
+        if config.get("local") or config.get("engine_mode") == "local":
+            from cryo.engines.spark.local import SparkLocalEngine
+
+            return SparkLocalEngine(config=dict(config))
         from cryo.engines.spark.engine import SparkEMREngine
 
         return SparkEMREngine(config=dict(config))
@@ -42,7 +46,9 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
     raise ValueError(f"Unsupported engine type: {engine_type}")
 
 
-def engine_from_destination(destination_id: str, engine: EngineType | str, config: Mapping[str, Any]) -> MaintenanceEngine:
+def engine_from_destination(
+    destination_id: str, engine: EngineType | str, config: Mapping[str, Any]
+) -> MaintenanceEngine:
     """Create an engine from destination configuration.
 
     This is the primary factory function used by the worker.

@@ -61,7 +61,9 @@ def compute_health_score(
     score = _deduct(
         score, float(stats.get("avg_files_per_partition") or 0), "avg_files_per_partition"
     )
-    score = _deduct(score, float(stats.get("metadata_to_data_ratio") or 0), "metadata_to_data_ratio")
+    score = _deduct(
+        score, float(stats.get("metadata_to_data_ratio") or 0), "metadata_to_data_ratio"
+    )
 
     if stats.get("v3_upgrade_candidate"):
         score -= 8

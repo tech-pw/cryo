@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from cryo.domain.enums import Mode
 from cryo.planner.guardrails import validate_operation_order
 from cryo.planner.planner import build_plan
+from cryo.scanner.signals import detect_streaming_from_history, metadata_to_data_ratio
 from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import resolve_destination
 from cryo.scheduler.rules import PresetConfig, TableCandidate
-from cryo.scanner.signals import detect_streaming_from_history, metadata_to_data_ratio
 
 
 def test_cron_is_due_on_hour_boundary() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -99,12 +100,18 @@ def analyze_catalog_table(
     small_file_mb: float = 89.6,
     file_size_threshold_mb: int = 128,
     settings: Settings | None = None,
+    parallel_manifests: bool = True,
 ) -> TableAnalysis:
     del file_size_threshold_mb
     table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     effective_settings = settings or Settings(scan_small_file_mb=small_file_mb)
     result = analyze_table(
-        table_obj, schema_name, table_name, scan_at=scan_at, settings=effective_settings
+        table_obj,
+        schema_name,
+        table_name,
+        scan_at=scan_at,
+        settings=effective_settings,
+        parallel_manifests=parallel_manifests,
     )
     assert isinstance(result, TableAnalysis)
     return result
@@ -117,6 +124,7 @@ def analyze_table(
     *,
     scan_at: datetime | None = None,
     settings: Settings | None = None,
+    parallel_manifests: bool = True,
 ) -> TableAnalysis | dict[str, Any]:
     if isinstance(schema_name, Settings):
         settings = schema_name
@@ -133,7 +141,10 @@ def analyze_table(
     delete_files = delete_bytes = health_small_files = 0
     file_formats: set[str] = set()
 
-    for data_file in iter_data_files(table_obj, manifests):
+    max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
+    for data_file in iter_data_files(
+        table_obj, manifests, parallel=parallel_manifests, max_workers=max_workers
+    ):
         total_files += 1
         file_size = int(_attr(data_file, "file_size_in_bytes", 0) or 0)
         total_size_bytes += file_size
@@ -176,14 +187,10 @@ def analyze_table(
     median_files = statistics.median(files_per_partition) if files_per_partition else 0
     skew = round(max_files_per_partition / max(median_files, 1), 1) if files_per_partition else 0.0
     small_files_count = sum(
-        row.small_files_in_partition_count
-        for row in partition_rows
-        if row.compaction_status == "F"
+        row.small_files_in_partition_count for row in partition_rows if row.compaction_status == "F"
     )
     small_file_bytes = sum(
-        accum.size_bytes
-        for accum in partitions.values()
-        if accum.small > 1 and accum.files > 1
+        accum.size_bytes for accum in partitions.values() if accum.small > 1 and accum.files > 1
     )
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
@@ -302,8 +309,18 @@ def analyze_table(
 
 
 def iter_data_files(
-    table_obj: object, manifests: Sequence[object] | None = None
+    table_obj: object,
+    manifests: Sequence[object] | None = None,
+    *,
+    parallel: bool = True,
+    max_workers: int = 8,
 ) -> Iterable[object]:
+    """Iterate over data files from a table's manifests.
+    
+    When parallel=True (default), manifest entries are fetched concurrently
+    using a thread pool. This significantly speeds up scanning for tables
+    with many manifests by overlapping I/O-bound S3/catalog calls.
+    """
     scan = _call_or_attr(table_obj, "scan", default=None)
     if scan is not None:
         plan_files = _call_or_attr(scan, "plan_files", default=None)
@@ -312,11 +329,39 @@ def iter_data_files(
                 yield _attr(task, "file", task)
             return
 
-    for manifest in manifests if manifests is not None else _manifests(table_obj):
-        for entry in _call_manifest_entries(manifest, _attr(table_obj, "io", None)):
-            if _entry_status_deleted(entry):
-                continue
-            yield _attr(entry, "data_file", entry)
+    manifest_list = list(manifests) if manifests is not None else _manifests(table_obj)
+    io = _attr(table_obj, "io", None)
+    
+    if not parallel or len(manifest_list) <= 1:
+        for manifest in manifest_list:
+            yield from _iter_manifest_data_files(manifest, io)
+        return
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(manifest_list))) as executor:
+        futures = {
+            executor.submit(_fetch_manifest_entries_safe, manifest, io): manifest
+            for manifest in manifest_list
+        }
+        for future in as_completed(futures):
+            entries = future.result()
+            for entry in entries:
+                yield _attr(entry, "data_file", entry)
+
+
+def _iter_manifest_data_files(manifest: object, io: object) -> Iterable[object]:
+    """Iterate over data files from a single manifest (serial path)."""
+    for entry in _call_manifest_entries(manifest, io):
+        if _entry_status_deleted(entry):
+            continue
+        yield _attr(entry, "data_file", entry)
+
+
+def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
+    """Fetch manifest entries, filtering deleted entries. Thread-safe."""
+    try:
+        return _call_manifest_entries(manifest, io)
+    except Exception:
+        return []
 
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:

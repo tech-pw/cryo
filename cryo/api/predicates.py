@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -14,6 +13,8 @@ from cryo.domain.predicates import (
     _glob_to_like,
     evaluate_predicate,
 )
+
+__all__ = ["compile_predicate", "evaluate_predicate"]
 
 FIELD_MAP = {
     "schema_name": Table.schema_name,

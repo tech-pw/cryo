@@ -14,9 +14,7 @@ CORRECT_ORDER: tuple[OperationType, ...] = (
 
 def validate_operation_order(operations: Sequence[OperationType | str]) -> list[str]:
     """Return warnings if operations are requested out of the canonical maintenance order."""
-    resolved = [
-        OperationType(op) if not isinstance(op, OperationType) else op for op in operations
-    ]
+    resolved = [OperationType(op) if not isinstance(op, OperationType) else op for op in operations]
     warnings: list[str] = []
     last_index = -1
     for operation in resolved:
@@ -27,7 +25,7 @@ def validate_operation_order(operations: Sequence[OperationType | str]) -> list[
         if index < last_index:
             warnings.append(
                 f"Operation {operation.value} should run after earlier maintenance steps; "
-                "recommended order is expire_snapshots → remove_orphan_files → optimize → optimize_manifests."
+                "recommended order is expire → orphan → optimize → manifests."
             )
         last_index = max(last_index, index)
     return warnings

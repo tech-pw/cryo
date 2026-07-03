@@ -12,7 +12,7 @@ const gradeColor: Record<string, string> = {
 const priorityColor: Record<string, TagProps["color"]> = {
   HIGH: "red",
   MEDIUM: "gold",
-  LOW: "blue"
+  LOW: "default"
 };
 
 const statusColor: Record<string, TagProps["color"]> = {

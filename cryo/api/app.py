@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cryo import __version__
+from cryo.api.extensions import router as extensions_router
+from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
 from cryo.config import Settings, get_settings
 
@@ -19,6 +21,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "tables", "description": "Iceberg table inventory and detail views."},
             {"name": "scans", "description": "Scanner trigger requests."},
             {"name": "runs", "description": "Maintenance run and job tracking."},
+            {"name": "ai", "description": "Anomaly detection, explain, Copilot, and MCP tools."},
+            {
+                "name": "compliance",
+                "description": "Compliance status, protected snapshots, catalog latency.",
+            },
+            {"name": "phase8", "description": "Adaptive routing and data tiering policies."},
         ],
     )
     if settings.cors_allow_origins:
@@ -35,4 +43,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "environment": settings.environment}
 
     app.include_router(api_router)
+    app.include_router(extensions_router)
+    app.include_router(phase8_router)
     return app

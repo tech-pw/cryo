@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from cryo.db.repositories.run_finalizer import finalize_open_runs
+from cryo.db.session import SessionLocal
 from cryo.domain.enums import JobStatus
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
@@ -59,8 +61,10 @@ class Governor:
         self._default_config = default_config or AdmissionConfig()
         self._lock_ttl_seconds = lock_ttl_seconds
         self._replica_offsets: dict[str, int] = defaultdict(int)
+        self._session_factory = SessionLocal
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
+        finalize_open_runs(self._session_factory)
         current = now or datetime.now(UTC)
         admitted = 0
         deferred = 0

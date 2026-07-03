@@ -23,6 +23,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from cryo.api.deps import require_admin, require_operator, require_viewer
 from cryo.api.predicates import compile_predicate
+from cryo.api.preview_cost import (
+    savings_for_plan_operations,
+    savings_projection_from_stats,
+    savings_projection_to_dict,
+)
 from cryo.api.schemas import (
     AssignmentDeleteRequest,
     AssignmentRequest,
@@ -51,6 +56,7 @@ from cryo.api.schemas import (
     RunJobsResponse,
     RunRead,
     RunSnapshotPayload,
+    SavingsProjectionRead,
     ScanTriggerRequest,
     ScanTriggerResponse,
     SchemaCostDashboardResponse,
@@ -66,7 +72,7 @@ from cryo.api.schemas import (
 )
 from cryo.api.security import Role, principal_from_token
 from cryo.api.serializers import table_to_read
-from cryo.config import Settings
+from cryo.config import Settings, get_settings
 from cryo.db.models import (
     Destination,
     MaintenanceJob,
@@ -80,14 +86,15 @@ from cryo.db.models import (
 )
 from cryo.db.repositories import p4, p5
 from cryo.db.session import get_session
-from cryo.domain.enums import EngineType, JobStatus
+from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.domain.models import MaintenancePlan
 from cryo.engines.base import RenderedStatement
 from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
-from cryo.planner.planner import build_plan
+from cryo.infra.wiring import build_runtime_wiring
 from cryo.planner.guardrails import validate_operation_order
+from cryo.planner.planner import build_plan
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -661,6 +668,7 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
             raise HTTPException(status_code=400, detail={"warnings": warnings})
 
     renderer = _renderer_for(payload.engine)
+    settings = get_settings()
     items: list[TablePreviewRead] = []
 
     for table in payload.tables:
@@ -676,14 +684,30 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
                 action=statement.action.value,
                 engine=statement.engine,
                 sql=statement.sql,
+                payload=dict(statement.payload),
             )
             for statement in renderer(plan)
         ]
+        savings_payload = None
+        try:
+            projection = savings_projection_from_stats(stats, settings)
+            op_types = [op.type for op in plan.operations]
+            savings_payload = SavingsProjectionRead(
+                **{
+                    **savings_projection_to_dict(projection),
+                    "projected_savings_usd_month": savings_for_plan_operations(
+                        projection, op_types
+                    ),
+                }
+            )
+        except Exception:
+            savings_payload = None
         items.append(
             TablePreviewRead(
                 table_ref=plan.table_ref,
                 notes=list(plan.notes),
                 statements=statements,
+                savings=savings_payload,
             )
         )
     return MaintenancePreviewResponse(items=items)
@@ -700,8 +724,21 @@ def create_maintenance_run(
 ) -> MaintenanceRunResponse:
     if session.get(Destination, payload.destination_id) is None:
         raise HTTPException(status_code=400, detail="Destination does not exist")
-    if payload.preset_id and session.get(Preset, payload.preset_id) is None:
+    preset = session.get(Preset, payload.preset_id) if payload.preset_id else None
+    if payload.preset_id and preset is None:
         raise HTTPException(status_code=400, detail="Preset does not exist")
+
+    requested_ops: list[str] = []
+    if preset is not None:
+        for op in preset.operations or []:
+            if isinstance(op, str):
+                requested_ops.append(op)
+            elif isinstance(op, dict) and "type" in op:
+                requested_ops.append(str(op["type"]))
+    if requested_ops:
+        warnings = validate_operation_order(requested_ops)
+        if warnings:
+            raise HTTPException(status_code=400, detail={"warnings": warnings, "blocking": True})
 
     selection = (
         _resolve_selection(session, payload.selection)
@@ -733,11 +770,26 @@ def create_maintenance_run(
         session.add(job)
         jobs.append(job)
     session.commit()
+    wiring = build_runtime_wiring()
     for job in jobs:
+        wiring.queue.enqueue(str(job.id), str(job.destination_id))
         session.refresh(job)
     return MaintenanceRunResponse(
         run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
     )
+
+
+@router.post(
+    "/maintenance/manifest-rewrite",
+    response_model=MaintenanceRunResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_operator)],
+)
+def create_manifest_rewrite_run(
+    payload: MaintenanceRunRequest, session: SessionDep
+) -> MaintenanceRunResponse:
+    payload = payload.model_copy(update={"mode": Mode.MANIFEST_ONLY})
+    return create_maintenance_run(payload, session)
 
 
 @router.post(

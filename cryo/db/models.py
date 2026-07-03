@@ -50,6 +50,9 @@ class Source(TimestampMixin, Base):
     tables: Mapped[list[Table]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+    tier_policies: Mapped[list[TierPolicyRecord]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
 
 
 class Destination(TimestampMixin, Base):
@@ -108,6 +111,9 @@ class Table(Base):
     )
     jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="table")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="table")
+    protected_snapshots: Mapped[list[ProtectedSnapshot]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
 
 
 class TableStats(Base):
@@ -254,8 +260,47 @@ class TableStatsHistory(Base):
     total_size_gb: Mapped[float | None] = mapped_column(Float)
     grade: Mapped[str | None] = mapped_column(Text)
     overall_score: Mapped[int | None] = mapped_column(Integer)
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
     table: Mapped[Table] = relationship(back_populates="history")
+
+
+class ProtectedSnapshot(Base):
+    __tablename__ = "protected_snapshots"
+    __table_args__ = (Index("ix_protected_snapshots_table", "table_id", "snapshot_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    snapshot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text)
+    protected_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table: Mapped[Table] = relationship(back_populates="protected_snapshots")
+
+
+class TierPolicyRecord(TimestampMixin, Base):
+    __tablename__ = "tier_policies"
+    __table_args__ = (UniqueConstraint("source_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_class: Mapped[str] = mapped_column(Text, nullable=False)
+    min_age_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    predicate: Mapped[JsonDict | None] = mapped_column(JSONB)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    source: Mapped[Source] = relationship(back_populates="tier_policies")
 
 
 class Preset(TimestampMixin, Base):
@@ -409,6 +454,7 @@ __all__ = [
     "MaintenanceRun",
     "Preset",
     "PresetRule",
+    "ProtectedSnapshot",
     "Source",
     "Table",
     "TableAssignment",
@@ -417,4 +463,5 @@ __all__ = [
     "TablePartition",
     "TableStats",
     "TableStatsHistory",
+    "TierPolicyRecord",
 ]

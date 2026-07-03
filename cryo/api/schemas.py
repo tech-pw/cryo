@@ -407,12 +407,24 @@ class RenderedStatementRead(BaseModel):
     action: str
     engine: EngineType
     sql: str
+    payload: JsonDict = Field(default_factory=dict)
+
+
+class SavingsProjectionRead(BaseModel):
+    precision: str
+    current_monthly_cost_usd: float
+    projected_monthly_cost_usd: float
+    projected_savings_usd_month: float
+    reclaimable_bytes: int
+    query_request_savings_usd_month: float = 0.0
+    by_operation: JsonDict = Field(default_factory=dict)
 
 
 class TablePreviewRead(BaseModel):
     table_ref: str
     notes: list[str]
     statements: list[RenderedStatementRead]
+    savings: SavingsProjectionRead | None = None
 
 
 class MaintenancePreviewResponse(BaseModel):
@@ -441,6 +453,7 @@ class ScanTriggerRequest(BaseModel):
     schema_names: list[str] = Field(default_factory=list)
     trigger: str = "api"
     requested_by: str | None = None
+    cost_full_scan: bool = False
 
 
 class ScanTriggerResponse(BaseModel):

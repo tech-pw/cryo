@@ -68,6 +68,7 @@ class FakeTable:
                 return snapshot
         raise KeyError(snapshot_id)
 
+
 def test_metadata_accounting_reclaims_only_expired_files() -> None:
     scan_at = datetime(2026, 7, 3, tzinfo=UTC)
     old_ts = int((scan_at - timedelta(days=30)).timestamp() * 1000)

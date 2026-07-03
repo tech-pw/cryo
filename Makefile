@@ -72,6 +72,9 @@ smoke-file-counts: up
 smoke-compact: up
 	$(SPARK_RUNNER) python3 scripts/smoke_file_counts.py --compact --assert-drop
 
+smoke-e2e:
+	$(PYTHON) scripts/smoke_cryo_e2e.py
+
 spark-shell: up
 	docker compose exec spark bash
 

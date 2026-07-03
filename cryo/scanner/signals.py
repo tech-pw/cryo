@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -13,7 +13,9 @@ def metadata_to_data_ratio(metadata_bytes: int, data_bytes: int) -> float:
 
 def detect_format_version(table_obj: object) -> int:
     metadata = getattr(table_obj, "metadata", None)
-    properties = getattr(table_obj, "properties", None) or getattr(metadata, "properties", None) or {}
+    properties = (
+        getattr(table_obj, "properties", None) or getattr(metadata, "properties", None) or {}
+    )
     if callable(properties):
         properties = properties()
     if not isinstance(properties, Mapping):
@@ -26,7 +28,9 @@ def detect_format_version(table_obj: object) -> int:
     return int(raw)
 
 
-def is_v3_upgrade_candidate(format_version: int, delete_file_pct: float, *, threshold: float = 5.0) -> bool:
+def is_v3_upgrade_candidate(
+    format_version: int, delete_file_pct: float, *, threshold: float = 5.0
+) -> bool:
     return format_version < 3 and delete_file_pct >= threshold
 
 
@@ -40,7 +44,10 @@ def detect_streaming_from_history(
     if len(history) < 2:
         return False, 0.0
 
-    ordered = sorted(history, key=lambda row: _as_datetime(row.get("scan_at")) or datetime.min.replace(tzinfo=UTC))
+    ordered = sorted(
+        history,
+        key=lambda row: _as_datetime(row.get("scan_at")) or datetime.min.replace(tzinfo=UTC),
+    )
     latest = ordered[-1]
     previous = ordered[-2]
     latest_at = _as_datetime(latest.get("scan_at"))
@@ -67,7 +74,9 @@ def enrich_stats_signals(
 ) -> dict[str, Any]:
     enriched = dict(stats)
     live_bytes = int(data_bytes if data_bytes is not None else stats.get("live_bytes") or 0)
-    meta_bytes = int(metadata_bytes if metadata_bytes is not None else stats.get("metadata_bytes") or 0)
+    meta_bytes = int(
+        metadata_bytes if metadata_bytes is not None else stats.get("metadata_bytes") or 0
+    )
     if live_bytes > 0 or meta_bytes > 0:
         enriched["metadata_to_data_ratio"] = metadata_to_data_ratio(meta_bytes, live_bytes)
 

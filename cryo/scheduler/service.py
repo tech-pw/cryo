@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
 from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
@@ -114,7 +115,15 @@ def _apply_routing(
         table = tables_by_id.get(job.table_id)
         destination_id = job.destination_id
         if table is not None:
-            route = resolve_destination(table, preset, destinations)
+            if preset.guardrails.get("adaptive_routing"):
+                route = resolve_destination_adaptive(
+                    table,
+                    preset,
+                    destinations,
+                    AdaptiveRoutingContext(),
+                )
+            else:
+                route = resolve_destination(table, preset, destinations)
             destination_id = route.destination_id
         routed.append(
             type(job)(

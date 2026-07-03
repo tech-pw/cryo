@@ -24,6 +24,7 @@ START_WEB="${START_WEB:-1}"
 START_WORKER="${START_WORKER:-0}"
 START_GOVERNOR="${START_GOVERNOR:-0}"
 START_SCHEDULER="${START_SCHEDULER:-0}"
+START_EVENTS="${START_EVENTS:-0}"
 DOCKER_DOWN_ON_STOP="${DOCKER_DOWN_ON_STOP:-0}"
 
 log() {
@@ -54,9 +55,10 @@ Environment:
   SEED_TABLES=0          Seed demo Iceberg tables after Docker is up
   SEED_FIXTURES=0        Also seed fragmented fixture tables
   START_WEB=1            Start Vite dev server
-  START_WORKER=0         Start maintenance worker (not implemented yet)
-  START_GOVERNOR=0       Start load-aware governor (not implemented yet)
+  START_WORKER=0         Start maintenance worker (default 0; set 1 for e2e)
+  START_GOVERNOR=0       Start load-aware governor (default 0; set 1 for e2e)
   START_SCHEDULER=0      Start scheduler (off by default for ad-hoc dev)
+  START_EVENTS=0         Start event watcher + consumer (Phase 4 fast-path)
   DOCKER_DOWN_ON_STOP=0  Stop Docker stack when running ./start-local.sh stop
   API_PORT=8000          FastAPI port
   WEB_PORT=5173          Vite dev server port
@@ -237,15 +239,19 @@ start_app_processes() {
   fi
 
   if [[ "$START_WORKER" == "1" ]]; then
-    start_process worker 0 python -m cryo.worker.worker
+    start_process worker 0 python -m cryo.cli worker
   fi
 
   if [[ "$START_GOVERNOR" == "1" ]]; then
-    start_process governor 0 python -m cryo.governor.governor
+    start_process governor 0 python -m cryo.cli governor
   fi
 
   if [[ "$START_SCHEDULER" == "1" ]]; then
-    start_process scheduler 0 python -m cryo.scheduler.scheduler
+    start_process scheduler 0 python -m cryo.cli scheduler
+  fi
+
+  if [[ "$START_EVENTS" == "1" ]]; then
+    start_process events 0 python -m cryo.cli events
   fi
 }
 
@@ -314,6 +320,7 @@ stop_process() {
 }
 
 stop_app_processes() {
+  stop_process events
   stop_process scheduler
   stop_process governor
   stop_process worker
@@ -331,7 +338,7 @@ cmd_status() {
   printf '\n'
   log "Cryo app processes"
   local name
-  for name in api web worker governor scheduler; do
+  for name in api web worker governor scheduler events; do
     local pid_file="$PID_DIR/${name}.pid"
     if is_running "$pid_file"; then
       printf '  %-10s running (pid %s, log %s/%s.log)\n' "$name" "$(cat "$pid_file")" "$LOG_DIR" "$name"

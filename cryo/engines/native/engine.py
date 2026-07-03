@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,9 +26,7 @@ class NativeEngine:
     def __post_init__(self) -> None:
         self.settings = self.settings or get_settings()
         self._binary = str(
-            self.config.get("binary")
-            or self.config.get("engine_binary")
-            or "cryo-engine"
+            self.config.get("binary") or self.config.get("engine_binary") or "cryo-engine"
         )
         self._slot_cap = int(self.config.get("slot_cap") or self.settings.default_native_slot_cap)
 
@@ -92,4 +89,6 @@ class NativeEngine:
 
 
 def default_binary_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "cryo-engine" / "target" / "release" / "cryo-engine"
+    return (
+        Path(__file__).resolve().parents[2] / "cryo-engine" / "target" / "release" / "cryo-engine"
+    )
