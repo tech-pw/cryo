@@ -151,6 +151,12 @@ For Trino destinations, this attempts the live load probe used by the governor. 
 - Trino catalog availability
 - whether the local `iceberg-trino` container is healthy
 
+For Trino compaction jobs, configure the Iceberg writer target in the Trino catalog properties:
+`iceberg.target-max-file-size=256MB`. The local Trino deployment does not expose
+`<catalog>.target_max_file_size` as a session property, so Cryo does not emit that `SET SESSION`
+statement. `optimize(file_size_threshold => '256MB')` still controls which files are eligible for
+rewrite; the catalog property controls the target size of newly written files.
+
 ## Troubleshooting
 
 ### API returns 401

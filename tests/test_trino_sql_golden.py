@@ -106,10 +106,9 @@ def test_trino_render_golden_operation_sql_and_session_setup() -> None:
             "AND region = 'us')"
         ),
     ]
-    assert session_setup("iceberg", 256) == [
-        "SET SESSION iceberg.target_max_file_size='256MB'",
-        "SET SESSION task_min_writer_count=8",
-        "SET SESSION writer_scaling_min_data_processed='32MB'",
+    assert session_setup() == [
+        "SET SESSION task_min_writer_count = 8",
+        "SET SESSION writer_scaling_min_data_processed = '32MB'",
     ]
 
 
@@ -118,9 +117,7 @@ def test_trino_renders_compute_statistics_all_columns() -> None:
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.DEEP,
-        operations=(
-            Operation(OperationType.COMPUTE_STATISTICS, {"columns": []}),
-        ),
+        operations=(Operation(OperationType.COMPUTE_STATISTICS, {"columns": []}),),
     )
     stmts = render(plan)
     assert len(stmts) == 1
@@ -138,4 +135,6 @@ def test_trino_renders_compute_statistics_specific_columns() -> None:
     )
     stmts = render(plan)
     assert len(stmts) == 1
-    assert stmts[0].sql == "ANALYZE iceberg.demo.events WITH (columns = ARRAY['user_id', 'event_date'])"
+    assert stmts[0].sql == (
+        "ANALYZE iceberg.demo.events WITH (columns = ARRAY['user_id', 'event_date'])"
+    )

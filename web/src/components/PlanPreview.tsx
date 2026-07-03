@@ -32,7 +32,7 @@ const savingsToByOperation = (savings?: SavingsProjectionRead | null): CostByOpe
 export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   const { api } = useAuth();
   const [engine, setEngine] = useState<EngineType>("trino");
-  const [mode, setMode] = useState<Mode>("standard");
+  const [mode, setMode] = useState<Mode>("deep");
 
   const requestTables = useMemo(
     () =>
