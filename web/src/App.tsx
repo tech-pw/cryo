@@ -10,6 +10,7 @@ import {
   MoonOutlined,
   SettingOutlined,
   SunOutlined,
+  SyncOutlined,
   TeamOutlined,
   ThunderboltOutlined
 } from "@ant-design/icons";
@@ -31,6 +32,7 @@ import { Presets } from "./pages/Presets";
 import { QueryPerformance } from "./pages/QueryPerformance";
 import { Runs } from "./pages/Runs";
 import { SLAStatus } from "./pages/SLAStatus";
+import { Scans } from "./pages/Scans";
 import { TableDetail } from "./pages/TableDetail";
 import { TableExplorer } from "./pages/TableExplorer";
 
@@ -47,6 +49,7 @@ const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
   { key: "/catalogs", icon: <DatabaseOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
+  { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
   { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
@@ -106,6 +109,8 @@ const Shell = () => {
             <Route path="/attribution" element={<CostAttribution />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
+            <Route path="/scans" element={<Scans />} />
+            <Route path="/scans/:runId" element={<Scans />} />
             <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/sla" element={<SLAStatus />} />
             <Route path="/optimize" element={<LayoutOptimization />} />

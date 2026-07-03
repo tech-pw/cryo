@@ -33,7 +33,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [x] `scanner/run.py` — deterministic chunking, skip-already-scanned-today, `full_scan`, batched
       upserts to `tables`/`table_stats`/`table_partitions`/`table_stats_history`. Idempotent.
 - [ ] (optional) dual-write Iceberg history table for parity with `iceberg_compaction_scan`.
-- [x] K8s `CronJob` manifest (parallel Job, `num_chunks`).
+- [x] Scanner scheduling moved from K8s `CronJob` values to Cryo-managed scanner config/API
+      (parallel chunk queue preserves `num_chunks` behavior).
 - [x] Tests: golden stats on seeded tables; health-score parity vs reference values.
 - [x] **Cost accounting (Tier 1)**: extend `scanner/cost.py` with metadata byte accounting
       (live/dead/metadata split via retained-snapshot manifest walk, deduped + bounded) → exact
@@ -81,6 +82,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
       `/presets/{id}/rules`, `/assignments` (filter/ids selection), `/tables/{id}/effective-preset`.
 - [x] `/maintenance/preview` (dry-run → per-table rendered SQL + estimates) and `/maintenance/run`.
 - [x] `/scans` trigger; `/runs`, `/jobs`, `/runs/{id}/cancel`.
+- [x] Scanner config/status API: `/scanner/config`, `/scanner/status`, scan-run filtering, chunked
+      progress summaries, bounded failed-table errors, visible queue failures.
 - [x] **Cost API**: extend `/maintenance/preview` with plan-filtered `SavingsProjection`; add
       `/tables/{id}/cost` + `/dashboards/cost`; cost summary fields in predicate grammar (including
       `estimated_monthly_s3_cost_usd`); `/scans` accepts `cost_full_scan` and enqueues when Redis is
@@ -102,6 +105,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
       Explorer columns/filters; Table Detail cost card + mini waterfall; PlanPreview savings summary.
       Regenerate `web/src/api/openapi.d.ts` via `npm run gen:api` when API is running locally.
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
+- [x] **Scanner** page (`/scans`): schedule form, scan status, scan-only run list, progress console;
+      ad-hoc scans from scanner page, table selection, and table detail.
 - [x] **Sources & Destinations** management + health checks.
 - [~] WebSocket endpoint `/ws/runs/{id}` streams DB snapshots; Redis live-state fanout pending.
 

@@ -13,10 +13,12 @@ interface Props {
   destinations: DestinationRead[];
   assigning?: boolean;
   running?: boolean;
+  scanning?: boolean;
   onClear: () => void;
   onAssign: (presetId: UUID) => void;
   onPreview: () => void;
   onRun: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => void;
+  onScan?: () => void;
 }
 
 export const BulkAssignBar = ({
@@ -25,10 +27,12 @@ export const BulkAssignBar = ({
   destinations,
   assigning,
   running,
+  scanning,
   onClear,
   onAssign,
   onPreview,
-  onRun
+  onRun,
+  onScan
 }: Props) => {
   const [destinationId, setDestinationId] = useState<UUID | undefined>();
   const [presetId, setPresetId] = useState<UUID | undefined>();
@@ -83,6 +87,13 @@ export const BulkAssignBar = ({
           <Tooltip title="Preview the planned maintenance steps before queueing a run.">
             <Button onClick={onPreview}>Preview</Button>
           </Tooltip>
+          {onScan ? (
+            <Tooltip title="Queue a metadata scan for the current selection.">
+              <Button loading={scanning} onClick={onScan}>
+                Scan selected
+              </Button>
+            </Tooltip>
+          ) : null}
           <Tooltip
             title={
               activeDestination

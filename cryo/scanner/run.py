@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from sqlalchemy import select
@@ -42,6 +42,11 @@ class ScanSummary:
     scanned: int = 0
     skipped: int = 0
     failed: int = 0
+    cancelled: bool = False
+
+
+class ScanProgressCallback(Protocol):
+    def __call__(self, event: dict[str, Any]) -> None: ...
 
 
 def deterministic_chunk[T](items: list[T], *, chunk_id: int, num_chunks: int) -> list[T]:
@@ -66,9 +71,11 @@ def run_scan(
     now: datetime | None = None,
     source_factory: Any = source_catalog_for,
     parallel_tables: int | None = None,
+    progress_callback: ScanProgressCallback | None = None,
+    cancel_checker: Any | None = None,
 ) -> ScanSummary:
     """Run a scan pass over assigned tables.
-    
+
     Args:
         session: Database session for persisting results.
         settings: Scanner settings.
@@ -110,6 +117,16 @@ def run_scan(
         len(candidates),
         effective_parallel,
     )
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "assigned",
+            "chunk_id": chunk_id,
+            "num_chunks": total_chunks,
+            "discovered": len(candidates),
+            "assigned": len(assigned),
+        },
+    )
 
     if effective_parallel > 0 and len(assigned) > 1:
         return _run_scan_parallel(
@@ -120,6 +137,8 @@ def run_scan(
             scan_at=scan_at,
             max_workers=effective_parallel,
             total_discovered=len(candidates),
+            progress_callback=progress_callback,
+            cancel_checker=cancel_checker,
         )
 
     return _run_scan_serial(
@@ -130,6 +149,8 @@ def run_scan(
         cost_full_scan=cost_full_scan,
         scan_at=scan_at,
         total_discovered=len(candidates),
+        progress_callback=progress_callback,
+        cancel_checker=cancel_checker,
     )
 
 
@@ -142,11 +163,25 @@ def _run_scan_serial(
     cost_full_scan: bool,
     scan_at: datetime,
     total_discovered: int,
+    progress_callback: ScanProgressCallback | None,
+    cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables serially within the current session."""
     scanned = skipped = failed = 0
 
     for candidate in assigned:
+        if _cancel_requested(cancel_checker):
+            return ScanSummary(
+                discovered=total_discovered,
+                assigned=len(assigned),
+                scanned=scanned,
+                skipped=skipped,
+                failed=failed,
+                cancelled=True,
+            )
+
+        table_ref = _table_ref(candidate)
+        _emit_progress(progress_callback, {"event": "start_table", "table_ref": table_ref})
         table_row = upsert_table(
             session,
             source_id=candidate.source.id,
@@ -155,6 +190,10 @@ def _run_scan_serial(
         )
         if not full_scan and already_scanned_today(session, table_id=table_row.id, now=scan_at):
             skipped += 1
+            _emit_progress(
+                progress_callback,
+                {"event": "table_result", "table_ref": table_ref, "outcome": "skipped"},
+            )
             continue
 
         try:
@@ -184,7 +223,11 @@ def _run_scan_serial(
             )
             session.commit()
             scanned += 1
-        except Exception:
+            _emit_progress(
+                progress_callback,
+                {"event": "table_result", "table_ref": table_ref, "outcome": "scanned"},
+            )
+        except Exception as exc:
             session.rollback()
             failed += 1
             logger.exception(
@@ -192,6 +235,15 @@ def _run_scan_serial(
                 candidate.schema_name,
                 candidate.table_name,
                 candidate.source.name,
+            )
+            _emit_progress(
+                progress_callback,
+                {
+                    "event": "table_result",
+                    "table_ref": table_ref,
+                    "outcome": "failed",
+                    "error": str(exc),
+                },
             )
 
     return ScanSummary(
@@ -212,12 +264,16 @@ def _run_scan_parallel(
     scan_at: datetime,
     max_workers: int,
     total_discovered: int,
+    progress_callback: ScanProgressCallback | None,
+    cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables in parallel using separate DB sessions per table."""
     scanned = skipped = failed = 0
 
-    def scan_one(candidate: ScanCandidate) -> str:
-        """Scan a single table, returning 'scanned', 'skipped', or 'failed'."""
+    def scan_one(candidate: ScanCandidate) -> tuple[str, str | None]:
+        """Scan a single table, returning outcome and optional error."""
+        if _cancel_requested(cancel_checker):
+            return ("cancelled", None)
         with SessionLocal() as table_session:
             table_row = upsert_table(
                 table_session,
@@ -228,7 +284,7 @@ def _run_scan_parallel(
             if not full_scan and already_scanned_today(
                 table_session, table_id=table_row.id, now=scan_at
             ):
-                return "skipped"
+                return ("skipped", None)
 
             try:
                 analysis = analyze_catalog_table(
@@ -256,8 +312,8 @@ def _run_scan_parallel(
                     table=table_row,
                 )
                 table_session.commit()
-                return "scanned"
-            except Exception:
+                return ("scanned", None)
+            except Exception as exc:
                 table_session.rollback()
                 logger.exception(
                     "Failed to scan %s.%s from source %s",
@@ -265,18 +321,42 @@ def _run_scan_parallel(
                     candidate.table_name,
                     candidate.source.name,
                 )
-                return "failed"
+                return ("failed", str(exc))
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(assigned))) as executor:
-        futures = {executor.submit(scan_one, candidate): candidate for candidate in assigned}
+        futures = {}
+        for candidate in assigned:
+            _emit_progress(
+                progress_callback,
+                {"event": "start_table", "table_ref": _table_ref(candidate)},
+            )
+            futures[executor.submit(scan_one, candidate)] = candidate
         for future in as_completed(futures):
-            result = future.result()
+            result, error = future.result()
+            table_ref = _table_ref(futures[future])
             if result == "scanned":
                 scanned += 1
             elif result == "skipped":
                 skipped += 1
+            elif result == "cancelled":
+                _emit_progress(
+                    progress_callback,
+                    {"event": "table_result", "table_ref": table_ref, "outcome": "skipped"},
+                )
+                continue
             else:
                 failed += 1
+            _emit_progress(
+                progress_callback,
+                {
+                    "event": "table_result",
+                    "table_ref": table_ref,
+                    "outcome": result,
+                    "error": error,
+                },
+            )
+            if _cancel_requested(cancel_checker):
+                break
 
     return ScanSummary(
         discovered=total_discovered,
@@ -284,7 +364,31 @@ def _run_scan_parallel(
         scanned=scanned,
         skipped=skipped,
         failed=failed,
+        cancelled=_cancel_requested(cancel_checker),
     )
+
+
+def _emit_progress(callback: ScanProgressCallback | None, event: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:
+        logger.exception("Scanner progress callback failed")
+
+
+def _cancel_requested(cancel_checker: Any | None) -> bool:
+    if cancel_checker is None:
+        return False
+    try:
+        return bool(cancel_checker())
+    except Exception:
+        logger.exception("Scanner cancel checker failed")
+        return False
+
+
+def _table_ref(candidate: ScanCandidate) -> str:
+    return f"{candidate.schema_name}.{candidate.table_name}"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -356,11 +460,15 @@ def _discover_candidates(
             for schema_name, table_name in catalog.list_tables():
                 if requested_schemas and schema_name not in requested_schemas:
                     continue
-                if requested_tables is not None and (
-                    source.id,
-                    schema_name,
-                    table_name,
-                ) not in requested_tables:
+                if (
+                    requested_tables is not None
+                    and (
+                        source.id,
+                        schema_name,
+                        table_name,
+                    )
+                    not in requested_tables
+                ):
                     continue
                 candidates.append(
                     ScanCandidate(

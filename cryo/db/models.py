@@ -108,6 +108,27 @@ class SlackConfig(TimestampMixin, Base):
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
 
+class ScannerConfig(TimestampMixin, Base):
+    """Singleton scanner schedule and execution defaults managed by Cryo."""
+
+    __tablename__ = "scanner_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, server_default=text("1"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    schedule_cron: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'0 2 * * *'")
+    )
+    timezone: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'UTC'"))
+    num_chunks: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("4"))
+    full_scan_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    cost_full_scan_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+
+
 class Table(Base):
     __tablename__ = "tables"
     __table_args__ = (UniqueConstraint("source_id", "schema_name", "table_name"),)

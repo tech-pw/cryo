@@ -20,6 +20,10 @@ import type {
   PresetWrite,
   RoleToken,
   RunRead,
+  ScannerConfigRead,
+  ScannerConfigUpdate,
+  ScannerStatusRead,
+  ScanTriggerRequest,
   ScanTriggerResponse,
   SourceRead,
   SourceTestResult,
@@ -218,7 +222,17 @@ export const runMaintenance = (
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
 
-export const listRuns = (api: ApiOptions) => apiFetch<RunRead[]>("/runs", api);
+export const listRuns = (
+  api: ApiOptions,
+  args: { kind?: string; limit?: number; offset?: number } = {}
+) =>
+  apiFetch<RunRead[]>("/runs", api, {
+    query: {
+      kind: args.kind,
+      limit: args.limit,
+      offset: args.offset
+    }
+  });
 export const getRun = (api: ApiOptions, id: UUID) => apiFetch<RunRead>(`/runs/${id}`, api);
 export const getRunJobs = (api: ApiOptions, id: UUID) =>
   apiFetch<{ jobs: JobRead[] }>(`/runs/${id}/jobs`, api).then((payload) => payload.jobs);
@@ -315,21 +329,37 @@ export const getCostDashboard = (api: ApiOptions) =>
 export const getTableCost = (api: ApiOptions, id: UUID) =>
   apiFetch<TableCostRead>(`/tables/${id}/cost`, api);
 
-export const triggerCostScan = (
-  api: ApiOptions,
-  body: {
-    scope?: "all" | "source" | "tables" | "schemas";
-    cost_full_scan?: boolean;
-    trigger?: string;
-  } = {}
-) =>
+export const getScannerConfig = (api: ApiOptions) =>
+  apiFetch<ScannerConfigRead>("/scanner/config", api);
+
+export const patchScannerConfig = (api: ApiOptions, body: ScannerConfigUpdate) =>
+  apiFetch<ScannerConfigRead>("/scanner/config", api, { method: "PATCH", body });
+
+export const getScannerStatus = (api: ApiOptions) =>
+  apiFetch<ScannerStatusRead>("/scanner/status", api);
+
+export const triggerScan = (api: ApiOptions, body: ScanTriggerRequest = {}) =>
   apiFetch<ScanTriggerResponse>("/scans", api, {
     method: "POST",
     body: {
       scope: body.scope ?? "all",
-      cost_full_scan: body.cost_full_scan ?? true,
-      trigger: body.trigger ?? "web-cost"
+      source_id: body.source_id,
+      table_ids: body.table_ids ?? [],
+      schema_names: body.schema_names ?? [],
+      selection: body.selection,
+      full_scan: body.full_scan ?? true,
+      cost_full_scan: body.cost_full_scan ?? false,
+      num_chunks: body.num_chunks,
+      trigger: body.trigger ?? "web"
     }
+  });
+
+export const triggerCostScan = (api: ApiOptions, body: ScanTriggerRequest = {}) =>
+  triggerScan(api, {
+    ...body,
+    scope: body.scope ?? "all",
+    cost_full_scan: body.cost_full_scan ?? true,
+    trigger: body.trigger ?? "web-cost"
   });
 
 export const savingsOpportunityFilter = {

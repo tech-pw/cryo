@@ -185,8 +185,9 @@ added). 16px in nav and standalone buttons, 14px inline within table cells and t
 
 ## 2. Global shell and navigation
 
-Six top-level destinations already exist and are the right set — don't add a seventh without a
-real reason: **Health, Cost, Tables, Presets, Runs, Connections.** Order them by operator
+Top-level destinations should stay tied to operator jobs, not implementation modules: **Health,
+Catalogs, Tables, Scanner, Queries, Savings, Attribution, SLA, Optimize, Presets, Runs,
+Connections.** Order them by operator
 frequency, which the current order already mostly reflects (Health and Cost first, as the
 "what needs attention" surfaces; Connections last, as the least-frequently-touched setup page).
 
@@ -341,14 +342,31 @@ saved-views feature yet (that's `RECOMMENDATIONS.md`'s explicit backlog item, do
 in the codebase — lean into it rather than removing it for simplicity; it's exactly the kind of
 small, real signal (not decoration) that makes a dense table feel premium instead of just busy.
 
-### 4.4 Table Detail (`/tables/:tableId`)
+### 4.4 Scanner (`/scans`, `/scans/:runId`)
+
+**Job:** control catalog scan cadence and answer "is the scanner moving, and what failed" without
+dropping into logs.
+
+| Region | Contents |
+|---|---|
+| Header | `Scan all tables now`, disabled while an all-table scan is active |
+| Schedule | Enabled switch, five-field cron select/input, timezone, chunk count, full-scan defaults |
+| Status | Tables with stats, queue depth, next scheduled scan, latest table scan time, active run |
+| Recent scans | Scan-only runs table: short ID, target, status, trigger, scanned/skipped/failed, created |
+| Scan progress | `ScanConsole`: progress bar, counters, current table, latest error, bounded failed-table list |
+
+**Visual note:** this page is operational, not analytical. Keep the schedule form compact and the
+progress/errors readable; do not turn failed-table errors into a large paginated table unless the
+bounded summary proves insufficient.
+
+### 4.5 Table Detail (`/tables/:tableId`)
 
 **Job:** everything about one table, for someone about to decide whether to run maintenance on it
 right now.
 
 | Region | Contents |
 |---|---|
-| Header | Table name, Assign-preset select, Preview, Run |
+| Header | Table name, Assign-preset select, Preview, Scan, Run |
 | Health summary | `GradePill` + `PriorityTag` + `HealthBadge`, `StatStrip` (score/size/files/small files/partitions), `Descriptions` (partition col/type, snapshots, manifests, delete files, effective preset + provenance) |
 | Cost & savings | `CostPrecisionBadge` + last-scan time, `StatStrip`, live/dead/metadata/orphan byte `Descriptions`, `SavingsByOperation` |
 | History | Small sparkline-style line chart, small-file count + overall score over time |
@@ -361,7 +379,7 @@ let any single card grow tall enough to force excessive scrolling before the Aud
 visible; that timeline is often the first thing an operator wants after a run, since it's the
 proof something happened.
 
-### 4.5 Presets (`/presets`)
+### 4.6 Presets (`/presets`)
 
 **Job:** define *what* maintenance means for a group of tables, safely.
 
@@ -380,7 +398,7 @@ proof something happened.
   the new Events module in the architecture diagram) so it's unmistakable that nothing has been
   executed yet.
 
-### 4.6 Runs (`/runs`, `/runs/:runId`)
+### 4.7 Runs (`/runs`, `/runs/:runId`)
 
 **Job:** know what's running right now, and watch it live.
 
@@ -393,7 +411,7 @@ proof something happened.
   should stream faster once the WebSocket endpoint noted in `current-state.md` lands). New log
   lines get the fade+slide-in treatment from §1.7.
 
-### 4.7 Connections (`/connections`)
+### 4.8 Connections (`/connections`)
 
 **Job:** the least-frequently-visited but highest-blast-radius page — misconfiguring a destination
 can point maintenance at the wrong cluster.

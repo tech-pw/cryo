@@ -24,6 +24,7 @@ from cryo.db.models import (
     TableStatsHistory,
 )
 from cryo.db.repositories import presets
+from cryo.db.repositories import scanner as scanner_repo
 from cryo.domain.enums import CostPrecision, OperationType
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
@@ -640,6 +641,9 @@ def table_history(session: Session, table_id: uuid.UUID, *, limit: int) -> dict[
 
 def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, object]:
     _validate_scan_scope(session, payload)
+    conflict = scanner_repo.active_scan_conflict(session, payload)
+    if conflict is not None:
+        raise ValueError(conflict)
     run = MaintenanceRun(
         id=uuid.uuid4(),
         kind="scan",
@@ -652,6 +656,7 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
             "schema_names": list(payload.get("schema_names", [])),
             "requested_by": payload.get("requested_by"),
             "cost_full_scan": bool(payload.get("cost_full_scan")),
+            "full_scan": bool(payload.get("full_scan", True)),
             "queued": False,
             "placeholder": False,
         },
@@ -672,6 +677,7 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
         "table_ids": payload.get("table_ids", []),
         "schema_names": payload.get("schema_names", []),
         "cost_full_scan": bool(payload.get("cost_full_scan")),
+        "full_scan": bool(payload.get("full_scan", True)),
     }
 
 

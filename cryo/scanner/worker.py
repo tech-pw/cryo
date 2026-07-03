@@ -4,13 +4,13 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import MaintenanceRun
+from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.session import SessionLocal
 from cryo.queue.scan_queue import ScanQueue
 from cryo.scanner.run import ScanSummary, run_scan
@@ -57,12 +57,29 @@ class ScanWorker:
             if run is None:
                 logger.warning("Discarding scan queue payload for missing run %s", run_id)
                 return ScanWorkResult(run_id=run_id, status="missing")
+            if run.status == "cancelled":
+                return ScanWorkResult(run_id=run_id, status="cancelled")
 
-            summary = dict(run.summary or {})
-            summary.update({"queued": False, "started_at": datetime.now(UTC).isoformat()})
-            run.status = "running"
-            run.summary = summary
-            session.commit()
+            chunk_id = _int_value(payload.get("chunk_id"), default=0)
+            num_chunks = _int_value(payload.get("num_chunks"), default=1)
+            scanner_repo.record_scan_chunk_started(
+                self._session_factory,
+                parsed_run_id,
+                chunk_id=chunk_id,
+                num_chunks=num_chunks,
+            )
+
+            def progress(event: dict[str, Any]) -> None:
+                scanner_repo.record_scan_progress(
+                    self._session_factory,
+                    parsed_run_id,
+                    chunk_id=chunk_id,
+                    num_chunks=num_chunks,
+                    event=event,
+                )
+
+            def cancel_requested() -> bool:
+                return scanner_repo.scan_cancel_requested(self._session_factory, parsed_run_id)
 
             try:
                 scan_summary = run_scan(
@@ -70,54 +87,90 @@ class ScanWorker:
                     source_id=_parse_uuid(payload.get("source_id")),
                     table_ids=_parse_uuid_list(payload.get("table_ids")),
                     schema_names=_string_list(payload.get("schema_names")),
-                    full_scan=True,
+                    chunk_id=chunk_id,
+                    num_chunks=num_chunks,
+                    full_scan=bool(payload.get("full_scan", True)),
                     cost_full_scan=bool(payload.get("cost_full_scan")),
+                    progress_callback=progress,
+                    cancel_checker=cancel_requested,
                 )
             except Exception as exc:
                 session.rollback()
-                run = session.get(MaintenanceRun, parsed_run_id)
-                if run is not None:
-                    run.status = "failed"
-                    run.finished_at = datetime.now(UTC)
-                    run.summary = {
-                        **dict(run.summary or {}),
-                        "queued": False,
-                        "error": str(exc),
-                    }
-                    session.commit()
+                scanner_repo.record_scan_chunk_finished(
+                    self._session_factory,
+                    parsed_run_id,
+                    chunk_id=chunk_id,
+                    num_chunks=num_chunks,
+                    status="failed",
+                    summary_update={
+                        "discovered": 0,
+                        "assigned": 0,
+                        "scanned": 0,
+                        "skipped": 0,
+                        "failed": 1,
+                    },
+                    error=str(exc),
+                )
                 logger.exception("Scan run %s failed", run_id)
                 return ScanWorkResult(run_id=run_id, status="failed")
 
-            run = session.get(MaintenanceRun, parsed_run_id)
-            if run is None:
-                return ScanWorkResult(run_id=run_id, status="missing", summary=scan_summary)
-
-            status = "failed" if scan_summary.failed else "succeeded"
-            run.status = status
-            run.finished_at = datetime.now(UTC)
-            run.summary = {
-                **dict(run.summary or {}),
-                "queued": False,
-                "discovered": scan_summary.discovered,
-                "assigned": scan_summary.assigned,
-                "scanned": scan_summary.scanned,
-                "skipped": scan_summary.skipped,
-                "failed": scan_summary.failed,
-            }
-            session.commit()
+            if scan_summary.cancelled:
+                status = "cancelled"
+            elif scan_summary.failed:
+                status = "partial_failed"
+            else:
+                status = "succeeded"
+            scanner_repo.record_scan_chunk_finished(
+                self._session_factory,
+                parsed_run_id,
+                chunk_id=chunk_id,
+                num_chunks=num_chunks,
+                status=status,
+                summary_update={
+                    "discovered": scan_summary.discovered,
+                    "assigned": scan_summary.assigned,
+                    "scanned": scan_summary.scanned,
+                    "skipped": scan_summary.skipped,
+                    "failed": scan_summary.failed,
+                },
+            )
             return ScanWorkResult(run_id=run_id, status=status, summary=scan_summary)
 
     def _claim_accepted_run(self) -> dict[str, Any] | None:
         with self._session_factory() as session:
-            run = session.scalar(
+            runs = session.scalars(
                 select(MaintenanceRun)
-                .where(MaintenanceRun.kind == "scan", MaintenanceRun.status == "accepted")
+                .where(
+                    MaintenanceRun.kind == "scan",
+                    MaintenanceRun.status.in_(scanner_repo.ACTIVE_SCAN_STATUSES),
+                )
                 .order_by(MaintenanceRun.created_at)
-                .limit(1)
+                .limit(10)
             )
+            run = None
+            chunk_id = 0
+            for candidate in runs:
+                summary = dict(candidate.summary or {})
+                chunks = summary.get("chunks")
+                if isinstance(chunks, dict):
+                    sorted_chunks = sorted(chunks.items(), key=lambda item: int(item[0]))
+                    for raw_chunk_id, chunk in sorted_chunks:
+                        if isinstance(chunk, dict) and chunk.get("status") in {
+                            "accepted",
+                            "queued",
+                        }:
+                            run = candidate
+                            chunk_id = int(raw_chunk_id)
+                            break
+                elif candidate.status == "accepted":
+                    run = candidate
+                    chunk_id = 0
+                if run is not None:
+                    break
             if run is None:
                 return None
             summary = dict(run.summary or {})
+            num_chunks = int(summary.get("chunks_total") or 1)
             return {
                 "run_id": str(run.id),
                 "scope": summary.get("scope", "all"),
@@ -125,6 +178,9 @@ class ScanWorker:
                 "table_ids": summary.get("table_ids", []),
                 "schema_names": summary.get("schema_names", []),
                 "cost_full_scan": bool(summary.get("cost_full_scan")),
+                "full_scan": bool(summary.get("full_scan", True)),
+                "chunk_id": chunk_id,
+                "num_chunks": num_chunks,
                 "trigger": run.trigger,
             }
 
@@ -149,3 +205,13 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item) for item in value if item]
+
+
+def _int_value(value: object, *, default: int) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        return default
+    if default > 0:
+        return parsed if parsed > 0 else default
+    return parsed if parsed >= 0 else default

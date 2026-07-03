@@ -1,8 +1,8 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Timeline, Typography, message } from "antd";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   assignTables,
   getEffectivePreset,
@@ -14,7 +14,8 @@ import {
   getTablePartitions,
   listDestinations,
   listPresets,
-  runMaintenance
+  runMaintenance,
+  triggerScan
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
@@ -42,6 +43,8 @@ const provenanceLabel = (provenance?: string | null): string => {
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { api, token } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -110,6 +113,25 @@ export const TableDetail = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
+  const scan = useMutation({
+    mutationFn: () =>
+      triggerScan(api, {
+        scope: "tables",
+        table_ids: [tableId],
+        full_scan: true,
+        trigger: "web-table-detail"
+      }),
+    onSuccess: (result) => {
+      message.success(result.message || `Scan queued: ${result.run_id}`);
+      void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
+      navigate(`/scans/${result.run_id}`);
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
   const row = table.data;
   const stats = row?.stats;
   const hasStatsCostFallback = Boolean(
@@ -151,6 +173,9 @@ export const TableDetail = () => {
             />
             <Button onClick={() => setPreviewOpen(true)} disabled={!row}>
               Preview
+            </Button>
+            <Button loading={scan.isPending} onClick={() => scan.mutate()} disabled={!row}>
+              Scan
             </Button>
             <Button type="primary" loading={run.isPending} onClick={() => run.mutate()} disabled={!row}>
               Run
@@ -339,11 +364,13 @@ export const TableDetail = () => {
                       <Tooltip
                         {...chartTooltipProps}
                         labelFormatter={(ts) => new Date(ts).toLocaleString()}
-                        formatter={(value: number, name: string) => {
-                          if (name === "score") return [value.toFixed(1), "Score"];
-                          if (name === "small_files") return [value.toLocaleString(), "Small Files"];
-                          if (name === "total_size_gb") return [value.toFixed(1) + " GB", "Size"];
-                          return [value, name];
+                        formatter={(value, name) => {
+                          const numeric = Number(value ?? 0);
+                          const label = String(name);
+                          if (label === "score") return [numeric.toFixed(1), "Score"];
+                          if (label === "small_files") return [numeric.toLocaleString(), "Small Files"];
+                          if (label === "total_size_gb") return [numeric.toFixed(1) + " GB", "Size"];
+                          return [numeric, label];
                         }}
                       />
                       <Line

@@ -4,10 +4,6 @@ image:
   pullPolicy: IfNotPresent
 
 scanner:
-  schedule: "0 2 * * *"
-  numChunks: 4
-  fullScan: false
-  costFullScan: false
   env: {}
   envFromSecret: ""
   envFromConfigMap: ""

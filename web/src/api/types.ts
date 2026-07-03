@@ -209,6 +209,45 @@ export interface MaintenanceRunResponse {
   status: string;
 }
 
+export interface ScannerConfigRead {
+  id: number;
+  enabled: boolean;
+  schedule_cron: string;
+  timezone: string;
+  num_chunks: number;
+  full_scan_default: boolean;
+  cost_full_scan_default: boolean;
+  max_concurrent_runs: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ScannerConfigUpdate = Partial<
+  Pick<
+    ScannerConfigRead,
+    | "enabled"
+    | "schedule_cron"
+    | "timezone"
+    | "num_chunks"
+    | "full_scan_default"
+    | "cost_full_scan_default"
+    | "max_concurrent_runs"
+  >
+>;
+
+export interface ScanTriggerRequest {
+  scope?: "all" | "source" | "tables" | "schemas";
+  source_id?: UUID | null;
+  table_ids?: UUID[];
+  schema_names?: string[];
+  selection?: { mode: "ids"; ids: UUID[] } | { mode: "filter"; filter: unknown };
+  trigger?: string;
+  requested_by?: string | null;
+  full_scan?: boolean;
+  cost_full_scan?: boolean;
+  num_chunks?: number | null;
+}
+
 export interface ScanTriggerResponse {
   run_id: UUID;
   status: string;
@@ -216,6 +255,8 @@ export interface ScanTriggerResponse {
   queued: boolean;
   message: string;
   cost_full_scan?: boolean;
+  full_scan?: boolean;
+  num_chunks?: number | null;
 }
 
 export interface RunRead {
@@ -228,6 +269,18 @@ export interface RunRead {
   created_at: string;
   finished_at?: string | null;
   summary?: JsonObject | null;
+}
+
+export interface ScannerStatusRead {
+  config: ScannerConfigRead;
+  queue_depth?: number | null;
+  latest_run?: RunRead | null;
+  active_run?: RunRead | null;
+  last_successful_run?: RunRead | null;
+  next_scan_at?: string | null;
+  total_tables: number;
+  tables_with_stats: number;
+  latest_table_scan_at?: string | null;
 }
 
 export interface JobRead {
