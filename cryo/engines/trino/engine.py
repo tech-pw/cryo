@@ -54,12 +54,29 @@ class TrinoEngine:
             cursor.execute(stmt.sql)
             rows = tuple(tuple(row) for row in (cursor.fetchall() or ()))
             engine_ref = _query_id(cursor)
+            
+            # Extract file counts for OPTIMIZE operations
+            input_files = None
+            output_files = None
+            if stmt.action.value == "optimize" and rows:
+                # Trino OPTIMIZE returns: (rewritten_data_files_count, added_data_files_count, ...)
+                # rewritten_data_files_count = input files compacted
+                # added_data_files_count = output files created
+                try:
+                    if len(rows[0]) >= 2:
+                        input_files = int(rows[0][0]) if rows[0][0] is not None else None
+                        output_files = int(rows[0][1]) if rows[0][1] is not None else None
+                except (ValueError, IndexError, TypeError):
+                    pass
+            
             return ExecResult(
                 ok=True,
                 engine_ref=engine_ref,
                 detail=stmt.sql,
                 rows=rows,
                 duration_ms=_elapsed_ms(start),
+                input_files_count=input_files,
+                output_files_count=output_files,
             )
         except Exception as exc:
             engine_ref = _query_id(cursor)

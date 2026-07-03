@@ -19,6 +19,7 @@ from cryo.governor.admission import (
 )
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.triggers.evaluator import TriggerEvaluator
 from cryo.worker.worker import DestinationConfig, JobStore, MaintenanceJobRecord
 
 
@@ -53,6 +54,8 @@ class Governor:
         *,
         default_config: AdmissionConfig | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
+        trigger_evaluator: TriggerEvaluator | None = None,
+        enable_signal_triggers: bool = True,
     ) -> None:
         self._queue = queue
         self._lock_store = lock_store
@@ -62,6 +65,8 @@ class Governor:
         self._lock_ttl_seconds = lock_ttl_seconds
         self._replica_offsets: dict[str, int] = defaultdict(int)
         self._session_factory = SessionLocal
+        self._trigger_evaluator = trigger_evaluator or TriggerEvaluator()
+        self._enable_signal_triggers = enable_signal_triggers
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         finalize_open_runs(self._session_factory)
@@ -84,14 +89,35 @@ class Governor:
                     break
 
                 job = self._store.get_job(job_id)
-                decision = decide_job_admission(_admission_job(job), config, now=current)
-                if not decision.admissible:
-                    if decision.defer:
-                        self._defer(job, decision.reason)
-                        deferred += 1
-                    else:
-                        blocked += 1
-                    continue
+                
+                # Check if signals override normal admission rules
+                signal_triggered = False
+                if self._enable_signal_triggers:
+                    try:
+                        with self._session_factory() as session:
+                            import uuid
+                            table_uuid = uuid.UUID(job.table_id) if isinstance(job.table_id, str) else job.table_id
+                            trigger_result = self._trigger_evaluator.evaluate(
+                                session,
+                                table_uuid,
+                                is_due_for_schedule=False,  # Let signals override
+                            )
+                            if trigger_result.should_run and trigger_result.trigger_type.value != "schedule":
+                                signal_triggered = True
+                    except Exception:
+                        # If signal check fails, fall through to normal admission
+                        pass
+                
+                # Normal admission decision (unless overridden by signal)
+                if not signal_triggered:
+                    decision = decide_job_admission(_admission_job(job), config, now=current)
+                    if not decision.admissible:
+                        if decision.defer:
+                            self._defer(job, decision.reason)
+                            deferred += 1
+                        else:
+                            blocked += 1
+                        continue
 
                 if not self._lock_store.acquire_table_lock(
                     job.table_id,

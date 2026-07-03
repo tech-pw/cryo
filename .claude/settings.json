@@ -5,7 +5,10 @@
       "WebFetch(domain:lakeops.dev)",
       "WebFetch(domain:aws.amazon.com)",
       "WebFetch(domain:iceberg.apache.org)",
-      "WebFetch(domain:www.ryft.io)"
+      "WebFetch(domain:www.ryft.io)",
+      "Bash(PGPASSWORD=cryo /usr/local/opt/postgresql@15/bin/psql -h localhost -p 5432 -U cryo -d cryo -c \"SELECT current_user, current_database\\(\\);\")",
+      "Bash(.venv/bin/alembic upgrade *)",
+      "Bash(.venv/bin/pytest -q)"
     ]
   }
 }

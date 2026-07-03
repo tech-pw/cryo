@@ -57,6 +57,8 @@ class AuditRecord:
     engine: EngineType | str
     detail: str | None = None
     duration_ms: int | None = None
+    input_files_count: int | None = None
+    output_files_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -282,6 +284,8 @@ class Worker:
                             engine=engine.type,
                             detail=str(exc),
                             duration_ms=duration_ms,
+                            input_files_count=None,
+                            output_files_count=None,
                         )
                     )
                     final_status = JobStatus.FAILED
@@ -303,6 +307,8 @@ class Worker:
                             engine=engine.type,
                             detail=detail,
                             duration_ms=result_duration_ms,
+                            input_files_count=getattr(result, "input_files_count", None),
+                            output_files_count=getattr(result, "output_files_count", None),
                         )
                     )
                     final_status = JobStatus.FAILED
@@ -317,6 +323,8 @@ class Worker:
                         engine=engine.type,
                         detail=result.detail,
                         duration_ms=result_duration_ms,
+                        input_files_count=getattr(result, "input_files_count", None),
+                        output_files_count=getattr(result, "output_files_count", None),
                     )
                 )
         except Exception as exc:
