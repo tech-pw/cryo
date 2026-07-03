@@ -1,7 +1,13 @@
 """Layout analysis and recommendation engine.
 
 Analyzes table file statistics and query patterns to recommend
-optimal data layout (sort order, z-ordering).
+optimal data layout (sort order, z-ordering) and Bloom filter indexes.
+
+Bloom filter guidance from research:
+- Iceberg PR #15311: Puffin-backed Bloom index reduces planning from 658 → 1 file
+  for point lookups on high-cardinality columns. Latency: 676ms → 201ms.
+- Best candidates: high-cardinality ID/UUID columns with equality filters (WHERE id = ?)
+- NOT useful for: low-cardinality columns (region, status) where min/max is sufficient.
 """
 
 from __future__ import annotations
@@ -43,6 +49,19 @@ class ColumnStats:
 
 
 @dataclass
+class BloomFilterRecommendation:
+    """Bloom filter recommendation for a column."""
+
+    column_name: str
+    reason: str
+    estimated_skip_rate: float  # Expected % of files skipped for point lookups
+    cardinality_estimate: str   # "high", "medium", "low"
+    equality_filter_count: int
+    spark_alter_statement: str
+    priority: int = 0  # Higher = more important
+
+
+@dataclass
 class LayoutAnalysis:
     """Analysis results for a table's data layout."""
 
@@ -61,11 +80,14 @@ class LayoutAnalysis:
     best_prune_efficiency: float = 0.0  # Best possible with perfect clustering
     efficiency_gap: float = 0.0  # Potential improvement
 
-    # Recommendations
+    # Sort/Z-order recommendations
     recommended_strategy: LayoutStrategy = LayoutStrategy.NONE
     recommended_columns: list[str] = field(default_factory=list)
     estimated_improvement: float = 0.0
     confidence: float = 0.0
+
+    # Bloom filter recommendations (new — unique vs competitors)
+    bloom_filter_recommendations: list[BloomFilterRecommendation] = field(default_factory=list)
 
     # Query pattern summary
     total_queries_analyzed: int = 0
@@ -137,6 +159,14 @@ def analyze_table_layout(
         logger.warning(f"No query patterns available for table {table_id}")
 
     analysis.efficiency_gap = max(0, analysis.best_prune_efficiency - analysis.current_prune_efficiency)
+
+    # Generate Bloom filter recommendations
+    try:
+        analysis.bloom_filter_recommendations = _recommend_bloom_filters(
+            session, table_id, analysis.schema_name, analysis.table_name
+        )
+    except Exception as e:
+        logger.warning(f"Bloom filter analysis failed for {table_id}: {e}")
 
     return analysis
 
@@ -278,6 +308,92 @@ def _calculate_confidence(patterns: Any, num_columns: int) -> float:
     return min(1.0, confidence)
 
 
+def _recommend_bloom_filters(
+    session: Session,
+    table_id: uuid.UUID,
+    schema_name: str,
+    table_name: str,
+) -> list[BloomFilterRecommendation]:
+    """Identify columns that would benefit from Parquet Bloom filter indexes.
+
+    Bloom filters are ideal for:
+    - High-cardinality columns (ID/UUID/hash fields)
+    - Equality predicates (WHERE col = ?)
+    - Columns where min/max is useless (e.g., UUIDs)
+
+    Returns recommendations ordered by expected impact.
+    """
+    from cryo.db.models import QueryPattern
+
+    patterns = session.scalars(
+        select(QueryPattern)
+        .where(QueryPattern.table_id == table_id)
+        .order_by(QueryPattern.equality_filter_count.desc())
+    ).all()
+
+    recommendations = []
+    for p in patterns:
+        # Only recommend for equality-heavy columns
+        if p.equality_filter_count < 5:
+            continue
+
+        # Skip columns that are likely low cardinality (partition/date columns)
+        col_lower = p.column_name.lower()
+        is_likely_low_cardinality = any(
+            kw in col_lower
+            for kw in ("date", "day", "month", "year", "status", "type", "flag", "region", "country")
+        )
+        if is_likely_low_cardinality:
+            continue
+
+        # Likely high cardinality: IDs, UUIDs, keys
+        is_likely_high_cardinality = any(
+            kw in col_lower
+            for kw in ("id", "uuid", "key", "hash", "token", "code", "ref", "guid", "sku")
+        )
+
+        total_queries = p.filter_count + p.join_count
+        equality_ratio = p.equality_filter_count / max(total_queries, 1)
+
+        # Need high equality ratio (most uses are = not ranges)
+        if equality_ratio < 0.6:
+            continue
+
+        cardinality_estimate = "high" if is_likely_high_cardinality else "medium"
+
+        # Estimate skip rate: for high-cardinality columns, Bloom filters can achieve
+        # near-perfect file skipping for point lookups (as shown in Iceberg PR #15311)
+        if cardinality_estimate == "high":
+            estimated_skip_rate = 0.95  # 95% of files skipped for misses
+        else:
+            estimated_skip_rate = 0.70
+
+        catalog_dot_table = f"iceberg.{schema_name}.{table_name}"
+        spark_stmt = (
+            f"ALTER TABLE {catalog_dot_table} "
+            f"SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{p.column_name}' = 'true')"
+        )
+
+        rec = BloomFilterRecommendation(
+            column_name=p.column_name,
+            reason=(
+                f"Column has {p.equality_filter_count} equality filter uses "
+                f"({equality_ratio:.0%} of all accesses). "
+                f"Min/max statistics are ineffective for {cardinality_estimate}-cardinality columns. "
+                f"Bloom filter estimated to skip ~{estimated_skip_rate:.0%} of files on miss."
+            ),
+            estimated_skip_rate=estimated_skip_rate,
+            cardinality_estimate=cardinality_estimate,
+            equality_filter_count=p.equality_filter_count,
+            spark_alter_statement=spark_stmt,
+            priority=p.equality_filter_count,
+        )
+        recommendations.append(rec)
+
+    recommendations.sort(key=lambda r: r.priority, reverse=True)
+    return recommendations[:10]  # Top 10 candidates
+
+
 def calculate_prune_efficiency(
     total_files: int,
     files_read: int,
@@ -330,6 +446,24 @@ def generate_layout_recommendation(
     analysis = analyze_table_layout(session, table_id)
 
     # Create or update recommendation
+    bloom_recs = [
+        {
+            "column": r.column_name,
+            "reason": r.reason,
+            "estimated_skip_rate": r.estimated_skip_rate,
+            "cardinality": r.cardinality_estimate,
+            "equality_filter_count": r.equality_filter_count,
+            "spark_sql": r.spark_alter_statement,
+        }
+        for r in analysis.bloom_filter_recommendations
+    ]
+    detail = {
+        "multi_column_filter_ratio": analysis.multi_column_filter_ratio,
+        "efficiency_gap": analysis.efficiency_gap,
+        "total_files": analysis.total_files,
+        "total_size_bytes": analysis.total_size_bytes,
+    }
+
     if existing:
         existing.current_sort_order = [{"column": c} for c in (analysis.current_sort_order or [])]
         existing.recommended_strategy = analysis.recommended_strategy.value
@@ -338,12 +472,8 @@ def generate_layout_recommendation(
         existing.current_prune_efficiency = analysis.current_prune_efficiency
         existing.analysis_query_count = analysis.total_queries_analyzed
         existing.confidence = analysis.confidence
-        existing.detail = {
-            "multi_column_filter_ratio": analysis.multi_column_filter_ratio,
-            "efficiency_gap": analysis.efficiency_gap,
-            "total_files": analysis.total_files,
-            "total_size_bytes": analysis.total_size_bytes,
-        }
+        existing.bloom_filter_columns = bloom_recs
+        existing.detail = detail
         recommendation = existing
     else:
         recommendation = LayoutRecommendation(
@@ -356,12 +486,8 @@ def generate_layout_recommendation(
             analysis_query_count=analysis.total_queries_analyzed,
             confidence=analysis.confidence,
             status="pending",
-            detail={
-                "multi_column_filter_ratio": analysis.multi_column_filter_ratio,
-                "efficiency_gap": analysis.efficiency_gap,
-                "total_files": analysis.total_files,
-                "total_size_bytes": analysis.total_size_bytes,
-            },
+            bloom_filter_columns=bloom_recs,
+            detail=detail,
         )
         session.add(recommendation)
 

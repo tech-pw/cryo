@@ -8,12 +8,14 @@ class OperationType(StrEnum):
     REMOVE_ORPHAN_FILES = "remove_orphan_files"
     OPTIMIZE = "optimize"
     OPTIMIZE_MANIFESTS = "optimize_manifests"
+    COMPUTE_STATISTICS = "compute_statistics"  # Puffin NDV + Bloom filter stats
 
 
 class EngineType(StrEnum):
     TRINO = "trino"
     SPARK_EMR = "spark_emr"
     NATIVE = "native"
+    FLINK = "flink"
 
 
 class Mode(StrEnum):

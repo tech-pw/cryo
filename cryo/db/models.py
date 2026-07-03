@@ -276,6 +276,12 @@ class TablePartition(Base):
     small_files_in_partition_count: Mapped[int | None] = mapped_column(Integer)
     partition_size_gb: Mapped[float | None] = mapped_column(Float)
     compaction_status: Mapped[str | None] = mapped_column(Text)
+    # AutoComp-style benefit scoring (SIGMOD 2025)
+    query_frequency: Mapped[float | None] = mapped_column(Float)  # queries/day hitting this partition
+    compaction_benefit_score: Mapped[float | None] = mapped_column(Float)  # small_files × query_frequency
+    last_compacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    input_files_last_compaction: Mapped[int | None] = mapped_column(Integer)  # effectiveness ratio tracking
+    output_files_last_compaction: Mapped[int | None] = mapped_column(Integer)
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
     table: Mapped[Table] = relationship(back_populates="partitions")
@@ -477,6 +483,9 @@ class AuditLog(Base):
     detail: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger)
     actual_bytes_freed: Mapped[int | None] = mapped_column(BigInteger)
+    # Compaction effectiveness ratio tracking (Feature 3)
+    input_files_count: Mapped[int | None] = mapped_column(Integer)
+    output_files_count: Mapped[int | None] = mapped_column(Integer)
 
     table: Mapped[Table | None] = relationship(back_populates="audit_entries")
     job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
@@ -573,6 +582,7 @@ class LayoutRecommendation(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))  # pending, applied, rejected
     applied_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     detail: Mapped[JsonDict | None] = mapped_column(JSONB)  # Additional analysis details
+    bloom_filter_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Bloom filter recommendations
 
     table: Mapped[Table] = relationship()
 

@@ -111,3 +111,31 @@ def test_trino_render_golden_operation_sql_and_session_setup() -> None:
         "SET SESSION task_min_writer_count=8",
         "SET SESSION writer_scaling_min_data_processed='32MB'",
     ]
+
+
+def test_trino_renders_compute_statistics_all_columns() -> None:
+    """ANALYZE TABLE without specific columns — refresh NDV stats for all columns."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.COMPUTE_STATISTICS, {"columns": []}),
+        ),
+    )
+    stmts = render(plan)
+    assert len(stmts) == 1
+    assert stmts[0].sql == "ANALYZE iceberg.demo.events"
+
+
+def test_trino_renders_compute_statistics_specific_columns() -> None:
+    """ANALYZE TABLE with column list — targeted NDV refresh."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.COMPUTE_STATISTICS, {"columns": ["user_id", "event_date"]}),
+        ),
+    )
+    stmts = render(plan)
+    assert len(stmts) == 1
+    assert stmts[0].sql == "ANALYZE iceberg.demo.events WITH (columns = ARRAY['user_id', 'event_date'])"

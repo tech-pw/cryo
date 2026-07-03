@@ -22,6 +22,7 @@ class OptimizeCandidate:
     size_gb: float
     small_files: int
     predicate: PartitionPredicate
+    benefit_score: float = 0.0  # AutoComp score; 0 = not computed (fall back to small_files)
 
 
 def build_plan(
@@ -55,6 +56,15 @@ def build_plan(
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+
+    # Puffin statistics: always last, after manifests, so new file stats are current.
+    # Only runs when at least one OPTIMIZE was planned (stats would be stale otherwise).
+    if (
+        resolved_mode in {Mode.STANDARD, Mode.DEEP}
+        and params.get("compute_statistics", False)
+        and any(op.type is OperationType.OPTIMIZE for op in operations)
+    ):
+        operations.append(Operation(OperationType.COMPUTE_STATISTICS, _stats_params(params)))
 
     return MaintenancePlan(
         table_ref=_table_ref(stats, params),
@@ -151,12 +161,14 @@ def _candidate_partitions(
             notes.append(f"Skipped partition {partition_value}: {unsupported_reason}.")
             continue
 
+        benefit_score = float(row.get("compaction_benefit_score") or 0.0)
         candidates.append(
             OptimizeCandidate(
                 value=_sort_value(row),
                 size_gb=_partition_size_gb(row),
                 small_files=small_files,
                 predicate=predicate,
+                benefit_score=benefit_score,
             )
         )
     return candidates
@@ -226,8 +238,14 @@ def _sort_value(row: Mapping[str, Any]) -> str:
 
 
 def _compare_candidates(left: OptimizeCandidate, right: OptimizeCandidate) -> int:
-    if left.small_files != right.small_files:
-        return -1 if left.small_files > right.small_files else 1
+    # If benefit scores are available for both, use AutoComp ranking
+    if left.benefit_score > 0 and right.benefit_score > 0:
+        if left.benefit_score != right.benefit_score:
+            return -1 if left.benefit_score > right.benefit_score else 1
+    else:
+        # Fall back to small_files DESC (original behavior)
+        if left.small_files != right.small_files:
+            return -1 if left.small_files > right.small_files else 1
     if left.size_gb != right.size_gb:
         return -1 if left.size_gb < right.size_gb else 1
     if left.value == right.value:
@@ -240,6 +258,18 @@ def _optional_int(value: Any) -> int | None:
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def _stats_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Build parameters for the COMPUTE_STATISTICS operation."""
+    return {
+        # Columns to compute stats for; empty = all columns
+        "columns": params.get("stats_columns", []),
+        # Whether to build Bloom filter indexes (high-cardinality columns only)
+        "bloom_filter_columns": params.get("bloom_filter_columns", []),
+        # NDV sketch via DataSketches Theta (always when supported)
+        "compute_ndv": params.get("stats_compute_ndv", True),
+    }
 
 
 def _partition_is_cold(row: Mapping[str, Any], idle_hours: int) -> bool:

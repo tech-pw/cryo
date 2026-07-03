@@ -43,6 +43,11 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
 
         return NativeEngine(config=dict(config))
 
+    if engine_type is EngineType.FLINK:
+        from cryo.engines.flink.engine import FlinkEngine
+
+        return FlinkEngine(config=dict(config))
+
     raise ValueError(f"Unsupported engine type: {engine_type}")
 
 

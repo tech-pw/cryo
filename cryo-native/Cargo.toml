@@ -9,6 +9,10 @@ license = "Apache-2.0"
 name = "cryo_native"
 crate-type = ["cdylib", "rlib"]
 
+[[bench]]
+name = "compaction_bench"
+harness = false
+
 [dependencies]
 # Apache Arrow and DataFusion for columnar processing
 arrow = { version = "53", features = ["prettyprint"] }
@@ -42,11 +46,7 @@ bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"
-criterion = "0.5"
-
-[[bench]]
-name = "compaction_bench"
-harness = false
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 [profile.release]
 lto = true

@@ -45,27 +45,63 @@ def is_native_available() -> bool:
 class NativeCompactionConfig:
     """Configuration for native compaction operations."""
 
-    target_file_size_bytes: int = 256 * 1024 * 1024  # 256 MB
-    min_file_size_bytes: int = 64 * 1024 * 1024  # 64 MB
-    max_file_size_bytes: int = 512 * 1024 * 1024  # 512 MB
+    target_file_size_bytes: int = 512 * 1024 * 1024  # 512 MB (matches Spark default)
+    min_file_size_bytes: int = 384 * 1024 * 1024    # 75% of target
+    max_file_size_bytes: int = 922 * 1024 * 1024    # 180% of target
     max_files_per_run: int = 1000
+    max_concurrent_tasks: int = 1
     sort_columns: list[str] | None = None
     use_zorder: bool = False
     partition_filter: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary for passing to Rust layer."""
+        return {
+            "target_file_size_bytes": self.target_file_size_bytes,
+            "min_file_size_bytes": self.min_file_size_bytes,
+            "max_file_size_bytes": self.max_file_size_bytes,
+            "max_files_per_run": self.max_files_per_run,
+            "max_concurrent_tasks": self.max_concurrent_tasks,
+            "sort_columns": self.sort_columns or [],
+            "use_zorder": self.use_zorder,
+            "partition_filter": self.partition_filter,
+        }
+
+
+@dataclass
+class NativeFileAnalysis:
+    """Analysis result for a single file."""
+
+    file_path: str
+    row_count: int
+    file_size_bytes: int
+    columns: list[str]
 
 
 @dataclass
 class NativeCompactionResult:
     """Result from a native compaction operation."""
 
-    success: bool
+    ok: bool
     input_files: int
     output_files: int
+    total_input_rows: int
+    total_output_rows: int
     bytes_read: int
     bytes_written: int
     duration_ms: int
     error: str | None
     output_paths: list[str]
+
+    @property
+    def success(self) -> bool:
+        """Alias for ok for compatibility."""
+        return self.ok
+
+    @property
+    def effectiveness_ratio(self) -> float:
+        """Input:output file ratio; higher = more effective."""
+        return self.input_files / max(self.output_files, 1)
 
 
 @dataclass
@@ -214,9 +250,11 @@ class NativeEngine:
                 result = self.engine.binpack_files(input_paths, output_dir, py_config)
 
             return NativeCompactionResult(
-                success=result.success,
+                ok=result.success,
                 input_files=result.input_files,
                 output_files=result.output_files,
+                total_input_rows=getattr(result, "total_input_rows", 0),
+                total_output_rows=getattr(result, "total_output_rows", 0),
                 bytes_read=result.bytes_read,
                 bytes_written=result.bytes_written,
                 duration_ms=result.duration_ms,
@@ -226,9 +264,11 @@ class NativeEngine:
 
         except Exception as e:
             return NativeCompactionResult(
-                success=False,
+                ok=False,
                 input_files=len(input_paths),
                 output_files=0,
+                total_input_rows=0,
+                total_output_rows=0,
                 bytes_read=0,
                 bytes_written=0,
                 duration_ms=0,
@@ -236,28 +276,42 @@ class NativeEngine:
                 output_paths=[],
             )
 
-    def analyze_files(self, input_paths: list[str]) -> dict[str, Any]:
+    def analyze_files(self, input_paths: list[str]) -> list[NativeFileAnalysis]:
         """Analyze files to determine optimal compaction strategy.
 
         Args:
             input_paths: List of parquet file paths to analyze
 
         Returns:
-            Dictionary with analysis results
+            List of NativeFileAnalysis per file
         """
         try:
-            return self.engine.analyze_files(input_paths)
+            raw_results = self.engine.analyze_files(input_paths)
+            # Raw results from Rust come as list of dicts or PyFileAnalysis objects
+            analyses = []
+            for raw in raw_results:
+                if hasattr(raw, "row_count"):
+                    analyses.append(
+                        NativeFileAnalysis(
+                            file_path=str(getattr(raw, "file_path", "")),
+                            row_count=int(raw.row_count),
+                            file_size_bytes=int(raw.file_size_bytes),
+                            columns=list(getattr(raw, "columns", [])),
+                        )
+                    )
+                else:
+                    analyses.append(
+                        NativeFileAnalysis(
+                            file_path=str(raw.get("file_path", "")),
+                            row_count=int(raw.get("row_count", 0)),
+                            file_size_bytes=int(raw.get("file_size_bytes", 0)),
+                            columns=list(raw.get("columns", [])),
+                        )
+                    )
+            return analyses
         except Exception as e:
             logger.error(f"Failed to analyze files: {e}")
-            return {
-                "total_files": len(input_paths),
-                "total_bytes": 0,
-                "avg_file_size": 0,
-                "small_files": 0,
-                "recommended_strategy": "binpack",
-                "estimated_output_files": 1,
-                "error": str(e),
-            }
+            raise
 
 
 def _elapsed_ms(start: float) -> int:
@@ -270,7 +324,7 @@ def _elapsed_ms(start: float) -> int:
 def native_binpack(
     input_paths: list[str],
     output_dir: str,
-    target_file_size_bytes: int = 256 * 1024 * 1024,
+    target_file_size_bytes: int = 512 * 1024 * 1024,
 ) -> NativeCompactionResult:
     """Compact parquet files using binpack strategy.
 
