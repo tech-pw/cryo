@@ -562,7 +562,17 @@ const KNOWN_SOURCE_KEYS = [
   "s3.endpoint",
   "s3.access-key-id",
   "s3.secret-access-key",
-  "s3.path-style-access"
+  "s3.path-style-access",
+  "s3.region",
+  "s3.role-arn",
+  "s3.external-id",
+  "s3.role-session-name"
+];
+
+const S3_AUTH_METHODS = [
+  { value: "default", label: "Default credentials (IAM Role / Instance Profile / Environment)" },
+  { value: "access_key", label: "Access Key + Secret Key" },
+  { value: "assume_role", label: "Assume IAM Role (cross-account)" }
 ];
 
 interface SourceFormValues {
@@ -571,9 +581,14 @@ interface SourceFormValues {
   uri?: string;
   warehouse?: string;
   catalog_name?: string;
+  s3_auth_method: "default" | "access_key" | "assume_role";
   s3_endpoint?: string;
+  s3_region?: string;
   s3_access_key_id?: string;
   s3_secret_access_key?: string;
+  s3_role_arn?: string;
+  s3_external_id?: string;
+  s3_role_session_name?: string;
   s3_path_style_access?: boolean;
   advanced_json?: string;
   secret_ref?: string | null;
@@ -583,14 +598,28 @@ interface SourceFormValues {
 const decomposeSourceConfig = (config: Record<string, unknown> | undefined) => {
   const cfg = config ?? {};
   const advanced = Object.fromEntries(Object.entries(cfg).filter(([key]) => !KNOWN_SOURCE_KEYS.includes(key)));
+
+  // Determine auth method from config
+  let s3_auth_method: "default" | "access_key" | "assume_role" = "default";
+  if (cfg["s3.role-arn"]) {
+    s3_auth_method = "assume_role";
+  } else if (cfg["s3.access-key-id"]) {
+    s3_auth_method = "access_key";
+  }
+
   return {
     uri: typeof cfg.uri === "string" ? cfg.uri : undefined,
     warehouse: typeof cfg.warehouse === "string" ? cfg.warehouse : undefined,
     catalog_name: typeof cfg.catalog_name === "string" ? cfg.catalog_name : undefined,
+    s3_auth_method,
     s3_endpoint: typeof cfg["s3.endpoint"] === "string" ? (cfg["s3.endpoint"] as string) : undefined,
+    s3_region: typeof cfg["s3.region"] === "string" ? (cfg["s3.region"] as string) : undefined,
     s3_access_key_id: typeof cfg["s3.access-key-id"] === "string" ? (cfg["s3.access-key-id"] as string) : undefined,
     s3_secret_access_key:
       typeof cfg["s3.secret-access-key"] === "string" ? (cfg["s3.secret-access-key"] as string) : undefined,
+    s3_role_arn: typeof cfg["s3.role-arn"] === "string" ? (cfg["s3.role-arn"] as string) : undefined,
+    s3_external_id: typeof cfg["s3.external-id"] === "string" ? (cfg["s3.external-id"] as string) : undefined,
+    s3_role_session_name: typeof cfg["s3.role-session-name"] === "string" ? (cfg["s3.role-session-name"] as string) : undefined,
     s3_path_style_access: cfg["s3.path-style-access"] === "true" || cfg["s3.path-style-access"] === true,
     advanced_json: Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : ""
   };
@@ -605,10 +634,22 @@ const buildSourceConfig = (values: SourceFormValues): Record<string, unknown> =>
   if (values.uri) config.uri = values.uri;
   if (values.warehouse) config.warehouse = values.warehouse;
   if (values.catalog_name) config.catalog_name = values.catalog_name;
+
+  // S3 config based on auth method
   if (values.s3_endpoint) config["s3.endpoint"] = values.s3_endpoint;
-  if (values.s3_access_key_id) config["s3.access-key-id"] = values.s3_access_key_id;
-  if (values.s3_secret_access_key) config["s3.secret-access-key"] = values.s3_secret_access_key;
+  if (values.s3_region) config["s3.region"] = values.s3_region;
   if (values.s3_path_style_access) config["s3.path-style-access"] = "true";
+
+  if (values.s3_auth_method === "access_key") {
+    if (values.s3_access_key_id) config["s3.access-key-id"] = values.s3_access_key_id;
+    if (values.s3_secret_access_key) config["s3.secret-access-key"] = values.s3_secret_access_key;
+  } else if (values.s3_auth_method === "assume_role") {
+    if (values.s3_role_arn) config["s3.role-arn"] = values.s3_role_arn;
+    if (values.s3_external_id) config["s3.external-id"] = values.s3_external_id;
+    if (values.s3_role_session_name) config["s3.role-session-name"] = values.s3_role_session_name;
+  }
+  // For "default" auth method, we don't add any credentials - uses AWS SDK default chain
+
   return config;
 };
 
@@ -675,6 +716,9 @@ const SourceDrawer = ({
   const isEditing = value && value !== "new";
   const existingConfig = isEditing ? decomposeSourceConfig(value.config as Record<string, unknown>) : {};
   const [catalogType, setCatalogType] = useState<string>(isEditing ? value.type : "rest");
+  const [s3AuthMethod, setS3AuthMethod] = useState<"default" | "access_key" | "assume_role">(
+    (existingConfig as { s3_auth_method?: "default" | "access_key" | "assume_role" }).s3_auth_method ?? "default"
+  );
 
   const testConnection = useMutation({
     mutationFn: () => {
@@ -694,10 +738,12 @@ const SourceDrawer = ({
           type: isEditing ? value.type : "rest",
           secret_ref: isEditing ? value.secret_ref : null,
           enabled: isEditing ? value.enabled : true,
+          s3_auth_method: "default",
           ...existingConfig
         }}
         onValuesChange={(changed) => {
           if (changed.type) setCatalogType(changed.type);
+          if (changed.s3_auth_method) setS3AuthMethod(changed.s3_auth_method);
         }}
         onFinish={(values) => {
           try {
@@ -750,20 +796,75 @@ const SourceDrawer = ({
           Storage connection
         </Divider>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8, fontSize: 12.5 }}>
-          Only needed for S3-compatible storage that isn't reachable via default AWS credentials —
-          e.g. MinIO in local/dev.
+          Configure how Cryo authenticates to S3 storage. For production, use IAM roles.
+          Access keys are only recommended for local/dev environments (e.g. MinIO).
         </Typography.Paragraph>
-        <Form.Item name="s3_endpoint" label="S3 endpoint">
-          <Input placeholder="http://localhost:9000" />
+
+        <Form.Item
+          name="s3_auth_method"
+          label={<HintLabel label="Authentication method" tooltip="How to authenticate to S3. IAM roles are recommended for production." />}
+        >
+          <Select options={S3_AUTH_METHODS} />
         </Form.Item>
+
         <Space size={12} className="full-width" style={{ display: "flex" }}>
-          <Form.Item name="s3_access_key_id" label="S3 access key ID" style={{ flex: 1 }}>
-            <Input autoComplete="off" />
+          <Form.Item name="s3_region" label="AWS Region" style={{ flex: 1 }}>
+            <Input placeholder="us-east-1" />
           </Form.Item>
-          <Form.Item name="s3_secret_access_key" label="S3 secret access key" style={{ flex: 1 }}>
-            <Input.Password autoComplete="off" />
+          <Form.Item name="s3_endpoint" label="S3 endpoint (optional)" style={{ flex: 1 }}>
+            <Input placeholder="http://localhost:9000" />
           </Form.Item>
         </Space>
+
+        {s3AuthMethod === "default" && (
+          <Alert
+            type="info"
+            showIcon
+            message="Using default AWS credentials"
+            description="Cryo will use the AWS SDK default credential chain: environment variables, IAM role (IRSA/instance profile), or ~/.aws/credentials."
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
+        {s3AuthMethod === "access_key" && (
+          <Space size={12} className="full-width" style={{ display: "flex" }}>
+            <Form.Item name="s3_access_key_id" label="Access key ID" style={{ flex: 1 }}>
+              <Input autoComplete="off" placeholder="AKIA..." />
+            </Form.Item>
+            <Form.Item name="s3_secret_access_key" label="Secret access key" style={{ flex: 1 }}>
+              <Input.Password autoComplete="off" />
+            </Form.Item>
+          </Space>
+        )}
+
+        {s3AuthMethod === "assume_role" && (
+          <>
+            <Form.Item
+              name="s3_role_arn"
+              label={<HintLabel label="Role ARN" tooltip="The ARN of the IAM role to assume for cross-account access." />}
+              rules={[{ required: true, message: "Role ARN is required for assume role auth" }]}
+            >
+              <Input placeholder="arn:aws:iam::123456789012:role/MyCrossAccountRole" />
+            </Form.Item>
+            <Space size={12} className="full-width" style={{ display: "flex" }}>
+              <Form.Item
+                name="s3_external_id"
+                label={<HintLabel label="External ID (optional)" tooltip="External ID for additional security when assuming the role." />}
+                style={{ flex: 1 }}
+              >
+                <Input placeholder="my-external-id" />
+              </Form.Item>
+              <Form.Item
+                name="s3_role_session_name"
+                label={<HintLabel label="Session name (optional)" tooltip="Name for the assumed role session. Defaults to 'cryo-session'." />}
+                style={{ flex: 1 }}
+              >
+                <Input placeholder="cryo-session" />
+              </Form.Item>
+            </Space>
+          </>
+        )}
+
         <Form.Item name="s3_path_style_access" label="Path-style access" valuePropName="checked">
           <Switch />
         </Form.Item>
