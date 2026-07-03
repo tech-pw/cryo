@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
+from cryo.domain.enums import (
+    CostPrecision,
+    Mode,
+    OperationType,
+    PartitionTransform,
+    PredicateCapability,
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,28 @@ class MaintenancePlan:
     mode: Mode
     operations: tuple[Operation, ...]
     notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StorageBreakdown:
+    live_bytes: int
+    dead_bytes: int
+    metadata_bytes: int
+    delete_bytes: int
+    orphan_bytes: int | None = None
+    listed_bytes: int | None = None
+
+
+@dataclass(frozen=True)
+class SavingsProjection:
+    precision: CostPrecision
+    current_monthly_cost_usd: float
+    projected_monthly_cost_usd: float
+    projected_savings_usd_month: float
+    reclaimable_bytes: int
+    by_operation: dict[OperationType, float]
+    query_request_savings_usd_month: float = 0.0
+    assumptions: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

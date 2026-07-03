@@ -1,4 +1,5 @@
 from cryo.domain.enums import (
+    CostPrecision,
     EngineType,
     Grade,
     JobStatus,
@@ -14,10 +15,13 @@ from cryo.domain.models import (
     Operation,
     PartitionPredicate,
     PartitionPredicateTerm,
+    SavingsProjection,
+    StorageBreakdown,
 )
 
 __all__ = [
     "CapacitySnapshot",
+    "CostPrecision",
     "EngineType",
     "Grade",
     "JobStatus",
@@ -30,6 +34,8 @@ __all__ = [
     "PartitionTransform",
     "PredicateCapability",
     "Priority",
+    "SavingsProjection",
+    "StorageBreakdown",
 ]
 
 """Pure domain DTOs and enums."""

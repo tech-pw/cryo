@@ -19,8 +19,25 @@ export const cryoColors = {
   gradeB: "#3d6fd4",
   gradeC: "#c9a227",
   gradeD: "#d97706",
-  gradeF: "#c0392b"
+  gradeF: "#c0392b",
+  costCurrent: "#3d6fd4",
+  costProjected: "#0f9b8e",
+  savings: "#2f9e6b"
 } as const;
+
+export const operationColors: Record<string, string> = {
+  optimize: "#3d6fd4",
+  expire_snapshots: "#2f9e6b",
+  remove_orphan_files: "#c9a227",
+  optimize_manifests: "#8b5cf6"
+};
+
+export const operationLabels: Record<string, string> = {
+  optimize: "Compaction",
+  expire_snapshots: "Snapshot expiry",
+  remove_orphan_files: "Orphan removal",
+  optimize_manifests: "Manifest rewrite"
+};
 
 export const chartAxisTick = { fill: cryoColors.muted, fontSize: 11 };
 

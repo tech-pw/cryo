@@ -119,6 +119,12 @@ Scan all enabled sources:
 .venv/bin/python -m cryo.scanner.run --num-chunks 1 --full-scan
 ```
 
+Opt into orphan byte detection (Tier 2 storage LIST):
+
+```bash
+.venv/bin/python -m cryo.scanner.run --num-chunks 1 --full-scan --cost-full-scan
+```
+
 Scan a specific source:
 
 ```bash

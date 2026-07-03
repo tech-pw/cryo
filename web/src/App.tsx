@@ -3,6 +3,7 @@ import {
   BarChartOutlined,
   ControlOutlined,
   DatabaseOutlined,
+  DollarOutlined,
   HistoryOutlined,
   SettingOutlined
 } from "@ant-design/icons";
@@ -13,6 +14,7 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, roleOptions, useAuth } from "./lib/auth";
 import { cryoColors } from "./lib/theme";
 import { Connections } from "./pages/Connections";
+import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
 import { Presets } from "./pages/Presets";
 import { Runs } from "./pages/Runs";
@@ -30,6 +32,7 @@ const queryClient = new QueryClient({
 
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
+  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
@@ -65,6 +68,7 @@ const Shell = () => {
           <Routes>
             <Route path="/" element={<Navigate to="/health" replace />} />
             <Route path="/health" element={<DatalakeHealth />} />
+            <Route path="/cost" element={<CostSavings />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
             <Route path="/presets" element={<Presets />} />

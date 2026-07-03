@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, not_, or_, true
 
-from cryo.db.models import Table, TableStats
+from cryo.db.models import Table, TableCost, TableStats
 
 FIELD_MAP = {
     "schema_name": Table.schema_name,
@@ -23,6 +23,10 @@ FIELD_MAP = {
     "partition_col": TableStats.partition_col,
     "partition_col_type": TableStats.partition_col_type,
     "query_count_30d": TableStats.query_count_30d,
+    "projected_savings_usd_month": TableStats.projected_savings_usd_month,
+    "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
+    "reclaimable_bytes": TableStats.reclaimable_bytes,
+    "cost_precision": TableCost.precision,
 }
 SUPPORTED_FIELDS = frozenset(FIELD_MAP)
 LEAF_OPERATORS = frozenset({"=", "!=", "<", "<=", ">", ">=", "in", "like", "glob"})

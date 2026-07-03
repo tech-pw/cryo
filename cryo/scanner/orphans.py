@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import urlparse
+
+import boto3
+from botocore.config import Config
+
+from cryo.config import Settings
+from cryo.db.models import TableCost
+
+
+@dataclass(frozen=True)
+class OrphanScanResult:
+    orphan_bytes: int
+    listed_bytes: int
+    listed_keys: int
+    last_full_cost_scan_at: datetime | None
+    skipped_reason: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+def should_run_orphan_scan(
+    previous_cost: TableCost | None,
+    scan_at: datetime,
+    settings: Settings,
+    *,
+    force: bool = False,
+) -> bool:
+    if force:
+        return True
+    if settings.cost_full_scan_every_hours <= 0:
+        return False
+    if previous_cost is None or previous_cost.last_full_cost_scan_at is None:
+        return True
+    cadence = timedelta(hours=settings.cost_full_scan_every_hours)
+    return scan_at - previous_cost.last_full_cost_scan_at >= cadence
+
+
+def scan_orphans(
+    table_obj: object,
+    *,
+    source_config: dict[str, Any],
+    referenced_file_paths: dict[str, int],
+    scan_at: datetime,
+    settings: Settings,
+) -> OrphanScanResult:
+    location = _table_location(table_obj)
+    if not location:
+        return OrphanScanResult(
+            orphan_bytes=0,
+            listed_bytes=0,
+            listed_keys=0,
+            last_full_cost_scan_at=None,
+            skipped_reason="no_location",
+        )
+
+    bucket, prefix = _parse_s3_location(location)
+    if bucket is None:
+        return OrphanScanResult(
+            orphan_bytes=0,
+            listed_bytes=0,
+            listed_keys=0,
+            last_full_cost_scan_at=None,
+            skipped_reason="unsupported_location",
+            raw={"location": location},
+        )
+
+    client = _s3_client(source_config)
+    min_modified = scan_at - timedelta(hours=settings.cost_orphan_min_age_hours)
+    listed_bytes = 0
+    orphan_bytes = 0
+    listed_keys = 0
+    paginator = client.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            listed_keys += 1
+            if listed_keys > settings.cost_scan_max_list_keys:
+                return OrphanScanResult(
+                    orphan_bytes=0,
+                    listed_bytes=listed_bytes,
+                    listed_keys=listed_keys,
+                    last_full_cost_scan_at=None,
+                    skipped_reason="max_list_keys",
+                    raw={"bucket": bucket, "prefix": prefix},
+                )
+            key = str(obj["Key"])
+            size = int(obj.get("Size", 0) or 0)
+            last_modified = obj.get("LastModified")
+            if isinstance(last_modified, datetime):
+                modified = (
+                    last_modified if last_modified.tzinfo else last_modified.replace(tzinfo=UTC)
+                )
+                if modified > min_modified:
+                    continue
+            listed_bytes += size
+            full_path = f"s3://{bucket}/{key}"
+            if full_path not in referenced_file_paths:
+                orphan_bytes += size
+
+    return OrphanScanResult(
+        orphan_bytes=orphan_bytes,
+        listed_bytes=listed_bytes,
+        listed_keys=listed_keys,
+        last_full_cost_scan_at=scan_at,
+        raw={"bucket": bucket, "prefix": prefix},
+    )
+
+
+def carry_forward_orphans(
+    previous_cost: TableCost | None,
+) -> tuple[int | None, int | None, datetime | None]:
+    if previous_cost is None:
+        return None, None, None
+    return (
+        previous_cost.orphan_bytes,
+        previous_cost.listed_bytes,
+        previous_cost.last_full_cost_scan_at,
+    )
+
+
+def _table_location(table_obj: object) -> str | None:
+    location = getattr(table_obj, "location", None)
+    if callable(location):
+        try:
+            location = location()
+        except TypeError:
+            location = None
+    if location:
+        return str(location)
+    metadata = getattr(table_obj, "metadata", None)
+    if metadata is not None:
+        meta_location = getattr(metadata, "location", None)
+        if meta_location:
+            return str(meta_location)
+    return None
+
+
+def _parse_s3_location(location: str) -> tuple[str | None, str]:
+    parsed = urlparse(location)
+    if parsed.scheme == "s3":
+        bucket = parsed.netloc
+        prefix = parsed.path.lstrip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix = f"{prefix}/"
+        data_prefix = f"{prefix}data/" if prefix else "data/"
+        return bucket, data_prefix
+    return None, ""
+
+
+def _s3_client(source_config: dict[str, Any]) -> Any:
+    endpoint = source_config.get("s3.endpoint")
+    access_key = source_config.get("s3.access-key-id")
+    secret_key = source_config.get("s3.secret-access-key")
+    region = source_config.get("s3.region", "us-east-1")
+    path_style = str(source_config.get("s3.path-style-access", "false")).lower() in {
+        "true",
+        "1",
+        "yes",
+    }
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region,
+        config=Config(s3={"addressing_style": "path" if path_style else "auto"}),
+    )

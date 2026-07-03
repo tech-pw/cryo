@@ -70,6 +70,30 @@ export const FilterBar = ({ value, onChange }: Props) => {
                 value={value.minSmallFiles}
                 onChange={(minSmallFiles) => patch({ minSmallFiles })}
               />
+              <InputNumber
+                min={0}
+                addonBefore="Min savings $/mo"
+                value={value.minMonthlySavings}
+                onChange={(minMonthlySavings) => patch({ minMonthlySavings })}
+              />
+              <InputNumber
+                min={0}
+                addonBefore="Min reclaim GB"
+                value={value.minReclaimableGb}
+                onChange={(minReclaimableGb) => patch({ minReclaimableGb })}
+              />
+              <Select
+                allowClear
+                placeholder="Cost precision"
+                value={value.costPrecision ?? undefined}
+                onChange={(costPrecision) => patch({ costPrecision: costPrecision ?? null })}
+                options={[
+                  { label: "Estimated", value: "heuristic" },
+                  { label: "Metadata precise", value: "metadata" },
+                  { label: "Storage verified", value: "storage_truth" }
+                ]}
+                style={{ width: "100%" }}
+              />
               <Checkbox
                 checked={value.activeOnly !== false}
                 onChange={(event) => patch({ activeOnly: event.target.checked })}

@@ -4,6 +4,12 @@ export type EngineType = "trino" | "spark_emr";
 export type Mode = "light" | "standard" | "deep";
 export type Grade = "A" | "B" | "C" | "D" | "F" | string;
 export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
+export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
+export type OperationType =
+  | "optimize"
+  | "expire_snapshots"
+  | "remove_orphan_files"
+  | "optimize_manifests";
 export type JsonObject = Record<string, unknown>;
 
 export interface SourceRead {
@@ -97,6 +103,10 @@ export interface TableStatsRead {
   partition_col?: string | null;
   partition_col_type?: string | null;
   estimated_monthly_s3_cost_usd?: number;
+  projected_monthly_s3_cost_usd?: number;
+  projected_savings_usd_month?: number;
+  reclaimable_bytes?: number;
+  cost_precision?: CostPrecision;
   query_count_30d?: number;
   raw?: JsonObject | null;
 }
@@ -215,11 +225,74 @@ export interface DatalakeDashboard {
     size_gb?: number;
     small_files?: number;
     monthly_cost_usd?: number;
+    projected_monthly_cost_usd?: number;
+    projected_savings_usd_month?: number;
+    reclaimable_bytes?: number;
     needs_compaction?: number;
     running_jobs?: number;
   };
   grade_distribution?: Array<{ grade: string; count: number }>;
-  cost_by_schema?: Array<{ schema_name: string; cost_usd?: number; size_gb?: number }>;
+  cost_by_schema?: Array<{
+    schema_name: string;
+    cost_usd?: number;
+    projected_usd?: number;
+    savings_usd?: number;
+    size_gb?: number;
+  }>;
   top_offenders?: TableRead[];
   drift?: Array<HistoryPoint & { table_id?: UUID; schema_name?: string; table_name?: string }>;
+}
+
+export interface CostByOperation {
+  operation: OperationType;
+  savings_usd_month: number;
+  reclaimable_bytes: number;
+}
+
+export interface CostTrendPoint {
+  scan_at: string;
+  current_monthly_cost_usd?: number;
+  projected_savings_usd_month?: number;
+  realized_usd_month?: number | null;
+}
+
+export interface CostDashboard {
+  totals: {
+    current_monthly_cost_usd: number;
+    projected_monthly_cost_usd: number;
+    projected_savings_usd_month: number;
+    current_storage_bytes: number;
+    reclaimable_bytes: number;
+    precision_coverage?: Partial<Record<CostPrecision, number>>;
+    orphan_scan_stale?: boolean;
+    last_full_cost_scan_at?: string | null;
+  };
+  savings_by_operation: CostByOperation[];
+  cost_by_schema: Array<{
+    schema_name: string;
+    current_usd: number;
+    projected_usd: number;
+    savings_usd: number;
+  }>;
+  top_opportunities: TableRead[];
+  trend?: CostTrendPoint[];
+}
+
+export interface TableCostRead {
+  table_id: UUID;
+  precision: CostPrecision;
+  price_per_gb_month: number;
+  current_monthly_cost_usd: number;
+  projected_monthly_cost_usd: number;
+  projected_savings_usd_month: number;
+  query_request_savings_usd_month: number;
+  live_bytes: number;
+  dead_bytes: number;
+  metadata_bytes: number;
+  orphan_bytes?: number | null;
+  listed_bytes?: number | null;
+  reclaimable_bytes: number;
+  by_operation: CostByOperation[];
+  last_full_cost_scan_at?: string | null;
+  scan_at?: string | null;
 }

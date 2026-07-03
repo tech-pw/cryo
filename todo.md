@@ -33,8 +33,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [x] `scanner/run.py` — deterministic chunking, skip-already-scanned-today, `full_scan`, batched
       upserts to `tables`/`table_stats`/`table_partitions`/`table_stats_history`. Idempotent.
 - [ ] (optional) dual-write Iceberg history table for parity with `iceberg_compaction_scan`.
-- [ ] K8s `CronJob` manifest (parallel Job, `num_chunks`).
+- [x] K8s `CronJob` manifest (parallel Job, `num_chunks`).
 - [x] Tests: golden stats on seeded tables; health-score parity vs reference values.
+- [x] **Cost accounting (Tier 1)**: extend `scanner/cost.py` with metadata byte accounting
+      (live/dead/metadata split via retained-snapshot manifest walk, deduped + bounded) → exact
+      expire/optimize/manifest reclaim. No data reads / no LIST. (see `lld.md` §16)
+- [x] `cost/model.py` (pure): prices, `bytes_to_usd`, `project_savings()` → `SavingsProjection`;
+      `CostPrecision` enum + `StorageBreakdown`/`SavingsProjection` DTOs. Golden + heuristic-parity tests.
+- [x] **Orphan tier (Tier 2)**: `scanner/orphans.py` — bounded, paginated storage LIST → `orphan_bytes`;
+      opt-in (`--cost-full-scan`), age-guarded, cadence-gated; carry-forward last-known when skipped.
+- [x] Migration (additive): `cryo.table_cost` + `cryo.table_cost_history` + `table_stats` cost summary
+      columns + `audit_log.actual_bytes_freed`; persist from `scanner/run.py`.
 
 ## P2 — Planner + Trino engine (single-table execution)
 - [x] `planner/partitions.py` — transform detection (`_day/_month/_year` + `$partitions` probe) and
@@ -72,6 +81,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
       `/presets/{id}/rules`, `/assignments` (filter/ids selection), `/tables/{id}/effective-preset`.
 - [x] `/maintenance/preview` (dry-run → per-table rendered SQL + estimates) and `/maintenance/run`.
 - [x] `/scans` trigger; `/runs`, `/jobs`, `/runs/{id}/cancel`.
+- [ ] **Cost API**: extend `/maintenance/preview` with plan-accurate `SavingsProjection`; add
+      `/tables/{id}/cost` + `/dashboards/cost` (fleet current vs projected, savings by op/schema, top
+      opportunities); add cost summary fields to the predicate grammar (filter/sort by savings);
+      `/scans` accepts `cost_full_scan`.
 - [x] Tests: selection/assignment transactional correctness (filter selects across pages);
       effective-preset resolution (pinned > rule-priority > none); preview renders without executing.
 
@@ -83,6 +96,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [x] **Presets** editor (operations/params/schedule/rules/guardrails) + **Simulator**.
 - [x] **Runs / Live Console**: WebSocket; per-engine concurrency gauges; job rows; log drawer.
 - [x] **Datalake Health** dashboard (grade dist, cost by schema, drift, top offenders, totals).
+- [ ] **Cost & Savings** dashboard (current vs projected, savings by op/schema, top opportunities →
+      select-all → Run, precision badge); explorer columns/filters for projected savings; Table Detail
+      cost breakdown; PlanPreview + RunConsole show projected + realized savings.
+      Frontend build spec: `docs/ui-cost-savings.md` (current→projected waterfall in the health UI).
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
 - [x] **Sources & Destinations** management + health checks.
 - [~] WebSocket endpoint `/ws/runs/{id}` streams DB snapshots; Redis live-state fanout pending.
@@ -98,9 +115,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
       routing test (large table → Spark, small → Trino).
 
 ## P7 — Reporting, alerting & hardening
-- [ ] `reporting/report.py` — port HTML daily/weekly email (KPIs, schema/cost, drift, top offenders).
-- [ ] Slack notifier + in-app drift/cost alerts (`reporting/alerts.py`).
-- [ ] Prometheus metrics (jobs, admission, live load, scan coverage, fleet grade, cost, drift).
+- [ ] `reporting/report.py` — port HTML daily/weekly email (KPIs, schema/cost, drift, top offenders,
+      **current vs projected cost + savings by operation + biggest savings opportunities**).
+- [ ] Slack notifier + in-app drift/cost alerts (`reporting/alerts.py`) incl. **"$X/mo reclaimable"**.
+- [ ] Worker **realized savings**: capture `actual_bytes_freed` per op → predicted-vs-realized +
+      model calibration (`query_gets_per_file`, compaction heuristic).
+- [ ] Prometheus metrics (jobs, admission, live load, scan coverage, fleet grade, cost, drift,
+      **projected savings by op, reclaimable bytes, realized-vs-projected, orphan bytes + staleness**).
 - [ ] Structured JSON logging across services; per-job live log stream.
 - [ ] Helm chart `deploy/helm/cryo` (api, web, scheduler, governor, worker, scanner CronJob, redis;
       Postgres external) + values + secrets/configmaps + Ingress + HPAs + leader leases.
@@ -116,7 +137,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [ ] Additional Spark targets (EMR-on-EKS / Livy / Spark Connect) behind the engine interface.
 - [ ] Continuous/streaming self-optimization mode (Amoro-style) — future phase.
 - [ ] Format-pluggability groundwork for Hudi/Paimon/Delta (Iceberg only in v1).
-- [ ] Cost model refinement (request/list costs, not just storage); savings-after-maintenance.
+- [x] Cost model refinement (request/list costs, not just storage); savings-after-maintenance —
+      **specced**: see `lld.md` §16, `docs/cost-savings.md`, and the cost tasks in P1/P4/P5/P7 above.
+      (Remaining backlog: multi-region price tables, non-storage AWS cost lines like data transfer.)
 - [ ] Saved filters / scheduled saved views in the Explorer.
 
 ## Open decisions to confirm (see `plan.md` §7)

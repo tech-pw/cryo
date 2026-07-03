@@ -97,6 +97,12 @@ class Table(Base):
     history: Mapped[list[TableStatsHistory]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
+    cost: Mapped[TableCost | None] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    cost_history: Mapped[list[TableCostHistory]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
     assignment: Mapped[TableAssignment | None] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
@@ -134,12 +140,70 @@ class TableStats(Base):
     has_sort_order: Mapped[bool | None] = mapped_column(Boolean)
     target_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     estimated_monthly_s3_cost_usd: Mapped[float | None] = mapped_column(Float)
+    projected_monthly_s3_cost_usd: Mapped[float | None] = mapped_column(Float)
+    projected_savings_usd_month: Mapped[float | None] = mapped_column(Float)
+    reclaimable_bytes: Mapped[int | None] = mapped_column(BigInteger)
     query_count_30d: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("0")
     )
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
     table: Mapped[Table] = relationship(back_populates="stats")
+
+
+class TableCost(Base):
+    __tablename__ = "table_cost"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), primary_key=True
+    )
+    scan_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    precision: Mapped[str] = mapped_column(Text, nullable=False)
+    price_per_gb_month: Mapped[float] = mapped_column(Float, nullable=False)
+    live_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    dead_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    metadata_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    orphan_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    listed_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    last_full_cost_scan_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    reclaim_expire_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    reclaim_orphan_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    reclaim_optimize_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    reclaim_manifests_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    current_monthly_cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_monthly_cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_savings_usd_month: Mapped[float] = mapped_column(Float, nullable=False)
+    query_request_savings_usd_month: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=text("0")
+    )
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+    table: Mapped[Table] = relationship(back_populates="cost")
+
+
+class TableCostHistory(Base):
+    __tablename__ = "table_cost_history"
+    __table_args__ = (Index("ix_table_cost_history_table_scan", "table_id", "scan_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    scan_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    current_monthly_cost_usd: Mapped[float | None] = mapped_column(Float)
+    projected_savings_usd_month: Mapped[float | None] = mapped_column(Float)
+    reclaimable_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    precision: Mapped[str | None] = mapped_column(Text)
+
+    table: Mapped[Table] = relationship(back_populates="cost_history")
 
 
 class TablePartition(Base):
@@ -332,6 +396,7 @@ class AuditLog(Base):
     engine: Mapped[str | None] = mapped_column(Text)
     detail: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    actual_bytes_freed: Mapped[int | None] = mapped_column(BigInteger)
 
     table: Mapped[Table | None] = relationship(back_populates="audit_entries")
     job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
@@ -347,6 +412,8 @@ __all__ = [
     "Source",
     "Table",
     "TableAssignment",
+    "TableCost",
+    "TableCostHistory",
     "TablePartition",
     "TableStats",
     "TableStatsHistory",

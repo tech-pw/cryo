@@ -14,11 +14,18 @@ Last updated from the backend/API build sessions on 2026-07-01.
 
 ### Scanner
 
-- Source catalog abstraction and REST catalog adapter.
+- Source catalog abstraction and REST/Hive/Glue catalog adapters (`cryo/sources/`).
 - PyIceberg table analysis for file counts, record counts, data size, manifests, snapshots, delete
   files, partition fields, partition values, small-file counts, and raw metadata.
 - Health score and A-F grade calculation.
-- S3 monthly storage cost estimate.
+- Tier 0 S3 monthly storage cost estimate (`estimated_monthly_s3_cost_usd`).
+- **Tier 1 metadata-precise cost accounting** (`account_metadata_cost`) with live/dead/metadata
+  byte split and per-operation reclaim projections.
+- **Tier 2 opt-in orphan scan** (`scanner/orphans.py`) with `--cost-full-scan`, cadence gating,
+  age guard, and carry-forward of last-known orphan bytes.
+- Pure cost projection model (`cryo/cost/model.py`) shared by scanner and future API/Worker paths.
+- Persistence to `table_cost`, `table_cost_history`, and denormalized summary columns on
+  `table_stats` (`projected_monthly_s3_cost_usd`, `projected_savings_usd_month`, `reclaimable_bytes`).
 - Deterministic scan chunking and idempotent persistence to:
   - `cryo.tables`
   - `cryo.table_stats`
@@ -26,6 +33,8 @@ Last updated from the backend/API build sessions on 2026-07-01.
   - `cryo.table_stats_history`
 - Local fixture coverage for unpartitioned, day, month, year, bucket, multi-column, timestamp/day,
   and nested/object-like schemas.
+- Kubernetes scanner CronJob manifest at `deploy/helm/cryo/templates/scanner-cronjob.yaml` (indexed
+  parallel chunks).
 
 ### Planner And Renderers
 
@@ -60,7 +69,6 @@ Last updated from the backend/API build sessions on 2026-07-01.
 
 - Field-level secret encryption for source/destination credentials.
 - CI pipeline.
-- Scanner Kubernetes CronJob manifest.
 - Optional dual-write Iceberg scanner history table.
 - Long-running production scheduler/governor/worker service loops.
 - Full DB-backed end-to-end scheduled maintenance flow.
@@ -69,6 +77,11 @@ Last updated from the backend/API build sessions on 2026-07-01.
 - Spark/EMR execution engine.
 - Web UI.
 - Reporting, metrics, alerts, Helm chart, and hardening.
+
+## Planned (specced, not yet implemented)
+
+- **Cost API + dashboards** (P4/P5): plan-accurate preview projections, `/tables/{id}/cost`,
+  `/dashboards/cost`, explorer filters — scanner persistence is done; API/UI wiring remains.
 
 ## Verification Snapshot
 

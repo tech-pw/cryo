@@ -107,6 +107,132 @@ def test_dashboard_endpoints_return_bounded_aggregates(monkeypatch: Any) -> None
     assert schema_response.json()["items"][0]["schema_name"] == "analytics"
 
 
+def test_cost_dashboard_and_table_cost_endpoints(monkeypatch: Any) -> None:
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def dashboard_cost(
+        session: object, *, top_limit: int, trend_limit: int, settings: object
+    ) -> dict[str, object]:
+        assert top_limit == 4
+        assert trend_limit == 6
+        assert settings is not None
+        return {
+            "totals": {
+                "current_monthly_cost_usd": 100.0,
+                "projected_monthly_cost_usd": 55.0,
+                "projected_savings_usd_month": 45.0,
+                "current_storage_bytes": 1024**4,
+                "reclaimable_bytes": 512**4,
+                "precision_coverage": {"metadata": 2, "heuristic": 1},
+                "orphan_scan_stale": False,
+                "last_full_cost_scan_at": scan_at,
+            },
+            "savings_by_operation": [
+                {
+                    "operation": "expire_snapshots",
+                    "savings_usd_month": 30.0,
+                    "reclaimable_bytes": 1000,
+                },
+                {
+                    "operation": "optimize",
+                    "savings_usd_month": 15.0,
+                    "reclaimable_bytes": 500,
+                },
+            ],
+            "cost_by_schema": [
+                {
+                    "schema_name": "analytics",
+                    "current_usd": 80.0,
+                    "projected_usd": 40.0,
+                    "savings_usd": 40.0,
+                }
+            ],
+            "top_opportunities": [
+                {
+                    "id": table_id,
+                    "source_id": uuid.uuid4(),
+                    "schema_name": "analytics",
+                    "table_name": "events",
+                    "first_seen_at": scan_at,
+                    "is_active": True,
+                    "stats": {
+                        "needs_compaction": True,
+                        "compaction_priority": "HIGH",
+                        "grade": "C",
+                        "overall_score": 61,
+                        "total_files": 500,
+                        "small_files_count": 250,
+                        "total_partitions": 10,
+                        "total_size_gb": 20.0,
+                        "estimated_monthly_s3_cost_usd": 80.0,
+                        "projected_monthly_s3_cost_usd": 40.0,
+                        "projected_savings_usd_month": 40.0,
+                        "reclaimable_bytes": 1024**3,
+                        "query_count_30d": 10,
+                    },
+                }
+            ],
+            "trend": [
+                {
+                    "scan_at": scan_at,
+                    "current_monthly_cost_usd": 100.0,
+                    "projected_savings_usd_month": 45.0,
+                    "realized_usd_month": None,
+                }
+            ],
+        }
+
+    def table_cost(session: object, table_id_arg: uuid.UUID) -> dict[str, object] | None:
+        assert table_id_arg == table_id
+        return {
+            "table_id": table_id,
+            "precision": "metadata",
+            "price_per_gb_month": 0.023,
+            "current_monthly_cost_usd": 80.0,
+            "projected_monthly_cost_usd": 40.0,
+            "projected_savings_usd_month": 40.0,
+            "query_request_savings_usd_month": 2.5,
+            "live_bytes": 1000,
+            "dead_bytes": 200,
+            "metadata_bytes": 50,
+            "orphan_bytes": 0,
+            "listed_bytes": None,
+            "reclaimable_bytes": 1024**3,
+            "by_operation": [
+                {
+                    "operation": "expire_snapshots",
+                    "savings_usd_month": 25.0,
+                    "reclaimable_bytes": 700,
+                }
+            ],
+            "last_full_cost_scan_at": scan_at,
+            "scan_at": scan_at,
+        }
+
+    monkeypatch.setattr(routes.p5, "dashboard_cost", dashboard_cost)
+    monkeypatch.setattr(routes.p5, "table_cost", table_cost)
+
+    client = _client()
+    cost_response = client.get(
+        "/api/v1/dashboards/cost?top_limit=4&trend_limit=6",
+        headers=AUTH_HEADERS,
+    )
+    table_cost_response = client.get(f"/api/v1/tables/{table_id}/cost", headers=AUTH_HEADERS)
+
+    assert cost_response.status_code == 200
+    assert cost_response.json()["totals"]["projected_savings_usd_month"] == 45.0
+    assert cost_response.json()["savings_by_operation"][0]["operation"] == "expire_snapshots"
+    assert table_cost_response.status_code == 200
+    assert table_cost_response.json()["projected_savings_usd_month"] == 40.0
+
+
+def test_table_cost_endpoint_returns_404_when_missing(monkeypatch: Any) -> None:
+    monkeypatch.setattr(routes.p5, "table_cost", lambda *args, **kwargs: None)
+    response = _client().get(f"/api/v1/tables/{uuid.uuid4()}/cost", headers=AUTH_HEADERS)
+    assert response.status_code == 404
+
+
 def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> None:
     table_id = uuid.uuid4()
     scan_at = datetime(2026, 1, 1, tzinfo=UTC)

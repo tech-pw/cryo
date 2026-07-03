@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Col, Row, Skeleton, Table, Typography } from "antd";
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Alert, Button, Card, Col, Row, Skeleton, Table, Typography } from "antd";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
+import { Link } from "react-router-dom";
 import { getDatalakeDashboard, listTables } from "../api/client";
 import type { DatalakeDashboard, TableRead } from "../api/types";
-import { EmptyState, PageHeader, StatStrip } from "../components/common";
+import { ChartFrame, EmptyState, PageHeader, StatStrip } from "../components/common";
 import { GradePill, PriorityTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
-import { formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
+import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 
 const gradePalette: Record<string, string> = {
   A: cryoColors.gradeA,
@@ -32,12 +33,20 @@ export const DatalakeHealth = () => {
 
   const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
   const topOffenders = data.top_offenders ?? [];
+  const hasProjectedCost = Boolean(
+    data.totals?.projected_monthly_cost_usd || data.totals?.projected_savings_usd_month
+  );
 
   return (
     <div>
       <PageHeader
         title="Datalake health"
         subtitle="Fleet posture, cost pressure, and tables most likely to benefit from maintenance."
+        actions={
+          <Link to="/cost">
+            <Button>View cost savings</Button>
+          </Link>
+        }
       />
       {dashboard.isError ? (
         <Alert
@@ -57,7 +66,15 @@ export const DatalakeHealth = () => {
               { label: "Fleet size", value: formatGb(data.totals?.size_gb) },
               { label: "Small files", value: formatNumber(data.totals?.small_files, true) },
               { label: "Needs compaction", value: formatNumber(data.totals?.needs_compaction) },
-              { label: "S3 monthly", value: formatCurrency(data.totals?.monthly_cost_usd) }
+              { label: "S3 monthly now", value: formatCurrency(data.totals?.monthly_cost_usd) },
+              {
+                label: "After maintenance",
+                value: formatCurrency(
+                  data.totals?.projected_monthly_cost_usd ?? data.totals?.monthly_cost_usd
+                )
+              },
+              { label: "Monthly savings", value: formatCurrency(data.totals?.projected_savings_usd_month) },
+              { label: "Reclaimable", value: formatBytesGb(data.totals?.reclaimable_bytes) }
             ]}
           />
           <Row gutter={[12, 12]}>
@@ -78,13 +95,30 @@ export const DatalakeHealth = () => {
             <Col xs={24} lg={15}>
               <Card title="Cost by schema">
                 <ChartFrame empty={!data.cost_by_schema?.length}>
-                  <BarChart data={data.cost_by_schema?.slice(0, 12)}>
-                    <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
-                    <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
-                    <Bar dataKey="cost_usd" fill={cryoColors.chartPrimary} radius={[4, 4, 0, 0]} />
-                  </BarChart>
+                  {hasProjectedCost ? (
+                    <BarChart data={data.cost_by_schema?.slice(0, 12)}>
+                      <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
+                      <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
+                      <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
+                      <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
+                      <Legend />
+                      <Bar dataKey="cost_usd" name="Now" fill={cryoColors.costCurrent} radius={[4, 4, 0, 0]} />
+                      <Bar
+                        dataKey="projected_usd"
+                        name="After maintenance"
+                        fill={cryoColors.costProjected}
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  ) : (
+                    <BarChart data={data.cost_by_schema?.slice(0, 12)}>
+                      <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
+                      <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
+                      <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
+                      <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
+                      <Bar dataKey="cost_usd" fill={cryoColors.chartPrimary} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  )}
                 </ChartFrame>
               </Card>
             </Col>
@@ -137,21 +171,18 @@ export const DatalakeHealth = () => {
   );
 };
 
-const ChartFrame = ({ empty, children }: { empty: boolean; children: React.ReactNode }) =>
-  empty ? (
-    <EmptyState title="No chart data" description="Run a scan to populate this panel." />
-  ) : (
-    <div className="chart-frame">
-      <ResponsiveContainer>{children}</ResponsiveContainer>
-    </div>
-  );
-
 const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
   const grades = new Map<string, number>();
-  const schemaCosts = new Map<string, { schema_name: string; cost_usd: number; size_gb: number }>();
+  const schemaCosts = new Map<
+    string,
+    { schema_name: string; cost_usd: number; projected_usd: number; savings_usd: number; size_gb: number }
+  >();
   let size = 0;
   let smallFiles = 0;
   let cost = 0;
+  let projected = 0;
+  let savings = 0;
+  let reclaimable = 0;
   let needsCompaction = 0;
 
   tables.forEach((table) => {
@@ -160,10 +191,20 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
     grades.set(grade, (grades.get(grade) ?? 0) + 1);
     size += stats?.total_size_gb ?? 0;
     smallFiles += stats?.small_files_count ?? 0;
-    cost += stats?.estimated_monthly_s3_cost_usd ?? 0;
+    const cur = stats?.estimated_monthly_s3_cost_usd ?? 0;
+    const proj = stats?.projected_monthly_s3_cost_usd ?? cur;
+    const sav = stats?.projected_savings_usd_month ?? Math.max(0, cur - proj);
+    cost += cur;
+    projected += proj;
+    savings += sav;
+    reclaimable += stats?.reclaimable_bytes ?? 0;
     if (stats?.needs_compaction) needsCompaction += 1;
-    const schema = schemaCosts.get(table.schema_name) ?? { schema_name: table.schema_name, cost_usd: 0, size_gb: 0 };
-    schema.cost_usd += stats?.estimated_monthly_s3_cost_usd ?? 0;
+    const schema =
+      schemaCosts.get(table.schema_name) ??
+      { schema_name: table.schema_name, cost_usd: 0, projected_usd: 0, savings_usd: 0, size_gb: 0 };
+    schema.cost_usd += cur;
+    schema.projected_usd += proj;
+    schema.savings_usd += sav;
     schema.size_gb += stats?.total_size_gb ?? 0;
     schemaCosts.set(table.schema_name, schema);
   });
@@ -174,10 +215,21 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
       size_gb: size,
       small_files: smallFiles,
       monthly_cost_usd: cost,
+      projected_monthly_cost_usd: projected,
+      projected_savings_usd_month: savings,
+      reclaimable_bytes: reclaimable,
       needs_compaction: needsCompaction
     },
     grade_distribution: Array.from(grades.entries()).map(([grade, count]) => ({ grade, count })),
-    cost_by_schema: Array.from(schemaCosts.values()).sort((a, b) => b.cost_usd - a.cost_usd),
+    cost_by_schema: Array.from(schemaCosts.values())
+      .map((item) => ({
+        schema_name: item.schema_name,
+        cost_usd: item.cost_usd,
+        projected_usd: item.projected_usd,
+        savings_usd: item.savings_usd,
+        size_gb: item.size_gb
+      }))
+      .sort((a, b) => (b.savings_usd || b.cost_usd) - (a.savings_usd || a.cost_usd)),
     top_offenders: [...tables].sort((a, b) => (b.stats?.small_files_count ?? 0) - (a.stats?.small_files_count ?? 0)).slice(0, 10)
   };
 };

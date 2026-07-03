@@ -32,7 +32,7 @@ export const Runs = () => {
     <div>
       <PageHeader
         title="Runs"
-        subtitle="Queued, active, and completed maintenance runs with live job state."
+        subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings will surface here once workers record audit_log.actual_bytes_freed."
       />
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={runId ? 11 : 24}>

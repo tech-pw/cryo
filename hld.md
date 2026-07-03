@@ -88,11 +88,17 @@ React + TypeScript SPA. Talks only to the API (REST + WebSocket).
 Primary screens:
 - **Datalake Health** — fleet overview: grade distribution (A–F), total tables/size/small-files,
   estimated S3 cost, drift alerts, cost-by-schema, top offenders.
+- **Cost & Savings** — fleet **current vs projected** monthly cost, savings **by operation**
+  (compaction / expiry / orphans / manifests), savings **by schema**, and a ranked **"biggest
+  savings opportunities"** list (→ select all → Run). Shows the reclaimable-bytes breakdown and the
+  precision tier (metadata vs storage-truth). Per-table detail lives on **Table Detail**.
 - **Table Explorer** — virtualized, server-side-filtered table list. Filters: schema, size, file
   count, small-file count/%, grade, partition column, snapshots, write frequency, drift, current
-  preset. **Filter → Select all matching (across pages) → Assign preset / Run now.**
+  preset, **projected savings / reclaimable bytes**. **Filter → Select all matching (across pages)
+  → Assign preset / Run now.**
 - **Table Detail** — health card, partition breakdown, snapshot/manifest stats, query load, audit
-  timeline, "Run maintenance" with **plan preview**.
+  timeline, **cost breakdown + projected savings by operation**, "Run maintenance" with **plan
+  preview** (the preview shows the plan-accurate projected savings and, after a run, realized savings).
 - **Presets** — create/edit presets: operations + params, target engine, schedule, selection rules,
   guardrails. **Simulator**: "matches N tables, est. load/time/cost".
 - **Runs / Live Console** — scheduled & ad-hoc runs; real-time wave view (running per engine/replica,
@@ -120,8 +126,13 @@ Direct port + refactor of `iceberg_table_stats_batch.py`. A batch service run as
   **needs_compaction + priority**, **S3 cost estimate**, and the **`partitions_to_rewrite`** detail
   used by the partition-aware planner.
 - **Chunked, deterministic, resumable** (skip already-scanned-today unless full scan).
-- Persist to Postgres (`tables`, `table_stats`, `table_partitions`, `table_stats_history`), and
-  optionally append to the Iceberg `compaction_scan` history table (parity with today).
+- Compute a **precise, tiered cost & savings breakdown** (see §3.10): storage split into
+  live / reclaimable-by-expiry (dead) / metadata / orphan bytes, plus the **projected monthly
+  savings** per maintenance operation. The metadata accounting runs every scan (cheap, no data
+  reads); the orphan storage-listing pass is opt-in, bounded, and runs on a slower cadence.
+- Persist to Postgres (`tables`, `table_stats`, `table_partitions`, `table_stats_history`,
+  `table_cost`, `table_cost_history`), and optionally append to the Iceberg `compaction_scan`
+  history table (parity with today).
 
 The Scanner is the single source of truth for "what shape is every table in" — exactly like
 `iceberg_compaction_scan` today, which all maintenance reads from instead of doing live `$files`
@@ -185,6 +196,31 @@ Two packages behind one interface:
 - **Redis** — job queue, distributed locks (single-active scheduler/governor; per-table lock to
   prevent double-maintenance), live counters (per-engine in-flight), live run/job state for the UI.
 - **Object store (S3/MinIO)** — the actual Iceberg data; touched only by engines + PyIceberg.
+
+### 3.10 Cost & Savings Estimator (`cost/`) — engine-agnostic
+Pure logic (no engine or storage I/O), a sibling to the Planner. It turns the Scanner's byte
+accounting into money and answers *"what does this table cost now, and what will maintenance save?"*
+
+- **Current monthly cost** = storage bytes × price/GB-month (region-configurable per source).
+- **Projected savings** per operation, using the same params the Planner uses for the table's
+  effective preset (`retention_days`, `retain_last`, `min_small_files`, target file size):
+  - `expire_snapshots` — bytes referenced **only** by snapshots the retention policy would drop,
+    computed exactly like Iceberg's own expiry (a file is reclaimable iff **no surviving snapshot**
+    references it). Metadata-only, precise.
+  - `remove_orphan_files` — bytes physically present but referenced by **no** snapshot. Needs the
+    Scanner's opt-in storage-listing tier; otherwise shown as last-known / estimated (flagged).
+  - `optimize` (compaction) — delete-file bytes merged away, plus a query **request-cost** reduction
+    from fewer files (uses the stored `query_count_30d`). Data bytes are ~storage-neutral (rewritten),
+    so compaction's storage win is realized via the follow-on expiry.
+  - `optimize_manifests` — manifest/metadata bytes reclaimed by consolidation.
+- Two entry points: a **fleet baseline** projection (standard-mode defaults, stored by the Scanner
+  for dashboards) and a **plan-accurate** projection (called by `/maintenance/preview` and the
+  Worker with the real preset params). After a run, predicted vs **actual bytes freed** is
+  reconciled ("realized savings") to keep the model honest and calibrate the compaction heuristic.
+
+> The estimator never lists S3 or reads data files; all inputs are the Scanner's metadata-derived
+> byte breakdown. The one paid step (an S3 LIST for orphans) lives in the Scanner's opt-in tier, not
+> here — keeping the model pure and the scans cheap.
 
 ---
 
@@ -287,9 +323,31 @@ sequenceDiagram
   UI->>API: POST /maintenance/preview {tables/selection, operations, engine, params}
   API->>PLAN: build plans (no execution)
   PLAN->>ENG: render SQL (Trino or Spark)
-  API-->>UI: per-table SQL + est. chunks/partitions/load
+  API-->>UI: per-table SQL + est. chunks/partitions/load + projected savings by op
   UI->>API: POST /maintenance/run {same payload} (after confirm)
 ```
+
+### 5.5 Cost & savings projection (metadata-precise, storage-truth opt-in)
+```mermaid
+sequenceDiagram
+  participant SC as Scanner
+  participant CAT as Source (Iceberg metadata)
+  participant S3 as Object store (opt-in tier only)
+  participant CE as Cost Estimator (pure)
+  participant PG as PostgreSQL
+  SC->>CAT: stream current + retained-snapshot manifests (metadata only, deduped)
+  SC->>SC: attribute bytes -> live / dead(expirable) / metadata
+  opt storage-truth tier (opt-in, bounded, slow cadence)
+    SC->>S3: paginated LIST of table data prefix
+    SC->>SC: orphan_bytes = listed - referenced_by_any_snapshot (age-guarded)
+  end
+  SC->>CE: byte breakdown + snapshots + standard params
+  CE-->>SC: current cost + projected savings by operation
+  SC->>PG: upsert table_cost (+ table_cost_history)
+```
+The default (daily) path is **metadata-only** — precise for expiry/compaction/manifests with no S3
+LIST. Orphan precision comes from the opt-in tier; between runs the last-known orphan bytes are
+reused (flagged stale) so dashboards stay complete without re-listing.
 
 ---
 
@@ -349,7 +407,9 @@ flowchart TB
 
 - **Structured logs** (JSON) per service; per-job log stream to Redis (live) + persisted summary.
 - **Metrics** (Prometheus): jobs queued/running/succeeded/failed, admission decisions, live engine
-  load, scan duration/coverage, fleet grade distribution, est. cost, drift counts.
+  load, scan duration/coverage, fleet grade distribution, est. cost, drift counts, **projected
+  savings by operation, reclaimable bytes, realized-vs-projected savings, orphan bytes + age of the
+  last storage-truth scan**.
 - **Audit log** (Postgres): every operation (table, action, status, detail, engine, run, duration) —
   superset of today's `iceberg_maintenance_log`, powering reports + Table Detail timeline.
 - **Reports**: scheduled HTML email/Slack (port `iceberg_maintenance_report.py`) + in-app alerts.
@@ -366,7 +426,7 @@ flowchart TB
 | dbt `iceberg_maintain_single_table` / `_partition_aware_optimize` | **Planner** + **Trino engine** (Worker) |
 | dbt `iceberg_list_maintenance_targets` (discovery, budget, drift, cooldown) | **Scheduler** + **Governor** + Planner inputs |
 | dbt `iceberg_lifecycle.sql` (orphan/manifests/full) | Planner operations + engine renderers |
-| dbt `iceberg_health_check` / `iceberg_diagnostics` / `iceberg_cost_report` | **Dashboards** + read APIs |
+| dbt `iceberg_health_check` / `iceberg_diagnostics` / `iceberg_cost_report` | **Dashboards** + read APIs (+ new **Cost & Savings Estimator** for precise projected savings — net-new, not in today's stack) |
 | `iceberg_maintenance_report.py` | **Reporting** service/job |
 | `iceberg_maintenance_log` (Iceberg) | `audit_log` / `maintenance_jobs` (PG) |
 | Per-table dbt subprocess isolation | Per-table Worker job + per-table Redis lock |

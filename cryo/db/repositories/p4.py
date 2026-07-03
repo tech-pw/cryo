@@ -75,6 +75,8 @@ def assignment_to_config(assignment: TableAssignment) -> AssignmentConfig:
 
 def table_to_candidate(table: Table) -> TableCandidate:
     stats = _stats_dict(table.stats)
+    if table.cost is not None:
+        stats["cost_precision"] = table.cost.precision
     return TableCandidate(
         id=str(table.id),
         schema_name=table.schema_name,
@@ -245,4 +247,7 @@ def _stats_dict(stats: TableStats | None) -> dict[str, Any]:
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
         "query_count_30d": stats.query_count_30d,
+        "projected_savings_usd_month": stats.projected_savings_usd_month,
+        "projected_monthly_s3_cost_usd": stats.projected_monthly_s3_cost_usd,
+        "reclaimable_bytes": stats.reclaimable_bytes,
     }

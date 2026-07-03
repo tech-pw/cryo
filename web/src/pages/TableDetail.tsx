@@ -8,6 +8,7 @@ import {
   getEffectivePreset,
   getTable,
   getTableAudit,
+  getTableCost,
   getTableHistory,
   getTablePartitions,
   listDestinations,
@@ -16,10 +17,12 @@ import {
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, PageHeader, StatStrip } from "../components/common";
+import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
+import { SavingsByOperation } from "../components/SavingsByOperation";
 import { PlanPreview } from "../components/PlanPreview";
 import { GradePill, HealthBadge, PriorityTag, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
-import { formatDuration, formatGb, formatNumber, formatTime } from "../lib/format";
+import { formatBytesGb, formatCurrency, formatDuration, formatGb, formatNumber, formatTime } from "../lib/format";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 
 export const TableDetail = () => {
@@ -47,6 +50,11 @@ export const TableDetail = () => {
     queryKey: ["effective-preset", tableId, token],
     queryFn: () => getEffectivePreset(api, tableId),
     retry: 1
+  });
+  const tableCost = useQuery({
+    queryKey: ["table-cost", tableId, token],
+    queryFn: () => getTableCost(api, tableId),
+    retry: false
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
@@ -144,6 +152,53 @@ export const TableDetail = () => {
               </Space>
             ) : (
               <EmptyState title="Table not found" description="The table may not have been scanned yet." />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} xl={8}>
+          <Card title="Cost & savings" loading={tableCost.isLoading}>
+            {tableCost.data ? (
+              <Space direction="vertical" size={12} className="full-width">
+                <Space wrap>
+                  <CostPrecisionBadge
+                    precision={tableCost.data.precision}
+                    lastFullCostScanAt={tableCost.data.last_full_cost_scan_at}
+                  />
+                  {tableCost.data.last_full_cost_scan_at ? (
+                    <Typography.Text type="secondary">
+                      Last full scan {formatTime(tableCost.data.last_full_cost_scan_at)}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+                <StatStrip
+                  items={[
+                    { label: "Now", value: formatCurrency(tableCost.data.current_monthly_cost_usd) },
+                    {
+                      label: "After maintenance",
+                      value: formatCurrency(tableCost.data.projected_monthly_cost_usd)
+                    },
+                    { label: "Savings / mo", value: formatCurrency(tableCost.data.projected_savings_usd_month) },
+                    { label: "Reclaimable", value: formatBytesGb(tableCost.data.reclaimable_bytes) }
+                  ]}
+                />
+                <Descriptions size="small" column={2}>
+                  <Descriptions.Item label="Live">{formatBytesGb(tableCost.data.live_bytes)}</Descriptions.Item>
+                  <Descriptions.Item label="Dead">{formatBytesGb(tableCost.data.dead_bytes)}</Descriptions.Item>
+                  <Descriptions.Item label="Metadata">{formatBytesGb(tableCost.data.metadata_bytes)}</Descriptions.Item>
+                  <Descriptions.Item label="Orphans">{formatBytesGb(tableCost.data.orphan_bytes)}</Descriptions.Item>
+                </Descriptions>
+                {tableCost.data.query_request_savings_usd_month > 0 ? (
+                  <Typography.Text type="secondary">
+                    Query request savings: {formatCurrency(tableCost.data.query_request_savings_usd_month)}/mo
+                  </Typography.Text>
+                ) : null}
+                <SavingsByOperation items={tableCost.data.by_operation} />
+              </Space>
+            ) : (
+              <EmptyState
+                title="No cost breakdown yet"
+                description="Cost breakdown appears after the scanner writes table_cost."
+              />
             )}
           </Card>
         </Col>

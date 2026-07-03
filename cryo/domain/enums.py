@@ -50,6 +50,12 @@ class Grade(StrEnum):
     F = "F"
 
 
+class CostPrecision(StrEnum):
+    HEURISTIC = "heuristic"
+    METADATA = "metadata"
+    STORAGE_TRUTH = "storage_truth"
+
+
 class JobStatus(StrEnum):
     QUEUED = "queued"
     ADMITTED = "admitted"

@@ -1,5 +1,25 @@
 import { Button, Empty, Space, Statistic, Typography } from "antd";
 import type { ReactNode } from "react";
+import { ResponsiveContainer } from "recharts";
+
+export const ChartFrame = ({
+  empty,
+  emptyTitle = "No chart data",
+  emptyDescription = "Run a scan to populate this panel.",
+  children
+}: {
+  empty: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  children: React.ReactNode;
+}) =>
+  empty ? (
+    <EmptyState title={emptyTitle} description={emptyDescription} />
+  ) : (
+    <div className="chart-frame">
+      <ResponsiveContainer>{children}</ResponsiveContainer>
+    </div>
+  );
 
 export const PageHeader = ({
   title,

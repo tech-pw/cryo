@@ -51,11 +51,14 @@ iceberg_compactor/                  # repo root (codename: Cryo)
     │   ├── partitions.py           # transform detection, predicate building
     │   ├── chunking.py             # GB-budget, partition-cap packer
     │   └── planner.py              # build MaintenancePlan (mode-aware)
+    ├── cost/
+    │   └── model.py                # pure cost + savings-projection math (no I/O) — see §16
     ├── scanner/
     │   ├── analyze.py              # PyIceberg manifest scan (port of stats batch)
     │   ├── health.py               # score/grade + thresholds
-    │   ├── cost.py                 # S3 cost estimate
-    │   └── run.py                  # chunked/resumable entrypoint
+    │   ├── cost.py                 # storage cost + metadata-precise byte accounting (Tier 0/1)
+    │   ├── orphans.py              # opt-in bounded storage LIST -> orphan bytes (Tier 2)
+    │   └── run.py                  # chunked/resumable entrypoint (persists table_cost)
     ├── scheduler/
     │   ├── rules.py                # selection rule evaluation + effective-preset resolution
     │   └── scheduler.py            # cron eval -> runs -> jobs
@@ -97,6 +100,20 @@ class Settings(BaseSettings):
     scan_num_chunks: int = 4
     scan_small_file_mb: float = 89.6          # 128 * 0.70 (parity with today)
     scan_needs_compaction_threshold: int = 128
+    # cost & savings model (see §16)
+    cost_price_per_gb_month: float = 0.023    # S3 Standard (parity); override per source region
+    cost_use_gib: bool = True                 # True=GiB (1024^3, parity) | False=GB (1e9, true billing)
+    cost_scan_tier: str = "metadata"          # per-scan default: heuristic | metadata | storage_truth
+    cost_scan_max_snapshots: int = 200        # bound Tier-1 all-snapshot accounting; else -> heuristic
+    cost_scan_max_manifests: int = 5000       # bound distinct manifests read for accounting
+    cost_full_scan_every_hours: int = 168     # Tier-2 (orphan) cadence; 0 = only on demand
+    cost_orphan_min_age_hours: int = 72       # ignore recently-written files as potential orphans
+    cost_scan_max_list_keys: int = 1_000_000  # Tier-2 LIST guard; above -> orphan reported "unknown"
+    default_retention_days: int = 7           # fleet-baseline expiry projection (parity: 7d)
+    default_retain_last: int = 1
+    s3_get_usd_per_1k: float = 0.0004         # request-cost model for optimize query savings
+    s3_list_usd_per_1k: float = 0.005
+    query_gets_per_file: float = 1.0          # GETs per data file per query (calibratable)
     # governor defaults (overridable per engine/preset)
     offpeak_start_ist: int = 0
     offpeak_end_ist: int = 7
@@ -184,7 +201,11 @@ CREATE TABLE cryo.table_stats (
     write_distribution_mode        text,
     has_sort_order                 boolean,
     target_file_size_bytes         bigint,
-    estimated_monthly_s3_cost_usd  double precision,
+    estimated_monthly_s3_cost_usd  double precision,        -- Tier-0 heuristic (parity, always set)
+    -- cost/savings summary (denormalized from table_cost for cheap explorer filter/sort)
+    projected_monthly_s3_cost_usd  double precision,        -- after standard maintenance
+    projected_savings_usd_month    double precision,        -- current - projected (storage)
+    reclaimable_bytes              bigint,                  -- expire + orphan + optimize + manifests
     query_count_30d                bigint DEFAULT 0,        -- from query metrics (ranking)
     raw                            jsonb                    -- full stats dict for forward-compat
 );
@@ -214,7 +235,49 @@ CREATE TABLE cryo.table_stats_history (
     overall_score       int
 );
 CREATE INDEX ON cryo.table_stats_history (table_id, scan_at);
+
+-- precise cost & savings breakdown (1 row per table, upserted by Scanner) — see §16
+CREATE TABLE cryo.table_cost (
+    table_id                    uuid PRIMARY KEY REFERENCES cryo.tables(id) ON DELETE CASCADE,
+    scan_at                     timestamptz NOT NULL,
+    precision                   text NOT NULL,             -- heuristic | metadata | storage_truth
+    price_per_gb_month          double precision NOT NULL,
+    -- storage decomposition (bytes)
+    live_bytes                  bigint NOT NULL,           -- referenced by current snapshot
+    dead_bytes                  bigint NOT NULL,           -- referenced only by expirable snapshots
+    metadata_bytes              bigint NOT NULL,           -- manifests + lists + metadata.json + stats
+    orphan_bytes                bigint,                    -- NULL unless storage_truth tier ran
+    listed_bytes                bigint,                    -- actual LIST total; NULL unless Tier 2
+    last_full_cost_scan_at      timestamptz,               -- last time the orphan LIST ran
+    -- reclaim by operation (bytes) — disjoint by construction (no double counting)
+    reclaim_expire_bytes        bigint NOT NULL DEFAULT 0,
+    reclaim_orphan_bytes        bigint NOT NULL DEFAULT 0,
+    reclaim_optimize_bytes      bigint NOT NULL DEFAULT 0, -- delete-file merge reclaim
+    reclaim_manifests_bytes     bigint NOT NULL DEFAULT 0,
+    -- money
+    current_monthly_cost_usd        double precision NOT NULL,
+    projected_monthly_cost_usd      double precision NOT NULL,
+    projected_savings_usd_month     double precision NOT NULL,
+    query_request_savings_usd_month double precision NOT NULL DEFAULT 0,  -- optimize, request-cost est.
+    raw                         jsonb                      -- assumptions + per-op + per-snapshot detail
+);
+
+-- cost trend (savings realized/available over time)
+CREATE TABLE cryo.table_cost_history (
+    id                          bigserial PRIMARY KEY,
+    table_id                    uuid NOT NULL REFERENCES cryo.tables(id) ON DELETE CASCADE,
+    scan_at                     timestamptz NOT NULL,
+    current_monthly_cost_usd    double precision,
+    projected_savings_usd_month double precision,
+    reclaimable_bytes           bigint,
+    precision                   text
+);
+CREATE INDEX ON cryo.table_cost_history (table_id, scan_at);
 ```
+
+> **Realized savings**: after a maintenance job, the Worker records `actual_bytes_freed` per
+> operation on `cryo.audit_log` (new nullable column) so the UI can show *predicted vs realized*
+> and the model can self-calibrate. This is additive to §3.4's `audit_log`.
 
 ### 3.3 Presets, rules, assignments (binding layer)
 
@@ -325,6 +388,11 @@ class Mode(str, Enum):
 class PartitionTransform(str, Enum):
     IDENTITY="identity"; DAY="day"; MONTH="month"; YEAR="year"; UNPARTITIONED="unpartitioned"
 
+class CostPrecision(str, Enum):
+    HEURISTIC = "heuristic"          # Tier 0: current-snapshot bytes + snapshot-overhead heuristic
+    METADATA = "metadata"            # Tier 1: exact expiry/compaction/manifest reclaim from metadata
+    STORAGE_TRUTH = "storage_truth"  # Tier 2: + orphan bytes from a bounded storage LIST
+
 @dataclass
 class PartitionPredicate:           # engine-agnostic; renderers turn this into a WHERE fragment
     base_column: str
@@ -344,6 +412,26 @@ class MaintenancePlan:
     mode: Mode
     operations: list[Operation]      # ordered, possibly multiple OPTIMIZE chunks
     notes: list[str]
+
+@dataclass(frozen=True)
+class StorageBreakdown:               # produced by the Scanner (bytes); input to the cost model
+    live_bytes: int                   # referenced by current snapshot
+    dead_bytes: int                   # referenced only by expirable snapshots
+    metadata_bytes: int               # manifests + manifest lists + metadata.json + stats/puffin
+    delete_bytes: int                 # delete files in current snapshot (merged by optimize)
+    orphan_bytes: int | None = None   # None until the storage-truth tier runs
+    listed_bytes: int | None = None   # actual LIST total (storage-truth tier only)
+
+@dataclass(frozen=True)
+class SavingsProjection:              # produced by cost/model.py (pure)
+    precision: CostPrecision
+    current_monthly_cost_usd: float
+    projected_monthly_cost_usd: float
+    projected_savings_usd_month: float
+    reclaimable_bytes: int
+    by_operation: dict[OperationType, float]      # usd/month saved, per op (disjoint)
+    query_request_savings_usd_month: float = 0.0  # optimize only; request-cost estimate, shown apart
+    assumptions: dict = field(default_factory=dict)
 ```
 
 ---
@@ -380,7 +468,10 @@ A single JSON predicate grammar powers UI filters, preset rules, and bulk select
 ] }
 ```
 Compiled to SQLAlchemy filters for the explorer/selection, and evaluated in-memory for rule matching.
-Fields = columns of `table_stats` (+ `schema_name`/`table_name`). Ops: `=,!=,<,<=,>,>=,in,like,glob`.
+Fields = columns of `table_stats` (+ `schema_name`/`table_name`), including the denormalized cost
+summary fields `projected_savings_usd_month`, `projected_monthly_s3_cost_usd`, and
+`reclaimable_bytes` — so "select all tables with projected savings > $50/mo → Run now" is one
+selection spec. Ops: `=,!=,<,<=,>,>=,in,like,glob`.
 
 ### 6.3 OPTIMIZE planning algorithm (ported from `_partition_aware_optimize`)
 ```
@@ -498,10 +589,18 @@ statements (as args/JSON) and executes them with the Iceberg-configured `SparkSe
   thresholds (`128MB` compaction / `8MB` health), per-partition accumulation, delete-file metrics,
   manifest stats, properties, transform detection, `needs_compaction` + `priority` formulas.
 - `health.py`: the exact `_compute_health_score` deductions (WARN −8 / CRIT −20) → score + A–F grade.
-- `cost.py`: snapshot-overhead heuristic + `$0.023/GB-month` S3 estimate.
+- `cost.py`: Tier-0 snapshot-overhead heuristic + `$0.023/GB-month` S3 estimate (parity, always set),
+  **plus Tier-1 metadata byte accounting** — during the manifest stream it also walks retained
+  snapshots' manifest lists (deduped, bounded by `cost_scan_max_snapshots/_manifests`) to split bytes
+  into live / dead(expirable) / metadata and compute exact per-operation reclaim. No data reads, no
+  S3 LIST. See §16.
+- `orphans.py`: Tier-2 opt-in orphan estimation — a bounded, paginated storage LIST of the table's
+  data prefix; `orphan_bytes = listed − referenced_by_any_retained_snapshot` (age-guarded by
+  `cost_orphan_min_age_hours`). Runs on the `cost_full_scan_every_hours` cadence or on demand; the
+  only step that spends S3 request cost. See §16.
 - `run.py`: deterministic chunking (`i % num_chunks == chunk_id`), skip-already-scanned-today unless
-  `full_scan`, batched upserts to Postgres (`tables`, `table_stats`, `table_partitions`, history).
-  Idempotent; retry-safe.
+  `full_scan`, batched upserts to Postgres (`tables`, `table_stats`, `table_partitions`, `table_cost`,
+  history). Idempotent; retry-safe. `--cost-full-scan` opts a run into the Tier-2 orphan pass.
 - Runs as K8s `CronJob` → parallel `Job` with `num_chunks` pods (mirrors today's 4 chunks).
 
 ---
@@ -582,13 +681,17 @@ POST                   /api/v1/destinations/{id}/test         # health check / p
 
 # Fleet & health
 GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=
-GET   /api/v1/tables/{id}                                     # detail: stats, partitions, audit
+GET   /api/v1/tables/{id}                                     # detail: stats, partitions, audit, cost
 GET   /api/v1/tables/{id}/partitions
 GET   /api/v1/tables/{id}/audit
 GET   /api/v1/tables/{id}/history
+GET   /api/v1/tables/{id}/cost                               # breakdown + projected savings by op
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals
 GET   /api/v1/dashboards/schema-cost
+GET   /api/v1/dashboards/cost                                 # fleet current vs projected, savings
+        # by operation + by schema, top savings opportunities, precision coverage
 POST  /api/v1/scans                                           # trigger ad-hoc scan (optional scope)
+        # body: {selection?, full_scan?, cost_full_scan?}  (cost_full_scan -> Tier-2 orphan pass)
 
 # Presets, rules, assignments
 GET/POST/PATCH/DELETE  /api/v1/presets
@@ -600,7 +703,8 @@ DELETE /api/v1/assignments                                    # same selection g
 GET   /api/v1/tables/{id}/effective-preset                    # provenance: pinned vs rule vs none
 
 # Maintenance (ad-hoc) + preview
-POST  /api/v1/maintenance/preview                             # dry-run -> per-table rendered SQL
+POST  /api/v1/maintenance/preview                             # dry-run -> per-table rendered SQL +
+        # plan-accurate SavingsProjection (current/projected cost, savings by op) for the payload
 POST  /api/v1/maintenance/run                                 # create adhoc run + jobs
         # body accepts either table_ids:[...] OR selection:{mode:"filter", filter:<predicate>}
 
@@ -623,11 +727,15 @@ assign" is one transactional call that stays correct even as the fleet changes.
   `/api/v1/tables`. Column filters map to the predicate grammar. A sticky **BulkAssignBar** shows
   "N tables match → [Assign preset ▼] [Run now]".
 - **PlanPreview**: modal showing per-table rendered SQL (Trino/Spark) + chunk/partition/load estimate
-  before any execution.
+  **and the plan-accurate projected savings by operation** before any execution.
 - **RunConsole**: WebSocket-driven; per-engine concurrency gauges (Trino active OPTIMIZEs by replica,
-  EMR slots), live job rows (running/queued/deferred/failed), log drawer.
+  EMR slots), live job rows (running/queued/deferred/failed), log drawer; **realized-vs-projected
+  savings** as jobs finish.
 - **DatalakeHealth**: Recharts — grade distribution, cost by schema, drift list, top offenders, totals.
-- **TableDetail**: health card + partition table + snapshot/manifest stats + audit timeline + "Run".
+- **CostSavings**: Recharts — fleet current vs projected monthly cost, savings by operation, savings
+  by schema, ranked "biggest savings opportunities" (→ select all → Run), precision-coverage badge.
+- **TableDetail**: health card + partition table + snapshot/manifest stats + audit timeline +
+  **cost breakdown & projected savings by operation** + "Run".
 - Data layer: TanStack Query; types generated from the OpenAPI schema.
 
 ---
@@ -640,6 +748,11 @@ assign" is one transactional call that stays correct even as the fleet changes.
 - **API**: FastAPI TestClient; selection/assignment transactional correctness.
 - **e2e (smoke)**: docker-compose up → scan → assign preset → run → assert audit + file-count drop.
 - Golden parity tests assert the Trino SQL matches today's dbt-rendered SQL for representative tables.
+- **Cost & savings** (see §16): pure-model golden tests (crafted `StorageBreakdown` → expected
+  `SavingsProjection`; heuristic tier == existing `estimate_storage_cost`); metadata-accounting tests
+  on multi-snapshot fixtures assert exact expire reclaim (predicted == Iceberg's own deletion set);
+  orphan tests seed unreferenced files in MinIO and assert detection + bounding; smoke asserts
+  predicted savings reconcile with realized `actual_bytes_freed` within tolerance.
 
 ---
 
@@ -650,3 +763,106 @@ assign" is one transactional call that stays correct even as the fleet changes.
 - Migrations via Alembic; blue/green-safe (additive first). Prometheus metrics + structured logs.
 - All destructive Iceberg ops are guarded by Planner/preset guardrails (max files/GB, cooldown) and
   require an explicit `force` to bypass (audited).
+
+---
+
+## 16. Cost & savings projection (precise, cost-efficient)
+
+Goal: show each table's **current monthly storage cost** and the **projected cost + savings once all
+maintenance is done** (compaction/`optimize`, snapshot **expiry**, **orphan-file** removal, manifest
+rewrite), rolled up by schema and fleet. Numbers must be **precise**; the scan must stay **cheap**.
+
+The design resolves that tension with a **tiered scan** (cost grows only when precision demands it)
+plus a **pure projection model** (`cost/model.py`) shared by the Scanner (fleet baseline) and the
+API/Worker (plan-accurate). Reclaim is computed the way the engines actually compute deletions, so
+projections match reality.
+
+### 16.1 Byte accounting (what the Scanner produces)
+
+A table's storage decomposes into disjoint buckets so per-op savings never double count:
+
+| Bucket | Meaning | Reclaimed by |
+|--------|---------|--------------|
+| `live_bytes` | data files referenced by the **current** snapshot | (kept) |
+| `delete_bytes` | delete files in the current snapshot | `optimize` (merged), then expiry |
+| `dead_bytes` | data/delete/manifest files referenced **only** by snapshots the retention policy would expire | `expire_snapshots` |
+| `metadata_bytes` | manifests + manifest lists + `metadata.json` versions + stats/puffin | `optimize_manifests` (partial) + expiry |
+| `orphan_bytes` | files under the table prefix referenced by **no** snapshot (Tier 2 only) | `remove_orphan_files` |
+
+`current_storage_bytes = live + delete + dead + metadata + orphan`.
+
+### 16.2 Tiered scan (precise but cost-efficient)
+
+**Tier 0 — heuristic (always, ~free).** The existing `estimate_storage_cost`: current-snapshot bytes
++ snapshot-overhead heuristic. Zero extra reads. Kept as `estimated_monthly_s3_cost_usd` (parity) and
+the fallback when higher tiers are bounded out. `precision = heuristic`.
+
+**Tier 1 — metadata-precise (default, cheap).** During the manifest stream the Scanner already does,
+it *also* walks the manifest lists of retained snapshots (deduped by manifest path; bounded by
+`cost_scan_max_snapshots` / `cost_scan_max_manifests`) to attribute every file to `live` vs `dead`
+vs `metadata`. **No data reads, no S3 LIST.** Yields exact reclaim for expiry, compaction
+(delete-file merge), and manifests. `precision = metadata`. If a table exceeds the bounds, that
+table falls back to Tier 0 for `dead_bytes` and is flagged `precision = heuristic`.
+
+**Tier 2 — storage-truth / orphans (opt-in, bounded, slow cadence).** `scanner/orphans.py` does a
+paginated, prefix-scoped S3 LIST of the table's data location and computes
+`orphan_bytes = listed_bytes − referenced_by_any_retained_snapshot_bytes`, ignoring files younger
+than `cost_orphan_min_age_hours`. This is the **only** step that spends S3 request cost, so it is
+gated by `cost_full_scan_every_hours` (or `--cost-full-scan` / API `cost_full_scan:true`) and skipped
+for tables above `cost_scan_max_list_keys` (orphan reported as `unknown`). `precision = storage_truth`.
+Between Tier-2 runs, the last known `orphan_bytes` is carried forward (flagged stale via
+`last_full_cost_scan_at`) so dashboards stay complete without re-listing.
+
+> Default daily scans = **Tier 0+1** → precise expiry/compaction/manifest savings with no LIST.
+> Orphan precision is layered in periodically by Tier 2. That is the precise-yet-cheap balance.
+
+### 16.3 Exact expiry reclaim (metadata only)
+
+Replicates Iceberg's own expiry set from metadata — no engine call:
+```
+surviving = { s in snapshots : s is current
+                              OR s.timestamp_ms >= now - retention_days
+                              OR s in newest `retain_last` snapshots }
+for each file f seen across all retained snapshots' manifests:
+    referencing = { snapshots whose manifests reference f }
+    if referencing ∩ surviving == ∅:  f is reclaimed by expire_snapshots
+reclaim_expire_bytes = Σ size(f) over reclaimed files (data + delete + manifest + list)
+```
+`retention_days` / `retain_last` come from the effective preset params for plan-accurate runs, or
+`default_retention_days` / `default_retain_last` (parity: 7d) for the fleet baseline.
+
+### 16.4 Per-operation savings (`cost/model.py`, pure)
+
+`bytes_to_usd(b) = b / (1024³ if cost_use_gib else 1e9) * price_per_gb_month`.
+
+- `expire` → `bytes_to_usd(reclaim_expire_bytes)`.
+- `remove_orphan_files` → `bytes_to_usd(orphan_bytes)` (0 / unknown until Tier 2).
+- `optimize` (storage) → `bytes_to_usd(delete_bytes_merged)` — compaction rewrites small files into
+  fewer large ones (data-byte-neutral) but drops applied delete files; the small-file bytes are
+  reclaimed via the follow-on `expire`. Modeled conservatively so we never over-promise.
+- `optimize` (request) → `query_request_savings_usd_month` = `Δfiles × query_gets_per_file ×
+  query_count_30d × s3_get_usd_per_1k/1000`, where `Δfiles = small_files − ceil(small_bytes /
+  target_file_size)`. Reported **separately** (it is an estimate, not storage).
+- `optimize_manifests` → `bytes_to_usd(reclaim_manifests_bytes)` (small manifests consolidated).
+
+`projected_savings_usd_month = Σ storage savings` (disjoint buckets → simple sum);
+`projected_monthly_cost_usd = current_monthly_cost_usd − projected_savings_usd_month`.
+
+### 16.5 Two entry points + calibration
+
+- **Fleet baseline** (Scanner): standard-mode ops + default params → upsert `table_cost` +
+  `table_cost_history` and the denormalized summary columns on `table_stats`. Powers dashboards and
+  explorer filters ("if we ran standard maintenance").
+- **Plan-accurate** (`/maintenance/preview`, Worker): the *actual* effective-preset params → exact
+  projection for that plan, shown in PlanPreview.
+- **Realized savings**: after a job the Worker records `actual_bytes_freed` per op (audit_log) —
+  from the engine result or a cheap snapshot-summary re-read — for predicted-vs-realized display and
+  to calibrate `query_gets_per_file` / the compaction heuristic over time.
+
+### 16.6 Parity & precision notes
+- `0.023/GB-month` and the snapshot-overhead heuristic are preserved as **Tier 0** (matches the ported
+  stats batch). Expiry/orphan retention defaults `7d` match the reference macro
+  (`retention_threshold => '7d'`).
+- Billing precision knob: `cost_use_gib` switches GiB (parity with today's estimate) vs GB (10⁹, how
+  S3 actually bills). Region price overridable per source.
+- The cost model is **engine-agnostic and pure** (no SQL, no I/O) — same layering rule as the Planner.

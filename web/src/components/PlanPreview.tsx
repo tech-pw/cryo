@@ -85,6 +85,9 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
         <Empty description="Select at least one table to preview." />
       ) : (
         <Space direction="vertical" size={12} className="full-width">
+          <Typography.Paragraph type="secondary">
+            Projected savings will appear here once `/maintenance/preview` returns a SavingsProjection.
+          </Typography.Paragraph>
           <StatStrip
             items={[
               { label: "Tables", value: formatNumber(estimate.tables) },

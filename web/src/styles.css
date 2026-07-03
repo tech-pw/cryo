@@ -283,6 +283,26 @@ textarea.mono-input {
   border-bottom: 0;
 }
 
+.operation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.operation-list-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.operation-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
 @media (max-width: 900px) {
   body {
     min-width: 0;

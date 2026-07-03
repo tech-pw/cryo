@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cryo.domain.enums import EngineType, Mode
+from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
 
 JsonDict = dict[str, Any]
 
@@ -156,6 +156,10 @@ class TableStatsRead(OrmModel):
     has_sort_order: bool | None = None
     target_file_size_bytes: int | None = None
     estimated_monthly_s3_cost_usd: float | None = None
+    projected_monthly_s3_cost_usd: float | None = None
+    projected_savings_usd_month: float | None = None
+    reclaimable_bytes: int | None = None
+    cost_precision: CostPrecision | None = None
     query_count_30d: int = 0
     raw: JsonDict | None = None
 
@@ -233,6 +237,7 @@ class AuditLogRead(OrmModel):
     engine: str | None = None
     detail: str | None = None
     duration_ms: int | None = None
+    actual_bytes_freed: int | None = None
 
 
 class TableAuditResponse(BaseModel):
@@ -251,6 +256,9 @@ class DatalakeTotals(BaseModel):
     small_files_count: int
     needs_compaction_count: int
     estimated_monthly_s3_cost_usd: float
+    projected_monthly_s3_cost_usd: float = 0
+    projected_savings_usd_month: float = 0
+    reclaimable_bytes: int = 0
     query_count_30d: int
 
 
@@ -300,6 +308,64 @@ class SchemaCostItem(BaseModel):
 class SchemaCostDashboardResponse(BaseModel):
     items: list[SchemaCostItem]
     limit: int
+
+
+class CostByOperationRead(BaseModel):
+    operation: OperationType
+    savings_usd_month: float
+    reclaimable_bytes: int
+
+
+class CostTrendPoint(BaseModel):
+    scan_at: datetime
+    current_monthly_cost_usd: float | None = None
+    projected_savings_usd_month: float | None = None
+    realized_usd_month: float | None = None
+
+
+class CostDashboardTotals(BaseModel):
+    current_monthly_cost_usd: float
+    projected_monthly_cost_usd: float
+    projected_savings_usd_month: float
+    current_storage_bytes: int
+    reclaimable_bytes: int
+    precision_coverage: dict[str, int] = Field(default_factory=dict)
+    orphan_scan_stale: bool = False
+    last_full_cost_scan_at: datetime | None = None
+
+
+class CostSchemaItem(BaseModel):
+    schema_name: str
+    current_usd: float
+    projected_usd: float
+    savings_usd: float
+
+
+class CostDashboardResponse(BaseModel):
+    totals: CostDashboardTotals
+    savings_by_operation: list[CostByOperationRead]
+    cost_by_schema: list[CostSchemaItem]
+    top_opportunities: list[TableRead]
+    trend: list[CostTrendPoint] = Field(default_factory=list)
+
+
+class TableCostRead(BaseModel):
+    table_id: uuid.UUID
+    precision: CostPrecision
+    price_per_gb_month: float
+    current_monthly_cost_usd: float
+    projected_monthly_cost_usd: float
+    projected_savings_usd_month: float
+    query_request_savings_usd_month: float
+    live_bytes: int
+    dead_bytes: int
+    metadata_bytes: int
+    orphan_bytes: int | None = None
+    listed_bytes: int | None = None
+    reclaimable_bytes: int
+    by_operation: list[CostByOperationRead]
+    last_full_cost_scan_at: datetime | None = None
+    scan_at: datetime | None = None
 
 
 class AssignmentSelection(BaseModel):
