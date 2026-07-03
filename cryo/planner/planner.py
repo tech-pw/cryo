@@ -35,6 +35,15 @@ def build_plan(
     operations: list[Operation] = []
     notes: list[str] = []
 
+    if resolved_mode is Mode.MANIFEST_ONLY:
+        operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+        return MaintenancePlan(
+            table_ref=_table_ref(stats, params),
+            mode=resolved_mode,
+            operations=tuple(operations),
+            notes=tuple(notes),
+        )
+
     if resolved_mode in {Mode.LIGHT, Mode.STANDARD, Mode.DEEP}:
         operations.append(Operation(OperationType.EXPIRE_SNAPSHOTS, _expire_params(params)))
 
@@ -62,17 +71,25 @@ def _optimize_operations(
     notes: list[str],
 ) -> list[Operation]:
     min_small_files = int(params.get("min_small_files", 128))
+    delete_ratio_trigger = float(params.get("delete_ratio_trigger", 0))
+    delete_file_pct = float(stats.get("delete_file_pct") or 0)
     table_small_files = int(stats.get("small_files_count") or stats.get("table_small_files") or 0)
     total_size_gb = float(stats.get("total_size_gb") or 0.0)
     chunk_size_gb = float(params.get("chunk_size_gb", 100))
     fields = partition_fields_from_stats(stats, params)
 
-    if table_small_files < min_small_files:
+    delete_triggered = delete_ratio_trigger > 0 and delete_file_pct >= delete_ratio_trigger
+    if table_small_files < min_small_files and not delete_triggered:
         notes.append(
             "Skipped optimize: table has "
             f"{table_small_files} small files below threshold {min_small_files}."
         )
         return []
+    if delete_triggered and table_small_files < min_small_files:
+        notes.append(
+            f"Planned optimize due to delete_file_pct {delete_file_pct}% "
+            f">= delete_ratio_trigger {delete_ratio_trigger}%."
+        )
 
     if not fields or all(field.transform is PartitionTransform.UNPARTITIONED for field in fields):
         notes.append("Planned full-table optimize: table is unpartitioned.")
@@ -83,7 +100,7 @@ def _optimize_operations(
         return [_optimize_operation(params)]
 
     capabilities = _predicate_capabilities(params)
-    candidates = _candidate_partitions(fields, partitions, min_small_files, capabilities, notes)
+    candidates = _candidate_partitions(fields, partitions, min_small_files, capabilities, notes, params)
     if not candidates:
         notes.append("Skipped optimize: no renderable partition candidates met the threshold.")
         return []
@@ -109,9 +126,16 @@ def _candidate_partitions(
     min_small_files: int,
     capabilities: set[PredicateCapability],
     notes: list[str],
+    params: Mapping[str, Any] | None = None,
 ) -> list[OptimizeCandidate]:
+    params = params or {}
+    idle_hours = int(params.get("partition_write_idle_hours") or 0)
     candidates: list[OptimizeCandidate] = []
     for row in partitions:
+        if idle_hours > 0 and not _partition_is_cold(row, idle_hours):
+            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+            notes.append(f"Skipped hot partition {partition_value}: writes within last {idle_hours}h.")
+            continue
         small_files = _small_files(row)
         if small_files < min_small_files:
             continue
@@ -212,3 +236,19 @@ def _optional_int(value: Any) -> int | None:
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def _partition_is_cold(row: Mapping[str, Any], idle_hours: int) -> bool:
+    from datetime import UTC, datetime, timedelta
+
+    last_write = row.get("last_write_at") or row.get("updated_at")
+    if last_write is None:
+        return True
+    if isinstance(last_write, datetime):
+        observed = last_write if last_write.tzinfo else last_write.replace(tzinfo=UTC)
+    else:
+        try:
+            observed = datetime.fromisoformat(str(last_write).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    return observed <= datetime.now(UTC) - timedelta(hours=idle_hours)

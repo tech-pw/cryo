@@ -20,6 +20,7 @@ from cryo.scanner.cost import (
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_health_score
+from cryo.scanner.signals import detect_format_version, enrich_stats_signals
 
 HEALTH_SMALL_FILE_BYTES = 8 * MB
 
@@ -187,6 +188,7 @@ def analyze_table(
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
     props = _table_properties(table_obj)
+    format_version = detect_format_version(table_obj)
     cost = estimate_storage_cost(
         total_size_bytes=total_size_bytes,
         total_delete_bytes=delete_bytes,
@@ -210,8 +212,8 @@ def analyze_table(
         "has_sort_order": props["has_sort_order"],
         "target_file_size_bytes": props["target_file_size_bytes"],
         "file_formats": sorted(file_formats),
+        "format_version": format_version,
     }
-    score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
     primary = fields[0] if fields else {}
     cost_analysis: TableCostAnalysis | None = None
     metadata_accounting: MetadataCostAccounting | None = None
@@ -234,6 +236,19 @@ def analyze_table(
             settings=settings,
             stats=cost_stats,
         )
+    if metadata_accounting is not None:
+        stats_for_health = enrich_stats_signals(
+            stats_for_health,
+            metadata_bytes=metadata_accounting.breakdown.metadata_bytes,
+            data_bytes=metadata_accounting.breakdown.live_bytes,
+            format_version=format_version,
+        )
+    else:
+        stats_for_health = enrich_stats_signals(
+            stats_for_health,
+            format_version=format_version,
+        )
+    score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
     raw = {
         "partition_fields": fields,
         "partitions_to_rewrite": [partition.__dict__ for partition in partition_rows],

@@ -14,6 +14,7 @@ class RenderedStatement:
     sql: str
     engine: EngineType
     metadata: dict[str, object] = field(default_factory=dict)
+    payload: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

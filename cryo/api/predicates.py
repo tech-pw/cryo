@@ -7,6 +7,13 @@ from typing import Any
 from sqlalchemy import ColumnElement, and_, false, not_, or_, true
 
 from cryo.db.models import Table, TableCost, TableStats
+from cryo.domain.predicates import (
+    LEAF_OPERATORS,
+    LIKE_ESCAPE,
+    SUPPORTED_FIELDS,
+    _glob_to_like,
+    evaluate_predicate,
+)
 
 FIELD_MAP = {
     "schema_name": Table.schema_name,
@@ -28,9 +35,6 @@ FIELD_MAP = {
     "reclaimable_bytes": TableStats.reclaimable_bytes,
     "cost_precision": TableCost.precision,
 }
-SUPPORTED_FIELDS = frozenset(FIELD_MAP)
-LEAF_OPERATORS = frozenset({"=", "!=", "<", "<=", ">", ">=", "in", "like", "glob"})
-LIKE_ESCAPE = "\\"
 
 
 def compile_predicate(predicate: Mapping[str, Any] | None) -> ColumnElement[bool] | None:
@@ -86,59 +90,6 @@ def _compile_leaf(predicate: Mapping[str, Any]) -> ColumnElement[bool]:
     raise ValueError(f"Unsupported filter operator: {op}")
 
 
-def evaluate_predicate(predicate: Mapping[str, Any] | None, row: Mapping[str, Any]) -> bool:
-    if not predicate:
-        return True
-
-    if "all" in predicate:
-        return all(_required_evaluate(child, row) for child in _children(predicate["all"]))
-    if "any" in predicate:
-        return any(_required_evaluate(child, row) for child in _children(predicate["any"]))
-    if "not" in predicate:
-        return not _required_evaluate(_child(predicate["not"]), row)
-
-    return _evaluate_leaf(predicate, row)
-
-
-def _required_evaluate(predicate: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
-    if not predicate:
-        raise ValueError("empty predicate is not allowed inside compound predicates")
-    return evaluate_predicate(predicate, row)
-
-
-def _evaluate_leaf(predicate: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
-    field_name = _field(predicate)
-    op = _operator(predicate)
-    expected = predicate.get("value")
-    actual = row.get(field_name)
-
-    if op == "=":
-        return bool(actual == expected)
-    if op == "!=":
-        return bool(actual != expected)
-    if op in {"<", "<=", ">", ">="}:
-        if actual is None or expected is None:
-            return False
-        comparison = _numeric_compare(actual, expected)
-        if op == "<":
-            return comparison < 0
-        if op == "<=":
-            return comparison <= 0
-        if op == ">":
-            return comparison > 0
-        return comparison >= 0
-    if op == "in":
-        if not isinstance(expected, list | tuple | set | frozenset):
-            raise ValueError("in predicate value must be a collection")
-        return bool(actual in expected)
-    if op == "like":
-        return _like_matches(actual, expected)
-    if op == "glob":
-        return _like_matches(actual, _glob_to_like(str(expected)))
-
-    raise ValueError(f"Unsupported filter operator: {op}")
-
-
 def _field(predicate: Mapping[str, Any]) -> str:
     field_name = predicate.get("field")
     if not isinstance(field_name, str):
@@ -167,52 +118,3 @@ def _child(value: Any) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("not predicate must be an object")
     return value
-
-
-def _numeric_compare(actual: Any, expected: Any) -> int:
-    left = float(actual)
-    right = float(expected)
-    if left < right:
-        return -1
-    if left > right:
-        return 1
-    return 0
-
-
-def _like_matches(actual: Any, expected: Any) -> bool:
-    if actual is None or expected is None:
-        return False
-    return re.fullmatch(_like_to_regex(str(expected)), str(actual), flags=re.DOTALL) is not None
-
-
-def _like_to_regex(pattern: str) -> str:
-    regex: list[str] = []
-    index = 0
-    while index < len(pattern):
-        char = pattern[index]
-        if char == LIKE_ESCAPE and index + 1 < len(pattern):
-            regex.append(re.escape(pattern[index + 1]))
-            index += 2
-            continue
-        if char == "%":
-            regex.append(".*")
-        elif char == "_":
-            regex.append(".")
-        else:
-            regex.append(re.escape(char))
-        index += 1
-    return "".join(regex)
-
-
-def _glob_to_like(value: str) -> str:
-    translated: list[str] = []
-    for char in value:
-        if char == "*":
-            translated.append("%")
-        elif char == "?":
-            translated.append("_")
-        elif char in {LIKE_ESCAPE, "%", "_"}:
-            translated.append(f"{LIKE_ESCAPE}{char}")
-        else:
-            translated.append(char)
-    return "".join(translated)
