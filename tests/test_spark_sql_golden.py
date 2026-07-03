@@ -109,9 +109,7 @@ def test_spark_renders_compute_statistics_all_columns() -> None:
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.DEEP,
-        operations=(
-            Operation(OperationType.COMPUTE_STATISTICS, {"columns": []}),
-        ),
+        operations=(Operation(OperationType.COMPUTE_STATISTICS, {"columns": []}),),
     )
     stmts = render(plan)
     assert len(stmts) == 1

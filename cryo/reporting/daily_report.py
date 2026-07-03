@@ -25,7 +25,8 @@ from cryo.reporting.slack import (
 
 logger = logging.getLogger(__name__)
 
-REPORT_SYSTEM_PROMPT = """You are Cryo's daily report summarizer. Generate a concise executive summary of the datalake health report.
+REPORT_SYSTEM_PROMPT = """You are Cryo's daily report summarizer. Generate a concise
+executive summary of the datalake health report.
 
 Guidelines:
 - Be concise (2-3 paragraphs max)
@@ -84,7 +85,7 @@ async def generate_daily_report(
         ai_summary = await _generate_ai_summary(session, report_data)
 
     # Build report result
-    result = {
+    result: dict[str, Any] = {
         "report_date": report_data.report_date.isoformat(),
         "summary": {
             "total_tables": report_data.total_tables,
@@ -109,7 +110,10 @@ async def generate_daily_report(
     # Send to Slack if client provided
     if slack_client:
         blocks = _build_slack_blocks(report_data, ai_summary)
-        await slack_client.send_blocks(blocks, fallback_text=f"Cryo Daily Report - {report_data.report_date.date()}")
+        await slack_client.send_blocks(
+            blocks,
+            fallback_text=f"Cryo Daily Report - {report_data.report_date.date()}",
+        )
         result["slack_sent"] = True
 
     return result
@@ -121,9 +125,9 @@ def _collect_report_data(session: Session) -> DailyReportData:
     yesterday = now - timedelta(days=1)
 
     # Table counts
-    total_tables = session.scalar(
-        select(func.count(Table.id)).where(Table.is_active.is_(True))
-    ) or 0
+    total_tables = (
+        session.scalar(select(func.count(Table.id)).where(Table.is_active.is_(True))) or 0
+    )
 
     # Health distribution
     grade_rows = session.execute(
@@ -137,9 +141,12 @@ def _collect_report_data(session: Session) -> DailyReportData:
     unhealthy = sum(grade_distribution.get(g, 0) for g in ["D", "E", "F"])
 
     # Compaction needs
-    compaction_count = session.scalar(
-        select(func.count(TableStats.table_id)).where(TableStats.needs_compaction.is_(True))
-    ) or 0
+    compaction_count = (
+        session.scalar(
+            select(func.count(TableStats.table_id)).where(TableStats.needs_compaction.is_(True))
+        )
+        or 0
+    )
 
     # Collect anomalies from recent history
     all_anomalies: list[Anomaly] = []
@@ -166,16 +173,18 @@ def _collect_report_data(session: Session) -> DailyReportData:
         rows = []
         for row in history:
             raw = dict(row.raw or {})
-            rows.append({
-                "scan_at": row.scan_at.isoformat(),
-                "small_files_count": row.small_files_count,
-                "total_files": row.total_files,
-                "total_size_gb": row.total_size_gb,
-                "overall_score": row.overall_score,
-                "total_snapshots": raw.get("total_snapshots"),
-                "total_delete_files": raw.get("total_delete_files"),
-                "manifest_count": raw.get("manifest_count"),
-            })
+            rows.append(
+                {
+                    "scan_at": row.scan_at.isoformat(),
+                    "small_files_count": row.small_files_count,
+                    "total_files": row.total_files,
+                    "total_size_gb": row.total_size_gb,
+                    "overall_score": row.overall_score,
+                    "total_snapshots": raw.get("total_snapshots"),
+                    "total_delete_files": raw.get("total_delete_files"),
+                    "manifest_count": raw.get("manifest_count"),
+                }
+            )
 
         anomalies = detect_anomalies(
             rows,
@@ -191,14 +200,16 @@ def _collect_report_data(session: Session) -> DailyReportData:
         for a in anomalies:
             all_anomalies.append(a)
             if a.severity in ("warning", "critical"):
-                critical_anomalies.append({
-                    "table": f"{schema_name}.{table_name}",
-                    "metric": a.metric,
-                    "value": a.value,
-                    "baseline": a.baseline,
-                    "severity": a.severity,
-                    "z_score": a.z_score,
-                })
+                critical_anomalies.append(
+                    {
+                        "table": f"{schema_name}.{table_name}",
+                        "metric": a.metric,
+                        "value": a.value,
+                        "baseline": a.baseline,
+                        "severity": a.severity,
+                        "z_score": a.z_score,
+                    }
+                )
 
     # Maintenance stats (last 24h)
     maintenance_rows = session.execute(
@@ -214,7 +225,13 @@ def _collect_report_data(session: Session) -> DailyReportData:
 
     # Top issues (tables with worst scores)
     top_issues_rows = session.execute(
-        select(Table.schema_name, Table.table_name, TableStats.grade, TableStats.overall_score, TableStats.small_files_count)
+        select(
+            Table.schema_name,
+            Table.table_name,
+            TableStats.grade,
+            TableStats.overall_score,
+            TableStats.small_files_count,
+        )
         .join(TableStats, TableStats.table_id == Table.id)
         .where(TableStats.overall_score < 60)
         .order_by(TableStats.overall_score.asc())
@@ -240,9 +257,9 @@ def _collect_report_data(session: Session) -> DailyReportData:
         )
     ).first()
 
-    total_size_gb = cost_stats[0] or 0
-    total_cost = cost_stats[1] or 0
-    projected_savings = cost_stats[2] or 0
+    total_size_gb = float(cost_stats[0] or 0.0) if cost_stats is not None else 0.0
+    total_cost = float(cost_stats[1] or 0.0) if cost_stats is not None else 0.0
+    projected_savings = float(cost_stats[2] or 0.0) if cost_stats is not None else 0.0
 
     return DailyReportData(
         report_date=now,
@@ -271,9 +288,7 @@ async def _generate_ai_summary(session: Session, data: DailyReportData) -> str |
         )
     )
     if provider is None:
-        provider = session.scalar(
-            select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1)
-        )
+        provider = session.scalar(select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1))
     if provider is None or not provider.api_key_encrypted:
         logger.info("No AI provider configured, skipping AI summary")
         return None
@@ -335,14 +350,25 @@ def _build_slack_blocks(data: DailyReportData, ai_summary: str | None) -> list[S
 
     # Health Overview
     blocks.append(divider_block())
-    health_emoji = "🟢" if data.unhealthy_tables == 0 else "🟡" if data.unhealthy_tables < 5 else "🔴"
+    health_emoji = (
+        "🟢" if data.unhealthy_tables == 0 else "🟡" if data.unhealthy_tables < 5 else "🔴"
+    )
     blocks.append(
-        fields_block([
-            ("Total Tables", str(data.total_tables)),
-            ("Health Status", f"{health_emoji} {data.healthy_tables} healthy / {data.unhealthy_tables} unhealthy"),
-            ("Needing Compaction", str(data.tables_needing_compaction)),
-            ("Anomalies Detected", f"{data.total_anomalies} ({len(data.critical_anomalies)} critical)"),
-        ])
+        fields_block(
+            [
+                ("Total Tables", str(data.total_tables)),
+                (
+                    "Health Status",
+                    f"{health_emoji} {data.healthy_tables} healthy / "
+                    f"{data.unhealthy_tables} unhealthy",
+                ),
+                ("Needing Compaction", str(data.tables_needing_compaction)),
+                (
+                    "Anomalies Detected",
+                    f"{data.total_anomalies} ({len(data.critical_anomalies)} critical)",
+                ),
+            ]
+        )
     )
 
     # Grade Distribution
@@ -379,20 +405,20 @@ def _build_slack_blocks(data: DailyReportData, ai_summary: str | None) -> list[S
     # Cost Summary
     blocks.append(divider_block())
     blocks.append(
-        fields_block([
-            ("Total Size", f"{data.total_size_tb:.2f} TB"),
-            ("Monthly S3 Cost", f"${data.total_cost_usd:,.2f}"),
-            ("Projected Savings", f"${data.projected_savings_usd:,.2f}/mo"),
-        ])
+        fields_block(
+            [
+                ("Total Size", f"{data.total_size_tb:.2f} TB"),
+                ("Monthly S3 Cost", f"${data.total_cost_usd:,.2f}"),
+                ("Projected Savings", f"${data.projected_savings_usd:,.2f}/mo"),
+            ]
+        )
     )
 
     # Maintenance Activity
     if data.maintenance_stats:
         succeeded = sum(v for k, v in data.maintenance_stats.items() if "succeeded" in k)
         failed = sum(v for k, v in data.maintenance_stats.items() if "failed" in k)
-        blocks.append(
-            section_block(f"*Maintenance (24h):* {succeeded} succeeded, {failed} failed")
-        )
+        blocks.append(section_block(f"*Maintenance (24h):* {succeeded} succeeded, {failed} failed"))
 
     # Footer
     blocks.append(divider_block())

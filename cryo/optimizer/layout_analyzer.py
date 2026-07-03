@@ -16,7 +16,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
@@ -28,7 +28,7 @@ from cryo.telemetry.patterns import get_recommended_sort_columns, get_table_quer
 logger = logging.getLogger(__name__)
 
 
-class LayoutStrategy(str, Enum):
+class LayoutStrategy(StrEnum):
     """Data layout optimization strategy."""
 
     NONE = "none"  # No optimization needed/possible
@@ -55,7 +55,7 @@ class BloomFilterRecommendation:
     column_name: str
     reason: str
     estimated_skip_rate: float  # Expected % of files skipped for point lookups
-    cardinality_estimate: str   # "high", "medium", "low"
+    cardinality_estimate: str  # "high", "medium", "low"
     equality_filter_count: int
     spark_alter_statement: str
     priority: int = 0  # Higher = more important
@@ -158,7 +158,9 @@ def analyze_table_layout(
     except ValueError:
         logger.warning(f"No query patterns available for table {table_id}")
 
-    analysis.efficiency_gap = max(0, analysis.best_prune_efficiency - analysis.current_prune_efficiency)
+    analysis.efficiency_gap = max(
+        0, analysis.best_prune_efficiency - analysis.current_prune_efficiency
+    )
 
     # Generate Bloom filter recommendations
     try:
@@ -238,7 +240,7 @@ def _calculate_overlap_ratio(ranges: list[tuple[Any, Any]]) -> float:
         else:
             overlap = 1.0
 
-        return overlap
+        return float(overlap)
 
     except (TypeError, ValueError):
         # Can't compare these values (e.g., strings, mixed types)
@@ -323,7 +325,6 @@ def _recommend_bloom_filters(
 
     Returns recommendations ordered by expected impact.
     """
-    from cryo.db.models import QueryPattern
 
     patterns = session.scalars(
         select(QueryPattern)
@@ -341,7 +342,17 @@ def _recommend_bloom_filters(
         col_lower = p.column_name.lower()
         is_likely_low_cardinality = any(
             kw in col_lower
-            for kw in ("date", "day", "month", "year", "status", "type", "flag", "region", "country")
+            for kw in (
+                "date",
+                "day",
+                "month",
+                "year",
+                "status",
+                "type",
+                "flag",
+                "region",
+                "country",
+            )
         )
         if is_likely_low_cardinality:
             continue
@@ -371,7 +382,8 @@ def _recommend_bloom_filters(
         catalog_dot_table = f"iceberg.{schema_name}.{table_name}"
         spark_stmt = (
             f"ALTER TABLE {catalog_dot_table} "
-            f"SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{p.column_name}' = 'true')"
+            "SET TBLPROPERTIES "
+            f"('write.parquet.bloom-filter-enabled.column.{p.column_name}' = 'true')"
         )
 
         rec = BloomFilterRecommendation(
@@ -379,7 +391,8 @@ def _recommend_bloom_filters(
             reason=(
                 f"Column has {p.equality_filter_count} equality filter uses "
                 f"({equality_ratio:.0%} of all accesses). "
-                f"Min/max statistics are ineffective for {cardinality_estimate}-cardinality columns. "
+                "Min/max statistics are ineffective for "
+                f"{cardinality_estimate}-cardinality columns. "
                 f"Bloom filter estimated to skip ~{estimated_skip_rate:.0%} of files on miss."
             ),
             estimated_skip_rate=estimated_skip_rate,

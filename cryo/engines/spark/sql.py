@@ -104,7 +104,7 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         # Linear sort
         sort_exprs = []
         sort_directions = operation.params.get("sort_directions", ["asc"] * len(sort_columns))
-        for col, direction in zip(sort_columns, sort_directions):
+        for col, direction in zip(sort_columns, sort_directions, strict=False):
             sort_exprs.append(f"`{col}` {direction.upper()}")
         options.append(f"'sort-order', '{', '.join(sort_exprs)}'")
 
@@ -141,9 +141,7 @@ def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, 
             f"table => '{table_name}', columns => ARRAY({cols_expr}))"
         )
     else:
-        stats_sql = (
-            f"CALL {catalog}.system.compute_table_stats(table => '{table_name}')"
-        )
+        stats_sql = f"CALL {catalog}.system.compute_table_stats(table => '{table_name}')"
     statements.append(stats_sql)
 
     # Enable Bloom filters for high-cardinality columns via table properties

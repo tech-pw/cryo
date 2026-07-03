@@ -88,9 +88,7 @@ class ExecutableMaintenanceEngine(Protocol):
 
     def session_setup(self) -> list[str]: ...
 
-    def execute(
-        self, stmt: RenderedStatement, ctx: ExecCtx | None = None
-    ) -> BaseExecResult: ...
+    def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> BaseExecResult: ...
 
 
 class JobStore(Protocol):
@@ -231,9 +229,7 @@ class FakeMaintenanceEngine:
     def session_setup(self) -> list[str]:
         return []
 
-    def execute(
-        self, stmt: RenderedStatement, ctx: ExecCtx | None = None
-    ) -> BaseExecResult:
+    def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> BaseExecResult:
         if stmt.action in self.fail_actions:
             raise RuntimeError(f"fake engine failed {stmt.action.value}")
         self.executed.append(stmt)

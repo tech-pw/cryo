@@ -16,9 +16,7 @@ _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
 )
 
 
-def _stats_with_preview_params(
-    stats: dict[str, Any], params: Mapping[str, Any]
-) -> dict[str, Any]:
+def _stats_with_preview_params(stats: dict[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
     merged = dict(stats)
     raw = dict(merged.get("raw") or {})
     target = params.get("target_file_size") or params.get("target_max_file_size_bytes")
@@ -151,9 +149,7 @@ def savings_projection_for_plan(
     planned_savings = round(sum(filtered_ops.values()), 4)
     planned_reclaim = reclaim_bytes_for_plan_operations(stats, operations)
     query_savings = (
-        projection.query_request_savings_usd_month
-        if OperationType.OPTIMIZE in resolved
-        else 0.0
+        projection.query_request_savings_usd_month if OperationType.OPTIMIZE in resolved else 0.0
     )
     assumptions = dict(projection.assumptions)
     assumptions["planned_operations"] = [

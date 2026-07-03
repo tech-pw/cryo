@@ -10,17 +10,17 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from cryo.triggers.signals import SignalResult, check_all_signals, any_signal_triggered
+from cryo.triggers.signals import SignalResult, any_signal_triggered, check_all_signals
 
 logger = logging.getLogger(__name__)
 
 
 class TriggerType(StrEnum):
-    SCHEDULE = "schedule"          # Normal scheduled maintenance
+    SCHEDULE = "schedule"  # Normal scheduled maintenance
     FILE_DEGRADATION = "file_degradation"  # Small-file ratio crossed threshold
-    QUERY_LATENCY = "query_latency"        # Query latency spike detected
-    COST_ANOMALY = "cost_anomaly"          # Projected savings spiked
-    MANUAL = "manual"              # Operator-initiated
+    QUERY_LATENCY = "query_latency"  # Query latency spike detected
+    COST_ANOMALY = "cost_anomaly"  # Projected savings spiked
+    MANUAL = "manual"  # Operator-initiated
 
 
 @dataclass

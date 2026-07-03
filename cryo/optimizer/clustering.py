@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
 
-class SortDirection(str, Enum):
+class SortDirection(StrEnum):
     """Sort direction for column ordering."""
 
     ASC = "asc"
@@ -32,14 +32,24 @@ class SortOrder:
     def to_spark_sql(self) -> str:
         """Generate Spark SQL sort expression."""
         result = f"`{self.column}`"
-        if self.direction in (SortDirection.DESC, SortDirection.DESC_NULLS_FIRST, SortDirection.DESC_NULLS_LAST):
+        if self.direction in (
+            SortDirection.DESC,
+            SortDirection.DESC_NULLS_FIRST,
+            SortDirection.DESC_NULLS_LAST,
+        ):
             result += " DESC"
         else:
             result += " ASC"
 
-        if self.null_order == "first" or self.direction in (SortDirection.ASC_NULLS_FIRST, SortDirection.DESC_NULLS_FIRST):
+        if self.null_order == "first" or self.direction in (
+            SortDirection.ASC_NULLS_FIRST,
+            SortDirection.DESC_NULLS_FIRST,
+        ):
             result += " NULLS FIRST"
-        elif self.null_order == "last" or self.direction in (SortDirection.ASC_NULLS_LAST, SortDirection.DESC_NULLS_LAST):
+        elif self.null_order == "last" or self.direction in (
+            SortDirection.ASC_NULLS_LAST,
+            SortDirection.DESC_NULLS_LAST,
+        ):
             result += " NULLS LAST"
 
         return result
@@ -136,9 +146,16 @@ class ClusteringPlan:
         ]
 
         # Set options
-        code_lines.append(f"rewrite = rewrite.option('target-file-size-bytes', {self.target_file_size_bytes})")
-        code_lines.append(f"rewrite = rewrite.option('min-file-size-bytes', {self.min_file_size_bytes})")
-        code_lines.append(f"rewrite = rewrite.option('partial-progress.enabled', {str(self.partial_progress_enabled).lower()})")
+        code_lines.append(
+            f"rewrite = rewrite.option('target-file-size-bytes', {self.target_file_size_bytes})"
+        )
+        code_lines.append(
+            f"rewrite = rewrite.option('min-file-size-bytes', {self.min_file_size_bytes})"
+        )
+        code_lines.append(
+            "rewrite = rewrite.option("
+            f"'partial-progress.enabled', {str(self.partial_progress_enabled).lower()})"
+        )
 
         # Set sort order
         if self.strategy == "zorder" and self.zorder_spec:
@@ -146,7 +163,9 @@ class ClusteringPlan:
             code_lines.append(f"rewrite = rewrite.zOrder({cols})")
         elif self.strategy == "sort" and self.sort_order:
             for sort in self.sort_order:
-                direction = "SortDirection.DESC" if "desc" in sort.direction.value else "SortDirection.ASC"
+                direction = (
+                    "SortDirection.DESC" if "desc" in sort.direction.value else "SortDirection.ASC"
+                )
                 code_lines.append(f'rewrite = rewrite.sort("{sort.column}", {direction})')
 
         # Filter
@@ -217,7 +236,7 @@ def build_clustering_plan(
             directions = options.get("directions", [SortDirection.ASC] * len(columns))
             plan.sort_order = [
                 SortOrder(column=col, direction=dir)
-                for col, dir in zip(columns, directions)
+                for col, dir in zip(columns, directions, strict=False)
             ]
 
     return plan

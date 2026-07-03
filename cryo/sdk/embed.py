@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Embedded analytics SDK for embedding Cryo widgets in external apps.
 
 Allows customers to embed Cryo dashboards and widgets into their
@@ -10,9 +11,11 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import Table, TableStats
+from cryo.db.model_utils import qualified_table_name
+from cryo.db.models import AuditLog, Table, TableStats
 
 
 @dataclass
@@ -31,16 +34,16 @@ def generate_embed_code(
 ) -> str:
     """
     Generate HTML/JS embed code for a widget.
-    
+
     Args:
         widget_config: Widget configuration
         cryo_base_url: Base URL of Cryo instance
-    
+
     Returns:
         HTML embed code
     """
     container_id = f"cryo-widget-{widget_config.table_id}"
-    
+
     code = f"""<!-- Cryo Embedded Widget -->
 <script src="{cryo_base_url}/embed.js"></script>
 <div id="{container_id}"></div>
@@ -53,7 +56,7 @@ def generate_embed_code(
     style: {widget_config.style or {}}
   }});
 </script>"""
-    
+
     return code
 
 
@@ -64,64 +67,73 @@ def get_widget_data(
 ) -> dict[str, Any]:
     """
     Get data for an embeddable widget.
-    
+
     This would be called by the Cryo API when the embed.js makes requests.
-    
+
     Args:
         session: Database session
         widget_type: Widget type
         table_id: Table ID
-    
+
     Returns:
         Widget data as JSON-serializable dict
     """
     table = session.get(Table, table_id)
     if not table:
         return {"error": "Table not found"}
-    
+
     stats = session.get(TableStats, table_id)
     if not stats:
         return {"error": "No stats available"}
-    
-    table_name = f"{table.catalog}.{table.schema_name}.{table.table_name}"
-    
+
+    table_name = qualified_table_name(table)
+
     if widget_type == "table-health-card":
+        last_optimized_at = session.scalar(
+            select(AuditLog.ts)
+            .where(
+                AuditLog.table_id == table_id,
+                AuditLog.status == "succeeded",
+            )
+            .order_by(AuditLog.ts.desc())
+            .limit(1)
+        )
         return {
             "table_name": table_name,
             "grade": stats.grade,
-            "score": stats.score,
+            "score": stats.overall_score,
             "total_size_gb": stats.total_size_gb,
             "small_files_count": stats.small_files_count,
-            "last_optimized_at": stats.last_optimized_at.isoformat() if stats.last_optimized_at else None,
+            "last_optimized_at": last_optimized_at.isoformat() if last_optimized_at else None,
             "estimated_monthly_cost_usd": stats.estimated_monthly_s3_cost_usd,
         }
-    
+
     elif widget_type == "maintenance-status":
-        from cryo.db.models import AuditLog
-        
         # Get recent maintenance jobs
         stmt = (
             select(AuditLog)
             .where(AuditLog.table_id == table_id)
-            .order_by(AuditLog.started_at.desc())
+            .order_by(AuditLog.ts.desc())
             .limit(5)
         )
-        
+
         recent_jobs = session.execute(stmt).scalars().all()
-        
+
         return {
             "table_name": table_name,
             "recent_jobs": [
                 {
                     "action": job.action,
                     "status": job.status,
-                    "started_at": job.started_at.isoformat(),
-                    "duration_seconds": job.duration_seconds,
+                    "started_at": job.ts.isoformat(),
+                    "duration_seconds": (
+                        job.duration_ms / 1000 if job.duration_ms is not None else None
+                    ),
                 }
                 for job in recent_jobs
             ],
         }
-    
+
     elif widget_type == "cost-trend":
         # Would fetch cost history from TableStatsHistory
         return {
@@ -129,7 +141,7 @@ def get_widget_data(
             "current_cost_usd": stats.estimated_monthly_s3_cost_usd,
             "trend": "stable",  # Simplified
         }
-    
+
     return {"error": f"Unknown widget type: {widget_type}"}
 
 

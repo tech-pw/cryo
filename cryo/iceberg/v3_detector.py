@@ -7,10 +7,10 @@ maintenance strategies accordingly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy.orm import Session
 
+from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import Table, TableStats
 
 
@@ -33,20 +33,20 @@ def detect_iceberg_v3_features(
 ) -> IcebergV3Features:
     """
     Detect Iceberg v3 features for a table.
-    
+
     Args:
         session: Database session
         table_id: Table UUID
-    
+
     Returns:
         Iceberg v3 features detected
     """
     table = session.get(Table, table_id)
     if not table:
         raise ValueError(f"Table {table_id} not found")
-    
-    table_name = f"{table.catalog}.{table.schema_name}.{table.table_name}"
-    
+
+    table_name = qualified_table_name(table)
+
     stats = session.get(TableStats, table_id)
     if not stats or not stats.raw:
         # No metadata available
@@ -59,24 +59,24 @@ def detect_iceberg_v3_features(
             single_file_commits=False,
             recommendations=[],
         )
-    
+
     raw_metadata = stats.raw if isinstance(stats.raw, dict) else {}
-    
+
     # Detect format version
     format_version = raw_metadata.get("format_version", 2)
-    
+
     # Detect deletion vectors (v3 feature)
     uses_deletion_vectors = False
     if format_version >= 3:
         # Check for delete files with deletion vectors
         delete_files = raw_metadata.get("delete_files", [])
         if delete_files:
-            # Deletion vectors are marked with content type = "POSITION_DELETES" and file format contains "deletion-vectors"
+            # Deletion vectors are POSITION_DELETES with deletion-vector file paths.
             uses_deletion_vectors = any(
                 isinstance(df, dict) and "deletion-vector" in str(df.get("file_path", "")).lower()
                 for df in delete_files
             )
-    
+
     # Detect row lineage (v3 feature)
     has_row_lineage = False
     if format_version >= 3:
@@ -85,8 +85,10 @@ def detect_iceberg_v3_features(
         if isinstance(schema, dict):
             fields = schema.get("fields", [])
             field_names = {f.get("name", "").lower() for f in fields if isinstance(f, dict)}
-            has_row_lineage = "_row_id" in field_names or "_last_updated_sequence_number" in field_names
-    
+            has_row_lineage = (
+                "_row_id" in field_names or "_last_updated_sequence_number" in field_names
+            )
+
     # Detect single-file commits (streaming pattern)
     single_file_commits = False
     snapshot_count = raw_metadata.get("snapshot_count", 0)
@@ -94,33 +96,37 @@ def detect_iceberg_v3_features(
     if snapshot_count > 100 and total_files > 0:
         avg_files_per_commit = total_files / snapshot_count
         single_file_commits = avg_files_per_commit < 2.0
-    
+
     # Generate recommendations
     recommendations = []
-    
+
     if format_version >= 3:
         recommendations.append("✅ Iceberg v3 table - latest features available")
     else:
-        recommendations.append("💡 Consider upgrading to Iceberg v3 for deletion vectors and row lineage")
-    
+        recommendations.append(
+            "💡 Consider upgrading to Iceberg v3 for deletion vectors and row lineage"
+        )
+
     if uses_deletion_vectors:
         recommendations.append(
-            "⚠️ Deletion vectors detected - skip eq-delete → pos-delete optimization (already optimal)"
+            "⚠️ Deletion vectors detected - skip eq-delete → pos-delete "
+            "optimization (already optimal)"
         )
-    
+
     if has_row_lineage:
         recommendations.append("✅ Row lineage enabled - CDC and audit use cases supported")
-    
+
     if single_file_commits:
         recommendations.append(
-            "⚠️ Streaming table detected (single-file commits) - increase compaction frequency to prevent file explosion"
+            "⚠️ Streaming table detected (single-file commits) - increase "
+            "compaction frequency to prevent file explosion"
         )
-    
+
     if format_version < 3 and single_file_commits:
         recommendations.append(
             "🚀 Upgrade to v3 + enable deletion vectors for efficient streaming updates"
         )
-    
+
     return IcebergV3Features(
         table_id=str(table_id),
         table_name=table_name,
@@ -135,13 +141,13 @@ def detect_iceberg_v3_features(
 def should_skip_delete_optimization(features: IcebergV3Features) -> bool:
     """
     Check if delete file optimization should be skipped.
-    
+
     Deletion vectors are more efficient than position deletes,
     so skip the eq-delete → pos-delete conversion.
-    
+
     Args:
         features: Detected Iceberg v3 features
-    
+
     Returns:
         True if delete optimization should be skipped
     """
@@ -154,19 +160,19 @@ def adjust_compaction_frequency_for_streaming(
 ) -> int:
     """
     Adjust compaction cooldown for streaming tables.
-    
+
     Tables with single-file commits need more frequent compaction
     to prevent file explosion.
-    
+
     Args:
         features: Detected Iceberg v3 features
         base_cooldown_days: Normal cooldown period
-    
+
     Returns:
         Adjusted cooldown period in days
     """
     if features.single_file_commits:
         # Reduce cooldown by 50% for streaming tables
         return max(1, base_cooldown_days // 2)
-    
+
     return base_cooldown_days

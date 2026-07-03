@@ -20,7 +20,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [ ] Field-level secret encryption helper (Fernet/KMS) for source/destination credentials.
 - [x] Local stack `docker-compose.yml`: MinIO, Iceberg REST, Trino, **Spark**, Postgres, Redis.
 - [x] Port/keep demo seeding (`scripts/create_test_tables.py`) for local Iceberg tables.
-- [ ] CI: lint + typecheck + unit tests on push.
+- [x] CI: lint + typecheck + unit tests on push.
 - [x] `Makefile` targets from `agents.md` §6.
 
 ## P1 — Scanner (datalake stats & health)

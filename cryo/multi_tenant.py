@@ -6,33 +6,34 @@ so Team A cannot see Team B's data.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import event, inspect, select
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 
 def add_tenant_filter(query: Any, tenant_id: UUID) -> Any:
     """
     Add tenant_id filter to a query.
-    
+
     This would be called automatically by the ORM session.
-    
+
     Args:
         query: SQLAlchemy query
         tenant_id: Tenant ID to filter by
-    
+
     Returns:
         Modified query with tenant filter
     """
     # Get model from query
     model = query.column_descriptions[0]["entity"]
-    
+
     # Check if model has tenant_id column
     mapper = inspect(model)
     if "tenant_id" in [col.key for col in mapper.columns]:
         query = query.filter(model.tenant_id == tenant_id)
-    
+
     return query
 
 
@@ -42,20 +43,20 @@ def create_tenant_aware_session(
 ) -> Session:
     """
     Create a tenant-aware session that automatically filters by tenant_id.
-    
+
     Args:
         base_session: Base database session
         tenant_id: Tenant ID to scope to
-    
+
     Returns:
         Tenant-scoped session
     """
     # In production, this would configure the session with automatic tenant filtering
     # using SQLAlchemy's query events or a custom Session subclass
-    
+
     # For now, just attach tenant_id to session for manual filtering
     base_session.info["tenant_id"] = str(tenant_id)
-    
+
     return base_session
 
 
@@ -66,12 +67,12 @@ def verify_tenant_access(
 ) -> bool:
     """
     Verify that the current tenant has access to a resource.
-    
+
     Args:
         session: Database session with tenant context
         resource_id: Resource ID to check
         resource_type: Resource type (e.g., "table", "source")
-    
+
     Returns:
         True if tenant has access
     """
@@ -79,12 +80,12 @@ def verify_tenant_access(
     if not tenant_id_str:
         # No tenant context - allow access (backward compatibility)
         return True
-    
-    tenant_id = UUID(tenant_id_str)
-    
+
+    UUID(tenant_id_str)
+
     # Check resource belongs to tenant
     # In production, query the resource table with tenant_id filter
-    
+
     return True  # Simplified for now
 
 
@@ -114,7 +115,8 @@ def verify_tenant_access(
 #    ...
 #
 # 4. Add foreign key constraints:
-#    ALTER TABLE tables ADD CONSTRAINT fk_tables_tenant_id FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+#    ALTER TABLE tables ADD CONSTRAINT fk_tables_tenant_id
+#      FOREIGN KEY (tenant_id) REFERENCES tenants(id);
 #    ...
 #
 # 5. Create indexes for tenant queries:

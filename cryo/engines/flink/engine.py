@@ -13,7 +13,7 @@ from typing import Any
 
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType, OperationType
-from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
+from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 from cryo.engines.flink.config import FlinkMaintenanceConfig
 
@@ -99,13 +99,14 @@ class FlinkEngine:
 
         # Log the generated configuration
         import logging
+
         logger = logging.getLogger(__name__)
         logger.info(f"Flink maintenance config generated:\n{stmt.sql[:500]}...")
 
         return ExecResult(
             ok=True,
-            detail=f"Flink TableMaintenance config generated. "
-                   f"Deploy as a Flink streaming job. See detail for config.",
+            detail="Flink TableMaintenance config generated. "
+            "Deploy as a Flink streaming job. See detail for config.",
             duration_ms=int((time.monotonic() - start) * 1000),
         )
 

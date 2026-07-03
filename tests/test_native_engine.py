@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from cryo.engines.native.engine import NativeEngine, NativeCompactionConfig, is_native_available
+from cryo.engines.native.engine import NativeCompactionConfig, NativeEngine, is_native_available
 
 
 class TestNativeEngineAvailability:
@@ -69,11 +68,13 @@ class TestNativeEngineIntegration:
         import pyarrow.parquet as pq
 
         tmpdir = tempfile.mkdtemp()
-        schema = pa.schema([
-            pa.field("id", pa.int64()),
-            pa.field("date", pa.string()),
-            pa.field("value", pa.float64()),
-        ])
+        schema = pa.schema(
+            [
+                pa.field("id", pa.int64()),
+                pa.field("date", pa.string()),
+                pa.field("value", pa.float64()),
+            ]
+        )
 
         paths = []
         for i in range(5):

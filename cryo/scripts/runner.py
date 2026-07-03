@@ -6,6 +6,7 @@ Scripts run in sandboxed Docker containers with resource limits.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import tempfile
@@ -41,10 +42,10 @@ class CustomScriptRunner:
     def validate_script(self, script_code: str) -> tuple[bool, str]:
         """
         Validate script for security issues.
-        
+
         Args:
             script_code: Python code to validate
-        
+
         Returns:
             Tuple of (is_valid, error_message)
         """
@@ -55,19 +56,19 @@ class CustomScriptRunner:
             "eval",
             "exec",
             "__import__",
-            "open(", # Prevent arbitrary file access
+            "open(",  # Prevent arbitrary file access
         ]
-        
+
         for dangerous in dangerous_imports:
             if dangerous in script_code:
                 return False, f"Forbidden operation: {dangerous}"
-        
+
         # Check script compiles
         try:
             compile(script_code, "<string>", "exec")
         except SyntaxError as e:
             return False, f"Syntax error: {e}"
-        
+
         return True, ""
 
     def run_script(
@@ -77,11 +78,11 @@ class CustomScriptRunner:
     ) -> dict[str, Any]:
         """
         Run a custom maintenance script in a sandboxed environment.
-        
+
         Args:
             config: Script configuration
             table_metadata: Table metadata to pass to script
-        
+
         Returns:
             Script execution result
         """
@@ -92,7 +93,7 @@ class CustomScriptRunner:
                 "status": "failed",
                 "error": error,
             }
-        
+
         # Create wrapper script that injects SDK and runs user code
         wrapper_code = f"""
 import json
@@ -126,39 +127,45 @@ except Exception as e:
     print(f"[CRYO] Script failed: {{e}}", file=sys.stderr)
     sys.exit(1)
 """
-        
+
         # Write wrapper script to temp file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(wrapper_code)
             script_path = f.name
-        
+
         try:
             # Run script in Docker container with resource limits
             cmd = [
-                "docker", "run",
+                "docker",
+                "run",
                 "--rm",
-                "--network", "none",  # No network access
-                "--memory", f"{config.memory_limit_mb}m",
-                "--cpus", str(config.cpu_limit),
+                "--network",
+                "none",  # No network access
+                "--memory",
+                f"{config.memory_limit_mb}m",
+                "--cpus",
+                str(config.cpu_limit),
                 "--read-only",  # Read-only filesystem
-                "-v", f"{script_path}:/script.py:ro",
+                "-v",
+                f"{script_path}:/script.py:ro",
                 self.docker_image,
-                "python", "/script.py",
+                "python",
+                "/script.py",
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=config.timeout_seconds,
             )
-            
+
             # Parse output for Cryo commands
             operations = []
             for line in result.stdout.splitlines():
                 if line.startswith("[CRYO]"):
                     operations.append(line[7:].strip())  # Remove "[CRYO] " prefix
-            
+
             return {
                 "status": "completed" if result.returncode == 0 else "failed",
                 "stdout": result.stdout,
@@ -166,7 +173,7 @@ except Exception as e:
                 "exit_code": result.returncode,
                 "operations": operations,  # Parsed Cryo operations to execute
             }
-        
+
         except subprocess.TimeoutExpired:
             return {
                 "status": "timeout",
