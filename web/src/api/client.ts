@@ -107,6 +107,30 @@ export const getTableAudit = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: AuditEntry[] }>(`/tables/${id}/audit`, api).then((payload) => payload.items);
 export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
+
+export interface HealthTrendPoint {
+  timestamp: string;
+  grade: string;
+  score: number;
+  small_files: number;
+  total_size_gb: number;
+  snapshot_count: number | null;
+  projected_savings_usd_month: number | null;
+}
+
+export interface TableHealthTrends {
+  table_id: UUID;
+  table_name: string;
+  current_grade: string;
+  current_score: number;
+  trend_points: HealthTrendPoint[];
+  degradation_rate: number | null;
+  days_to_critical: number | null;
+}
+
+export const getTableHealthTrends = (api: ApiOptions, id: UUID, days = 30) =>
+  apiFetch<TableHealthTrends>(`/tables/${id}/health-trends?days=${days}`, api);
+
 export const getEffectivePreset = (api: ApiOptions, id: UUID) =>
   apiFetch<EffectivePresetResponse>(`/tables/${id}/effective-preset`, api);
 

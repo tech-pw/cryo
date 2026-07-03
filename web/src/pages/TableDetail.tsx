@@ -9,6 +9,7 @@ import {
   getTable,
   getTableAudit,
   getTableCost,
+  getTableHealthTrends,
   getTableHistory,
   getTablePartitions,
   listDestinations,
@@ -57,6 +58,11 @@ export const TableDetail = () => {
   const history = useQuery({
     queryKey: ["table-history", tableId, token],
     queryFn: () => getTableHistory(api, tableId) as Promise<HistoryPoint[]>,
+    retry: 1
+  });
+  const healthTrends = useQuery({
+    queryKey: ["table-health-trends", tableId, token],
+    queryFn: () => getTableHealthTrends(api, tableId, 30),
     retry: 1
   });
   const effectivePreset = useQuery({
@@ -261,24 +267,71 @@ export const TableDetail = () => {
           </Card>
         </Col>
         <Col xs={24} xl={8}>
-          <Card title="History">
-            {(history.data ?? []).length ? (
-              <div className="chart-frame compact">
-                <ResponsiveContainer>
-                  <LineChart data={history.data}>
-                    <XAxis dataKey="scan_at" hide />
-                    <YAxis hide />
-                    <Tooltip
-                      {...chartTooltipProps}
-                      labelFormatter={(value) => formatTime(String(value))}
-                    />
-                    <Line dataKey="small_files_count" stroke={cryoColors.chartPrimary} dot={false} />
-                    <Line dataKey="overall_score" stroke={cryoColors.gradeA} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+          <Card
+            title="Health Trends (30 days)"
+            extra={
+              healthTrends.data?.degradation_rate && healthTrends.data.degradation_rate < -0.5 ? (
+                <Typography.Text type="danger" style={{ fontSize: 11 }}>
+                  Degrading {Math.abs(healthTrends.data.degradation_rate).toFixed(1)} pts/day
+                </Typography.Text>
+              ) : null
+            }
+          >
+            {(healthTrends.data?.trend_points ?? []).length ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                {healthTrends.data?.days_to_critical && healthTrends.data.days_to_critical < 30 ? (
+                  <Typography.Paragraph type="warning" style={{ margin: 0, fontSize: 12 }}>
+                    ⚠️ Est. {healthTrends.data.days_to_critical} days until critical (F grade) if trend continues
+                  </Typography.Paragraph>
+                ) : null}
+                <div className="chart-frame compact">
+                  <ResponsiveContainer>
+                    <LineChart
+                      data={healthTrends.data?.trend_points.map((p) => ({
+                        ...p,
+                        timestamp: new Date(p.timestamp).getTime()
+                      }))}
+                    >
+                      <XAxis
+                        dataKey="timestamp"
+                        tickFormatter={(ts) => new Date(ts).toLocaleDateString()}
+                        tick={{ fontSize: 10 }}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} domain={[0, 100]} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        {...chartTooltipProps}
+                        labelFormatter={(ts) => new Date(ts).toLocaleString()}
+                        formatter={(value: number, name: string) => {
+                          if (name === "score") return [value.toFixed(1), "Score"];
+                          if (name === "small_files") return [value.toLocaleString(), "Small Files"];
+                          if (name === "total_size_gb") return [value.toFixed(1) + " GB", "Size"];
+                          return [value, name];
+                        }}
+                      />
+                      <Line
+                        yAxisId="left"
+                        dataKey="score"
+                        stroke={cryoColors.gradeA}
+                        strokeWidth={2}
+                        dot={false}
+                        name="Health Score"
+                      />
+                      <Line
+                        yAxisId="right"
+                        dataKey="small_files"
+                        stroke={cryoColors.chartPrimary}
+                        strokeWidth={2}
+                        dot={false}
+                        name="Small Files"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </Space>
             ) : (
-              <EmptyState title="No history yet" description="Trend data appears after multiple scans." />
+              <EmptyState title="No trends yet" description="Health trends appear after multiple scans over time." />
             )}
           </Card>
         </Col>
