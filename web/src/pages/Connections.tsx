@@ -1,19 +1,52 @@
-import { PlusOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, RobotOutlined, SlackOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography, message } from "antd";
-import { useState } from "react";
-import type { ReactNode } from "react";
 import {
+  Alert,
+  Button,
+  Collapse,
+  Divider,
+  Drawer,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message
+} from "antd";
+import { useState } from "react";
+import {
+  createAIProvider,
   createDestination,
+  createSlackConfig,
   createSource,
+  deleteAIProvider,
+  deleteSlackConfig,
+  listAIProviders,
+  listAIProviderTypes,
   listDestinations,
+  listSlackConfigs,
   listSources,
+  patchAIProvider,
   patchDestination,
+  patchSlackConfig,
   patchSource,
-  testDestination
+  testAIProvider,
+  testDestination,
+  testSlackConfig,
+  testSource,
+  type AIProviderRead,
+  type AIProviderType,
+  type AIProviderWrite,
+  type SlackConfigRead,
+  type SlackConfigWrite
 } from "../api/client";
-import type { DestinationRead, DestinationWrite, SourceRead, SourceWrite } from "../api/types";
-import { EmptyState, PageHeader } from "../components/common";
+import type { DestinationRead, DestinationWrite, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
+import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 
@@ -22,10 +55,24 @@ export const Connections = () => {
   const queryClient = useQueryClient();
   const [sourceDrawer, setSourceDrawer] = useState<SourceRead | "new" | null>(null);
   const [destinationDrawer, setDestinationDrawer] = useState<DestinationRead | "new" | null>(null);
+  const [aiProviderDrawer, setAiProviderDrawer] = useState<AIProviderRead | "new" | null>(null);
+  const [slackDrawer, setSlackDrawer] = useState<SlackConfigRead | "new" | null>(null);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
+  const aiProviders = useQuery({
+    queryKey: ["ai-providers", token],
+    queryFn: () => listAIProviders(api)
+  });
+  const aiProviderTypes = useQuery({
+    queryKey: ["ai-provider-types", token],
+    queryFn: () => listAIProviderTypes(api)
+  });
+  const slackConfigs = useQuery({
+    queryKey: ["slack-configs", token],
+    queryFn: () => listSlackConfigs(api)
+  });
 
   const saveSource = useMutation({
     mutationFn: (body: SourceWrite) =>
@@ -54,6 +101,74 @@ export const Connections = () => {
   const probe = useMutation({
     mutationFn: (destination: DestinationRead) => testDestination(api, destination.id),
     onSuccess: setTestResult,
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const saveAiProvider = useMutation({
+    mutationFn: async (body: AIProviderWrite & { id?: string }) => {
+      if (body.id) {
+        return patchAIProvider(api, body.id, body);
+      }
+      return createAIProvider(api, body);
+    },
+    onSuccess: () => {
+      message.success("AI provider saved");
+      setAiProviderDrawer(null);
+      void queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const deleteAiProviderMutation = useMutation({
+    mutationFn: (id: string) => deleteAIProvider(api, id),
+    onSuccess: () => {
+      message.success("AI provider deleted");
+      void queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const testAiProviderMutation = useMutation({
+    mutationFn: (id: string) => testAIProvider(api, id),
+    onSuccess: (data) => {
+      if (data.success) {
+        message.success(`AI responded: "${data.response}"`);
+      } else {
+        message.error(`Test failed: ${data.error}`);
+      }
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const saveSlackConfig = useMutation({
+    mutationFn: async (body: SlackConfigWrite & { id?: string }) => {
+      if (body.id) {
+        return patchSlackConfig(api, body.id, body);
+      }
+      return createSlackConfig(api, body);
+    },
+    onSuccess: () => {
+      message.success("Slack configuration saved");
+      setSlackDrawer(null);
+      void queryClient.invalidateQueries({ queryKey: ["slack-configs"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const deleteSlackConfigMutation = useMutation({
+    mutationFn: (id: string) => deleteSlackConfig(api, id),
+    onSuccess: () => {
+      message.success("Slack configuration deleted");
+      void queryClient.invalidateQueries({ queryKey: ["slack-configs"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const testSlackMutation = useMutation({
+    mutationFn: (id: string) => testSlackConfig(api, id),
+    onSuccess: () => {
+      message.success("Test message sent to Slack!");
+    },
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -147,7 +262,7 @@ export const Connections = () => {
                       render: (value) => <HealthBadge healthy={value}>{value ? "Enabled" : "Disabled"}</HealthBadge>
                     },
                     {
-                      title: "Off-peak IST",
+                      title: "Off-peak window",
                       render: (_, row) => row.offpeak_start === null || row.offpeak_start === undefined ? "-" : `${row.offpeak_start}:00-${row.offpeak_end}:00`
                     },
                     {
@@ -164,6 +279,215 @@ export const Connections = () => {
                     }
                   ]}
                   locale={{ emptyText: <EmptyState title="No engines connected" description="Add a Trino or Spark engine to run maintenance." /> }}
+                />
+              </Space>
+            )
+          },
+          {
+            key: "ai-providers",
+            label: (
+              <Space>
+                <RobotOutlined />
+                AI Providers
+              </Space>
+            ),
+            children: (
+              <Space direction="vertical" size={12} className="full-width">
+                <Typography.Paragraph type="secondary" className="tab-intro">
+                  Connect an AI provider (Anthropic Claude or OpenAI GPT) to enable natural language
+                  queries, intelligent health explanations, and AI-powered recommendations. API keys
+                  are stored encrypted and never logged.
+                </Typography.Paragraph>
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => setAiProviderDrawer("new")}>
+                  New AI provider
+                </Button>
+                <Table<AIProviderRead>
+                  size="small"
+                  rowKey="id"
+                  loading={aiProviders.isLoading}
+                  dataSource={aiProviders.data ?? []}
+                  columns={[
+                    {
+                      title: "Name",
+                      dataIndex: "name",
+                      render: (value, row) => (
+                        <Space>
+                          <Typography.Text strong>{value}</Typography.Text>
+                          {row.is_default ? <Tag color="blue">Default</Tag> : null}
+                        </Space>
+                      )
+                    },
+                    {
+                      title: "Provider",
+                      dataIndex: "provider_type",
+                      render: (value) => (
+                        <Tag color={value === "anthropic" ? "orange" : "green"}>
+                          {value === "anthropic" ? "Anthropic" : "OpenAI"}
+                        </Tag>
+                      )
+                    },
+                    { title: "Model", dataIndex: "model", render: (value) => <Typography.Text code>{value}</Typography.Text> },
+                    {
+                      title: "API Key",
+                      dataIndex: "has_api_key",
+                      render: (value) =>
+                        value ? (
+                          <Space>
+                            <CheckCircleOutlined style={{ color: "var(--ant-color-success)" }} />
+                            <Typography.Text type="secondary">Configured</Typography.Text>
+                          </Space>
+                        ) : (
+                          <Space>
+                            <CloseCircleOutlined style={{ color: "var(--ant-color-error)" }} />
+                            <Typography.Text type="secondary">Missing</Typography.Text>
+                          </Space>
+                        )
+                    },
+                    {
+                      title: "Enabled",
+                      dataIndex: "enabled",
+                      render: (value) => <StatusTag status={value ? "succeeded" : "skipped"} />
+                    },
+                    {
+                      title: "",
+                      render: (_, row) => (
+                        <Space>
+                          <Button size="small" onClick={() => setAiProviderDrawer(row)}>Edit</Button>
+                          <Button
+                            size="small"
+                            loading={testAiProviderMutation.isPending}
+                            disabled={!row.has_api_key}
+                            onClick={() => testAiProviderMutation.mutate(row.id)}
+                          >
+                            Test
+                          </Button>
+                          <Button
+                            size="small"
+                            danger
+                            onClick={() => deleteAiProviderMutation.mutate(row.id)}
+                          >
+                            Delete
+                          </Button>
+                        </Space>
+                      )
+                    }
+                  ]}
+                  locale={{
+                    emptyText: (
+                      <EmptyState
+                        title="No AI providers configured"
+                        description="Add an Anthropic or OpenAI API key to enable AI features like natural language queries and intelligent recommendations."
+                      />
+                    )
+                  }}
+                />
+              </Space>
+            )
+          },
+          {
+            key: "slack",
+            label: (
+              <Space>
+                <SlackOutlined />
+                Slack
+              </Space>
+            ),
+            children: (
+              <Space direction="vertical" size={12} className="full-width">
+                <Typography.Paragraph type="secondary" className="tab-intro">
+                  Connect Slack to receive daily anomaly reports with AI-generated summaries.
+                  Configure your webhook URL, reporting schedule, and channel.
+                </Typography.Paragraph>
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => setSlackDrawer("new")}>
+                  New Slack connection
+                </Button>
+                <Table<SlackConfigRead>
+                  size="small"
+                  rowKey="id"
+                  loading={slackConfigs.isLoading}
+                  dataSource={slackConfigs.data ?? []}
+                  columns={[
+                    {
+                      title: "Name",
+                      dataIndex: "name",
+                      render: (value, row) => (
+                        <Space>
+                          <Typography.Text strong>{value}</Typography.Text>
+                          {row.is_default ? <Tag color="blue">Default</Tag> : null}
+                        </Space>
+                      )
+                    },
+                    {
+                      title: "Channel",
+                      dataIndex: "channel",
+                      render: (value) => value ? <Typography.Text code>{value}</Typography.Text> : <Typography.Text type="secondary">Default</Typography.Text>
+                    },
+                    {
+                      title: "Webhook",
+                      dataIndex: "has_webhook",
+                      render: (value) =>
+                        value ? (
+                          <Space>
+                            <CheckCircleOutlined style={{ color: "var(--ant-color-success)" }} />
+                            <Typography.Text type="secondary">Configured</Typography.Text>
+                          </Space>
+                        ) : (
+                          <Space>
+                            <CloseCircleOutlined style={{ color: "var(--ant-color-error)" }} />
+                            <Typography.Text type="secondary">Missing</Typography.Text>
+                          </Space>
+                        )
+                    },
+                    {
+                      title: "Daily Report",
+                      render: (_, row) => (
+                        <Space direction="vertical" size={0}>
+                          <StatusTag status={row.daily_report_enabled ? "succeeded" : "skipped"} />
+                          {row.daily_report_enabled && (
+                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                              {row.daily_report_cron} {row.daily_report_use_ai ? "(+ AI)" : ""}
+                            </Typography.Text>
+                          )}
+                        </Space>
+                      )
+                    },
+                    {
+                      title: "Enabled",
+                      dataIndex: "enabled",
+                      render: (value) => <StatusTag status={value ? "succeeded" : "skipped"} />
+                    },
+                    {
+                      title: "",
+                      render: (_, row) => (
+                        <Space>
+                          <Button size="small" onClick={() => setSlackDrawer(row)}>Edit</Button>
+                          <Button
+                            size="small"
+                            loading={testSlackMutation.isPending}
+                            disabled={!row.has_webhook}
+                            onClick={() => testSlackMutation.mutate(row.id)}
+                          >
+                            Test
+                          </Button>
+                          <Button
+                            size="small"
+                            danger
+                            onClick={() => deleteSlackConfigMutation.mutate(row.id)}
+                          >
+                            Delete
+                          </Button>
+                        </Space>
+                      )
+                    }
+                  ]}
+                  locale={{
+                    emptyText: (
+                      <EmptyState
+                        title="No Slack connections configured"
+                        description="Add a Slack webhook to receive daily anomaly reports with AI-generated summaries."
+                      />
+                    )
+                  }}
                 />
               </Space>
             )
@@ -184,7 +508,154 @@ export const Connections = () => {
         onClose={() => setDestinationDrawer(null)}
         onSave={(body) => saveDestination.mutate(body)}
       />
+      <AIProviderDrawer
+        key={aiProviderDrawer && aiProviderDrawer !== "new" ? aiProviderDrawer.id : String(aiProviderDrawer)}
+        value={aiProviderDrawer}
+        providerTypes={aiProviderTypes.data ?? []}
+        saving={saveAiProvider.isPending}
+        onClose={() => setAiProviderDrawer(null)}
+        onSave={(body) => saveAiProvider.mutate(body)}
+      />
+      <SlackDrawer
+        key={slackDrawer && slackDrawer !== "new" ? slackDrawer.id : String(slackDrawer)}
+        value={slackDrawer}
+        saving={saveSlackConfig.isPending}
+        onClose={() => setSlackDrawer(null)}
+        onSave={(body) => saveSlackConfig.mutate(body)}
+      />
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Lakehouse (Source) drawer
+//
+// Config is passed almost verbatim to PyIceberg's `load_catalog(**properties)`, so its keyspace
+// is genuinely open-ended (auth/oauth/region/etc. vary by catalog implementation). Rather than
+// pretend to enumerate every possible property, this form gives named fields for everything we
+// actually use today (see cryo/sources/*.py + the seeded local config) and an "Advanced" JSON
+// panel for anything else — so nothing is hidden, but nobody has to hand-write JSON for the
+// common case either.
+// ---------------------------------------------------------------------------
+
+const CATALOG_TYPES = [
+  { value: "rest", label: "REST catalog" },
+  { value: "hive", label: "Hive Metastore" },
+  { value: "glue", label: "AWS Glue" },
+  { value: "polaris", label: "Apache Polaris" },
+  { value: "nessie", label: "Project Nessie" }
+];
+
+const CATALOG_URI_HINT: Record<string, string> = {
+  rest: "http://localhost:8181",
+  hive: "thrift://localhost:9083",
+  glue: "",
+  polaris: "http://localhost:8181/api/catalog",
+  nessie: "http://localhost:19120/api/v1"
+};
+
+const KNOWN_SOURCE_KEYS = [
+  "uri",
+  "warehouse",
+  "catalog_name",
+  "type",
+  "s3.endpoint",
+  "s3.access-key-id",
+  "s3.secret-access-key",
+  "s3.path-style-access"
+];
+
+interface SourceFormValues {
+  name: string;
+  type: string;
+  uri?: string;
+  warehouse?: string;
+  catalog_name?: string;
+  s3_endpoint?: string;
+  s3_access_key_id?: string;
+  s3_secret_access_key?: string;
+  s3_path_style_access?: boolean;
+  advanced_json?: string;
+  secret_ref?: string | null;
+  enabled: boolean;
+}
+
+const decomposeSourceConfig = (config: Record<string, unknown> | undefined) => {
+  const cfg = config ?? {};
+  const advanced = Object.fromEntries(Object.entries(cfg).filter(([key]) => !KNOWN_SOURCE_KEYS.includes(key)));
+  return {
+    uri: typeof cfg.uri === "string" ? cfg.uri : undefined,
+    warehouse: typeof cfg.warehouse === "string" ? cfg.warehouse : undefined,
+    catalog_name: typeof cfg.catalog_name === "string" ? cfg.catalog_name : undefined,
+    s3_endpoint: typeof cfg["s3.endpoint"] === "string" ? (cfg["s3.endpoint"] as string) : undefined,
+    s3_access_key_id: typeof cfg["s3.access-key-id"] === "string" ? (cfg["s3.access-key-id"] as string) : undefined,
+    s3_secret_access_key:
+      typeof cfg["s3.secret-access-key"] === "string" ? (cfg["s3.secret-access-key"] as string) : undefined,
+    s3_path_style_access: cfg["s3.path-style-access"] === "true" || cfg["s3.path-style-access"] === true,
+    advanced_json: Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : ""
+  };
+};
+
+const buildSourceConfig = (values: SourceFormValues): Record<string, unknown> => {
+  let extra: Record<string, unknown> = {};
+  if (values.advanced_json?.trim()) {
+    extra = JSON.parse(values.advanced_json) as Record<string, unknown>;
+  }
+  const config: Record<string, unknown> = { ...extra };
+  if (values.uri) config.uri = values.uri;
+  if (values.warehouse) config.warehouse = values.warehouse;
+  if (values.catalog_name) config.catalog_name = values.catalog_name;
+  if (values.s3_endpoint) config["s3.endpoint"] = values.s3_endpoint;
+  if (values.s3_access_key_id) config["s3.access-key-id"] = values.s3_access_key_id;
+  if (values.s3_secret_access_key) config["s3.secret-access-key"] = values.s3_secret_access_key;
+  if (values.s3_path_style_access) config["s3.path-style-access"] = "true";
+  return config;
+};
+
+/**
+ * A single "Warehouse" field is only ever a default — individual namespaces or tables in a real
+ * lakehouse can (and often do) point at different S3 buckets/prefixes. Rather than pretend one
+ * field settles that, this shows what's actually reachable so the user can see the real shape of
+ * the catalog before saving.
+ */
+const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
+  if (!result.ok) {
+    return (
+      <Alert
+        className="page-alert"
+        type="error"
+        showIcon
+        message="Couldn't connect"
+        description={result.error}
+      />
+    );
+  }
+  return (
+    <Alert
+      className="page-alert"
+      type="success"
+      showIcon
+      message={`Connected — found ${result.table_count} table${result.table_count === 1 ? "" : "s"} across ${result.namespaces.length} namespace${result.namespaces.length === 1 ? "" : "s"}`}
+      description={
+        <Space direction="vertical" size={6} className="full-width">
+          {result.namespaces.length ? (
+            <Space size={[4, 4]} wrap>
+              {result.namespaces.map((namespace) => (
+                <Typography.Text key={namespace} code>
+                  {namespace}
+                </Typography.Text>
+              ))}
+            </Space>
+          ) : null}
+          {result.sample_tables.length ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+              e.g. {result.sample_tables.slice(0, 5).join(", ")}
+              {result.table_count > 5 ? ", …" : ""}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      }
+    />
   );
 };
 
@@ -198,23 +669,257 @@ const SourceDrawer = ({
   saving: boolean;
   onClose: () => void;
   onSave: (body: SourceWrite) => void;
-}) => (
-  <ConnectionDrawer
-    title={value && value !== "new" ? "Edit lakehouse" : "New lakehouse"}
-    open={Boolean(value)}
-    onClose={onClose}
-    initial={{
-      name: value && value !== "new" ? value.name : "",
-      type: value && value !== "new" ? value.type : "rest",
-      config: JSON.stringify(value && value !== "new" ? value.config : { uri: "http://localhost:8181", warehouse: "warehouse" }, null, 2),
-      secret_ref: value && value !== "new" ? value.secret_ref : null,
-      enabled: value && value !== "new" ? value.enabled : true
-    }}
-    fields={<Form.Item name="type" label="Catalog type"><Select options={["rest", "hive", "glue", "polaris", "nessie"].map((item) => ({ label: item, value: item }))} /></Form.Item>}
-    saving={saving}
-    onSave={onSave}
-  />
-);
+}) => {
+  const { api } = useAuth();
+  const [form] = Form.useForm<SourceFormValues>();
+  const isEditing = value && value !== "new";
+  const existingConfig = isEditing ? decomposeSourceConfig(value.config as Record<string, unknown>) : {};
+  const [catalogType, setCatalogType] = useState<string>(isEditing ? value.type : "rest");
+
+  const testConnection = useMutation({
+    mutationFn: () => {
+      const current = form.getFieldsValue(true) as SourceFormValues;
+      return testSource(api, { type: current.type, config: buildSourceConfig(current) });
+    },
+    onError: () => message.error("Advanced properties must be valid JSON before testing.")
+  });
+
+  return (
+    <Drawer title={isEditing ? "Edit lakehouse" : "New lakehouse"} open={Boolean(value)} onClose={onClose} width={620} destroyOnHidden>
+      <Form<SourceFormValues>
+        form={form}
+        layout="vertical"
+        initialValues={{
+          name: isEditing ? value.name : "",
+          type: isEditing ? value.type : "rest",
+          secret_ref: isEditing ? value.secret_ref : null,
+          enabled: isEditing ? value.enabled : true,
+          ...existingConfig
+        }}
+        onValuesChange={(changed) => {
+          if (changed.type) setCatalogType(changed.type);
+        }}
+        onFinish={(values) => {
+          try {
+            onSave({
+              name: values.name,
+              type: values.type,
+              config: buildSourceConfig(values),
+              secret_ref: values.secret_ref || null,
+              enabled: values.enabled
+            });
+          } catch {
+            message.error("Advanced properties must be valid JSON.");
+          }
+        }}
+      >
+        <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+          <Input placeholder="production-lakehouse" />
+        </Form.Item>
+        <Form.Item name="type" label="Catalog type" rules={[{ required: true }]}>
+          <Select options={CATALOG_TYPES} />
+        </Form.Item>
+
+        {catalogType !== "glue" ? (
+          <Form.Item
+            name="uri"
+            label="Catalog URI"
+            rules={[{ required: true, message: "Required for this catalog type" }]}
+          >
+            <Input placeholder={CATALOG_URI_HINT[catalogType] ?? "http://localhost:8181"} />
+          </Form.Item>
+        ) : null}
+        <Form.Item name="warehouse" label="Warehouse">
+          <Input placeholder={catalogType === "glue" ? "s3://my-bucket/warehouse" : "warehouse"} />
+        </Form.Item>
+        <Form.Item
+          name="catalog_name"
+          label={<HintLabel label="Catalog name" tooltip="Overrides the name PyIceberg registers this catalog under. Leave blank to use the lakehouse name above." />}
+        >
+          <Input placeholder="(defaults to the name above)" />
+        </Form.Item>
+
+        <Form.Item>
+          <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
+            Test connection
+          </Button>
+        </Form.Item>
+        {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
+
+        <Divider titlePlacement="left" plain style={{ fontSize: 12, color: "var(--ink-faint, rgba(0,0,0,0.45))" }}>
+          Storage connection
+        </Divider>
+        <Typography.Paragraph type="secondary" style={{ marginTop: -8, fontSize: 12.5 }}>
+          Only needed for S3-compatible storage that isn't reachable via default AWS credentials —
+          e.g. MinIO in local/dev.
+        </Typography.Paragraph>
+        <Form.Item name="s3_endpoint" label="S3 endpoint">
+          <Input placeholder="http://localhost:9000" />
+        </Form.Item>
+        <Space size={12} className="full-width" style={{ display: "flex" }}>
+          <Form.Item name="s3_access_key_id" label="S3 access key ID" style={{ flex: 1 }}>
+            <Input autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="s3_secret_access_key" label="S3 secret access key" style={{ flex: 1 }}>
+            <Input.Password autoComplete="off" />
+          </Form.Item>
+        </Space>
+        <Form.Item name="s3_path_style_access" label="Path-style access" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+
+        <Collapse
+          ghost
+          items={[
+            {
+              key: "advanced",
+              label: "Advanced properties (optional)",
+              children: (
+                <>
+                  <Typography.Paragraph type="secondary" style={{ fontSize: 12.5 }}>
+                    Any other PyIceberg catalog property (OAuth credentials, custom headers, SSL
+                    settings, etc.) — merged in alongside the fields above.
+                  </Typography.Paragraph>
+                  <Form.Item name="advanced_json" noStyle>
+                    <Input.TextArea rows={5} className="mono-input" placeholder='{"credential": "client-id:client-secret"}' />
+                  </Form.Item>
+                </>
+              )
+            }
+          ]}
+        />
+
+        <Form.Item name="secret_ref" label="Secret reference" style={{ marginTop: 16 }}>
+          <Input placeholder="Encrypted secret reference, never raw credentials" />
+        </Form.Item>
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={saving}>
+          Save
+        </Button>
+      </Form>
+    </Drawer>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Engine (Destination) drawer
+//
+// Unlike lakehouse config, an engine's config keys are entirely Cryo's own (see
+// cryo/engines/trino/client.py and cryo/engines/spark/emr.py) — a small, fixed, known surface,
+// so this can be fully structured with no JSON escape hatch needed except the one genuinely
+// open-ended Spark field (spark_submit_params, arbitrary --conf overrides).
+// ---------------------------------------------------------------------------
+
+interface TrinoCoordinatorFormValue {
+  host: string;
+  port: number;
+  http_scheme: "http" | "https";
+}
+
+interface DestinationFormValues {
+  name: string;
+  engine: "trino" | "spark_emr";
+  offpeak_start?: number;
+  offpeak_end?: number;
+  secret_ref?: string | null;
+  enabled: boolean;
+  // Trino
+  coordinators?: TrinoCoordinatorFormValue[];
+  user?: string;
+  catalog?: string;
+  schema?: string;
+  use_basic_auth?: boolean;
+  auth_username?: string;
+  auth_password?: string;
+  // Spark EMR
+  application_id?: string;
+  execution_role_arn?: string;
+  region?: string;
+  s3_logs_bucket?: string;
+  s3_logs_prefix?: string;
+  entry_point?: string;
+  poll_interval_seconds?: number;
+  timeout_seconds?: number;
+  spark_submit_params_json?: string;
+}
+
+const decomposeDestinationConfig = (engine: string, config: Record<string, unknown> | undefined) => {
+  const cfg = config ?? {};
+  if (engine === "spark_emr") {
+    const sparkParams = cfg.spark_submit_params;
+    return {
+      application_id: typeof cfg.application_id === "string" ? cfg.application_id : "",
+      execution_role_arn: typeof cfg.execution_role_arn === "string" ? cfg.execution_role_arn : "",
+      region: typeof cfg.region === "string" ? cfg.region : "us-east-1",
+      s3_logs_bucket: typeof cfg.s3_logs_bucket === "string" ? cfg.s3_logs_bucket : "",
+      s3_logs_prefix: typeof cfg.s3_logs_prefix === "string" ? cfg.s3_logs_prefix : "cryo-spark-logs",
+      entry_point:
+        typeof cfg.entry_point === "string" ? cfg.entry_point : "s3://cryo-artifacts/cryo_spark_runner.py",
+      poll_interval_seconds: typeof cfg.poll_interval_seconds === "number" ? cfg.poll_interval_seconds : 10,
+      timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
+      spark_submit_params_json: sparkParams ? JSON.stringify(sparkParams, null, 2) : ""
+    };
+  }
+
+  const rawCoordinators = Array.isArray(cfg.coordinators) ? cfg.coordinators : ["localhost"];
+  const coordinators: TrinoCoordinatorFormValue[] = rawCoordinators.map((item) => {
+    if (typeof item === "string") {
+      return { host: item, port: 8080, http_scheme: "http" };
+    }
+    const record = item as Record<string, unknown>;
+    return {
+      host: typeof record.host === "string" ? record.host : "",
+      port: typeof record.port === "number" ? record.port : 8080,
+      http_scheme: record.http_scheme === "https" || record.scheme === "https" ? "https" : "http"
+    };
+  });
+  const auth = cfg.auth as Record<string, unknown> | undefined;
+  return {
+    coordinators,
+    user: typeof cfg.user === "string" ? cfg.user : "cryo",
+    catalog: typeof cfg.catalog === "string" ? cfg.catalog : "iceberg",
+    schema: typeof cfg.schema === "string" ? cfg.schema : undefined,
+    use_basic_auth: Boolean(auth && auth.type === "basic"),
+    auth_username: typeof auth?.username === "string" ? auth.username : "",
+    auth_password: typeof auth?.password === "string" ? auth.password : ""
+  };
+};
+
+const buildDestinationConfig = (values: DestinationFormValues): Record<string, unknown> => {
+  if (values.engine === "spark_emr") {
+    const config: Record<string, unknown> = {
+      application_id: values.application_id,
+      execution_role_arn: values.execution_role_arn,
+      region: values.region || "us-east-1",
+      s3_logs_prefix: values.s3_logs_prefix || "cryo-spark-logs",
+      entry_point: values.entry_point || "s3://cryo-artifacts/cryo_spark_runner.py",
+      poll_interval_seconds: values.poll_interval_seconds || 10,
+      timeout_seconds: values.timeout_seconds || 3600
+    };
+    if (values.s3_logs_bucket) config.s3_logs_bucket = values.s3_logs_bucket;
+    if (values.spark_submit_params_json?.trim()) {
+      config.spark_submit_params = JSON.parse(values.spark_submit_params_json);
+    }
+    return config;
+  }
+
+  const config: Record<string, unknown> = {
+    coordinators: (values.coordinators ?? []).map((c) => ({
+      host: c.host,
+      port: c.port || 8080,
+      http_scheme: c.http_scheme || "http"
+    })),
+    user: values.user || "cryo",
+    catalog: values.catalog || "iceberg"
+  };
+  if (values.schema) config.schema = values.schema;
+  if (values.use_basic_auth) {
+    config.auth = { type: "basic", username: values.auth_username, password: values.auth_password };
+  }
+  return config;
+};
 
 const DestinationDrawer = ({
   value,
@@ -226,79 +931,578 @@ const DestinationDrawer = ({
   saving: boolean;
   onClose: () => void;
   onSave: (body: DestinationWrite) => void;
-}) => (
-  <ConnectionDrawer
-    title={value && value !== "new" ? "Edit engine" : "New engine"}
-    open={Boolean(value)}
-    onClose={onClose}
-    initial={{
-      name: value && value !== "new" ? value.name : "",
-      engine: value && value !== "new" ? value.engine : "trino",
-      config: JSON.stringify(value && value !== "new" ? value.config : { coordinators: ["http://localhost:8080"], user: "cryo", catalog: "iceberg" }, null, 2),
-      secret_ref: value && value !== "new" ? value.secret_ref : null,
-      enabled: value && value !== "new" ? value.enabled : true,
-      offpeak_start: value && value !== "new" ? value.offpeak_start : 0,
-      offpeak_end: value && value !== "new" ? value.offpeak_end : 7
-    }}
-    fields={
-      <>
-        <Form.Item name="engine" label="Engine"><Select options={[{ label: "Trino", value: "trino" }, { label: "Spark EMR", value: "spark_emr" }]} /></Form.Item>
-        <Space>
-          <Form.Item name="offpeak_start" label="Off-peak start"><InputNumber min={0} max={23} /></Form.Item>
-          <Form.Item name="offpeak_end" label="Off-peak end"><InputNumber min={0} max={23} /></Form.Item>
-        </Space>
-      </>
-    }
-    saving={saving}
-    onSave={onSave}
-  />
-);
+}) => {
+  const [form] = Form.useForm<DestinationFormValues>();
+  const isEditing = value && value !== "new";
+  const initialEngine = isEditing ? value.engine : "trino";
+  const [engine, setEngine] = useState<"trino" | "spark_emr">(initialEngine as "trino" | "spark_emr");
+  const existingConfig = isEditing
+    ? decomposeDestinationConfig(initialEngine, value.config as Record<string, unknown>)
+    : decomposeDestinationConfig("trino", undefined);
+  const useBasicAuth = Form.useWatch("use_basic_auth", form);
 
-const ConnectionDrawer = <T extends { name: string; config: Record<string, unknown>; enabled: boolean }>({
-  title,
-  open,
-  onClose,
-  initial,
-  fields,
+  return (
+    <Drawer title={isEditing ? "Edit engine" : "New engine"} open={Boolean(value)} onClose={onClose} width={620} destroyOnHidden>
+      <Form<DestinationFormValues>
+        form={form}
+        layout="vertical"
+        initialValues={{
+          name: isEditing ? value.name : "",
+          engine: initialEngine,
+          secret_ref: isEditing ? value.secret_ref : null,
+          enabled: isEditing ? value.enabled : true,
+          offpeak_start: isEditing ? value.offpeak_start : 0,
+          offpeak_end: isEditing ? value.offpeak_end : 7,
+          ...existingConfig
+        }}
+        onValuesChange={(changed) => {
+          if (changed.engine) setEngine(changed.engine);
+        }}
+        onFinish={(values) => {
+          try {
+            onSave({
+              name: values.name,
+              engine: values.engine,
+              config: buildDestinationConfig(values),
+              secret_ref: values.secret_ref || null,
+              enabled: values.enabled,
+              offpeak_start: values.offpeak_start ?? null,
+              offpeak_end: values.offpeak_end ?? null
+            });
+          } catch {
+            message.error("Spark submit params must be valid JSON.");
+          }
+        }}
+      >
+        <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+          <Input placeholder="trino-primary" />
+        </Form.Item>
+        <Form.Item name="engine" label="Engine" rules={[{ required: true }]}>
+          <Select options={[{ label: "Trino", value: "trino" }, { label: "Spark on EMR Serverless", value: "spark_emr" }]} />
+        </Form.Item>
+
+        {engine === "trino" ? (
+          <>
+            <Form.List name="coordinators">
+              {(fields, { add, remove }) => (
+                <Form.Item
+                  label={
+                    <HintLabel
+                      label="Coordinators"
+                      tooltip="One or more Trino coordinator hosts. Multiple entries let Cryo spread load or fail over."
+                    />
+                  }
+                >
+                  <Space direction="vertical" size={8} className="full-width">
+                    {fields.map((field) => (
+                      <Space key={field.key} align="baseline" size={8}>
+                        <Form.Item {...field} name={[field.name, "host"]} noStyle rules={[{ required: true, message: "Host required" }]}>
+                          <Input placeholder="trino.internal" style={{ width: 240 }} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, "port"]} noStyle>
+                          <InputNumber placeholder="8080" min={1} max={65535} style={{ width: 90 }} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, "http_scheme"]} noStyle>
+                          <Select
+                            style={{ width: 90 }}
+                            options={[{ label: "http", value: "http" }, { label: "https", value: "https" }]}
+                          />
+                        </Form.Item>
+                        {fields.length > 1 ? <Button size="small" danger onClick={() => remove(field.name)}>Remove</Button> : null}
+                      </Space>
+                    ))}
+                    <Button
+                      size="small"
+                      icon={<PlusOutlined />}
+                      onClick={() => add({ host: "", port: 8080, http_scheme: "http" })}
+                    >
+                      Add coordinator
+                    </Button>
+                  </Space>
+                </Form.Item>
+              )}
+            </Form.List>
+            <Space size={12} className="full-width" style={{ display: "flex" }}>
+              <Form.Item name="user" label="User" style={{ flex: 1 }}>
+                <Input placeholder="cryo" />
+              </Form.Item>
+              <Form.Item name="catalog" label="Catalog" style={{ flex: 1 }}>
+                <Input placeholder="iceberg" />
+              </Form.Item>
+              <Form.Item name="schema" label="Schema (optional)" style={{ flex: 1 }}>
+                <Input />
+              </Form.Item>
+            </Space>
+            <Form.Item name="use_basic_auth" label="Use basic auth" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            {useBasicAuth ? (
+              <Space size={12} className="full-width" style={{ display: "flex" }}>
+                <Form.Item name="auth_username" label="Username" style={{ flex: 1 }}>
+                  <Input autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="auth_password" label="Password" style={{ flex: 1 }}>
+                  <Input.Password autoComplete="off" />
+                </Form.Item>
+              </Space>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Form.Item name="application_id" label="EMR Serverless application ID" rules={[{ required: true }]}>
+              <Input placeholder="00fcxxxxxxxxxxxx" />
+            </Form.Item>
+            <Form.Item name="execution_role_arn" label="Execution role ARN" rules={[{ required: true }]}>
+              <Input placeholder="arn:aws:iam::123456789012:role/cryo-emr-execution" />
+            </Form.Item>
+            <Space size={12} className="full-width" style={{ display: "flex" }}>
+              <Form.Item name="region" label="AWS region" style={{ flex: 1 }}>
+                <Input placeholder="us-east-1" />
+              </Form.Item>
+              <Form.Item name="s3_logs_bucket" label="S3 logs bucket (optional)" style={{ flex: 1 }}>
+                <Input placeholder="my-emr-logs" />
+              </Form.Item>
+              <Form.Item name="s3_logs_prefix" label="S3 logs prefix" style={{ flex: 1 }}>
+                <Input placeholder="cryo-spark-logs" />
+              </Form.Item>
+            </Space>
+            <Form.Item name="entry_point" label="Spark entry point">
+              <Input placeholder="s3://cryo-artifacts/cryo_spark_runner.py" />
+            </Form.Item>
+            <Space size={12} className="full-width" style={{ display: "flex" }}>
+              <Form.Item
+                name="poll_interval_seconds"
+                label={<HintLabel label="Poll interval (s)" tooltip="How often Cryo checks EMR for job status." />}
+                style={{ flex: 1 }}
+              >
+                <InputNumber min={1} style={{ width: "100%" }} />
+              </Form.Item>
+              <Form.Item
+                name="timeout_seconds"
+                label={<HintLabel label="Timeout (s)" tooltip="Cryo gives up waiting for the job after this long." />}
+                style={{ flex: 1 }}
+              >
+                <InputNumber min={1} style={{ width: "100%" }} />
+              </Form.Item>
+            </Space>
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: "spark-params",
+                  label: "Advanced Spark submit parameters (optional)",
+                  children: (
+                    <>
+                      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5 }}>
+                        Extra <code>--conf</code> overrides passed to <code>spark-submit</code>, as JSON key/value pairs.
+                      </Typography.Paragraph>
+                      <Form.Item name="spark_submit_params_json" noStyle>
+                        <Input.TextArea rows={4} className="mono-input" placeholder='{"--conf spark.executor.memory": "8g"}' />
+                      </Form.Item>
+                    </>
+                  )
+                }
+              ]}
+            />
+          </>
+        )}
+
+        <Divider titlePlacement="left" plain style={{ fontSize: 12, color: "var(--ink-faint, rgba(0,0,0,0.45))" }}>
+          Scheduling
+        </Divider>
+        <Space size={12}>
+          <Form.Item
+            name="offpeak_start"
+            label={<HintLabel label="Off-peak start (hr)" tooltip="Hour of day, in this engine's local time, when low-priority maintenance is allowed to start." />}
+          >
+            <InputNumber min={0} max={23} />
+          </Form.Item>
+          <Form.Item name="offpeak_end" label="Off-peak end (hr)">
+            <InputNumber min={0} max={23} />
+          </Form.Item>
+        </Space>
+
+        <Form.Item name="secret_ref" label="Secret reference">
+          <Input placeholder="Encrypted secret reference, never raw credentials" />
+        </Form.Item>
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={saving}>
+          Save
+        </Button>
+      </Form>
+    </Drawer>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// AI Provider drawer
+// ---------------------------------------------------------------------------
+
+interface AIProviderFormValues {
+  name: string;
+  provider_type: string;
+  api_key: string;
+  model: string;
+  enabled: boolean;
+  is_default: boolean;
+  // Dynamic config fields (e.g., api_base for Azure)
+  config_api_base?: string;
+  config_api_version?: string;
+  // Allow any config_ prefixed fields
+  [key: `config_${string}`]: string | undefined;
+}
+
+const AIProviderDrawer = ({
+  value,
+  providerTypes,
   saving,
+  onClose,
   onSave
 }: {
-  title: string;
-  open: boolean;
-  onClose: () => void;
-  initial: Record<string, unknown>;
-  fields: ReactNode;
+  value: AIProviderRead | "new" | null;
+  providerTypes: AIProviderType[];
   saving: boolean;
-  onSave: (body: T) => void;
-}) => (
-  <Drawer title={title} open={open} onClose={onClose} width={580} destroyOnHidden>
-    <Form
-      layout="vertical"
-      initialValues={initial}
-      onFinish={(values) => {
-        try {
-          onSave({ ...values, config: JSON.parse(values.config || "{}") } as T);
-        } catch {
-          message.error("Config must be valid JSON.");
-        }
-      }}
+  onClose: () => void;
+  onSave: (body: AIProviderWrite & { id?: string }) => void;
+}) => {
+  const [form] = Form.useForm<AIProviderFormValues>();
+  const isEditing = value && value !== "new";
+  const existingConfig = isEditing ? (value.config as Record<string, string>) : {};
+  const [selectedType, setSelectedType] = useState<string>(isEditing ? value.provider_type : "anthropic");
+
+  const currentTypeInfo = providerTypes.find((t) => t.type === selectedType);
+  const modelOptions = currentTypeInfo?.models.map((m) => ({ label: m, value: m })) ?? [];
+  const configFields = currentTypeInfo?.config_fields ?? [];
+
+  return (
+    <Drawer
+      title={isEditing ? "Edit AI provider" : "New AI provider"}
+      open={Boolean(value)}
+      onClose={onClose}
+      width={520}
+      destroyOnHidden
     >
-      <Form.Item name="name" label="Name" rules={[{ required: true }]}>
-        <Input />
-      </Form.Item>
-      {fields}
-      <Form.Item name="config" label="Config JSON" rules={[{ required: true }]}>
-        <Input.TextArea rows={8} className="mono-input" />
-      </Form.Item>
-      <Form.Item name="secret_ref" label="Secret reference">
-        <Input placeholder="Encrypted secret reference, never raw credentials" />
-      </Form.Item>
-      <Form.Item name="enabled" label="Enabled" valuePropName="checked">
-        <Switch />
-      </Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving}>
-        Save
-      </Button>
-    </Form>
-  </Drawer>
-);
+      <Form<AIProviderFormValues>
+        form={form}
+        layout="vertical"
+        initialValues={{
+          name: isEditing ? value.name : "",
+          provider_type: isEditing ? value.provider_type : "anthropic",
+          api_key: "",
+          model: isEditing ? value.model : "claude-sonnet-4-20250514",
+          enabled: isEditing ? value.enabled : true,
+          is_default: isEditing ? value.is_default : false,
+          config_api_base: existingConfig.api_base ?? "",
+          config_api_version: existingConfig.api_version ?? "2024-03-01-preview"
+        }}
+        onValuesChange={(changed) => {
+          if (changed.provider_type) {
+            setSelectedType(changed.provider_type);
+            const newTypeInfo = providerTypes.find((t) => t.type === changed.provider_type);
+            if (newTypeInfo) {
+              form.setFieldValue("model", newTypeInfo.default_model);
+              // Set defaults for config fields
+              newTypeInfo.config_fields?.forEach((field) => {
+                if (field.default) {
+                  form.setFieldValue(`config_${field.name}` as keyof AIProviderFormValues, field.default);
+                }
+              });
+            }
+          }
+        }}
+        onFinish={(values) => {
+          // Build config object from config_ prefixed fields
+          const config: Record<string, string> = {};
+          if (values.config_api_base) config.api_base = values.config_api_base;
+          if (values.config_api_version) config.api_version = values.config_api_version;
+
+          const body: AIProviderWrite & { id?: string } = {
+            name: values.name,
+            provider_type: values.provider_type,
+            api_key: values.api_key,
+            model: values.model,
+            config: Object.keys(config).length > 0 ? config : undefined,
+            enabled: values.enabled,
+            is_default: values.is_default
+          };
+          if (isEditing) {
+            body.id = value.id;
+          }
+          onSave(body);
+        }}
+      >
+        <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+          <Input placeholder="anthropic-production" />
+        </Form.Item>
+
+        <Form.Item name="provider_type" label="Provider" rules={[{ required: true }]}>
+          <Select
+            options={providerTypes.map((t) => ({
+              label: (
+                <Space>
+                  <RobotOutlined />
+                  {t.name}
+                </Space>
+              ),
+              value: t.type
+            }))}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="api_key"
+          label={
+            <HintLabel
+              label="API Key"
+              tooltip={
+                isEditing && value.has_api_key
+                  ? "Leave blank to keep the existing key. Enter a new value to replace it."
+                  : "Your API key from the provider's dashboard. Stored encrypted."
+              }
+            />
+          }
+          rules={[{ required: !isEditing, message: "API key is required for new providers" }]}
+        >
+          <Input.Password
+            placeholder={isEditing && value.has_api_key ? "••••••••••••••••" : "sk-..."}
+            autoComplete="off"
+          />
+        </Form.Item>
+
+        {/* Dynamic config fields for providers like Azure OpenAI */}
+        {configFields.map((field) => (
+          <Form.Item
+            key={field.name}
+            name={`config_${field.name}`}
+            label={field.label}
+            rules={[{ required: field.required, message: `${field.label} is required` }]}
+          >
+            <Input placeholder={field.placeholder ?? ""} />
+          </Form.Item>
+        ))}
+
+        <Form.Item name="model" label={selectedType === "azure_openai" ? "Deployment Name" : "Model"} rules={[{ required: true }]}>
+          <Select options={modelOptions} />
+        </Form.Item>
+
+        <Divider />
+
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="is_default"
+          label={
+            <HintLabel
+              label="Set as default"
+              tooltip="The default provider is used for AI chat and copilot features. Only one provider can be default."
+            />
+          }
+          valuePropName="checked"
+        >
+          <Switch />
+        </Form.Item>
+
+        <Alert
+          type="info"
+          showIcon
+          message="API keys are stored encrypted"
+          description="Keys are encrypted at rest and never logged. They're only used server-side to call the AI provider's API."
+          style={{ marginBottom: 16 }}
+        />
+
+        <Button type="primary" htmlType="submit" loading={saving}>
+          Save
+        </Button>
+      </Form>
+    </Drawer>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Slack Configuration drawer
+// ---------------------------------------------------------------------------
+
+interface SlackFormValues {
+  name: string;
+  webhook_url: string;
+  channel: string;
+  daily_report_enabled: boolean;
+  daily_report_cron: string;
+  daily_report_use_ai: boolean;
+  enabled: boolean;
+  is_default: boolean;
+}
+
+const CRON_PRESETS = [
+  { label: "Daily at 9 AM", value: "0 9 * * *" },
+  { label: "Daily at 8 AM", value: "0 8 * * *" },
+  { label: "Daily at 10 AM", value: "0 10 * * *" },
+  { label: "Weekdays at 9 AM", value: "0 9 * * 1-5" },
+  { label: "Every 6 hours", value: "0 */6 * * *" },
+  { label: "Every 12 hours", value: "0 */12 * * *" },
+];
+
+const SlackDrawer = ({
+  value,
+  saving,
+  onClose,
+  onSave
+}: {
+  value: SlackConfigRead | "new" | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (body: SlackConfigWrite & { id?: string }) => void;
+}) => {
+  const [form] = Form.useForm<SlackFormValues>();
+  const isEditing = value && value !== "new";
+
+  return (
+    <Drawer
+      title={isEditing ? "Edit Slack connection" : "New Slack connection"}
+      open={Boolean(value)}
+      onClose={onClose}
+      width={520}
+      destroyOnHidden
+    >
+      <Form<SlackFormValues>
+        form={form}
+        layout="vertical"
+        initialValues={{
+          name: isEditing ? value.name : "",
+          webhook_url: "",
+          channel: isEditing ? (value.channel ?? "") : "",
+          daily_report_enabled: isEditing ? value.daily_report_enabled : true,
+          daily_report_cron: isEditing ? value.daily_report_cron : "0 9 * * *",
+          daily_report_use_ai: isEditing ? value.daily_report_use_ai : true,
+          enabled: isEditing ? value.enabled : true,
+          is_default: isEditing ? value.is_default : false
+        }}
+        onFinish={(values) => {
+          const body: SlackConfigWrite & { id?: string } = {
+            name: values.name,
+            webhook_url: values.webhook_url,
+            channel: values.channel || undefined,
+            daily_report_enabled: values.daily_report_enabled,
+            daily_report_cron: values.daily_report_cron,
+            daily_report_use_ai: values.daily_report_use_ai,
+            enabled: values.enabled,
+            is_default: values.is_default
+          };
+          if (isEditing) {
+            body.id = value.id;
+          }
+          onSave(body);
+        }}
+      >
+        <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+          <Input placeholder="daily-reports" />
+        </Form.Item>
+
+        <Form.Item
+          name="webhook_url"
+          label={
+            <HintLabel
+              label="Webhook URL"
+              tooltip={
+                isEditing && value.has_webhook
+                  ? "Leave blank to keep the existing webhook. Enter a new value to replace it."
+                  : "Create an incoming webhook in your Slack workspace settings."
+              }
+            />
+          }
+          rules={[{ required: !isEditing, message: "Webhook URL is required for new connections" }]}
+        >
+          <Input.Password
+            placeholder={isEditing && value.has_webhook ? "••••••••••••••••" : "https://hooks.slack.com/services/T.../B.../xxx"}
+            autoComplete="off"
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="channel"
+          label={
+            <HintLabel
+              label="Channel override (optional)"
+              tooltip="Override the default channel configured in the webhook. Leave blank to use the webhook's default channel."
+            />
+          }
+        >
+          <Input placeholder="#cryo-alerts" />
+        </Form.Item>
+
+        <Divider>Daily Report Settings</Divider>
+
+        <Form.Item name="daily_report_enabled" label="Enable daily reports" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="daily_report_cron"
+          label={
+            <HintLabel
+              label="Report schedule"
+              tooltip="Cron expression for when to send the daily report. Times are in UTC."
+            />
+          }
+        >
+          <Select options={CRON_PRESETS} />
+        </Form.Item>
+
+        <Form.Item
+          name="daily_report_use_ai"
+          label={
+            <HintLabel
+              label="Include AI summary"
+              tooltip="Use the configured AI provider to generate an executive summary of the report."
+            />
+          }
+          valuePropName="checked"
+        >
+          <Switch />
+        </Form.Item>
+
+        <Divider />
+
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="is_default"
+          label={
+            <HintLabel
+              label="Set as default"
+              tooltip="The default Slack connection is used for automated reports. Only one can be default."
+            />
+          }
+          valuePropName="checked"
+        >
+          <Switch />
+        </Form.Item>
+
+        <Alert
+          type="info"
+          showIcon
+          message="How to create a Slack webhook"
+          description={
+            <ol style={{ margin: 0, paddingLeft: 16 }}>
+              <li>Go to your Slack workspace settings</li>
+              <li>Navigate to Apps → Manage → Custom Integrations → Incoming Webhooks</li>
+              <li>Click "Add to Slack" and select the channel</li>
+              <li>Copy the webhook URL and paste it above</li>
+            </ol>
+          }
+          style={{ marginBottom: 16 }}
+        />
+
+        <Button type="primary" htmlType="submit" loading={saving}>
+          Save
+        </Button>
+      </Form>
+    </Drawer>
+  );
+};

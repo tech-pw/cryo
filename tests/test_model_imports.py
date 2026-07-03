@@ -9,6 +9,7 @@ from cryo.db.models import TablePartition
 def test_all_foundation_tables_are_registered() -> None:
     assert Base.metadata.schema == "cryo"
     assert set(Base.metadata.tables) == {
+        "cryo.ai_providers",
         "cryo.audit_log",
         "cryo.destinations",
         "cryo.jobs",
@@ -16,6 +17,7 @@ def test_all_foundation_tables_are_registered() -> None:
         "cryo.presets",
         "cryo.protected_snapshots",
         "cryo.runs",
+        "cryo.slack_configs",
         "cryo.sources",
         "cryo.table_assignments",
         "cryo.table_cost",

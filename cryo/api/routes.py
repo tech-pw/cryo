@@ -63,6 +63,8 @@ from cryo.api.schemas import (
     SourceCreate,
     SourcePatch,
     SourceRead,
+    SourceTestRequest,
+    SourceTestResponse,
     TableAuditResponse,
     TableCostRead,
     TablePartitionsResponse,
@@ -95,6 +97,7 @@ from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
 from cryo.planner.guardrails import validate_operation_order
 from cryo.planner.planner import build_plan
+from cryo.sources.factory import catalog_from_config
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -207,6 +210,33 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
     session.commit()
     session.refresh(source)
     return source
+
+
+@router.post(
+    "/sources/test",
+    response_model=SourceTestResponse,
+    dependencies=[Depends(require_operator)],
+)
+def test_source(payload: SourceTestRequest) -> SourceTestResponse:
+    """Verify a not-yet-saved catalog config and show what's actually in it.
+
+    Used by the "Test connection" action while creating/editing a lakehouse, so a user can see
+    real discovered namespaces and tables before committing to a Warehouse/URI guess.
+    """
+    try:
+        catalog = catalog_from_config("__test__", payload.type, payload.config)
+        tables = catalog.list_tables()
+    except Exception as exc:
+        return SourceTestResponse(ok=False, error=str(exc))
+
+    namespaces = sorted({schema for schema, _ in tables})
+    sample = [f"{schema}.{table}" for schema, table in tables[:10]]
+    return SourceTestResponse(
+        ok=True,
+        namespaces=namespaces,
+        table_count=len(tables),
+        sample_tables=sample,
+    )
 
 
 @router.patch(
