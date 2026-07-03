@@ -66,7 +66,7 @@ export const BulkAssignBar = ({
         />
         <Button onClick={onPreview}>Preview</Button>
         <Select
-          placeholder="Run destination"
+          placeholder="Run engine"
           value={activeDestinationId}
           options={destinations.map((destination) => ({ label: destination.name, value: destination.id }))}
           style={{ width: 190 }}

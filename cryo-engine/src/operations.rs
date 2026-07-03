@@ -1,21 +1,20 @@
 //! Iceberg maintenance operations implemented with iceberg-rust.
 //!
-//! Note: iceberg-rust is still evolving. This implementation targets v0.4.x
+//! Note: iceberg-rust is still evolving. This implementation targets v0.10.x (main branch)
 //! and may need updates as the API stabilizes.
 
+use crate::progress::{emit_completed, emit_progress, emit_started};
 use crate::{ExecuteRequest, OperationRequest, OperationResult};
-use crate::progress::{emit_completed, emit_failed, emit_progress, emit_started};
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 use tracing::info;
 
 // iceberg-rust imports
-use iceberg::io::FileIO;
-use iceberg::spec::{ManifestFile, Snapshot};
+use iceberg::spec::Snapshot;
 use iceberg::table::Table;
-use iceberg::{Catalog, NamespaceIdent, TableIdent};
-use iceberg_catalog_rest::{RestCatalog, RestCatalogConfig};
+use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
+use iceberg_catalog_rest::{RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
 
 const DEFAULT_TARGET_FILE_SIZE_BYTES: u64 = 268_435_456; // 256 MB
 const DEFAULT_MIN_FILE_SIZE_BYTES: u64 = 104_857_600; // 100 MB
@@ -23,16 +22,31 @@ const DEFAULT_RETENTION_DAYS: i64 = 7;
 const DEFAULT_RETAIN_LAST: usize = 1;
 const DEFAULT_ORPHAN_MIN_AGE_HOURS: i64 = 72;
 
-/// Connect to the Iceberg REST catalog.
-async fn load_catalog(request: &ExecuteRequest) -> Result<RestCatalog> {
-    let config = RestCatalogConfig::builder()
-        .uri(&request.catalog_uri)
-        .warehouse(&request.warehouse)
-        .build();
+/// Connect to the Iceberg REST catalog using the builder pattern.
+async fn load_catalog(request: &ExecuteRequest) -> Result<impl Catalog> {
+    use std::collections::HashMap;
+    
+    let mut props = HashMap::new();
+    props.insert(REST_CATALOG_PROP_URI.to_string(), request.catalog_uri.clone());
+    props.insert(REST_CATALOG_PROP_WAREHOUSE.to_string(), request.warehouse.clone());
+    
+    // Add S3 credentials if provided
+    if let Some(s3_endpoint) = &request.s3_endpoint {
+        props.insert("s3.endpoint".to_string(), s3_endpoint.clone());
+    }
+    if let Some(s3_access_key) = &request.s3_access_key {
+        props.insert("s3.access-key-id".to_string(), s3_access_key.clone());
+    }
+    if let Some(s3_secret_key) = &request.s3_secret_key {
+        props.insert("s3.secret-access-key".to_string(), s3_secret_key.clone());
+    }
 
-    RestCatalog::new(config)
+    let catalog = RestCatalogBuilder::default()
+        .load("rest", props)
         .await
-        .context("failed to connect to REST catalog")
+        .context("failed to connect to REST catalog")?;
+
+    Ok(catalog)
 }
 
 /// Parse a table reference like "schema.table" or "catalog.schema.table".
@@ -117,12 +131,12 @@ pub async fn rewrite_data_files(
     };
 
     // Count small files by examining manifests
-    let file_io = table.file_io();
+    let _file_io = table.file_io();
     let manifest_list = current_snapshot.manifest_list();
-    
-    let mut small_file_count = 0u64;
-    let mut small_file_bytes = 0u64;
-    let mut total_files = 0u64;
+
+    let small_file_count = 0u64;
+    let small_file_bytes = 0u64;
+    let _total_files = 0u64;
 
     // In production, we'd iterate through manifest entries here.
     // The iceberg-rust API for this is still stabilizing.
@@ -192,7 +206,7 @@ pub async fn expire_snapshots(
 
     let table = load_table(request).await?;
     let metadata = table.metadata();
-    let snapshots: Vec<&Snapshot> = metadata.snapshots().collect();
+    let snapshots: Vec<&Arc<Snapshot>> = metadata.snapshots().collect();
     let total_snapshots = snapshots.len();
 
     let mut to_expire = 0u64;
@@ -266,7 +280,7 @@ pub async fn remove_orphan_files(
     // 3. Delete files that are:
     //    - Not referenced by any snapshot
     //    - Older than min_age_hours (to avoid deleting in-progress writes)
-    
+
     emit_progress("remove_orphan_files", 50, 0, 0);
 
     // Placeholder: actual orphan detection requires S3 listing
@@ -325,7 +339,7 @@ pub async fn rewrite_manifests(
 
     // Count existing manifests
     let manifest_list = current_snapshot.manifest_list();
-    
+
     emit_progress("rewrite_manifests", 50, 0, 0);
 
     // In production, this would:

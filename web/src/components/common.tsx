@@ -1,4 +1,5 @@
-import { Button, Empty, Space, Statistic, Typography } from "antd";
+import { InfoCircleOutlined } from "@ant-design/icons";
+import { Button, Empty, Space, Statistic, Tooltip, Typography } from "antd";
 import type { ReactNode } from "react";
 import { ResponsiveContainer } from "recharts";
 
@@ -65,12 +66,34 @@ export interface StatItem {
   label: string;
   value: ReactNode;
   suffix?: ReactNode;
+  /** Shown as a hoverable info icon next to the label — use for any metric whose name alone
+   * doesn't say what it measures (e.g. "why is this called that"). */
+  tooltip?: string;
 }
+
+/** A label with a hoverable info icon — use for any field name that doesn't say what it means
+ * on its own (e.g. "Live" bytes, "Precision coverage"). Reused by StatStrip and Descriptions. */
+export const HintLabel = ({ label, tooltip }: { label: ReactNode; tooltip?: string }) =>
+  tooltip ? (
+    <Space size={4}>
+      <span>{label}</span>
+      <Tooltip title={tooltip}>
+        <InfoCircleOutlined style={{ color: "var(--ink-faint, rgba(0,0,0,0.35))" }} />
+      </Tooltip>
+    </Space>
+  ) : (
+    <>{label}</>
+  );
 
 export const StatStrip = ({ items }: { items: StatItem[] }) => (
   <div className="stat-strip">
     {items.map((item) => (
-      <Statistic key={item.label} title={item.label} value={String(item.value)} suffix={item.suffix} />
+      <Statistic
+        key={item.label}
+        title={<HintLabel label={item.label} tooltip={item.tooltip} />}
+        value={String(item.value)}
+        suffix={item.suffix}
+      />
     ))}
   </div>
 );

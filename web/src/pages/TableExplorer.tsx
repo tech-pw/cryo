@@ -183,7 +183,7 @@ export const TableExplorer = () => {
             render: (_, row) => <PriorityTag priority={row.stats?.compaction_priority} />
           },
           {
-            title: "Needs",
+            title: "Needs compaction",
             key: "needs",
             render: (_, row) => <StatusTag status={row.stats?.needs_compaction ? "running" : "succeeded"} />
           },
@@ -228,7 +228,7 @@ export const TableExplorer = () => {
             render: (value) => formatCurrency(value)
           },
           {
-            title: "Reclaimable",
+            title: "Reclaimable storage",
             dataIndex: ["stats", "reclaimable_bytes"],
             sorter: true,
             align: "right",
@@ -244,7 +244,7 @@ export const TableExplorer = () => {
             render: (_, row) => row.stats?.partition_col ?? "-"
           },
           {
-            title: "Seen",
+            title: "First seen",
             dataIndex: "first_seen_at",
             render: formatTime
           }

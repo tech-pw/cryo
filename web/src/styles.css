@@ -150,6 +150,11 @@ body {
   letter-spacing: -0.02em;
 }
 
+.tab-intro {
+  max-width: 68ch;
+  margin-bottom: 4px !important;
+}
+
 .page-alert {
   margin-bottom: 12px;
 }

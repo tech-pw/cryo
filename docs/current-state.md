@@ -58,16 +58,20 @@ Last updated: 2026-07-03 (Phase 1-8 implementation complete).
 - `cryo/events/service.py` — wiring for watcher/consumer with `RuntimeWiring`
 - `cryo/cli.py` — `cryo cli events` command runs event loop
 
-### Phase 5 — Native Rust Engine ⚠️ Partial
+### Phase 5 — Native Rust Engine ✅ Builds (Read-Only Operations)
 
 - `cryo/domain/enums.py` — `EngineType.NATIVE`
 - `cryo/engines/base.py` — `payload: dict[str, object]` field on `RenderedStatement`
 - `cryo/engines/native/engine.py` — Python adapter implementing `MaintenanceEngine`
 - `cryo/engines/native/payload.py` — JSON payload serialization
-- `cryo-engine/src/main.rs` — **Scaffold only** with JSON stdin/stdout protocol
-- `cryo-engine/Cargo.toml` — Rust crate manifest
+- `cryo-engine/src/main.rs` — JSON stdin/stdout protocol with full error reporting
+- `cryo-engine/src/operations.rs` — Iceberg operations using iceberg-rust 0.10.x (git main)
+- `cryo-engine/src/progress.rs` — JSONL progress reporting to stderr
+- `cryo-engine/Cargo.toml` — Rust crate with iceberg-rust, tokio, tracing
 
-**Pending:** Full iceberg-rust + DataFusion integration for the four operations.
+**Status:** The Rust engine builds successfully and connects to Iceberg REST catalogs.
+Operations currently perform read-only metadata analysis; full write operations
+depend on iceberg-rust's table modification APIs which are still stabilizing upstream.
 
 ### Phase 6 — Compliance & Governance ✅
 

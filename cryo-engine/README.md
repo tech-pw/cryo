@@ -2,35 +2,32 @@
 
 Native Rust execution engine for Cryo Iceberg maintenance operations.
 
-## Overview
+## Status
 
-`cryo-engine` is a high-performance alternative to the Trino/Spark execution engines in Cryo.
-It uses [iceberg-rust](https://github.com/apache/iceberg-rust) and [DataFusion](https://github.com/apache/datafusion)
-to execute maintenance operations directly, without requiring an external compute cluster.
+✅ **Builds successfully** with iceberg-rust 0.10.x (git main branch).
+
+Operations currently analyze table metadata and report findings. Full write operations
+depend on iceberg-rust's table modification APIs which are still evolving upstream.
 
 ## Supported Operations
 
 | Operation | Description | Status |
 |-----------|-------------|--------|
-| `rewrite_data_files` | Compact small files into larger files (binpack) | ⚠️ Scaffold |
-| `expire_snapshots` | Remove old snapshots past retention | ⚠️ Scaffold |
-| `remove_orphan_files` | Delete unreferenced files from storage | ⚠️ Scaffold |
-| `rewrite_manifests` | Consolidate small manifest files | ⚠️ Scaffold |
-
-**Note:** The current implementation is a scaffold that demonstrates the integration pattern
-with iceberg-rust. Full operation implementation requires completing the iceberg-rust table
-modification APIs, which are still evolving.
+| `rewrite_data_files` | Compact small files into larger files (binpack) | ⚠️ Read-only analysis |
+| `expire_snapshots` | Remove old snapshots past retention | ⚠️ Read-only analysis |
+| `remove_orphan_files` | Delete unreferenced files from storage | ⚠️ Read-only analysis |
+| `rewrite_manifests` | Consolidate small manifest files | ⚠️ Read-only analysis |
 
 ## Building
 
 ### Prerequisites
 
 - Rust 1.75+ (install via [rustup](https://rustup.rs/))
-- System libraries for OpenSSL (for AWS S3 access)
 
 ```bash
 # Install Rust if needed
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
 # Build the engine
 cd cryo-engine
@@ -47,14 +44,17 @@ Progress events are streamed to stderr as JSONL.
 ```bash
 # Execute maintenance operations
 echo '{
-  "table_ref": "db.schema.table",
+  "table_ref": "demo.orders",
   "catalog_uri": "http://localhost:8181",
-  "warehouse": "s3://bucket/warehouse",
-  "mode": "standard",
+  "warehouse": "s3://warehouse/",
+  "mode": "dry_run",
   "operations": [
     {"type": "expire_snapshots", "params": {"retention_days": 7}},
     {"type": "rewrite_data_files", "params": {"target_file_size_bytes": 268435456}}
-  ]
+  ],
+  "s3_endpoint": "http://localhost:9000",
+  "s3_access_key": "minioadmin",
+  "s3_secret_key": "minioadmin"
 }' | ./target/release/cryo-engine execute
 ```
 
@@ -62,16 +62,19 @@ echo '{
 
 ```json
 {
-  "table_ref": "catalog.schema.table",
+  "table_ref": "schema.table",
   "catalog_uri": "http://iceberg-rest:8181",
   "warehouse": "s3://bucket/warehouse",
-  "mode": "light|standard|deep",
+  "mode": "dry_run|execute",
   "operations": [
     {
       "type": "expire_snapshots|rewrite_data_files|remove_orphan_files|rewrite_manifests",
       "params": { ... }
     }
-  ]
+  ],
+  "s3_endpoint": "http://minio:9000",
+  "s3_access_key": "...",
+  "s3_secret_key": "..."
 }
 ```
 
@@ -80,7 +83,7 @@ echo '{
 ```json
 {
   "ok": true,
-  "table_ref": "catalog.schema.table",
+  "table_ref": "schema.table",
   "operations": 2,
   "results": [
     {
@@ -145,13 +148,24 @@ cargo build --release
 │  progress.rs      - JSONL progress reporting                │
 ├─────────────────────────────────────────────────────────────┤
 │                    Dependencies                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ iceberg-rust │  │  DataFusion  │  │ object_store │      │
-│  │  (catalog,   │  │  (query      │  │  (S3 access) │      │
-│  │   metadata)  │  │   execution) │  │              │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌──────────────────────┐  ┌──────────────┐                │
+│  │ iceberg-rust 0.10.x  │  │ object_store │                │
+│  │  (catalog, metadata) │  │  (S3 access) │                │
+│  └──────────────────────┘  └──────────────┘                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Dependencies
+
+Uses iceberg-rust from git main branch to get latest fixes for chrono/arrow compatibility:
+
+- `iceberg` + `iceberg-catalog-rest` — Apache Iceberg Rust implementation
+- `object_store` — S3/cloud storage access
+- `tokio` — Async runtime
+- `tracing` / `tracing-subscriber` — Structured logging (JSON to stderr)
+- `serde` / `serde_json` — JSON serialization
+- `chrono` — Time handling
+- `anyhow` / `thiserror` — Error handling
 
 ## License
 

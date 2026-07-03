@@ -16,6 +16,13 @@ pub struct ExecuteRequest {
     pub operations: Vec<OperationRequest>,
     #[serde(default)]
     pub params: serde_json::Value,
+    // Optional S3 credentials
+    #[serde(default)]
+    pub s3_endpoint: Option<String>,
+    #[serde(default)]
+    pub s3_access_key: Option<String>,
+    #[serde(default)]
+    pub s3_secret_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,6 +124,8 @@ async fn execute(request: ExecuteRequest) -> ExecuteResponse {
             }
             Err(e) => {
                 all_ok = false;
+                // Include full error chain for debugging
+                let error_chain = format!("{e:#}");
                 results.push(OperationResult {
                     operation: op.operation_type.clone(),
                     success: false,
@@ -124,7 +133,7 @@ async fn execute(request: ExecuteRequest) -> ExecuteResponse {
                     bytes_removed: None,
                     snapshots_expired: None,
                     manifests_rewritten: None,
-                    error: Some(e.to_string()),
+                    error: Some(error_chain),
                     duration_ms,
                 });
             }

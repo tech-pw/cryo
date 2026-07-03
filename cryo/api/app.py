@@ -46,3 +46,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(extensions_router)
     app.include_router(phase8_router)
     return app
+
+
+app = create_app()

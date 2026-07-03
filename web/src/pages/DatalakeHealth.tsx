@@ -63,18 +63,31 @@ export const DatalakeHealth = () => {
           <StatStrip
             items={[
               { label: "Tables", value: formatNumber(data.totals?.tables, true) },
-              { label: "Fleet size", value: formatGb(data.totals?.size_gb) },
-              { label: "Small files", value: formatNumber(data.totals?.small_files, true) },
+              {
+                label: "Total data size",
+                value: formatGb(data.totals?.size_gb),
+                tooltip: "Combined size of every table Cryo is tracking, across all schemas."
+              },
+              {
+                label: "Small files",
+                value: formatNumber(data.totals?.small_files, true),
+                tooltip: "Files under the target size threshold — too many of these slows down queries."
+              },
               { label: "Needs compaction", value: formatNumber(data.totals?.needs_compaction) },
               { label: "S3 monthly now", value: formatCurrency(data.totals?.monthly_cost_usd) },
               {
                 label: "After maintenance",
                 value: formatCurrency(
                   data.totals?.projected_monthly_cost_usd ?? data.totals?.monthly_cost_usd
-                )
+                ),
+                tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
               },
               { label: "Monthly savings", value: formatCurrency(data.totals?.projected_savings_usd_month) },
-              { label: "Reclaimable", value: formatBytesGb(data.totals?.reclaimable_bytes) }
+              {
+                label: "Reclaimable storage",
+                value: formatBytesGb(data.totals?.reclaimable_bytes),
+                tooltip: "Disk space maintenance would free up — dead/expired data, orphan files, and metadata bloat."
+              }
             ]}
           />
           <Row gutter={[12, 12]}>
@@ -149,7 +162,14 @@ export const DatalakeHealth = () => {
               </Card>
             </Col>
             <Col xs={24} xl={9}>
-              <Card title="Drift watch">
+              <Card
+                title="Recent scan trend"
+                extra={
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Small-file count per scan
+                  </Typography.Text>
+                }
+              >
                 {(data.drift ?? []).length ? (
                   <div className="drift-list">
                     {(data.drift ?? []).slice(0, 8).map((item, index) => (
@@ -160,7 +180,10 @@ export const DatalakeHealth = () => {
                     ))}
                   </div>
                 ) : (
-                  <EmptyState title="No drift detected" description="Trend data will appear after repeated scans." />
+                  <EmptyState
+                    title="No scan history yet"
+                    description="This fills in once the fleet has been scanned more than once, so you can see whether small-file counts are climbing."
+                  />
                 )}
               </Card>
             </Col>
