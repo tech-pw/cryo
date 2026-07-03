@@ -50,10 +50,10 @@ LOCAL_SPARK_DESTINATION = {
 
 LOCAL_STANDARD_PRESET = {
     "name": "local-standard",
-    "mode": "standard",
-    "operations": ["expire_snapshots", "optimize"],
+    "mode": "deep",
+    "operations": ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"],
     "params": {"min_small_files": 10},
-    "description": "Default local Trino maintenance profile for small tables",
+    "description": "Default local Trino maintenance profile (deep mode, all steps)",
     "guardrails": {},
 }
 

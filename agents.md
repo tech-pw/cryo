@@ -121,8 +121,9 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
 - Correct op order: `expire_snapshots → remove_orphan_files → optimize → optimize_manifests`.
 - **A–F health grade** + score deductions (WARN −8 / CRIT −20) and **S3 cost** heuristic, unchanged.
 - **Audit every action** (table, action, status, detail, engine, duration).
-- Session tuning before Trino OPTIMIZE (`target_max_file_size`, `task_min_writer_count`,
-  `writer_scaling_min_data_processed`).
+- Trino writer target configured at the Iceberg catalog level (`iceberg.target-max-file-size`);
+  session tuning before Trino OPTIMIZE only uses supported session properties
+  (`task_min_writer_count`, `writer_scaling_min_data_processed`).
 
 If you must change any of these, call it out explicitly and update `lld.md` + parity tests.
 

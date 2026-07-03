@@ -18,11 +18,10 @@ class UnsupportedPredicateError(ValueError):
     pass
 
 
-def session_setup(catalog: str = "iceberg", target_file_size_mb: int = 256) -> list[str]:
+def session_setup() -> list[str]:
     return [
-        f"SET SESSION {catalog}.target_max_file_size='{target_file_size_mb}MB'",
-        "SET SESSION task_min_writer_count=8",
-        "SET SESSION writer_scaling_min_data_processed='32MB'",
+        "SET SESSION task_min_writer_count = 8",
+        "SET SESSION writer_scaling_min_data_processed = '32MB'",
     ]
 
 

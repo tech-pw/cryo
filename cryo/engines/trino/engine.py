@@ -38,9 +38,7 @@ class TrinoEngine:
         return render(plan)
 
     def session_setup(self) -> list[str]:
-        catalog = str(self.config.get("catalog") or "iceberg")
-        target_mb = int(self.config.get("target_file_size_mb") or 256)
-        return session_setup(catalog=catalog, target_file_size_mb=target_mb)
+        return session_setup()
 
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
         coordinator = self._coordinator(ctx)
@@ -54,7 +52,7 @@ class TrinoEngine:
             cursor.execute(stmt.sql)
             rows = tuple(tuple(row) for row in (cursor.fetchall() or ()))
             engine_ref = _query_id(cursor)
-            
+
             # Extract file counts for OPTIMIZE operations
             input_files = None
             output_files = None
@@ -68,7 +66,7 @@ class TrinoEngine:
                         output_files = int(rows[0][1]) if rows[0][1] is not None else None
                 except (ValueError, IndexError, TypeError):
                     pass
-            
+
             return ExecResult(
                 ok=True,
                 engine_ref=engine_ref,

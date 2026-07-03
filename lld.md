@@ -542,9 +542,12 @@ Predicate rendering (transform-aware), examples:
 - `year` → `(col >= DATE 'YYYY-01-01' AND col < DATE 'YYYY+1-01-01')`
 - `identity` → `col = '<value>'`
 
-Session setup before OPTIMIZE (ported):
-`SET SESSION {catalog}.target_max_file_size='256MB'`, `task_min_writer_count=8`,
-`writer_scaling_min_data_processed='32MB'`.
+Session setup before OPTIMIZE (ported): run `SET SESSION task_min_writer_count = 8` and
+`SET SESSION writer_scaling_min_data_processed = '32MB'`. Trino does not expose
+`<catalog>.target_max_file_size` as a session property in the local Trino 482 deployment; set
+`iceberg.target-max-file-size=256MB` in the Iceberg catalog properties to control the writer target.
+`optimize(file_size_threshold => ...)` remains the procedure threshold that selects candidate files
+for rewrite.
 
 Load probe (`engines/trino/load.py`): per-coordinator
 ```sql

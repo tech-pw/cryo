@@ -94,10 +94,9 @@ def test_trino_engine_executes_session_setup_and_statement() -> None:
 
     assert result.ok is True
     assert result.engine_ref == "query_123"
-    assert cursor.executed[:3] == [
-        "SET SESSION iceberg.target_max_file_size='256MB'",
-        "SET SESSION task_min_writer_count=8",
-        "SET SESSION writer_scaling_min_data_processed='32MB'",
+    assert cursor.executed[:2] == [
+        "SET SESSION task_min_writer_count = 8",
+        "SET SESSION writer_scaling_min_data_processed = '32MB'",
     ]
     assert cursor.executed[-1] == "ALTER TABLE iceberg.demo.t EXECUTE optimize"
 
