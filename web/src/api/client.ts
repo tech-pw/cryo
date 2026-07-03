@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  CostDashboard,
   DatalakeDashboard,
   DestinationRead,
   DestinationWrite,
@@ -10,6 +11,7 @@ import type {
   MaintenancePreviewResponse,
   MaintenanceRunResponse,
   Mode,
+  OperationType,
   PaginatedTables,
   PartitionRead,
   PresetRead,
@@ -20,6 +22,7 @@ import type {
   RunRead,
   SourceRead,
   SourceWrite,
+  TableCostRead,
   TableRead,
   UUID
 } from "./types";
@@ -198,6 +201,9 @@ interface RawDatalakeDashboard {
     total_size_gb: number;
     small_files_count: number;
     estimated_monthly_s3_cost_usd: number;
+    projected_monthly_s3_cost_usd?: number;
+    projected_savings_usd_month?: number;
+    reclaimable_bytes?: number;
     needs_compaction_count: number;
   };
   grade_distribution: Array<{ grade: string; count: number }>;
@@ -229,6 +235,9 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
     size_gb: payload.totals.total_size_gb,
     small_files: payload.totals.small_files_count,
     monthly_cost_usd: payload.totals.estimated_monthly_s3_cost_usd,
+    projected_monthly_cost_usd: payload.totals.projected_monthly_s3_cost_usd,
+    projected_savings_usd_month: payload.totals.projected_savings_usd_month,
+    reclaimable_bytes: payload.totals.reclaimable_bytes,
     needs_compaction: payload.totals.needs_compaction_count
   },
   grade_distribution: payload.grade_distribution,
@@ -250,3 +259,66 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
   })),
   drift: payload.drift
 });
+
+export const getCostDashboard = (api: ApiOptions) =>
+  apiFetch<CostDashboard>("/dashboards/cost", api);
+
+export const getTableCost = (api: ApiOptions, id: UUID) =>
+  apiFetch<TableCostRead>(`/tables/${id}/cost`, api);
+
+export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
+  const bySchema = new Map<string, { current_usd: number; projected_usd: number; savings_usd: number }>();
+  const ops: Record<OperationType, number> = {
+    optimize: 0,
+    expire_snapshots: 0,
+    remove_orphan_files: 0,
+    optimize_manifests: 0
+  };
+  let current = 0;
+  let projected = 0;
+  let savings = 0;
+  let reclaimable = 0;
+  let storage = 0;
+
+  for (const table of tables) {
+    const stats = table.stats;
+    if (!stats) continue;
+    const cur = stats.estimated_monthly_s3_cost_usd ?? 0;
+    const proj = stats.projected_monthly_s3_cost_usd ?? cur;
+    const sav = stats.projected_savings_usd_month ?? Math.max(0, cur - proj);
+    current += cur;
+    projected += proj;
+    savings += sav;
+    reclaimable += stats.reclaimable_bytes ?? 0;
+    storage += (stats.total_size_gb ?? 0) * 1024 ** 3;
+    const row = bySchema.get(table.schema_name) ?? { current_usd: 0, projected_usd: 0, savings_usd: 0 };
+    row.current_usd += cur;
+    row.projected_usd += proj;
+    row.savings_usd += sav;
+    bySchema.set(table.schema_name, row);
+  }
+
+  return {
+    totals: {
+      current_monthly_cost_usd: current,
+      projected_monthly_cost_usd: projected,
+      projected_savings_usd_month: savings,
+      current_storage_bytes: storage,
+      reclaimable_bytes: reclaimable
+    },
+    savings_by_operation: Object.entries(ops).map(([operation, savings_usd_month]) => ({
+      operation: operation as OperationType,
+      savings_usd_month,
+      reclaimable_bytes: 0
+    })),
+    cost_by_schema: Array.from(bySchema.entries())
+      .map(([schema_name, values]) => ({ schema_name, ...values }))
+      .sort((a, b) => b.savings_usd - a.savings_usd),
+    top_opportunities: [...tables]
+      .sort(
+        (a, b) =>
+          (b.stats?.projected_savings_usd_month ?? 0) - (a.stats?.projected_savings_usd_month ?? 0)
+      )
+      .slice(0, 10)
+  };
+};

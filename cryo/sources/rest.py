@@ -1,54 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import Any
 
-from pyiceberg.catalog import load_catalog
-
-from cryo.sources.base import TableIdentifier
+from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
 
 
-@dataclass
-class RestSourceCatalog:
+class RestSourceCatalog(PyIcebergSourceCatalog):
     """PyIceberg REST catalog wrapper."""
 
-    name: str
-    config: Mapping[str, Any]
-    _catalog: Any = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        properties = dict(self.config)
-        catalog_name = properties.pop("catalog_name", None)
-        catalog_name = catalog_name or properties.pop("catalog", None)
-        catalog_name = catalog_name or properties.pop("name", self.name)
-        self._catalog = load_catalog(str(catalog_name), **properties)
-
-    def list_tables(self) -> list[TableIdentifier]:
-        tables: set[TableIdentifier] = set()
-        for namespace in sorted(self._catalog.list_namespaces(), key=_namespace_name):
-            for identifier in self._catalog.list_tables(namespace):
-                tables.add(_schema_table(identifier, default_schema=_namespace_name(namespace)))
-        return sorted(tables)
-
-    def load_table(self, schema: str, table: str) -> Any:
-        return self._catalog.load_table((schema, table))
-
-
-def _namespace_name(namespace: Any) -> str:
-    if isinstance(namespace, str):
-        return namespace
-    if isinstance(namespace, tuple):
-        return ".".join(str(part) for part in namespace)
-    return str(namespace)
-
-
-def _schema_table(identifier: Any, *, default_schema: str) -> TableIdentifier:
-    parts = tuple(str(part) for part in identifier) if isinstance(identifier, tuple) else ()
-    if not parts:
-        parts = tuple(str(identifier).split("."))
-    if len(parts) >= 2:
-        return parts[-2], parts[-1]
-    if len(parts) == 1:
-        return default_schema, parts[0]
-    raise ValueError(f"Unable to parse Iceberg table identifier: {identifier!r}")
+    def __init__(self, name: str, config: Mapping[str, object]) -> None:
+        super().__init__(name=name, config=config, default_catalog_type="rest")

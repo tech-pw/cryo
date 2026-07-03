@@ -56,7 +56,15 @@ and orchestration move into the platform itself.
 9. **Health dashboards**: datalake (fleet) health + per-table health & audit timeline.
 10. **Reporting & alerting**: scheduled HTML/email/Slack summaries (port existing report), plus
     in-app drift/cost alerts.
-11. **Kubernetes deployment**: Docker images + Helm chart for all components.
+11. **Cost & savings projection**: show each table's **current monthly storage cost** and the
+    **projected cost + savings once maintenance is done**, attributed per operation (compaction /
+    `optimize`, snapshot **expiry**, **orphan-file** removal, manifest rewrite). Numbers are
+    **precise** — exact reclaim is computed from Iceberg metadata, the same way the engines compute
+    what to delete — while scans stay **cost-efficient**: metadata-only by default, with the single
+    storage-listing step (needed only for orphan detection) kept opt-in and bounded. Rolls up at
+    table, schema, and fleet level; the explorer can filter/sort by projected savings so operators
+    target the biggest wins first.
+12. **Kubernetes deployment**: Docker images + Helm chart for all components.
 
 ### Explicitly preserved from today (non-negotiable "keep these")
 - **Partition-aware OPTIMIZE** driven by pre-computed scan data (no live `$files` scans on hot paths).
@@ -113,6 +121,7 @@ and orchestration move into the platform itself.
 | D9 | **No Airflow.** Internal scheduler (APScheduler in the Scheduler service) + K8s `CronJob` for the Scanner | Removes the Airflow dependency entirely as required. |
 | D10 | **Stats stay dual-written**: Postgres (serving/UI) + optional Iceberg history table | UI reads Postgres; long-term history/trend can also live in Iceberg like today. |
 | D11 | **Plans are previewable & dry-runnable** | Every job can render its exact SQL before execution — safety + the "preview" UX. |
+| D12 | **Tiered cost model: metadata-precise by default, storage-truth opt-in** | Exact "what will maintenance reclaim?" needs per-snapshot file accounting, which comes from Iceberg **metadata** (cheap, no data reads). Orphan detection is the only step that needs an S3 **LIST**, so it is a separate, bounded, opt-in pass on a slower cadence. This keeps the numbers precise while keeping scans cheap — the core requirement for the cost/savings feature. |
 
 ---
 
@@ -155,6 +164,12 @@ See `hld.md` for the diagram and data flow; `lld.md` for schemas, interfaces, an
 - **Phase 7 — Reporting/alerting + hardening**: email/Slack reports (port existing), drift/cost
   alerts, metrics (Prometheus), Helm chart polish, docs, e2e tests.
 
+> **Cost & savings projection is cross-phase**: the metadata-precise byte accounting + pure
+> savings model land as a **Phase 1** Scanner extension (feeds `table_cost`); the plan-accurate
+> projection surfaces in the **Phase 4** preview API and **Phase 5** cost dashboard; the
+> opt-in storage-truth (orphan) tier and the savings section of the report land in **Phase 7**.
+> See `lld.md` §16 for the full design and `docs/cost-savings.md` for the pickup brief.
+
 ---
 
 ## 7. Assumptions & open questions
@@ -183,3 +198,6 @@ Reasonable defaults chosen; flag to change:
   ad-hoc maintenance execute on the right engine with full audit + live status.
 - Tables > 100 GB route to Spark/EMR via preset rules; everything else stays on Trino.
 - Table health, datalake health, drift, and cost are visible and trustworthy.
+- Every table shows a **precise current storage cost** and a **projected savings-after-maintenance**
+  broken down by operation; operators can filter the fleet by savings and act on the biggest wins,
+  and post-run "realized savings" reconcile against the projection.

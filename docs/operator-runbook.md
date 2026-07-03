@@ -65,6 +65,16 @@ make smoke-compact
 .venv/bin/python -m cryo.scanner.run --num-chunks 1 --full-scan
 ```
 
+Include the opt-in orphan storage-listing tier (Tier 2):
+
+```bash
+.venv/bin/python -m cryo.scanner.run --num-chunks 1 --full-scan --cost-full-scan
+```
+
+By default, scans run Tier 0+1 (metadata-precise expiry/compaction/delete reclaim with no S3 LIST).
+Tier 2 runs when `--cost-full-scan` is passed or when `cost_full_scan_every_hours` cadence elapses
+since the last full cost scan for a table.
+
 The scanner logs a `ScanSummary`:
 
 ```text

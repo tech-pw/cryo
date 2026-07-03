@@ -7,9 +7,18 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from cryo.config import Settings, get_settings
+from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
 from cryo.planner.partitions import normalize_transform
-from cryo.scanner.cost import GB, MB, estimate_storage_cost
+from cryo.scanner.cost import (
+    GB,
+    MB,
+    MetadataCostAccounting,
+    TableCostAnalysis,
+    account_metadata_cost,
+    build_table_cost_analysis,
+    estimate_storage_cost,
+)
 from cryo.scanner.health import compute_health_score
 
 HEALTH_SMALL_FILE_BYTES = 8 * MB
@@ -65,6 +74,7 @@ class TableAnalysis:
     has_sort_order: bool | None
     target_file_size_bytes: int | None
     estimated_monthly_s3_cost_usd: float
+    cost: TableCostAnalysis | None
     partitions: list[PartitionAnalysis]
     raw: dict[str, Any]
 
@@ -87,11 +97,14 @@ def analyze_catalog_table(
     scan_at: datetime | None = None,
     small_file_mb: float = 89.6,
     file_size_threshold_mb: int = 128,
+    settings: Settings | None = None,
 ) -> TableAnalysis:
     del file_size_threshold_mb
     table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
-    settings = Settings(scan_small_file_mb=small_file_mb)
-    result = analyze_table(table_obj, schema_name, table_name, scan_at=scan_at, settings=settings)
+    effective_settings = settings or Settings(scan_small_file_mb=small_file_mb)
+    result = analyze_table(
+        table_obj, schema_name, table_name, scan_at=scan_at, settings=effective_settings
+    )
     assert isinstance(result, TableAnalysis)
     return result
 
@@ -161,7 +174,16 @@ def analyze_table(
     )
     median_files = statistics.median(files_per_partition) if files_per_partition else 0
     skew = round(max_files_per_partition / max(median_files, 1), 1) if files_per_partition else 0.0
-    small_files_count = sum(row.small_files_in_partition_count for row in partition_rows)
+    small_files_count = sum(
+        row.small_files_in_partition_count
+        for row in partition_rows
+        if row.compaction_status == "F"
+    )
+    small_file_bytes = sum(
+        accum.size_bytes
+        for accum in partitions.values()
+        if accum.small > 1 and accum.files > 1
+    )
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
     props = _table_properties(table_obj)
@@ -191,12 +213,35 @@ def analyze_table(
     }
     score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
     primary = fields[0] if fields else {}
+    cost_analysis: TableCostAnalysis | None = None
+    metadata_accounting: MetadataCostAccounting | None = None
+    if settings.cost_scan_tier in {"metadata", "storage_truth"}:
+        metadata_accounting = account_metadata_cost(
+            table_obj,
+            scan_at=scan_time,
+            settings=settings,
+            small_file_bytes=small_file_bytes,
+        )
+        cost_stats = CostStatsInput(
+            small_files_count=small_files_count,
+            small_file_bytes=small_file_bytes,
+            target_file_size_bytes=props["target_file_size_bytes"] or 268_435_456,
+            query_count_30d=0,
+        )
+        cost_analysis = build_table_cost_analysis(
+            metadata_accounting,
+            scan_at=scan_time,
+            settings=settings,
+            stats=cost_stats,
+        )
     raw = {
         "partition_fields": fields,
         "partitions_to_rewrite": [partition.__dict__ for partition in partition_rows],
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
     }
+    if cost_analysis is not None:
+        raw["cost"] = cost_analysis.raw
     common = {
         "needs_compaction": _needs_compaction(
             total_files, small_files_count, max_files_per_partition
@@ -223,6 +268,7 @@ def analyze_table(
         "has_sort_order": props["has_sort_order"],
         "target_file_size_bytes": props["target_file_size_bytes"],
         "estimated_monthly_s3_cost_usd": cost.monthly_s3_cost_usd,
+        "cost": cost_analysis,
         "raw": raw,
     }
 
@@ -253,6 +299,8 @@ def iter_data_files(
 
     for manifest in manifests if manifests is not None else _manifests(table_obj):
         for entry in _call_manifest_entries(manifest, _attr(table_obj, "io", None)):
+            if _entry_status_deleted(entry):
+                continue
             yield _attr(entry, "data_file", entry)
 
 
@@ -344,10 +392,19 @@ def _call_manifest_entries(manifest: object, io: object) -> list[object]:
         return []
     for call in (lambda: fetch(io=io, discard_deleted=True), lambda: fetch(io), fetch):
         try:
-            return list(call() or [])
+            entries = list(call() or [])
+            return [entry for entry in entries if not _entry_status_deleted(entry)]
         except TypeError:
             continue
     return []
+
+
+def _entry_status_deleted(entry: object) -> bool:
+    status = _attr(entry, "status", None)
+    if status is None:
+        return False
+    status_str = str(status).upper()
+    return status_str.endswith("DELETED") or status_str == "2"
 
 
 def _snapshot_info(table_obj: object) -> dict[str, Any]:

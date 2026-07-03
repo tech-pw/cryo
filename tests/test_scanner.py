@@ -10,7 +10,7 @@ from cryo.scanner.analyze import analyze_table
 from cryo.scanner.cost import GB, estimate_storage_cost
 from cryo.scanner.health import compute_health_score
 from cryo.scanner.persistence import persist_table_analysis
-from cryo.scanner.run import deterministic_chunk
+from cryo.scanner.run import deterministic_chunk, parse_args
 
 MB = 1024 * 1024
 
@@ -117,7 +117,14 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     stats = next(item for item in session.added if isinstance(item, TableStats))
     assert stats.total_files == 2
     assert stats.raw["partition_fields"][0]["base_column"] == "event_date"
-    assert len(session.executed) == 2
+    assert len(session.executed) == 3
+
+
+def test_parse_args_accepts_cost_full_scan() -> None:
+    args = parse_args(["--cost-full-scan", "--chunk-id", "1", "--num-chunks", "4"])
+    assert args.cost_full_scan is True
+    assert args.chunk_id == 1
+    assert args.num_chunks == 4
 
 
 class FakeSession:

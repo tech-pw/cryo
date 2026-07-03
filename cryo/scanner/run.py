@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -11,9 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.config import Settings, get_settings
-from cryo.db.models import Source
+from cryo.cost.model import CostStatsInput
+from cryo.db.models import Source, TableCost
 from cryo.db.session import SessionLocal
-from cryo.scanner.analyze import analyze_catalog_table
+from cryo.domain.enums import CostPrecision
+from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
+from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
+from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
 from cryo.scanner.persistence import already_scanned_today, persist_table_analysis, upsert_table
 from cryo.sources.base import SourceCatalog
 from cryo.sources.factory import source_catalog_for
@@ -54,6 +58,7 @@ def run_scan(
     chunk_id: int = 0,
     num_chunks: int | None = None,
     full_scan: bool = False,
+    cost_full_scan: bool = False,
     now: datetime | None = None,
     source_factory: Any = source_catalog_for,
 ) -> ScanSummary:
@@ -93,6 +98,16 @@ def run_scan(
                 scan_at=scan_at,
                 small_file_mb=settings.scan_small_file_mb,
                 file_size_threshold_mb=settings.scan_needs_compaction_threshold,
+                settings=settings,
+            )
+            analysis = _apply_orphan_scan(
+                session,
+                candidate=candidate,
+                table_id=table_row.id,
+                analysis=analysis,
+                settings=settings,
+                scan_at=scan_at,
+                cost_full_scan=cost_full_scan,
             )
             persist_table_analysis(
                 session,
@@ -127,6 +142,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chunk-id", type=int, default=0)
     parser.add_argument("--num-chunks", type=int)
     parser.add_argument("--full-scan", action="store_true")
+    parser.add_argument("--cost-full-scan", action="store_true")
     args = parser.parse_args(argv)
     if args.num_chunks is not None and args.num_chunks <= 0:
         parser.error("--num-chunks must be positive")
@@ -147,6 +163,7 @@ def main(argv: list[str] | None = None) -> None:
             chunk_id=args.chunk_id,
             num_chunks=args.num_chunks,
             full_scan=args.full_scan,
+            cost_full_scan=args.cost_full_scan,
         )
     logger.info("Scanner finished: %s", summary)
 
@@ -179,6 +196,105 @@ def _discover_candidates(
     return sorted(
         candidates, key=lambda item: (item.source.name, item.schema_name, item.table_name)
     )
+
+
+def _apply_orphan_scan(
+    session: Session,
+    *,
+    candidate: ScanCandidate,
+    table_id: UUID,
+    analysis: TableAnalysis,
+    settings: Settings,
+    scan_at: datetime,
+    cost_full_scan: bool,
+) -> TableAnalysis:
+    if analysis.cost is None:
+        return analysis
+
+    previous_cost = session.get(TableCost, table_id)
+
+    if not should_run_orphan_scan(previous_cost, scan_at, settings, force=cost_full_scan):
+        orphan_bytes, listed_bytes, last_full = carry_forward_orphans(previous_cost)
+        if orphan_bytes is not None:
+            return _rebuild_cost_analysis(
+                analysis,
+                settings=settings,
+                orphan_bytes=orphan_bytes,
+                listed_bytes=listed_bytes,
+                last_full_cost_scan_at=last_full,
+                precision=CostPrecision.METADATA,
+            )
+        return analysis
+
+    table_obj = candidate.catalog.load_table(candidate.schema_name, candidate.table_name)
+    orphan_result = scan_orphans(
+        table_obj,
+        source_config=dict(candidate.source.config),
+        referenced_file_paths=analysis.cost.referenced_file_paths,
+        scan_at=scan_at,
+        settings=settings,
+    )
+    if orphan_result.skipped_reason:
+        orphan_bytes, listed_bytes, last_full = carry_forward_orphans(previous_cost)
+        return _rebuild_cost_analysis(
+            analysis,
+            settings=settings,
+            orphan_bytes=orphan_bytes,
+            listed_bytes=listed_bytes,
+            last_full_cost_scan_at=last_full,
+            precision=CostPrecision.METADATA,
+        )
+
+    return _rebuild_cost_analysis(
+        analysis,
+        settings=settings,
+        orphan_bytes=orphan_result.orphan_bytes,
+        listed_bytes=orphan_result.listed_bytes,
+        last_full_cost_scan_at=orphan_result.last_full_cost_scan_at,
+        precision=CostPrecision.STORAGE_TRUTH,
+    )
+
+
+def _rebuild_cost_analysis(
+    analysis: TableAnalysis,
+    *,
+    settings: Settings,
+    orphan_bytes: int | None,
+    listed_bytes: int | None,
+    last_full_cost_scan_at: datetime | None,
+    precision: CostPrecision,
+) -> TableAnalysis:
+    if analysis.cost is None:
+        return analysis
+
+    metadata_raw = analysis.raw.get("cost", {}).get("metadata", {})
+    metadata = MetadataCostAccounting(
+        precision=analysis.cost.precision,
+        breakdown=analysis.cost.breakdown,
+        reclaim_expire_bytes=analysis.cost.reclaim_expire_bytes,
+        reclaim_optimize_bytes=analysis.cost.reclaim_optimize_bytes,
+        reclaim_manifests_bytes=analysis.cost.reclaim_manifests_bytes,
+        small_file_bytes=0,
+        referenced_file_paths=analysis.cost.referenced_file_paths,
+        raw=metadata_raw if isinstance(metadata_raw, dict) else {},
+    )
+    stats = CostStatsInput(
+        small_files_count=analysis.small_files_count,
+        small_file_bytes=0,
+        target_file_size_bytes=analysis.target_file_size_bytes or 268_435_456,
+        query_count_30d=0,
+    )
+    new_cost = build_table_cost_analysis(
+        metadata,
+        scan_at=analysis.scan_at,
+        settings=settings,
+        stats=stats,
+        orphan_bytes=orphan_bytes,
+        listed_bytes=listed_bytes,
+        last_full_cost_scan_at=last_full_cost_scan_at,
+        precision=precision,
+    )
+    return replace(analysis, cost=new_cost)
 
 
 if __name__ == "__main__":

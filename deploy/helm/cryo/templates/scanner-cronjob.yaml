@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cryo.fullname" . }}-scanner
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scanner
+spec:
+  schedule: {{ .Values.scanner.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      completionMode: Indexed
+      completions: {{ .Values.scanner.numChunks }}
+      parallelism: {{ .Values.scanner.numChunks }}
+      template:
+        metadata:
+          labels:
+            {{- include "cryo.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: scanner
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: scanner
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - cryo.scanner.run
+                - --chunk-id
+                - $(JOB_COMPLETION_INDEX)
+                - --num-chunks
+                - $(CRYO_SCAN_NUM_CHUNKS)
+                {{- if .Values.scanner.fullScan }}
+                - --full-scan
+                {{- end }}
+                {{- if .Values.scanner.costFullScan }}
+                - --cost-full-scan
+                {{- end }}
+              env:
+                - name: JOB_COMPLETION_INDEX
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+                - name: CRYO_SCAN_NUM_CHUNKS
+                  value: {{ .Values.scanner.numChunks | quote }}
+                {{- range $key, $value := .Values.scanner.env }}
+                - name: {{ $key }}
+                  value: {{ $value | quote }}
+                {{- end }}
+              envFrom:
+                {{- if .Values.scanner.envFromSecret }}
+                - secretRef:
+                    name: {{ .Values.scanner.envFromSecret }}
+                {{- end }}
+                {{- if .Values.scanner.envFromConfigMap }}
+                - configMapRef:
+                    name: {{ .Values.scanner.envFromConfigMap }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.scanner.resources | nindent 16 }}

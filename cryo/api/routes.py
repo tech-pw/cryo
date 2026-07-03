@@ -28,6 +28,7 @@ from cryo.api.schemas import (
     AssignmentRequest,
     AssignmentResponse,
     AssignmentSelection,
+    CostDashboardResponse,
     DatalakeDashboardResponse,
     DestinationCreate,
     DestinationPatch,
@@ -57,12 +58,15 @@ from cryo.api.schemas import (
     SourcePatch,
     SourceRead,
     TableAuditResponse,
+    TableCostRead,
     TablePartitionsResponse,
     TablePreviewRead,
     TableRead,
     TableStatsHistoryResponse,
 )
 from cryo.api.security import Role, principal_from_token
+from cryo.api.serializers import table_to_read
+from cryo.config import Settings
 from cryo.db.models import (
     Destination,
     MaintenanceJob,
@@ -71,6 +75,7 @@ from cryo.db.models import (
     PresetRule,
     Source,
     Table,
+    TableCost,
     TableStats,
 )
 from cryo.db.repositories import p4, p5
@@ -96,6 +101,9 @@ SORT_FIELDS = {
     "grade": TableStats.grade,
     "overall_score": TableStats.overall_score,
     "compaction_priority": TableStats.compaction_priority,
+    "projected_savings_usd_month": TableStats.projected_savings_usd_month,
+    "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
+    "reclaimable_bytes": TableStats.reclaimable_bytes,
 }
 
 
@@ -124,6 +132,38 @@ def get_schema_cost_dashboard(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict[str, object]:
     return p5.dashboard_schema_cost(session, limit=limit)
+
+
+@router.get(
+    "/dashboards/cost",
+    response_model=CostDashboardResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["dashboards"],
+)
+def get_cost_dashboard(
+    session: SessionDep,
+    top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    trend_limit: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> dict[str, object]:
+    return p5.dashboard_cost(
+        session,
+        top_limit=top_limit,
+        trend_limit=trend_limit,
+        settings=Settings(),
+    )
+
+
+@router.get(
+    "/tables/{table_id}/cost",
+    response_model=TableCostRead,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def get_table_cost(table_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
+    payload = p5.table_cost(session, table_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Table cost not found")
+    return payload
 
 
 @router.get(
@@ -452,8 +492,13 @@ def list_tables(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
-    stmt = select(Table).outerjoin(TableStats).options(selectinload(Table.stats))
-    count_stmt = select(func.count()).select_from(Table).outerjoin(TableStats)
+    stmt = (
+        select(Table)
+        .outerjoin(TableStats)
+        .outerjoin(TableCost)
+        .options(selectinload(Table.stats), selectinload(Table.cost))
+    )
+    count_stmt = select(func.count()).select_from(Table).outerjoin(TableStats).outerjoin(TableCost)
     if predicate is not None:
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
@@ -461,7 +506,7 @@ def list_tables(
     total = session.scalar(count_stmt) or 0
     items = list(session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(offset).limit(limit)))
     return PaginatedTables(
-        items=[TableRead.model_validate(item) for item in items],
+        items=[table_to_read(item) for item in items],
         total=total,
         limit=limit,
         offset=offset,
@@ -473,15 +518,19 @@ def list_tables(
     response_model=TableRead,
     dependencies=[Depends(require_viewer)],
 )
-def get_table(table_id: uuid.UUID, session: SessionDep) -> Table:
+def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
     table = session.scalar(
         select(Table)
         .where(Table.id == table_id)
-        .options(selectinload(Table.stats), selectinload(Table.partitions))
+        .options(
+            selectinload(Table.stats),
+            selectinload(Table.partitions),
+            selectinload(Table.cost),
+        )
     )
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    return table
+    return table_to_read(table)
 
 
 @router.get(
@@ -871,7 +920,10 @@ def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
         column = SORT_FIELDS.get(field_name)
         if column is None:
             raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
-        clauses.append(column.desc() if descending else column.asc())
+        if descending:
+            clauses.append(column.desc().nulls_last())
+        else:
+            clauses.append(column.asc().nulls_last())
     return tuple(clauses or [Table.schema_name, Table.table_name])
 
 

@@ -7,7 +7,14 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import Table, TablePartition, TableStats, TableStatsHistory
+from cryo.db.models import (
+    Table,
+    TableCost,
+    TableCostHistory,
+    TablePartition,
+    TableStats,
+    TableStatsHistory,
+)
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 
 
@@ -102,7 +109,41 @@ def persist_table_analysis(
             overall_score=analysis.overall_score,
         )
     )
+    if analysis.cost is not None:
+        persist_table_cost(session, table_id=table_id, cost=analysis.cost)
     return table_id
+
+
+def persist_table_cost(
+    session: Session,
+    *,
+    table_id: uuid.UUID,
+    cost: Any,
+) -> None:
+    cost_values = _cost_values(table_id, cost)
+    existing_cost = session.get(TableCost, table_id)
+    if existing_cost is None:
+        session.add(TableCost(**cost_values))
+    else:
+        for key, value in cost_values.items():
+            setattr(existing_cost, key, value)
+
+    session.execute(
+        delete(TableCostHistory).where(
+            TableCostHistory.table_id == table_id,
+            TableCostHistory.scan_at == cost.scan_at,
+        )
+    )
+    session.add(
+        TableCostHistory(
+            table_id=table_id,
+            scan_at=cost.scan_at,
+            current_monthly_cost_usd=cost.current_monthly_cost_usd,
+            projected_savings_usd_month=cost.projected_savings_usd_month,
+            reclaimable_bytes=cost.reclaimable_bytes,
+            precision=cost.precision.value if hasattr(cost.precision, "value") else cost.precision,
+        )
+    )
 
 
 def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any]:
@@ -132,7 +173,39 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         "has_sort_order": analysis.has_sort_order,
         "target_file_size_bytes": analysis.target_file_size_bytes,
         "estimated_monthly_s3_cost_usd": analysis.estimated_monthly_s3_cost_usd,
+        "projected_monthly_s3_cost_usd": (
+            analysis.cost.projected_monthly_cost_usd if analysis.cost else None
+        ),
+        "projected_savings_usd_month": (
+            analysis.cost.projected_savings_usd_month if analysis.cost else None
+        ),
+        "reclaimable_bytes": analysis.cost.reclaimable_bytes if analysis.cost else None,
         "raw": analysis.raw,
+    }
+
+
+def _cost_values(table_id: uuid.UUID, cost: Any) -> dict[str, Any]:
+    precision = cost.precision.value if hasattr(cost.precision, "value") else cost.precision
+    return {
+        "table_id": table_id,
+        "scan_at": cost.scan_at,
+        "precision": precision,
+        "price_per_gb_month": cost.price_per_gb_month,
+        "live_bytes": cost.breakdown.live_bytes,
+        "dead_bytes": cost.breakdown.dead_bytes,
+        "metadata_bytes": cost.breakdown.metadata_bytes,
+        "orphan_bytes": cost.breakdown.orphan_bytes,
+        "listed_bytes": cost.breakdown.listed_bytes,
+        "last_full_cost_scan_at": cost.last_full_cost_scan_at,
+        "reclaim_expire_bytes": cost.reclaim_expire_bytes,
+        "reclaim_orphan_bytes": cost.reclaim_orphan_bytes,
+        "reclaim_optimize_bytes": cost.reclaim_optimize_bytes,
+        "reclaim_manifests_bytes": cost.reclaim_manifests_bytes,
+        "current_monthly_cost_usd": cost.current_monthly_cost_usd,
+        "projected_monthly_cost_usd": cost.projected_monthly_cost_usd,
+        "projected_savings_usd_month": cost.projected_savings_usd_month,
+        "query_request_savings_usd_month": cost.query_request_savings_usd_month,
+        "raw": cost.raw,
     }
 
 

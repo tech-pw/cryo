@@ -17,6 +17,8 @@ def test_all_foundation_tables_are_registered() -> None:
         "cryo.runs",
         "cryo.sources",
         "cryo.table_assignments",
+        "cryo.table_cost",
+        "cryo.table_cost_history",
         "cryo.table_partitions",
         "cryo.table_stats",
         "cryo.table_stats_history",

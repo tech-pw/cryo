@@ -11,4 +11,7 @@ def test_settings_defaults_are_development_safe() -> None:
     assert settings.redis_url.startswith("redis://")
     assert settings.cors_allow_origins == ["http://localhost:5173"]
     assert settings.scan_num_chunks == 4
+    assert settings.cost_price_per_gb_month == 0.023
+    assert settings.cost_scan_tier == "metadata"
+    assert settings.default_retention_days == 7
     assert settings.default_per_replica_optimize_cap == 5

@@ -24,6 +24,10 @@ BASE_ROW: dict[str, Any] = {
     "partition_col": "ds",
     "partition_col_type": "date",
     "query_count_30d": 25,
+    "projected_savings_usd_month": 12.5,
+    "projected_monthly_s3_cost_usd": 40.0,
+    "reclaimable_bytes": 2048,
+    "cost_precision": "metadata",
 }
 
 
@@ -48,6 +52,18 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
         ({"field": "total_size_gb", "op": ">", "value": 100}, {"total_size_gb": 100}),
         ({"field": "total_files", "op": ">=", "value": 1_000}, {"total_files": 999}),
         ({"field": "grade", "op": "in", "value": ["D", "F"]}, {"grade": "A"}),
+        (
+            {"field": "projected_savings_usd_month", "op": ">=", "value": 10},
+            {"projected_savings_usd_month": 9},
+        ),
+        (
+            {"field": "reclaimable_bytes", "op": ">=", "value": 1024},
+            {"reclaimable_bytes": 512},
+        ),
+        (
+            {"field": "cost_precision", "op": "=", "value": "metadata"},
+            {"cost_precision": "heuristic"},
+        ),
         ({"field": "table_name", "op": "like", "value": "orders%"}, {"table_name": "events"}),
         ({"field": "schema_name", "op": "glob", "value": "mv?ew*"}, {"schema_name": "raw"}),
     ],

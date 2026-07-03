@@ -1,0 +1,20 @@
+image:
+  repository: cryo
+  tag: latest
+  pullPolicy: IfNotPresent
+
+scanner:
+  schedule: "0 2 * * *"
+  numChunks: 4
+  fullScan: false
+  costFullScan: false
+  env: {}
+  envFromSecret: ""
+  envFromConfigMap: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Table, Typography, message as antdMessage } from "antd";
+import { Button, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
 import { Link } from "react-router-dom";
 import { assignTables, listDestinations, listPresets, listTables, runMaintenance } from "../api/client";
@@ -7,10 +7,11 @@ import type { TableRead, UUID } from "../api/types";
 import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
 import { FilterBar } from "../components/FilterBar";
 import { EmptyState, PageHeader, Sparkline } from "../components/common";
+import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { PlanPreview } from "../components/PlanPreview";
 import { GradePill, PriorityTag, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
-import { formatGb, formatNumber, formatTime } from "../lib/format";
+import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
 import { useMemo, useState } from "react";
 
@@ -22,6 +23,7 @@ export const TableExplorer = () => {
   const [filters, setFilters] = useState<TableFilterState>({ activeOnly: true });
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<string | undefined>("-small_files_count");
+  const [savingsView, setSavingsView] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<UUID[]>([]);
   const [allMatching, setAllMatching] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -92,7 +94,21 @@ export const TableExplorer = () => {
       <PageHeader
         title="Table explorer"
         subtitle="Filter the fleet, assign presets, and preview maintenance without relying on page-only selections."
-        actions={<Button onClick={() => tables.refetch()}>Refresh</Button>}
+        actions={
+          <Space>
+            <Button
+              type={savingsView ? "primary" : "default"}
+              onClick={() => {
+                const next = !savingsView;
+                setSavingsView(next);
+                if (next) setSort("-projected_savings_usd_month");
+              }}
+            >
+              Savings view
+            </Button>
+            <Button onClick={() => tables.refetch()}>Refresh</Button>
+          </Space>
+        }
       />
       <FilterBar
         value={filters}
@@ -205,6 +221,25 @@ export const TableExplorer = () => {
             render: formatGb
           },
           {
+            title: "Savings / mo",
+            dataIndex: ["stats", "projected_savings_usd_month"],
+            sorter: true,
+            align: "right",
+            render: (value) => formatCurrency(value)
+          },
+          {
+            title: "Reclaimable",
+            dataIndex: ["stats", "reclaimable_bytes"],
+            sorter: true,
+            align: "right",
+            render: (value) => formatBytesGb(value)
+          },
+          {
+            title: "Precision",
+            key: "cost_precision",
+            render: (_, row) => <CostPrecisionBadge precision={row.stats?.cost_precision} />
+          },
+          {
             title: "Partition",
             render: (_, row) => row.stats?.partition_col ?? "-"
           },
@@ -222,7 +257,7 @@ export const TableExplorer = () => {
             />
           )
         }}
-        scroll={{ x: 1080 }}
+        scroll={{ x: 1320 }}
       />
       <BulkAssignBar
         selection={selection}

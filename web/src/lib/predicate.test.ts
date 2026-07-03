@@ -31,6 +31,23 @@ describe("tableFiltersToPredicate", () => {
     });
   });
 
+  it("maps savings filters to cost predicate fields", () => {
+    expect(
+      tableFiltersToPredicate({
+        minMonthlySavings: 25,
+        minReclaimableGb: 10,
+        costPrecision: "metadata"
+      })
+    ).toEqual({
+      all: [
+        { field: "is_active", op: "=", value: true },
+        { field: "projected_savings_usd_month", op: ">=", value: 25 },
+        { field: "reclaimable_bytes", op: ">=", value: 10 * 1024 ** 3 },
+        { field: "cost_precision", op: "=", value: "metadata" }
+      ]
+    });
+  });
+
   it("serializes empty filters as undefined", () => {
     expect(serializePredicate(null)).toBeUndefined();
   });

@@ -61,3 +61,13 @@ export const formatTime = (value?: string | null): string => {
     minute: "2-digit"
   }).format(date);
 };
+
+export const bytesToGb = (bytes?: number | null): number =>
+  bytes && Number.isFinite(bytes) ? bytes / 1024 ** 3 : 0;
+
+export const formatBytesGb = (bytes?: number | null): string => formatGb(bytesToGb(bytes));
+
+export const formatPercent = (value?: number | null, digits = 0): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${value.toFixed(digits)}%`;
+};

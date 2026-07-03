@@ -12,6 +12,8 @@ export type Predicate =
   | { any: Predicate[] }
   | { not: Predicate };
 
+export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
+
 export interface TableFilterState {
   grades?: string[];
   priorities?: string[];
@@ -19,6 +21,9 @@ export interface TableFilterState {
   schemaSearch?: string;
   minSizeGb?: number | null;
   minSmallFiles?: number | null;
+  minMonthlySavings?: number | null;
+  minReclaimableGb?: number | null;
+  costPrecision?: CostPrecision | null;
   activeOnly?: boolean;
 }
 
@@ -66,7 +71,14 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
       : null,
     typeof filters.minSmallFiles === "number" && Number.isFinite(filters.minSmallFiles)
       ? leaf("small_files_count", ">=", filters.minSmallFiles)
-      : null
+      : null,
+    typeof filters.minMonthlySavings === "number" && Number.isFinite(filters.minMonthlySavings)
+      ? leaf("projected_savings_usd_month", ">=", filters.minMonthlySavings)
+      : null,
+    typeof filters.minReclaimableGb === "number" && Number.isFinite(filters.minReclaimableGb)
+      ? leaf("reclaimable_bytes", ">=", Math.round(filters.minReclaimableGb * 1024 ** 3))
+      : null,
+    filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null
   ]);
 
 export const predicateSummary = (filters: TableFilterState): string => {
@@ -80,7 +92,10 @@ export const predicateSummary = (filters: TableFilterState): string => {
       : null,
     filters.schemaSearch ? `schema/table "${filters.schemaSearch}"` : null,
     filters.minSizeGb ? `>= ${filters.minSizeGb} GB` : null,
-    filters.minSmallFiles ? `>= ${filters.minSmallFiles} small files` : null
+    filters.minSmallFiles ? `>= ${filters.minSmallFiles} small files` : null,
+    filters.minMonthlySavings ? `>= $${filters.minMonthlySavings}/mo savings` : null,
+    filters.minReclaimableGb ? `>= ${filters.minReclaimableGb} GB reclaimable` : null,
+    filters.costPrecision ? `precision ${filters.costPrecision}` : null
   ].filter(Boolean);
 
   return parts.length ? parts.join(" · ") : "all active tables";
