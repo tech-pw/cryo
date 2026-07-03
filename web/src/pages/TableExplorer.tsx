@@ -4,16 +4,17 @@ import type { TablePaginationConfig } from "antd/es/table";
 import { Link } from "react-router-dom";
 import { assignTables, listDestinations, listPresets, listTables, runMaintenance } from "../api/client";
 import type { TableRead, UUID } from "../api/types";
-import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
+import { BulkAssignBar } from "../components/BulkAssignBar";
 import { FilterBar } from "../components/FilterBar";
-import { EmptyState, PageHeader, Sparkline } from "../components/common";
+import { EmptyState, HintLabel, PageHeader, Sparkline } from "../components/common";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { PlanPreview } from "../components/PlanPreview";
-import { GradePill, PriorityTag, StatusTag } from "../components/status";
+import { CompactionTag, GradePill, PriorityTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
 import { useMemo, useState } from "react";
+import { useTableExplorerSelection } from "./useTableExplorerSelection";
 
 const pageSize = 50;
 
@@ -24,8 +25,6 @@ export const TableExplorer = () => {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<string | undefined>("-small_files_count");
   const [savingsView, setSavingsView] = useState(false);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<UUID[]>([]);
-  const [allMatching, setAllMatching] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
@@ -36,11 +35,28 @@ export const TableExplorer = () => {
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
 
-  const selection: BulkSelection | null = allMatching
-    ? { mode: "filter", filter: predicate, totalSelected: tables.data?.total ?? 0 }
-    : selectedRowKeys.length
-      ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
-      : null;
+  const pageItems = tables.data?.items ?? [];
+  const matchingTotal = tables.data?.total ?? 0;
+
+  const {
+    selectedRowKeys,
+    allMatching,
+    bulkSelection: selection,
+    rowSelectedKeys,
+    hasSelection,
+    filterSelectionActive,
+    isDemotingSelection,
+    clearSelection,
+    selectAllMatching,
+    resetSelectionForFilterChange,
+    handleRowSelectionChange
+  } = useTableExplorerSelection({
+    api,
+    predicate,
+    sort,
+    matchingTotal,
+    pageItems
+  });
 
   const assign = useMutation({
     mutationFn: (presetId: UUID) =>
@@ -84,16 +100,16 @@ export const TableExplorer = () => {
   const selectedTables = useMemo(
     () =>
       allMatching
-        ? (tables.data?.items ?? []).slice(0, 10)
-        : (tables.data?.items ?? []).filter((table) => selectedRowKeys.includes(table.id)),
-    [allMatching, selectedRowKeys, tables.data?.items]
+        ? pageItems.slice(0, 10)
+        : pageItems.filter((table) => selectedRowKeys.includes(table.id)),
+    [allMatching, selectedRowKeys, pageItems]
   );
 
   return (
     <>
       <PageHeader
         title="Table explorer"
-        subtitle="Filter the fleet, assign presets, and preview maintenance without relying on page-only selections."
+        subtitle="Filter the datalake, assign presets, and preview maintenance without relying on page-only selections."
         actions={
           <Space>
             <Button
@@ -112,30 +128,34 @@ export const TableExplorer = () => {
       />
       <FilterBar
         value={filters}
+        matchingTotal={matchingTotal}
+        hasSelection={hasSelection}
+        filterSelectionActive={filterSelectionActive}
+        onSelectAllMatching={selectAllMatching}
+        onClearSelection={clearSelection}
         onChange={(next) => {
           setFilters(next);
           setPage(1);
-          setAllMatching(false);
+          resetSelectionForFilterChange();
         }}
       />
       <Table<TableRead>
-        className="fleet-table"
+        className="datalake-table"
         size="small"
         rowKey="id"
-        loading={tables.isLoading}
-        dataSource={tables.data?.items ?? []}
+        loading={tables.isLoading || isDemotingSelection}
+        dataSource={pageItems}
         rowSelection={{
-          selectedRowKeys,
+          selectedRowKeys: rowSelectedKeys,
           preserveSelectedRowKeys: true,
           onChange: (keys) => {
-            setSelectedRowKeys(keys as UUID[]);
-            setAllMatching(false);
+            void handleRowSelectionChange(keys);
           }
         }}
         pagination={{
           current: page,
           pageSize,
-          total: tables.data?.total ?? 0,
+          total: matchingTotal,
           showSizeChanger: false,
           showTotal: (total) => `${total.toLocaleString()} tables`
         }}
@@ -154,7 +174,8 @@ export const TableExplorer = () => {
             title: "Table",
             key: "table",
             fixed: "left",
-            width: 280,
+            width: 320,
+            className: "table-name-cell",
             ellipsis: { showTitle: false },
             render: (_, row) => {
               const name = `${row.schema_name}.${row.table_name}`;
@@ -172,6 +193,7 @@ export const TableExplorer = () => {
             dataIndex: "grade",
             key: "grade",
             width: 76,
+            align: "center",
             sorter: true,
             render: (_, row) => <GradePill grade={row.stats?.grade} />
           },
@@ -179,19 +201,23 @@ export const TableExplorer = () => {
             title: "Priority",
             dataIndex: "compaction_priority",
             key: "compaction_priority",
+            width: 104,
             sorter: true,
             render: (_, row) => <PriorityTag priority={row.stats?.compaction_priority} />
           },
           {
-            title: "Needs compaction",
+            title: "Compaction",
             key: "needs",
-            render: (_, row) => <StatusTag status={row.stats?.needs_compaction ? "running" : "succeeded"} />
+            width: 142,
+            render: (_, row) => <CompactionTag needsCompaction={row.stats?.needs_compaction} />
           },
           {
             title: "Small files",
             dataIndex: ["stats", "small_files_count"],
             sorter: true,
             align: "right",
+            width: 168,
+            className: "numeric-cell sparkline-cell",
             render: (value, row) => (
               <span className="metric-with-sparkline">
                 <span>{formatNumber(value)}</span>
@@ -207,10 +233,12 @@ export const TableExplorer = () => {
             )
           },
           {
-            title: "Total files",
+            title: "Files",
             dataIndex: ["stats", "total_files"],
             sorter: true,
             align: "right",
+            width: 104,
+            className: "numeric-cell",
             render: (value) => formatNumber(value, true)
           },
           {
@@ -218,34 +246,58 @@ export const TableExplorer = () => {
             dataIndex: ["stats", "total_size_gb"],
             sorter: true,
             align: "right",
+            width: 96,
+            className: "numeric-cell",
             render: formatGb
           },
           {
-            title: "Savings / mo",
+            title: "Savings/mo",
             dataIndex: ["stats", "projected_savings_usd_month"],
             sorter: true,
             align: "right",
+            width: 120,
+            className: "numeric-cell",
             render: (value) => formatCurrency(value)
           },
           {
-            title: "Reclaimable storage",
+            title: "Reclaimable",
             dataIndex: ["stats", "reclaimable_bytes"],
             sorter: true,
             align: "right",
+            width: 128,
+            className: "numeric-cell",
             render: (value) => formatBytesGb(value)
           },
           {
-            title: "Precision",
+            title: (
+              <HintLabel
+                label="Savings basis"
+                tooltip="How Cryo calculated savings and reclaimable storage for this table."
+              />
+            ),
             key: "cost_precision",
-            render: (_, row) => <CostPrecisionBadge precision={row.stats?.cost_precision} />
+            width: 150,
+            render: (_, row) => (
+              <CostPrecisionBadge
+                precision={row.stats?.cost_precision}
+                lastFullCostScanAt={row.stats?.cost_last_full_scan_at}
+              />
+            )
           },
           {
             title: "Partition",
-            render: (_, row) => row.stats?.partition_col ?? "-"
+            width: 156,
+            ellipsis: { showTitle: false },
+            render: (_, row) => (
+              <Typography.Text ellipsis={{ tooltip: row.stats?.partition_col }}>
+                {row.stats?.partition_col ?? "-"}
+              </Typography.Text>
+            )
           },
           {
-            title: "First seen",
+            title: "Seen",
             dataIndex: "first_seen_at",
+            width: 152,
             render: formatTime
           }
         ]}
@@ -253,11 +305,11 @@ export const TableExplorer = () => {
           emptyText: (
             <EmptyState
               title="No tables match this view"
-              description="Run a scan or clear filters to browse the Iceberg fleet."
+              description="Run a scan or clear filters to browse the datalake."
             />
           )
         }}
-        scroll={{ x: 1320 }}
+        scroll={{ x: 1620 }}
       />
       <BulkAssignBar
         selection={selection}
@@ -265,11 +317,7 @@ export const TableExplorer = () => {
         destinations={destinations.data ?? []}
         assigning={assign.isPending}
         running={run.isPending}
-        onClear={() => {
-          setSelectedRowKeys([]);
-          setAllMatching(false);
-        }}
-        onSelectAllMatching={() => setAllMatching(true)}
+        onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}
         onPreview={() => setPreviewOpen(true)}
         onRun={(args) => run.mutate(args)}

@@ -91,6 +91,9 @@ export const CostSavingsWaterfall = ({
         empty={!hasSavings && currentCostUsd <= 0}
         emptyTitle="No savings projection yet"
         emptyDescription="Run a scanner pass with cost accounting to populate savings."
+        ariaLabel={`Projected savings ${formatCurrency(
+          byOperation.reduce((sum, item) => sum + item.savings_usd_month, 0)
+        )} per month from current ${formatCurrency(currentCostUsd)}`}
       >
         <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
           <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />

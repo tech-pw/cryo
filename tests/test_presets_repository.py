@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from cryo.api.routes import _resolve_selection, _sort_clauses
 from cryo.api.schemas import AssignmentSelection
 from cryo.db.models import Preset, PresetRule, Table, TableAssignment, TableStats
-from cryo.db.repositories import p4
+from cryo.db.repositories import presets
 
 
 def test_table_to_candidate_merges_table_and_stats_fields() -> None:
@@ -33,7 +33,7 @@ def test_table_to_candidate_merges_table_and_stats_fields() -> None:
         total_size_gb=1.25,
     )
 
-    candidate = p4.table_to_candidate(table)
+    candidate = presets.table_to_candidate(table)
 
     assert candidate.id == str(table_id)
     assert candidate.schema_name == "fixtures"
@@ -64,9 +64,9 @@ def test_repository_adapters_preserve_scheduler_resolution_shape() -> None:
     )
     assignment = TableAssignment(table_id=table_id, preset_id=preset_id, pinned=True)
 
-    preset_config = p4.preset_to_config(preset)
-    rule_config = p4.rule_to_config(rule)
-    assignment_config = p4.assignment_to_config(assignment)
+    preset_config = presets.preset_to_config(preset)
+    rule_config = presets.rule_to_config(rule)
+    assignment_config = presets.assignment_to_config(assignment)
 
     assert preset_config.id == str(preset_id)
     assert preset_config.destination_id == str(destination_id)

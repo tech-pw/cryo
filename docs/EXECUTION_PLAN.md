@@ -112,8 +112,7 @@ scanner already collects.
       on `/maintenance/preview`; cost summary fields in the predicate grammar for filter/sort by
       savings; `/scans` accepts `cost_full_scan`). Implemented in `cryo/api/routes.py` and
       `cryo/api/preview_cost.py`.
-- [ ] Cost & Savings dashboard UI per the existing spec: [`ui-cost-savings.md`](./ui-cost-savings.md)
-      — **Backend done; frontend needs implementation.**
+- [x] Cost & Savings UI at `/cost` per [`ui-cost-savings.md`](./ui-cost-savings.md); Health page summary + link.
 - [x] Surface `metadata_bytes / data_bytes` ratio as an explicit health metric. Implemented in
       `cryo/scanner/signals.py` (`metadata_to_data_ratio`) and `cryo/scanner/health.py`.
 - [x] Streaming/commit-velocity detection: derive commits/day from snapshot-count deltas between
@@ -161,7 +160,7 @@ alongside the existing cron sweep, without replacing it.
 - [x] `cryo/events/redis_stream.py` — Redis Streams-backed event bus.
 - [x] `cryo/events/service.py` — Wiring for watcher and consumer.
 - [x] `cryo cli events` — CLI command to run event loop.
-- [x] The existing CronJob full-fleet scan is left unchanged as the slow-path/reliability
+- [x] The existing CronJob full-datalake scan is left unchanged as the slow-path/reliability
       backstop.
 
 **Acceptance criteria:** ✅ Complete.

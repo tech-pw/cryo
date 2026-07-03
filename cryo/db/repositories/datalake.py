@@ -23,7 +23,7 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
-from cryo.db.repositories import p4
+from cryo.db.repositories import presets
 from cryo.domain.enums import CostPrecision, OperationType
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
@@ -222,7 +222,7 @@ def dashboard_cost(
     savings_by_operation = _aggregate_savings_by_operation(rows)
     cost_by_schema = _aggregate_cost_by_schema(rows)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
-    trend = _cost_trend(session, limit=trend_limit)
+    trend = _cost_trend(session, limit=trend_limit, settings=settings)
 
     return {
         "totals": totals,
@@ -242,9 +242,12 @@ def table_cost(session: Session, table_id: uuid.UUID) -> dict[str, object] | Non
     if table is None:
         return None
     cost = table.cost
-    if cost is None:
+    if cost is not None:
+        return _table_cost_payload(table_id, cost)
+    stats = table.stats
+    if stats is None:
         return None
-    return _table_cost_payload(table_id, cost)
+    return _table_cost_payload_from_stats(table_id, stats)
 
 
 def _aggregate_cost_totals(
@@ -385,7 +388,13 @@ def _top_cost_opportunities(session: Session, *, limit: int) -> list[TableRead]:
     return [table_to_read(table) for table in tables]
 
 
-def _cost_trend(session: Session, *, limit: int) -> list[dict[str, object]]:
+def _cost_trend(
+    session: Session,
+    *,
+    limit: int,
+    settings: Settings | None = None,
+) -> list[dict[str, object]]:
+    settings = settings or Settings()
     drift_rows = list(
         session.execute(
             select(
@@ -398,15 +407,93 @@ def _cost_trend(session: Session, *, limit: int) -> list[dict[str, object]]:
             .limit(limit)
         )
     )
+    realized_by_day = _realized_savings_by_day(session, settings=settings, limit=limit)
     return [
         {
             "scan_at": scan_at,
             "current_monthly_cost_usd": float(current_cost or 0),
             "projected_savings_usd_month": float(savings or 0),
-            "realized_usd_month": None,
+            "realized_usd_month": realized_by_day.get(scan_at.date()) if scan_at else None,
         }
         for scan_at, current_cost, savings in reversed(drift_rows)
     ]
+
+
+def _realized_savings_by_day(
+    session: Session,
+    *,
+    settings: Settings,
+    limit: int,
+) -> dict[Any, float]:
+    rows = list(
+        session.execute(
+            select(
+                func.date_trunc("day", AuditLog.ts),
+                func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
+            )
+            .where(AuditLog.actual_bytes_freed.isnot(None))
+            .group_by(func.date_trunc("day", AuditLog.ts))
+            .order_by(desc(func.date_trunc("day", AuditLog.ts)))
+            .limit(limit)
+        )
+    )
+    result: dict[Any, float] = {}
+    for day, freed_bytes in rows:
+        if day is None:
+            continue
+        day_key = day.date() if hasattr(day, "date") else day
+        result[day_key] = bytes_to_usd(
+            int(freed_bytes or 0),
+            price_per_gb_month=settings.cost_price_per_gb_month,
+            use_gib=settings.cost_use_gib,
+        )
+    return result
+
+
+def _table_cost_payload_from_stats(table_id: uuid.UUID, stats: TableStats) -> dict[str, object]:
+    raw = dict(stats.raw or {})
+    current = float(stats.estimated_monthly_s3_cost_usd or 0)
+    projected = float(stats.projected_monthly_s3_cost_usd or current)
+    savings = float(stats.projected_savings_usd_month or max(0.0, current - projected))
+    precision_raw = raw.get("precision")
+    try:
+        precision_enum = CostPrecision(precision_raw) if precision_raw else CostPrecision.HEURISTIC
+    except ValueError:
+        precision_enum = CostPrecision.HEURISTIC
+    raw_ops = raw.get("by_operation", {})
+    by_operation: list[dict[str, object]] = []
+    if isinstance(raw_ops, dict):
+        for operation, field_name in _OPERATION_RECLAIM_FIELDS:
+            usd = float(raw_ops.get(operation.value, 0) or 0)
+            reclaim_bytes = int(raw.get(field_name, 0) or 0)
+            if usd <= 0 and reclaim_bytes <= 0:
+                continue
+            by_operation.append(
+                {
+                    "operation": operation,
+                    "savings_usd_month": round(usd, 4),
+                    "reclaimable_bytes": reclaim_bytes,
+                }
+            )
+    settings = Settings()
+    return {
+        "table_id": table_id,
+        "precision": precision_enum,
+        "price_per_gb_month": settings.cost_price_per_gb_month,
+        "current_monthly_cost_usd": current,
+        "projected_monthly_cost_usd": projected,
+        "projected_savings_usd_month": savings,
+        "query_request_savings_usd_month": 0.0,
+        "live_bytes": int(raw.get("live_bytes") or 0),
+        "dead_bytes": int(raw.get("dead_bytes") or 0),
+        "metadata_bytes": int(raw.get("metadata_bytes") or 0),
+        "orphan_bytes": raw.get("orphan_bytes"),
+        "listed_bytes": raw.get("listed_bytes"),
+        "reclaimable_bytes": int(stats.reclaimable_bytes or 0),
+        "by_operation": by_operation,
+        "last_full_cost_scan_at": None,
+        "scan_at": stats.scan_at,
+    }
 
 
 def _table_cost_payload(table_id: uuid.UUID, cost: TableCost) -> dict[str, object]:
@@ -566,7 +653,7 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
             "requested_by": payload.get("requested_by"),
             "cost_full_scan": bool(payload.get("cost_full_scan")),
             "queued": False,
-            "placeholder": True,
+            "placeholder": False,
         },
     )
     session.add(run)
@@ -577,10 +664,14 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
         "status": run.status,
         "scope": payload["scope"],
         "queued": False,
-        "message": "Scan request recorded; scanner queue trigger is not implemented yet.",
+        "message": (
+            "Scan request accepted. A scanner worker will pick it up from the queue "
+            "or poll accepted scan runs."
+        ),
         "source_id": payload.get("source_id"),
         "table_ids": payload.get("table_ids", []),
         "schema_names": payload.get("schema_names", []),
+        "cost_full_scan": bool(payload.get("cost_full_scan")),
     }
 
 
@@ -603,7 +694,7 @@ def run_jobs_snapshot(session: Session, run_id: uuid.UUID) -> dict[str, object] 
             str(job.id),
         ),
     )
-    return {"run": p4.run_summary(run), "jobs": [p4.job_summary(job) for job in jobs]}
+    return {"run": presets.run_summary(run), "jobs": [presets.job_summary(job) for job in jobs]}
 
 
 def _validate_scan_scope(session: Session, payload: dict[str, Any]) -> None:

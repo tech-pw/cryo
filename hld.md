@@ -11,7 +11,7 @@ and the deployment topology. Implementation detail (schemas, interfaces, SQL) is
    into one product. **No Airflow.**
 2. **Separate** read-side **Sources** (Iceberg catalogs) from write-side **Destinations/Engines**
    (Trino, Spark/EMR). Separate config, separate storage, separate code paths for SQL generation.
-3. **Preset-driven** maintenance with a UI to filter the fleet and **bulk-assign** presets.
+3. **Preset-driven** maintenance with a UI to filter the datalake and **bulk-assign** presets.
 4. **Preserve** all load-aware, partition-aware filtering that protects Trino today.
 5. **Pluggable engines** and **format-pluggable** core (Iceberg first).
 6. **Kubernetes-native** deployment.
@@ -86,9 +86,9 @@ Destination (where maintenance runs).
 React + TypeScript SPA. Talks only to the API (REST + WebSocket).
 
 Primary screens:
-- **Datalake Health** — fleet overview: grade distribution (A–F), total tables/size/small-files,
+- **Datalake Health** — datalake overview: grade distribution (A–F), total tables/size/small-files,
   estimated S3 cost, drift alerts, cost-by-schema, top offenders.
-- **Cost & Savings** — fleet **current vs projected** monthly cost, savings **by operation**
+- **Cost & Savings** — datalake **current vs projected** monthly cost, savings **by operation**
   (compaction / expiry / orphans / manifests), savings **by schema**, and a ranked **"biggest
   savings opportunities"** list (→ select all → Run). Shows the reclaimable-bytes breakdown and the
   precision tier (metadata vs storage-truth). Per-table detail lives on **Table Detail**.
@@ -213,7 +213,7 @@ accounting into money and answers *"what does this table cost now, and what will
     from fewer files (uses the stored `query_count_30d`). Data bytes are ~storage-neutral (rewritten),
     so compaction's storage win is realized via the follow-on expiry.
   - `optimize_manifests` — manifest/metadata bytes reclaimed by consolidation.
-- Two entry points: a **fleet baseline** projection (standard-mode defaults, stored by the Scanner
+- Two entry points: a **datalake baseline** projection (standard-mode defaults, stored by the Scanner
   for dashboards) and a **plan-accurate** projection (called by `/maintenance/preview` and the
   Worker with the real preset params). After a run, predicted vs **actual bytes freed** is
   reconciled ("realized savings") to keep the model honest and calibrate the compaction heuristic.
@@ -407,7 +407,7 @@ flowchart TB
 
 - **Structured logs** (JSON) per service; per-job log stream to Redis (live) + persisted summary.
 - **Metrics** (Prometheus): jobs queued/running/succeeded/failed, admission decisions, live engine
-  load, scan duration/coverage, fleet grade distribution, est. cost, drift counts, **projected
+  load, scan duration/coverage, datalake grade distribution, est. cost, drift counts, **projected
   savings by operation, reclaimable bytes, realized-vs-projected savings, orphan bytes + age of the
   last storage-truth scan**.
 - **Audit log** (Postgres): every operation (table, action, status, detail, engine, run, duration) —

@@ -20,6 +20,7 @@ import type {
   PresetWrite,
   RoleToken,
   RunRead,
+  ScanTriggerResponse,
   SourceRead,
   SourceTestResult,
   SourceWrite,
@@ -89,7 +90,7 @@ export const apiFetch = async <T>(
 
 export const listTables = (
   api: ApiOptions,
-  args: { predicate?: Predicate | null; sort?: string; limit?: number; offset?: number }
+  args: { predicate?: Predicate | null; sort?: string; limit?: number; offset?: number; signal?: AbortSignal }
 ) =>
   apiFetch<PaginatedTables>("/tables", api, {
     query: {
@@ -97,8 +98,29 @@ export const listTables = (
       sort: args.sort,
       limit: args.limit ?? 50,
       offset: args.offset ?? 0
-    }
+    },
+    signal: args.signal
   });
+
+const TABLE_IDS_PAGE_SIZE = 500;
+
+export const fetchAllMatchingTableIds = async (
+  api: ApiOptions,
+  args: { predicate?: Predicate | null; sort?: string; total: number; signal?: AbortSignal }
+): Promise<UUID[]> => {
+  const ids: UUID[] = [];
+  for (let offset = 0; offset < args.total; offset += TABLE_IDS_PAGE_SIZE) {
+    const batch = await listTables(api, {
+      predicate: args.predicate,
+      sort: args.sort,
+      limit: Math.min(TABLE_IDS_PAGE_SIZE, args.total - offset),
+      offset,
+      signal: args.signal
+    });
+    ids.push(...batch.items.map((table) => table.id));
+  }
+  return ids;
+};
 
 export const getTable = (api: ApiOptions, id: UUID) => apiFetch<TableRead>(`/tables/${id}`, api);
 export const getTablePartitions = (api: ApiOptions, id: UUID) =>
@@ -292,6 +314,29 @@ export const getCostDashboard = (api: ApiOptions) =>
 
 export const getTableCost = (api: ApiOptions, id: UUID) =>
   apiFetch<TableCostRead>(`/tables/${id}/cost`, api);
+
+export const triggerCostScan = (
+  api: ApiOptions,
+  body: {
+    scope?: "all" | "source" | "tables" | "schemas";
+    cost_full_scan?: boolean;
+    trigger?: string;
+  } = {}
+) =>
+  apiFetch<ScanTriggerResponse>("/scans", api, {
+    method: "POST",
+    body: {
+      scope: body.scope ?? "all",
+      cost_full_scan: body.cost_full_scan ?? true,
+      trigger: body.trigger ?? "web-cost"
+    }
+  });
+
+export const savingsOpportunityFilter = {
+  field: "projected_savings_usd_month",
+  op: ">",
+  value: 0
+} as const;
 
 // AI Providers
 export interface AIProviderRead {

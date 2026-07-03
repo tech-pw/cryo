@@ -29,25 +29,6 @@ const destination: DestinationRead = {
 };
 
 describe("BulkAssignBar", () => {
-  it("promotes row selection to filter selection", () => {
-    const onSelectAllMatching = vi.fn();
-    render(
-      <BulkAssignBar
-        selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
-        presets={[preset]}
-        destinations={[destination]}
-        onClear={vi.fn()}
-        onSelectAllMatching={onSelectAllMatching}
-        onAssign={vi.fn()}
-        onPreview={vi.fn()}
-        onRun={vi.fn()}
-      />
-    );
-
-    fireEvent.click(screen.getByText("Select all matching filter"));
-    expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
-  });
-
   it("runs with the filter selection when all matching is active", () => {
     const onRun = vi.fn();
     const filter = leaf("grade", "in", ["D", "F"]);
@@ -57,14 +38,35 @@ describe("BulkAssignBar", () => {
         presets={[preset]}
         destinations={[destination]}
         onClear={vi.fn()}
-        onSelectAllMatching={vi.fn()}
         onAssign={vi.fn()}
         onPreview={vi.fn()}
         onRun={onRun}
       />
     );
 
+    expect(screen.getByText("Filter selection")).toBeInTheDocument();
+    expect(screen.getByText("All 42 matching tables selected")).toBeInTheDocument();
+    expect(
+      screen.getByText("Actions now apply to every table matching the current filters, across all pages.")
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("Run now"));
     expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
+  });
+
+  it("labels preset and engine options with useful context", () => {
+    render(
+      <BulkAssignBar
+        selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
+        presets={[{ ...preset, description: "Default local Trino maintenance profile" }]}
+        destinations={[destination]}
+        onClear={vi.fn()}
+        onAssign={vi.fn()}
+        onPreview={vi.fn()}
+        onRun={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("trino-standard · Default local Trino maintenance profile")).toBeInTheDocument();
+    expect(screen.getByText("trino-main · trino")).toBeInTheDocument();
   });
 });

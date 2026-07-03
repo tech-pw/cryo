@@ -146,7 +146,7 @@ GET /api/v1/dashboards/datalake
 GET /api/v1/dashboards/schema-cost
 ```
 
-`/dashboards/datalake` returns fleet totals, grade distribution, top offender tables, and scan drift.
+`/dashboards/datalake` returns datalake totals, grade distribution, top offender tables, and scan drift.
 `/dashboards/schema-cost` returns per-schema size, estimated S3 cost, small-file count, and query count.
 
 ## Presets

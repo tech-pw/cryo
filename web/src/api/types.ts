@@ -115,6 +115,7 @@ export interface TableStatsRead {
   projected_savings_usd_month?: number;
   reclaimable_bytes?: number;
   cost_precision?: CostPrecision;
+  cost_last_full_scan_at?: string | null;
   query_count_30d?: number;
   raw?: JsonObject | null;
 }
@@ -180,10 +181,22 @@ export interface RenderedStatementRead {
   sql: string;
 }
 
+export interface SavingsProjectionRead {
+  precision: CostPrecision;
+  current_monthly_cost_usd: number;
+  projected_monthly_cost_usd: number;
+  projected_savings_usd_month: number;
+  reclaimable_bytes: number;
+  query_request_savings_usd_month?: number;
+  by_operation?: Record<string, number>;
+  assumptions?: Record<string, unknown>;
+}
+
 export interface TablePreviewRead {
   table_ref: string;
   notes: string[];
   statements: RenderedStatementRead[];
+  savings?: SavingsProjectionRead | null;
 }
 
 export interface MaintenancePreviewResponse {
@@ -194,6 +207,15 @@ export interface MaintenanceRunResponse {
   run_id: UUID;
   job_ids: UUID[];
   status: string;
+}
+
+export interface ScanTriggerResponse {
+  run_id: UUID;
+  status: string;
+  scope: "all" | "source" | "tables" | "schemas";
+  queued: boolean;
+  message: string;
+  cost_full_scan?: boolean;
 }
 
 export interface RunRead {

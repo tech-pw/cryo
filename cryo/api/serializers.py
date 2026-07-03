@@ -15,5 +15,12 @@ def table_to_read(table: Table) -> TableRead:
     except ValueError:
         cost_precision = None
     return read.model_copy(
-        update={"stats": read.stats.model_copy(update={"cost_precision": cost_precision})}
+        update={
+            "stats": read.stats.model_copy(
+                update={
+                    "cost_precision": cost_precision,
+                    "cost_last_full_scan_at": table.cost.last_full_cost_scan_at,
+                }
+            )
+        }
     )

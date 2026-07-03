@@ -7,17 +7,19 @@ export const ChartFrame = ({
   empty,
   emptyTitle = "No chart data",
   emptyDescription = "Run a scan to populate this panel.",
+  ariaLabel,
   children
 }: {
   empty: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
+  ariaLabel?: string;
   children: React.ReactNode;
 }) =>
   empty ? (
     <EmptyState title={emptyTitle} description={emptyDescription} />
   ) : (
-    <div className="chart-frame">
+    <div className="chart-frame" role="img" aria-label={ariaLabel}>
       <ResponsiveContainer>{children}</ResponsiveContainer>
     </div>
   );

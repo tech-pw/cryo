@@ -24,8 +24,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from cryo.api.deps import require_admin, require_operator, require_viewer
 from cryo.api.predicates import compile_predicate
 from cryo.api.preview_cost import (
-    savings_for_plan_operations,
-    savings_projection_from_stats,
+    savings_projection_for_plan,
     savings_projection_to_dict,
 )
 from cryo.api.schemas import (
@@ -86,8 +85,9 @@ from cryo.db.models import (
     TableCost,
     TableStats,
 )
-from cryo.db.repositories import p4, p5
-from cryo.db.session import get_session
+from cryo.db.repositories import datalake, presets
+from cryo.db.repositories.run_finalizer import finalize_open_runs
+from cryo.db.session import SessionLocal, get_session
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.domain.models import MaintenancePlan
 from cryo.engines.base import RenderedStatement
@@ -115,6 +115,7 @@ SORT_FIELDS = {
     "projected_savings_usd_month": TableStats.projected_savings_usd_month,
     "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
     "reclaimable_bytes": TableStats.reclaimable_bytes,
+    "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
 }
 
 
@@ -129,7 +130,7 @@ def get_datalake_dashboard(
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> dict[str, object]:
-    return p5.dashboard_datalake(session, top_limit=top_limit, drift_limit=drift_limit)
+    return datalake.dashboard_datalake(session, top_limit=top_limit, drift_limit=drift_limit)
 
 
 @router.get(
@@ -142,7 +143,7 @@ def get_schema_cost_dashboard(
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict[str, object]:
-    return p5.dashboard_schema_cost(session, limit=limit)
+    return datalake.dashboard_schema_cost(session, limit=limit)
 
 
 @router.get(
@@ -156,7 +157,7 @@ def get_cost_dashboard(
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     trend_limit: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> dict[str, object]:
-    return p5.dashboard_cost(
+    return datalake.dashboard_cost(
         session,
         top_limit=top_limit,
         trend_limit=trend_limit,
@@ -171,7 +172,7 @@ def get_cost_dashboard(
     tags=["tables"],
 )
 def get_table_cost(table_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
-    payload = p5.table_cost(session, table_id)
+    payload = datalake.table_cost(session, table_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Table cost not found")
     return payload
@@ -497,7 +498,7 @@ def simulate_preset(preset_id: uuid.UUID, session: SessionDep) -> PresetSimulati
     preset = session.get(Preset, preset_id)
     if preset is None:
         raise HTTPException(status_code=404, detail="Preset not found")
-    sample, estimate = p4.simulate_preset(session, preset)
+    sample, estimate = presets.simulate_preset(session, preset)
     return PresetSimulationResponse(
         preset_id=preset.id,
         matched_count=int(estimate["matched_count"]),
@@ -584,7 +585,7 @@ def get_table_partitions(
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, object]:
-    result = p5.table_partitions(
+    result = datalake.table_partitions(
         session,
         table_id,
         scan_at=scan_at,
@@ -608,7 +609,7 @@ def get_table_audit(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, object]:
-    result = p5.table_audit(session, table_id, limit=limit, offset=offset)
+    result = datalake.table_audit(session, table_id, limit=limit, offset=offset)
     if result is None:
         raise HTTPException(status_code=404, detail="Table not found")
     return result
@@ -625,7 +626,7 @@ def get_table_history(
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=365)] = 90,
 ) -> dict[str, object]:
-    result = p5.table_history(session, table_id, limit=limit)
+    result = datalake.table_history(session, table_id, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Table not found")
     return result
@@ -637,10 +638,10 @@ def get_table_history(
     dependencies=[Depends(require_viewer)],
 )
 def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectivePresetResponse:
-    table = p4.get_table_with_stats(session, table_id)
+    table = presets.get_table_with_stats(session, table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    effective = p4.resolve_effective_preset(session, table)
+    effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         return EffectivePresetResponse(table_id=table_id, provenance="none")
     provenance = cast(Literal["assignment", "rule", "none"], effective.provenance)
@@ -663,7 +664,7 @@ def assign_tables(payload: AssignmentRequest, session: SessionDep) -> Assignment
         raise HTTPException(status_code=400, detail="Preset does not exist")
 
     selection = _resolve_selection(session, payload.selection)
-    affected = p4.assign_tables(
+    affected = presets.assign_tables(
         session,
         table_ids=selection.table_ids,
         preset_id=payload.preset_id,
@@ -680,7 +681,7 @@ def assign_tables(payload: AssignmentRequest, session: SessionDep) -> Assignment
 )
 def unassign_tables(payload: AssignmentDeleteRequest, session: SessionDep) -> AssignmentResponse:
     selection = _resolve_selection(session, payload.selection)
-    affected = p4.unassign_tables(session, table_ids=selection.table_ids)
+    affected = presets.unassign_tables(session, table_ids=selection.table_ids)
     session.commit()
     return AssignmentResponse(affected=affected)
 
@@ -718,20 +719,11 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
             )
             for statement in renderer(plan)
         ]
-        savings_payload = None
-        try:
-            projection = savings_projection_from_stats(stats, settings)
-            op_types = [op.type for op in plan.operations]
-            savings_payload = SavingsProjectionRead(
-                **{
-                    **savings_projection_to_dict(projection),
-                    "projected_savings_usd_month": savings_for_plan_operations(
-                        projection, op_types
-                    ),
-                }
-            )
-        except Exception:
-            savings_payload = None
+        op_types = [op.type for op in plan.operations]
+        projection = savings_projection_for_plan(
+            stats, settings, params=payload.params, operations=op_types
+        )
+        savings_payload = SavingsProjectionRead(**savings_projection_to_dict(projection))
         items.append(
             TablePreviewRead(
                 table_ref=plan.table_ref,
@@ -834,9 +826,38 @@ def create_scan_trigger(
     session: SessionDep,
 ) -> dict[str, object]:
     try:
-        return p5.create_scan_trigger(session, payload.model_dump(mode="python"))
+        result = datalake.create_scan_trigger(session, payload.model_dump(mode="python"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        from cryo.infra.wiring import build_runtime_wiring
+        from cryo.queue.scan_queue import RedisScanQueue
+
+        wiring = build_runtime_wiring()
+        scan_queue = RedisScanQueue(wiring.redis_client)
+        raw_table_ids = result.get("table_ids", [])
+        raw_schema_names = result.get("schema_names", [])
+        table_ids = raw_table_ids if isinstance(raw_table_ids, list) else []
+        schema_names = raw_schema_names if isinstance(raw_schema_names, list) else []
+        scan_queue.enqueue(
+            str(result["run_id"]),
+            {
+                "scope": result["scope"],
+                "source_id": str(result["source_id"]) if result.get("source_id") else None,
+                "table_ids": [str(table_id) for table_id in table_ids],
+                "schema_names": [str(schema_name) for schema_name in schema_names],
+                "cost_full_scan": bool(payload.cost_full_scan),
+                "trigger": payload.trigger,
+            },
+        )
+        result = {**result, "queued": True, "message": "Scan request accepted and queued."}
+        summary = session.get(MaintenanceRun, result["run_id"])
+        if summary is not None and isinstance(summary.summary, dict):
+            summary.summary = {**summary.summary, "queued": True, "placeholder": False}
+            session.commit()
+    except Exception:
+        pass
+    return result
 
 
 @router.get(
@@ -846,10 +867,14 @@ def create_scan_trigger(
     tags=["runs"],
 )
 def list_runs(session: SessionDep) -> list[RunRead]:
+    finalize_open_runs(SessionLocal)
     runs = session.scalars(
-        select(MaintenanceRun).order_by(MaintenanceRun.created_at.desc()).limit(100)
+        select(MaintenanceRun)
+        .options(selectinload(MaintenanceRun.jobs).selectinload(MaintenanceJob.table))
+        .order_by(MaintenanceRun.created_at.desc())
+        .limit(100)
     )
-    return [RunRead.model_validate(p4.run_summary(run)) for run in runs]
+    return [RunRead.model_validate(presets.run_summary(run)) for run in runs]
 
 
 @router.get(
@@ -859,10 +884,15 @@ def list_runs(session: SessionDep) -> list[RunRead]:
     tags=["runs"],
 )
 def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
-    run = session.get(MaintenanceRun, run_id)
+    finalize_open_runs(SessionLocal)
+    run = session.scalar(
+        select(MaintenanceRun)
+        .where(MaintenanceRun.id == run_id)
+        .options(selectinload(MaintenanceRun.jobs).selectinload(MaintenanceJob.table))
+    )
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return RunRead.model_validate(p4.run_summary(run))
+    return RunRead.model_validate(presets.run_summary(run))
 
 
 @router.get(
@@ -872,7 +902,8 @@ def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     tags=["runs"],
 )
 def get_run_jobs(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
-    snapshot = p5.run_jobs_snapshot(session, run_id)
+    finalize_open_runs(SessionLocal)
+    snapshot = datalake.run_jobs_snapshot(session, run_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return snapshot
@@ -896,7 +927,7 @@ async def watch_run(
         while True:
             if hasattr(session, "expire_all"):
                 session.expire_all()
-            snapshot = p5.run_jobs_snapshot(session, run_id)
+            snapshot = datalake.run_jobs_snapshot(session, run_id)
             if snapshot is None:
                 await websocket.send_json({"type": "error", "detail": "Run not found"})
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -937,7 +968,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
             job.finished_at = run.finished_at
     session.commit()
     session.refresh(run)
-    return RunRead.model_validate(p4.run_summary(run))
+    return RunRead.model_validate(presets.run_summary(run))
 
 
 @router.get(
@@ -950,7 +981,7 @@ def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
     job = session.get(MaintenanceJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return JobRead.model_validate(p4.job_summary(job))
+    return JobRead.model_validate(presets.job_summary(job))
 
 
 def _websocket_allows_viewer(websocket: WebSocket, token: str | None) -> bool:
@@ -984,9 +1015,9 @@ def _validate_filter(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _resolve_selection(session: Session, selection: AssignmentSelection) -> p4.SelectionResult:
+def _resolve_selection(session: Session, selection: AssignmentSelection) -> presets.SelectionResult:
     try:
-        return p4.resolve_selection(
+        return presets.resolve_selection(
             session,
             mode=selection.mode,
             ids=selection.ids,

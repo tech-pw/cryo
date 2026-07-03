@@ -79,7 +79,7 @@ Responsive rules:
 
 ## Data Tables
 
-Tables are the primary product surface. Use AntD Table with server-side pagination, sorting, filtering, and row selection. Prefer virtualization for large fleets.
+Tables are the primary product surface. Use AntD Table with server-side pagination, sorting, filtering, and row selection. Prefer virtualization for large datalakes.
 
 Density:
 - Default row height: 40px.

@@ -6,7 +6,7 @@
 
 **Cryo** is a self-hosted platform that consolidates **Apache Iceberg table maintenance** and
 **lakehouse health** into one product: policy/**preset-driven** compaction, snapshot expiry, orphan-
-file cleanup and manifest rewrites, with first-class **table health**, **datalake (fleet) health**,
+file cleanup and manifest rewrites, with first-class **table health**, **datalake health**,
 and **ad-hoc maintenance** — driven from a UI and a Python API, deployable to Kubernetes.
 
 It is inspired by [Floe](https://github.com/nssalian/floe) and
@@ -29,7 +29,7 @@ breakdown of what is being replaced and [`hld.md`](./hld.md) §9 for the old→n
   and read metadata via PyIceberg.
 - **Destinations (write side):** submit maintenance to **Trino** (SQL) or **Spark on EMR** (Spark
   SQL). Sources and destinations are configured **independently**.
-- **Scanner:** chunked, resumable fleet scan → per-table & per-partition stats, **A–F health grade**,
+- **Scanner:** chunked, resumable datalake scan → per-table & per-partition stats, **A–F health grade**,
   `needs_compaction` priority, and **S3 cost** estimate.
 - **Presets:** named maintenance profiles binding *operations + params + target engine + schedule +
   selection rules*. e.g. `spark-large` = "tables > 100 GB → Spark/EMR, deep maintenance weekly".

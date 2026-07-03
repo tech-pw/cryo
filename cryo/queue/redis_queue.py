@@ -33,6 +33,8 @@ class MaintenanceQueue(Protocol):
 
     def defer(self, job_id: str) -> None: ...
 
+    def cancel_pending(self, job_id: str) -> None: ...
+
     def local_in_flight(self, destination_id: str) -> int: ...
 
     def local_in_flight_by_replica(self, destination_id: str) -> dict[str, int]: ...
@@ -97,6 +99,14 @@ class InMemoryMaintenanceQueue:
         if entry:
             self._remove_pending(job_id, entry.destination_id)
         self._statuses[job_id] = JobStatus.DEFERRED
+
+    def cancel_pending(self, job_id: str) -> None:
+        entry = self._entries.get(job_id)
+        if entry:
+            self._remove_pending(job_id, entry.destination_id)
+            return
+        for destination_id in list(self._pending):
+            self._remove_pending(job_id, destination_id)
 
     def local_in_flight(self, destination_id: str) -> int:
         return sum(
@@ -195,6 +205,17 @@ class RedisMaintenanceQueue:
         if destination_id:
             pipe.zrem(self._pending_key(destination_id), job_id)
         pipe.hset(self._job_key(job_id), "status", "deferred")
+        pipe.execute()
+
+    def cancel_pending(self, job_id: str) -> None:
+        entry = self._redis.hgetall(self._job_key(job_id))
+        destination_id = _decode(entry.get(b"destination_id") or entry.get("destination_id"))
+        pipe = self._redis.pipeline()
+        if destination_id:
+            pipe.zrem(self._pending_key(destination_id), job_id)
+        else:
+            for value in self._redis.smembers(self._destinations_key()):
+                pipe.zrem(self._pending_key(_decode(value)), job_id)
         pipe.execute()
 
     def local_in_flight(self, destination_id: str) -> int:

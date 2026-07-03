@@ -199,10 +199,12 @@ body {
   justify-content: flex-end;
   gap: 8px;
   width: 100%;
+  min-width: 0;
 }
 
 .sparkline {
-  width: 72px;
+  flex: 0 0 64px;
+  width: 64px;
   height: 20px;
   color: var(--primary);
   opacity: 0.78;
@@ -249,6 +251,11 @@ body {
   box-shadow: 0 10px 28px rgb(28 36 51 / 14%);
 }
 
+.bulk-selection-help {
+  display: block;
+  max-width: 680px;
+}
+
 [data-theme="dark"] .bulk-bar {
   box-shadow: 0 10px 28px rgb(0 0 0 / 45%);
 }
@@ -257,18 +264,61 @@ body {
   box-shadow: 0 4px 12px rgb(0 0 0 / 45%) !important;
 }
 
-.fleet-table .ant-table-cell {
+.datalake-table .ant-table-cell {
   white-space: nowrap;
+  vertical-align: middle;
 }
 
-.fleet-table .table-name-link {
+.datalake-table .numeric-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.datalake-table .sparkline-cell {
+  min-width: 168px;
+}
+
+.datalake-table .table-name-cell {
+  min-width: 320px;
+}
+
+.datalake-table .table-name-link {
   display: block;
   overflow: hidden;
   color: inherit;
+  min-width: 0;
 }
 
-.fleet-table .table-name-link .ant-typography {
+.datalake-table .table-name-link .ant-typography {
+  display: block;
   max-width: 100%;
+}
+
+.runs-table .ant-table-cell {
+  vertical-align: middle;
+}
+
+.identity-stack {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+  min-width: 0;
+  color: inherit;
+  line-height: 1.35;
+}
+
+.identity-stack .ant-typography {
+  max-width: 100%;
+}
+
+.secondary-line {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.mono-id {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .grade-pill {

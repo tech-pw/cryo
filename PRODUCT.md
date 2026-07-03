@@ -6,13 +6,13 @@ product
 
 ## Users
 
-Cryo is used by data platform engineers, SREs, operators, and occasional viewer stakeholders who manage Apache Iceberg table health across a lakehouse fleet. They work in focused operational sessions: scanning table condition, filtering for maintenance candidates, assigning presets, connecting catalogs and engines, previewing SQL/load impact, and monitoring scheduled or ad-hoc runs.
+Cryo is used by data platform engineers, SREs, operators, and occasional viewer stakeholders who manage Apache Iceberg table health across the datalake. They work in focused operational sessions: scanning table condition, filtering for maintenance candidates, assigning presets, connecting catalogs and engines, previewing SQL/load impact, and monitoring scheduled or ad-hoc runs.
 
 ## Product Purpose
 
 Cryo consolidates Iceberg maintenance and health into one self-hosted product. It replaces scattered Airflow DAGs, dbt macros, and reports with a UI and API for source/destination setup, table exploration, preset-driven maintenance, load-aware execution, health dashboards, run monitoring, and audit history.
 
-Success means operators can safely understand the fleet, act on the right tables, and trust that maintenance respects partitioning, engine capacity, cooldowns, off-peak windows, and audit requirements.
+Success means operators can safely understand the datalake, act on the right tables, and trust that maintenance respects partitioning, engine capacity, cooldowns, off-peak windows, and audit requirements.
 
 ## Brand Personality
 
@@ -26,7 +26,7 @@ Do not make Cryo feel like consumer or marketing SaaS: no gradient hero cards, p
 
 Show only useful information by default. Tables, dashboards, and details should expose the operational fields needed to decide what to do next, with progressive disclosure for diagnostics and raw SQL.
 
-Make filtering the primary interaction. Users should intuitively narrow the fleet, select all matching tables across pages, assign presets, and run maintenance without learning an internal query language first.
+Make filtering the primary interaction. Users should intuitively narrow the datalake, select all matching tables across pages, assign presets, and run maintenance without learning an internal query language first.
 
 Separate safety from decoration. Guardrails, previews, capacity, cooldowns, health grades, and audit trails must be visually legible and trustworthy; color and motion should clarify state, not add personality.
 

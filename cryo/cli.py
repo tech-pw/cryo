@@ -122,12 +122,16 @@ class GovernorRunner(DaemonRunner):
             return
 
         result = governor.run_wave(now=datetime.now(UTC))
-        if result.admitted or result.deferred or result.blocked:
+        if any(
+            (result.admitted, result.deferred, result.blocked, result.orphaned, result.re_enqueued)
+        ):
             self._logger.info(
-                "Wave complete: admitted=%d, deferred=%d, blocked=%d",
+                "Wave complete: admitted=%d, deferred=%d, blocked=%d, orphaned=%d, re_enqueued=%d",
                 result.admitted,
                 result.deferred,
                 result.blocked,
+                result.orphaned,
+                result.re_enqueued,
             )
 
     def _get_wiring(self) -> Any:
@@ -194,6 +198,8 @@ class WorkerRunner(DaemonRunner):
             return self._worker
 
         try:
+            from cryo.db.repositories.run_finalizer import finalize_open_runs
+            from cryo.db.session import SessionLocal
             from cryo.worker.worker import Worker
 
             wiring = self._get_wiring()
@@ -201,6 +207,7 @@ class WorkerRunner(DaemonRunner):
                 queue=wiring.queue,
                 store=wiring.job_store,
                 lock_store=wiring.lock_store,
+                on_job_finished=lambda: finalize_open_runs(SessionLocal),
             )
             return self._worker
         except Exception as exc:
@@ -293,6 +300,46 @@ class EventsRunner(DaemonRunner):
             return None
 
 
+class ScannerRunner(DaemonRunner):
+    """Runs queued ad-hoc scanner requests."""
+
+    def __init__(self, interval: int = 5, wiring: Any = None) -> None:
+        super().__init__("scanner", interval)
+        self._wiring: Any = wiring
+        self._worker: Any = None
+
+    def _tick(self) -> None:
+        worker = self._get_worker()
+        if worker is None:
+            self._logger.warning("Scanner worker not available")
+            return
+        result = worker.process_next()
+        if result is not None and result.run_id:
+            self._logger.info("Processed scan run %s: %s", result.run_id[:8], result.status)
+
+    def _get_wiring(self) -> Any:
+        if self._wiring is not None:
+            return self._wiring
+        from cryo.infra.wiring import build_runtime_wiring
+
+        self._wiring = build_runtime_wiring()
+        return self._wiring
+
+    def _get_worker(self) -> Any:
+        if self._worker is not None:
+            return self._worker
+        try:
+            from cryo.queue.scan_queue import RedisScanQueue
+            from cryo.scanner.worker import ScanWorker
+
+            wiring = self._get_wiring()
+            self._worker = ScanWorker(RedisScanQueue(wiring.redis_client))
+            return self._worker
+        except Exception as exc:
+            self._logger.debug("Cannot initialize scanner worker: %s", exc)
+            return None
+
+
 def run_governor(args: argparse.Namespace) -> NoReturn:
     runner = GovernorRunner(interval=args.wave_interval)
     _run_with_signal(runner)
@@ -322,6 +369,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         GovernorRunner(interval=args.wave_interval, wiring=wiring),
         WorkerRunner(interval=args.poll_interval, wiring=wiring),
         SchedulerRunner(interval=args.check_interval, wiring=wiring),
+        ScannerRunner(interval=args.poll_interval, wiring=wiring),
     ]
 
     threads: list[Thread] = []
@@ -341,7 +389,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    logger.info("Cryo serve started (governor + worker + scheduler)")
+    logger.info("Cryo serve started (governor + worker + scheduler + scanner)")
     while not stop.is_set():
         time.sleep(1)
 

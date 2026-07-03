@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
-from cryo.db.models import Source, TableCost
+from cryo.db.models import Source, Table, TableCost
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import CostPrecision
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
@@ -56,6 +57,8 @@ def run_scan(
     *,
     settings: Settings | None = None,
     source_id: UUID | None = None,
+    table_ids: Sequence[UUID] | None = None,
+    schema_names: Sequence[str] | None = None,
     chunk_id: int = 0,
     num_chunks: int | None = None,
     full_scan: bool = False,
@@ -90,7 +93,13 @@ def run_scan(
     if scan_at.tzinfo is None:
         scan_at = scan_at.replace(tzinfo=UTC)
 
-    candidates = _discover_candidates(session, source_id=source_id, source_factory=source_factory)
+    candidates = _discover_candidates(
+        session,
+        source_id=source_id,
+        table_ids=table_ids,
+        schema_names=schema_names,
+        source_factory=source_factory,
+    )
     assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
 
     logger.info(
@@ -323,17 +332,36 @@ def _discover_candidates(
     session: Session,
     *,
     source_id: UUID | None,
+    table_ids: Sequence[UUID] | None = None,
+    schema_names: Sequence[str] | None = None,
     source_factory: Any,
 ) -> list[ScanCandidate]:
     stmt = select(Source).where(Source.enabled.is_(True)).order_by(Source.name)
     if source_id is not None:
         stmt = stmt.where(Source.id == source_id)
 
+    requested_tables: set[tuple[UUID, str, str]] | None = None
+    if table_ids:
+        requested_tables = {
+            (row.source_id, row.schema_name, row.table_name)
+            for row in session.scalars(select(Table).where(Table.id.in_(table_ids)))
+        }
+
+    requested_schemas = set(schema_names or ())
+
     candidates: list[ScanCandidate] = []
     for source in session.scalars(stmt):
         try:
             catalog = source_factory(source)
             for schema_name, table_name in catalog.list_tables():
+                if requested_schemas and schema_name not in requested_schemas:
+                    continue
+                if requested_tables is not None and (
+                    source.id,
+                    schema_name,
+                    table_name,
+                ) not in requested_tables:
+                    continue
                 candidates.append(
                     ScanCandidate(
                         source=source,

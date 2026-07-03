@@ -35,6 +35,20 @@ def test_worker_builds_plan_executes_statements_and_marks_success() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+def test_worker_records_actual_bytes_freed_when_engine_returns_them() -> None:
+    queue, locks, store = _worker_fixture()
+    engine = FakeMaintenanceEngine(
+        bytes_freed_by_action={
+            OperationType.EXPIRE_SNAPSHOTS: 1024**3,
+            OperationType.OPTIMIZE: 512 * 1024**2,
+        }
+    )
+
+    Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert [record.actual_bytes_freed for record in store.audit] == [1024**3, 512 * 1024**2]
+
+
 def test_worker_marks_failed_when_engine_statement_fails() -> None:
     queue, locks, store = _worker_fixture()
     engine = FakeMaintenanceEngine(fail_actions={OperationType.OPTIMIZE})

@@ -9,7 +9,7 @@ changes. For *what* we're building and *why*, read `plan.md`, `hld.md`, and `lld
 
 **Cryo** — a self-hosted **Apache Iceberg maintenance & health platform**. It consolidates Iceberg
 table maintenance (compaction/optimize, snapshot expiry, orphan-file removal, manifest rewrite),
-fleet health/observability, and ad-hoc maintenance behind a Python backend + React UI, deployable to
+datalake health/observability, and ad-hoc maintenance behind a Python backend + React UI, deployable to
 Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for the mapping).
 
 **Hard requirements (do not violate):**

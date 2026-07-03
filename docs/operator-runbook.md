@@ -88,7 +88,7 @@ If `failed` is non-zero, check:
 - MinIO credentials and endpoint.
 - Whether the local stack was recreated and needs tables reseeded.
 
-## Query Fleet Health
+## Query Datalake Health
 
 ```bash
 .venv/bin/python - <<'PY'

@@ -23,6 +23,7 @@ SUPPORTED_FIELDS = frozenset(
         "projected_savings_usd_month",
         "projected_monthly_s3_cost_usd",
         "reclaimable_bytes",
+        "estimated_monthly_s3_cost_usd",
         "cost_precision",
     }
 )

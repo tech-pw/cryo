@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     cost_full_scan_every_hours: int = 168     # Tier-2 (orphan) cadence; 0 = only on demand
     cost_orphan_min_age_hours: int = 72       # ignore recently-written files as potential orphans
     cost_scan_max_list_keys: int = 1_000_000  # Tier-2 LIST guard; above -> orphan reported "unknown"
-    default_retention_days: int = 7           # fleet-baseline expiry projection (parity: 7d)
+    default_retention_days: int = 7           # datalake-baseline expiry projection (parity: 7d)
     default_retain_last: int = 1
     s3_get_usd_per_1k: float = 0.0004         # request-cost model for optimize query savings
     s3_list_usd_per_1k: float = 0.005
@@ -162,7 +162,7 @@ CREATE TABLE cryo.destinations (
 );
 ```
 
-### 3.2 Fleet (read side, produced by Scanner)
+### 3.2 Datalake (read side, produced by Scanner)
 
 ```sql
 CREATE TABLE cryo.tables (
@@ -679,7 +679,7 @@ GET/POST/PATCH/DELETE  /api/v1/sources
 GET/POST/PATCH/DELETE  /api/v1/destinations
 POST                   /api/v1/destinations/{id}/test         # health check / probe
 
-# Fleet & health
+# Datalake & health
 GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=
 GET   /api/v1/tables/{id}                                     # detail: stats, partitions, audit, cost
 GET   /api/v1/tables/{id}/partitions
@@ -688,7 +688,7 @@ GET   /api/v1/tables/{id}/history
 GET   /api/v1/tables/{id}/cost                               # breakdown + projected savings by op
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals
 GET   /api/v1/dashboards/schema-cost
-GET   /api/v1/dashboards/cost                                 # fleet current vs projected, savings
+GET   /api/v1/dashboards/cost                                 # datalake current vs projected, savings
         # by operation + by schema, top savings opportunities, precision coverage
 POST  /api/v1/scans                                           # trigger ad-hoc scan (optional scope)
         # body: {selection?, full_scan?, cost_full_scan?}  (cost_full_scan -> Tier-2 orphan pass)
@@ -716,7 +716,7 @@ WS    /api/v1/ws/runs/{id}                                    # live job state /
 ```
 
 **Bulk assignment is a selection spec, not a list of IDs**, so "filter → select all 3,000 matches →
-assign" is one transactional call that stays correct even as the fleet changes.
+assign" is one transactional call that stays correct even as the datalake changes.
 
 ---
 
@@ -732,7 +732,7 @@ assign" is one transactional call that stays correct even as the fleet changes.
   EMR slots), live job rows (running/queued/deferred/failed), log drawer; **realized-vs-projected
   savings** as jobs finish.
 - **DatalakeHealth**: Recharts — grade distribution, cost by schema, drift list, top offenders, totals.
-- **CostSavings**: Recharts — fleet current vs projected monthly cost, savings by operation, savings
+- **CostSavings**: Recharts — datalake current vs projected monthly cost, savings by operation, savings
   by schema, ranked "biggest savings opportunities" (→ select all → Run), precision-coverage badge.
 - **TableDetail**: health card + partition table + snapshot/manifest stats + audit timeline +
   **cost breakdown & projected savings by operation** + "Run".
@@ -770,10 +770,10 @@ assign" is one transactional call that stays correct even as the fleet changes.
 
 Goal: show each table's **current monthly storage cost** and the **projected cost + savings once all
 maintenance is done** (compaction/`optimize`, snapshot **expiry**, **orphan-file** removal, manifest
-rewrite), rolled up by schema and fleet. Numbers must be **precise**; the scan must stay **cheap**.
+rewrite), rolled up by schema and datalake. Numbers must be **precise**; the scan must stay **cheap**.
 
 The design resolves that tension with a **tiered scan** (cost grows only when precision demands it)
-plus a **pure projection model** (`cost/model.py`) shared by the Scanner (fleet baseline) and the
+plus a **pure projection model** (`cost/model.py`) shared by the Scanner (datalake baseline) and the
 API/Worker (plan-accurate). Reclaim is computed the way the engines actually compute deletions, so
 projections match reality.
 
@@ -829,7 +829,7 @@ for each file f seen across all retained snapshots' manifests:
 reclaim_expire_bytes = Σ size(f) over reclaimed files (data + delete + manifest + list)
 ```
 `retention_days` / `retain_last` come from the effective preset params for plan-accurate runs, or
-`default_retention_days` / `default_retain_last` (parity: 7d) for the fleet baseline.
+`default_retention_days` / `default_retain_last` (parity: 7d) for the datalake baseline.
 
 ### 16.4 Per-operation savings (`cost/model.py`, pure)
 
@@ -850,7 +850,7 @@ reclaim_expire_bytes = Σ size(f) over reclaimed files (data + delete + manifest
 
 ### 16.5 Two entry points + calibration
 
-- **Fleet baseline** (Scanner): standard-mode ops + default params → upsert `table_cost` +
+- **Datalake baseline** (Scanner): standard-mode ops + default params → upsert `table_cost` +
   `table_cost_history` and the denormalized summary columns on `table_stats`. Powers dashboards and
   explorer filters ("if we ran standard maintenance").
 - **Plan-accurate** (`/maintenance/preview`, Worker): the *actual* effective-preset params → exact

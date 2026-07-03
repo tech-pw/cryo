@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal
@@ -18,9 +19,16 @@ from cryo.governor.admission import (
     decide_job_admission,
 )
 from cryo.queue.locks import LockStore
+from cryo.queue.reconcile import (
+    purge_stale_queue_entries,
+    reconcile_deferred_jobs,
+    reconcile_queued_jobs,
+)
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.triggers.evaluator import TriggerEvaluator
 from cryo.worker.worker import DestinationConfig, JobStore, MaintenanceJobRecord
+
+logger = logging.getLogger(__name__)
 
 
 class CapacityProvider(Protocol):
@@ -42,6 +50,8 @@ class WaveResult:
     admitted: int = 0
     deferred: int = 0
     blocked: int = 0
+    orphaned: int = 0
+    re_enqueued: int = 0
 
 
 class Governor:
@@ -71,12 +81,18 @@ class Governor:
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         finalize_open_runs(self._session_factory)
         current = now or datetime.now(UTC)
+        re_enqueued = reconcile_queued_jobs(self._store, self._queue)
+        re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
+        orphaned = purge_stale_queue_entries(self._store, self._queue)
         admitted = 0
         deferred = 0
         blocked = 0
 
         for destination_id, job_ids in self._queue.pending_by_destination().items():
-            destination = self._store.get_destination(destination_id)
+            destination = _try_get_destination(self._store, destination_id)
+            if destination is None:
+                orphaned += self._fail_orphaned_jobs(destination_id, job_ids)
+                continue
             config = _admission_config(destination, self._default_config)
             live_capacity = self._capacity_provider.probe(destination)
             local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
@@ -88,27 +104,38 @@ class Governor:
                     blocked += 1
                     break
 
-                job = self._store.get_job(job_id)
-                
-                # Check if signals override normal admission rules
+                try:
+                    job = self._store.get_job(job_id)
+                except KeyError:
+                    logger.warning("Purging queue entry for unknown job %s", job_id)
+                    self._queue.cancel_pending(job_id)
+                    orphaned += 1
+                    continue
+
                 signal_triggered = False
                 if self._enable_signal_triggers:
                     try:
                         with self._session_factory() as session:
                             import uuid
-                            table_uuid = uuid.UUID(job.table_id) if isinstance(job.table_id, str) else job.table_id
+
+                            table_uuid = (
+                                uuid.UUID(job.table_id)
+                                if isinstance(job.table_id, str)
+                                else job.table_id
+                            )
                             trigger_result = self._trigger_evaluator.evaluate(
                                 session,
                                 table_uuid,
-                                is_due_for_schedule=False,  # Let signals override
+                                is_due_for_schedule=False,
                             )
-                            if trigger_result.should_run and trigger_result.trigger_type.value != "schedule":
+                            if (
+                                trigger_result.should_run
+                                and trigger_result.trigger_type.value != "schedule"
+                            ):
                                 signal_triggered = True
                     except Exception:
-                        # If signal check fails, fall through to normal admission
                         pass
-                
-                # Normal admission decision (unless overridden by signal)
+
                 if not signal_triggered:
                     decision = decide_job_admission(_admission_job(job), config, now=current)
                     if not decision.admissible:
@@ -133,7 +160,32 @@ class Governor:
                 self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
                 admitted += 1
 
-        return WaveResult(admitted=admitted, deferred=deferred, blocked=blocked)
+        return WaveResult(
+            admitted=admitted,
+            deferred=deferred,
+            blocked=blocked,
+            orphaned=orphaned,
+            re_enqueued=re_enqueued,
+        )
+
+    def _fail_orphaned_jobs(self, destination_id: str, job_ids: list[str]) -> int:
+        logger.warning(
+            "Purging %d queued job(s) for missing destination %s",
+            len(job_ids),
+            destination_id,
+        )
+        failed = 0
+        for job_id in job_ids:
+            self._queue.cancel_pending(job_id)
+            if not _is_valid_job_id(job_id):
+                failed += 1
+                continue
+            try:
+                self._store.mark_status(job_id, JobStatus.FAILED, error="destination_not_found")
+                failed += 1
+            except KeyError:
+                logger.debug("Skipping orphan queue entry with no DB job record: %s", job_id)
+        return failed
 
     def _round_robin_slots(
         self,
@@ -179,6 +231,20 @@ def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
         last_maintained_at=job.last_maintained_at,
         deadline_at=job.deadline_at,
     )
+
+
+def _try_get_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:
+    getter = getattr(store, "try_get_destination", None)
+    if callable(getter):
+        return cast(DestinationConfig | None, getter(destination_id))
+    try:
+        return store.get_destination(destination_id)
+    except KeyError:
+        return None
+
+
+def _is_valid_job_id(job_id: str) -> bool:
+    return bool(job_id) and job_id.lower() != "none"
 
 
 def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
