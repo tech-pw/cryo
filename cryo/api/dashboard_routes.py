@@ -19,6 +19,113 @@ from cryo.domain.enums import JobStatus
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
+# ===================== Multi-Catalog Federation =====================
+
+
+class CatalogStatsRead(BaseModel):
+    """Statistics for a single catalog."""
+
+    catalog_id: UUID
+    catalog_name: str
+    catalog_type: str
+    table_count: int
+    total_size_gb: float
+    small_files_count: int
+    needs_compaction_count: int
+    monthly_cost_usd: float
+    projected_savings_usd_month: float | None
+    avg_health_score: float
+    enabled: bool
+
+
+class MultiCatalogResponse(BaseModel):
+    """Response for multi-catalog federation dashboard."""
+
+    catalogs: list[CatalogStatsRead]
+    total_catalogs: int
+    total_tables: int
+    total_cost_usd: float
+
+
+@router.get("/multi-catalog", response_model=MultiCatalogResponse)
+def get_multi_catalog_stats(
+    session: Annotated[Session, Depends(get_session)],
+    _principal: Annotated[dict, Depends(require_viewer)],
+) -> MultiCatalogResponse:
+    """
+    Get aggregated statistics across all catalogs for federation view.
+    
+    Returns catalog-level health, cost, and table metrics.
+    """
+    from cryo.db.models import Source, Table, TableStats
+    
+    # Get all sources (catalogs)
+    sources_stmt = select(Source).where(Source.enabled == True)  # noqa: E712
+    sources = session.execute(sources_stmt).scalars().all()
+    
+    catalogs: list[CatalogStatsRead] = []
+    total_tables = 0
+    total_cost_usd = 0.0
+    
+    for source in sources:
+        # Aggregate table stats for this catalog
+        stats_stmt = (
+            select(
+                func.count(Table.id).label("table_count"),
+                func.sum(TableStats.total_size_gb).label("total_size_gb"),
+                func.sum(TableStats.small_files_count).label("small_files_count"),
+                func.sum(
+                    func.case(
+                        (TableStats.small_files_count >= 128, 1),
+                        else_=0
+                    )
+                ).label("needs_compaction"),
+                func.sum(TableStats.estimated_monthly_s3_cost_usd).label("monthly_cost_usd"),
+                func.sum(TableStats.projected_savings_usd_month).label("projected_savings"),
+                func.avg(TableStats.score).label("avg_score"),
+            )
+            .join(TableStats, Table.id == TableStats.table_id)
+            .where(Table.source_id == source.id)
+        )
+        
+        agg = session.execute(stats_stmt).one_or_none()
+        
+        if agg and agg.table_count:
+            table_count = int(agg.table_count or 0)
+            total_size_gb = float(agg.total_size_gb or 0.0)
+            small_files = int(agg.small_files_count or 0)
+            needs_compaction = int(agg.needs_compaction or 0)
+            monthly_cost = float(agg.monthly_cost_usd or 0.0)
+            projected_savings = float(agg.projected_savings or 0.0) if agg.projected_savings else None
+            avg_score = float(agg.avg_score or 0.0)
+            
+            catalogs.append(
+                CatalogStatsRead(
+                    catalog_id=source.id,
+                    catalog_name=source.name,
+                    catalog_type=source.type,
+                    table_count=table_count,
+                    total_size_gb=total_size_gb,
+                    small_files_count=small_files,
+                    needs_compaction_count=needs_compaction,
+                    monthly_cost_usd=monthly_cost,
+                    projected_savings_usd_month=projected_savings,
+                    avg_health_score=avg_score,
+                    enabled=source.enabled,
+                )
+            )
+            
+            total_tables += table_count
+            total_cost_usd += monthly_cost
+    
+    return MultiCatalogResponse(
+        catalogs=catalogs,
+        total_catalogs=len(catalogs),
+        total_tables=total_tables,
+        total_cost_usd=total_cost_usd,
+    )
+
+
 # ===================== Schemas =====================
 
 
