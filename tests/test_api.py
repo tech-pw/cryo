@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from fastapi.testclient import TestClient
 
 from cryo.api.app import create_app
@@ -120,3 +122,36 @@ def test_preview_skips_bucket_filter_without_unsafe_sql() -> None:
     assert len(item["statements"]) == 1
     assert item["statements"][0]["action"] == "expire_snapshots"
     assert any("bucket_filter" in note for note in item["notes"])
+
+
+def test_source_test_endpoint_reports_discovered_tables() -> None:
+    mock_catalog = MagicMock()
+    mock_catalog.list_namespaces.return_value = ["events"]
+    mock_catalog.list_tables.return_value = [("events", "clicks"), ("events", "impressions")]
+
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog", return_value=mock_catalog):
+        response = _client().post(
+            "/api/v1/sources/test",
+            headers=AUTH_HEADERS,
+            json={"type": "rest", "config": {"uri": "http://localhost:8181"}},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["namespaces"] == ["events"]
+    assert body["table_count"] == 2
+    assert set(body["sample_tables"]) == {"events.clicks", "events.impressions"}
+
+
+def test_source_test_endpoint_reports_connection_failure() -> None:
+    response = _client().post(
+        "/api/v1/sources/test",
+        headers=AUTH_HEADERS,
+        json={"type": "made-up-catalog-type", "config": {}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"] and "Unsupported source type" in body["error"]
