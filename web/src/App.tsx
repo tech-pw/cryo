@@ -4,6 +4,7 @@ import {
   ControlOutlined,
   DatabaseOutlined,
   DollarOutlined,
+  ExperimentOutlined,
   HistoryOutlined,
   MoonOutlined,
   SettingOutlined,
@@ -19,6 +20,7 @@ import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { Connections } from "./pages/Connections";
 import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
+import LayoutOptimization from "./pages/LayoutOptimization";
 import { Presets } from "./pages/Presets";
 import { Runs } from "./pages/Runs";
 import { TableDetail } from "./pages/TableDetail";
@@ -37,6 +39,7 @@ const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
+  { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
@@ -89,6 +92,7 @@ const Shell = () => {
             <Route path="/cost" element={<CostSavings />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
+            <Route path="/optimize" element={<LayoutOptimization />} />
             <Route path="/presets" element={<Presets />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/runs/:runId" element={<Runs />} />

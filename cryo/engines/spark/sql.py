@@ -74,15 +74,86 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         operation.params.get("min_input_files", operation.params.get("min_small_files", 128))
     )
     args = [f"table => '{table_name}'"]
+
+    # Strategy (binpack, sort)
+    strategy = operation.params.get("strategy", "binpack")
+    args.append(f"strategy => '{strategy}'")
+
+    # Partition filter
     if operation.predicates:
         where = " OR ".join(render_predicate(predicate) for predicate in operation.predicates)
         args.append(f"where => '{_escape_sql_string(where)}'")
-    args.append(
-        "options => map("
-        f"'target-file-size-bytes','{target_bytes}', "
-        f"'min-input-files','{min_input_files}'"
-        ")"
-    )
+
+    # Build options map
+    options = [
+        f"'target-file-size-bytes', '{target_bytes}'",
+        f"'min-input-files', '{min_input_files}'",
+    ]
+
+    # Sort/Z-order configuration
+    sort_columns = operation.params.get("sort_columns", [])
+    zorder_columns = operation.params.get("zorder_columns", [])
+
+    if zorder_columns:
+        # Z-order clustering
+        zorder_expr = ", ".join(f"`{col}`" for col in zorder_columns)
+        options.append(f"'sort-order', 'zorder({zorder_expr})'")
+    elif sort_columns:
+        # Linear sort
+        sort_exprs = []
+        sort_directions = operation.params.get("sort_directions", ["asc"] * len(sort_columns))
+        for col, direction in zip(sort_columns, sort_directions):
+            sort_exprs.append(f"`{col}` {direction.upper()}")
+        options.append(f"'sort-order', '{', '.join(sort_exprs)}'")
+
+    # Additional options
+    if operation.params.get("rewrite_all"):
+        options.append("'rewrite-all', 'true'")
+    if operation.params.get("partial_progress", True):
+        options.append("'partial-progress.enabled', 'true'")
+    max_concurrent = operation.params.get("max_concurrent_file_group_rewrites", 5)
+    options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
+
+    args.append(f"options => map({', '.join(options)})")
+    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def render_clustering_operation(
+    catalog: str,
+    table_name: str,
+    strategy: str,
+    columns: list[str],
+    *,
+    partition_filter: str | None = None,
+    target_file_size_bytes: int = 256 * 1024 * 1024,
+    rewrite_all: bool = False,
+) -> str:
+    """Render a standalone clustering operation (sort or z-order).
+
+    This is used by the layout optimizer to generate SQL for data re-organization.
+    """
+    args = [f"table => '{table_name}'", f"strategy => '{strategy}'"]
+
+    if partition_filter:
+        args.append(f"where => '{_escape_sql_string(partition_filter)}'")
+
+    options = [
+        f"'target-file-size-bytes', '{target_file_size_bytes}'",
+        "'partial-progress.enabled', 'true'",
+        "'max-concurrent-file-group-rewrites', '5'",
+    ]
+
+    if rewrite_all:
+        options.append("'rewrite-all', 'true'")
+
+    if strategy == "zorder" and columns:
+        zorder_expr = ", ".join(f"`{col}`" for col in columns)
+        options.append(f"'sort-order', 'zorder({zorder_expr})'")
+    elif strategy == "sort" and columns:
+        sort_expr = ", ".join(f"`{col}` ASC" for col in columns)
+        options.append(f"'sort-order', '{sort_expr}'")
+
+    args.append(f"options => map({', '.join(options)})")
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
 
 
