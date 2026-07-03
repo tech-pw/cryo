@@ -32,6 +32,8 @@ class ExecResult:
     rows: tuple[tuple[object, ...], ...] = ()
     error: str | None = None
     duration_ms: int | None = None
+    input_files_count: int | None = None
+    output_files_count: int | None = None
 
 
 class MaintenanceEngine(Protocol):

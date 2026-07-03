@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
+from cryo.db.session import SessionLocal
+from cryo.planner.benefit_score import update_all_benefit_scores
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
 from cryo.scheduler.cron import cron_is_due
@@ -46,16 +48,22 @@ class SchedulerService:
         queue: MaintenanceQueue,
         *,
         leader_check: Callable[[], bool] | None = None,
+        benefit_score_update_interval_hours: int = 4,
     ) -> None:
         self._store = store
         self._queue = queue
         self._leader_check = leader_check or (lambda: True)
+        self._benefit_score_interval_hours = benefit_score_update_interval_hours
+        self._last_benefit_score_update: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
             return SchedulerTickResult()
 
         current = now or datetime.now(UTC)
+        
+        # Update benefit scores periodically (helps AutoComp prioritization)
+        self._maybe_update_benefit_scores(current)
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
             return SchedulerTickResult()
@@ -101,6 +109,29 @@ class SchedulerService:
             jobs_enqueued=jobs_enqueued,
             preset_ids=tuple(fired),
         )
+
+    def _maybe_update_benefit_scores(self, current: datetime) -> None:
+        """Update partition benefit scores periodically for AutoComp prioritization."""
+        from datetime import timedelta
+        
+        if self._last_benefit_score_update is None:
+            should_update = True
+        else:
+            elapsed = current - self._last_benefit_score_update
+            should_update = elapsed >= timedelta(hours=self._benefit_score_interval_hours)
+        
+        if should_update:
+            try:
+                with SessionLocal() as session:
+                    updated = update_all_benefit_scores(session)
+                    import logging
+                    logging.getLogger(__name__).info(
+                        f"Updated benefit scores for {updated} partitions"
+                    )
+                self._last_benefit_score_update = current
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to update benefit scores: {e}")
 
 
 def _apply_routing(

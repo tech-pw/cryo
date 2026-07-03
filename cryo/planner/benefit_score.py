@@ -102,13 +102,24 @@ def update_partition_benefit_scores(
     days_in_window = query_window_hours / 24.0
     queries_per_day = total_queries / max(days_in_window, 1.0)
 
-    # Load all current partitions for this table
+    # Load current partitions for this table (from most recent scan only)
+    # First get the latest scan_at timestamp
+    latest_scan = session.scalar(
+        select(func.max(TablePartition.scan_at)).where(
+            TablePartition.table_id == table_id,
+        )
+    )
+    
+    if not latest_scan:
+        return 0
+    
+    # Then get partitions from that scan
     partitions = session.scalars(
         select(TablePartition).where(
             TablePartition.table_id == table_id,
+            TablePartition.scan_at == latest_scan,
         )
-        .order_by(TablePartition.scan_at.desc())
-        .limit(1000)  # safety cap
+        .limit(10000)  # safety cap
     ).all()
 
     if not partitions:

@@ -173,10 +173,11 @@ class CostAnomalySignal:
         savings = cost.projected_savings_usd_month or 0
         triggered_by_abs = savings >= self.min_savings_usd
 
-        # Check historical growth
+        # Check for grade degradation as proxy for cost growth
+        # (TableStatsHistory doesn't track projected_savings yet)
         now = datetime.now(UTC)
         week_ago = now - timedelta(days=7)
-        old_cost = session.scalar(
+        old_stats = session.scalar(
             select(TableStatsHistory)
             .where(
                 TableStatsHistory.table_id == table_id,
@@ -186,13 +187,19 @@ class CostAnomalySignal:
             .limit(1)
         )
 
-        triggered_by_growth = False
-        growth_pct = 0.0
+        triggered_by_degradation = False
+        if old_stats and old_stats.grade:
+            # Grade degradation: A=4, B=3, C=2, D=1, F=0
+            grade_map = {"A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
+            old_grade_val = grade_map.get(old_stats.grade, 0)
+            # Get current grade from TableStats
+            current_stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
+            if current_stats and current_stats.grade:
+                curr_grade_val = grade_map.get(current_stats.grade, 0)
+                # Degraded by 2+ grades (e.g., A → C or B → D)
+                triggered_by_degradation = (old_grade_val - curr_grade_val) >= 2
 
-        # We don't have savings history in TableStatsHistory — use grade degradation as proxy
-        # Future: add projected_savings to TableStatsHistory
-
-        triggered = triggered_by_abs or triggered_by_growth
+        triggered = triggered_by_abs or triggered_by_degradation
 
         return SignalResult(
             triggered=triggered,

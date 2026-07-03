@@ -17,6 +17,13 @@ from cryo.domain.enums import EngineType, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 
+try:
+    from pyiceberg.catalog import load_catalog
+    from pyiceberg.table import Table as IcebergTable
+    PYICEBERG_AVAILABLE = True
+except ImportError:
+    PYICEBERG_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Flag to track if native engine is available
@@ -276,6 +283,112 @@ class NativeEngine:
                 output_paths=[],
             )
 
+    def compact_and_commit(
+        self,
+        table_identifier: str,
+        catalog_config: dict[str, Any],
+        input_paths: list[str],
+        output_dir: str,
+        config: NativeCompactionConfig | None = None,
+    ) -> NativeCompactionResult:
+        """Compact files and commit results to Iceberg in one operation.
+        
+        This is the recommended way to use the native engine for production,
+        as it ensures compacted files are immediately visible to queries.
+        
+        Args:
+            table_identifier: Full table identifier (e.g., "catalog.schema.table")
+            catalog_config: PyIceberg catalog configuration dict
+            input_paths: List of input Parquet file paths
+            output_dir: Directory for output files
+            config: Compaction configuration
+            
+        Returns:
+            NativeCompactionResult with operation details
+        """
+        # Step 1: Compact files
+        result = self.compact_files(input_paths, output_dir, config)
+        
+        if not result.ok:
+            return result
+        
+        # Step 2: Commit to Iceberg
+        try:
+            self.commit_to_iceberg(
+                table_identifier=table_identifier,
+                catalog_config=catalog_config,
+                old_file_paths=input_paths,
+                new_file_paths=result.output_paths,
+            )
+        except Exception as e:
+            # Compaction succeeded but commit failed
+            return NativeCompactionResult(
+                ok=False,
+                input_files=result.input_files,
+                output_files=result.output_files,
+                total_input_rows=result.total_input_rows,
+                total_output_rows=result.total_output_rows,
+                bytes_read=result.bytes_read,
+                bytes_written=result.bytes_written,
+                duration_ms=result.duration_ms,
+                error=f"Compaction succeeded but Iceberg commit failed: {e}",
+                output_paths=result.output_paths,
+            )
+        
+        return result
+    
+    def commit_to_iceberg(
+        self,
+        table_identifier: str,
+        catalog_config: dict[str, Any],
+        old_file_paths: list[str],
+        new_file_paths: list[str],
+    ) -> None:
+        """Commit compaction results to Iceberg metadata.
+        
+        This updates the Iceberg table to replace old files with new compacted files.
+        
+        Args:
+            table_identifier: Full table identifier (e.g., "catalog.schema.table")
+            catalog_config: PyIceberg catalog configuration
+            old_file_paths: Paths to old files being replaced
+            new_file_paths: Paths to new compacted files
+        """
+        if not PYICEBERG_AVAILABLE:
+            raise RuntimeError(
+                "PyIceberg is required for Iceberg metadata commits. "
+                "Install with: pip install pyiceberg"
+            )
+        
+        # Load the catalog and table
+        catalog = load_catalog("native_catalog", **catalog_config)
+        
+        # Parse table identifier
+        parts = table_identifier.split(".")
+        if len(parts) == 3:
+            namespace, table_name = parts[1], parts[2]
+        elif len(parts) == 2:
+            namespace, table_name = parts[0], parts[1]
+        else:
+            raise ValueError(f"Invalid table identifier: {table_identifier}")
+        
+        table = catalog.load_table((namespace, table_name))
+        
+        # Create a transaction to delete old files and add new ones
+        with table.transaction() as txn:
+            # Delete old data files
+            for old_path in old_file_paths:
+                txn.delete_data_file(old_path)
+            
+            # Add new data files
+            for new_path in new_file_paths:
+                txn.add_data_file(new_path)
+        
+        logger.info(
+            f"Committed Iceberg metadata: removed {len(old_file_paths)} files, "
+            f"added {len(new_file_paths)} files to {table_identifier}"
+        )
+    
     def analyze_files(self, input_paths: list[str]) -> list[NativeFileAnalysis]:
         """Analyze files to determine optimal compaction strategy.
 

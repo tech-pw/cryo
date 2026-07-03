@@ -83,6 +83,7 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("applied_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("detail", postgresql.JSONB(), nullable=True),
+        sa.Column("bloom_filter_columns", postgresql.JSONB(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["table_id"], ["cryo.tables.id"]),
