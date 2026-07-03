@@ -342,3 +342,215 @@ async def ingest_from_query_events(
 
     session.commit()
     return ingested
+
+
+class SparkHistoryIngester:
+    """Ingest query logs from Spark History Server."""
+
+    def __init__(self, history_server_url: str):
+        self.history_server_url = history_server_url.rstrip("/")
+
+    async def fetch_recent_queries(
+        self,
+        since: datetime | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent SQL queries from Spark History Server.
+
+        Args:
+            since: Only fetch queries executed after this time
+            limit: Maximum number of queries to fetch
+
+        Returns:
+            List of normalized query events
+        """
+        if since is None:
+            since = datetime.now(UTC) - timedelta(hours=24)
+
+        events = []
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Get list of applications
+            response = await client.get(f"{self.history_server_url}/api/v1/applications")
+            response.raise_for_status()
+            apps = response.json()
+
+            # Fetch SQL queries from each app
+            for app in apps[:limit]:
+                app_id = app.get("id")
+                if not app_id:
+                    continue
+
+                try:
+                    sql_response = await client.get(
+                        f"{self.history_server_url}/api/v1/applications/{app_id}/sql"
+                    )
+                    if sql_response.status_code != 200:
+                        continue
+
+                    sql_queries = sql_response.json()
+                    for query in sql_queries:
+                        execution_id = query.get("id")
+                        description = query.get("description", "")
+                        duration_ms = query.get("duration", 0)
+                        submission_time = query.get("submissionTime")
+
+                        if submission_time:
+                            executed_at = datetime.fromtimestamp(submission_time / 1000, tz=UTC)
+                            if executed_at < since:
+                                continue
+                        else:
+                            executed_at = datetime.now(UTC)
+
+                        events.append({
+                            "query_id": f"{app_id}-{execution_id}",
+                            "query": description,
+                            "engine": "spark",
+                            "executed_at": executed_at,
+                            "duration_ms": duration_ms,
+                            "raw": query,
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to fetch SQL from app {app_id}: {e}")
+                    continue
+
+        return events
+
+
+class AthenaIngester:
+    """Ingest query logs from AWS Athena."""
+
+    def __init__(self, boto_session: Any = None):
+        """Initialize Athena ingester.
+
+        Args:
+            boto_session: boto3.Session instance (optional)
+        """
+        self.boto_session = boto_session
+
+    def fetch_recent_queries(
+        self,
+        since: datetime | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent queries from Athena.
+
+        Args:
+            since: Only fetch queries executed after this time
+            limit: Maximum number of queries to fetch
+
+        Returns:
+            List of normalized query events
+        """
+        import boto3
+
+        if since is None:
+            since = datetime.now(UTC) - timedelta(hours=24)
+
+        session = self.boto_session or boto3.Session()
+        athena = session.client("athena")
+
+        events = []
+        paginator = athena.get_paginator("list_query_executions")
+
+        for page in paginator.paginate(PaginationConfig={"MaxItems": limit}):
+            query_execution_ids = page.get("QueryExecutionIds", [])
+            if not query_execution_ids:
+                break
+
+            # Get execution details in batches
+            for query_id in query_execution_ids:
+                try:
+                    result = athena.get_query_execution(QueryExecutionId=query_id)
+                    execution = result.get("QueryExecution", {})
+
+                    status = execution.get("Status", {})
+                    state = status.get("State")
+                    if state != "SUCCEEDED":
+                        continue
+
+                    submission_time = status.get("SubmissionDateTime")
+                    completion_time = status.get("CompletionDateTime")
+
+                    if submission_time and submission_time < since:
+                        continue
+
+                    query = execution.get("Query", "")
+                    stats = execution.get("Statistics", {})
+
+                    duration_ms = None
+                    if submission_time and completion_time:
+                        duration_ms = int((completion_time - submission_time).total_seconds() * 1000)
+
+                    events.append({
+                        "query_id": query_id,
+                        "query": query,
+                        "engine": "athena",
+                        "executed_at": submission_time or datetime.now(UTC),
+                        "duration_ms": duration_ms,
+                        "bytes_read": stats.get("DataScannedInBytes"),
+                        "user": execution.get("ResultConfiguration", {}).get("OutputLocation"),
+                        "raw": execution,
+                    })
+
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Athena query {query_id}: {e}")
+                    continue
+
+        return events
+
+
+class DuckDBIngester:
+    """Ingest query logs from DuckDB local history file."""
+
+    def __init__(self, history_file: str = "~/.duckdb/history"):
+        self.history_file = history_file
+
+    def fetch_recent_queries(
+        self,
+        since: datetime | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent queries from DuckDB history file.
+
+        Args:
+            since: Only fetch queries executed after this time
+            limit: Maximum number of queries to fetch
+
+        Returns:
+            List of normalized query events
+        """
+        import os
+        import uuid
+
+        if since is None:
+            since = datetime.now(UTC) - timedelta(hours=24)
+
+        events = []
+        history_path = os.path.expanduser(self.history_file)
+
+        if not os.path.exists(history_path):
+            logger.warning(f"DuckDB history file not found: {history_path}")
+            return events
+
+        try:
+            with open(history_path) as f:
+                lines = f.readlines()
+
+            # DuckDB history is just SQL statements, one per line
+            for line in lines[-limit:]:
+                query = line.strip()
+                if not query or query.startswith("--"):
+                    continue
+
+                events.append({
+                    "query_id": str(uuid.uuid4()),
+                    "query": query,
+                    "engine": "duckdb",
+                    "executed_at": datetime.now(UTC),  # No timestamp in history file
+                    "raw": {"query": query},
+                })
+
+        except Exception as e:
+            logger.error(f"Failed to read DuckDB history: {e}")
+
+        return events
