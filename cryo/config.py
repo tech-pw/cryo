@@ -77,6 +77,21 @@ class Settings(BaseSettings):
         description="Enable daily anomaly report to Slack.",
     )
 
+    # Maintenance policy defaults
+    compute_statistics_enabled: bool = Field(
+        default=True,
+        description="Enable Puffin statistics computation after compaction by default.",
+    )
+    stats_columns_limit: int = Field(
+        default=50,
+        description="Max columns to compute stats for (high-cardinality priority).",
+    )
+    benefit_score_update_interval_hours: int = Field(
+        default=6,
+        ge=1,
+        description="Hours between AutoComp benefit score recalculations.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
