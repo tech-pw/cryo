@@ -19,7 +19,19 @@ from cryo.api.schemas import JsonDict
 from cryo.api.serializers import table_to_read
 from cryo.compliance.governance import track_pending_deletions
 from cryo.config import get_settings
-from cryo.db.models import AIProvider, AuditLog, ProtectedSnapshot, SlackConfig, Source, Table, TableStats, TableStatsHistory
+from cryo.db.models import (
+    AIProvider,
+    AuditLog,
+    LayoutRecommendation,
+    ProtectedSnapshot,
+    QueryLog,
+    QueryPattern,
+    SlackConfig,
+    Source,
+    Table,
+    TableStats,
+    TableStatsHistory,
+)
 from cryo.db.session import get_session
 from cryo.mcp.server import CryoMcpServer, build_default_mcp_server
 from cryo.sources.latency import get_catalog_latency_monitor
@@ -1143,3 +1155,341 @@ def _table_stats_dict(table: Table, stats: TableStats | None) -> dict[str, Any]:
         "target_file_size_bytes": stats.target_file_size_bytes,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
     }
+
+
+# ============================================================================
+# Query Telemetry & Layout Optimization
+# ============================================================================
+
+
+class QueryPatternRead(BaseModel):
+    column_name: str
+    filter_count: int
+    equality_filter_count: int
+    range_filter_count: int
+    join_count: int
+    projection_count: int
+    avg_selectivity: float | None = None
+
+
+class TableQueryPatternsResponse(BaseModel):
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    total_queries: int
+    patterns: list[QueryPatternRead]
+    dominant_filter_column: str | None = None
+    multi_column_filter_ratio: float = 0.0
+
+
+class LayoutRecommendationRead(BaseModel):
+    id: uuid.UUID
+    table_id: uuid.UUID
+    current_sort_order: list[JsonDict] | None = None
+    recommended_strategy: str
+    recommended_columns: list[JsonDict]
+    estimated_prune_improvement: float | None = None
+    current_prune_efficiency: float | None = None
+    analysis_query_count: int
+    confidence: float
+    status: str
+    applied_at: datetime | None = None
+    detail: JsonDict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClusteringPlanRequest(BaseModel):
+    strategy: str = "sort"  # sort, zorder, binpack
+    columns: list[str] | None = None
+    partition_filter: str | None = None
+    target_file_size_mb: int = 256
+    rewrite_all: bool = False
+
+
+class ClusteringPlanResponse(BaseModel):
+    table_id: uuid.UUID
+    table_ref: str
+    strategy: str
+    columns: list[str]
+    spark_sql: str
+    spark_python: str
+    trino_sql: str | None = None
+
+
+class TelemetryIngestRequest(BaseModel):
+    source_id: uuid.UUID
+    since_hours: int = 24
+    limit: int = 1000
+
+
+class TelemetryIngestResponse(BaseModel):
+    queries_ingested: int
+    patterns_updated: int
+
+
+@router.get(
+    "/tables/{table_id}/query-patterns",
+    response_model=TableQueryPatternsResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["optimization"],
+)
+def get_table_query_patterns_api(table_id: uuid.UUID, session: SessionDep) -> TableQueryPatternsResponse:
+    """Get aggregated query patterns for a table."""
+    from cryo.telemetry.patterns import get_table_query_patterns
+
+    try:
+        patterns = get_table_query_patterns(session, table_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    return TableQueryPatternsResponse(
+        table_id=table_id,
+        schema_name=patterns.schema_name,
+        table_name=patterns.table_name,
+        total_queries=patterns.total_queries,
+        patterns=[
+            QueryPatternRead(
+                column_name=p.column_name,
+                filter_count=p.filter_count,
+                equality_filter_count=p.equality_filter_count,
+                range_filter_count=p.range_filter_count,
+                join_count=p.join_count,
+                projection_count=p.projection_count,
+                avg_selectivity=p.avg_selectivity,
+            )
+            for p in patterns.columns
+        ],
+        dominant_filter_column=patterns.dominant_filter_column,
+        multi_column_filter_ratio=patterns.multi_column_filter_ratio,
+    )
+
+
+@router.get(
+    "/tables/{table_id}/layout-recommendation",
+    response_model=LayoutRecommendationRead,
+    dependencies=[Depends(require_viewer)],
+    tags=["optimization"],
+)
+def get_layout_recommendation(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    refresh: bool = False,
+) -> LayoutRecommendationRead:
+    """Get layout optimization recommendation for a table."""
+    from cryo.optimizer.layout_analyzer import generate_layout_recommendation
+
+    recommendation = generate_layout_recommendation(session, table_id, force_refresh=refresh)
+
+    return LayoutRecommendationRead(
+        id=recommendation.id,
+        table_id=recommendation.table_id,
+        current_sort_order=recommendation.current_sort_order,
+        recommended_strategy=recommendation.recommended_strategy,
+        recommended_columns=recommendation.recommended_columns,
+        estimated_prune_improvement=recommendation.estimated_prune_improvement,
+        current_prune_efficiency=recommendation.current_prune_efficiency,
+        analysis_query_count=recommendation.analysis_query_count,
+        confidence=recommendation.confidence,
+        status=recommendation.status,
+        applied_at=recommendation.applied_at,
+        detail=recommendation.detail,
+        created_at=recommendation.created_at,
+        updated_at=recommendation.updated_at,
+    )
+
+
+@router.post(
+    "/tables/{table_id}/clustering-plan",
+    response_model=ClusteringPlanResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["optimization"],
+)
+def create_clustering_plan(
+    table_id: uuid.UUID,
+    payload: ClusteringPlanRequest,
+    session: SessionDep,
+) -> ClusteringPlanResponse:
+    """Generate a clustering plan (sort/z-order) for a table."""
+    from cryo.optimizer.clustering import build_clustering_plan
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    source = session.get(Source, table.source_id)
+    catalog_name = (source.config or {}).get("catalog_name", source.name) if source else "iceberg"
+    table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
+
+    # Get columns from recommendation if not specified
+    columns = payload.columns
+    if not columns and payload.strategy != "binpack":
+        recommendation = session.scalar(
+            select(LayoutRecommendation).where(LayoutRecommendation.table_id == table_id)
+        )
+        if recommendation and recommendation.recommended_columns:
+            columns = [c.get("column", "") for c in recommendation.recommended_columns if c.get("column")]
+
+    if not columns and payload.strategy != "binpack":
+        raise HTTPException(
+            status_code=400,
+            detail="No columns specified and no recommendation available. "
+            "Either specify columns or generate a layout recommendation first.",
+        )
+
+    plan = build_clustering_plan(
+        table_ref=table_ref,
+        strategy=payload.strategy,
+        columns=columns,
+        target_file_size_bytes=payload.target_file_size_mb * 1024 * 1024,
+        partition_filter=payload.partition_filter,
+        rewrite_all=payload.rewrite_all,
+    )
+
+    return ClusteringPlanResponse(
+        table_id=table_id,
+        table_ref=table_ref,
+        strategy=payload.strategy,
+        columns=columns or [],
+        spark_sql=plan.to_spark_rewrite_call(),
+        spark_python=plan.to_spark_python(),
+        trino_sql=plan.to_trino_optimize(),
+    )
+
+
+@router.post(
+    "/telemetry/ingest",
+    response_model=TelemetryIngestResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["optimization"],
+)
+async def ingest_query_telemetry(
+    payload: TelemetryIngestRequest,
+    session: SessionDep,
+) -> TelemetryIngestResponse:
+    """Ingest query logs from Trino and aggregate patterns."""
+    from cryo.telemetry.ingestion import TrinoQueryIngester, ingest_trino_query_log
+    from cryo.telemetry.patterns import aggregate_query_patterns
+
+    source = session.get(Source, payload.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    # Get Trino connection info from source config or a linked destination
+    # For now, we'll look for a Trino destination
+    from cryo.db.models import Destination
+
+    trino_dest = session.scalar(
+        select(Destination).where(Destination.engine == "trino", Destination.enabled.is_(True)).limit(1)
+    )
+    if trino_dest is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Trino destination configured. Add a Trino engine in Connections first.",
+        )
+
+    trino_url = (trino_dest.config or {}).get("url", "http://localhost:8080")
+
+    ingester = TrinoQueryIngester(trino_url=trino_url)
+    since = datetime.now(UTC) - timedelta(hours=payload.since_hours)
+
+    queries_ingested = await ingest_trino_query_log(
+        session=session,
+        source=source,
+        ingester=ingester,
+        since=since,
+        limit=payload.limit,
+    )
+
+    patterns_updated = aggregate_query_patterns(session, since=since)
+
+    return TelemetryIngestResponse(
+        queries_ingested=queries_ingested,
+        patterns_updated=patterns_updated,
+    )
+
+
+@router.get(
+    "/optimization/recommendations",
+    response_model=list[LayoutRecommendationRead],
+    dependencies=[Depends(require_viewer)],
+    tags=["optimization"],
+)
+def list_layout_recommendations(
+    session: SessionDep,
+    status: str | None = None,
+    min_confidence: float = 0.0,
+    limit: int = 50,
+) -> list[LayoutRecommendationRead]:
+    """List layout recommendations across all tables."""
+    query = select(LayoutRecommendation).where(LayoutRecommendation.confidence >= min_confidence)
+    if status:
+        query = query.where(LayoutRecommendation.status == status)
+    query = query.order_by(LayoutRecommendation.estimated_prune_improvement.desc().nulls_last()).limit(limit)
+
+    recommendations = session.scalars(query).all()
+
+    return [
+        LayoutRecommendationRead(
+            id=r.id,
+            table_id=r.table_id,
+            current_sort_order=r.current_sort_order,
+            recommended_strategy=r.recommended_strategy,
+            recommended_columns=r.recommended_columns,
+            estimated_prune_improvement=r.estimated_prune_improvement,
+            current_prune_efficiency=r.current_prune_efficiency,
+            analysis_query_count=r.analysis_query_count,
+            confidence=r.confidence,
+            status=r.status,
+            applied_at=r.applied_at,
+            detail=r.detail,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in recommendations
+    ]
+
+
+@router.patch(
+    "/optimization/recommendations/{rec_id}",
+    response_model=LayoutRecommendationRead,
+    dependencies=[Depends(require_operator)],
+    tags=["optimization"],
+)
+def update_recommendation_status(
+    rec_id: uuid.UUID,
+    session: SessionDep,
+    status: str,
+) -> LayoutRecommendationRead:
+    """Update a recommendation's status (e.g., mark as applied or rejected)."""
+    rec = session.get(LayoutRecommendation, rec_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    valid_statuses = {"pending", "applied", "rejected", "scheduled"}
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Status must be one of: {valid_statuses}")
+
+    rec.status = status
+    if status == "applied":
+        rec.applied_at = datetime.now(UTC)
+
+    session.commit()
+    session.refresh(rec)
+
+    return LayoutRecommendationRead(
+        id=rec.id,
+        table_id=rec.table_id,
+        current_sort_order=rec.current_sort_order,
+        recommended_strategy=rec.recommended_strategy,
+        recommended_columns=rec.recommended_columns,
+        estimated_prune_improvement=rec.estimated_prune_improvement,
+        current_prune_efficiency=rec.current_prune_efficiency,
+        analysis_query_count=rec.analysis_query_count,
+        confidence=rec.confidence,
+        status=rec.status,
+        applied_at=rec.applied_at,
+        detail=rec.detail,
+        created_at=rec.created_at,
+        updated_at=rec.updated_at,
+    )

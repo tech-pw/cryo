@@ -482,15 +482,113 @@ class AuditLog(Base):
     job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
 
 
+# ============================================================================
+# Query Telemetry & Layout Optimization
+# ============================================================================
+
+
+class QueryLog(Base):
+    """Raw query log entries from query engines (Trino, Spark, etc.)."""
+
+    __tablename__ = "query_logs"
+    __table_args__ = (
+        Index("ix_query_logs_table_id", "table_id"),
+        Index("ix_query_logs_executed_at", "executed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id"), nullable=False
+    )
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+    )
+    query_id: Mapped[str] = mapped_column(Text, nullable=False)  # Engine's query ID
+    engine: Mapped[str] = mapped_column(Text, nullable=False)  # trino, spark, etc.
+    query_text: Mapped[str | None] = mapped_column(Text)  # Full SQL (optional)
+    query_type: Mapped[str | None] = mapped_column(Text)  # SELECT, INSERT, etc.
+    filter_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [{column, operator, cardinality}]
+    join_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [column, ...]
+    projection_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Selected columns
+    executed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    rows_read: Mapped[int | None] = mapped_column(BigInteger)
+    bytes_read: Mapped[int | None] = mapped_column(BigInteger)
+    files_read: Mapped[int | None] = mapped_column(Integer)
+    files_pruned: Mapped[int | None] = mapped_column(Integer)  # Files skipped via stats
+    user_name: Mapped[str | None] = mapped_column(Text)
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)  # Full engine response
+
+    table: Mapped[Table | None] = relationship()
+
+
+class QueryPattern(Base):
+    """Aggregated query patterns per table for layout optimization."""
+
+    __tablename__ = "query_patterns"
+    __table_args__ = (
+        UniqueConstraint("table_id", "column_name", name="uq_query_patterns_table_column"),
+        Index("ix_query_patterns_table_id", "table_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+    )
+    column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    equality_filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    range_filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    join_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    projection_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    avg_selectivity: Mapped[float | None] = mapped_column(Float)  # Estimated % of rows matched
+    last_seen_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    table: Mapped[Table] = relationship()
+
+
+class LayoutRecommendation(TimestampMixin, Base):
+    """Layout optimization recommendations per table."""
+
+    __tablename__ = "layout_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False, unique=True
+    )
+    current_sort_order: Mapped[JsonList | None] = mapped_column(JSONB)  # Current table sort order
+    recommended_strategy: Mapped[str] = mapped_column(Text, nullable=False)  # none, sort, zorder
+    recommended_columns: Mapped[JsonList] = mapped_column(JSONB, nullable=False)  # Columns to sort/cluster by
+    estimated_prune_improvement: Mapped[float | None] = mapped_column(Float)  # Expected % improvement
+    current_prune_efficiency: Mapped[float | None] = mapped_column(Float)  # Current file pruning rate
+    analysis_query_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.0"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))  # pending, applied, rejected
+    applied_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    detail: Mapped[JsonDict | None] = mapped_column(JSONB)  # Additional analysis details
+
+    table: Mapped[Table] = relationship()
+
+
 __all__ = [
     "AIProvider",
     "AuditLog",
     "Destination",
+    "LayoutRecommendation",
     "MaintenanceJob",
     "MaintenanceRun",
     "Preset",
     "PresetRule",
     "ProtectedSnapshot",
+    "QueryLog",
+    "QueryPattern",
     "SlackConfig",
     "Source",
     "Table",

@@ -1,0 +1,54 @@
+[package]
+name = "cryo-native"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust engine for Cryo - high-performance Iceberg table compaction"
+license = "Apache-2.0"
+
+[lib]
+name = "cryo_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Apache Arrow and DataFusion for columnar processing
+arrow = { version = "53", features = ["prettyprint"] }
+datafusion = "43"
+parquet = { version = "53", features = ["arrow", "async"] }
+
+# PyO3 for Python bindings
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Object storage
+object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
+
+# Iceberg support
+iceberg = { version = "0.4", features = ["storage-s3"] }
+iceberg-datafusion = "0.4"
+
+# Utilities
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+bytes = "1"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = "0.5"
+
+[[bench]]
+name = "compaction_bench"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
