@@ -1,6 +1,7 @@
 import {
   ApiOutlined,
   BarChartOutlined,
+  ClockCircleOutlined,
   ControlOutlined,
   DatabaseOutlined,
   DollarOutlined,
@@ -9,6 +10,7 @@ import {
   MoonOutlined,
   SettingOutlined,
   SunOutlined,
+  TeamOutlined,
   ThunderboltOutlined
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -19,6 +21,7 @@ import { AuthProvider, roleOptions, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { Connections } from "./pages/Connections";
+import { CostAttribution } from "./pages/CostAttribution";
 import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
 import { JobDetail } from "./pages/JobDetail";
@@ -26,6 +29,7 @@ import LayoutOptimization from "./pages/LayoutOptimization";
 import { Presets } from "./pages/Presets";
 import { QueryPerformance } from "./pages/QueryPerformance";
 import { Runs } from "./pages/Runs";
+import { SLAStatus } from "./pages/SLAStatus";
 import { TableDetail } from "./pages/TableDetail";
 import { TableExplorer } from "./pages/TableExplorer";
 
@@ -40,9 +44,11 @@ const queryClient = new QueryClient({
 
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
-  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
+  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
+  { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
+  { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
@@ -94,9 +100,11 @@ const Shell = () => {
             <Route path="/" element={<Navigate to="/health" replace />} />
             <Route path="/health" element={<DatalakeHealth />} />
             <Route path="/cost" element={<CostSavings />} />
+            <Route path="/attribution" element={<CostAttribution />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
             <Route path="/queries" element={<QueryPerformance />} />
+            <Route path="/sla" element={<SLAStatus />} />
             <Route path="/optimize" element={<LayoutOptimization />} />
             <Route path="/presets" element={<Presets />} />
             <Route path="/runs" element={<Runs />} />
