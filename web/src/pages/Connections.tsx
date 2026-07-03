@@ -1154,6 +1154,34 @@ interface AIProviderFormValues {
   [key: `config_${string}`]: string | undefined;
 }
 
+// Default provider types as fallback when API hasn't loaded
+const DEFAULT_PROVIDER_TYPES: AIProviderType[] = [
+  {
+    type: "anthropic",
+    name: "Anthropic",
+    models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022"],
+    default_model: "claude-sonnet-4-20250514",
+    config_fields: []
+  },
+  {
+    type: "openai",
+    name: "OpenAI",
+    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+    default_model: "gpt-4o",
+    config_fields: []
+  },
+  {
+    type: "azure_openai",
+    name: "Azure OpenAI",
+    models: ["gpt4o", "gpt-4", "gpt-4-turbo", "gpt-35-turbo"],
+    default_model: "gpt4o",
+    config_fields: [
+      { name: "api_base", label: "API Base URL", placeholder: "https://your-resource.openai.azure.com", required: true },
+      { name: "api_version", label: "API Version", placeholder: "2024-03-01-preview", required: false, default: "2024-03-01-preview" }
+    ]
+  }
+];
+
 const AIProviderDrawer = ({
   value,
   providerTypes,
@@ -1172,7 +1200,9 @@ const AIProviderDrawer = ({
   const existingConfig = isEditing ? (value.config as Record<string, string>) : {};
   const [selectedType, setSelectedType] = useState<string>(isEditing ? value.provider_type : "anthropic");
 
-  const currentTypeInfo = providerTypes.find((t) => t.type === selectedType);
+  // Use API data if available, otherwise fall back to defaults
+  const effectiveProviderTypes = providerTypes.length > 0 ? providerTypes : DEFAULT_PROVIDER_TYPES;
+  const currentTypeInfo = effectiveProviderTypes.find((t) => t.type === selectedType);
   const modelOptions = currentTypeInfo?.models.map((m) => ({ label: m, value: m })) ?? [];
   const configFields = currentTypeInfo?.config_fields ?? [];
 
@@ -1200,7 +1230,7 @@ const AIProviderDrawer = ({
         onValuesChange={(changed) => {
           if (changed.provider_type) {
             setSelectedType(changed.provider_type);
-            const newTypeInfo = providerTypes.find((t) => t.type === changed.provider_type);
+            const newTypeInfo = effectiveProviderTypes.find((t) => t.type === changed.provider_type);
             if (newTypeInfo) {
               form.setFieldValue("model", newTypeInfo.default_model);
               // Set defaults for config fields
@@ -1239,7 +1269,7 @@ const AIProviderDrawer = ({
 
         <Form.Item name="provider_type" label="Provider" rules={[{ required: true }]}>
           <Select
-            options={providerTypes.map((t) => ({
+            options={effectiveProviderTypes.map((t) => ({
               label: (
                 <Space>
                   <RobotOutlined />
