@@ -26,6 +26,7 @@ import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
 import { JobDetail } from "./pages/JobDetail";
 import LayoutOptimization from "./pages/LayoutOptimization";
+import { MultiCatalog } from "./pages/MultiCatalog";
 import { Presets } from "./pages/Presets";
 import { QueryPerformance } from "./pages/QueryPerformance";
 import { Runs } from "./pages/Runs";
@@ -44,10 +45,11 @@ const queryClient = new QueryClient({
 
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
-  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
-  { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
+  { key: "/catalogs", icon: <DatabaseOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
+  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
+  { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
@@ -99,6 +101,7 @@ const Shell = () => {
           <Routes>
             <Route path="/" element={<Navigate to="/health" replace />} />
             <Route path="/health" element={<DatalakeHealth />} />
+            <Route path="/catalogs" element={<MultiCatalog />} />
             <Route path="/cost" element={<CostSavings />} />
             <Route path="/attribution" element={<CostAttribution />} />
             <Route path="/tables" element={<TableExplorer />} />
