@@ -20,6 +20,7 @@ def test_all_foundation_tables_are_registered() -> None:
         "cryo.query_logs",
         "cryo.query_patterns",
         "cryo.runs",
+        "cryo.scanner_config",
         "cryo.slack_configs",
         "cryo.sources",
         "cryo.table_assignments",

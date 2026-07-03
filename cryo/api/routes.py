@@ -56,6 +56,9 @@ from cryo.api.schemas import (
     RunRead,
     RunSnapshotPayload,
     SavingsProjectionRead,
+    ScannerConfigRead,
+    ScannerConfigUpdate,
+    ScannerStatusRead,
     ScanTriggerRequest,
     ScanTriggerResponse,
     SchemaCostDashboardResponse,
@@ -86,6 +89,7 @@ from cryo.db.models import (
     TableStats,
 )
 from cryo.db.repositories import datalake, presets
+from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal, get_session
 from cryo.domain.enums import EngineType, JobStatus, Mode
@@ -825,13 +829,23 @@ def create_scan_trigger(
     payload: ScanTriggerRequest,
     session: SessionDep,
 ) -> dict[str, object]:
+    if payload.selection is not None:
+        selection = _resolve_selection(session, payload.selection)
+        payload = payload.model_copy(
+            update={"scope": "tables", "table_ids": selection.table_ids, "selection": None}
+        )
     try:
         result = datalake.create_scan_trigger(session, payload.model_dump(mode="python"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    config = scanner_repo.get_scanner_config(session)
+    num_chunks = payload.num_chunks or (
+        config.num_chunks if payload.scope in {"all", "source", "schemas"} else 1
+    )
     try:
         from cryo.infra.wiring import build_runtime_wiring
         from cryo.queue.scan_queue import RedisScanQueue
+        from cryo.scanner.control import enqueue_scan_run
 
         wiring = build_runtime_wiring()
         scan_queue = RedisScanQueue(wiring.redis_client)
@@ -839,25 +853,101 @@ def create_scan_trigger(
         raw_schema_names = result.get("schema_names", [])
         table_ids = raw_table_ids if isinstance(raw_table_ids, list) else []
         schema_names = raw_schema_names if isinstance(raw_schema_names, list) else []
-        scan_queue.enqueue(
-            str(result["run_id"]),
-            {
+        enqueue_result = enqueue_scan_run(
+            session,
+            scan_queue,
+            run_id=uuid.UUID(str(result["run_id"])),
+            num_chunks=num_chunks,
+            payload={
                 "scope": result["scope"],
                 "source_id": str(result["source_id"]) if result.get("source_id") else None,
                 "table_ids": [str(table_id) for table_id in table_ids],
                 "schema_names": [str(schema_name) for schema_name in schema_names],
                 "cost_full_scan": bool(payload.cost_full_scan),
+                "full_scan": bool(payload.full_scan),
                 "trigger": payload.trigger,
             },
         )
-        result = {**result, "queued": True, "message": "Scan request accepted and queued."}
-        summary = session.get(MaintenanceRun, result["run_id"])
-        if summary is not None and isinstance(summary.summary, dict):
-            summary.summary = {**summary.summary, "queued": True, "placeholder": False}
-            session.commit()
-    except Exception:
-        pass
+        result = {
+            **result,
+            "queued": enqueue_result.queued,
+            "message": enqueue_result.message,
+            "num_chunks": enqueue_result.num_chunks,
+        }
+    except Exception as exc:
+        if hasattr(session, "get"):
+            run = session.get(MaintenanceRun, result["run_id"])
+            if run is not None:
+                run.summary = {
+                    **dict(run.summary or {}),
+                    "queued": False,
+                    "queue_error": str(exc),
+                    "placeholder": False,
+                }
+                session.commit()
+        result = {
+            **result,
+            "queued": False,
+            "message": f"Scan request accepted, but queueing failed: {exc}",
+            "num_chunks": num_chunks,
+        }
     return result
+
+
+@router.get(
+    "/scanner/config",
+    response_model=ScannerConfigRead,
+    dependencies=[Depends(require_viewer)],
+    tags=["scans"],
+)
+def get_scanner_config(session: SessionDep) -> ScannerConfigRead:
+    return ScannerConfigRead.model_validate(scanner_repo.get_scanner_config(session))
+
+
+@router.patch(
+    "/scanner/config",
+    response_model=ScannerConfigRead,
+    dependencies=[Depends(require_operator)],
+    tags=["scans"],
+)
+def patch_scanner_config(
+    payload: ScannerConfigUpdate,
+    session: SessionDep,
+) -> ScannerConfigRead:
+    try:
+        config = scanner_repo.update_scanner_config(session, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ScannerConfigRead.model_validate(config)
+
+
+@router.get(
+    "/scanner/status",
+    response_model=ScannerStatusRead,
+    dependencies=[Depends(require_viewer)],
+    tags=["scans"],
+)
+def get_scanner_status(session: SessionDep) -> ScannerStatusRead:
+    queue_depth: int | None = None
+    try:
+        from cryo.infra.wiring import build_runtime_wiring
+        from cryo.queue.scan_queue import RedisScanQueue
+
+        wiring = build_runtime_wiring()
+        queue_depth = RedisScanQueue(wiring.redis_client).pending_count()
+    except Exception:
+        queue_depth = None
+
+    status_payload = scanner_repo.scanner_status(session, queue_depth=queue_depth)
+    return ScannerStatusRead.model_validate(
+        {
+            **status_payload,
+            "config": ScannerConfigRead.model_validate(status_payload["config"]),
+            "latest_run": _run_read_or_none(status_payload.get("latest_run")),
+            "active_run": _run_read_or_none(status_payload.get("active_run")),
+            "last_successful_run": _run_read_or_none(status_payload.get("last_successful_run")),
+        }
+    )
 
 
 @router.get(
@@ -866,14 +956,23 @@ def create_scan_trigger(
     dependencies=[Depends(require_viewer)],
     tags=["runs"],
 )
-def list_runs(session: SessionDep) -> list[RunRead]:
+def list_runs(
+    session: SessionDep,
+    kind: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[RunRead]:
     finalize_open_runs(SessionLocal)
-    runs = session.scalars(
+    stmt = (
         select(MaintenanceRun)
         .options(selectinload(MaintenanceRun.jobs).selectinload(MaintenanceJob.table))
         .order_by(MaintenanceRun.created_at.desc())
-        .limit(100)
+        .limit(limit)
+        .offset(offset)
     )
+    if kind:
+        stmt = stmt.where(MaintenanceRun.kind == kind)
+    runs = session.scalars(stmt)
     return [RunRead.model_validate(presets.run_summary(run)) for run in runs]
 
 
@@ -953,6 +1052,11 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     run = session.get(MaintenanceRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.kind == "scan":
+        scanner_repo.request_scan_cancel(session, run)
+        session.commit()
+        session.refresh(run)
+        return RunRead.model_validate(presets.run_summary(run))
     run.status = "cancelled"
     run.finished_at = datetime.now(UTC)
     jobs = session.scalars(select(MaintenanceJob).where(MaintenanceJob.run_id == run_id))
@@ -996,6 +1100,12 @@ def _websocket_allows_viewer(websocket: WebSocket, token: str | None) -> bool:
         return False
     principal = principal_from_token(token_value)
     return principal is not None and principal.can(Role.VIEWER)
+
+
+def _run_read_or_none(run: object | None) -> RunRead | None:
+    if not isinstance(run, MaintenanceRun):
+        return None
+    return RunRead.model_validate(presets.run_summary(run))
 
 
 def _parse_filter(raw: str | None) -> ColumnElement[bool] | None:

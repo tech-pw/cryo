@@ -81,6 +81,23 @@ The scanner logs a `ScanSummary`:
 ScanSummary(discovered=13, assigned=13, scanned=13, skipped=0, failed=0)
 ```
 
+## Schedule And Monitor Scans In Cryo
+
+Scanner scheduling is now managed by Cryo, not by the Helm values file. Use the web UI at
+`/scans` to enable/disable the scanner cron, edit the five-field cron expression, set the scanner
+chunk count, and choose whether scheduled scans force a full rescan or include the Tier 2 cost scan.
+
+Operators can start ad-hoc scans from three places:
+
+- `/scans`: `Scan all tables now` queues a full-datalake scan using the configured chunk count.
+- `/tables`: select one or more tables, or all tables matching the current filter, then choose
+  `Scan selected`.
+- `/tables/:tableId`: choose `Scan` in the table header to refresh one table.
+
+The Scanner page shows queue depth, the active scan, the next scheduled scan, latest table scan time,
+per-run progress counters, and a bounded list of failed table errors. If a run remains `accepted` or
+`queued`, check that `cryo serve` or the scanner worker is running and can reach Redis.
+
 If `failed` is non-zero, check:
 
 - REST catalog URL and availability.

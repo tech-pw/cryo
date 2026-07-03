@@ -222,6 +222,7 @@ class SchedulerRunner(DaemonRunner):
         super().__init__("scheduler", interval)
         self._wiring: Any = wiring
         self._service: Any = None
+        self._scan_service: Any = None
 
     def _tick(self) -> None:
         wiring = self._get_wiring()
@@ -239,6 +240,15 @@ class SchedulerRunner(DaemonRunner):
                 result.jobs_enqueued,
                 ",".join(result.preset_ids),
             )
+        scan_service = self._get_scan_service()
+        if scan_service is not None:
+            scan_result = scan_service.tick()
+            if scan_result.runs_created:
+                self._logger.info(
+                    "Scanner schedule tick: run=%s chunks=%d",
+                    scan_result.run_id,
+                    scan_result.chunks_enqueued,
+                )
 
     def _get_wiring(self) -> Any:
         if self._wiring is not None:
@@ -260,6 +270,23 @@ class SchedulerRunner(DaemonRunner):
             return self._service
         except Exception as exc:
             self._logger.debug("Cannot initialize scheduler: %s", exc)
+            return None
+
+    def _get_scan_service(self) -> Any:
+        if self._scan_service is not None:
+            return self._scan_service
+        try:
+            from cryo.queue.scan_queue import RedisScanQueue
+            from cryo.scanner.scheduler import ScanSchedulerService
+
+            wiring = self._get_wiring()
+            self._scan_service = ScanSchedulerService(
+                RedisScanQueue(wiring.redis_client),
+                wiring.redis_client,
+            )
+            return self._scan_service
+        except Exception as exc:
+            self._logger.debug("Cannot initialize scanner scheduler: %s", exc)
             return None
 
 

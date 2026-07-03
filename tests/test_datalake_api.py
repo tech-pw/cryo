@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -319,6 +320,7 @@ def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> Non
 def test_scan_trigger_accepts_cost_full_scan(monkeypatch: Any) -> None:
     run_id = uuid.uuid4()
     table_id = uuid.uuid4()
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     def create_scan_trigger(session: object, payload: dict[str, object]) -> dict[str, object]:
         assert payload["scope"] == "tables"
@@ -337,6 +339,22 @@ def test_scan_trigger_accepts_cost_full_scan(monkeypatch: Any) -> None:
         }
 
     monkeypatch.setattr(routes.datalake, "create_scan_trigger", create_scan_trigger)
+    monkeypatch.setattr(
+        routes.scanner_repo,
+        "get_scanner_config",
+        lambda session: SimpleNamespace(
+            id=1,
+            enabled=True,
+            schedule_cron="0 2 * * *",
+            timezone="UTC",
+            num_chunks=4,
+            full_scan_default=False,
+            cost_full_scan_default=False,
+            max_concurrent_runs=1,
+            created_at=scan_at,
+            updated_at=scan_at,
+        ),
+    )
 
     def _raise_redis() -> object:
         raise RuntimeError("no redis")

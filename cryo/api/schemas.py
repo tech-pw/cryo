@@ -463,14 +463,40 @@ class MaintenanceRunResponse(BaseModel):
     status: str
 
 
+class ScannerConfigRead(OrmModel):
+    id: int
+    enabled: bool
+    schedule_cron: str
+    timezone: str
+    num_chunks: int
+    full_scan_default: bool
+    cost_full_scan_default: bool
+    max_concurrent_runs: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScannerConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    schedule_cron: str | None = None
+    timezone: str | None = None
+    num_chunks: int | None = Field(default=None, ge=1)
+    full_scan_default: bool | None = None
+    cost_full_scan_default: bool | None = None
+    max_concurrent_runs: int | None = Field(default=None, ge=1)
+
+
 class ScanTriggerRequest(BaseModel):
     scope: Literal["all", "source", "tables", "schemas"] = "all"
     source_id: uuid.UUID | None = None
     table_ids: list[uuid.UUID] = Field(default_factory=list)
     schema_names: list[str] = Field(default_factory=list)
+    selection: AssignmentSelection | None = None
     trigger: str = "api"
     requested_by: str | None = None
+    full_scan: bool = True
     cost_full_scan: bool = False
+    num_chunks: int | None = Field(default=None, ge=1)
 
 
 class ScanTriggerResponse(BaseModel):
@@ -480,6 +506,8 @@ class ScanTriggerResponse(BaseModel):
     queued: bool
     message: str
     cost_full_scan: bool = False
+    full_scan: bool = True
+    num_chunks: int | None = None
     source_id: uuid.UUID | None = None
     table_ids: list[uuid.UUID] = Field(default_factory=list)
     schema_names: list[str] = Field(default_factory=list)
@@ -495,6 +523,18 @@ class RunRead(BaseModel):
     created_at: datetime
     finished_at: datetime | None = None
     summary: JsonDict | None = None
+
+
+class ScannerStatusRead(BaseModel):
+    config: ScannerConfigRead
+    queue_depth: int | None = None
+    latest_run: RunRead | None = None
+    active_run: RunRead | None = None
+    last_successful_run: RunRead | None = None
+    next_scan_at: datetime | None = None
+    total_tables: int = 0
+    tables_with_stats: int = 0
+    latest_table_scan_at: datetime | None = None
 
 
 class JobRead(BaseModel):

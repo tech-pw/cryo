@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
-import { Link } from "react-router-dom";
-import { assignTables, listDestinations, listPresets, listTables, runMaintenance } from "../api/client";
+import { Link, useNavigate } from "react-router-dom";
+import { assignTables, listDestinations, listPresets, listTables, runMaintenance, triggerScan } from "../api/client";
 import type { TableRead, UUID } from "../api/types";
 import { BulkAssignBar } from "../components/BulkAssignBar";
 import { FilterBar } from "../components/FilterBar";
@@ -20,6 +20,7 @@ const pageSize = 50;
 
 export const TableExplorer = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { api, token } = useAuth();
   const [filters, setFilters] = useState<TableFilterState>({ activeOnly: true });
   const [page, setPage] = useState(1);
@@ -94,6 +95,35 @@ export const TableExplorer = () => {
       });
     },
     onSuccess: (result) => antdMessage.success(`Run queued: ${result.run_id}`),
+    onError: (error) => antdMessage.error((error as Error).message)
+  });
+
+  const scan = useMutation({
+    mutationFn: () => {
+      if (!selection) throw new Error("No tables selected");
+      if (selection.mode === "filter") {
+        return triggerScan(api, {
+          scope: "tables",
+          selection: { mode: "filter", filter: selection.filter },
+          full_scan: true,
+          trigger: "web-table-selection"
+        });
+      }
+      return triggerScan(api, {
+        scope: "tables",
+        table_ids: selectedRowKeys,
+        full_scan: true,
+        trigger: "web-table-selection"
+      });
+    },
+    onSuccess: (result) => {
+      antdMessage.success(result.message || `Scan queued: ${result.run_id}`);
+      clearSelection();
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
+      navigate(`/scans/${result.run_id}`);
+    },
     onError: (error) => antdMessage.error((error as Error).message)
   });
 
@@ -317,10 +347,12 @@ export const TableExplorer = () => {
         destinations={destinations.data ?? []}
         assigning={assign.isPending}
         running={run.isPending}
+        scanning={scan.isPending}
         onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}
         onPreview={() => setPreviewOpen(true)}
         onRun={(args) => run.mutate(args)}
+        onScan={() => scan.mutate()}
       />
       <PlanPreview open={previewOpen} tables={selectedTables} onClose={() => setPreviewOpen(false)} />
     </>

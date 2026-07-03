@@ -330,7 +330,7 @@ export const CostAttribution = () => {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                    <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
