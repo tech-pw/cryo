@@ -334,7 +334,9 @@ class Worker:
 
 
 def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintenanceEngine:
-    return FakeMaintenanceEngine(EngineType(destination.engine))
+    from cryo.engines.factory import create_engine
+
+    return create_engine(destination.engine, destination.config)
 
 
 def plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:
