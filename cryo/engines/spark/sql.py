@@ -43,6 +43,8 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
         sql = _render_optimize(catalog, table_name, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{table_name}')"
+    elif operation.type is OperationType.COMPUTE_STATISTICS:
+        sql = _render_compute_statistics(catalog, table_name, operation.params)
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
     return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.SPARK_EMR)
@@ -116,6 +118,43 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
 
     args.append(f"options => map({', '.join(options)})")
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+    """Render compute_table_stats CALL for Spark (Puffin NDV statistics).
+
+    Spark uses: CALL system.compute_table_stats(table => '...', columns => ARRAY(...))
+    This refreshes NDV Theta sketches stored in Puffin files, improving join ordering.
+
+    Bloom filter columns are configured via table properties — rendered separately.
+    """
+    columns: list[str] = params.get("columns", [])
+    bloom_filter_columns: list[str] = params.get("bloom_filter_columns", [])
+
+    statements = []
+
+    # Main stats computation
+    if columns:
+        cols_expr = ", ".join(f"'{c}'" for c in columns)
+        stats_sql = (
+            f"CALL {catalog}.system.compute_table_stats("
+            f"table => '{table_name}', columns => ARRAY({cols_expr}))"
+        )
+    else:
+        stats_sql = (
+            f"CALL {catalog}.system.compute_table_stats(table => '{table_name}')"
+        )
+    statements.append(stats_sql)
+
+    # Enable Bloom filters for high-cardinality columns via table properties
+    for col in bloom_filter_columns:
+        statements.append(
+            f"ALTER TABLE {catalog}.{table_name} "
+            f"SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{col}' = 'true')"
+        )
+
+    # Multiple statements joined — executor must split on ";\n"
+    return ";\n".join(statements)
 
 
 def render_clustering_operation(

@@ -50,6 +50,8 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         sql = _render_optimize(table_ref, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
+    elif operation.type is OperationType.COMPUTE_STATISTICS:
+        sql = _render_compute_statistics(table_ref, operation.params)
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
     return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.TRINO)
@@ -186,6 +188,19 @@ def _is_numeric_type(col_type: str) -> bool:
     return any(
         token in col_type for token in ("int", "long", "double", "float", "decimal", "numeric")
     )
+
+
+def _render_compute_statistics(table_ref: str, params: dict[str, Any]) -> str:
+    """Render ANALYZE TABLE for Trino (computes Puffin NDV statistics).
+
+    Trino uses: ANALYZE table [WITH (columns = ARRAY['col1', 'col2'])]
+    This refreshes NDV sketches in Puffin files, improving join ordering.
+    """
+    columns: list[str] = params.get("columns", [])
+    if columns:
+        cols_expr = ", ".join(f"'{c}'" for c in columns)
+        return f"ANALYZE {table_ref} WITH (columns = ARRAY[{cols_expr}])"
+    return f"ANALYZE {table_ref}"
 
 
 def _is_number(value: Any) -> bool:
