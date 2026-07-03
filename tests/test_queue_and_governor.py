@@ -28,6 +28,15 @@ def test_in_memory_queue_tracks_priority_admission_claim_and_inflight() -> None:
     assert queue.status("high") is JobStatus.SUCCEEDED
 
 
+def test_in_memory_queue_cancel_pending_removes_stale_entry_without_job_hash() -> None:
+    queue = InMemoryMaintenanceQueue()
+    queue._pending["missing-dest"].append((0, 1, "None"))
+
+    queue.cancel_pending("None")
+
+    assert queue.pending("missing-dest") == []
+
+
 def test_governor_admits_wave_round_robin_across_replicas() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
@@ -99,3 +108,26 @@ def test_governor_defers_heavy_jobs_outside_offpeak() -> None:
     assert result.deferred == 1
     assert store.get_job("job-1").status is JobStatus.DEFERRED
     assert store.get_job("job-1").error == "outside_offpeak"
+
+
+def test_governor_purges_jobs_for_missing_destination() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="missing-dest",
+            mode=Mode.STANDARD,
+        )
+    )
+    queue.enqueue("job-1", "missing-dest")
+
+    result = Governor(queue, locks, store).run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    assert result.orphaned == 0
+    assert store.get_job("job-1").status is JobStatus.FAILED
+    assert store.get_job("job-1").error == "destination_not_found"
+    assert queue.pending("missing-dest") == []

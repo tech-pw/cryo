@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from cryo.api.deps import require_admin, require_operator, require_viewer
 from cryo.api.schemas import JsonDict
 from cryo.db.models import Preset, Table, TablePartition, TierPolicyRecord
-from cryo.db.repositories.p4 import preset_to_config, table_to_candidate
+from cryo.db.repositories.presets import preset_to_config, table_to_candidate
 from cryo.db.session import get_session
 from cryo.scheduler.adaptive_routing import (
     AdaptiveRoutingContext,

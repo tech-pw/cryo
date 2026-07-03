@@ -21,7 +21,8 @@ This guide documents how the current backend is structured and how to extend it 
 | API routes/schemas | `cryo/api/routes.py`, `cryo/api/schemas.py` |
 | API auth | `cryo/api/security.py`, `cryo/api/deps.py` |
 | Predicate grammar | `cryo/api/predicates.py`, re-used by `cryo/scheduler/rules.py` |
-| P4 repositories | `cryo/db/repositories/p4.py` |
+| Preset repositories | `cryo/db/repositories/presets.py` |
+| Datalake/dashboard repositories | `cryo/db/repositories/datalake.py` |
 | Scanner | `cryo/scanner/analyze.py`, `cryo/scanner/run.py`, `cryo/scanner/persistence.py` |
 | Source catalogs | `cryo/sources/base.py`, `cryo/sources/rest.py`, `cryo/sources/factory.py` |
 | Planner | `cryo/planner/planner.py`, `cryo/planner/partitions.py`, `cryo/planner/chunking.py` |
@@ -105,7 +106,9 @@ When implementing service loops:
 | `tests/test_scanner.py` | Scanner health/cost/chunking/analyze/persistence. |
 | `tests/test_predicates.py` | Shared predicate compile/evaluate parity. |
 | `tests/test_api.py` | Health and maintenance preview behavior. |
-| `tests/test_p4_api.py` | P4 repository/adapters/sort/selection helpers. |
+| `tests/test_presets_repository.py` | Preset repository/adapters/sort/selection helpers. |
+| `tests/test_presets_api_db.py` | DB-backed preset, assignment, and run API flows. |
+| `tests/test_datalake_api.py` | Datalake dashboard, cost, drilldown, and scan-trigger routes. |
 | `tests/test_api_security.py`, `tests/test_security.py` | Local auth and role enforcement. |
 | `tests/test_partitions_and_planner.py` | Planner and partition predicates. |
 | `tests/test_chunking.py` | Greedy chunk packing. |

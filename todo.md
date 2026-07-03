@@ -23,7 +23,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [ ] CI: lint + typecheck + unit tests on push.
 - [x] `Makefile` targets from `agents.md` §6.
 
-## P1 — Scanner (fleet stats & health)
+## P1 — Scanner (datalake stats & health)
 - [x] `sources/base.py` + `rest.py`/`hive.py`/`glue.py` (PyIceberg `load_catalog`) + `factory.py`.
 - [x] `scanner/analyze.py` — PyIceberg manifest stream → stats dict. (parity: file/size/record,
       per-partition small files, delete files, manifests, properties, transform, partition detail).
@@ -81,10 +81,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
       `/presets/{id}/rules`, `/assignments` (filter/ids selection), `/tables/{id}/effective-preset`.
 - [x] `/maintenance/preview` (dry-run → per-table rendered SQL + estimates) and `/maintenance/run`.
 - [x] `/scans` trigger; `/runs`, `/jobs`, `/runs/{id}/cancel`.
-- [ ] **Cost API**: extend `/maintenance/preview` with plan-accurate `SavingsProjection`; add
-      `/tables/{id}/cost` + `/dashboards/cost` (fleet current vs projected, savings by op/schema, top
-      opportunities); add cost summary fields to the predicate grammar (filter/sort by savings);
-      `/scans` accepts `cost_full_scan`.
+- [x] **Cost API**: extend `/maintenance/preview` with plan-filtered `SavingsProjection`; add
+      `/tables/{id}/cost` + `/dashboards/cost`; cost summary fields in predicate grammar (including
+      `estimated_monthly_s3_cost_usd`); `/scans` accepts `cost_full_scan` and enqueues when Redis is
+      available; worker writes `actual_bytes_freed` when engines return it.
 - [x] Tests: selection/assignment transactional correctness (filter selects across pages);
       effective-preset resolution (pinned > rule-priority > none); preview renders without executing.
 
@@ -96,10 +96,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [x] **Presets** editor (operations/params/schedule/rules/guardrails) + **Simulator**.
 - [x] **Runs / Live Console**: WebSocket; per-engine concurrency gauges; job rows; log drawer.
 - [x] **Datalake Health** dashboard (grade dist, cost by schema, drift, top offenders, totals).
-- [ ] **Cost & Savings** dashboard (current vs projected, savings by op/schema, top opportunities →
-      select-all → Run, precision badge); explorer columns/filters for projected savings; Table Detail
-      cost breakdown; PlanPreview + RunConsole show projected + realized savings.
-      Frontend build spec: `docs/ui-cost-savings.md` (current→projected waterfall in the health UI).
+- [x] **Cost & Savings** page at `/cost` (canonical full experience): waterfall, savings by op, schema
+      bars, trend (incl. realized when available), top opportunities with filter-based bulk select,
+      full cost scan trigger, precision badge. Health page keeps KPI summary + link to `/cost`.
+      Explorer columns/filters; Table Detail cost card + mini waterfall; PlanPreview savings summary.
+      Regenerate `web/src/api/openapi.d.ts` via `npm run gen:api` when API is running locally.
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
 - [x] **Sources & Destinations** management + health checks.
 - [~] WebSocket endpoint `/ws/runs/{id}` streams DB snapshots; Redis live-state fanout pending.
@@ -120,7 +121,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `(parity)` must match t
 - [ ] Slack notifier + in-app drift/cost alerts (`reporting/alerts.py`) incl. **"$X/mo reclaimable"**.
 - [ ] Worker **realized savings**: capture `actual_bytes_freed` per op → predicted-vs-realized +
       model calibration (`query_gets_per_file`, compaction heuristic).
-- [ ] Prometheus metrics (jobs, admission, live load, scan coverage, fleet grade, cost, drift,
+- [ ] Prometheus metrics (jobs, admission, live load, scan coverage, datalake grade, cost, drift,
       **projected savings by op, reclaimable bytes, realized-vs-projected, orphan bytes + staleness**).
 - [ ] Structured JSON logging across services; per-job live log stream.
 - [ ] Helm chart `deploy/helm/cryo` (api, web, scheduler, governor, worker, scanner CronJob, redis;

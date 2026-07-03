@@ -12,9 +12,8 @@ opportunities" list.
   `Col`, Recharts, `cryoColors`, `chartTooltipProps`, `formatCurrency`, the `deriveDashboard`
   fallback) so it drops into the current codebase.
 
-> **Data readiness gate.** These panels light up as the backend cost tiers land. Until
-> `/dashboards/cost` exists, the UI derives what it can from `/tables` (existing pattern) and shows
-> graceful empty states — never a blank or broken chart. See §8.
+> **Data readiness gate.** `/dashboards/cost` and `/tables/{id}/cost` are live. `/health` shows cost
+> KPIs and schema comparison; the full waterfall/donut/trend experience lives on `/cost`.
 
 ---
 
@@ -472,7 +471,7 @@ const hasSavings = (costData.totals.projected_savings_usd_month ?? 0) > 0;
 <StatStrip
   items={[
     { label: "Tables", value: formatNumber(data.totals?.tables, true) },
-    { label: "Fleet size", value: formatGb(data.totals?.size_gb) },
+    { label: "Datalake size", value: formatGb(data.totals?.size_gb) },
     { label: "S3 monthly (now)", value: formatCurrency(costData.totals.current_monthly_cost_usd) },
     { label: "Projected", value: formatCurrency(costData.totals.projected_monthly_cost_usd) },
     { label: "Monthly savings", value: formatCurrency(costData.totals.projected_savings_usd_month) }
@@ -520,10 +519,10 @@ const hasSavings = (costData.totals.projected_savings_usd_month ?? 0) > 0;
 </BarChart>
 ```
 
-5. **Precision badge + stale-orphan hint** near the KPI strip so users trust the numbers (from
+5. **Savings basis badge + stale-orphan hint** near the KPI strip so users trust the numbers (from
    `costData.totals.precision_coverage` / `orphan_scan_stale`). A single AntD `Tag` is enough, e.g.
-   `metadata-precise` (green) vs `heuristic` (default) vs `storage-truth` (blue); show a small
-   `Tooltip` "orphan estimate is N days old — run a full cost scan" when stale.
+   `Iceberg metadata` (neutral) vs `Quick estimate` (default) vs `Storage checked` (blue); show a
+   small `Tooltip` "orphan estimate is N days old — run a full cost scan" when stale.
 
 ---
 
@@ -594,16 +593,13 @@ Follow the existing Vitest + Testing Library setup (`web/src/test/setup.ts`, see
 
 ## 13. Build order / checklist
 
-1. Types (`types.ts`) + client (`getCostDashboard`, `getTableCost`, `deriveCostDashboard`).
-2. Formatters (`format.ts`) + theme colors (`theme.ts`).
-3. `CostSavingsWaterfall.tsx` + `SavingsByOperation.tsx` (+ `buildRows` unit tests).
-4. Integrate into `DatalakeHealth.tsx` (KPI strip, hero row, current-vs-projected schema bars, badge).
-5. `Cost & savings` card on `TableDetail.tsx` (`getTableCost`).
-6. (Optional) dedicated `/cost` page + nav + top-opportunities → `BulkAssignBar`.
-7. Regenerate `openapi.d.ts` once the backend `/dashboards/cost` + `/tables/{id}/cost` are live; swap
-   hand-written cost types for generated ones.
-8. `cd web && npm run build && npm run test`.
+1. Types (`types.ts`) + client (`getCostDashboard`, `getTableCost`, `deriveCostDashboard`). **Done.**
+2. Formatters (`format.ts`) + theme colors (`theme.ts`). **Done.**
+3. `CostSavingsWaterfall.tsx` + `SavingsByOperation.tsx` (+ `buildRows` unit tests). **Done.**
+4. `DatalakeHealth.tsx` — KPI strip + schema bars + link to `/cost` (summary only). **Done.**
+5. `Cost & savings` card on `TableDetail.tsx` with mini waterfall + stats fallback. **Done.**
+6. Dedicated `/cost` page + nav + top-opportunities → filter-based `BulkAssignBar`. **Done.**
+7. Regenerate `openapi.d.ts` via `cd web && npm run gen:api` (requires API on `:8000`).
+8. `cd web && npm run build && npm run test`. **Done.**
 
-**Backend dependencies** (see `docs/cost-savings.md` build order): `/dashboards/cost` and
-`/tables/{id}/cost`, plus the `table_stats.projected_*` / `reclaimable_bytes` columns. The UI ships
-behind graceful empty states until those land, so frontend and backend can proceed in parallel.
+**Product note:** `/cost` is the canonical full Cost & Savings experience; `/health` stays summary-first.

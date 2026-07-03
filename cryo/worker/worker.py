@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
@@ -59,6 +59,7 @@ class AuditRecord:
     duration_ms: int | None = None
     input_files_count: int | None = None
     output_files_count: int | None = None
+    actual_bytes_freed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class ExecResult:
     detail: str | None = None
     error: str | None = None
     duration_ms: int | None = None
+    actual_bytes_freed: int | None = None
 
 
 class ExecutableMaintenanceEngine(Protocol):
@@ -135,7 +137,13 @@ class InMemoryJobStore:
         return self.jobs[job_id]
 
     def get_destination(self, destination_id: str) -> DestinationConfig:
-        return self.destinations[destination_id]
+        destination = self.try_get_destination(destination_id)
+        if destination is None:
+            raise KeyError(f"destination not found: {destination_id}")
+        return destination
+
+    def try_get_destination(self, destination_id: str) -> DestinationConfig | None:
+        return self.destinations.get(destination_id)
 
     def get_table_data(self, table_id: str) -> TableMaintenanceData:
         return self.tables[table_id]
@@ -154,6 +162,11 @@ class InMemoryJobStore:
     ) -> None:
         job = self.jobs[job_id]
         job.status = status
+        if status is JobStatus.QUEUED:
+            job.started_at = None
+            job.finished_at = None
+        if status in {JobStatus.QUEUED, JobStatus.ADMITTED, JobStatus.RUNNING}:
+            job.finished_at = None
         if status is JobStatus.RUNNING:
             job.started_at = datetime.now(UTC)
         if status in {
@@ -179,6 +192,16 @@ class InMemoryJobStore:
             if job.destination_id == destination_id and job.status is JobStatus.QUEUED
         ]
 
+    def list_queued_jobs(self) -> list[MaintenanceJobRecord]:
+        return [job for job in self.jobs.values() if job.status is JobStatus.QUEUED]
+
+    def list_deferred_jobs(self) -> list[MaintenanceJobRecord]:
+        return [job for job in self.jobs.values() if job.status is JobStatus.DEFERRED]
+
+    def destination_exists(self, destination_id: str) -> bool:
+        destination = self.destinations.get(destination_id)
+        return destination is not None
+
 
 class FakeMaintenanceEngine:
     """Executable test engine used until concrete engine adapters are wired into workers."""
@@ -188,9 +211,11 @@ class FakeMaintenanceEngine:
         engine_type: EngineType | str = EngineType.TRINO,
         *,
         fail_actions: set[OperationType] | None = None,
+        bytes_freed_by_action: dict[OperationType, int] | None = None,
     ) -> None:
         self.type = engine_type
         self.fail_actions = fail_actions or set()
+        self.bytes_freed_by_action = bytes_freed_by_action or {}
         self.executed: list[RenderedStatement] = []
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]:
@@ -217,6 +242,7 @@ class FakeMaintenanceEngine:
             ok=True,
             engine_ref=f"fake-{job_id}-{len(self.executed)}",
             detail=stmt.sql,
+            actual_bytes_freed=self.bytes_freed_by_action.get(stmt.action),
         )
 
 
@@ -231,12 +257,14 @@ class Worker:
         engine_factory: EngineFactory | None = None,
         lock_store: LockStore | None = None,
         *,
+        on_job_finished: Callable[[], None] | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
     ) -> None:
         self._queue = queue
         self._store = store
         self._engine_factory = engine_factory or default_engine_factory
         self._lock_store = lock_store
+        self._on_job_finished = on_job_finished
         self._lock_ttl_seconds = lock_ttl_seconds
 
     def process_next(self) -> MaintenanceJobRecord | None:
@@ -245,7 +273,13 @@ class Worker:
             return None
 
         job = self._store.get_job(job_id)
-        destination = self._store.get_destination(job.destination_id)
+        destination = _try_get_destination(self._store, job.destination_id)
+        if destination is None:
+            self._store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
+            self._queue.complete(job.id, JobStatus.FAILED)
+            if self._on_job_finished is not None:
+                self._on_job_finished()
+            return self._store.get_job(job.id)
         self._ensure_table_lock(job)
         self._queue.mark_running(job.id)
         self._store.mark_status(job.id, JobStatus.RUNNING)
@@ -325,6 +359,7 @@ class Worker:
                         duration_ms=result_duration_ms,
                         input_files_count=getattr(result, "input_files_count", None),
                         output_files_count=getattr(result, "output_files_count", None),
+                        actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
                     )
                 )
         except Exception as exc:
@@ -334,6 +369,8 @@ class Worker:
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         self._queue.complete(job.id, final_status)
         self._release_table_lock(job)
+        if self._on_job_finished is not None:
+            self._on_job_finished()
         return self._store.get_job(job.id)
 
     def _ensure_table_lock(self, job: MaintenanceJobRecord) -> None:
@@ -350,6 +387,16 @@ def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintena
     from cryo.engines.factory import create_engine
 
     return create_engine(destination.engine, destination.config)
+
+
+def _try_get_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:
+    getter = getattr(store, "try_get_destination", None)
+    if callable(getter):
+        return cast(DestinationConfig | None, getter(destination_id))
+    try:
+        return store.get_destination(destination_id)
+    except KeyError:
+        return None
 
 
 def plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:

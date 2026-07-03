@@ -34,6 +34,7 @@ FIELD_MAP = {
     "projected_savings_usd_month": TableStats.projected_savings_usd_month,
     "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
     "reclaimable_bytes": TableStats.reclaimable_bytes,
+    "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
     "cost_precision": TableCost.precision,
 }
 

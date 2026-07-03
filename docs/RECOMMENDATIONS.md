@@ -198,7 +198,7 @@ Independently re-checked 2026-07-03 against primary sources:
 | 2 | Operation sequencing | ✅ `planner/guardrails.py` + API enforcement |
 | 2 | Partition skew warnings | ✅ `scanner/health.py` |
 | 2 | Manifest fragmentation | ✅ Health thresholds + standalone rewrite action |
-| 2 | Cost dashboard | ✅ Backend + UI (`CostSavings` page) |
+| 2 | Cost dashboard | ✅ Backend + `/cost` UI complete; RunConsole realized line deferred until engines report bytes |
 | 2 | Metadata-to-data ratio | ✅ `scanner/signals.py` + health thresholds |
 | 2 | Streaming/commit-velocity | ✅ `scanner/signals.py::detect_streaming_from_history` |
 | 2 | Hot/cold partition tracking | ✅ `planner/planner.py::_is_hot_partition` |

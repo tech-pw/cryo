@@ -195,7 +195,7 @@ frequency, which the current order already mostly reflects (Health and Cost firs
   at-10%-opacity background wash (not a hard block color — softer reads as more premium).
 - **Topbar:** currently holds a static subtitle and a dev-role `Select` (viewer/operator/admin) —
   correct for the current auth stage. When real auth lands (per `docs/EXECUTION_PLAN.md` Phase 1),
-  this becomes: environment/catalog context on the left (which fleet/cluster you're looking at, if
+  this becomes: environment/catalog context on the left (which datalake/cluster you're looking at, if
   multi-tenant), user identity + theme toggle + role badge on the right.
 - **Theme toggle:** a simple sun/moon icon button in the topbar, persisted to `localStorage`,
   defaulting to the OS preference (`prefers-color-scheme`) on first load.
@@ -235,11 +235,11 @@ Every primary page centers on a dense `Table`. Conventions to apply everywhere:
   effect.
 - Empty state (`EmptyState`): always a specific title + a specific next action, never a generic
   "No data." Every page already does this correctly (e.g. "No tables match this view — Run a scan
-  or clear filters to browse the Iceberg fleet") — keep this discipline for every future table.
+  or clear filters to browse the datalake") — keep this discipline for every future table.
 
 ### 3.3 Filtering and bulk selection (`FilterBar`, `BulkAssignBar`)
 
-This is the product's signature interaction (filter the fleet → select all matching → assign/run)
+This is the product's signature interaction (filter the datalake → select all matching → assign/run)
 and should feel the most polished:
 
 - `FilterBar` sits directly under `PageHeader`, filters render as removable chips once applied so
@@ -292,15 +292,15 @@ navigation.
 
 ### 4.1 Datalake Health (`/health`) — the landing page
 
-**Job:** answer "is the fleet OK, and if not, where do I look first" in under five seconds.
+**Job:** answer "is the datalake OK, and if not, where do I look first" in under five seconds.
 
 | Region | Contents |
 |---|---|
 | Header | Title, subtitle, "View cost savings" action |
-| `StatStrip` | Tables · Fleet size · Small files · Needs compaction · S3 monthly now · After maintenance · Monthly savings · Reclaimable — 8 hero numbers, `heroStat` scale, tabular-nums |
-| Grade distribution | Donut chart, slice colors = grade ramp (§1.4) — the fastest "is the fleet healthy" glance in the product |
+| `StatStrip` | Tables · Datalake size · Small files · Needs compaction · S3 monthly now · After maintenance · Monthly savings · Reclaimable — 8 hero numbers, `heroStat` scale, tabular-nums |
+| Grade distribution | Donut chart, slice colors = grade ramp (§1.4) — the fastest "is the datalake healthy" glance in the product |
 | Cost by schema | Grouped bar (Now vs. After maintenance), top 12 schemas by cost/savings |
-| Top offenders | Table: name, grade, priority, small files, size — the fleet's worst tables, sorted, linking to Table Detail |
+| Top offenders | Table: name, grade, priority, small files, size — the datalake's worst tables, sorted, linking to Table Detail |
 | Drift watch | Small list of recent scan deltas — currently minimal (timestamp + small-file count); leave as-is until Phase 2/3 features (streaming/commit-velocity detection, metadata-ratio) land, then this panel is the natural home for those new signals |
 
 **Visual note:** the grade donut is the one place a chart legitimately carries the whole semantic
@@ -321,9 +321,10 @@ to be screenshotted for a leadership update, so it needs to look immediately cre
 | Cost trend | Line chart, current cost vs. available savings over time |
 | Top opportunities | Table with row-selection, Preview/Run per-row actions, feeds the same `BulkAssignBar` |
 
-**Visual note:** `CostPrecisionBadge` (metadata-estimate vs. storage-truth precision) should read
-as *reassurance*, not a caveat — frame it visually as informational (neutral blue/gray), never as a
-warning color, since low precision just means "run a fuller scan," not "something is wrong."
+**Visual note:** `CostPrecisionBadge` should read as a savings-basis explanation, not a caveat. Use
+plain labels such as `Quick estimate`, `Iceberg metadata`, and `Storage checked`, and frame it
+visually as informational (neutral blue/gray), never as a warning color, since lower precision just
+means "run a fuller scan," not "something is wrong."
 
 ### 4.3 Table Explorer (`/tables`)
 
@@ -371,7 +372,7 @@ proof something happened.
   planner's enforced sequencing), schedule cron, params JSON, guardrails JSON.
 - **Rules drawer:** reuses `FilterBar` to build a predicate-based matching rule, lists existing
   rules with their raw predicate JSON.
-- **Simulator drawer:** runs the preset's current rule set against the live fleet without executing
+- **Simulator drawer:** runs the preset's current rule set against the live datalake without executing
   anything — shows matched count, total size, small files, and a sample table. This is the
   single best trust-building feature in the product (per `ARCHITECTURE_AND_AI_STRATEGY.md`'s
   transparency principle) — visually, the simulation result should look distinctly "read-only/

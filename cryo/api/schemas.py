@@ -175,6 +175,7 @@ class TableStatsRead(OrmModel):
     projected_savings_usd_month: float | None = None
     reclaimable_bytes: int | None = None
     cost_precision: CostPrecision | None = None
+    cost_last_full_scan_at: datetime | None = None
     query_count_30d: int = 0
     raw: JsonDict | None = None
 
@@ -433,6 +434,7 @@ class SavingsProjectionRead(BaseModel):
     reclaimable_bytes: int
     query_request_savings_usd_month: float = 0.0
     by_operation: JsonDict = Field(default_factory=dict)
+    assumptions: JsonDict = Field(default_factory=dict)
 
 
 class TablePreviewRead(BaseModel):
@@ -477,6 +479,7 @@ class ScanTriggerResponse(BaseModel):
     scope: Literal["all", "source", "tables", "schemas"]
     queued: bool
     message: str
+    cost_full_scan: bool = False
     source_id: uuid.UUID | None = None
     table_ids: list[uuid.UUID] = Field(default_factory=list)
     schema_names: list[str] = Field(default_factory=list)

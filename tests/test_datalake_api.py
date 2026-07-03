@@ -11,7 +11,7 @@ from cryo.api.app import create_app
 from cryo.api.schemas import AssignmentSelection, MaintenanceRunRequest
 from cryo.config import Settings
 from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun
-from cryo.db.repositories.p4 import SelectionResult
+from cryo.db.repositories.presets import SelectionResult
 from cryo.db.session import get_session
 
 AUTH_HEADERS = {"Authorization": "Bearer operator"}
@@ -87,8 +87,8 @@ def test_dashboard_endpoints_return_bounded_aggregates(monkeypatch: Any) -> None
             "limit": limit,
         }
 
-    monkeypatch.setattr(routes.p5, "dashboard_datalake", datalake)
-    monkeypatch.setattr(routes.p5, "dashboard_schema_cost", schema_cost)
+    monkeypatch.setattr(routes.datalake, "dashboard_datalake", datalake)
+    monkeypatch.setattr(routes.datalake, "dashboard_schema_cost", schema_cost)
 
     client = _client()
     datalake_response = client.get(
@@ -210,8 +210,8 @@ def test_cost_dashboard_and_table_cost_endpoints(monkeypatch: Any) -> None:
             "scan_at": scan_at,
         }
 
-    monkeypatch.setattr(routes.p5, "dashboard_cost", dashboard_cost)
-    monkeypatch.setattr(routes.p5, "table_cost", table_cost)
+    monkeypatch.setattr(routes.datalake, "dashboard_cost", dashboard_cost)
+    monkeypatch.setattr(routes.datalake, "table_cost", table_cost)
 
     client = _client()
     cost_response = client.get(
@@ -228,7 +228,7 @@ def test_cost_dashboard_and_table_cost_endpoints(monkeypatch: Any) -> None:
 
 
 def test_table_cost_endpoint_returns_404_when_missing(monkeypatch: Any) -> None:
-    monkeypatch.setattr(routes.p5, "table_cost", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.datalake, "table_cost", lambda *args, **kwargs: None)
     response = _client().get(f"/api/v1/tables/{uuid.uuid4()}/cost", headers=AUTH_HEADERS)
     assert response.status_code == 404
 
@@ -238,7 +238,7 @@ def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> Non
     scan_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     monkeypatch.setattr(
-        routes.p5,
+        routes.datalake,
         "table_partitions",
         lambda *args, **kwargs: {
             "table_id": table_id,
@@ -263,7 +263,7 @@ def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> Non
         },
     )
     monkeypatch.setattr(
-        routes.p5,
+        routes.datalake,
         "table_audit",
         lambda *args, **kwargs: {
             "table_id": table_id,
@@ -283,7 +283,7 @@ def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> Non
         },
     )
     monkeypatch.setattr(
-        routes.p5,
+        routes.datalake,
         "table_history",
         lambda *args, **kwargs: {
             "table_id": table_id,
@@ -316,30 +316,37 @@ def test_table_drilldown_endpoints_return_ui_ready_rows(monkeypatch: Any) -> Non
     assert history.json()["items"][0]["overall_score"] == 82
 
 
-def test_scan_trigger_records_placeholder_status(monkeypatch: Any) -> None:
+def test_scan_trigger_accepts_cost_full_scan(monkeypatch: Any) -> None:
     run_id = uuid.uuid4()
     table_id = uuid.uuid4()
 
     def create_scan_trigger(session: object, payload: dict[str, object]) -> dict[str, object]:
         assert payload["scope"] == "tables"
         assert payload["table_ids"] == [table_id]
+        assert payload["cost_full_scan"] is True
         return {
             "run_id": run_id,
             "status": "accepted",
             "scope": "tables",
             "queued": False,
-            "message": "Scan request recorded; scanner queue trigger is not implemented yet.",
+            "message": "Scan request accepted.",
             "source_id": None,
             "table_ids": [table_id],
             "schema_names": [],
+            "cost_full_scan": True,
         }
 
-    monkeypatch.setattr(routes.p5, "create_scan_trigger", create_scan_trigger)
+    monkeypatch.setattr(routes.datalake, "create_scan_trigger", create_scan_trigger)
+
+    def _raise_redis() -> object:
+        raise RuntimeError("no redis")
+
+    monkeypatch.setattr("cryo.infra.wiring.build_runtime_wiring", _raise_redis)
 
     response = _client().post(
         "/api/v1/scans",
         headers=AUTH_HEADERS,
-        json={"scope": "tables", "table_ids": [str(table_id)]},
+        json={"scope": "tables", "table_ids": [str(table_id)], "cost_full_scan": True},
     )
 
     assert response.status_code == 202
@@ -382,7 +389,7 @@ def test_run_jobs_endpoint_and_websocket_snapshot(monkeypatch: Any) -> None:
         ],
     }
 
-    monkeypatch.setattr(routes.p5, "run_jobs_snapshot", lambda *args, **kwargs: snapshot)
+    monkeypatch.setattr(routes.datalake, "run_jobs_snapshot", lambda *args, **kwargs: snapshot)
 
     client = _client()
     response = client.get(f"/api/v1/runs/{run_id}/jobs", headers=AUTH_HEADERS)

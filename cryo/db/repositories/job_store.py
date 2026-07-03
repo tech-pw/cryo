@@ -35,10 +35,16 @@ class SQLJobStore:
             return _job_record(session, job)
 
     def get_destination(self, destination_id: str) -> DestinationConfig:
+        destination = self.try_get_destination(destination_id)
+        if destination is None:
+            raise KeyError(f"destination not found: {destination_id}")
+        return destination
+
+    def try_get_destination(self, destination_id: str) -> DestinationConfig | None:
         with self._session_factory() as session:
             destination = session.get(Destination, uuid.UUID(destination_id))
             if destination is None:
-                raise KeyError(f"destination not found: {destination_id}")
+                return None
             return DestinationConfig(
                 id=str(destination.id),
                 engine=destination.engine,
@@ -77,6 +83,11 @@ class SQLJobStore:
             job = _load_job(session, uuid.UUID(job_id))
             job.status = JobStatus(status).value
             now = datetime.now(UTC)
+            if status is JobStatus.QUEUED:
+                job.started_at = None
+                job.finished_at = None
+            if status in {JobStatus.QUEUED, JobStatus.ADMITTED, JobStatus.RUNNING}:
+                job.finished_at = None
             if status is JobStatus.RUNNING and job.started_at is None:
                 job.started_at = now
             if status in {
@@ -90,8 +101,7 @@ class SQLJobStore:
                 job.engine_ref = engine_ref
             if replica is not None:
                 job.replica = replica
-            if error is not None:
-                job.error = error
+            job.error = error
             session.commit()
 
     def record_audit(self, record: AuditRecord) -> None:
@@ -105,6 +115,7 @@ class SQLJobStore:
                     engine=str(record.engine),
                     detail=record.detail,
                     duration_ms=record.duration_ms,
+                    actual_bytes_freed=record.actual_bytes_freed,
                 )
             )
             session.commit()
@@ -120,6 +131,29 @@ class SQLJobStore:
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
             return [_job_record(session, job) for job in jobs]
+
+    def list_queued_jobs(self) -> list[MaintenanceJobRecord]:
+        with self._session_factory() as session:
+            jobs = session.scalars(
+                select(MaintenanceJob)
+                .where(MaintenanceJob.status == JobStatus.QUEUED.value)
+                .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
+            )
+            return [_job_record(session, job) for job in jobs]
+
+    def list_deferred_jobs(self) -> list[MaintenanceJobRecord]:
+        with self._session_factory() as session:
+            jobs = session.scalars(
+                select(MaintenanceJob)
+                .where(MaintenanceJob.status == JobStatus.DEFERRED.value)
+                .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
+            )
+            return [_job_record(session, job) for job in jobs]
+
+    def destination_exists(self, destination_id: str) -> bool:
+        with self._session_factory() as session:
+            destination = session.get(Destination, uuid.UUID(destination_id))
+            return destination is not None and destination.enabled
 
 
 def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:

@@ -1,9 +1,19 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Table, Typography, message } from "antd";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Tooltip, Typography, message } from "antd";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
 import { useMemo, useState } from "react";
-import { deriveCostDashboard, getCostDashboard, assignTables, listDestinations, listPresets, listTables, runMaintenance } from "../api/client";
+import {
+  assignTables,
+  deriveCostDashboard,
+  getCostDashboard,
+  listDestinations,
+  listPresets,
+  listTables,
+  runMaintenance,
+  savingsOpportunityFilter,
+  triggerCostScan
+} from "../api/client";
 import type { CostDashboard, TableRead, UUID } from "../api/types";
 import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
 import { ChartFrame, EmptyState, PageHeader, StatStrip } from "../components/common";
@@ -14,13 +24,17 @@ import { SavingsByOperation } from "../components/SavingsByOperation";
 import { GradePill } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../lib/format";
+import type { Predicate } from "../lib/predicate";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
+
+const OPPORTUNITY_FILTER: Predicate = savingsOpportunityFilter;
 
 export const CostSavings = () => {
   const { api, token } = useAuth();
   const [previewTables, setPreviewTables] = useState<TableRead[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<UUID[]>([]);
+  const [bulkSelection, setBulkSelection] = useState<BulkSelection | null>(null);
 
   const cost = useQuery({
     queryKey: ["cost-dashboard", token],
@@ -32,11 +46,17 @@ export const CostSavings = () => {
     queryFn: () => listTables(api, { limit: 500, offset: 0 }),
     enabled: cost.isError
   });
+  const matchingTables = useQuery({
+    queryKey: ["cost-matching-tables", token],
+    queryFn: () => listTables(api, { predicate: OPPORTUNITY_FILTER, limit: 1, offset: 0 }),
+    enabled: !cost.isLoading
+  });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
 
   const data: CostDashboard = cost.data ?? deriveCostDashboard(tables.data?.items ?? []);
   const usingFallback = cost.isError;
+  const hasRealizedTrend = (data.trend ?? []).some((point) => (point.realized_usd_month ?? 0) > 0);
   const precisionTotal = useMemo(
     () => Object.values(data.totals.precision_coverage ?? {}).reduce((sum, count) => sum + count, 0),
     [data.totals.precision_coverage]
@@ -50,29 +70,53 @@ export const CostSavings = () => {
             100
         )
       : "-";
+  const dominantPrecision =
+    data.totals.precision_coverage?.storage_truth && data.totals.precision_coverage.storage_truth > 0
+      ? "storage_truth"
+      : data.totals.precision_coverage?.metadata && data.totals.precision_coverage.metadata > 0
+        ? "metadata"
+        : "heuristic";
 
-  const selection: BulkSelection | null = selectedRowKeys.length
-    ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
-    : null;
+  const selection: BulkSelection | null =
+    bulkSelection ??
+    (selectedRowKeys.length
+      ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
+      : null);
 
   const assign = useMutation({
-    mutationFn: (presetId: UUID) =>
-      assignTables(api, {
-        selection: { mode: "ids", ids: selectedRowKeys },
+    mutationFn: (presetId: UUID) => {
+      if (!selection) throw new Error("No tables selected");
+      return assignTables(api, {
+        selection:
+          selection.mode === "filter"
+            ? { mode: "filter", filter: selection.filter }
+            : { mode: "ids", ids: selectedRowKeys },
         preset_id: presetId
-      }),
+      });
+    },
     onSuccess: (result) => message.success(`Assigned ${result.affected} tables`)
   });
 
   const bulkRun = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: "light" | "standard" | "deep" }) =>
-      runMaintenance(api, {
+    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: "light" | "standard" | "deep" }) => {
+      if (!selection) throw new Error("No tables selected");
+      if (selection.mode === "filter") {
+        return runMaintenance(api, {
+          selection: { mode: "filter", filter: selection.filter },
+          destination_id: args.destinationId,
+          preset_id: args.presetId,
+          mode: args.mode,
+          trigger: "web-cost"
+        });
+      }
+      return runMaintenance(api, {
         table_ids: selectedRowKeys,
         destination_id: args.destinationId,
         preset_id: args.presetId,
         mode: args.mode,
         trigger: "web-cost"
-      }),
+      });
+    },
     onSuccess: (result) => message.success(`Run queued: ${result.run_id}`),
     onError: (error) => message.error((error as Error).message)
   });
@@ -94,11 +138,29 @@ export const CostSavings = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
+  const fullCostScan = useMutation({
+    mutationFn: () => triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" }),
+    onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const clearSelection = () => {
+    setSelectedRowKeys([]);
+    setBulkSelection(null);
+  };
+
   return (
     <div>
       <PageHeader
         title="Cost & savings"
         subtitle="Expected storage and monthly cost impact after standard maintenance."
+        actions={
+          <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
+            <Button loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
+              Run full cost scan
+            </Button>
+          </Tooltip>
+        }
       />
       {usingFallback ? (
         <Alert
@@ -112,6 +174,18 @@ export const CostSavings = () => {
         <Skeleton active />
       ) : (
         <>
+          <Space wrap style={{ marginBottom: 12 }}>
+            <CostPrecisionBadge
+              precision={dominantPrecision}
+              lastFullCostScanAt={data.totals.last_full_cost_scan_at}
+              orphanScanStale={data.totals.orphan_scan_stale}
+            />
+            {data.totals.orphan_scan_stale ? (
+              <Typography.Text type="secondary">
+                Orphan estimates may be stale — run a full cost scan for storage-truth accuracy.
+              </Typography.Text>
+            ) : null}
+          </Space>
           <StatStrip
             items={[
               { label: "S3 monthly now", value: formatCurrency(data.totals.current_monthly_cost_usd) },
@@ -158,31 +232,44 @@ export const CostSavings = () => {
                   ) : null
                 }
               >
-                <ChartFrame empty={!data.cost_by_schema.length}>
+                <ChartFrame
+                  empty={!data.cost_by_schema.length}
+                  ariaLabel="Current versus projected monthly cost by schema"
+                >
                   <BarChart data={data.cost_by_schema.slice(0, 12)}>
                     <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
                     <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
                     <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
+                    <RechartsTooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
                     <Legend />
                     <Bar dataKey="current_usd" name="Now" fill={cryoColors.costCurrent} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="projected_usd" name="After maintenance" fill={cryoColors.costProjected} radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="projected_usd"
+                      name="After maintenance"
+                      fill={cryoColors.costProjected}
+                      radius={[4, 4, 0, 0]}
+                    />
                   </BarChart>
                 </ChartFrame>
               </Card>
             </Col>
             <Col xs={24} lg={10}>
               <Card title="Cost trend">
-                <ChartFrame empty={!(data.trend ?? []).length} emptyDescription="Trend appears after repeated cost scans.">
+                <ChartFrame
+                  empty={!(data.trend ?? []).length}
+                  emptyDescription="Trend appears after repeated cost scans."
+                  ariaLabel="Cost trend showing current cost, available savings, and realized savings over time"
+                >
                   <LineChart data={data.trend ?? []}>
                     <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
                     <XAxis dataKey="scan_at" tickFormatter={(value) => formatTime(String(value))} tick={chartAxisTick} />
                     <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <Tooltip
+                    <RechartsTooltip
                       {...chartTooltipProps}
                       labelFormatter={(value) => formatTime(String(value))}
                       formatter={(value) => formatCurrency(Number(value))}
                     />
+                    <Legend />
                     <Line
                       type="monotone"
                       dataKey="current_monthly_cost_usd"
@@ -197,6 +284,16 @@ export const CostSavings = () => {
                       stroke={cryoColors.savings}
                       dot={false}
                     />
+                    {hasRealizedTrend ? (
+                      <Line
+                        type="monotone"
+                        dataKey="realized_usd_month"
+                        name="Realized savings"
+                        stroke={cryoColors.costProjected}
+                        dot={false}
+                        connectNulls
+                      />
+                    ) : null}
                   </LineChart>
                 </ChartFrame>
               </Card>
@@ -210,7 +307,10 @@ export const CostSavings = () => {
                   pagination={false}
                   rowSelection={{
                     selectedRowKeys,
-                    onChange: (keys) => setSelectedRowKeys(keys as UUID[])
+                    onChange: (keys) => {
+                      setBulkSelection(null);
+                      setSelectedRowKeys(keys as UUID[]);
+                    }
                   }}
                   columns={[
                     {
@@ -289,13 +389,16 @@ export const CostSavings = () => {
             destinations={destinations.data ?? []}
             assigning={assign.isPending}
             running={bulkRun.isPending}
-            onClear={() => setSelectedRowKeys([])}
-            onSelectAllMatching={() => setSelectedRowKeys(data.top_opportunities.map((table) => table.id))}
+            onClear={clearSelection}
             onAssign={(presetId) => assign.mutate(presetId)}
             onPreview={() => {
-              setPreviewTables(
-                data.top_opportunities.filter((table) => selectedRowKeys.includes(table.id))
-              );
+              if (selection?.mode === "filter") {
+                setPreviewTables(data.top_opportunities);
+              } else {
+                setPreviewTables(
+                  data.top_opportunities.filter((table) => selectedRowKeys.includes(table.id))
+                );
+              }
               setPreviewOpen(true);
             }}
             onRun={(args) => bulkRun.mutate(args)}

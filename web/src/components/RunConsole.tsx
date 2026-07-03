@@ -1,12 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Drawer, List, Space, Table, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { getRun, getRunJobs, wsRunUrl } from "../api/client";
 import type { JobRead, UUID } from "../api/types";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
 import { formatTime } from "../lib/format";
 import { StatusTag } from "./status";
+
+const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
+
+const tableRef = (job: JobRead) =>
+  job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
 
 interface LiveMessage {
   ts?: string;
@@ -94,20 +100,46 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         ]}
       />
       <Table<JobRead>
+        className="runs-table"
         size="small"
         rowKey="id"
         dataSource={jobRows}
         loading={jobs.isLoading}
         pagination={false}
         columns={[
-          { title: "Job", dataIndex: "id", ellipsis: true },
-          { title: "Status", dataIndex: "status", render: (status) => <StatusTag status={status} /> },
-          { title: "Mode", dataIndex: "mode" },
-          { title: "Replica", dataIndex: "replica", render: (value) => value ?? "-" },
-          { title: "Started", dataIndex: "started_at", render: formatTime },
+          {
+            title: "Table",
+            width: 280,
+            render: (_, row) => (
+              <Link to={`/tables/${row.table_id}`} className="identity-stack">
+                <Typography.Text strong ellipsis={{ tooltip: tableRef(row) }}>
+                  {tableRef(row)}
+                </Typography.Text>
+                <Typography.Text type="secondary" className="secondary-line">
+                  job <span className="mono-id">{shortId(row.id)}</span> · table{" "}
+                  <span className="mono-id">{shortId(row.table_id)}</span>
+                </Typography.Text>
+              </Link>
+            )
+          },
+          {
+            title: "Status",
+            dataIndex: "status",
+            width: 112,
+            render: (status) => <StatusTag status={status} />
+          },
+          { title: "Mode", dataIndex: "mode", width: 90 },
+          {
+            title: "Engine",
+            width: 120,
+            render: (_, row) => row.destination_name ?? row.destination_engine ?? "-"
+          },
+          { title: "Replica", dataIndex: "replica", width: 96, render: (value) => value ?? "-" },
+          { title: "Started", dataIndex: "started_at", width: 148, render: formatTime },
           {
             title: "",
             key: "log",
+            width: 72,
             render: (_, row) => (
               <Button size="small" onClick={() => setLogJob(row)}>
                 Logs
@@ -115,6 +147,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
             )
           }
         ]}
+        scroll={{ x: 920 }}
       />
       <List
         className="log-list"

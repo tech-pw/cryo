@@ -9,6 +9,17 @@ import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatNumber, formatTime } from "../lib/format";
 
+const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
+
+const summaryText = (summary: RunRead["summary"], key: string): string | undefined => {
+  const value = summary?.[key];
+  return typeof value === "string" && value ? value : undefined;
+};
+
+const targetLabel = (run: RunRead): string => summaryText(run.summary, "target_label") ?? `${run.kind} run`;
+
+const targetTableId = (run: RunRead): string | undefined => summaryText(run.summary, "target_table_id");
+
 export const Runs = () => {
   const { runId } = useParams();
   const navigate = useNavigate();
@@ -38,6 +49,7 @@ export const Runs = () => {
         <Col xs={24} xl={runId ? 11 : 24}>
           <Card title="Recent runs">
             <Table<RunRead>
+              className="runs-table"
               size="small"
               rowKey="id"
               loading={runs.isLoading}
@@ -47,22 +59,57 @@ export const Runs = () => {
               columns={[
                 {
                   title: "Run",
+                  width: 104,
                   render: (_, row) => (
                     <Link to={`/runs/${row.id}`}>
-                      <Typography.Text strong>{row.id.slice(0, 8)}</Typography.Text>
+                      <Typography.Text code className="mono-id">
+                        {shortId(row.id)}
+                      </Typography.Text>
                     </Link>
                   )
                 },
-                { title: "Status", dataIndex: "status", render: (status) => <StatusTag status={status} /> },
-                { title: "Kind", dataIndex: "kind" },
-                { title: "Trigger", dataIndex: "trigger", render: (value) => value ?? "-" },
+                {
+                  title: "Target",
+                  width: 260,
+                  render: (_, row) => {
+                    const tableId = targetTableId(row);
+                    const label = targetLabel(row);
+                    const content = (
+                      <span className="identity-stack">
+                        <Typography.Text strong ellipsis={{ tooltip: label }}>
+                          {label}
+                        </Typography.Text>
+                        <Typography.Text type="secondary" className="secondary-line">
+                          {tableId ? `table ${shortId(tableId)}` : row.kind}
+                        </Typography.Text>
+                      </span>
+                    );
+                    return tableId ? (
+                      <Link to={`/tables/${tableId}`} onClick={(event) => event.stopPropagation()}>
+                        {content}
+                      </Link>
+                    ) : (
+                      content
+                    );
+                  }
+                },
+                {
+                  title: "Status",
+                  dataIndex: "status",
+                  width: 112,
+                  render: (status) => <StatusTag status={status} />
+                },
+                { title: "Kind", dataIndex: "kind", width: 96 },
+                { title: "Trigger", dataIndex: "trigger", width: 104, render: (value) => value ?? "-" },
                 {
                   title: "Jobs",
+                  width: 84,
                   render: (_, row) => formatNumber(Number(row.summary?.jobs_total ?? row.summary?.job_count ?? 0))
                 },
-                { title: "Created", dataIndex: "created_at", render: formatTime },
+                { title: "Created", dataIndex: "created_at", width: 148, render: formatTime },
                 {
                   title: "",
+                  width: 84,
                   render: (_, row) => (
                     <Button
                       size="small"
@@ -79,6 +126,7 @@ export const Runs = () => {
                   )
                 }
               ]}
+              scroll={{ x: runId ? 980 : 1160 }}
               locale={{ emptyText: <EmptyState title="No runs yet" description="Ad-hoc and scheduled runs appear here." /> }}
             />
           </Card>

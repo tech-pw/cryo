@@ -43,6 +43,12 @@ export const StatusTag = ({ status }: { status?: string | null }) => (
   </Tag>
 );
 
+export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (
+  <Tag color={needsCompaction ? "gold" : "default"}>
+    {needsCompaction ? "Needs compaction" : "Healthy"}
+  </Tag>
+);
+
 export const HealthBadge = ({ healthy, children }: { healthy?: boolean; children?: ReactNode }) => (
   <Badge status={healthy ? "success" : "warning"} text={children ?? (healthy ? "Healthy" : "Attention")} />
 );

@@ -3,15 +3,18 @@ import type { CostPrecision } from "../api/types";
 import { formatTime } from "../lib/format";
 
 const LABELS: Record<CostPrecision, string> = {
-  heuristic: "Estimated",
-  metadata: "Metadata precise",
-  storage_truth: "Storage verified"
+  heuristic: "Quick estimate",
+  metadata: "Iceberg metadata",
+  storage_truth: "Storage checked"
 };
 
 const TOOLTIPS: Record<CostPrecision, string> = {
-  heuristic: "Tier-0 estimate from table stats. Run a metadata cost scan for finer projections.",
-  metadata: "Snapshot and manifest walk. Orphan bytes may be carried forward until a storage scan.",
-  storage_truth: "Orphan detection included a storage listing under the table prefix."
+  heuristic:
+    "Cryo used basic table stats. Good for a quick view, but savings and reclaimable storage may move after a deeper scan.",
+  metadata:
+    "Cryo read Iceberg snapshots, manifests, and file metadata. This is usually precise for table-managed files, but orphan files need a storage check.",
+  storage_truth:
+    "Cryo also listed the table's storage path, so orphan files outside Iceberg metadata were checked too."
 };
 
 export const CostPrecisionBadge = ({
@@ -25,11 +28,14 @@ export const CostPrecisionBadge = ({
 }) => {
   if (!precision) return null;
   const label = LABELS[precision] ?? precision;
-  const color = precision === "storage_truth" ? "green" : precision === "metadata" ? "blue" : "default";
+  const color = precision === "storage_truth" ? "processing" : "default";
   const tooltip = [
     TOOLTIPS[precision],
-    lastFullCostScanAt ? `Last full cost scan: ${formatTime(lastFullCostScanAt)}` : null,
-    orphanScanStale ? "Storage-truth scan is stale; rerun with --cost-full-scan for orphan accuracy." : null
+    precision !== "storage_truth"
+      ? "Only some tables show Storage checked because full storage scans are opt-in or cadence-based."
+      : null,
+    lastFullCostScanAt ? `Last storage check: ${formatTime(lastFullCostScanAt)}` : null,
+    orphanScanStale ? "The last storage check is stale; rerun a full cost scan for orphan accuracy." : null
   ]
     .filter(Boolean)
     .join(" ");

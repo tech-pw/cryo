@@ -26,6 +26,7 @@ BASE_ROW: dict[str, Any] = {
     "query_count_30d": 25,
     "projected_savings_usd_month": 12.5,
     "projected_monthly_s3_cost_usd": 40.0,
+    "estimated_monthly_s3_cost_usd": 52.5,
     "reclaimable_bytes": 2048,
     "cost_precision": "metadata",
 }
@@ -55,6 +56,10 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
         (
             {"field": "projected_savings_usd_month", "op": ">=", "value": 10},
             {"projected_savings_usd_month": 9},
+        ),
+        (
+            {"field": "estimated_monthly_s3_cost_usd", "op": ">=", "value": 5},
+            {"estimated_monthly_s3_cost_usd": 4},
         ),
         (
             {"field": "reclaimable_bytes", "op": ">=", "value": 1024},

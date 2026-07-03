@@ -19,6 +19,7 @@ import {
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
+import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
 import { SavingsByOperation } from "../components/SavingsByOperation";
 import { PlanPreview } from "../components/PlanPreview";
 import { GradePill, HealthBadge, PriorityTag, StatusTag } from "../components/status";
@@ -111,6 +112,26 @@ export const TableDetail = () => {
 
   const row = table.data;
   const stats = row?.stats;
+  const hasStatsCostFallback = Boolean(
+    stats?.projected_savings_usd_month || stats?.projected_monthly_s3_cost_usd
+  );
+  const costView = tableCost.data;
+  const costByOperation = costView?.by_operation ?? [];
+  const currentCostUsd =
+    costView?.current_monthly_cost_usd ?? stats?.estimated_monthly_s3_cost_usd ?? 0;
+  const projectedCostUsd =
+    costView?.projected_monthly_cost_usd ??
+    stats?.projected_monthly_s3_cost_usd ??
+    stats?.estimated_monthly_s3_cost_usd ??
+    0;
+  const savingsUsd =
+    costView?.projected_savings_usd_month ?? stats?.projected_savings_usd_month ?? 0;
+  const reclaimableBytes = costView?.reclaimable_bytes ?? stats?.reclaimable_bytes ?? 0;
+  const storageBytes =
+    (costView?.live_bytes ?? 0) +
+    (costView?.dead_bytes ?? 0) +
+    (costView?.metadata_bytes ?? 0) +
+    (costView?.orphan_bytes ?? 0);
 
   return (
     <div>
@@ -183,80 +204,95 @@ export const TableDetail = () => {
         </Col>
         <Col xs={24} xl={8}>
           <Card title="Cost & savings" loading={tableCost.isLoading}>
-            {tableCost.data ? (
+            {costView || hasStatsCostFallback ? (
               <Space direction="vertical" size={12} className="full-width">
                 <Space wrap>
                   <CostPrecisionBadge
-                    precision={tableCost.data.precision}
-                    lastFullCostScanAt={tableCost.data.last_full_cost_scan_at}
+                    precision={costView?.precision ?? stats?.cost_precision}
+                    lastFullCostScanAt={costView?.last_full_cost_scan_at}
                   />
-                  {tableCost.data.last_full_cost_scan_at ? (
+                  {costView?.last_full_cost_scan_at ? (
                     <Typography.Text type="secondary">
-                      Last full scan {formatTime(tableCost.data.last_full_cost_scan_at)}
+                      Last full scan {formatTime(costView.last_full_cost_scan_at)}
+                    </Typography.Text>
+                  ) : !costView && hasStatsCostFallback ? (
+                    <Typography.Text type="secondary">
+                      Summary from latest scan stats; run a cost scan for per-operation breakdown.
                     </Typography.Text>
                   ) : null}
                 </Space>
                 <StatStrip
                   items={[
-                    { label: "Now", value: formatCurrency(tableCost.data.current_monthly_cost_usd) },
+                    { label: "Now", value: formatCurrency(currentCostUsd) },
                     {
                       label: "After maintenance",
-                      value: formatCurrency(tableCost.data.projected_monthly_cost_usd),
+                      value: formatCurrency(projectedCostUsd),
                       tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
                     },
-                    { label: "Savings / mo", value: formatCurrency(tableCost.data.projected_savings_usd_month) },
+                    { label: "Savings / mo", value: formatCurrency(savingsUsd) },
                     {
                       label: "Reclaimable storage",
-                      value: formatBytesGb(tableCost.data.reclaimable_bytes),
+                      value: formatBytesGb(reclaimableBytes),
                       tooltip: "Disk space maintenance would free up on this table."
                     }
                   ]}
                 />
-                <Descriptions size="small" column={2}>
-                  <Descriptions.Item
-                    label={
-                      <HintLabel label="Live" tooltip="Data still referenced by the table's current snapshot." />
-                    }
-                  >
-                    {formatBytesGb(tableCost.data.live_bytes)}
-                  </Descriptions.Item>
-                  <Descriptions.Item
-                    label={
-                      <HintLabel
-                        label="Dead"
-                        tooltip="Data superseded by newer snapshots — reclaimed once old snapshots expire."
-                      />
-                    }
-                  >
-                    {formatBytesGb(tableCost.data.dead_bytes)}
-                  </Descriptions.Item>
-                  <Descriptions.Item
-                    label={
-                      <HintLabel
-                        label="Metadata"
-                        tooltip="Manifests, snapshots, and other Iceberg metadata overhead — not the actual data."
-                      />
-                    }
-                  >
-                    {formatBytesGb(tableCost.data.metadata_bytes)}
-                  </Descriptions.Item>
-                  <Descriptions.Item
-                    label={
-                      <HintLabel
-                        label="Orphans"
-                        tooltip="Files on storage that no snapshot or manifest references anymore — safe to delete."
-                      />
-                    }
-                  >
-                    {formatBytesGb(tableCost.data.orphan_bytes)}
-                  </Descriptions.Item>
-                </Descriptions>
-                {tableCost.data.query_request_savings_usd_month > 0 ? (
+                {costByOperation.length ? (
+                  <div className="chart-frame compact">
+                    <CostSavingsWaterfall
+                      currentCostUsd={currentCostUsd}
+                      currentStorageBytes={storageBytes || (stats?.total_size_gb ?? 0) * 1024 ** 3}
+                      byOperation={costByOperation}
+                    />
+                  </div>
+                ) : null}
+                {costView ? (
+                  <Descriptions size="small" column={2}>
+                    <Descriptions.Item
+                      label={
+                        <HintLabel label="Live" tooltip="Data still referenced by the table's current snapshot." />
+                      }
+                    >
+                      {formatBytesGb(costView.live_bytes)}
+                    </Descriptions.Item>
+                    <Descriptions.Item
+                      label={
+                        <HintLabel
+                          label="Dead"
+                          tooltip="Data superseded by newer snapshots — reclaimed once old snapshots expire."
+                        />
+                      }
+                    >
+                      {formatBytesGb(costView.dead_bytes)}
+                    </Descriptions.Item>
+                    <Descriptions.Item
+                      label={
+                        <HintLabel
+                          label="Metadata"
+                          tooltip="Manifests, snapshots, and other Iceberg metadata overhead — not the actual data."
+                        />
+                      }
+                    >
+                      {formatBytesGb(costView.metadata_bytes)}
+                    </Descriptions.Item>
+                    <Descriptions.Item
+                      label={
+                        <HintLabel
+                          label="Orphans"
+                          tooltip="Files on storage that no snapshot or manifest references anymore — safe to delete."
+                        />
+                      }
+                    >
+                      {formatBytesGb(costView.orphan_bytes)}
+                    </Descriptions.Item>
+                  </Descriptions>
+                ) : null}
+                {costView && costView.query_request_savings_usd_month > 0 ? (
                   <Typography.Text type="secondary">
-                    Query request savings: {formatCurrency(tableCost.data.query_request_savings_usd_month)}/mo
+                    Query request savings: {formatCurrency(costView.query_request_savings_usd_month)}/mo
                   </Typography.Text>
                 ) : null}
-                <SavingsByOperation items={tableCost.data.by_operation} />
+                {costByOperation.length ? <SavingsByOperation items={costByOperation} /> : null}
               </Space>
             ) : (
               <EmptyState

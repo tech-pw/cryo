@@ -1,20 +1,53 @@
-import { Button, Checkbox, Input, InputNumber, Popover, Segmented, Select, Space } from "antd";
+import { Button, Checkbox, Input, InputNumber, Popover, Segmented, Select, Space, Tag, Tooltip } from "antd";
 import { useMemo } from "react";
 import { predicateSummary, type TableFilterState } from "../lib/predicate";
 
 interface Props {
   value: TableFilterState;
   onChange: (value: TableFilterState) => void;
+  matchingTotal?: number;
+  hasSelection?: boolean;
+  filterSelectionActive?: boolean;
+  onSelectAllMatching?: () => void;
+  onClearSelection?: () => void;
 }
 
-export const FilterBar = ({ value, onChange }: Props) => {
+export const FilterBar = ({
+  value,
+  onChange,
+  matchingTotal = 0,
+  hasSelection = false,
+  filterSelectionActive = false,
+  onSelectAllMatching,
+  onClearSelection
+}: Props) => {
   const summary = useMemo(() => predicateSummary(value), [value]);
 
   const patch = (next: Partial<TableFilterState>) => onChange({ ...value, ...next });
+  const showBulkSelect = onSelectAllMatching !== undefined;
 
   return (
     <div className="filter-bar">
       <Space size={8} wrap>
+        {showBulkSelect ? (
+          <Space size={6}>
+            {filterSelectionActive ? <Tag color="processing">Filter selection</Tag> : null}
+            {!filterSelectionActive ? (
+              <Tooltip title="Select every table that matches the current filters, including tables on other pages.">
+                <Button disabled={matchingTotal === 0} onClick={onSelectAllMatching}>
+                  Select all matching tables
+                </Button>
+              </Tooltip>
+            ) : null}
+            {hasSelection ? (
+              <Tooltip title="Clear all selected tables.">
+                <Button size="small" onClick={onClearSelection}>
+                  Clear selection
+                </Button>
+              </Tooltip>
+            ) : null}
+          </Space>
+        ) : null}
         <Input.Search
           allowClear
           placeholder="Schema or table"

@@ -8,7 +8,7 @@ cost-savings visuals — see `docs/ui-cost-savings.md`.
 
 ## What we're adding
 
-Per table / schema / fleet:
+Per table / schema / datalake:
 
 - **Current monthly storage cost** (precise where the scan tier allows).
 - **Projected cost + savings after maintenance**, attributed per operation:
@@ -52,7 +52,7 @@ reclaim_expire_bytes = Σ size(f)  # data + delete + manifest + manifest-list
 ```
 
 `retention_days` / `retain_last` = effective-preset params (plan-accurate) or
-`default_retention_days=7` / `default_retain_last=1` (fleet baseline; 7d matches the reference macro).
+`default_retention_days=7` / `default_retain_last=1` (datalake baseline; 7d matches the reference macro).
 
 ## Per-op savings (`cost/model.py`, pure)
 
@@ -83,10 +83,11 @@ reclaim_expire_bytes = Σ size(f)  # data + delete + manifest + manifest-list
 6. **`scanner/run.py`** — `--cost-full-scan`, persist `table_cost` + history + summary columns.
    **Done.**
 7. **API** — plan-accurate projection in `/maintenance/preview`; `/tables/{id}/cost`;
-   `/dashboards/cost`; predicate-grammar cost fields; `/scans` `cost_full_scan`. **P4.**
-8. **Worker realized savings** — capture `actual_bytes_freed` per op → predicted-vs-realized + calibrate.
-9. **UI + reporting** (Phase 5/7) — Cost & Savings dashboard, explorer columns, detail breakdown,
-   report section, Prometheus metrics.
+   `/dashboards/cost`; predicate-grammar cost fields; `/scans` `cost_full_scan`. **Done.**
+8. **Worker realized savings** — capture `actual_bytes_freed` per op → predicted-vs-realized trend.
+   **Done** (optional per engine; trend line appears when audit rows carry bytes).
+9. **UI + reporting** (Phase 5/7) — Cost & Savings page (`/cost`), explorer columns, detail breakdown,
+   PlanPreview savings. **Done** for UI; reporting section + Prometheus metrics remain future work.
 
 ## Config knobs (`cryo/config.py`, see `lld.md` §2)
 

@@ -20,7 +20,10 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
 
   return (
     <div className="savings-by-operation">
-      <ChartFrame empty={false}>
+      <ChartFrame
+        empty={false}
+        ariaLabel={`Savings by operation totaling ${formatCurrency(total)} per month`}
+      >
         <PieChart>
           <Pie data={active} dataKey="savings_usd_month" nameKey="operation" innerRadius={42} outerRadius={72}>
             {active.map((item) => (

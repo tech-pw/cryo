@@ -92,7 +92,7 @@ start_services() {
 
   wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
   wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
-  wait_for_url "Trino" "http://localhost:8080/v1/info"
+  wait_for_url "Trino" "http://localhost:8090/v1/info"
   wait_for_container_health "postgres" "Postgres"
   wait_for_container_health "redis" "Redis"
   wait_for_container_health "spark" "Spark runner"

@@ -196,6 +196,8 @@ def unassign_tables(session: Session, *, table_ids: Sequence[uuid.UUID]) -> int:
 
 
 def run_summary(run: MaintenanceRun) -> dict[str, object]:
+    summary = dict(run.summary or {})
+    summary.update(_run_target_summary(run))
     return {
         "id": run.id,
         "kind": run.kind,
@@ -205,7 +207,59 @@ def run_summary(run: MaintenanceRun) -> dict[str, object]:
         "deadline_at": run.deadline_at,
         "created_at": run.created_at,
         "finished_at": run.finished_at,
-        "summary": run.summary,
+        "summary": summary,
+    }
+
+
+def _run_target_summary(run: MaintenanceRun) -> dict[str, object]:
+    if run.kind == "scan":
+        summary = dict(run.summary or {})
+        scope = str(summary.get("scope") or "all")
+        if scope == "tables":
+            table_count = len(summary.get("table_ids") or [])
+            target_label = f"Scan: {table_count} table{'s' if table_count != 1 else ''}"
+        elif scope == "schemas":
+            schema_names = summary.get("schema_names") or []
+            target_label = (
+                f"Scan: {', '.join(map(str, schema_names[:2]))}"
+                if schema_names
+                else "Scan: schemas"
+            )
+            if len(schema_names) > 2:
+                target_label = f"{target_label} +{len(schema_names) - 2}"
+        elif scope == "source":
+            target_label = "Scan: source"
+        else:
+            target_label = "Scan: all"
+        return {"target_label": target_label, "target_kind": "scan"}
+
+    jobs = list(run.jobs or [])
+    if not jobs:
+        return {"target_label": "No jobs", "target_kind": run.kind}
+
+    first = sorted(
+        jobs,
+        key=lambda job: (
+            job.table.schema_name if job.table else "",
+            job.table.table_name if job.table else "",
+            str(job.id),
+        ),
+    )[0]
+    if first.table is not None:
+        table_ref = f"{first.table.schema_name}.{first.table.table_name}"
+        table_id = str(first.table.id)
+    else:
+        table_ref = str(first.table_id)
+        table_id = str(first.table_id)
+
+    suffix = f" +{len(jobs) - 1} tables" if len(jobs) > 1 else ""
+    return {
+        "target_label": f"{table_ref}{suffix}",
+        "target_kind": "table" if len(jobs) == 1 else "tables",
+        "target_table_id": table_id,
+        "target_schema_name": first.table.schema_name if first.table else None,
+        "target_table_name": first.table.table_name if first.table else None,
+        "job_count": len(jobs),
     }
 
 

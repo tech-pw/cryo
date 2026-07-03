@@ -53,7 +53,7 @@ sweep, is the one addition worth making.
 
 ```
                      ┌─────────────────────────────────────────┐
-                     │   Full-fleet sweep (slow path, unchanged) │
+                     │   Full-datalake sweep (slow path, unchanged) │
                      │   K8s CronJob → Scanner → full re-score   │
                      │   Catches: cold tables, missed events,    │
                      │            drift, correctness backstop    │
@@ -130,7 +130,7 @@ exists in the codebase, it just needs a third implementation alongside `engines/
 their entire commercial product, and what Netflix built internally specifically because JVM/Spark
 overhead was their actual measured bottleneck for compaction. A single static binary running
 DataFusion + iceberg-rust genuinely outperforms spinning up a JVM/Spark job for the common case —
-most fleets' long tail is small-to-medium tables. It's also a real adoption differentiator: an org
+most datalakes' long tail is small-to-medium tables. It's also a real adoption differentiator: an org
 with no existing Trino/Spark footprint gets working maintenance with zero cluster to stand up.
 
 **Why Trino/Spark stay first-class, not "legacy support":** this is the actual interoperability
@@ -185,7 +185,7 @@ fixtures.
 Every feature below is tied to a specific, verified real-world precedent. Where the precedent is
 thin or unproven, it's explicitly called out in 2.3 as something we are *not* building yet.
 
-### 2.1 Cryo Copilot — natural language over table/fleet metadata
+### 2.1 Cryo Copilot — natural language over table/datalake metadata
 
 **Precedent:** Databricks Genie and Snowflake Cortex Analyst are the two proven production systems
 for "ask your lakehouse a question in English." Neither is zero-shot LLM-over-raw-schema — both

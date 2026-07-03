@@ -41,7 +41,7 @@ export const DatalakeHealth = () => {
     <div>
       <PageHeader
         title="Datalake health"
-        subtitle="Fleet posture, cost pressure, and tables most likely to benefit from maintenance."
+        subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
           <Link to="/cost">
             <Button>View cost savings</Button>
@@ -157,7 +157,7 @@ export const DatalakeHealth = () => {
                     { title: "Small files", align: "right", render: (_, row) => formatNumber(row.stats?.small_files_count, true) },
                     { title: "Size", align: "right", render: (_, row) => formatGb(row.stats?.total_size_gb) }
                   ]}
-                  locale={{ emptyText: <EmptyState title="No offender tables" description="The fleet is currently quiet." /> }}
+                  locale={{ emptyText: <EmptyState title="No offender tables" description="The datalake is currently quiet." /> }}
                 />
               </Card>
             </Col>
@@ -182,7 +182,7 @@ export const DatalakeHealth = () => {
                 ) : (
                   <EmptyState
                     title="No scan history yet"
-                    description="This fills in once the fleet has been scanned more than once, so you can see whether small-file counts are climbing."
+                    description="This fills in once the datalake has been scanned more than once, so you can see whether small-file counts are climbing."
                   />
                 )}
               </Card>

@@ -32,6 +32,9 @@ LOCAL_TRINO_DESTINATION = {
         "user": "cryo",
         "catalog": "iceberg",
         "per_replica_cap": 5,
+        "offpeak_start_ist": 0,
+        "offpeak_end_ist": 0,
+        "adaptive_budget": False,
     },
 }
 

@@ -13,7 +13,6 @@ TERMINAL = {
     JobStatus.SUCCEEDED.value,
     JobStatus.FAILED.value,
     JobStatus.SKIPPED.value,
-    JobStatus.DEFERRED.value,
 }
 
 
@@ -21,9 +20,7 @@ def finalize_open_runs(session_factory: Callable[[], Session]) -> int:
     """Mark runs finished when all child jobs reached a terminal state."""
     finalized = 0
     with session_factory() as session:
-        runs = session.scalars(
-            select(MaintenanceRun).where(MaintenanceRun.status.in_(("queued", "running")))
-        )
+        runs = session.scalars(select(MaintenanceRun).where(MaintenanceRun.status != "cancelled"))
         for run in runs:
             rows = session.execute(
                 select(MaintenanceJob.status, func.count())

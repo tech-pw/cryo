@@ -17,7 +17,7 @@ from cryo.db.models import (
     Table,
     TableAssignment,
 )
-from cryo.db.repositories.p4 import (
+from cryo.db.repositories.presets import (
     assignment_to_config,
     preset_to_config,
     rule_to_config,
