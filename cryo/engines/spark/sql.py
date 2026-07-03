@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from typing import Any
+
+from cryo.domain.enums import EngineType, OperationType, PartitionTransform, PredicateCapability
+from cryo.domain.models import (
+    MaintenancePlan,
+    Operation,
+    PartitionPredicate,
+    PartitionPredicateTerm,
+)
+from cryo.engines.base import RenderedStatement
+from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
+
+
+class UnsupportedPredicateError(ValueError):
+    pass
+
+
+def render(plan: MaintenancePlan) -> list[RenderedStatement]:
+    catalog, table_name = _spark_table(plan.table_ref)
+    return [_render_operation(catalog, table_name, operation) for operation in plan.operations]
+
+
+def render_predicate(
+    predicate: PartitionPredicate,
+    supported_capabilities: set[PredicateCapability] | None = None,
+) -> str:
+    capabilities = supported_capabilities or DEFAULT_RENDERABLE_CAPABILITIES
+    unsupported_reason = predicate.unsupported_for(capabilities)
+    if unsupported_reason:
+        raise UnsupportedPredicateError(unsupported_reason)
+    return "(" + " AND ".join(_render_term(term) for term in predicate.terms) + ")"
+
+
+def _render_operation(catalog: str, table_name: str, operation: Operation) -> RenderedStatement:
+    if operation.type is OperationType.EXPIRE_SNAPSHOTS:
+        sql = _render_expire(catalog, table_name, operation.params)
+    elif operation.type is OperationType.REMOVE_ORPHAN_FILES:
+        sql = _render_orphan(catalog, table_name, operation.params)
+    elif operation.type is OperationType.OPTIMIZE:
+        sql = _render_optimize(catalog, table_name, operation)
+    elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
+        sql = f"CALL {catalog}.system.rewrite_manifests(table => '{table_name}')"
+    else:
+        raise ValueError(f"Unsupported operation: {operation.type}")
+    return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.SPARK_EMR)
+
+
+def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+    retain_last = int(params.get("retain_last", 1))
+    older_than = _older_than_expr(params)
+    return (
+        f"CALL {catalog}.system.expire_snapshots("
+        f"table => '{table_name}', older_than => {older_than}, retain_last => {retain_last})"
+    )
+
+
+def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+    older_than = _older_than_expr(params)
+    return (
+        f"CALL {catalog}.system.remove_orphan_files("
+        f"table => '{table_name}', older_than => {older_than})"
+    )
+
+
+def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str:
+    target_bytes = int(
+        operation.params.get("target_file_size_bytes")
+        or int(operation.params.get("file_size_mb", 256)) * 1024 * 1024
+    )
+    min_input_files = int(
+        operation.params.get("min_input_files", operation.params.get("min_small_files", 128))
+    )
+    args = [f"table => '{table_name}'"]
+    if operation.predicates:
+        where = " OR ".join(render_predicate(predicate) for predicate in operation.predicates)
+        args.append(f"where => '{_escape_sql_string(where)}'")
+    args.append(
+        "options => map("
+        f"'target-file-size-bytes','{target_bytes}', "
+        f"'min-input-files','{min_input_files}'"
+        ")"
+    )
+    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def _render_term(term: PartitionPredicateTerm) -> str:
+    column = _quote_identifier(term.base_column)
+    if term.transform is PartitionTransform.IDENTITY:
+        if term.value is None:
+            return f"{column} IS NULL"
+        return f"{column} = {_literal(term.value, term.col_type)}"
+    if term.transform is PartitionTransform.DAY:
+        start = _day_start(term.value)
+        end = start + timedelta(days=1)
+        return _range_condition(column, start, end, term.col_type)
+    if term.transform is PartitionTransform.MONTH:
+        start = _month_start(term.value)
+        end = _add_month(start)
+        return _range_condition(column, start, end, term.col_type)
+    if term.transform is PartitionTransform.YEAR:
+        start = _year_start(term.value)
+        end = date(start.year + 1, 1, 1)
+        return _range_condition(column, start, end, term.col_type)
+    raise UnsupportedPredicateError(f"unsupported partition transform: {term.transform.value}")
+
+
+def _range_condition(column: str, start: date, end: date, col_type: str) -> str:
+    start_literal = _temporal_literal(start, col_type)
+    end_literal = _temporal_literal(end, col_type)
+    return f"{column} >= {start_literal} AND {column} < {end_literal}"
+
+
+def _literal(value: Any, col_type: str) -> str:
+    lowered = col_type.lower()
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if _is_numeric_type(lowered) and _is_number(value):
+        return str(value)
+    if "timestamp" in lowered:
+        return f"TIMESTAMP '{_timestamp_string(value)}'"
+    if lowered == "date" or lowered.startswith("date"):
+        return f"DATE '{_date_string(value)}'"
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _temporal_literal(value: date, col_type: str) -> str:
+    if "timestamp" in col_type.lower():
+        return f"TIMESTAMP '{value.isoformat()} 00:00:00'"
+    return f"DATE '{value.isoformat()}'"
+
+
+def _older_than_expr(params: dict[str, Any]) -> str:
+    cutoff = params.get("older_than") or params.get("cutoff_timestamp")
+    if cutoff:
+        return f"TIMESTAMP '{_timestamp_string(cutoff)}'"
+    return f"current_timestamp() - INTERVAL {int(params.get('retention_days', 7))} DAYS"
+
+
+def _day_start(value: Any) -> date:
+    if isinstance(value, int):
+        return date(1970, 1, 1) + timedelta(days=value)
+    if isinstance(value, str) and _looks_like_int(value):
+        return date(1970, 1, 1) + timedelta(days=int(value))
+    return _parse_date(value)
+
+
+def _month_start(value: Any) -> date:
+    if isinstance(value, int) or (
+        isinstance(value, str) and _looks_like_int(value) and len(value) < 4
+    ):
+        months = int(value)
+        return date(1970 + months // 12, months % 12 + 1, 1)
+    parsed = _parse_date(f"{value}-01" if isinstance(value, str) and len(value) == 7 else value)
+    return date(parsed.year, parsed.month, 1)
+
+
+def _year_start(value: Any) -> date:
+    if isinstance(value, int) or (
+        isinstance(value, str) and _looks_like_int(value) and len(value) < 4
+    ):
+        return date(1970 + int(value), 1, 1)
+    return date(int(str(value)[:4]), 1, 1)
+
+
+def _add_month(value: date) -> date:
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def _parse_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _date_string(value: Any) -> str:
+    return _parse_date(value).isoformat()
+
+
+def _timestamp_string(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    text = str(value)
+    if len(text) == 10:
+        return f"{text} 00:00:00"
+    return text.replace("T", " ")[:19]
+
+
+def _spark_table(table_ref: str) -> tuple[str, str]:
+    parts = table_ref.split(".")
+    if len(parts) >= 3:
+        return parts[0], ".".join(parts[1:])
+    if len(parts) == 2:
+        return "spark_catalog", table_ref
+    raise ValueError("table_ref must be schema.table or catalog.schema.table")
+
+
+def _escape_sql_string(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _is_numeric_type(col_type: str) -> bool:
+    return any(
+        token in col_type for token in ("int", "long", "double", "float", "decimal", "numeric")
+    )
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) or (isinstance(value, str) and _matches_number(value))
+
+
+def _looks_like_int(value: str) -> bool:
+    return value.removeprefix("-").isdigit()
+
+
+def _matches_number(value: str) -> bool:
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _quote_identifier(identifier: str) -> str:
+    if identifier.replace("_", "").isalnum() and not identifier[0].isdigit():
+        return identifier
+    return "`" + identifier.replace("`", "``") + "`"
