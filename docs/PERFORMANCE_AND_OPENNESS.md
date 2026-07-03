@@ -3,6 +3,13 @@
 > **Research-backed recommendations for building a high-performance, community-driven
 > Iceberg maintenance platform.**
 
+> **Fact-check pass (2026-07-03):** Competitor names, repos, and cited issues in this document were
+> independently re-verified against live sources. All of LakeOps, Floe, Firn, and Amoro are real
+> projects. A handful of specific numbers in the original draft were vendor-marketing rounding or
+> unsupported by their cited sources; those have been corrected inline and flagged where the
+> underlying claim is vendor-self-reported rather than independently benchmarked. See
+> `docs/RECOMMENDATIONS.md` for the actionable, codebase-grounded version of these ideas.
+
 ---
 
 ## Executive Summary
@@ -34,11 +41,18 @@ Cryo's current architecture:
 
 | Tool | Language | Execution Engine | Claimed Performance |
 |------|----------|------------------|---------------------|
-| **LakeOps** | Rust | DataFusion | 95% faster than Spark, 10x cheaper |
-| **Firn** | Go | DuckDB subprocess | No JVM, single binary |
+| **LakeOps** | Rust | DataFusion | 95% faster than Spark, ~80% lower cost (vendor-claimed) |
+| **Firn** | Go | DuckDB subprocess | No JVM, single binary (pre-v1.0, not production-ready) |
 | **Floe** | Java | Spark/Trino | Standard JVM performance |
 | **Amoro** | Java | Spark/Flink | Standard JVM performance |
 | **Cryo** | Python | Spark/Trino | Standard JVM performance |
+
+> **Verification note:** LakeOps, Floe, Firn, and Amoro are all real projects (verified July 2026),
+> but they are not equivalent in scale. LakeOps and Amoro are funded/foundation-backed products with
+> marketing sites and public benchmarks. Floe (github.com/nssalian/floe) reads as an individual
+> developer's project, not an established commercial competitor. Firn (github.com/basekick-labs/firn)
+> explicitly states it is "not yet suitable for production use" (pre-v1.0). Treat this table as
+> directional, not apples-to-apples.
 
 ### 1.3 The Case for Rust + DataFusion
 
@@ -55,21 +69,34 @@ Cryo's current architecture:
 #### Benchmark Evidence
 
 **Rust vs Python (ETL workloads):**
-- 10M rows, same transform logic: **Rust 11.3x faster**
-- Memory usage: **Rust 1.4x less**
-- Throughput: **Rust 10.9x higher**
+- Independent comparisons (e.g. Sae-Hwan Park's analysis, ref. 5) show speedups ranging
+  from **2.65x to 15.14x depending on the specific task** — there is no single reliable
+  multiplier. The task's shape (I/O-bound vs. CPU-bound, string-heavy vs. numeric) dominates
+  the result far more than "Rust vs. Python" as a category.
+- Takeaway for Cryo: don't plan around a specific multiplier. Benchmark our own compaction
+  workload once a Rust prototype exists (Phase 1) rather than extrapolating from generic
+  ETL benchmarks.
 
-**Rust vs Spark (compaction):**
-- LakeOps benchmark on 5.5TB across 10 tables:
+**Rust vs Spark (compaction) — vendor-reported, unverified independently:**
+- LakeOps (CEO Amit Gilad, company blog, ref. 1) reports a benchmark on 5.5TB across 10 tables:
   - Spark: 1,612 seconds
   - Rust/DataFusion: 221 seconds (**86% faster**)
-- File count reduction: 101K → 19K (81% reduction)
-- Peak throughput: 2,522 MB/s
+  - File count reduction: 101K → 19K (81% reduction)
+  - Peak throughput: 2,522 MB/s
+- **Caveat:** This is a single vendor's self-reported benchmark on their own hardware/config,
+  not an independently reproduced result. LakeOps' own site headline claims "95% faster than
+  Spark" and "~80% cost reduction" (not "10x cheaper" — corrected from an earlier draft of this
+  doc). Useful as a directional signal that Rust/DataFusion compaction *can* be dramatically
+  faster than Spark, not as a number Cryo should promise to match.
 
 **iceberg-rust optimizations (2026):**
-- Range coalescing: 35% fewer S3 GETs
-- File size passthrough: 17% CPU reduction (no `stat()` calls)
-- Single-threaded fast path: 2.5x faster for small files
+- Range coalescing: 35% fewer S3 GETs — confirmed via PR discussion on issue #2172 (773→500 GETs).
+- File size passthrough: eliminates `stat()` calls, which the PR author measured at "over 17%
+  of CPU time" for metadata-heavy scans (issue #2172).
+- A separate, earlier fix (PR #1684, not part of the #2172 epic) resolved a multi-threading bug
+  and cut a TPC-H scan from 56s to 20s (2.8x). An earlier draft of this doc mischaracterized this
+  as a "single-threaded fast path for small files, 2.5x faster" — that specific framing could not
+  be verified in the epic or its linked PRs and has been corrected here.
 
 #### Why DataFusion?
 
@@ -245,7 +272,7 @@ iceberg-rust (native Iceberg implementation)
 |-------|-------------|----------|----------------|
 | **BDFL** | Benevolent dictator | Linux, Python | ❌ Not scalable |
 | **Corporate-led** | Single company controls | Databricks Delta | ❌ Community distrust |
-| **Foundation** | Neutral governance | Apache Iceberg, Amoro | ✅ Recommended |
+| **Foundation** | Neutral governance | Apache Iceberg (top-level project since 2020), Amoro (still ASF **incubating**, not yet graduated) | ✅ Recommended |
 | **Community-led** | Loose coordination | Many GitHub projects | ⚠️ Initial phase only |
 
 ### 4.2 Apache Way Principles
@@ -387,13 +414,16 @@ provides patent protection.
 
 ### Key Crates
 
-| Crate | Purpose | Maturity |
+There is no official ASF maturity rating for these crates — "Production/Beta" below is our own
+characterization based on release cadence and issue activity, not a sourced designation.
+
+| Crate | Purpose | Our assessment |
 |-------|---------|----------|
-| `iceberg` | Core Iceberg implementation | Production |
-| `iceberg-datafusion` | DataFusion integration | Production |
-| `iceberg-catalog-rest` | REST catalog client | Production |
-| `iceberg-catalog-hms` | Hive Metastore client | Beta |
-| `iceberg-catalog-glue` | AWS Glue client | Beta |
+| `iceberg` | Core Iceberg implementation | Actively developed, widely used |
+| `iceberg-datafusion` | DataFusion integration | Actively developed, widely used |
+| `iceberg-catalog-rest` | REST catalog client | Actively developed |
+| `iceberg-catalog-hms` | Hive Metastore client | Earlier-stage, less battle-tested |
+| `iceberg-catalog-glue` | AWS Glue client | Earlier-stage, less battle-tested |
 
 ### Recent Performance Improvements (2026)
 

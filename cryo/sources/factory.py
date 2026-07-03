@@ -21,6 +21,14 @@ def source_catalog_for(source: Any) -> SourceCatalog:
     )
 
 
+def monitored_source_catalog(source: Any) -> SourceCatalog:
+    from cryo.sources.monitored import wrap_catalog
+
+    catalog = source_catalog_for(source)
+    source_id = str(getattr(source, "id", None) or _source_value(source, "name"))
+    return wrap_catalog(catalog, source_id=source_id)
+
+
 def catalog_from_config(name: str, source_type: str, config: Mapping[str, Any]) -> SourceCatalog:
     normalized = source_type.lower().replace("_", "-")
     if normalized in REST_SOURCE_TYPES:

@@ -26,8 +26,8 @@ def explain_health_change(
         lines.append(f"Health grade remains {grade_after} (score {score_before} → {score_after}).")
 
     for metric, label in _METRIC_LABELS.items():
-        old = after.get(metric)
-        new = before.get(metric)
+        old = before.get(metric)
+        new = after.get(metric)
         if old is None or new is None:
             continue
         if _changed(old, new):
@@ -50,8 +50,8 @@ _METRIC_LABELS = {
 
 def _changed(old: Any, new: Any) -> bool:
     if isinstance(old, (int, float)) and isinstance(new, (int, float)):
-        return abs(float(new) - float(old)) > 1e-9
-    return old != new
+        return bool(abs(float(new) - float(old)) > 1e-9)
+    return bool(old != new)
 
 
 def _float(value: Any) -> float:

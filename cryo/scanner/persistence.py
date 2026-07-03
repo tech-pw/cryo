@@ -107,6 +107,18 @@ def persist_table_analysis(
             total_size_gb=analysis.total_size_gb,
             grade=analysis.grade,
             overall_score=analysis.overall_score,
+            raw={
+                "total_snapshots": analysis.total_snapshots,
+                "total_delete_files": analysis.total_delete_files,
+                "delete_file_pct": analysis.delete_file_pct,
+                "manifest_count": analysis.manifest_count,
+                "metadata_to_data_ratio": (analysis.raw or {}).get("metadata_to_data_ratio"),
+                "is_streaming": (analysis.raw or {}).get("is_streaming"),
+                "format_version": (analysis.raw or {}).get("format_version"),
+                "projected_savings_usd_month": (
+                    analysis.cost.projected_savings_usd_month if analysis.cost else None
+                ),
+            },
         )
     )
     if analysis.cost is not None:

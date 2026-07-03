@@ -60,9 +60,7 @@ def test_project_savings_sums_disjoint_operations() -> None:
     assert projection.by_operation[OperationType.OPTIMIZE] == bytes_to_usd(
         2 * GB, price_per_gb_month=price
     )
-    assert projection.projected_savings_usd_month == round(
-        sum(projection.by_operation.values()), 4
-    )
+    assert projection.projected_savings_usd_month == round(sum(projection.by_operation.values()), 4)
     assert projection.query_request_savings_usd_month > 0
     assert projection.projected_savings_usd_month == round(
         projection.by_operation[OperationType.EXPIRE_SNAPSHOTS]

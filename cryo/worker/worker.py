@@ -8,7 +8,8 @@ from typing import Any, Protocol
 
 from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
-from cryo.engines.base import RenderedStatement
+from cryo.engines.base import ExecCtx, RenderedStatement
+from cryo.engines.base import ExecResult as BaseExecResult
 from cryo.planner.planner import build_plan
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
@@ -77,13 +78,15 @@ class ExecResult:
 
 
 class ExecutableMaintenanceEngine(Protocol):
-    type: EngineType | str
+    type: EngineType
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]: ...
 
     def session_setup(self) -> list[str]: ...
 
-    def execute(self, statement: RenderedStatement, context: ExecContext) -> ExecResult: ...
+    def execute(
+        self, stmt: RenderedStatement, ctx: ExecCtx | None = None
+    ) -> BaseExecResult: ...
 
 
 class JobStore(Protocol):
@@ -201,13 +204,17 @@ class FakeMaintenanceEngine:
     def session_setup(self) -> list[str]:
         return []
 
-    def execute(self, statement: RenderedStatement, context: ExecContext) -> ExecResult:
-        if statement.action in self.fail_actions:
-            raise RuntimeError(f"fake engine failed {statement.action.value}")
-        self.executed.append(statement)
-        return ExecResult(
-            engine_ref=f"fake-{context.job_id}-{context.statement_index}",
-            detail=statement.sql,
+    def execute(
+        self, stmt: RenderedStatement, ctx: ExecCtx | None = None
+    ) -> BaseExecResult:
+        if stmt.action in self.fail_actions:
+            raise RuntimeError(f"fake engine failed {stmt.action.value}")
+        self.executed.append(stmt)
+        job_id = str(ctx.job_id)[:8] if ctx and ctx.job_id else "noctx"
+        return BaseExecResult(
+            ok=True,
+            engine_ref=f"fake-{job_id}-{len(self.executed)}",
+            detail=stmt.sql,
         )
 
 
@@ -255,17 +262,15 @@ class Worker:
                 final_status = JobStatus.SKIPPED
             for index, statement in enumerate(statements):
                 started = perf_counter()
+                exec_ctx = ExecContext(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    destination_id=job.destination_id,
+                    statement_index=index,
+                    replica=job.replica,
+                )
                 try:
-                    result = engine.execute(
-                        statement,
-                        ExecContext(
-                            job_id=job.id,
-                            table_id=job.table_id,
-                            destination_id=job.destination_id,
-                            statement_index=index,
-                            replica=job.replica,
-                        ),
-                    )
+                    result = engine.execute(statement, _to_exec_ctx(exec_ctx))
                 except Exception as exc:
                     duration_ms = int((perf_counter() - started) * 1000)
                     self._store.record_audit(
@@ -374,6 +379,25 @@ def _predicate_to_dict(predicate: PartitionPredicate) -> dict[str, Any]:
             for term in predicate.terms
         ],
     }
+
+
+def _to_exec_ctx(ctx: ExecContext) -> ExecCtx:
+    """Convert worker ExecContext to engine ExecCtx."""
+    from uuid import UUID
+
+    def _safe_uuid(value: str | None) -> UUID | None:
+        if not value:
+            return None
+        try:
+            return UUID(value)
+        except (ValueError, AttributeError):
+            return None
+
+    return ExecCtx(
+        job_id=_safe_uuid(ctx.job_id),
+        table_id=_safe_uuid(ctx.table_id),
+        replica=ctx.replica,
+    )
 
 
 def main() -> None:

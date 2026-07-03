@@ -8,11 +8,17 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
-
 @dataclass(frozen=True)
 class LatencySample:
     operation: str
     duration_ms: float
+
+
+_MONITOR_REGISTRY: dict[str, CatalogLatencyMonitor] = {}
+
+
+def get_catalog_latency_monitor(source_id: str) -> CatalogLatencyMonitor:
+    return _MONITOR_REGISTRY.setdefault(source_id, CatalogLatencyMonitor())
 
 
 class CatalogLatencyMonitor:
@@ -38,7 +44,7 @@ class CatalogLatencyMonitor:
         return {operation: self.summary(operation) for operation in self._samples}
 
 
-def timed_catalog_call(
+def timed_catalog_call[T](
     monitor: CatalogLatencyMonitor,
     operation: str,
     fn: Callable[[], T],

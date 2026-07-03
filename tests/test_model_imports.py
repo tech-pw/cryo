@@ -14,6 +14,7 @@ def test_all_foundation_tables_are_registered() -> None:
         "cryo.jobs",
         "cryo.preset_rules",
         "cryo.presets",
+        "cryo.protected_snapshots",
         "cryo.runs",
         "cryo.sources",
         "cryo.table_assignments",
@@ -23,6 +24,7 @@ def test_all_foundation_tables_are_registered() -> None:
         "cryo.table_stats",
         "cryo.table_stats_history",
         "cryo.tables",
+        "cryo.tier_policies",
     }
 
 

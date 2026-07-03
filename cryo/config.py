@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     scan_num_chunks: int = Field(default=4, gt=0)
     scan_small_file_mb: float = Field(default=89.6, gt=0)
     scan_needs_compaction_threshold: int = Field(default=128, gt=0)
+    scan_parallel_tables: int = Field(
+        default=0,
+        ge=0,
+        description="Tables to scan in parallel per chunk (0=serial).",
+    )
+    scan_parallel_manifests: int = Field(
+        default=8,
+        ge=1,
+        description="Max threads for parallel manifest fetching within a table.",
+    )
 
     cost_price_per_gb_month: float = Field(default=0.023, gt=0)
     cost_use_gib: bool = True

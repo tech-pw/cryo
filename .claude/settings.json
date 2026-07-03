@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "WebFetch(domain:lakeops.dev)",
+      "WebFetch(domain:aws.amazon.com)",
+      "WebFetch(domain:iceberg.apache.org)",
+      "WebFetch(domain:www.ryft.io)"
+    ]
+  }
+}

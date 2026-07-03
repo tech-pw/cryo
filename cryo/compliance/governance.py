@@ -20,7 +20,9 @@ def track_pending_deletions(
     *,
     retention_days: int = 7,
 ) -> PendingDeletion | None:
-    pending_rows = int(stats.get("pending_soft_delete_rows") or stats.get("deleted_rows_pending") or 0)
+    pending_rows = int(
+        stats.get("pending_soft_delete_rows") or stats.get("deleted_rows_pending") or 0
+    )
     if pending_rows <= 0:
         return None
     blocked_until = datetime.now(UTC)

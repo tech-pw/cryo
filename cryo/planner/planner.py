@@ -100,7 +100,9 @@ def _optimize_operations(
         return [_optimize_operation(params)]
 
     capabilities = _predicate_capabilities(params)
-    candidates = _candidate_partitions(fields, partitions, min_small_files, capabilities, notes, params)
+    candidates = _candidate_partitions(
+        fields, partitions, min_small_files, capabilities, notes, params
+    )
     if not candidates:
         notes.append("Skipped optimize: no renderable partition candidates met the threshold.")
         return []
@@ -134,7 +136,9 @@ def _candidate_partitions(
     for row in partitions:
         if idle_hours > 0 and not _partition_is_cold(row, idle_hours):
             partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
-            notes.append(f"Skipped hot partition {partition_value}: writes within last {idle_hours}h.")
+            notes.append(
+                f"Skipped hot partition {partition_value}: writes within last {idle_hours}h."
+            )
             continue
         small_files = _small_files(row)
         if small_files < min_small_files:

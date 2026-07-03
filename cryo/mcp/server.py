@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-
 ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -26,8 +25,7 @@ class CryoMcpServer:
 
     def list_tools(self) -> list[dict[str, str]]:
         return [
-            {"name": tool.name, "description": tool.description}
-            for tool in self._tools.values()
+            {"name": tool.name, "description": tool.description} for tool in self._tools.values()
         ]
 
     def call(self, name: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:

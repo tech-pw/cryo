@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 
 class SnapshotProbe(Protocol):
@@ -52,7 +51,9 @@ class TableCommitWatcher:
             previous = self._last_seen.get(table_ref)
             self._last_seen[table_ref] = snapshot_id
             if previous is not None and snapshot_id != previous:
-                event = TableCommitted(table_ref=table_ref, snapshot_id=snapshot_id, observed_at=current)
+                event = TableCommitted(
+                    table_ref=table_ref, snapshot_id=snapshot_id, observed_at=current
+                )
                 self._publish(event)
                 events.append(event)
         return events

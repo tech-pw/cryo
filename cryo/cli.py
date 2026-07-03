@@ -7,6 +7,7 @@ Usage:
     cryo scheduler [--check-interval SECS]
     cryo serve  # runs all three in a single process
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from threading import Event, Thread
-from typing import NoReturn
+from typing import Any, NoReturn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +67,14 @@ def create_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--poll-interval", type=int, default=5)
     serve_parser.add_argument("--check-interval", type=int, default=60)
 
+    events_parser = subparsers.add_parser("events", help="Run event watcher + consumer loop")
+    events_parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between snapshot polls (default: 5)",
+    )
+
     return parser
 
 
@@ -98,14 +107,18 @@ class DaemonRunner:
 class GovernorRunner(DaemonRunner):
     """Runs the admission governor wave loop."""
 
-    def __init__(self, interval: int = 30) -> None:
+    def __init__(self, interval: int = 30, wiring: Any = None) -> None:
         super().__init__("governor", interval)
-        self._governor = None
+        self._wiring: Any = wiring
+        self._governor: Any = None
 
     def _tick(self) -> None:
         governor = self._get_governor()
         if governor is None:
             self._logger.warning("Governor not available (missing dependencies)")
+            return
+        wiring = self._get_wiring()
+        if wiring and not wiring.is_governor_leader():
             return
 
         result = governor.run_wave(now=datetime.now(UTC))
@@ -117,26 +130,27 @@ class GovernorRunner(DaemonRunner):
                 result.blocked,
             )
 
-    def _get_governor(self):  # type: ignore[no-untyped-def]
+    def _get_wiring(self) -> Any:
+        if self._wiring is not None:
+            return self._wiring
+        from cryo.infra.wiring import build_runtime_wiring
+
+        self._wiring = build_runtime_wiring()
+        return self._wiring
+
+    def _get_governor(self) -> Any:
         if self._governor is not None:
             return self._governor
 
         try:
             from cryo.governor import Governor, LiveCapacityProvider
-            from cryo.queue.locks import InMemoryLockStore
-            from cryo.queue.redis_queue import InMemoryMaintenanceQueue
-            from cryo.worker.worker import InMemoryJobStore
 
-            queue = InMemoryMaintenanceQueue()
-            lock_store = InMemoryLockStore()
-            store = InMemoryJobStore()
-            capacity = LiveCapacityProvider()
-
+            wiring = self._get_wiring()
             self._governor = Governor(
-                queue=queue,
-                lock_store=lock_store,
-                store=store,
-                capacity_provider=capacity,
+                queue=wiring.queue,
+                lock_store=wiring.lock_store,
+                store=wiring.job_store,
+                capacity_provider=LiveCapacityProvider(),
             )
             return self._governor
         except Exception as exc:
@@ -147,9 +161,10 @@ class GovernorRunner(DaemonRunner):
 class WorkerRunner(DaemonRunner):
     """Runs the worker job processing loop."""
 
-    def __init__(self, interval: int = 5) -> None:
+    def __init__(self, interval: int = 5, wiring: Any = None) -> None:
         super().__init__("worker", interval)
-        self._worker = None
+        self._wiring: Any = wiring
+        self._worker: Any = None
 
     def _tick(self) -> None:
         worker = self._get_worker()
@@ -166,23 +181,26 @@ class WorkerRunner(DaemonRunner):
                 job.status.value,
             )
 
-    def _get_worker(self):  # type: ignore[no-untyped-def]
+    def _get_wiring(self) -> Any:
+        if self._wiring is not None:
+            return self._wiring
+        from cryo.infra.wiring import build_runtime_wiring
+
+        self._wiring = build_runtime_wiring()
+        return self._wiring
+
+    def _get_worker(self) -> Any:
         if self._worker is not None:
             return self._worker
 
         try:
-            from cryo.worker.worker import Worker, InMemoryJobStore
-            from cryo.queue.locks import InMemoryLockStore
-            from cryo.queue.redis_queue import InMemoryMaintenanceQueue
+            from cryo.worker.worker import Worker
 
-            queue = InMemoryMaintenanceQueue()
-            lock_store = InMemoryLockStore()
-            store = InMemoryJobStore()
-
+            wiring = self._get_wiring()
             self._worker = Worker(
-                queue=queue,
-                store=store,
-                lock_store=lock_store,
+                queue=wiring.queue,
+                store=wiring.job_store,
+                lock_store=wiring.lock_store,
             )
             return self._worker
         except Exception as exc:
@@ -193,11 +211,15 @@ class WorkerRunner(DaemonRunner):
 class SchedulerRunner(DaemonRunner):
     """Runs the scheduler cron evaluation loop."""
 
-    def __init__(self, interval: int = 60) -> None:
+    def __init__(self, interval: int = 60, wiring: Any = None) -> None:
         super().__init__("scheduler", interval)
-        self._service = None
+        self._wiring: Any = wiring
+        self._service: Any = None
 
     def _tick(self) -> None:
+        wiring = self._get_wiring()
+        if wiring and not wiring.is_scheduler_leader():
+            return
         service = self._get_service()
         if service is None:
             self._logger.warning("Scheduler not available")
@@ -211,20 +233,63 @@ class SchedulerRunner(DaemonRunner):
                 ",".join(result.preset_ids),
             )
 
-    def _get_service(self):  # type: ignore[no-untyped-def]
+    def _get_wiring(self) -> Any:
+        if self._wiring is not None:
+            return self._wiring
+        from cryo.infra.wiring import build_runtime_wiring
+
+        self._wiring = build_runtime_wiring()
+        return self._wiring
+
+    def _get_service(self) -> Any:
         if self._service is not None:
             return self._service
 
         try:
-            from cryo.queue.redis_queue import InMemoryMaintenanceQueue
-            from cryo.scheduler.service import InMemorySchedulerStore, SchedulerService
+            from cryo.scheduler.service import SchedulerService
 
-            store = InMemorySchedulerStore()
-            queue = InMemoryMaintenanceQueue()
-            self._service = SchedulerService(store, queue)
+            wiring = self._get_wiring()
+            self._service = SchedulerService(wiring.scheduler_store, wiring.queue)
             return self._service
         except Exception as exc:
             self._logger.debug("Cannot initialize scheduler: %s", exc)
+            return None
+
+
+class EventsRunner(DaemonRunner):
+    """Runs hot-table watcher and Redis Streams consumer."""
+
+    def __init__(self, interval: int = 5, wiring: Any = None) -> None:
+        super().__init__("events", interval)
+        self._wiring: Any = wiring
+        self._watcher: Any = None
+
+    def _tick(self) -> None:
+        from cryo.events.service import poll_events_once
+
+        watcher = self._get_watcher()
+        if watcher is not None:
+            watcher.poll_once()
+        poll_events_once(self._get_wiring())
+
+    def _get_wiring(self) -> Any:
+        if self._wiring is not None:
+            return self._wiring
+        from cryo.infra.wiring import build_runtime_wiring
+
+        self._wiring = build_runtime_wiring()
+        return self._wiring
+
+    def _get_watcher(self) -> Any:
+        if self._watcher is not None:
+            return self._watcher
+        try:
+            from cryo.events.service import build_event_watcher
+
+            self._watcher = build_event_watcher(self._get_wiring())
+            return self._watcher
+        except Exception as exc:
+            self._logger.debug("Cannot initialize event watcher: %s", exc)
             return None
 
 
@@ -243,12 +308,20 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     _run_with_signal(runner)
 
 
+def run_events(args: argparse.Namespace) -> NoReturn:
+    runner = EventsRunner(interval=args.poll_interval)
+    _run_with_signal(runner)
+
+
 def run_serve(args: argparse.Namespace) -> NoReturn:
-    """Run all daemons in separate threads."""
+    """Run all daemons in separate threads with shared Redis/Postgres wiring."""
+    from cryo.infra.wiring import build_runtime_wiring
+
+    wiring = build_runtime_wiring()
     runners = [
-        GovernorRunner(interval=args.wave_interval),
-        WorkerRunner(interval=args.poll_interval),
-        SchedulerRunner(interval=args.check_interval),
+        GovernorRunner(interval=args.wave_interval, wiring=wiring),
+        WorkerRunner(interval=args.poll_interval, wiring=wiring),
+        SchedulerRunner(interval=args.check_interval, wiring=wiring),
     ]
 
     threads: list[Thread] = []
@@ -299,6 +372,7 @@ def main() -> NoReturn:
         "governor": run_governor,
         "worker": run_worker,
         "scheduler": run_scheduler,
+        "events": run_events,
         "serve": run_serve,
     }
 

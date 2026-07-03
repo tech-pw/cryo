@@ -3,14 +3,14 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mypy_boto3_emr_serverless import EMRServerlessClient as Boto3EMRClient
 
 
-class JobRunState(str, Enum):
+class JobRunState(StrEnum):
     PENDING = "PENDING"
     SCHEDULED = "SCHEDULED"
     RUNNING = "RUNNING"
@@ -41,14 +41,26 @@ class EMRServerlessConfig:
         emr_config = config.get("emr", {})
         return cls(
             application_id=str(emr_config.get("application_id") or config.get("application_id")),
-            execution_role_arn=str(emr_config.get("execution_role_arn") or config.get("execution_role_arn")),
+            execution_role_arn=str(
+                emr_config.get("execution_role_arn") or config.get("execution_role_arn")
+            ),
             region=str(emr_config.get("region") or config.get("region", "us-east-1")),
             s3_logs_bucket=emr_config.get("s3_logs_bucket") or config.get("s3_logs_bucket"),
-            s3_logs_prefix=str(emr_config.get("s3_logs_prefix") or config.get("s3_logs_prefix", "cryo-spark-logs")),
-            spark_submit_params=emr_config.get("spark_submit_params") or config.get("spark_submit_params"),
-            entry_point=str(emr_config.get("entry_point") or config.get("entry_point", "s3://cryo-artifacts/cryo_spark_runner.py")),
-            poll_interval_seconds=int(emr_config.get("poll_interval_seconds") or config.get("poll_interval_seconds", 10)),
-            timeout_seconds=int(emr_config.get("timeout_seconds") or config.get("timeout_seconds", 3600)),
+            s3_logs_prefix=str(
+                emr_config.get("s3_logs_prefix") or config.get("s3_logs_prefix", "cryo-spark-logs")
+            ),
+            spark_submit_params=emr_config.get("spark_submit_params")
+            or config.get("spark_submit_params"),
+            entry_point=str(
+                emr_config.get("entry_point")
+                or config.get("entry_point", "s3://cryo-artifacts/cryo_spark_runner.py")
+            ),
+            poll_interval_seconds=int(
+                emr_config.get("poll_interval_seconds") or config.get("poll_interval_seconds", 10)
+            ),
+            timeout_seconds=int(
+                emr_config.get("timeout_seconds") or config.get("timeout_seconds", 3600)
+            ),
         )
 
 
@@ -100,8 +112,10 @@ class EMRServerlessClient:
         spark_submit: dict[str, Any] = {
             "entryPoint": self._config.entry_point,
             "entryPointArguments": [
-                "--sql", sql,
-                "--catalog", catalog,
+                "--sql",
+                sql,
+                "--catalog",
+                catalog,
             ],
             "sparkSubmitParameters": self._build_spark_params(),
         }
@@ -145,7 +159,9 @@ class EMRServerlessClient:
             time.sleep(self._config.poll_interval_seconds)
         result = self.get_job_run(job_run_id)
         if result.state not in TERMINAL_STATES:
-            raise TimeoutError(f"Job {job_run_id} did not complete within {self._config.timeout_seconds}s")
+            raise TimeoutError(
+                f"Job {job_run_id} did not complete within {self._config.timeout_seconds}s"
+            )
         return result
 
     def cancel_job_run(self, job_run_id: str) -> None:
@@ -158,10 +174,17 @@ class EMRServerlessClient:
     def _build_spark_params(self) -> str:
         base_params = {
             "--conf": "spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog",
-            "--conf spark.sql.catalog.glue_catalog.catalog-impl": "org.apache.iceberg.aws.glue.GlueCatalog",
+            "--conf spark.sql.catalog.glue_catalog.catalog-impl": (
+                "org.apache.iceberg.aws.glue.GlueCatalog"
+            ),
             "--conf spark.sql.catalog.glue_catalog.warehouse": "s3://your-warehouse/",
-            "--conf spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+            "--conf spark.sql.extensions": (
+                "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+            ),
         }
         if self._config.spark_submit_params:
             base_params.update(self._config.spark_submit_params)
-        return " ".join(f"{key}={value}" if "=" not in key else f"{key} {value}" for key, value in base_params.items())
+        return " ".join(
+            f"{key}={value}" if "=" not in key else f"{key} {value}"
+            for key, value in base_params.items()
+        )

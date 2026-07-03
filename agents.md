@@ -30,7 +30,10 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
 4. `todo.md` — the phased task checklist; keep it updated as you complete work.
 5. `docs/` — persistent project brain. Always keep it current with fixes, implementations,
    new features, design decisions, operational notes, and any project knowledge future agents
-   or maintainers will need.
+   or maintainers will need. If you're picking up work with no other context, start at
+   [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md) — it sequences everything in
+   `docs/RECOMMENDATIONS.md`, `docs/PERFORMANCE_AND_OPENNESS.md`, and
+   `docs/ARCHITECTURE_AND_AI_STRATEGY.md` into an ordered, actionable plan.
 6. This file — conventions & guardrails.
 
 The reference implementation being ported lives **outside this repo** (read-only, for parity):
