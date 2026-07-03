@@ -8,7 +8,10 @@ from cryo.sources.glue import GlueSourceCatalog
 from cryo.sources.hive import HiveSourceCatalog
 from cryo.sources.rest import RestSourceCatalog
 
-REST_SOURCE_TYPES = {"rest", "iceberg-rest", "iceberg_rest"}
+# Polaris and Nessie both speak the standard Iceberg REST Catalog protocol, so they use the same
+# adapter as a plain REST catalog — the "type" distinction in the UI is about which product is on
+# the other end, not a different wire protocol PyIceberg needs to know about.
+REST_SOURCE_TYPES = {"rest", "iceberg-rest", "iceberg_rest", "polaris", "nessie"}
 HIVE_SOURCE_TYPES = {"hive", "hms", "hive-metastore", "hive_metastore"}
 GLUE_SOURCE_TYPES = {"glue", "aws-glue", "aws_glue"}
 

@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     default_native_slot_cap: int = Field(default=5, gt=0)
     wave_wait_sec: int = Field(default=300, gt=0)
 
+    # Slack notifications
+    slack_webhook_url: str | None = Field(
+        default=None,
+        description="Slack incoming webhook URL for daily reports.",
+    )
+    slack_channel: str | None = Field(
+        default=None,
+        description="Override channel for Slack notifications (optional).",
+    )
+    slack_daily_report_cron: str = Field(
+        default="0 9 * * *",
+        description="Cron expression for daily anomaly report (default: 9 AM daily).",
+    )
+    slack_daily_report_enabled: bool = Field(
+        default=False,
+        description="Enable daily anomaly report to Slack.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -27,6 +27,14 @@ export type SourceWrite = Pick<SourceRead, "name" | "type" | "config" | "enabled
   secret_ref?: string | null;
 };
 
+export interface SourceTestResult {
+  ok: boolean;
+  namespaces: string[];
+  table_count: number;
+  sample_tables: string[];
+  error?: string | null;
+}
+
 export interface DestinationRead {
   id: UUID;
   name: string;

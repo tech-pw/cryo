@@ -37,6 +37,21 @@ class SourcePatch(BaseModel):
     enabled: bool | None = None
 
 
+class SourceTestRequest(BaseModel):
+    """A not-yet-saved source config, so the UI can verify a connection before creating it."""
+
+    type: str
+    config: JsonDict = Field(default_factory=dict)
+
+
+class SourceTestResponse(BaseModel):
+    ok: bool
+    namespaces: list[str] = Field(default_factory=list)
+    table_count: int = 0
+    sample_tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class DestinationCreate(BaseModel):
     name: str
     engine: EngineType

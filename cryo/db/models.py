@@ -73,6 +73,41 @@ class Destination(TimestampMixin, Base):
     jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="destination")
 
 
+class AIProvider(TimestampMixin, Base):
+    """Configuration for AI/LLM providers (Anthropic, OpenAI, etc.)."""
+
+    __tablename__ = "ai_providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    provider_type: Mapped[str] = mapped_column(Text, nullable=False)  # anthropic, openai, etc.
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text)  # encrypted API key
+    model: Mapped[str] = mapped_column(Text, nullable=False)  # claude-sonnet-4-20250514, gpt-4o, etc.
+    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+
+class SlackConfig(TimestampMixin, Base):
+    """Configuration for Slack integration (webhooks, channels, schedules)."""
+
+    __tablename__ = "slack_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    webhook_url_encrypted: Mapped[str | None] = mapped_column(Text)  # encrypted webhook URL
+    channel: Mapped[str | None] = mapped_column(Text)  # override channel (optional)
+    daily_report_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    daily_report_cron: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'0 9 * * *'"))
+    daily_report_use_ai: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+
 class Table(Base):
     __tablename__ = "tables"
     __table_args__ = (UniqueConstraint("source_id", "schema_name", "table_name"),)
@@ -448,6 +483,7 @@ class AuditLog(Base):
 
 
 __all__ = [
+    "AIProvider",
     "AuditLog",
     "Destination",
     "MaintenanceJob",
@@ -455,6 +491,7 @@ __all__ = [
     "Preset",
     "PresetRule",
     "ProtectedSnapshot",
+    "SlackConfig",
     "Source",
     "Table",
     "TableAssignment",

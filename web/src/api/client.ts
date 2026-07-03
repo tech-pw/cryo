@@ -21,6 +21,7 @@ import type {
   RoleToken,
   RunRead,
   SourceRead,
+  SourceTestResult,
   SourceWrite,
   TableCostRead,
   TableRead,
@@ -114,6 +115,8 @@ export const createSource = (api: ApiOptions, body: SourceWrite) =>
   apiFetch<SourceRead>("/sources", api, { method: "POST", body });
 export const patchSource = (api: ApiOptions, id: UUID, body: Partial<SourceWrite>) =>
   apiFetch<SourceRead>(`/sources/${id}`, api, { method: "PATCH", body });
+export const testSource = (api: ApiOptions, body: { type: string; config: Record<string, unknown> }) =>
+  apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
 
 export const listDestinations = (api: ApiOptions) => apiFetch<DestinationRead[]>("/destinations", api);
 export const createDestination = (api: ApiOptions, body: DestinationWrite) =>
@@ -265,6 +268,121 @@ export const getCostDashboard = (api: ApiOptions) =>
 
 export const getTableCost = (api: ApiOptions, id: UUID) =>
   apiFetch<TableCostRead>(`/tables/${id}/cost`, api);
+
+// AI Providers
+export interface AIProviderRead {
+  id: UUID;
+  name: string;
+  provider_type: string;
+  model: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  is_default: boolean;
+  has_api_key: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIProviderWrite {
+  name: string;
+  provider_type: string;
+  api_key: string;
+  model: string;
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+  is_default?: boolean;
+}
+
+export interface AIProviderConfigField {
+  name: string;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  default?: string;
+}
+
+export interface AIProviderType {
+  type: string;
+  name: string;
+  models: string[];
+  default_model: string;
+  config_fields?: AIProviderConfigField[];
+}
+
+export interface AIProviderTestResult {
+  success: boolean;
+  response?: string;
+  error?: string;
+  model?: string;
+  tokens_used?: number;
+}
+
+export const listAIProviders = (api: ApiOptions) =>
+  apiFetch<AIProviderRead[]>("/ai/providers", api);
+
+export const listAIProviderTypes = (api: ApiOptions) =>
+  apiFetch<AIProviderType[]>("/ai/providers/types", api);
+
+export const createAIProvider = (api: ApiOptions, body: AIProviderWrite) =>
+  apiFetch<AIProviderRead>("/ai/providers", api, { method: "POST", body });
+
+export const patchAIProvider = (api: ApiOptions, id: UUID, body: Partial<AIProviderWrite>) =>
+  apiFetch<AIProviderRead>(`/ai/providers/${id}`, api, { method: "PATCH", body });
+
+export const deleteAIProvider = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/ai/providers/${id}`, api, { method: "DELETE" });
+
+export const testAIProvider = (api: ApiOptions, id: UUID, prompt?: string) =>
+  apiFetch<AIProviderTestResult>(`/ai/providers/${id}/test`, api, {
+    method: "POST",
+    body: { prompt: prompt ?? "Say hello in one sentence." }
+  });
+
+// Slack Configs
+export interface SlackConfigRead {
+  id: UUID;
+  name: string;
+  channel: string | null;
+  daily_report_enabled: boolean;
+  daily_report_cron: string;
+  daily_report_use_ai: boolean;
+  enabled: boolean;
+  is_default: boolean;
+  has_webhook: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SlackConfigWrite {
+  name: string;
+  webhook_url: string;
+  channel?: string | null;
+  daily_report_enabled?: boolean;
+  daily_report_cron?: string;
+  daily_report_use_ai?: boolean;
+  enabled?: boolean;
+  is_default?: boolean;
+}
+
+export interface SlackTestResult {
+  status: string;
+  message: string;
+}
+
+export const listSlackConfigs = (api: ApiOptions) =>
+  apiFetch<SlackConfigRead[]>("/slack/configs", api);
+
+export const createSlackConfig = (api: ApiOptions, body: SlackConfigWrite) =>
+  apiFetch<SlackConfigRead>("/slack/configs", api, { method: "POST", body });
+
+export const patchSlackConfig = (api: ApiOptions, id: UUID, body: Partial<SlackConfigWrite>) =>
+  apiFetch<SlackConfigRead>(`/slack/configs/${id}`, api, { method: "PATCH", body });
+
+export const deleteSlackConfig = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/slack/configs/${id}`, api, { method: "DELETE" });
+
+export const testSlackConfig = (api: ApiOptions, id: UUID) =>
+  apiFetch<SlackTestResult>(`/slack/configs/${id}/test`, api, { method: "POST" });
 
 export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
   const bySchema = new Map<string, { current_usd: number; projected_usd: number; savings_usd: number }>();

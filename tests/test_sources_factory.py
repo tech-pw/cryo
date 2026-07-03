@@ -31,6 +31,17 @@ def test_factory_supports_glue_aliases() -> None:
     assert isinstance(catalog, GlueSourceCatalog)
 
 
+def test_factory_supports_polaris_and_nessie_as_rest() -> None:
+    # Polaris and Nessie both speak the standard Iceberg REST Catalog protocol, so they're routed
+    # through the same adapter as a plain REST catalog.
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
+        load_catalog.return_value = MagicMock()
+        polaris = catalog_from_config("polaris", "polaris", {"uri": "http://localhost:8181"})
+        nessie = catalog_from_config("nessie", "nessie", {"uri": "http://localhost:19120/api/v1"})
+    assert isinstance(polaris, RestSourceCatalog)
+    assert isinstance(nessie, RestSourceCatalog)
+
+
 def test_factory_rejects_unknown_type() -> None:
     with pytest.raises(ValueError, match="Unsupported source type"):
-        catalog_from_config("x", "polaris", {})
+        catalog_from_config("x", "made-up-catalog-type", {})

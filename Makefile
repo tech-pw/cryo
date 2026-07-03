@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate api scan worker governor scheduler up down ps logs seed seed-docker seed-fragmented smoke-file-counts smoke-compact spark-shell web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate api scan worker governor scheduler report-scheduler daily-report up down ps logs seed seed-docker seed-fragmented smoke-file-counts smoke-compact spark-shell web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 SPARK_RUNNER = docker compose run --rm spark
@@ -38,6 +38,12 @@ governor:
 
 scheduler:
 	$(PYTHON) -m cryo.cli scheduler
+
+report-scheduler:
+	$(PYTHON) -m cryo.reporting.scheduler
+
+daily-report:
+	$(PYTHON) -c "import asyncio; from cryo.reporting.scheduler import run_daily_report_now; print(asyncio.run(run_daily_report_now()))"
 
 serve:
 	$(PYTHON) -m cryo.cli serve
