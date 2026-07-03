@@ -25,6 +25,8 @@ HEALTH_THRESHOLDS = {
     "partition_skew_ratio_crit": 50,
     "avg_files_per_partition_warn": 50,
     "avg_files_per_partition_crit": 200,
+    "metadata_to_data_ratio_warn": 0.05,
+    "metadata_to_data_ratio_crit": 0.15,
 }
 
 
@@ -59,6 +61,13 @@ def compute_health_score(
     score = _deduct(
         score, float(stats.get("avg_files_per_partition") or 0), "avg_files_per_partition"
     )
+    score = _deduct(score, float(stats.get("metadata_to_data_ratio") or 0), "metadata_to_data_ratio")
+
+    if stats.get("v3_upgrade_candidate"):
+        score -= 8
+
+    if stats.get("is_streaming"):
+        score -= 8
 
     props_issues = 0
     if stats.get("write_distribution_mode", "none") == "none":

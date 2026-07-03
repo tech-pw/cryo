@@ -13,12 +13,14 @@ class OperationType(StrEnum):
 class EngineType(StrEnum):
     TRINO = "trino"
     SPARK_EMR = "spark_emr"
+    NATIVE = "native"
 
 
 class Mode(StrEnum):
     LIGHT = "light"
     STANDARD = "standard"
     DEEP = "deep"
+    MANIFEST_ONLY = "manifest_only"
 
 
 class PartitionTransform(StrEnum):

@@ -195,9 +195,37 @@ class SchedulerRunner(DaemonRunner):
 
     def __init__(self, interval: int = 60) -> None:
         super().__init__("scheduler", interval)
+        self._service = None
 
     def _tick(self) -> None:
-        self._logger.debug("Scheduler tick (cron evaluation not yet implemented)")
+        service = self._get_service()
+        if service is None:
+            self._logger.warning("Scheduler not available")
+            return
+        result = service.tick()
+        if result.runs_created:
+            self._logger.info(
+                "Scheduler tick: runs=%d jobs=%d presets=%s",
+                result.runs_created,
+                result.jobs_enqueued,
+                ",".join(result.preset_ids),
+            )
+
+    def _get_service(self):  # type: ignore[no-untyped-def]
+        if self._service is not None:
+            return self._service
+
+        try:
+            from cryo.queue.redis_queue import InMemoryMaintenanceQueue
+            from cryo.scheduler.service import InMemorySchedulerStore, SchedulerService
+
+            store = InMemorySchedulerStore()
+            queue = InMemoryMaintenanceQueue()
+            self._service = SchedulerService(store, queue)
+            return self._service
+        except Exception as exc:
+            self._logger.debug("Cannot initialize scheduler: %s", exc)
+            return None
 
 
 def run_governor(args: argparse.Namespace) -> NoReturn:

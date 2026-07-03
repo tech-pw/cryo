@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     offpeak_end_ist: int = Field(default=7, ge=0, le=23)
     default_per_replica_optimize_cap: int = Field(default=5, gt=0)
     default_emr_slot_cap: int = Field(default=10, gt=0)
+    default_native_slot_cap: int = Field(default=5, gt=0)
     wave_wait_sec: int = Field(default=300, gt=0)
 
 

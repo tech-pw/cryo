@@ -87,6 +87,7 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.planner.planner import build_plan
+from cryo.planner.guardrails import validate_operation_order
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -653,6 +654,12 @@ def unassign_tables(payload: AssignmentDeleteRequest, session: SessionDep) -> As
     dependencies=[Depends(require_operator)],
 )
 def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePreviewResponse:
+    requested_ops = payload.params.get("operations")
+    if requested_ops:
+        warnings = validate_operation_order(requested_ops)
+        if warnings:
+            raise HTTPException(status_code=400, detail={"warnings": warnings})
+
     renderer = _renderer_for(payload.engine)
     items: list[TablePreviewRead] = []
 

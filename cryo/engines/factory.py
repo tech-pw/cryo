@@ -34,6 +34,11 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
 
         return SparkEMREngine(config=dict(config))
 
+    if engine_type is EngineType.NATIVE:
+        from cryo.engines.native.engine import NativeEngine
+
+        return NativeEngine(config=dict(config))
+
     raise ValueError(f"Unsupported engine type: {engine_type}")
 
 
