@@ -7,7 +7,6 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -75,7 +74,7 @@ def aggregate_query_patterns(
     logger.info(f"Aggregating patterns from {len(logs)} query logs")
 
     # Group by table and aggregate column stats
-    table_stats: dict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(lambda: defaultdict(ColumnPatternStats))
+    table_stats: defaultdict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(dict)
 
     for log in logs:
         if log.table_id is None:
@@ -185,19 +184,19 @@ def get_table_query_patterns(
 
     # Count total queries for this table
     total_queries = (
-        session.scalar(
-            select(func.count(QueryLog.id)).where(QueryLog.table_id == table_id)
-        )
-        or 0
+        session.scalar(select(func.count(QueryLog.id)).where(QueryLog.table_id == table_id)) or 0
     )
 
     # Count queries with multiple filter columns
-    multi_filter_count = session.scalar(
-        select(func.count(QueryLog.id)).where(
-            QueryLog.table_id == table_id,
-            func.jsonb_array_length(QueryLog.filter_columns) > 1,
+    multi_filter_count = (
+        session.scalar(
+            select(func.count(QueryLog.id)).where(
+                QueryLog.table_id == table_id,
+                func.jsonb_array_length(QueryLog.filter_columns) > 1,
+            )
         )
-    ) or 0
+        or 0
+    )
 
     multi_column_ratio = multi_filter_count / total_queries if total_queries > 0 else 0.0
 
@@ -265,7 +264,9 @@ def get_recommended_sort_columns(
         # Take top N filter columns
         columns = [
             col.column_name
-            for col in sorted(patterns.columns, key=lambda c: c.filter_count, reverse=True)[:max_columns]
+            for col in sorted(patterns.columns, key=lambda c: c.filter_count, reverse=True)[
+                :max_columns
+            ]
             if col.filter_count > patterns.total_queries * 0.05  # >5% of queries
         ]
         if len(columns) >= 2:
@@ -274,7 +275,9 @@ def get_recommended_sort_columns(
     # Default: linear sort on top filter columns
     columns = [
         col.column_name
-        for col in sorted(patterns.columns, key=lambda c: c.filter_count, reverse=True)[:max_columns]
+        for col in sorted(patterns.columns, key=lambda c: c.filter_count, reverse=True)[
+            :max_columns
+        ]
         if col.filter_count > 0
     ]
     return columns, "sort" if columns else "none"

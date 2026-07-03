@@ -41,11 +41,20 @@ _ALL_OPS = _EQUALITY_OPS | _RANGE_OPS | {"LIKE", "NOT LIKE", "IS", "IS NOT"}
 # Regex patterns
 _SELECT_PATTERN = re.compile(r"\bSELECT\s+(.+?)\s+FROM\b", re.IGNORECASE | re.DOTALL)
 _FROM_PATTERN = re.compile(r"\bFROM\s+([^\s,]+)", re.IGNORECASE)
-_JOIN_PATTERN = re.compile(r"\bJOIN\s+([^\s]+)\s+(?:AS\s+)?(\w+)?\s+ON\s+(.+?)(?=\s+(?:LEFT|RIGHT|INNER|OUTER|FULL|CROSS|JOIN|WHERE|GROUP|ORDER|LIMIT|$))", re.IGNORECASE | re.DOTALL)
-_WHERE_PATTERN = re.compile(r"\bWHERE\s+(.+?)(?=\s+(?:GROUP|ORDER|LIMIT|HAVING|$))", re.IGNORECASE | re.DOTALL)
-_COLUMN_PATTERN = re.compile(r"(\w+(?:\.\w+)?)\s*(=|<>|!=|<=|>=|<|>|LIKE|IN|BETWEEN|IS)\s*", re.IGNORECASE)
+_JOIN_PATTERN = re.compile(
+    r"\bJOIN\s+([^\s]+)\s+(?:AS\s+)?(\w+)?\s+ON\s+(.+?)(?=\s+(?:LEFT|RIGHT|INNER|OUTER|FULL|CROSS|JOIN|WHERE|GROUP|ORDER|LIMIT|$))",
+    re.IGNORECASE | re.DOTALL,
+)
+_WHERE_PATTERN = re.compile(
+    r"\bWHERE\s+(.+?)(?=\s+(?:GROUP|ORDER|LIMIT|HAVING|$))", re.IGNORECASE | re.DOTALL
+)
+_COLUMN_PATTERN = re.compile(
+    r"(\w+(?:\.\w+)?)\s*(=|<>|!=|<=|>=|<|>|LIKE|IN|BETWEEN|IS)\s*", re.IGNORECASE
+)
 _JOIN_ON_PATTERN = re.compile(r"(\w+(?:\.\w+)?)\s*=\s*(\w+(?:\.\w+)?)", re.IGNORECASE)
-_TABLE_REF_PATTERN = re.compile(r"(?:FROM|JOIN)\s+([\"']?[\w.]+[\"']?)(?:\s+(?:AS\s+)?(\w+))?", re.IGNORECASE)
+_TABLE_REF_PATTERN = re.compile(
+    r"(?:FROM|JOIN)\s+([\"']?[\w.]+[\"']?)(?:\s+(?:AS\s+)?(\w+))?", re.IGNORECASE
+)
 
 
 def parse_query_predicates(sql: str) -> PredicateInfo:

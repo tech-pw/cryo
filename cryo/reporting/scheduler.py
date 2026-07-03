@@ -68,6 +68,10 @@ class ReportScheduler:
 
     async def _send_daily_report(self, config: SlackConfig) -> None:
         """Generate and send the daily report."""
+        if config.webhook_url_encrypted is None:
+            logger.warning("Skipping Slack config '%s' without a webhook URL", config.name)
+            return
+
         session = SessionLocal()
         try:
             slack_client = SlackClient(

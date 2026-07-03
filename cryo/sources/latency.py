@@ -8,6 +8,7 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
+
 @dataclass(frozen=True)
 class LatencySample:
     operation: str

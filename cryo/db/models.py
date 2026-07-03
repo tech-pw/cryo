@@ -84,8 +84,12 @@ class AIProvider(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     provider_type: Mapped[str] = mapped_column(Text, nullable=False)  # anthropic, openai, etc.
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)  # encrypted API key
-    model: Mapped[str] = mapped_column(Text, nullable=False)  # claude-sonnet-4-20250514, gpt-4o, etc.
-    config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    model: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # claude-sonnet-4-20250514, gpt-4o, etc.
+    config: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
@@ -101,9 +105,15 @@ class SlackConfig(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     webhook_url_encrypted: Mapped[str | None] = mapped_column(Text)  # encrypted webhook URL
     channel: Mapped[str | None] = mapped_column(Text)  # override channel (optional)
-    daily_report_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    daily_report_cron: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'0 9 * * *'"))
-    daily_report_use_ai: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    daily_report_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    daily_report_cron: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'0 9 * * *'")
+    )
+    daily_report_use_ai: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
@@ -126,7 +136,9 @@ class ScannerConfig(TimestampMixin, Base):
     cost_full_scan_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
-    max_concurrent_runs: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    max_concurrent_runs: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
 
 
 class Table(Base):
@@ -298,10 +310,16 @@ class TablePartition(Base):
     partition_size_gb: Mapped[float | None] = mapped_column(Float)
     compaction_status: Mapped[str | None] = mapped_column(Text)
     # AutoComp-style benefit scoring (SIGMOD 2025)
-    query_frequency: Mapped[float | None] = mapped_column(Float)  # queries/day hitting this partition
-    compaction_benefit_score: Mapped[float | None] = mapped_column(Float)  # small_files × query_frequency
+    query_frequency: Mapped[float | None] = mapped_column(
+        Float
+    )  # queries/day hitting this partition
+    compaction_benefit_score: Mapped[float | None] = mapped_column(
+        Float
+    )  # small_files × query_frequency
     last_compacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    input_files_last_compaction: Mapped[int | None] = mapped_column(Integer)  # effectiveness ratio tracking
+    input_files_last_compaction: Mapped[int | None] = mapped_column(
+        Integer
+    )  # effectiveness ratio tracking
     output_files_last_compaction: Mapped[int | None] = mapped_column(Integer)
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
@@ -537,7 +555,9 @@ class QueryLog(Base):
     engine: Mapped[str] = mapped_column(Text, nullable=False)  # trino, spark, etc.
     query_text: Mapped[str | None] = mapped_column(Text)  # Full SQL (optional)
     query_type: Mapped[str | None] = mapped_column(Text)  # SELECT, INSERT, etc.
-    filter_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [{column, operator, cardinality}]
+    filter_columns: Mapped[JsonList | None] = mapped_column(
+        JSONB
+    )  # [{column, operator, cardinality}]
     join_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [column, ...]
     projection_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Selected columns
     executed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
@@ -567,8 +587,12 @@ class QueryPattern(Base):
     )
     column_name: Mapped[str] = mapped_column(Text, nullable=False)
     filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    equality_filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    range_filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    equality_filter_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    range_filter_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     join_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     projection_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     avg_selectivity: Mapped[float | None] = mapped_column(Float)  # Estimated % of rows matched
@@ -595,15 +619,27 @@ class LayoutRecommendation(TimestampMixin, Base):
     )
     current_sort_order: Mapped[JsonList | None] = mapped_column(JSONB)  # Current table sort order
     recommended_strategy: Mapped[str] = mapped_column(Text, nullable=False)  # none, sort, zorder
-    recommended_columns: Mapped[JsonList] = mapped_column(JSONB, nullable=False)  # Columns to sort/cluster by
-    estimated_prune_improvement: Mapped[float | None] = mapped_column(Float)  # Expected % improvement
-    current_prune_efficiency: Mapped[float | None] = mapped_column(Float)  # Current file pruning rate
-    analysis_query_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    recommended_columns: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False
+    )  # Columns to sort/cluster by
+    estimated_prune_improvement: Mapped[float | None] = mapped_column(
+        Float
+    )  # Expected % improvement
+    current_prune_efficiency: Mapped[float | None] = mapped_column(
+        Float
+    )  # Current file pruning rate
+    analysis_query_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.0"))
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))  # pending, applied, rejected
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )  # pending, applied, rejected
     applied_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     detail: Mapped[JsonDict | None] = mapped_column(JSONB)  # Additional analysis details
-    bloom_filter_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Bloom filter recommendations
+    bloom_filter_columns: Mapped[JsonList | None] = mapped_column(
+        JSONB
+    )  # Bloom filter recommendations
 
     table: Mapped[Table] = relationship()
 

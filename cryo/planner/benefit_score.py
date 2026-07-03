@@ -16,10 +16,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, QueryLog, Table, TablePartition, TableStats
+from cryo.db.models import AuditLog, QueryLog, Table, TablePartition
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +109,14 @@ def update_partition_benefit_scores(
             TablePartition.table_id == table_id,
         )
     )
-    
+
     if not latest_scan:
         return 0
-    
+
     # Then get partitions from that scan
     partitions = session.scalars(
-        select(TablePartition).where(
+        select(TablePartition)
+        .where(
             TablePartition.table_id == table_id,
             TablePartition.scan_at == latest_scan,
         )
@@ -153,9 +154,7 @@ def update_all_benefit_scores(session: Session) -> int:
     Called by the governor/scheduler on a regular cadence
     (e.g., every 4 hours) after query log ingestion.
     """
-    tables = session.scalars(
-        select(Table).where(Table.is_active.is_(True))
-    ).all()
+    tables = session.scalars(select(Table).where(Table.is_active.is_(True))).all()
 
     total = 0
     for table in tables:
@@ -266,7 +265,10 @@ def _effectiveness_recommendation(effectiveness: str, ratio: float) -> str:
             "Increase min_small_files threshold or cooldown period to avoid wasting compute."
         )
     if effectiveness == "fair":
-        return f"Ratio {ratio:.0f}:1 is acceptable but could be improved. Consider raising min_small_files."
+        return (
+            f"Ratio {ratio:.0f}:1 is acceptable but could be improved. "
+            "Consider raising min_small_files."
+        )
     if effectiveness == "good":
         return f"Ratio {ratio:.0f}:1 is good. Compaction is running efficiently."
     return f"Ratio {ratio:.0f}:1 is excellent. Compaction is highly effective."

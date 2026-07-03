@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from sqlalchemy import select
@@ -107,7 +107,7 @@ class TrinoQueryIngester:
                 if "data" in result:
                     columns = [c["name"] for c in result.get("columns", [])]
                     for row in result["data"]:
-                        queries.append(dict(zip(columns, row)))
+                        queries.append(dict(zip(columns, row, strict=False)))
 
                 if "nextUri" not in result:
                     break
@@ -133,7 +133,7 @@ class TrinoQueryIngester:
                     headers={"X-Trino-User": self.user},
                 )
                 if response.status_code == 200:
-                    return response.json()
+                    return cast(dict[str, Any], response.json())
             except Exception as e:
                 logger.warning(f"Failed to fetch query stats for {query_id}: {e}")
         return None
@@ -160,9 +160,7 @@ async def ingest_trino_query_log(
     """
     # Get existing query IDs to avoid duplicates
     existing_ids = set(
-        session.scalars(
-            select(QueryLog.query_id).where(QueryLog.source_id == source.id)
-        )
+        session.scalars(select(QueryLog.query_id).where(QueryLog.source_id == source.id))
     )
 
     # Fetch queries from Trino
@@ -244,7 +242,14 @@ async def ingest_trino_query_log(
                 k: v
                 for k, v in q.items()
                 if k
-                not in ("query", "query_id", "user_name", "executed_at", "physical_input_rows", "physical_input_bytes")
+                not in (
+                    "query",
+                    "query_id",
+                    "user_name",
+                    "executed_at",
+                    "physical_input_rows",
+                    "physical_input_bytes",
+                )
             },
         )
 
@@ -367,7 +372,7 @@ class SparkHistoryIngester:
         if since is None:
             since = datetime.now(UTC) - timedelta(hours=24)
 
-        events = []
+        events: list[dict[str, Any]] = []
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Get list of applications
             response = await client.get(f"{self.history_server_url}/api/v1/applications")
@@ -401,14 +406,16 @@ class SparkHistoryIngester:
                         else:
                             executed_at = datetime.now(UTC)
 
-                        events.append({
-                            "query_id": f"{app_id}-{execution_id}",
-                            "query": description,
-                            "engine": "spark",
-                            "executed_at": executed_at,
-                            "duration_ms": duration_ms,
-                            "raw": query,
-                        })
+                        events.append(
+                            {
+                                "query_id": f"{app_id}-{execution_id}",
+                                "query": description,
+                                "engine": "spark",
+                                "executed_at": executed_at,
+                                "duration_ms": duration_ms,
+                                "raw": query,
+                            }
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to fetch SQL from app {app_id}: {e}")
                     continue
@@ -449,7 +456,7 @@ class AthenaIngester:
         session = self.boto_session or boto3.Session()
         athena = session.client("athena")
 
-        events = []
+        events: list[dict[str, Any]] = []
         paginator = athena.get_paginator("list_query_executions")
 
         for page in paginator.paginate(PaginationConfig={"MaxItems": limit}):
@@ -479,18 +486,22 @@ class AthenaIngester:
 
                     duration_ms = None
                     if submission_time and completion_time:
-                        duration_ms = int((completion_time - submission_time).total_seconds() * 1000)
+                        duration_ms = int(
+                            (completion_time - submission_time).total_seconds() * 1000
+                        )
 
-                    events.append({
-                        "query_id": query_id,
-                        "query": query,
-                        "engine": "athena",
-                        "executed_at": submission_time or datetime.now(UTC),
-                        "duration_ms": duration_ms,
-                        "bytes_read": stats.get("DataScannedInBytes"),
-                        "user": execution.get("ResultConfiguration", {}).get("OutputLocation"),
-                        "raw": execution,
-                    })
+                    events.append(
+                        {
+                            "query_id": query_id,
+                            "query": query,
+                            "engine": "athena",
+                            "executed_at": submission_time or datetime.now(UTC),
+                            "duration_ms": duration_ms,
+                            "bytes_read": stats.get("DataScannedInBytes"),
+                            "user": execution.get("ResultConfiguration", {}).get("OutputLocation"),
+                            "raw": execution,
+                        }
+                    )
 
                 except Exception as e:
                     logger.warning(f"Failed to fetch Athena query {query_id}: {e}")
@@ -525,7 +536,7 @@ class DuckDBIngester:
         if since is None:
             since = datetime.now(UTC) - timedelta(hours=24)
 
-        events = []
+        events: list[dict[str, Any]] = []
         history_path = os.path.expanduser(self.history_file)
 
         if not os.path.exists(history_path):
@@ -542,13 +553,15 @@ class DuckDBIngester:
                 if not query or query.startswith("--"):
                     continue
 
-                events.append({
-                    "query_id": str(uuid.uuid4()),
-                    "query": query,
-                    "engine": "duckdb",
-                    "executed_at": datetime.now(UTC),  # No timestamp in history file
-                    "raw": {"query": query},
-                })
+                events.append(
+                    {
+                        "query_id": str(uuid.uuid4()),
+                        "query": query,
+                        "engine": "duckdb",
+                        "executed_at": datetime.now(UTC),  # No timestamp in history file
+                        "raw": {"query": query},
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Failed to read DuckDB history: {e}")

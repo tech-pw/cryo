@@ -203,11 +203,15 @@ class WorkerRunner(DaemonRunner):
             from cryo.worker.worker import Worker
 
             wiring = self._get_wiring()
+
+            def finalize_finished_runs() -> None:
+                finalize_open_runs(SessionLocal)
+
             self._worker = Worker(
                 queue=wiring.queue,
                 store=wiring.job_store,
                 lock_store=wiring.lock_store,
-                on_job_finished=lambda: finalize_open_runs(SessionLocal),
+                on_job_finished=finalize_finished_runs,
             )
             return self._worker
         except Exception as exc:

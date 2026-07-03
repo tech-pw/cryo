@@ -14,8 +14,9 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, ForeignKey, Text, select
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy import ForeignKey, Text, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.types import TIMESTAMP
 
@@ -39,15 +40,21 @@ class ApprovalRequest(TimestampMixin, Base):
     __tablename__ = "approval_requests"
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    table_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("tables.id"), nullable=False)
+    table_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tables.id"), nullable=False
+    )
     operation_type: Mapped[str] = mapped_column(Text, nullable=False)
     requested_by: Mapped[str] = mapped_column(Text, nullable=False)  # User who requested
     approved_by: Mapped[str | None] = mapped_column(Text)  # User who approved/rejected
     status: Mapped[str] = mapped_column(Text, nullable=False, default=ApprovalStatus.PENDING)
     request_reason: Mapped[str | None] = mapped_column(Text)  # Why this operation is needed
     approval_reason: Mapped[str | None] = mapped_column(Text)  # Why approved/rejected
-    impact_preview: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)  # Estimated impact
-    operation_params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)  # Operation parameters
+    impact_preview: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )  # Estimated impact
+    operation_params: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )  # Operation parameters
     approved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     executed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -73,17 +80,17 @@ def create_approval_request(
 ) -> ApprovalRequest:
     """
     Create a new approval request.
-    
+
     Args:
         session: Database session
         request_data: Approval request data
         auto_expire_hours: Hours until request expires (default: 72)
-    
+
     Returns:
         Created approval request
     """
     from datetime import timedelta
-    
+
     request = ApprovalRequest(
         table_id=request_data.table_id,
         operation_type=request_data.operation_type.value,
@@ -94,10 +101,10 @@ def create_approval_request(
         status=ApprovalStatus.PENDING,
         expires_at=datetime.now(UTC) + timedelta(hours=auto_expire_hours),
     )
-    
+
     session.add(request)
     session.commit()
-    
+
     return request
 
 
@@ -109,38 +116,38 @@ def approve_request(
 ) -> ApprovalRequest:
     """
     Approve an approval request.
-    
+
     Args:
         session: Database session
         request_id: Approval request ID
         approved_by: User who is approving
         approval_reason: Optional reason for approval
-    
+
     Returns:
         Updated approval request
-    
+
     Raises:
         ValueError: If request not found or already processed
     """
     request = session.get(ApprovalRequest, request_id)
     if not request:
         raise ValueError(f"Approval request {request_id} not found")
-    
+
     if request.status != ApprovalStatus.PENDING:
         raise ValueError(f"Request already {request.status}")
-    
+
     if request.expires_at and request.expires_at < datetime.now(UTC):
         request.status = ApprovalStatus.EXPIRED
         session.commit()
         raise ValueError("Request has expired")
-    
+
     request.status = ApprovalStatus.APPROVED
     request.approved_by = approved_by
     request.approved_at = datetime.now(UTC)
     request.approval_reason = approval_reason
-    
+
     session.commit()
-    
+
     return request
 
 
@@ -152,33 +159,33 @@ def reject_request(
 ) -> ApprovalRequest:
     """
     Reject an approval request.
-    
+
     Args:
         session: Database session
         request_id: Approval request ID
         rejected_by: User who is rejecting
         rejection_reason: Optional reason for rejection
-    
+
     Returns:
         Updated approval request
-    
+
     Raises:
         ValueError: If request not found or already processed
     """
     request = session.get(ApprovalRequest, request_id)
     if not request:
         raise ValueError(f"Approval request {request_id} not found")
-    
+
     if request.status != ApprovalStatus.PENDING:
         raise ValueError(f"Request already {request.status}")
-    
+
     request.status = ApprovalStatus.REJECTED
     request.approved_by = rejected_by
     request.approved_at = datetime.now(UTC)
     request.approval_reason = rejection_reason
-    
+
     session.commit()
-    
+
     return request
 
 
@@ -188,11 +195,11 @@ def get_pending_approvals(
 ) -> list[ApprovalRequest]:
     """
     Get all pending approval requests.
-    
+
     Args:
         session: Database session
         table_id: Optional table ID filter
-    
+
     Returns:
         List of pending approval requests
     """
@@ -200,12 +207,12 @@ def get_pending_approvals(
         ApprovalRequest.status == ApprovalStatus.PENDING,
         ApprovalRequest.expires_at > datetime.now(UTC),
     )
-    
+
     if table_id:
         stmt = stmt.where(ApprovalRequest.table_id == table_id)
-    
+
     stmt = stmt.order_by(ApprovalRequest.created_at.desc())
-    
+
     return list(session.execute(stmt).scalars().all())
 
 
@@ -216,27 +223,29 @@ def mark_as_executed(
 ) -> ApprovalRequest:
     """
     Mark an approval request as executed.
-    
+
     Args:
         session: Database session
         request_id: Approval request ID
         job_id: Job ID that executed the operation
-    
+
     Returns:
         Updated approval request
     """
     request = session.get(ApprovalRequest, request_id)
     if not request:
         raise ValueError(f"Approval request {request_id} not found")
-    
+
     if request.status != ApprovalStatus.APPROVED:
-        raise ValueError(f"Request must be approved before execution (current status: {request.status})")
-    
+        raise ValueError(
+            f"Request must be approved before execution (current status: {request.status})"
+        )
+
     request.executed_at = datetime.now(UTC)
     request.execution_job_id = job_id
-    
+
     session.commit()
-    
+
     return request
 
 
@@ -246,11 +255,11 @@ def requires_approval(
 ) -> bool:
     """
     Check if an operation type requires approval.
-    
+
     Args:
         operation_type: Operation type to check
         config_require_approval: Configuration dict with operation types requiring approval
-    
+
     Returns:
         True if approval is required
     """
@@ -260,7 +269,7 @@ def requires_approval(
             OperationType.EXPIRE_SNAPSHOTS: True,
             OperationType.REMOVE_ORPHAN_FILES: True,
         }
-    
+
     return config_require_approval.get(operation_type.value, False)
 
 
@@ -272,56 +281,62 @@ def estimate_impact(
 ) -> dict[str, Any]:
     """
     Estimate the impact of a destructive operation.
-    
+
     Args:
         session: Database session
         table_id: Table ID
         operation_type: Operation type
         operation_params: Operation parameters
-    
+
     Returns:
         Impact preview dictionary
     """
+    from cryo.db.model_utils import qualified_table_name
     from cryo.db.models import Table, TableStats
-    
+
     table = session.get(Table, table_id)
     if not table:
         return {"error": "Table not found"}
-    
+
     stats = session.get(TableStats, table_id)
     if not stats:
         return {"error": "No stats available"}
-    
-    table_name = f"{table.catalog}.{table.schema_name}.{table.table_name}"
-    
+
+    table_name = qualified_table_name(table)
+
     if operation_type == OperationType.EXPIRE_SNAPSHOTS:
         retention_days = operation_params.get("retention_days", 7)
-        snapshot_count = stats.snapshot_count or 0
-        
+        snapshot_count = stats.total_snapshots or 0
+
         # Estimate snapshots to be deleted (rough estimate)
         snapshots_to_delete = max(0, snapshot_count - retention_days)
-        
+
         return {
             "operation": "Expire Snapshots",
             "table_name": table_name,
             "current_snapshots": snapshot_count,
             "retention_days": retention_days,
             "estimated_snapshots_to_delete": snapshots_to_delete,
-            "estimated_data_freed_gb": stats.total_size_gb * 0.2 if snapshots_to_delete > 0 else 0,  # Rough estimate
+            "estimated_data_freed_gb": stats.total_size_gb * 0.2
+            if snapshots_to_delete > 0
+            else 0,  # Rough estimate
             "warning": "This operation is irreversible. Old snapshots will be permanently deleted.",
         }
-    
+
     elif operation_type == OperationType.REMOVE_ORPHAN_FILES:
         orphan_retention_days = operation_params.get("retention_days", 7)
-        
+
         return {
             "operation": "Remove Orphan Files",
             "table_name": table_name,
             "orphan_retention_days": orphan_retention_days,
             "estimated_orphan_files": "Unknown (requires scan)",
-            "warning": "This operation permanently deletes files not referenced by any snapshot or manifest.",
+            "warning": (
+                "This operation permanently deletes files not referenced by any "
+                "snapshot or manifest."
+            ),
         }
-    
+
     return {
         "operation": operation_type.value,
         "table_name": table_name,

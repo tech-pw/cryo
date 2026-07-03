@@ -201,10 +201,15 @@ class AzureOpenAIClient(LLMClient):
         # Handle both direct Azure OpenAI and APIM load-balanced endpoints
         if "/openai" in base:
             # APIM style: base already includes /openai or /openai-load-balancing
-            return f"{base}/deployments/{self.model}/chat/completions?api-version={self.api_version}"
+            return (
+                f"{base}/deployments/{self.model}/chat/completions?api-version={self.api_version}"
+            )
         else:
             # Direct Azure OpenAI style
-            return f"{base}/openai/deployments/{self.model}/chat/completions?api-version={self.api_version}"
+            return (
+                f"{base}/openai/deployments/{self.model}/chat/completions"
+                f"?api-version={self.api_version}"
+            )
 
     async def complete(
         self,

@@ -7,9 +7,9 @@ and cost anomalies.
 
 from cryo.triggers.evaluator import TriggerEvaluator, TriggerResult, TriggerType
 from cryo.triggers.signals import (
+    CostAnomalySignal,
     FileDegradationSignal,
     QueryLatencySignal,
-    CostAnomalySignal,
     check_all_signals,
 )
 

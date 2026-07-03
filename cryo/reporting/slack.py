@@ -39,7 +39,9 @@ def header_block(text: str) -> SlackBlock:
 
 
 def section_block(text: str, markdown: bool = True) -> SlackBlock:
-    return SlackBlock(type="section", text={"type": "mrkdwn" if markdown else "plain_text", "text": text})
+    return SlackBlock(
+        type="section", text={"type": "mrkdwn" if markdown else "plain_text", "text": text}
+    )
 
 
 def fields_block(fields: list[tuple[str, str]]) -> SlackBlock:
@@ -106,6 +108,8 @@ class SlackClient:
             logger.exception(f"Failed to send Slack message: {e}")
             return False
 
-    async def send_blocks(self, blocks: list[SlackBlock], fallback_text: str = "Cryo Report") -> bool:
+    async def send_blocks(
+        self, blocks: list[SlackBlock], fallback_text: str = "Cryo Report"
+    ) -> bool:
         """Convenience method to send a block-based message."""
         return await self.send_message(fallback_text, blocks)

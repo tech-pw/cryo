@@ -10,12 +10,12 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, QueryLog, TablePartition, TableStats, TableStatsHistory
+from cryo.db.models import QueryLog, TableStats, TableStatsHistory
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,10 @@ class SignalResult:
     threshold: float | None = None
 
 
+class MaintenanceSignal(Protocol):
+    def evaluate(self, session: Session, table_id: uuid.UUID) -> SignalResult: ...
+
+
 @dataclass
 class FileDegradationSignal:
     """Triggers when the small-file ratio crosses a threshold.
@@ -45,7 +49,9 @@ class FileDegradationSignal:
     def evaluate(self, session: Session, table_id: uuid.UUID) -> SignalResult:
         stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
         if stats is None:
-            return SignalResult(triggered=False, signal_name="file_degradation", reason="No stats available")
+            return SignalResult(
+                triggered=False, signal_name="file_degradation", reason="No stats available"
+            )
 
         total = stats.total_files or 0
         small = stats.small_files_count or 0
@@ -92,36 +98,45 @@ class QueryLatencySignal:
         baseline_start = now - timedelta(hours=self.baseline_window_hours)
 
         # Recent average duration
-        recent = session.execute(
-            select(
-                func.avg(QueryLog.duration_ms).label("avg_ms"),
-                func.count(QueryLog.id).label("count"),
-            ).where(
-                QueryLog.table_id == table_id,
-                QueryLog.executed_at >= recent_start,
-                QueryLog.duration_ms.isnot(None),
+        recent = (
+            session.execute(
+                select(
+                    func.avg(QueryLog.duration_ms).label("avg_ms"),
+                    func.count(QueryLog.id).label("count"),
+                ).where(
+                    QueryLog.table_id == table_id,
+                    QueryLog.executed_at >= recent_start,
+                    QueryLog.duration_ms.isnot(None),
+                )
             )
-        ).one()
+            .mappings()
+            .one()
+        )
 
-        if (recent.count or 0) < self.min_recent_queries:
+        recent_count = int(recent["count"] or 0)
+        if recent_count < self.min_recent_queries:
             return SignalResult(
                 triggered=False,
                 signal_name="query_latency",
-                reason=f"Not enough recent queries ({recent.count or 0} < {self.min_recent_queries})",
+                reason=f"Not enough recent queries ({recent_count} < {self.min_recent_queries})",
             )
 
         # Baseline average duration (prior period, not including recent)
-        baseline = session.execute(
-            select(func.avg(QueryLog.duration_ms).label("avg_ms")).where(
-                QueryLog.table_id == table_id,
-                QueryLog.executed_at >= baseline_start,
-                QueryLog.executed_at < recent_start,
-                QueryLog.duration_ms.isnot(None),
+        baseline = (
+            session.execute(
+                select(func.avg(QueryLog.duration_ms).label("avg_ms")).where(
+                    QueryLog.table_id == table_id,
+                    QueryLog.executed_at >= baseline_start,
+                    QueryLog.executed_at < recent_start,
+                    QueryLog.duration_ms.isnot(None),
+                )
             )
-        ).one()
+            .mappings()
+            .one()
+        )
 
-        recent_avg = recent.avg_ms or 0
-        baseline_avg = baseline.avg_ms or 0
+        recent_avg = float(recent["avg_ms"] or 0)
+        baseline_avg = float(baseline["avg_ms"] or 0)
 
         if baseline_avg <= 0:
             return SignalResult(
@@ -193,7 +208,9 @@ class CostAnomalySignal:
             grade_map = {"A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
             old_grade_val = grade_map.get(old_stats.grade, 0)
             # Get current grade from TableStats
-            current_stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
+            current_stats = session.scalar(
+                select(TableStats).where(TableStats.table_id == table_id)
+            )
             if current_stats and current_stats.grade:
                 curr_grade_val = grade_map.get(current_stats.grade, 0)
                 # Degraded by 2+ grades (e.g., A → C or B → D)
@@ -232,7 +249,7 @@ def check_all_signals(
     """
     config = config or {}
 
-    signals = [
+    signals: list[MaintenanceSignal] = [
         FileDegradationSignal(
             threshold_ratio=config.get("file_degradation_threshold", 0.40),
             min_total_files=config.get("min_total_files", 20),

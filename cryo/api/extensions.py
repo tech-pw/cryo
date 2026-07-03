@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -24,12 +24,9 @@ from cryo.db.models import (
     AuditLog,
     LayoutRecommendation,
     ProtectedSnapshot,
-    QueryLog,
-    QueryPattern,
     SlackConfig,
     Source,
     Table,
-    TablePartition,
     TableStats,
     TableStatsHistory,
 )
@@ -284,9 +281,7 @@ async def copilot_natural_language(
         )
     )
     if provider is None:
-        provider = session.scalar(
-            select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1)
-        )
+        provider = session.scalar(select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1))
     if provider is None:
         raise HTTPException(
             status_code=400,
@@ -320,10 +315,7 @@ async def copilot_natural_language(
 def _gather_copilot_context(session: Session) -> dict[str, Any]:
     """Gather datalake context for LLM."""
     # Get summary stats
-    total_tables = session.scalar(select(Table).where(Table.is_active.is_(True)).limit(1))
-    tables_count = session.execute(
-        select(Table.id).where(Table.is_active.is_(True))
-    ).fetchall()
+    tables_count = session.execute(select(Table.id).where(Table.is_active.is_(True))).fetchall()
 
     # Get unhealthy tables
     unhealthy = session.execute(
@@ -346,12 +338,10 @@ def _gather_copilot_context(session: Session) -> dict[str, Any]:
     return {
         "total_tables": len(tables_count),
         "unhealthy_tables": [
-            {"table": f"{r[0]}.{r[1]}", "grade": r[2], "score": r[3]}
-            for r in unhealthy
+            {"table": f"{r[0]}.{r[1]}", "grade": r[2], "score": r[3]} for r in unhealthy
         ],
         "compaction_backlog": [
-            {"table": f"{r[0]}.{r[1]}", "small_files": r[2]}
-            for r in compaction
+            {"table": f"{r[0]}.{r[1]}", "small_files": r[2]} for r in compaction
         ],
     }
 
@@ -467,9 +457,9 @@ def get_catalog_latency(source_id: uuid.UUID, session: SessionDep) -> CatalogLat
     dependencies=[Depends(require_viewer)],
     tags=["ai"],
 )
-def list_provider_types() -> list[dict]:
+def list_provider_types() -> list[dict[str, Any]]:
     """List supported AI provider types with their available models."""
-    return SUPPORTED_PROVIDERS
+    return cast(list[dict[str, Any]], SUPPORTED_PROVIDERS)
 
 
 @router.get(
@@ -508,7 +498,8 @@ def list_ai_providers(session: SessionDep) -> list[AIProviderRead]:
 def create_ai_provider(payload: AIProviderCreate, session: SessionDep) -> AIProviderRead:
     """Create a new AI provider configuration."""
     # Validate provider type
-    valid_types = [p["type"] for p in SUPPORTED_PROVIDERS]
+    provider_types = cast(list[dict[str, Any]], SUPPORTED_PROVIDERS)
+    valid_types = [p["type"] for p in provider_types]
     if payload.provider_type not in valid_types:
         raise HTTPException(
             status_code=400,
@@ -517,9 +508,7 @@ def create_ai_provider(payload: AIProviderCreate, session: SessionDep) -> AIProv
 
     # If this is set as default, unset other defaults
     if payload.is_default:
-        session.execute(
-            select(AIProvider).where(AIProvider.is_default.is_(True))
-        )
+        session.execute(select(AIProvider).where(AIProvider.is_default.is_(True)))
         for existing in session.scalars(select(AIProvider).where(AIProvider.is_default.is_(True))):
             existing.is_default = False
 
@@ -701,9 +690,7 @@ async def ai_chat(payload: AIChatRequest, session: SessionDep) -> AIChatResponse
     )
     if provider is None:
         # Fall back to any enabled provider
-        provider = session.scalar(
-            select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1)
-        )
+        provider = session.scalar(select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1))
     if provider is None:
         raise HTTPException(
             status_code=400,
@@ -807,7 +794,9 @@ def create_slack_config(payload: SlackConfigCreate, session: SessionDep) -> Slac
     """Create a new Slack configuration."""
     # If this is set as default, unset other defaults
     if payload.is_default:
-        for existing in session.scalars(select(SlackConfig).where(SlackConfig.is_default.is_(True))):
+        for existing in session.scalars(
+            select(SlackConfig).where(SlackConfig.is_default.is_(True))
+        ):
             existing.is_default = False
 
     config = SlackConfig(
@@ -958,7 +947,10 @@ async def test_slack_config(config_id: uuid.UUID, session: SessionDep) -> JsonDi
     client = SlackClient(config.webhook_url_encrypted, config.channel)
     blocks = [
         header_block("🧊 Cryo Test Message"),
-        section_block("This is a test message from Cryo to verify your Slack integration is working correctly."),
+        section_block(
+            "This is a test message from Cryo to verify your Slack integration "
+            "is working correctly."
+        ),
     ]
 
     success = await client.send_blocks(blocks, fallback_text="Cryo Test Message")
@@ -1201,7 +1193,7 @@ class LayoutRecommendationRead(BaseModel):
 
 
 class ClusteringPlanRequest(BaseModel):
-    strategy: str = "sort"  # sort, zorder, binpack
+    strategy: Literal["sort", "zorder", "binpack"] = "sort"
     columns: list[str] | None = None
     partition_filter: str | None = None
     target_file_size_mb: int = 256
@@ -1235,7 +1227,9 @@ class TelemetryIngestResponse(BaseModel):
     dependencies=[Depends(require_viewer)],
     tags=["optimization"],
 )
-def get_table_query_patterns_api(table_id: uuid.UUID, session: SessionDep) -> TableQueryPatternsResponse:
+def get_table_query_patterns_api(
+    table_id: uuid.UUID, session: SessionDep
+) -> TableQueryPatternsResponse:
     """Get aggregated query patterns for a table."""
     from cryo.telemetry.patterns import get_table_query_patterns
 
@@ -1329,7 +1323,9 @@ def create_clustering_plan(
             select(LayoutRecommendation).where(LayoutRecommendation.table_id == table_id)
         )
         if recommendation and recommendation.recommended_columns:
-            columns = [c.get("column", "") for c in recommendation.recommended_columns if c.get("column")]
+            columns = [
+                c.get("column", "") for c in recommendation.recommended_columns if c.get("column")
+            ]
 
     if not columns and payload.strategy != "binpack":
         raise HTTPException(
@@ -1381,7 +1377,9 @@ async def ingest_query_telemetry(
     from cryo.db.models import Destination
 
     trino_dest = session.scalar(
-        select(Destination).where(Destination.engine == "trino", Destination.enabled.is_(True)).limit(1)
+        select(Destination)
+        .where(Destination.engine == "trino", Destination.enabled.is_(True))
+        .limit(1)
     )
     if trino_dest is None:
         raise HTTPException(
@@ -1426,7 +1424,9 @@ def list_layout_recommendations(
     query = select(LayoutRecommendation).where(LayoutRecommendation.confidence >= min_confidence)
     if status:
         query = query.where(LayoutRecommendation.status == status)
-    query = query.order_by(LayoutRecommendation.estimated_prune_improvement.desc().nulls_last()).limit(limit)
+    query = query.order_by(
+        LayoutRecommendation.estimated_prune_improvement.desc().nulls_last()
+    ).limit(limit)
 
     recommendations = session.scalars(query).all()
 
@@ -1529,9 +1529,9 @@ def get_table_benefit_scores(
 ) -> BenefitScoreResponse:
     """Get AutoComp benefit scores for table partitions."""
     from cryo.planner.benefit_score import get_top_compaction_candidates
-    
+
     candidates = get_top_compaction_candidates(session, table_id, min_score=0.1, limit=top_n)
-    
+
     return BenefitScoreResponse(
         table_id=table_id,
         partitions_scored=len(candidates),
@@ -1559,11 +1559,14 @@ def update_table_benefit_scores(
     session: SessionDep,
 ) -> BenefitScoreResponse:
     """Trigger immediate benefit score update for a table."""
-    from cryo.planner.benefit_score import update_partition_benefit_scores, get_top_compaction_candidates
-    
+    from cryo.planner.benefit_score import (
+        get_top_compaction_candidates,
+        update_partition_benefit_scores,
+    )
+
     updated = update_partition_benefit_scores(session, table_id)
     candidates = get_top_compaction_candidates(session, table_id, min_score=0.1, limit=10)
-    
+
     return BenefitScoreResponse(
         table_id=table_id,
         partitions_scored=updated,
@@ -1593,9 +1596,9 @@ def get_effectiveness_stats(
 ) -> EffectivenessStatsResponse:
     """Get compaction effectiveness ratio for a table."""
     from cryo.planner.benefit_score import get_compaction_effectiveness_stats
-    
+
     stats = get_compaction_effectiveness_stats(session, table_id, lookback_days)
-    
+
     return EffectivenessStatsResponse(
         table_id=table_id,
         total_input_files=stats["total_input_files"],
@@ -1638,10 +1641,10 @@ def check_table_signals(
     session: SessionDep,
 ) -> TableSignalsResponse:
     """Check all maintenance trigger signals for a table."""
-    from cryo.triggers.signals import check_all_signals, any_signal_triggered
-    
+    from cryo.triggers.signals import any_signal_triggered, check_all_signals
+
     results = check_all_signals(session, table_id)
-    
+
     return TableSignalsResponse(
         table_id=table_id,
         checked_at=datetime.now(UTC),

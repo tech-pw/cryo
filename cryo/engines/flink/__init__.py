@@ -7,7 +7,7 @@ operators — eliminating the need for a separate Spark cluster.
 Reference: https://iceberg.apache.org/docs/latest/flink-maintenance/
 """
 
-from cryo.engines.flink.engine import FlinkEngine
 from cryo.engines.flink.config import FlinkMaintenanceConfig
+from cryo.engines.flink.engine import FlinkEngine
 
 __all__ = ["FlinkEngine", "FlinkMaintenanceConfig"]

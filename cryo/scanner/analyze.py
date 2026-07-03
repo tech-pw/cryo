@@ -316,7 +316,7 @@ def iter_data_files(
     max_workers: int = 8,
 ) -> Iterable[object]:
     """Iterate over data files from a table's manifests.
-    
+
     When parallel=True (default), manifest entries are fetched concurrently
     using a thread pool. This significantly speeds up scanning for tables
     with many manifests by overlapping I/O-bound S3/catalog calls.
@@ -331,7 +331,7 @@ def iter_data_files(
 
     manifest_list = list(manifests) if manifests is not None else _manifests(table_obj)
     io = _attr(table_obj, "io", None)
-    
+
     if not parallel or len(manifest_list) <= 1:
         for manifest in manifest_list:
             yield from _iter_manifest_data_files(manifest, io)
