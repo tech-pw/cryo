@@ -30,6 +30,9 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+cryo = "cryo.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["cryo*"]
 

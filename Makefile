@@ -31,13 +31,16 @@ scan:
 	$(PYTHON) -m cryo.scanner.run
 
 worker:
-	$(PYTHON) -m cryo.worker.worker
+	$(PYTHON) -m cryo.cli worker
 
 governor:
-	$(PYTHON) -m cryo.governor.governor
+	$(PYTHON) -m cryo.cli governor
 
 scheduler:
-	$(PYTHON) -m cryo.scheduler.scheduler
+	$(PYTHON) -m cryo.cli scheduler
+
+serve:
+	$(PYTHON) -m cryo.cli serve
 
 up:
 	docker compose up -d
