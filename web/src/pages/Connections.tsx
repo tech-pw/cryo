@@ -46,9 +46,11 @@ import {
   type SlackConfigWrite
 } from "../api/client";
 import type { DestinationRead, DestinationWrite, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
+import { CronInput } from "../components/CronInput";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { cronFormValidator } from "../lib/cron";
 
 export const Connections = () => {
   const { api, token } = useAuth();
@@ -1468,15 +1470,6 @@ interface SlackFormValues {
   is_default: boolean;
 }
 
-const CRON_PRESETS = [
-  { label: "Daily at 9 AM", value: "0 9 * * *" },
-  { label: "Daily at 8 AM", value: "0 8 * * *" },
-  { label: "Daily at 10 AM", value: "0 10 * * *" },
-  { label: "Weekdays at 9 AM", value: "0 9 * * 1-5" },
-  { label: "Every 6 hours", value: "0 */6 * * *" },
-  { label: "Every 12 hours", value: "0 */12 * * *" },
-];
-
 const SlackDrawer = ({
   value,
   saving,
@@ -1573,6 +1566,7 @@ const SlackDrawer = ({
 
         <Form.Item
           name="daily_report_cron"
+          rules={[{ validator: cronFormValidator() }]}
           label={
             <HintLabel
               label="Report schedule"
@@ -1580,7 +1574,7 @@ const SlackDrawer = ({
             />
           }
         >
-          <Select options={CRON_PRESETS} />
+          <CronInput placeholder="0 9 * * *" />
         </Form.Item>
 
         <Form.Item

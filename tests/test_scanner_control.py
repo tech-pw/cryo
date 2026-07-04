@@ -13,6 +13,21 @@ def test_validate_cron_expression_rejects_invalid_ranges() -> None:
         validate_cron_expression("0 2", raise_error=True)
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "0 2 * * *; DROP TABLE cryo.tables",
+        "0 2 * * *\n* * * * *",
+        "0 2 * * *\x00",
+        "0 */0 * * *",
+        "0 */ * * *",
+        "0 2 * * *" + (" " * 101),
+    ],
+)
+def test_validate_cron_expression_rejects_malicious_or_unsafe_input(expression: str) -> None:
+    assert not validate_cron_expression(expression)
+
+
 def test_scan_queue_enqueue_chunks_adds_chunk_metadata() -> None:
     queue = InMemoryScanQueue()
 

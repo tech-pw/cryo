@@ -76,6 +76,7 @@ from cryo.api.schemas import (
 )
 from cryo.api.security import Role, principal_from_token
 from cryo.api.serializers import table_to_read
+from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
     Destination,
@@ -405,6 +406,10 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
         raise HTTPException(status_code=400, detail="Destination does not exist")
     values = payload.model_dump()
     values["mode"] = payload.mode.value
+    try:
+        values["schedule_cron"] = validate_cron_field(values.get("schedule_cron"), required=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     preset = Preset(**values)
     session.add(preset)
     session.commit()
@@ -424,6 +429,14 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
     values = payload.model_dump(exclude_unset=True)
     if payload.mode is not None:
         values["mode"] = payload.mode.value
+    if "schedule_cron" in values:
+        try:
+            values["schedule_cron"] = validate_cron_field(
+                values.get("schedule_cron"),
+                required=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     destination_id = values.get("destination_id")
     if destination_id is not None and session.get(Destination, destination_id) is None:
         raise HTTPException(status_code=400, detail="Destination does not exist")
@@ -915,7 +928,13 @@ def patch_scanner_config(
     session: SessionDep,
 ) -> ScannerConfigRead:
     try:
-        config = scanner_repo.update_scanner_config(session, payload.model_dump(exclude_unset=True))
+        values = payload.model_dump(exclude_unset=True)
+        if "schedule_cron" in values:
+            values["schedule_cron"] = validate_cron_field(
+                values.get("schedule_cron"),
+                required=True,
+            )
+        config = scanner_repo.update_scanner_config(session, values)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ScannerConfigRead.model_validate(config)

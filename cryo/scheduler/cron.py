@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+MAX_CRON_EXPRESSION_LENGTH = 100
+_ALLOWED_CRON_CHARS = frozenset("0123456789*/-, ")
+
 
 def cron_is_due(
     expression: str | None,
@@ -21,7 +24,7 @@ def cron_is_due(
     if not validate_cron_expression(expression):
         return False
 
-    fields = expression.strip().split()
+    fields = normalize_cron_expression(expression).split()
     minute, hour, dom, month, dow = fields
     if not _field_matches(minute, current.minute, 0, 59):
         return False
@@ -58,7 +61,16 @@ def validate_cron_expression(expression: str | None, *, raise_error: bool = Fals
     if not expression:
         return _cron_invalid("Cron expression is required", raise_error=raise_error)
 
-    fields = expression.strip().split()
+    if len(expression) > MAX_CRON_EXPRESSION_LENGTH:
+        return _cron_invalid("Cron expression is too long", raise_error=raise_error)
+
+    if any(char not in _ALLOWED_CRON_CHARS for char in expression):
+        return _cron_invalid(
+            "Cron expression contains unsupported characters",
+            raise_error=raise_error,
+        )
+
+    fields = normalize_cron_expression(expression).split()
     if len(fields) != 5:
         return _cron_invalid("Cron expression must have five fields", raise_error=raise_error)
 
@@ -69,6 +81,11 @@ def validate_cron_expression(expression: str | None, *, raise_error: bool = Fals
     except ValueError as exc:
         return _cron_invalid(str(exc), raise_error=raise_error)
     return True
+
+
+def normalize_cron_expression(expression: str) -> str:
+    """Trim and collapse spaces in a cron expression."""
+    return " ".join(expression.strip().split())
 
 
 def _field_matches(field: str, value: int, minimum: int, maximum: int) -> bool:
@@ -89,16 +106,23 @@ def _validate_field(field: str, minimum: int, maximum: int) -> None:
     if field == "*":
         return
     if "," in field:
+        if "" in field.split(","):
+            raise ValueError("Cron lists cannot contain empty values")
         for part in field.split(","):
             _validate_field(part, minimum, maximum)
         return
     if field.startswith("*/"):
-        step = int(field[2:])
+        step_text = field[2:]
+        if not step_text.isdigit():
+            raise ValueError("Cron step values must be integers")
+        step = int(step_text)
         if step <= 0:
             raise ValueError("Cron step values must be positive")
         return
     if "-" in field and not field.startswith("-"):
         start, end = field.split("-", 1)
+        if not start.isdigit() or not end.isdigit():
+            raise ValueError("Cron ranges must use integer values")
         start_int = int(start)
         end_int = int(end)
         if start_int > end_int:
@@ -107,6 +131,8 @@ def _validate_field(field: str, minimum: int, maximum: int) -> None:
             raise ValueError("Cron range is outside the supported bounds")
         return
 
+    if not field.isdigit():
+        raise ValueError("Cron values must be integers")
     value = int(field)
     if value < minimum or value > maximum:
         raise ValueError("Cron value is outside the supported bounds")

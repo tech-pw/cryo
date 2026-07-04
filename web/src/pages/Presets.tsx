@@ -26,12 +26,14 @@ import {
   simulatePreset
 } from "../api/client";
 import type { PresetRead, PresetWrite, UUID } from "../api/types";
+import { CronInput } from "../components/CronInput";
 import { EmptyState, PageHeader } from "../components/common";
+import { FilterBar } from "../components/FilterBar";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { cronFormValidator } from "../lib/cron";
 import { formatGb, formatNumber } from "../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
-import { FilterBar } from "../components/FilterBar";
 
 const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
 type SimulationSample = NonNullable<Awaited<ReturnType<typeof simulatePreset>>["sample"]>[number];
@@ -208,8 +210,8 @@ const PresetDrawer = ({
         <Form.Item name="operations" label="Operations">
           <Checkbox.Group options={operations} />
         </Form.Item>
-        <Form.Item name="schedule_cron" label="Schedule cron">
-          <Input placeholder="0 2 * * *" />
+        <Form.Item name="schedule_cron" label="Schedule cron" rules={[{ validator: cronFormValidator({ allowEmpty: true }) }]}>
+          <CronInput allowEmpty />
         </Form.Item>
         <Form.Item name="params" label="Params JSON">
           <Input.TextArea rows={6} className="mono-input" />

@@ -17,6 +17,7 @@ from cryo.api.deps import require_admin, require_operator, require_viewer
 from cryo.api.preview_cost import savings_projection_from_stats, savings_projection_to_dict
 from cryo.api.schemas import JsonDict
 from cryo.api.serializers import table_to_read
+from cryo.api.validators import validate_cron_field
 from cryo.compliance.governance import track_pending_deletions
 from cryo.config import get_settings
 from cryo.db.models import (
@@ -792,6 +793,11 @@ def list_slack_configs(session: SessionDep) -> list[SlackConfigRead]:
 )
 def create_slack_config(payload: SlackConfigCreate, session: SessionDep) -> SlackConfigRead:
     """Create a new Slack configuration."""
+    try:
+        daily_report_cron = validate_cron_field(payload.daily_report_cron, required=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # If this is set as default, unset other defaults
     if payload.is_default:
         for existing in session.scalars(
@@ -804,7 +810,7 @@ def create_slack_config(payload: SlackConfigCreate, session: SessionDep) -> Slac
         webhook_url_encrypted=payload.webhook_url,  # TODO: encrypt in production
         channel=payload.channel,
         daily_report_enabled=payload.daily_report_enabled,
-        daily_report_cron=payload.daily_report_cron,
+        daily_report_cron=daily_report_cron,
         daily_report_use_ai=payload.daily_report_use_ai,
         enabled=payload.enabled,
         is_default=payload.is_default,
@@ -879,7 +885,13 @@ def update_slack_config(
     if payload.daily_report_enabled is not None:
         config.daily_report_enabled = payload.daily_report_enabled
     if payload.daily_report_cron is not None:
-        config.daily_report_cron = payload.daily_report_cron
+        try:
+            config.daily_report_cron = validate_cron_field(
+                payload.daily_report_cron,
+                required=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if payload.daily_report_use_ai is not None:
         config.daily_report_use_ai = payload.daily_report_use_ai
     if payload.enabled is not None:

@@ -479,7 +479,6 @@ class ScannerConfigRead(OrmModel):
 class ScannerConfigUpdate(BaseModel):
     enabled: bool | None = None
     schedule_cron: str | None = None
-    timezone: str | None = None
     num_chunks: int | None = Field(default=None, ge=1)
     full_scan_default: bool | None = None
     cost_full_scan_default: bool | None = None
