@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Switch, Table, Typography, message } from "antd";
+import { Button, Card, Col, Form, InputNumber, Row, Space, Switch, Table, Typography, message } from "antd";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getScannerConfig,
@@ -9,22 +9,16 @@ import {
   triggerScan
 } from "../api/client";
 import type { RunRead, ScannerConfigUpdate } from "../api/types";
+import { CronInput } from "../components/CronInput";
 import { EmptyState, PageHeader, StatStrip } from "../components/common";
 import { ScanConsole } from "../components/ScanConsole";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { cronFormValidator } from "../lib/cron";
 import { formatNumber, formatTime } from "../lib/format";
 import { useEffect } from "react";
 
 const ACTIVE_STATUSES = new Set(["accepted", "queued", "running"]);
-
-const CRON_PRESETS = [
-  { label: "Daily at 2 AM", value: "0 2 * * *" },
-  { label: "Daily at 9 AM", value: "0 9 * * *" },
-  { label: "Every 6 hours", value: "0 */6 * * *" },
-  { label: "Every 12 hours", value: "0 */12 * * *" },
-  { label: "Weekdays at 2 AM", value: "0 2 * * 1-5" }
-];
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
 
@@ -36,14 +30,6 @@ const summaryNumber = (run: RunRead, key: string): number => {
 const targetLabel = (run: RunRead): string => {
   const value = run.summary?.target_label;
   return typeof value === "string" ? value : "Scan run";
-};
-
-const validateCron = (_: unknown, value?: string) => {
-  if (!value) return Promise.reject(new Error("Cron expression is required"));
-  if (value.trim().split(/\s+/).length !== 5) {
-    return Promise.reject(new Error("Use five-field cron syntax"));
-  }
-  return Promise.resolve();
 };
 
 export const Scans = () => {
@@ -136,12 +122,10 @@ export const Scans = () => {
               <Form.Item name="enabled" label="Enable scheduled scans" valuePropName="checked">
                 <Switch />
               </Form.Item>
-              <Form.Item name="schedule_cron" label="Cron schedule" rules={[{ validator: validateCron }]}>
-                <Select options={CRON_PRESETS} showSearch />
+              <Form.Item name="schedule_cron" label="Cron schedule" rules={[{ validator: cronFormValidator() }]}>
+                <CronInput />
               </Form.Item>
-              <Form.Item name="timezone" label="Timezone">
-                <Input placeholder="UTC" />
-              </Form.Item>
+              <Typography.Paragraph type="secondary">Timezone: UTC</Typography.Paragraph>
               <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
                 <InputNumber min={1} max={128} style={{ width: "100%" }} />
               </Form.Item>

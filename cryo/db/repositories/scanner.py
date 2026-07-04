@@ -47,7 +47,6 @@ def update_scanner_config(session: Session, values: dict[str, Any]) -> ScannerCo
     allowed = {
         "enabled",
         "schedule_cron",
-        "timezone",
         "num_chunks",
         "full_scan_default",
         "cost_full_scan_default",
@@ -56,6 +55,7 @@ def update_scanner_config(session: Session, values: dict[str, Any]) -> ScannerCo
     for key, value in values.items():
         if key in allowed and value is not None:
             setattr(config, key, value)
+    config.timezone = "UTC"
     session.commit()
     session.refresh(config)
     return config

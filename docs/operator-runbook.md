@@ -84,8 +84,9 @@ ScanSummary(discovered=13, assigned=13, scanned=13, skipped=0, failed=0)
 ## Schedule And Monitor Scans In Cryo
 
 Scanner scheduling is now managed by Cryo, not by the Helm values file. Use the web UI at
-`/scans` to enable/disable the scanner cron, edit the five-field cron expression, set the scanner
-chunk count, and choose whether scheduled scans force a full rescan or include the Tier 2 cost scan.
+`/scans` to enable/disable the scanner cron, enter a custom five-field cron expression, set the
+scanner chunk count, and choose whether scheduled scans force a full rescan or include the Tier 2
+cost scan. Scanner schedules are evaluated in UTC; the timezone is fixed and not editable.
 
 Operators can start ad-hoc scans from three places:
 

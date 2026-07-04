@@ -350,7 +350,7 @@ dropping into logs.
 | Region | Contents |
 |---|---|
 | Header | `Scan all tables now`, disabled while an all-table scan is active |
-| Schedule | Enabled switch, five-field cron select/input, timezone, chunk count, full-scan defaults |
+| Schedule | Enabled switch, custom five-field cron input, fixed UTC timezone display, chunk count, full-scan defaults |
 | Status | Tables with stats, queue depth, next scheduled scan, latest table scan time, active run |
 | Recent scans | Scan-only runs table: short ID, target, status, trigger, scanned/skipped/failed, created |
 | Scan progress | `ScanConsole`: progress bar, counters, current table, latest error, bounded failed-table list |

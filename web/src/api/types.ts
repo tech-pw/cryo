@@ -227,7 +227,6 @@ export type ScannerConfigUpdate = Partial<
     ScannerConfigRead,
     | "enabled"
     | "schedule_cron"
-    | "timezone"
     | "num_chunks"
     | "full_scan_default"
     | "cost_full_scan_default"

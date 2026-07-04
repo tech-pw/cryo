@@ -148,6 +148,46 @@ def test_source_destination_preset_crud_and_rules(api_db: ApiDb) -> None:
     assert disabled_destination.json()["enabled"] is False
 
 
+def test_cron_write_endpoints_reject_invalid_expressions(api_db: ApiDb) -> None:
+    client = api_db.client
+
+    scanner_response = client.patch(
+        "/api/v1/scanner/config",
+        headers=ADMIN_HEADERS,
+        json={"schedule_cron": "0 2 * * *; DROP TABLE cryo.tables"},
+    )
+    assert scanner_response.status_code == 400
+
+    destination_response = client.post(
+        "/api/v1/destinations",
+        headers=ADMIN_HEADERS,
+        json={"name": "trino-main", "engine": "trino", "config": {"host": "trino"}},
+    )
+    assert destination_response.status_code == 201
+
+    preset_response = client.post(
+        "/api/v1/presets",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "unsafe",
+            "destination_id": destination_response.json()["id"],
+            "schedule_cron": "0 99 * * *",
+        },
+    )
+    assert preset_response.status_code == 400
+
+    slack_response = client.post(
+        "/api/v1/slack/configs",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "daily",
+            "webhook_url": "https://hooks.slack.com/services/T/B/C",
+            "daily_report_cron": "0 9 * * *\n* * * * *",
+        },
+    )
+    assert slack_response.status_code == 400
+
+
 def test_simulate_effective_preset_assignment_and_sorting(api_db: ApiDb) -> None:
     source_id, destination_id = _seed_source_destination(api_db.session_factory)
     hot_table_id, cold_table_id = _seed_tables(api_db.session_factory, source_id)
