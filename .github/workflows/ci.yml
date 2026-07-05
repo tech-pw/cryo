@@ -7,6 +7,32 @@ on:
     branches: [main]
 
 jobs:
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks CLI
+        run: |
+          set -euo pipefail
+          ver="8.18.0"
+          curl -fsSL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/gitleaks_${ver}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan git history for secrets
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --redact \
+            --verbose \
+            --exit-code 1
+
   lint:
     name: Lint & Format
     runs-on: ubuntu-latest
@@ -21,6 +47,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install -U pip
           pip install -e ".[dev]"
 
       - name: Run ruff check
@@ -43,6 +70,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install -U pip
           pip install -e ".[dev]"
 
       - name: Run mypy
@@ -87,6 +115,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install -U pip
           pip install -e ".[dev]"
 
       - name: Run tests
