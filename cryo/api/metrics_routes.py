@@ -17,7 +17,7 @@ router = APIRouter(tags=["observability"])
 @router.get("/metrics", response_class=PlainTextResponse)
 def metrics() -> PlainTextResponse:
     """Expose Prometheus metrics for scraping.
-    
+
     This endpoint returns all registered Prometheus metrics in the
     standard exposition format.
     """

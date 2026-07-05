@@ -130,24 +130,26 @@ def persist_table_analysis(
     )
     if analysis.cost is not None:
         persist_table_cost(session, table_id=table_id, cost=analysis.cost)
-    
+
     # Update AutoComp benefit scores after scan (if enabled)
     try:
         from cryo.config import get_settings
         from cryo.planner.benefit_score import update_partition_benefit_scores
-        
+
         settings = get_settings()
-        if hasattr(settings, 'compute_statistics_enabled') and settings.compute_statistics_enabled:
+        if hasattr(settings, "compute_statistics_enabled") and settings.compute_statistics_enabled:
             updated = update_partition_benefit_scores(session, table_id)
             if updated > 0:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.info(f"Updated benefit scores for {updated} partitions of table {table_id}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to update benefit scores for table {table_id}: {e}")
-    
+
     return table_id
 
 

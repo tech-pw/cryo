@@ -171,8 +171,7 @@ def profile_table_quality(
                 if avg_historical_max and max_value > avg_historical_max * 10:
                     value_range_changed = True
                     value_range_explanation = (
-                        f"Max value spike: {max_value} vs historical avg "
-                        f"{avg_historical_max:.0f}"
+                        f"Max value spike: {max_value} vs historical avg {avg_historical_max:.0f}"
                     )
                     anomalies_detected += 1
 

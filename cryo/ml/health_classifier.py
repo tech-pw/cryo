@@ -41,10 +41,7 @@ class HealthPrediction:
 
 def metadata_signature(stats: dict[str, Any]) -> list[float]:
     """Normalize table stats into a fixed feature vector."""
-    return [
-        float(stats.get(key, 0) or 0) / _scale(key)
-        for key in _FEATURE_KEYS
-    ]
+    return [float(stats.get(key, 0) or 0) / _scale(key) for key in _FEATURE_KEYS]
 
 
 def _scale(key: str) -> float:

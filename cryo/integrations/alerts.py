@@ -70,9 +70,7 @@ def format_slack_blocks(alerts: list[AnomalyAlert]) -> list[dict[str, Any]]:
         blocks.append(
             {
                 "type": "context",
-                "elements": [
-                    {"type": "mrkdwn", "text": f"_…and {len(alerts) - 10} more alerts_"}
-                ],
+                "elements": [{"type": "mrkdwn", "text": f"_…and {len(alerts) - 10} more alerts_"}],
             }
         )
     return blocks

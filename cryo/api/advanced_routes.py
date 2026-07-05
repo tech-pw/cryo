@@ -3,7 +3,7 @@
 Endpoints for:
 - Approval workflows
 - Data lineage
-- Anomaly detection  
+- Anomaly detection
 - Data quality profiling
 - Partition evolution
 - GitOps policies
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
 
 # ==================== Approval Workflows ====================
+
 
 class ApprovalRequestRead(BaseModel):
     id: UUID
@@ -72,11 +73,13 @@ def list_pending_approvals(
     table_ids = [r.table_id for r in requests]
     table_map: dict[UUID, str] = {}
     if table_ids:
-        tables = session.execute(
-            select(Table)
-            .where(Table.id.in_(table_ids))
-            .options(selectinload(Table.source))
-        ).scalars().all()
+        tables = (
+            session.execute(
+                select(Table).where(Table.id.in_(table_ids)).options(selectinload(Table.source))
+            )
+            .scalars()
+            .all()
+        )
         table_map = {table.id: qualified_table_name(table) for table in tables}
 
     return [
@@ -119,9 +122,7 @@ def create_approval_request(
         raise HTTPException(400, f"Invalid operation_type: {request.operation_type}") from exc
 
     table = session.execute(
-        select(Table)
-        .where(Table.id == request.table_id)
-        .options(selectinload(Table.source))
+        select(Table).where(Table.id == request.table_id).options(selectinload(Table.source))
     ).scalar_one_or_none()
     if not table:
         raise HTTPException(404, "Table not found")
@@ -165,16 +166,17 @@ def approve_or_reject(
 ) -> dict[str, str]:
     """Approve or reject an approval request."""
     from cryo.workflows.approvals import approve_request, reject_request
-    
+
     if action.approved:
         result = approve_request(session, request_id, action.approver, action.reason)
     else:
         result = reject_request(session, request_id, action.approver, action.reason)
-    
+
     return {"status": result.status, "message": "Request processed successfully"}
 
 
 # ==================== Data Lineage ====================
+
 
 class LineageNodeRead(BaseModel):
     table_id: str
@@ -201,12 +203,10 @@ def get_table_lineage(
     from cryo.db.models import Table
     from cryo.lineage.tracker import get_lineage_graph
 
-    table = session.execute(
-        select(Table).where(Table.id == table_id)
-    ).scalar_one_or_none()
+    table = session.execute(select(Table).where(Table.id == table_id)).scalar_one_or_none()
     if not table:
         raise HTTPException(404, "Table not found")
-    
+
     graph = get_lineage_graph(session, table_id, depth=depth)
 
     return LineageGraphRead(
@@ -235,6 +235,7 @@ def get_table_lineage(
 
 # ==================== Anomaly Detection ====================
 
+
 class AnomalyAlertRead(BaseModel):
     table_id: str
     table_name: str
@@ -257,14 +258,14 @@ def detect_anomalies(
 ) -> list[AnomalyAlertRead]:
     """Detect anomalies across all tables."""
     from cryo.ml.anomaly_detector import detect_all_anomalies
-    
+
     alerts = detect_all_anomalies(
         session,
         lookback_days=lookback_days,
         threshold_sigma=threshold_sigma,
         dispatch_alerts=dispatch_alerts,
     )
-    
+
     return [
         AnomalyAlertRead(
             table_id=a.table_id,
@@ -290,14 +291,14 @@ def detect_table_anomalies(
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
 ) -> list[AnomalyAlertRead]:
     from cryo.ml.anomaly_detector import detect_table_anomalies as detect
-    
+
     alerts = detect(
         session,
         str(table_id),
         lookback_days=lookback_days,
         threshold_sigma=threshold_sigma,
     )
-    
+
     return [
         AnomalyAlertRead(
             table_id=a.table_id,
@@ -315,6 +316,7 @@ def detect_table_anomalies(
 
 
 # ==================== Data Quality Profiling ====================
+
 
 class ColumnQualityMetricRead(BaseModel):
     column_name: str
@@ -347,9 +349,9 @@ def get_data_quality_profile(
 ) -> DataQualityProfileRead:
     """Get zero-scan data quality profile for a table."""
     from cryo.quality.profiler import profile_table_quality
-    
+
     profile = profile_table_quality(session, str(table_id), lookback_days=lookback_days)
-    
+
     return DataQualityProfileRead(
         table_id=profile.table_id,
         table_name=profile.table_name,
@@ -376,6 +378,7 @@ def get_data_quality_profile(
 
 # ==================== Partition Evolution ====================
 
+
 class PartitionEvolutionRecommendationRead(BaseModel):
     table_id: str
     table_name: str
@@ -399,16 +402,14 @@ def get_partition_evolution_recommendation(
 ) -> PartitionEvolutionRecommendationRead | None:
     """Get partition evolution recommendation for a table."""
     from cryo.optimizer.partition_analyzer import analyze_partition_evolution
-    
+
     rec = analyze_partition_evolution(
-        session, 
-        str(table_id), 
-        min_query_threshold=min_query_threshold
+        session, str(table_id), min_query_threshold=min_query_threshold
     )
-    
+
     if not rec:
         return None
-    
+
     return PartitionEvolutionRecommendationRead(
         table_id=rec.table_id,
         table_name=rec.table_name,
@@ -422,6 +423,7 @@ def get_partition_evolution_recommendation(
 
 
 # ==================== Signal-Driven Triggers ====================
+
 
 class MaintenanceSignalRead(BaseModel):
     table_id: str
@@ -442,9 +444,9 @@ def detect_maintenance_signals(
 ) -> list[MaintenanceSignalRead]:
     """Detect all maintenance signals (file degradation, latency spikes, cost spikes)."""
     from cryo.signals import detect_all_signals
-    
+
     signals = detect_all_signals(session)
-    
+
     return [
         MaintenanceSignalRead(
             table_id=str(s.table_id),
@@ -462,6 +464,7 @@ def detect_maintenance_signals(
 
 
 # ==================== FinOps Forecasts ====================
+
 
 class CostForecastRead(BaseModel):
     forecast_month: str
@@ -484,9 +487,9 @@ def get_cost_forecast(
 ) -> CostForecastRead:
     """Get next month cost forecast."""
     from cryo.finops.forecast import forecast_next_month_cost
-    
+
     forecast = forecast_next_month_cost(session, budget_limit_usd=budget_limit_usd)
-    
+
     return CostForecastRead(
         forecast_month=forecast.forecast_month,
         current_month_storage_cost_usd=forecast.current_month_storage_cost_usd,

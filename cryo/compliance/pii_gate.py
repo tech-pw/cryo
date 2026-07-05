@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -25,7 +26,7 @@ def maintenance_blocked_for_untagged_pii(
     table_id: uuid.UUID,
     plan_operations: list[dict[str, Any]] | None,
     *,
-    job_params: dict[str, Any] | None = None,
+    job_params: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Return a deferral reason when rewrite ops would touch untagged sensitive columns."""
     params = job_params or {}

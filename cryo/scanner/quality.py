@@ -138,9 +138,7 @@ class ColumnQualityAccumulator:
     def finish(self) -> list[ColumnQualityStats]:
         results = []
         for field_id, accum in sorted(self._accum.items()):
-            null_rate = (
-                round(accum.null_count / accum.value_count, 4) if accum.value_count else 0.0
-            )
+            null_rate = round(accum.null_count / accum.value_count, 4) if accum.value_count else 0.0
             results.append(
                 ColumnQualityStats(
                     field_id=field_id,

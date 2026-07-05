@@ -424,8 +424,8 @@ class CostModelEvaluateResponse(BaseModel):
 )
 def evaluate_learned_cost_model(session: SessionDep) -> CostModelEvaluateResponse:
     from cryo.config import get_settings
-    from cryo.ml.cost_integration import refresh_cost_model_cache
-    from cryo.ml.cost_model import evaluate_model, load_cached_cost_model, train_cost_model
+    from cryo.ml.cost_integration import load_cached_cost_model, refresh_cost_model_cache
+    from cryo.ml.cost_model import evaluate_model, train_cost_model
 
     rows = session.execute(
         select(AuditLog, TableStats)

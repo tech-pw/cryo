@@ -152,10 +152,7 @@ def test_health_classifier_few_shot_knn() -> None:
 
 
 def test_health_classifier_evaluate() -> None:
-    labeled = [
-        HealthLabel(f"t{i}", i < 3)
-        for i in range(8)
-    ]
+    labeled = [HealthLabel(f"t{i}", i < 3) for i in range(8)]
     stats = {
         f"t{i}": {
             "small_files_count": 600 if i < 3 else 5,

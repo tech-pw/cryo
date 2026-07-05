@@ -61,13 +61,10 @@ def _fetch_daily_storage_totals(
     _daily_aggregate_cache_key(as_of.isoformat(), lookback_days)
     if cache_key in _storage_daily_cache:
         return [
-            (datetime.fromisoformat(day), total)
-            for day, total in _storage_daily_cache[cache_key]
+            (datetime.fromisoformat(day), total) for day, total in _storage_daily_cache[cache_key]
         ]
 
-    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(
-        days=lookback_days
-    )
+    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(days=lookback_days)
 
     day_bucket = func.date_trunc("day", TableStatsHistory.scan_at).label("day")
     stmt = (
@@ -105,9 +102,7 @@ def _fetch_daily_query_counts(
             (datetime.fromisoformat(day), count) for day, count in _query_daily_cache[cache_key]
         ]
 
-    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(
-        days=lookback_days
-    )
+    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(days=lookback_days)
 
     day_bucket = func.date_trunc("day", QueryLog.executed_at).label("day")
     stmt = (
@@ -202,9 +197,7 @@ def forecast_next_month_cost(
 
     daily_queries = _fetch_daily_query_counts(session, lookback_days, as_of)
 
-    current_month_queries = sum(
-        count for day, count in daily_queries if day >= current_month_start
-    )
+    current_month_queries = sum(count for day, count in daily_queries if day >= current_month_start)
 
     prev_month_start = current_month_start - timedelta(days=30)
     prev_month_queries = (

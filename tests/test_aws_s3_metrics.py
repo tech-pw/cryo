@@ -50,9 +50,7 @@ def test_fetch_bucket_storage_metrics_aggregates_storage_classes() -> None:
     mock_cloudwatch = MagicMock()
 
     def get_metric_statistics(*, MetricName, Dimensions, **_kwargs):
-        storage_type = next(
-            (d["Value"] for d in Dimensions if d["Name"] == "StorageType"), None
-        )
+        storage_type = next((d["Value"] for d in Dimensions if d["Name"] == "StorageType"), None)
         if MetricName == "BucketSizeBytes" and storage_type == "StandardStorage":
             return {
                 "Datapoints": [

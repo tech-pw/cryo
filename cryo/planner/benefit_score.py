@@ -218,12 +218,12 @@ def compare_scheduling_strategies(
 
     static_sorted = sorted(
         partitions,
-        key=lambda p: (p.small_files_in_partition_count or 0),
+        key=lambda p: p.small_files_in_partition_count or 0,
         reverse=True,
     )[:limit]
     autocomp_sorted = sorted(
         partitions,
-        key=lambda p: (p.compaction_benefit_score or 0.0),
+        key=lambda p: p.compaction_benefit_score or 0.0,
         reverse=True,
     )[:limit]
 

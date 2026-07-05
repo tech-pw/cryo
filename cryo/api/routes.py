@@ -312,9 +312,7 @@ def create_aws_integration(
 ) -> AWSIntegration:
     if session.get(Source, source_id) is None:
         raise HTTPException(status_code=404, detail="Source not found")
-    existing = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
+    existing = session.scalar(select(AWSIntegration).where(AWSIntegration.source_id == source_id))
     if existing is not None:
         raise HTTPException(
             status_code=400, detail="AWS integration already exists for this source"

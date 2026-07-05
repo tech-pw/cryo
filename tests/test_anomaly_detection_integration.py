@@ -100,8 +100,7 @@ def test_detect_table_anomalies_finds_small_files_spike(session):
 def test_detect_all_anomalies_processes_tables_in_batches(session):
     """detect_all_anomalies should scan recent tables and respect batch sizing."""
     tables = [
-        _seed_table(session, schema_name="test", table_name=f"batch_table_{i}")
-        for i in range(3)
+        _seed_table(session, schema_name="test", table_name=f"batch_table_{i}") for i in range(3)
     ]
     for table in tables:
         _seed_history(

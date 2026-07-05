@@ -17,6 +17,7 @@ from cryo.observability.log_redaction import SensitiveDataFilter
 
 try:
     import structlog
+
     HAS_STRUCTLOG = True
 except ImportError:
     HAS_STRUCTLOG = False
@@ -29,14 +30,14 @@ def configure_logging(
     environment: str = "development",
 ) -> None:
     """Configure structured logging for Cryo.
-    
+
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         json_format: If True, output JSON; if False, use console format
         environment: Deployment environment (development, staging, production)
     """
     log_level = getattr(logging, level.upper(), logging.INFO)
-    
+
     if HAS_STRUCTLOG and json_format:
         # Configure structlog for JSON output
         structlog.configure(
@@ -63,18 +64,18 @@ def configure_logging(
             level=log_level,
             stream=sys.stdout,
         )
-    
+
     # Set root logger level
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
     if not any(isinstance(f, SensitiveDataFilter) for f in root_logger.filters):
         root_logger.addFilter(SensitiveDataFilter())
-    
+
     # Configure third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("fastapi").setLevel(logging.INFO)
-    
+
     # Log configuration
     logger = get_logger(__name__)
     if HAS_STRUCTLOG:
@@ -97,10 +98,10 @@ def configure_logging(
 
 def get_logger(name: str) -> Any:
     """Get a logger instance.
-    
+
     Args:
         name: Logger name (typically __name__)
-        
+
     Returns:
         Logger instance (structlog or stdlib logging)
     """
@@ -111,22 +112,22 @@ def get_logger(name: str) -> Any:
 
 class LogContext:
     """Context manager for adding contextual fields to logs.
-    
+
     Usage:
         with LogContext(table_id=table.id, operation="optimize"):
             logger.info("Starting operation")
     """
-    
+
     def __init__(self, **context: Any) -> None:
         self.context = context
         self.bound_logger = None
-    
+
     def __enter__(self) -> Any:
         if HAS_STRUCTLOG:
             self.bound_logger = structlog.get_logger().bind(**self.context)
             return self.bound_logger
         return logging.getLogger()
-    
+
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         pass
 
