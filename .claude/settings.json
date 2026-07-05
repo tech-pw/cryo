@@ -22,7 +22,9 @@
       "Bash(.venv/bin/pytest tests/test_aws_s3_metrics.py -q)",
       "Bash(python3 -c ' *)",
       "Bash(.venv/bin/mypy cryo/api/routes.py cryo/api/schemas.py cryo/db/models.py cryo/integrations/aws_s3_metrics.py)",
-      "Bash(.venv/bin/pytest tests/test_aws_integration_api.py -q)"
+      "Bash(.venv/bin/pytest tests/test_aws_integration_api.py -q)",
+      "Bash(.venv/bin/mypy tests/test_aws_integration_api.py tests/test_aws_s3_metrics.py)",
+      "Bash(.venv/bin/pytest)"
     ]
   }
 }
