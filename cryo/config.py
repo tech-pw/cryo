@@ -22,6 +22,35 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = "dev-only-change-me"
+    jwt_secret: str | None = Field(
+        default=None,
+        description="HS256 secret for API JWTs. Defaults to secret_key when unset.",
+    )
+    enforce_tenant_isolation: bool = Field(
+        default=False,
+        description="When true, every JWT must carry tenant_id and queries are scoped.",
+    )
+    oidc_issuer_url: str | None = Field(
+        default=None,
+        description="OIDC issuer URL (production SSO). Enables RS256 IdP token verification.",
+    )
+    oidc_client_id: str | None = Field(default=None, description="OIDC OAuth client id.")
+    oidc_client_secret: str | None = Field(
+        default=None,
+        description="OIDC client secret for authorization-code exchange.",
+    )
+    oidc_audience: str | None = Field(
+        default=None,
+        description="Expected access-token audience; defaults to oidc_client_id.",
+    )
+    oidc_jwks_uri: str | None = Field(
+        default=None,
+        description="Optional JWKS URI override (defaults to issuer/.well-known/jwks.json).",
+    )
+    oidc_redirect_uri: str | None = Field(
+        default=None,
+        description="OAuth redirect URI registered with the IdP (UI callback).",
+    )
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     scan_num_chunks: int = Field(default=4, gt=0)
@@ -58,6 +87,10 @@ class Settings(BaseSettings):
     default_emr_slot_cap: int = Field(default=10, gt=0)
     default_native_slot_cap: int = Field(default=5, gt=0)
     wave_wait_sec: int = Field(default=300, gt=0)
+    native_engine_enabled: bool = Field(
+        default=False,
+        description="Enable experimental cryo-native engine (disabled by default).",
+    )
 
     # Slack notifications
     slack_webhook_url: str | None = Field(

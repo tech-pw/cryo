@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 
 from cryo.api.security import (
     Principal,
@@ -12,6 +14,8 @@ from cryo.api.security import (
     principal_from_credentials,
     require_role,
 )
+from cryo.db.session import get_session
+from cryo.db.tenant_scope import bind_tenant
 
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
@@ -21,6 +25,17 @@ def get_current_principal(credentials: CredentialsDep) -> Principal:
 
 
 CurrentPrincipal = Annotated[Principal, Depends(get_current_principal)]
+
+
+def get_tenant_session(
+    principal: CurrentPrincipal,
+) -> Iterator[Session]:
+    for session in get_session():
+        bind_tenant(session, principal.tenant_id)
+        yield session
+
+
+SessionDep = Annotated[Session, Depends(get_tenant_session)]
 
 
 def require_viewer(principal: CurrentPrincipal) -> Principal:

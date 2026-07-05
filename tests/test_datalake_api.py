@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -9,13 +10,13 @@ from fastapi.testclient import TestClient
 
 from cryo.api import routes
 from cryo.api.app import create_app
+from cryo.api.deps import get_tenant_session
 from cryo.api.schemas import AssignmentSelection, MaintenanceRunRequest
 from cryo.config import Settings
 from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun
 from cryo.db.repositories.presets import SelectionResult
-from cryo.db.session import get_session
-
-AUTH_HEADERS = {"Authorization": "Bearer operator"}
+from tests.auth_helpers import OPERATOR_HEADERS as AUTH_HEADERS
+from tests.auth_helpers import VIEWER_HEADERS, ensure_test_jwt_secret
 
 
 class FakeSession:
@@ -24,8 +25,13 @@ class FakeSession:
 
 
 def _client() -> TestClient:
+    ensure_test_jwt_secret()
     app = create_app(Settings(_env_file=None, environment="test"))
-    app.dependency_overrides[get_session] = lambda: FakeSession()
+
+    def fake_tenant_session() -> Iterator[FakeSession]:
+        yield FakeSession()
+
+    app.dependency_overrides[get_tenant_session] = fake_tenant_session
     return TestClient(app)
 
 
@@ -415,7 +421,10 @@ def test_run_jobs_endpoint_and_websocket_snapshot(monkeypatch: Any) -> None:
     assert response.status_code == 200
     assert response.json()["jobs"][0]["table_name"] == "events"
 
-    with client.websocket_connect(f"/api/v1/ws/runs/{run_id}?token=viewer&once=true") as ws:
+    with client.websocket_connect(
+        f"/api/v1/ws/runs/{run_id}?once=true",
+        headers=VIEWER_HEADERS,
+    ) as ws:
         payload = ws.receive_json()
 
     assert payload["type"] == "run_snapshot"

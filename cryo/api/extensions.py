@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -16,11 +16,11 @@ from cryo.ai.copilot import (
     build_table_fleet_rows,
     list_verified_questions,
 )
+from cryo.ai.embedding_cache import find_similar_tables_cached
 from cryo.ai.explain import explain_health_change
 from cryo.ai.llm import SUPPORTED_PROVIDERS, create_llm_client
 from cryo.ai.pii import classify_table_columns
-from cryo.ai.similarity import find_similar_tables
-from cryo.api.deps import require_admin, require_operator, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.preview_cost import savings_projection_from_stats, savings_projection_to_dict
 from cryo.api.schemas import JsonDict
 from cryo.api.serializers import table_to_read
@@ -38,13 +38,15 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
-from cryo.db.session import get_session
 from cryo.mcp.server import CryoMcpServer, build_default_mcp_server
+from cryo.security.crypto import decrypt_secret, encrypt_secret
 from cryo.sources.latency import get_catalog_latency_monitor
 
-SessionDep = Annotated[Session, Depends(get_session)]
-
 router = APIRouter(prefix="/api/v1")
+
+
+def _provider_api_key(stored: str | None) -> str | None:
+    return decrypt_secret(stored)
 
 
 class AnomalyResponse(BaseModel):
@@ -358,7 +360,9 @@ def get_similar_tables(
     target = next((row for row in fleet if row["table_id"] == str(table_id)), None)
     if target is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    similar = find_similar_tables(target, fleet, min_similarity=min_similarity, limit=limit)
+    similar = find_similar_tables_cached(
+        session, target, fleet, min_similarity=min_similarity, limit=limit
+    )
     return SimilarTablesResponse(
         table_id=table_id,
         similar=[
@@ -386,15 +390,11 @@ class BanditStatusResponse(BaseModel):
     dependencies=[Depends(require_viewer)],
     tags=["governor"],
 )
-def governor_bandit_status() -> BanditStatusResponse:
-    import os
-    from pathlib import Path
-
+def governor_bandit_status(session: SessionDep) -> BanditStatusResponse:
     from cryo.governor.admission import AdmissionConfig
-    from cryo.governor.bandit import AdmissionBandit
+    from cryo.governor.bandit_store import load_bandit
 
-    state_path = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
-    bandit = AdmissionBandit.load(state_path)
+    bandit = load_bandit(session)
     base = AdmissionConfig()
     tuned, confident = bandit.suggest_config(base)
     return BanditStatusResponse(
@@ -595,7 +595,7 @@ async def copilot_natural_language(
     # Call the LLM
     client = create_llm_client(
         provider.provider_type,
-        provider.api_key_encrypted,
+        _provider_api_key(provider.api_key_encrypted) or "",
         provider.model,
         config=provider.config,
     )
@@ -812,7 +812,7 @@ def create_ai_provider(payload: AIProviderCreate, session: SessionDep) -> AIProv
     provider = AIProvider(
         name=payload.name,
         provider_type=payload.provider_type,
-        api_key_encrypted=payload.api_key,  # TODO: encrypt in production
+        api_key_encrypted=encrypt_secret(payload.api_key),
         model=payload.model,
         config=payload.config,
         enabled=payload.enabled,
@@ -880,7 +880,7 @@ def update_ai_provider(
     if payload.name is not None:
         provider.name = payload.name
     if payload.api_key is not None:
-        provider.api_key_encrypted = payload.api_key  # TODO: encrypt
+        provider.api_key_encrypted = encrypt_secret(payload.api_key)
     if payload.model is not None:
         provider.model = payload.model
     if payload.config is not None:
@@ -952,7 +952,7 @@ async def test_ai_provider(
     try:
         client = create_llm_client(
             provider.provider_type,
-            provider.api_key_encrypted,  # TODO: decrypt
+            _provider_api_key(provider.api_key_encrypted) or "",
             provider.model,
             config=provider.config,
         )
@@ -998,7 +998,7 @@ async def ai_chat(payload: AIChatRequest, session: SessionDep) -> AIChatResponse
 
     client = create_llm_client(
         provider.provider_type,
-        provider.api_key_encrypted,  # TODO: decrypt
+        _provider_api_key(provider.api_key_encrypted) or "",
         provider.model,
         config=provider.config,
     )

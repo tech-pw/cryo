@@ -597,6 +597,7 @@ class AuditLog(Base):
     # Compaction effectiveness ratio tracking (Feature 3)
     input_files_count: Mapped[int | None] = mapped_column(Integer)
     output_files_count: Mapped[int | None] = mapped_column(Integer)
+    actor: Mapped[str | None] = mapped_column(Text)
 
     table: Mapped[Table | None] = relationship(back_populates="audit_entries")
     job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
@@ -716,10 +717,30 @@ class LayoutRecommendation(TimestampMixin, Base):
     table: Mapped[Table] = relationship()
 
 
+class GovernorBanditState(TimestampMixin, Base):
+    __tablename__ = "governor_bandit_state"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    payload: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+
+
+class TableEmbedding(TimestampMixin, Base):
+    __tablename__ = "table_embeddings"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    stats_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
+
+
 __all__ = [
     "AIProvider",
     "AuditLog",
     "Destination",
+    "GovernorBanditState",
     "LayoutRecommendation",
     "MaintenanceJob",
     "MaintenanceRun",
@@ -734,6 +755,7 @@ __all__ = [
     "TableAssignment",
     "TableCost",
     "TableCostHistory",
+    "TableEmbedding",
     "TablePartition",
     "TableStats",
     "TableStatsHistory",

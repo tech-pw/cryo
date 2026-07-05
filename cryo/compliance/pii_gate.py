@@ -31,6 +31,11 @@ def maintenance_blocked_for_untagged_pii(
     """Return a deferral reason when rewrite ops would touch untagged sensitive columns."""
     params = job_params or {}
     if params.get("force") or params.get("ignore_pii_gate"):
+        if not params.get("pii_gate_bypass_authorized"):
+            return (
+                "PII gate bypass requires admin authorization "
+                "(set pii_gate_bypass_authorized via the maintenance API)"
+            )
         return None
 
     if not _plan_has_rewrite(plan_operations):

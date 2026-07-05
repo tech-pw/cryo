@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type { RunRead, ScannerConfigUpdate } from "../api/types";
 import { CronInput } from "../components/CronInput";
+import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, StatStrip } from "../components/common";
 import { ScanConsole } from "../components/ScanConsole";
 import { StatusTag } from "../components/status";
@@ -36,9 +37,9 @@ export const Scans = () => {
   const { runId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { api, token } = useAuth();
+  const { api, role, token } = useAuth();
   const [form] = Form.useForm<ScannerConfigUpdate>();
-  const canOperate = token !== "viewer";
+  const canOperate = role !== "viewer";
 
   const config = useQuery({
     queryKey: ["scanner-config", token],
@@ -98,14 +99,19 @@ export const Scans = () => {
         subtitle="Schedule catalog scans, trigger ad-hoc refreshes, and inspect scan progress."
         actions={
           <Space>
-            <Button
-              type="primary"
-              loading={scanAll.isPending}
-              disabled={!canOperate || Boolean(activeRun)}
-              onClick={() => scanAll.mutate()}
+            <ConfirmAction
+              title="Scan all tables now?"
+              description="Queues a full fleet scan across every registered table. This can be expensive on large catalogs."
+              onConfirm={() => scanAll.mutate()}
             >
-              Scan all tables now
-            </Button>
+              <Button
+                type="primary"
+                loading={scanAll.isPending}
+                disabled={!canOperate || Boolean(activeRun)}
+              >
+                Scan all tables now
+              </Button>
+            </ConfirmAction>
           </Space>
         }
       />

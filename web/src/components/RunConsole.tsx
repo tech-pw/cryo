@@ -116,6 +116,8 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
                   {tableRef(row)}
                 </Typography.Text>
                 <Typography.Text type="secondary" className="secondary-line">
+                  <Link to={`/jobs/${row.id}`}>View job</Link>
+                  {" · "}
                   job <span className="mono-id">{shortId(row.id)}</span> · table{" "}
                   <span className="mono-id">{shortId(row.table_id)}</span>
                 </Typography.Text>
@@ -161,8 +163,46 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
           </List.Item>
         )}
       />
-      <Drawer title="Job detail" open={Boolean(logJob)} onClose={() => setLogJob(null)} width={560}>
-        <pre className="json-block">{JSON.stringify(logJob, null, 2)}</pre>
+      <Drawer
+        title={logJob ? `Job ${shortId(logJob.id)}` : "Job logs"}
+        open={Boolean(logJob)}
+        onClose={() => setLogJob(null)}
+        width={560}
+        extra={
+          logJob ? (
+            <Link to={`/jobs/${logJob.id}`}>
+              <Button size="small">Full job detail</Button>
+            </Link>
+          ) : null
+        }
+      >
+        {logJob ? (
+          <Space direction="vertical" size={12} className="full-width">
+            <Space wrap>
+              <StatusTag status={logJob.status} />
+              {logJob.error ? (
+                <Typography.Text type="danger">{logJob.error}</Typography.Text>
+              ) : null}
+            </Space>
+            <Typography.Text type="secondary">
+              Engine {logJob.destination_name ?? logJob.destination_engine ?? "—"} · started{" "}
+              {formatTime(logJob.started_at)}
+            </Typography.Text>
+            <List
+              size="small"
+              locale={{ emptyText: "No live events for this job yet." }}
+              dataSource={messages.filter(
+                (item) => !item.job_id || item.job_id === logJob.id
+              )}
+              renderItem={(item) => (
+                <List.Item>
+                  <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
+                  <Typography.Text>{item.message ?? JSON.stringify(item)}</Typography.Text>
+                </List.Item>
+              )}
+            />
+          </Space>
+        ) : null}
       </Drawer>
     </Space>
   );

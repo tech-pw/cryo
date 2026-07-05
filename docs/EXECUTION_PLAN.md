@@ -332,6 +332,32 @@ just the "what."
 
 ---
 
+### Phase 10 — AWS S3 free-tier cost/usage integration ✅ Complete
+
+**Why:** added 2026-07-05, user-requested — get real S3 cost/usage signal into Cryo's cost
+projections. Hard constraint from the user, honored throughout: **zero paid AWS API calls, ever**
+(no Cost Explorer, no CUR, no CloudWatch request-metrics configuration, no `get_metric_data`).
+
+- [x] `AWSIntegration` model (per-`Source`, opt-in, encrypted-secret-ref, not raw secret storage) —
+      `cryo/db/models.py`; migration `20260705_0005_aws_integration.py`.
+- [x] Connection test via `sts:get_caller_identity` (free, no resource access needed) —
+      `cryo/integrations/aws_s3_metrics.py::test_aws_connection`.
+- [x] Bucket size + object count via CloudWatch's daily auto-published storage metrics
+      (`BucketSizeBytes` per storage class, `NumberOfObjects`), read with `get_metric_statistics`
+      — deliberately **not** `get_metric_data`, which AWS bills unconditionally even inside the
+      free tier. Enforced in code and tested (`test_aws_s3_metrics.py` asserts `get_metric_data`
+      is never called).
+- [x] Real S3 $/GB pricing via the free `pricing:GetProducts` API, queried against `us-east-1`
+      regardless of the bucket's actual region (an AWS API constraint, not a Cryo choice).
+- [x] Full CRUD + test + usage API — `cryo/api/routes.py`
+      (`/sources/{id}/aws-integration*`, `/sources/{id}/aws-usage`).
+- [x] Frontend: `web/src/components/AwsIntegrationPanel.tsx` (form + "Test STS" + live metrics),
+      embedded in `web/src/pages/Connections.tsx` behind the edit-mode `Collapse` section.
+- [x] Tests: `tests/test_aws_s3_metrics.py` (8 tests, mocked `boto3.Session`),
+      `tests/test_aws_integration_api.py` (9 tests against the route handlers directly).
+
+---
+
 ## 3. Summary — Implementation Status
 
 | Phase | Status | Notes |

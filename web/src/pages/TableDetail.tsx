@@ -19,6 +19,7 @@ import {
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
+import { ConfirmAction } from "../components/confirm";
 import { TableAiInsights } from "../components/TableAiInsights";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
@@ -110,7 +111,11 @@ export const TableDetail = () => {
         trigger: "web-detail"
       });
     },
-    onSuccess: (result) => message.success(`Run queued: ${result.run_id}`),
+    onSuccess: (result) => {
+      message.success(`Run queued: ${result.run_id}`);
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
+    },
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -126,6 +131,8 @@ export const TableDetail = () => {
       message.success(result.message || `Scan queued: ${result.run_id}`);
       void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
       void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
       navigate(`/scans/${result.run_id}`);
@@ -183,9 +190,15 @@ export const TableDetail = () => {
             <Button loading={scan.isPending} onClick={() => scan.mutate()} disabled={!row}>
               Scan
             </Button>
-            <Button type="primary" loading={run.isPending} onClick={() => run.mutate()} disabled={!row}>
-              Run
-            </Button>
+            <ConfirmAction
+              title="Run maintenance on this table?"
+              description="This queues a real maintenance job using the assigned preset and destination."
+              onConfirm={() => run.mutate()}
+            >
+              <Button type="primary" loading={run.isPending} disabled={!row}>
+                Run
+              </Button>
+            </ConfirmAction>
           </Space>
         }
       />

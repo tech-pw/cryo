@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cryo.fullname" . }}-scanner
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scanner
+spec:
+  schedule: {{ .Values.scanner.schedule | quote }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "cryo.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: scanner
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: scanner
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "cryo.scanner.run"]
+              env:
+                {{- range $k, $v := .Values.global.env }}
+                - name: {{ $k }}
+                  value: {{ $v | quote }}
+                {{- end }}
+              envFrom:
+                {{- include "cryo.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.scanner.resources | nindent 16 }}

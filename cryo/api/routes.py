@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from cryo.api.deps import require_admin, require_operator, require_viewer
+from cryo.api.deps import CurrentPrincipal, SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.predicates import compile_predicate
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
@@ -98,7 +98,14 @@ from cryo.db.models import (
 from cryo.db.repositories import datalake, presets
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.repositories.run_finalizer import finalize_open_runs
-from cryo.db.session import SessionLocal, get_session
+from cryo.db.session import SessionLocal
+from cryo.db.tenant_scope import (
+    get_scoped_resource,
+    require_tenant,
+    scope_by_tenant,
+    scoped_select,
+    tenant_id_for_create,
+)
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.domain.models import MaintenancePlan
 from cryo.engines.base import RenderedStatement
@@ -106,17 +113,16 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
+from cryo.integrations.aws_credentials import credentials_from_integration
 from cryo.integrations.aws_s3_metrics import (
-    AWSCredentials,
     fetch_bucket_storage_metrics,
     fetch_s3_price_per_gb,
 )
 from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
 from cryo.planner.guardrails import validate_operation_order
 from cryo.planner.planner import build_plan
+from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 router = APIRouter(prefix="/api/v1")
 
@@ -201,7 +207,7 @@ def get_table_cost(table_id: uuid.UUID, session: SessionDep) -> dict[str, object
     dependencies=[Depends(require_viewer)],
 )
 def list_sources(session: SessionDep) -> list[Source]:
-    return list(session.scalars(select(Source).order_by(Source.name)))
+    return list(session.scalars(scoped_select(session, Source, Source.name)))
 
 
 @router.get(
@@ -210,10 +216,7 @@ def list_sources(session: SessionDep) -> list[Source]:
     dependencies=[Depends(require_viewer)],
 )
 def get_source(source_id: uuid.UUID, session: SessionDep) -> Source:
-    source = session.get(Source, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
-    return source
+    return get_scoped_resource(session, Source, source_id, resource_type="Source")
 
 
 @router.post(
@@ -223,7 +226,13 @@ def get_source(source_id: uuid.UUID, session: SessionDep) -> Source:
     dependencies=[Depends(require_admin)],
 )
 def create_source(payload: SourceCreate, session: SessionDep) -> Source:
-    source = Source(**payload.model_dump())
+    data = payload.model_dump()
+    tenant_id = tenant_id_for_create(session)
+    if tenant_id is not None:
+        data["tenant_id"] = tenant_id
+    if data.get("secret_ref"):
+        data["secret_ref"] = encrypt_secret(data["secret_ref"])
+    source = Source(**data)
     session.add(source)
     session.commit()
     session.refresh(source)
@@ -263,10 +272,11 @@ def test_source(payload: SourceTestRequest) -> SourceTestResponse:
     dependencies=[Depends(require_admin)],
 )
 def patch_source(source_id: uuid.UUID, payload: SourcePatch, session: SessionDep) -> Source:
-    source = session.get(Source, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
-    _apply_patch(source, payload.model_dump(exclude_unset=True))
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
+    values = payload.model_dump(exclude_unset=True)
+    if "secret_ref" in values and values["secret_ref"]:
+        values["secret_ref"] = encrypt_secret(values["secret_ref"])
+    _apply_patch(source, values)
     session.commit()
     session.refresh(source)
     return source
@@ -278,9 +288,7 @@ def patch_source(source_id: uuid.UUID, payload: SourcePatch, session: SessionDep
     dependencies=[Depends(require_admin)],
 )
 def delete_source(source_id: uuid.UUID, session: SessionDep) -> None:
-    source = session.get(Source, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
     source.enabled = False
     session.commit()
 
@@ -310,8 +318,7 @@ def get_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSIntegra
 def create_aws_integration(
     source_id: uuid.UUID, payload: AWSIntegrationCreate, session: SessionDep
 ) -> AWSIntegration:
-    if session.get(Source, source_id) is None:
-        raise HTTPException(status_code=404, detail="Source not found")
+    get_scoped_resource(session, Source, source_id, resource_type="Source")
     existing = session.scalar(select(AWSIntegration).where(AWSIntegration.source_id == source_id))
     if existing is not None:
         raise HTTPException(
@@ -322,7 +329,7 @@ def create_aws_integration(
         bucket=payload.bucket,
         region=payload.region,
         access_key_id=payload.access_key_id,
-        secret_ref=payload.secret_access_key,
+        secret_ref=encrypt_secret(payload.secret_access_key),
         enabled=payload.enabled,
     )
     session.add(integration)
@@ -347,7 +354,7 @@ def patch_aws_integration(
         raise HTTPException(status_code=404, detail="No AWS integration configured")
     values = payload.model_dump(exclude_unset=True)
     if "secret_access_key" in values:
-        values["secret_ref"] = values.pop("secret_access_key")
+        values["secret_ref"] = encrypt_secret(values.pop("secret_access_key"))
     _apply_patch(integration, values)
     session.commit()
     session.refresh(integration)
@@ -383,13 +390,7 @@ def test_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSConnec
     )
     if integration is None:
         raise HTTPException(status_code=404, detail="No AWS integration configured")
-    result = check_aws_connection(
-        AWSCredentials(
-            region=integration.region,
-            access_key_id=integration.access_key_id,
-            secret_access_key=integration.secret_ref,
-        )
-    )
+    result = check_aws_connection(credentials_from_integration(integration))
     integration.last_tested_at = datetime.now(UTC)
     integration.last_test_ok = result.ok
     session.commit()
@@ -412,11 +413,7 @@ def get_aws_usage(source_id: uuid.UUID, session: SessionDep) -> AWSUsageResponse
     )
     if integration is None or not integration.enabled:
         raise HTTPException(status_code=404, detail="No enabled AWS integration configured")
-    credentials = AWSCredentials(
-        region=integration.region,
-        access_key_id=integration.access_key_id,
-        secret_access_key=integration.secret_ref,
-    )
+    credentials = credentials_from_integration(integration)
     metrics = fetch_bucket_storage_metrics(integration.bucket, credentials)
     price = fetch_s3_price_per_gb(integration.region, credentials)
     return AWSUsageResponse(
@@ -437,7 +434,7 @@ def get_aws_usage(source_id: uuid.UUID, session: SessionDep) -> AWSUsageResponse
     dependencies=[Depends(require_viewer)],
 )
 def list_destinations(session: SessionDep) -> list[Destination]:
-    return list(session.scalars(select(Destination).order_by(Destination.name)))
+    return list(session.scalars(scoped_select(session, Destination, Destination.name)))
 
 
 @router.get(
@@ -446,10 +443,7 @@ def list_destinations(session: SessionDep) -> list[Destination]:
     dependencies=[Depends(require_viewer)],
 )
 def get_destination(destination_id: uuid.UUID, session: SessionDep) -> Destination:
-    destination = session.get(Destination, destination_id)
-    if destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
-    return destination
+    return get_scoped_resource(session, Destination, destination_id, resource_type="Destination")
 
 
 @router.post(
@@ -459,7 +453,13 @@ def get_destination(destination_id: uuid.UUID, session: SessionDep) -> Destinati
     dependencies=[Depends(require_admin)],
 )
 def create_destination(payload: DestinationCreate, session: SessionDep) -> Destination:
-    destination = Destination(**payload.model_dump(mode="json"))
+    data = payload.model_dump(mode="json")
+    tenant_id = tenant_id_for_create(session)
+    if tenant_id is not None:
+        data["tenant_id"] = tenant_id
+    if data.get("secret_ref"):
+        data["secret_ref"] = encrypt_secret(data["secret_ref"])
+    destination = Destination(**data)
     session.add(destination)
     session.commit()
     session.refresh(destination)
@@ -474,10 +474,13 @@ def create_destination(payload: DestinationCreate, session: SessionDep) -> Desti
 def patch_destination(
     destination_id: uuid.UUID, payload: DestinationPatch, session: SessionDep
 ) -> Destination:
-    destination = session.get(Destination, destination_id)
-    if destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
-    _apply_patch(destination, payload.model_dump(exclude_unset=True, mode="json"))
+    destination = get_scoped_resource(
+        session, Destination, destination_id, resource_type="Destination"
+    )
+    values = payload.model_dump(exclude_unset=True, mode="json")
+    if values.get("secret_ref"):
+        values["secret_ref"] = encrypt_secret(values["secret_ref"])
+    _apply_patch(destination, values)
     session.commit()
     session.refresh(destination)
     return destination
@@ -489,9 +492,9 @@ def patch_destination(
     dependencies=[Depends(require_admin)],
 )
 def delete_destination(destination_id: uuid.UUID, session: SessionDep) -> None:
-    destination = session.get(Destination, destination_id)
-    if destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
+    destination = get_scoped_resource(
+        session, Destination, destination_id, resource_type="Destination"
+    )
     destination.enabled = False
     session.commit()
 
@@ -501,9 +504,9 @@ def delete_destination(destination_id: uuid.UUID, session: SessionDep) -> None:
     dependencies=[Depends(require_operator)],
 )
 def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
-    destination = session.get(Destination, destination_id)
-    if destination is None:
-        raise HTTPException(status_code=404, detail="Destination not found")
+    destination = get_scoped_resource(
+        session, Destination, destination_id, resource_type="Destination"
+    )
     if destination.engine == EngineType.TRINO.value:
         try:
             snapshot = TrinoEngine(dict(destination.config)).probe_capacity()
@@ -538,7 +541,7 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
     dependencies=[Depends(require_viewer)],
 )
 def list_presets(session: SessionDep) -> list[Preset]:
-    return list(session.scalars(select(Preset).order_by(Preset.name)))
+    return list(session.scalars(scoped_select(session, Preset, Preset.name)))
 
 
 @router.get(
@@ -547,10 +550,7 @@ def list_presets(session: SessionDep) -> list[Preset]:
     dependencies=[Depends(require_viewer)],
 )
 def get_preset(preset_id: uuid.UUID, session: SessionDep) -> Preset:
-    preset = session.get(Preset, preset_id)
-    if preset is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
-    return preset
+    return get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
 
 
 @router.post(
@@ -560,10 +560,12 @@ def get_preset(preset_id: uuid.UUID, session: SessionDep) -> Preset:
     dependencies=[Depends(require_admin)],
 )
 def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
-    if session.get(Destination, payload.destination_id) is None:
-        raise HTTPException(status_code=400, detail="Destination does not exist")
+    get_scoped_resource(session, Destination, payload.destination_id, resource_type="Destination")
     values = payload.model_dump()
     values["mode"] = payload.mode.value
+    tenant_id = tenant_id_for_create(session)
+    if tenant_id is not None:
+        values["tenant_id"] = tenant_id
     try:
         values["schedule_cron"] = validate_cron_field(values.get("schedule_cron"), required=False)
     except ValueError as exc:
@@ -581,9 +583,7 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
     dependencies=[Depends(require_admin)],
 )
 def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep) -> Preset:
-    preset = session.get(Preset, preset_id)
-    if preset is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    preset = get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     values = payload.model_dump(exclude_unset=True)
     if payload.mode is not None:
         values["mode"] = payload.mode.value
@@ -596,8 +596,8 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     destination_id = values.get("destination_id")
-    if destination_id is not None and session.get(Destination, destination_id) is None:
-        raise HTTPException(status_code=400, detail="Destination does not exist")
+    if destination_id is not None:
+        get_scoped_resource(session, Destination, destination_id, resource_type="Destination")
     _apply_patch(preset, values)
     session.commit()
     session.refresh(preset)
@@ -706,6 +706,7 @@ def list_tables(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
+    tenant_id = require_tenant(session)
     stmt = (
         select(Table)
         .outerjoin(TableStats)
@@ -713,6 +714,8 @@ def list_tables(
         .options(selectinload(Table.stats), selectinload(Table.cost))
     )
     count_stmt = select(func.count()).select_from(Table).outerjoin(TableStats).outerjoin(TableCost)
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    count_stmt = scope_by_tenant(count_stmt, Table, tenant_id)
     if predicate is not None:
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
@@ -733,6 +736,7 @@ def list_tables(
     dependencies=[Depends(require_viewer)],
 )
 def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
     table = session.scalar(
         select(Table)
         .where(Table.id == table_id)
@@ -742,8 +746,7 @@ def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
             selectinload(Table.cost),
         )
     )
-    if table is None:
-        raise HTTPException(status_code=404, detail="Table not found")
+    assert table is not None
     return table_to_read(table)
 
 
@@ -917,7 +920,7 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
     dependencies=[Depends(require_operator)],
 )
 def create_maintenance_run(
-    payload: MaintenanceRunRequest, session: SessionDep
+    payload: MaintenanceRunRequest, session: SessionDep, principal: CurrentPrincipal
 ) -> MaintenanceRunResponse:
     if session.get(Destination, payload.destination_id) is None:
         raise HTTPException(status_code=400, detail="Destination does not exist")
@@ -951,6 +954,7 @@ def create_maintenance_run(
         preset_id=payload.preset_id,
         trigger=payload.trigger,
         status="queued",
+        summary={"actor": principal.subject},
     )
     session.add(run)
     session.flush()
@@ -983,10 +987,10 @@ def create_maintenance_run(
     dependencies=[Depends(require_operator)],
 )
 def create_manifest_rewrite_run(
-    payload: MaintenanceRunRequest, session: SessionDep
+    payload: MaintenanceRunRequest, session: SessionDep, principal: CurrentPrincipal
 ) -> MaintenanceRunResponse:
     payload = payload.model_copy(update={"mode": Mode.MANIFEST_ONLY})
-    return create_maintenance_run(payload, session)
+    return create_maintenance_run(payload, session, principal)
 
 
 @router.post(

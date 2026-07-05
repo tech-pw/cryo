@@ -49,6 +49,7 @@ import type { DestinationRead, DestinationWrite, SourceRead, SourceTestResult, S
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
+import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
@@ -364,13 +365,15 @@ export const Connections = () => {
                           >
                             Test
                           </Button>
-                          <Button
-                            size="small"
-                            danger
-                            onClick={() => deleteAiProviderMutation.mutate(row.id)}
+                          <ConfirmAction
+                            title="Delete this AI provider?"
+                            description="Copilot and other AI features will stop using this key immediately."
+                            onConfirm={() => deleteAiProviderMutation.mutate(row.id)}
                           >
-                            Delete
-                          </Button>
+                            <Button size="small" danger loading={deleteAiProviderMutation.isPending}>
+                              Delete
+                            </Button>
+                          </ConfirmAction>
                         </Space>
                       )
                     }
@@ -472,13 +475,15 @@ export const Connections = () => {
                           >
                             Test
                           </Button>
-                          <Button
-                            size="small"
-                            danger
-                            onClick={() => deleteSlackConfigMutation.mutate(row.id)}
+                          <ConfirmAction
+                            title="Delete this Slack configuration?"
+                            description="Daily reports and alerts will stop posting to this webhook."
+                            onConfirm={() => deleteSlackConfigMutation.mutate(row.id)}
                           >
-                            Delete
-                          </Button>
+                            <Button size="small" danger loading={deleteSlackConfigMutation.isPending}>
+                              Delete
+                            </Button>
+                          </ConfirmAction>
                         </Space>
                       )
                     }

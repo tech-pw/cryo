@@ -22,48 +22,24 @@ import {
 } from "@ant-design/icons";
 import { useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { getCostAttributionDashboard, type CostAttributionResponse } from "../api/client";
+import { PageHeader, QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
+import { formatCurrency } from "../lib/format";
 
-const { Title, Text } = Typography;
-
-interface CostAttribution {
-  cost_center: string | null;
-  department: string | null;
-  storage_cost_usd: number;
-  compute_cost_usd: number;
-  maintenance_cost_usd: number;
-  total_cost_usd: number;
-  table_count: number;
-  month: string;
-}
-
-interface CostAttributionResponse {
-  attributions: CostAttribution[];
-  total_cost_usd: number;
-  unattributed_cost_usd: number;
-  month: string;
-}
-
-const formatCurrency = (value: number) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const { Text } = Typography;
 
 const COLORS = ["#3d6fd4", "#52c41a", "#faad14", "#ff4d4f", "#722ed1", "#13c2c2", "#eb2f96"];
 
+type CostAttributionRow = CostAttributionResponse["attributions"][number];
+
 export const CostAttribution = () => {
-  const { token } = useAuth();
+  const { api } = useAuth();
   const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
 
-  const { data, isLoading } = useQuery<CostAttributionResponse>({
-    queryKey: ["cost-attribution", selectedMonth],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedMonth) params.append("month", selectedMonth);
-
-      const response = await fetch(`/api/cost-attribution?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch cost attribution");
-      return response.json();
-    },
+  const { data, isLoading, error } = useQuery<CostAttributionResponse>({
+    queryKey: ["cost-attribution", api.token, selectedMonth],
+    queryFn: () => getCostAttributionDashboard(api, selectedMonth),
   });
 
   // Generate month options (last 12 months)
@@ -80,7 +56,7 @@ export const CostAttribution = () => {
       title: "Team/Department",
       key: "team",
       width: "20%",
-      render: (_: any, record: CostAttribution) => (
+      render: (_: any, record: CostAttributionRow) => (
         <Space>
           <TeamOutlined />
           <Text strong>{record.cost_center || record.department || "Unattributed"}</Text>
@@ -131,7 +107,7 @@ export const CostAttribution = () => {
       key: "total",
       width: "15%",
       align: "right" as const,
-      render: (cost: number, record: CostAttribution) => {
+      render: (cost: number, record: CostAttributionRow) => {
         const percent = data ? (cost / data.total_cost_usd) * 100 : 0;
         return (
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
@@ -146,7 +122,7 @@ export const CostAttribution = () => {
       key: "percent",
       width: "10%",
       align: "right" as const,
-      render: (_: any, record: CostAttribution) => {
+      render: (_: any, record: CostAttributionRow) => {
         const percent = data ? (record.total_cost_usd / data.total_cost_usd) * 100 : 0;
         return <Text type="secondary">{percent.toFixed(1)}%</Text>;
       },
@@ -164,24 +140,22 @@ export const CostAttribution = () => {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <Title level={2}>
-            <DollarOutlined /> Cost Attribution
-          </Title>
-          <Text type="secondary">
-            Storage, compute, and maintenance costs by team and department
-          </Text>
-        </div>
-        <Select
-          style={{ width: 200 }}
-          value={selectedMonth}
-          onChange={setSelectedMonth}
-          options={monthOptions}
-          placeholder="Current month"
-          allowClear
-        />
-      </div>
+      <PageHeader
+        title="Cost attribution"
+        subtitle="Storage, compute, and maintenance costs by team and department."
+        actions={
+          <Select
+            style={{ width: 200 }}
+            value={selectedMonth}
+            onChange={setSelectedMonth}
+            options={monthOptions}
+            placeholder="Current month"
+            allowClear
+          />
+        }
+      />
+
+      <QueryErrorAlert error={error} title="Failed to load cost attribution" />
 
       {isLoading ? (
         <div style={{ textAlign: "center", padding: "60px" }}>
@@ -210,7 +184,7 @@ export const CostAttribution = () => {
       ) : (
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Total Cost"
@@ -224,7 +198,7 @@ export const CostAttribution = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Attribution Rate"
@@ -240,7 +214,7 @@ export const CostAttribution = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Unattributed"
@@ -256,7 +230,7 @@ export const CostAttribution = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Teams"

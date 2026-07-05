@@ -13,6 +13,7 @@ import {
   Alert,
   Progress,
   Tooltip,
+  type TableColumnsType,
 } from "antd";
 import {
   ClockCircleOutlined,
@@ -24,30 +25,13 @@ import {
 } from "@ant-design/icons";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
+import { QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
 
 const { Title, Text } = Typography;
 
-interface SLAStatus {
-  table_id: string;
-  table_name: string;
-  freshness_hours: number | null;
-  freshness_sla_hours: number | null;
-  freshness_breached: boolean;
-  scan_staleness_hours: number | null;
-  maintenance_days: number | null;
-  maintenance_sla_days: number | null;
-  maintenance_breached: boolean;
-  p95_latency_ms: number | null;
-  p95_latency_sla_ms: number | null;
-  p95_latency_breached: boolean;
-}
-
-interface SLAResponse {
-  slas: SLAStatus[];
-  total_breached: number;
-  total_monitored: number;
-}
+type SLAStatusRow = SLAResponse["slas"][number];
 
 const formatHours = (hours: number | null) => {
   if (hours === null) return "—";
@@ -74,33 +58,25 @@ const getCompliancePercent = (actual: number | null, sla: number | null): number
 };
 
 export const SLAStatus = () => {
-  const { token } = useAuth();
+  const { api } = useAuth();
   const navigate = useNavigate();
   const [breachedOnly, setBreachedOnly] = useState(false);
 
-  const { data, isLoading } = useQuery<SLAResponse>({
-    queryKey: ["sla-status", breachedOnly],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (breachedOnly) params.append("breached_only", "true");
-
-      const response = await fetch(`/api/sla-status?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch SLA status");
-      return response.json();
-    },
-    refetchInterval: 60000, // Refresh every minute
+  const { data, isLoading, error } = useQuery<SLAResponse>({
+    queryKey: ["sla-status", api.token, breachedOnly],
+    queryFn: () => getSlaStatusDashboard(api, breachedOnly),
+    refetchInterval: 60000
   });
 
-  const columns = [
+  const columns: TableColumnsType<SLAStatusRow> = [
     {
       title: "Table",
       dataIndex: "table_name",
       key: "table_name",
       width: "25%",
       ellipsis: true,
-      render: (name: string, record: SLAStatus) => (
+      fixed: "left" as const,
+      render: (name: string, record: SLAStatusRow) => (
         <a onClick={() => navigate(`/tables/${record.table_id}`)}>{name}</a>
       ),
     },
@@ -108,7 +84,8 @@ export const SLAStatus = () => {
       title: "Data freshness",
       key: "freshness",
       width: "22%",
-      render: (_: any, record: SLAStatus) => {
+      responsive: ["md"],
+      render: (_: any, record: SLAStatusRow) => {
         const breached = record.freshness_breached;
         const percent = getCompliancePercent(record.freshness_hours, record.freshness_sla_hours);
         const scanLag = record.scan_staleness_hours;
@@ -147,7 +124,8 @@ export const SLAStatus = () => {
       title: "Maintenance",
       key: "maintenance",
       width: "20%",
-      render: (_: any, record: SLAStatus) => {
+      responsive: ["lg"],
+      render: (_: any, record: SLAStatusRow) => {
         const breached = record.maintenance_breached;
         const percent = getCompliancePercent(record.maintenance_days, record.maintenance_sla_days);
         return (
@@ -176,7 +154,8 @@ export const SLAStatus = () => {
       title: "P95 Latency",
       key: "latency",
       width: "20%",
-      render: (_: any, record: SLAStatus) => {
+      responsive: ["xl"],
+      render: (_: any, record: SLAStatusRow) => {
         const breached = record.p95_latency_breached;
         const percent = getCompliancePercent(record.p95_latency_ms, record.p95_latency_sla_ms);
         return (
@@ -205,7 +184,7 @@ export const SLAStatus = () => {
       title: "Status",
       key: "status",
       width: "15%",
-      render: (_: any, record: SLAStatus) => {
+      render: (_: any, record: SLAStatusRow) => {
         const breachedCount = [
           record.freshness_breached,
           record.maintenance_breached,
@@ -243,6 +222,8 @@ export const SLAStatus = () => {
           <Switch checked={breachedOnly} onChange={setBreachedOnly} />
         </Space>
       </div>
+
+      <QueryErrorAlert error={error} title="Failed to load SLA status" />
 
       {isLoading ? (
         <div style={{ textAlign: "center", padding: "60px" }}>
@@ -337,6 +318,7 @@ export const SLAStatus = () => {
             }
           >
             <Table
+              scroll={{ x: 960 }}
               columns={columns}
               dataSource={data?.slas || []}
               rowKey="table_id"
@@ -346,7 +328,7 @@ export const SLAStatus = () => {
                 showTotal: (total) => `${total} tables`,
               }}
               size="small"
-              rowClassName={(record: SLAStatus) => {
+              rowClassName={(record: SLAStatusRow) => {
                 const breachedCount = [
                   record.freshness_breached,
                   record.maintenance_breached,

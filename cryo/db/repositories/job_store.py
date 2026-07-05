@@ -116,6 +116,9 @@ class SQLJobStore:
                     detail=record.detail,
                     duration_ms=record.duration_ms,
                     actual_bytes_freed=record.actual_bytes_freed,
+                    input_files_count=record.input_files_count,
+                    output_files_count=record.output_files_count,
+                    actor=record.actor,
                 )
             )
             session.commit()
@@ -171,6 +174,9 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     preset = job.run.preset if job.run else None
     params: dict[str, Any] = dict(preset.params) if preset else {}
     guardrails = dict(preset.guardrails) if preset else {}
+    summary = dict(job.run.summary or {}) if job.run else {}
+    actor_raw = summary.get("actor")
+    actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     return MaintenanceJobRecord(
         id=str(job.id),
         run_id=str(job.run_id),
@@ -188,6 +194,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         deadline_at=job.run.deadline_at if job.run else None,
         cooldown_hours=int(guardrails.get("cooldown_hours") or 0),
         last_maintained_at=_last_maintained_at(session, job.table_id),
+        actor=actor,
     )
 
 

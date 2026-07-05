@@ -110,11 +110,11 @@ async def generate_daily_report(
     # Send to Slack if client provided
     if slack_client:
         blocks = _build_slack_blocks(report_data, ai_summary)
-        await slack_client.send_blocks(
+        slack_sent = await slack_client.send_blocks(
             blocks,
             fallback_text=f"Cryo Daily Report - {report_data.report_date.date()}",
         )
-        result["slack_sent"] = True
+        result["slack_sent"] = slack_sent
 
     return result
 

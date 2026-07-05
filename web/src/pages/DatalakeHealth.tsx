@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, Tooltip, XAx
 import { Link } from "react-router-dom";
 import { getDatalakeDashboard, listTables } from "../api/client";
 import type { DatalakeDashboard, TableRead } from "../api/types";
-import { ChartFrame, EmptyState, PageHeader, StatStrip } from "../components/common";
+import { ChartFrame, EmptyState, PageHeader, StatStrip, QueryErrorAlert, FirstRunEmptyState, TruncatedResultsBanner } from "../components/common";
 import { GradePill, PriorityTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
@@ -18,11 +18,13 @@ const gradePalette: Record<string, string> = {
   F: cryoColors.gradeF
 };
 
+const TOP_OFFENDERS_LIMIT = 50;
+
 export const DatalakeHealth = () => {
   const { api, token } = useAuth();
   const dashboard = useQuery({
-    queryKey: ["dashboard", token],
-    queryFn: () => getDatalakeDashboard(api),
+    queryKey: ["dashboard", token, TOP_OFFENDERS_LIMIT],
+    queryFn: () => getDatalakeDashboard(api, { top_limit: TOP_OFFENDERS_LIMIT }),
     retry: 1
   });
   const tables = useQuery({
@@ -33,6 +35,7 @@ export const DatalakeHealth = () => {
 
   const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
   const topOffenders = data.top_offenders ?? [];
+  const tableTotal = tables.data?.total;
   const hasProjectedCost = Boolean(
     data.totals?.projected_monthly_cost_usd || data.totals?.projected_savings_usd_month
   );
@@ -59,6 +62,21 @@ export const DatalakeHealth = () => {
           type="info"
           showIcon
           message="Dashboard endpoint is not available yet; showing a fallback view from /tables."
+        />
+      ) : null}
+      <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />
+      {!dashboard.isError && (data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
+        <TruncatedResultsBanner
+          shown={topOffenders.length}
+          total={data.totals?.needs_compaction ?? topOffenders.length}
+          noun="tables needing attention"
+        />
+      ) : null}
+      {dashboard.isError ? (
+        <TruncatedResultsBanner
+          shown={tables.data?.items.length ?? 0}
+          total={tableTotal ?? tables.data?.items.length ?? 0}
+          noun="tables"
         />
       ) : null}
       {dashboard.isLoading || tables.isLoading ? (
@@ -162,7 +180,17 @@ export const DatalakeHealth = () => {
                     { title: "Small files", align: "right", render: (_, row) => formatNumber(row.stats?.small_files_count, true) },
                     { title: "Size", align: "right", render: (_, row) => formatGb(row.stats?.total_size_gb) }
                   ]}
-                  locale={{ emptyText: <EmptyState title="No offender tables" description="The datalake is currently quiet." /> }}
+                  locale={{
+                    emptyText:
+                      (data.totals?.tables ?? 0) === 0 ? (
+                        <FirstRunEmptyState />
+                      ) : (
+                        <EmptyState
+                          title="No tables need attention"
+                          description="Every tracked table is below the compaction threshold right now."
+                        />
+                      )
+                  }}
                 />
               </Card>
             </Col>

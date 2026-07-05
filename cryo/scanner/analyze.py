@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +25,8 @@ from cryo.scanner.cost import (
 from cryo.scanner.health import compute_health_score
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals
+
+logger = logging.getLogger(__name__)
 
 HEALTH_SMALL_FILE_BYTES = 8 * MB
 
@@ -103,6 +106,7 @@ def analyze_catalog_table(
     file_size_threshold_mb: int = 128,
     settings: Settings | None = None,
     parallel_manifests: bool = True,
+    stats_history: Sequence[Mapping[str, Any]] | None = None,
 ) -> TableAnalysis:
     del file_size_threshold_mb
     table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
@@ -114,6 +118,7 @@ def analyze_catalog_table(
         scan_at=scan_at,
         settings=effective_settings,
         parallel_manifests=parallel_manifests,
+        stats_history=stats_history,
     )
     assert isinstance(result, TableAnalysis)
     return result
@@ -127,6 +132,7 @@ def analyze_table(
     scan_at: datetime | None = None,
     settings: Settings | None = None,
     parallel_manifests: bool = True,
+    stats_history: Sequence[Mapping[str, Any]] | None = None,
 ) -> TableAnalysis | dict[str, Any]:
     if isinstance(schema_name, Settings):
         settings = schema_name
@@ -146,8 +152,13 @@ def analyze_table(
     quality_accum = ColumnQualityAccumulator(schema)
 
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
+    manifest_read_errors: list[str] = []
     for data_file in iter_data_files(
-        table_obj, manifests, parallel=parallel_manifests, max_workers=max_workers
+        table_obj,
+        manifests,
+        parallel=parallel_manifests,
+        max_workers=max_workers,
+        manifest_errors=manifest_read_errors,
     ):
         total_files += 1
         file_size = int(_attr(data_file, "file_size_in_bytes", 0) or 0)
@@ -257,11 +268,13 @@ def analyze_table(
             metadata_bytes=metadata_accounting.breakdown.metadata_bytes,
             data_bytes=metadata_accounting.breakdown.live_bytes,
             format_version=format_version,
+            history=stats_history,
         )
     else:
         stats_for_health = enrich_stats_signals(
             stats_for_health,
             format_version=format_version,
+            history=stats_history,
         )
     score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
     column_quality = quality_accum.finish()
@@ -288,6 +301,8 @@ def analyze_table(
         "first_snapshot_at": snapshot_info["first_snapshot_at"],
         "last_snapshot_committed_at": snapshot_info["last_snapshot_committed_at"],
     }
+    if manifest_read_errors:
+        raw["manifest_read_errors"] = manifest_read_errors
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
@@ -340,6 +355,7 @@ def iter_data_files(
     *,
     parallel: bool = True,
     max_workers: int = 8,
+    manifest_errors: list[str] | None = None,
 ) -> Iterable[object]:
     """Iterate over data files from a table's manifests.
 
@@ -360,34 +376,53 @@ def iter_data_files(
 
     if not parallel or len(manifest_list) <= 1:
         for manifest in manifest_list:
-            yield from _iter_manifest_data_files(manifest, io)
+            yield from _iter_manifest_data_files(manifest, io, manifest_errors=manifest_errors)
         return
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(manifest_list))) as executor:
         futures = {
-            executor.submit(_fetch_manifest_entries_safe, manifest, io): manifest
+            executor.submit(_read_manifest_entries, manifest, io): manifest
             for manifest in manifest_list
         }
         for future in as_completed(futures):
-            entries = future.result()
+            entries, error = future.result()
+            if error and manifest_errors is not None:
+                manifest_errors.append(error)
             for entry in entries:
+                if _entry_status_deleted(entry):
+                    continue
                 yield _attr(entry, "data_file", entry)
 
 
-def _iter_manifest_data_files(manifest: object, io: object) -> Iterable[object]:
+def _iter_manifest_data_files(
+    manifest: object,
+    io: object,
+    *,
+    manifest_errors: list[str] | None = None,
+) -> Iterable[object]:
     """Iterate over data files from a single manifest (serial path)."""
-    for entry in _call_manifest_entries(manifest, io):
+    entries, error = _read_manifest_entries(manifest, io)
+    if error and manifest_errors is not None:
+        manifest_errors.append(error)
+    for entry in entries:
         if _entry_status_deleted(entry):
             continue
         yield _attr(entry, "data_file", entry)
 
 
-def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
-    """Fetch manifest entries, filtering deleted entries. Thread-safe."""
+def _read_manifest_entries(manifest: object, io: object) -> tuple[list[object], str | None]:
+    """Read manifest entries; return empty list + error message on failure."""
     try:
-        return _call_manifest_entries(manifest, io)
-    except Exception:
-        return []
+        return _call_manifest_entries(manifest, io), None
+    except Exception as exc:
+        logger.warning("Failed to read Iceberg manifest entries: %s", exc)
+        return [], str(exc)
+
+
+def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
+    """Backward-compatible wrapper used by tests."""
+    entries, _ = _read_manifest_entries(manifest, io)
+    return entries
 
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:

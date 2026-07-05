@@ -21,7 +21,12 @@ from cryo.observability.metrics import scanner_tables_scanned_total
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
-from cryo.scanner.persistence import already_scanned_today, persist_table_analysis, upsert_table
+from cryo.scanner.persistence import (
+    already_scanned_today,
+    persist_table_analysis,
+    stats_history_for_signals,
+    upsert_table,
+)
 from cryo.sources.base import SourceCatalog
 from cryo.sources.factory import source_catalog_for
 
@@ -198,6 +203,7 @@ def _run_scan_serial(
             continue
 
         try:
+            history = stats_history_for_signals(session, table_row.id)
             analysis = analyze_catalog_table(
                 candidate.catalog,
                 candidate.schema_name,
@@ -206,6 +212,7 @@ def _run_scan_serial(
                 small_file_mb=settings.scan_small_file_mb,
                 file_size_threshold_mb=settings.scan_needs_compaction_threshold,
                 settings=settings,
+                stats_history=history,
             )
             analysis = _apply_orphan_scan(
                 session,
@@ -289,6 +296,7 @@ def _run_scan_parallel(
                 return ("skipped", None)
 
             try:
+                history = stats_history_for_signals(table_session, table_row.id)
                 analysis = analyze_catalog_table(
                     candidate.catalog,
                     candidate.schema_name,
@@ -297,6 +305,7 @@ def _run_scan_parallel(
                     small_file_mb=settings.scan_small_file_mb,
                     file_size_threshold_mb=settings.scan_needs_compaction_threshold,
                     settings=settings,
+                    stats_history=history,
                 )
                 analysis = _apply_orphan_scan(
                     table_session,

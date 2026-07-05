@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from cryo.api.deps import require_admin, require_operator, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.schemas import JsonDict
 from cryo.db.models import Preset, Table, TablePartition, TierPolicyRecord
 from cryo.db.repositories.presets import preset_to_config, table_to_candidate
-from cryo.db.session import get_session
 from cryo.scheduler.adaptive_routing import (
     AdaptiveRoutingContext,
     DestinationSignal,
@@ -26,8 +25,6 @@ from cryo.tiering.service import (
     summarize_tier_savings,
     tier_candidates_for_table,
 )
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 router = APIRouter(prefix="/api/v1", tags=["phase8"])
 

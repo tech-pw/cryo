@@ -8,6 +8,7 @@ import {
   deriveCostDashboard,
   getCostDashboard,
   getCostModelEvaluate,
+  getSchemaCost,
   listDestinations,
   listPresets,
   listTables,
@@ -57,6 +58,11 @@ export const CostSavings = () => {
   const costModel = useQuery({
     queryKey: ["cost-model-evaluate", token],
     queryFn: () => getCostModelEvaluate(api),
+    retry: false
+  });
+  const schemaCost = useQuery({
+    queryKey: ["schema-cost", token],
+    queryFn: () => getSchemaCost(api),
     retry: false
   });
 

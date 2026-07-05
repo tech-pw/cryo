@@ -336,6 +336,7 @@ class AuditLogRead(OrmModel):
     detail: str | None = None
     duration_ms: int | None = None
     actual_bytes_freed: int | None = None
+    actor: str | None = None
 
 
 class TableAuditResponse(BaseModel):

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty && tsc --noEmit -p tsconfig.node.json --pretty",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "gen:api": "openapi-typescript http://localhost:8000/openapi.json -o src/api/openapi.d.ts"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "recharts": "^3.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^24.0.0",

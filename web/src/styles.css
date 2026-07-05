@@ -515,6 +515,20 @@ textarea.mono-input {
   }
 }
 
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--layout-bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

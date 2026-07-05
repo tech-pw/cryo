@@ -2,6 +2,9 @@
 
 Fine-grained row-level and column-level security enforcement via
 Iceberg REST Catalog Scan API interception.
+
+NOTE: This module is not wired into any production route or worker path yet.
+Do not assume ABAC policies are enforced until explicitly integrated.
 """
 
 from __future__ import annotations

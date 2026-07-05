@@ -41,6 +41,7 @@ class MaintenanceJobRecord:
     deadline_at: datetime | None = None
     cooldown_hours: int = 0
     last_maintained_at: datetime | None = None
+    actor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class AuditRecord:
     input_files_count: int | None = None
     output_files_count: int | None = None
     actual_bytes_freed: int | None = None
+    actor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -301,6 +303,7 @@ class Worker:
             if not statements:
                 final_status = JobStatus.SKIPPED
             for index, statement in enumerate(statements):
+                self._renew_table_lock(job)
                 started = perf_counter()
                 exec_ctx = ExecContext(
                     job_id=job.id,
@@ -324,6 +327,7 @@ class Worker:
                             duration_ms=duration_ms,
                             input_files_count=None,
                             output_files_count=None,
+                            actor=job.actor,
                         )
                     )
                     final_status = JobStatus.FAILED
@@ -347,6 +351,7 @@ class Worker:
                             duration_ms=result_duration_ms,
                             input_files_count=getattr(result, "input_files_count", None),
                             output_files_count=getattr(result, "output_files_count", None),
+                            actor=job.actor,
                         )
                     )
                     final_status = JobStatus.FAILED
@@ -364,6 +369,7 @@ class Worker:
                         input_files_count=getattr(result, "input_files_count", None),
                         output_files_count=getattr(result, "output_files_count", None),
                         actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
+                        actor=job.actor,
                     )
                 )
         except Exception as exc:
@@ -423,6 +429,11 @@ class Worker:
         if self._lock_store is None or self._lock_store.is_table_locked(job.table_id):
             return
         self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+
+    def _renew_table_lock(self, job: MaintenanceJobRecord) -> None:
+        if self._lock_store is None:
+            return
+        self._lock_store.renew_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
     def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is not None:

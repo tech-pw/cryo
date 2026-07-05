@@ -49,6 +49,13 @@ def _compile_jsonb_sqlite(type_: JSONB, compiler: object, **kwargs: object) -> s
     return "JSON"
 
 
+@pytest.fixture(autouse=True)
+def _test_jwt_secret() -> None:
+    from tests.auth_helpers import ensure_test_jwt_secret
+
+    ensure_test_jwt_secret()
+
+
 @pytest.fixture()
 def session() -> Iterator[Session]:
     _patch_sqlite_incompatible_defaults()

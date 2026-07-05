@@ -1,7 +1,9 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { Button, Empty, Space, Statistic, Tooltip, Typography } from "antd";
+import { Alert, Button, Empty, Space, Statistic, Tooltip, Typography } from "antd";
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { ResponsiveContainer } from "recharts";
+import { ApiError } from "../api/client";
 
 export const ChartFrame = ({
   empty,
@@ -121,4 +123,72 @@ export const JsonHelpButton = ({ value }: { value: unknown }) => (
   <Button size="small" onClick={() => navigator.clipboard.writeText(JSON.stringify(value, null, 2))}>
     Copy JSON
   </Button>
+);
+
+export const QueryErrorAlert = ({
+  error,
+  title = "Failed to load data",
+  className = "page-alert"
+}: {
+  error: unknown;
+  title?: string;
+  className?: string;
+}) => {
+  if (!error) return null;
+  const detail =
+    error instanceof ApiError
+      ? String(error.detail ?? error.message)
+      : error instanceof Error
+        ? error.message
+        : "Unknown error";
+  const isAuth = error instanceof ApiError && (error.status === 401 || error.status === 403);
+  return (
+    <Alert
+      className={className}
+      type="error"
+      showIcon
+      message={isAuth ? "Authentication or permission error" : title}
+      description={
+        <Space direction="vertical" size={4}>
+          <Typography.Text>{detail}</Typography.Text>
+          {isAuth ? (
+            <Typography.Text type="secondary">
+              Sign in again or switch to a role with sufficient permissions in the header.
+            </Typography.Text>
+          ) : null}
+        </Space>
+      }
+    />
+  );
+};
+
+export const TruncatedResultsBanner = ({
+  shown,
+  total,
+  noun = "results"
+}: {
+  shown: number;
+  total: number;
+  noun?: string;
+}) =>
+  total > shown ? (
+    <Alert
+      className="page-alert"
+      type="warning"
+      showIcon
+      message={`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${noun}`}
+      description="Refine filters or use search to narrow the list — the view is capped for performance."
+    />
+  ) : null;
+
+export const FirstRunEmptyState = () => (
+  <EmptyState
+    title="No tables scanned yet"
+    description="Connect a catalog source, then run a scan to populate health and cost metrics."
+    action={
+      <Link to="/connections">
+        <Button type="primary">Connect a catalog</Button>
+      </Link>
+    }
+  />
 );

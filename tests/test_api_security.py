@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-import base64
-import json
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from cryo.api.deps import get_current_principal, require_admin, require_operator
-from cryo.api.security import Principal, Role, principal_from_token
+from cryo.api.security import Principal, Role
+from tests.auth_helpers import (
+    ADMIN_HEADERS,
+    OPERATOR_HEADERS,
+    VIEWER_HEADERS,
+    ensure_test_jwt_secret,
+)
 
 
 def _client() -> TestClient:
+    ensure_test_jwt_secret()
     app = FastAPI()
 
     @app.get("/operator")
@@ -25,22 +30,17 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
-def test_local_tokens_enforce_role_order() -> None:
+def test_signed_jwt_tokens_enforce_role_order() -> None:
     client = _client()
 
-    assert client.get("/operator", headers={"Authorization": "Bearer viewer"}).status_code == 403
-    operator_response = client.get("/operator", headers={"Authorization": "Bearer local:operator"})
-
-    assert operator_response.status_code == 200
-    assert client.get("/operator", headers={"Authorization": "Bearer admin"}).status_code == 200
+    assert client.get("/operator", headers=VIEWER_HEADERS).status_code == 403
+    assert client.get("/operator", headers=OPERATOR_HEADERS).status_code == 200
+    assert client.get("/operator", headers=ADMIN_HEADERS).status_code == 200
 
 
-def test_jwt_shaped_token_extracts_subject_and_roles() -> None:
-    token = f"header.{_b64_json({'sub': 'alice', 'roles': ['viewer', 'operator']})}.signature"
-
-    principal = principal_from_token(token)
-
-    assert principal == Principal(subject="alice", roles=frozenset({Role.VIEWER, Role.OPERATOR}))
+def test_literal_tokens_are_rejected() -> None:
+    client = _client()
+    assert client.get("/operator", headers={"Authorization": "Bearer admin"}).status_code == 401
 
 
 def test_security_dependency_is_easy_to_override() -> None:
@@ -58,8 +58,3 @@ def test_security_dependency_is_easy_to_override() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": "admin"}
-
-
-def _b64_json(value: object) -> str:
-    raw = json.dumps(value).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")

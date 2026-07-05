@@ -1,0 +1,37 @@
+{{- define "cryo.workerPod" -}}
+image: "{{ .root.Values.image.repository }}:{{ .root.Values.image.tag }}"
+imagePullPolicy: {{ .root.Values.image.pullPolicy }}
+env:
+  {{- range $k, $v := .root.Values.global.env }}
+  - name: {{ $k }}
+    value: {{ $v | quote }}
+  {{- end }}
+envFrom:
+  {{- include "cryo.envFrom" .root | nindent 2 }}
+resources:
+  {{- toYaml .resources | nindent 2 }}
+{{- end }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cryo.fullname" . }}-worker
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "cryo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          command: ["python", "-m", "cryo.worker.run"]
+          {{- include "cryo.workerPod" (dict "root" . "resources" .Values.worker.resources) | nindent 10 }}

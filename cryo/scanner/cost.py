@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from cryo.config import Settings
 from cryo.cost.model import CostStatsInput, ReclaimBytes, project_savings
+from cryo.cost.s3_pricing import S3StorageClass, calculate_monthly_storage_cost
 from cryo.domain.enums import CostPrecision
 from cryo.domain.models import StorageBreakdown
 
@@ -54,7 +55,10 @@ class TableCostAnalysis:
 
 def estimate_monthly_s3_cost_usd(total_size_bytes: int, snapshot_overhead_bytes: int = 0) -> float:
     total_gb = (total_size_bytes + snapshot_overhead_bytes) / GB
-    return round(total_gb * S3_COST_PER_GB_MONTH, 2)
+    return round(
+        calculate_monthly_storage_cost(total_gb, storage_class=S3StorageClass.STANDARD),
+        2,
+    )
 
 
 def estimate_storage_cost(
