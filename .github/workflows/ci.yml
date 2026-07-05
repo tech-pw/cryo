@@ -118,6 +118,11 @@ jobs:
           pip install -U pip
           pip install -e ".[dev]"
 
+      - name: Run database migrations
+        env:
+          CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@localhost:5432/cryo_test
+        run: alembic upgrade head
+
       - name: Run tests
         env:
           CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@localhost:5432/cryo_test
