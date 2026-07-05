@@ -13,17 +13,18 @@ curl http://localhost:8000/healthz
 Docker stack:
 
 ```bash
-docker compose ps
+make ps
 ```
 
-Expected local services:
+Expected local services (container names prefixed `cryo-`):
 
-- `iceberg-minio`
-- `iceberg-rest`
-- `iceberg-trino`
-- `iceberg-spark`
-- `iceberg-postgres`
-- `iceberg-redis`
+- `cryo-minio`
+- `cryo-iceberg-rest`
+- `cryo-trino`
+- `cryo-spark` (tools profile)
+- `cryo-postgres`
+- `cryo-redis`
+- `cryo-prometheus`, `cryo-grafana`, `cryo-loki` (when observability stack is running)
 
 ## Apply Database Migrations
 
@@ -200,8 +201,8 @@ Use a role with enough privileges:
 Verify:
 
 ```bash
-docker compose ps
-docker exec -it iceberg-trino trino --execute "SHOW SCHEMAS FROM iceberg"
+make ps
+docker exec -it cryo-trino trino --execute "SHOW SCHEMAS FROM iceberg"
 ```
 
 Then verify the `local-rest` source row points to `http://localhost:8181`.

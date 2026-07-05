@@ -35,6 +35,9 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
    `docs/RECOMMENDATIONS.md`, `docs/PERFORMANCE_AND_OPENNESS.md`, and
    `docs/ARCHITECTURE_AND_AI_STRATEGY.md` into an ordered, actionable plan.
 6. This file — conventions & guardrails.
+7. [`docs/LOCAL_DEV_ONLY_INVENTORY.md`](./docs/LOCAL_DEV_ONLY_INVENTORY.md) — ad-hoc local datalake
+   components that must not ship to prod; **update in the same PR** when adding new dev-only scripts
+   or compose services.
 
 The reference implementation being ported lives **outside this repo** (read-only, for parity):
 - `/Users/pw/PycharmProjects/pw-data-connectors/airflow/dags/data_team/trino_admin/dag_iceberg_auto_maintenance_with_trino.py`
@@ -135,9 +138,11 @@ If you must change any of these, call it out explicitly and update `lld.md` + pa
 > Phase 0. Until then, prefer the Makefile targets below as the canonical interface.
 
 ```bash
-# Local infra (MinIO + Iceberg REST + Trino + Spark + Postgres + Redis)
-make up                 # docker compose up -d
-make down               # stop
+# Local full stack (datalake + Cryo deps + observability)
+make up                 # all three compose files
+make up-cryo            # Cryo platform only (prod-shaped)
+make up-datalake        # MinIO + catalogs + Trino (LOCAL/CI only)
+make down               # stop full local stack
 make seed               # create demo Iceberg tables (scripts/)
 
 # Backend

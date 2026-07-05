@@ -23,8 +23,11 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       Operation, PartitionPredicate, MaintenancePlan, CapacitySnapshot.
 - [~] Field-level secret encryption helper (Fernet/KMS) for source/destination credentials — schema
       fields exist (`secret_ref`, `*_encrypted`); `cryo/api/extensions.py` still has TODO encrypt/decrypt.
-- [x] Local stack `docker-compose.yml`: MinIO, Iceberg REST, Trino, **Spark**, Postgres, Redis.
+- [x] Local compose split: `docker-compose.yml` (Cryo platform), `docker-compose.dev-datalake.yml`
+      (MinIO, Iceberg REST, HMS, Trino, Spark — LOCAL/CI only), `docker-compose.observability.yml`.
 - [x] Port/keep demo seeding (`scripts/create_test_tables.py`) for local Iceberg tables.
+- [x] Local HMS integration: `hive-metastore` + `hms-postgres`, `tests/integration/hms/` fixture
+      generator (MinIO-only data), `local-hms` source seed, opt-in `test_hms_catalog_integration.py`.
 - [x] CI: lint + typecheck + unit tests on push (`.github/workflows/ci.yml`).
 - [x] `Makefile` targets from `agents.md` §6 (+ `smoke-compact`, `start-local`, reporting targets).
 
@@ -71,7 +74,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] Tests: planner unit tests; Trino renderer golden tests; `test_trino_engine.py`;
       routing/execution phase tests (`test_execution_phases.py`).
 - [~] Contract test against local Trino on seeded tables in pytest — `make smoke-compact` covers
-      Docker e2e; not yet wired into CI unit suite.
+      Docker e2e REST path; HMS live tests via `make test-hms-integration` (opt-in, not CI default).
 
 ## P3 — Governor + Scheduler (load-aware orchestration)
 - [x] `governor/admission.py` — capacity math: caps, live vs local in-flight, off-peak gate,

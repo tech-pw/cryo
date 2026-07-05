@@ -12,7 +12,8 @@ helm install cryo deploy/helm/cryo/ \
   --set global.envFromSecret=cryo-secrets
 ```
 
-For local development, `docker-compose.yml` remains the fastest path.
+For local development, use `./start-local.sh` or `make up` (three compose files — see
+[`local-docker-compose.md`](./local-docker-compose.md)). Production deploys only Cryo services via Helm.
 
 ## Authentication
 

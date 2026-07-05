@@ -10,30 +10,35 @@ This guide covers local deployment with Docker Compose and production deployment
 
 ## Docker Compose (local / single-node)
 
+Cryo uses three compose files. See [`local-docker-compose.md`](./local-docker-compose.md) for the full
+layout. Production deploys only Cryo application services via Helm — never the dev-datalake file.
+
 ### 1. Start infrastructure and services
 
 ```bash
 cd /path/to/Cryo
-docker compose up -d
+make up
+# or for Cryo platform only (external catalogs/engines):
+make up-cryo
 ```
 
-Core services:
+Core services (full local stack via `make up`):
 
-| Service | Purpose | URL |
-|---------|---------|-----|
-| `cryo-api` | FastAPI backend | http://localhost:8000 |
-| `cryo-web` | React UI | http://localhost:5173 |
-| `cryo-scanner` | Catalog scanner CronJob-style worker | — |
-| `cryo-scheduler` | Maintenance scheduler (leader-elected) | — |
-| `cryo-governor` | Load-aware admission controller | — |
-| `cryo-worker` | Maintenance job executor | — |
-| `postgres` | Cryo metadata DB | localhost:5432 |
-| `redis` | Queue + leader locks | localhost:6379 |
-| `trino` | Default maintenance engine | http://localhost:8080 |
-| `prometheus` | Metrics scrape | http://localhost:9090 |
-| `grafana` | Dashboards + alerting UI | http://localhost:3000 |
-| `loki` | Log aggregation | http://localhost:3100 |
-| `promtail` | Docker log shipper | — |
+| Service | Compose file | Purpose | URL |
+|---------|--------------|---------|-----|
+| `cryo-api` | `docker-compose.yml` | FastAPI backend | http://localhost:8000 |
+| `cryo-web` | `docker-compose.yml` | React UI | http://localhost:5173 |
+| `cryo-scanner` | `docker-compose.yml` | Catalog scanner CronJob-style worker | — |
+| `cryo-scheduler` | `docker-compose.yml` | Maintenance scheduler (leader-elected) | — |
+| `cryo-governor` | `docker-compose.yml` | Load-aware admission controller | — |
+| `cryo-worker` | `docker-compose.yml` | Maintenance job executor | — |
+| `postgres` | `docker-compose.yml` | Cryo metadata DB | localhost:5432 |
+| `redis` | `docker-compose.yml` | Queue + leader locks | localhost:6379 |
+| `trino` | `docker-compose.dev-datalake.yml` | Default maintenance engine (local only) | http://localhost:8080 |
+| `prometheus` | `docker-compose.observability.yml` | Metrics scrape | http://localhost:9090 |
+| `grafana` | `docker-compose.observability.yml` | Dashboards + alerting UI | http://localhost:3000 |
+| `loki` | `docker-compose.observability.yml` | Log aggregation | http://localhost:3100 |
+| `promtail` | `docker-compose.observability.yml` | Docker log shipper | — |
 
 ### 2. Apply migrations
 
@@ -131,9 +136,9 @@ Customize `values.yaml` for image registry, resource limits, envFrom secrets, an
 
 ## Upgrades
 
-1. Pull new image / rebuild: `docker compose build`
+1. Pull new image / rebuild: `docker compose -f docker-compose.yml build`
 2. Run migrations: `alembic upgrade head`
-3. Rolling restart stateless services: `docker compose up -d --force-recreate cryo-api cryo-worker cryo-governor cryo-scheduler`
+3. Rolling restart stateless services: `docker compose -f docker-compose.yml up -d --force-recreate cryo-api cryo-worker cryo-governor cryo-scheduler`
 4. Verify Grafana dashboard panels and `/metrics` counters increment
 
 ---

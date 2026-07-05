@@ -56,16 +56,18 @@ pip install -e ".[dev]"
 ### 2. Start Infrastructure
 
 ```bash
-docker compose up -d
+./start-local.sh start
+# or: make up
 ```
 
-This starts:
-- MinIO (S3-compatible storage)
-- Iceberg REST Catalog
-- Trino
-- Spark
-- PostgreSQL
-- Redis
+This starts three compose stacks — see [`docs/local-docker-compose.md`](docs/local-docker-compose.md):
+
+- **Dev datalake** (`docker-compose.dev-datalake.yml`): MinIO, Iceberg REST, HMS, Trino, Spark
+- **Cryo platform** (`docker-compose.yml`): PostgreSQL, Redis (+ optional Cryo containers)
+- **Observability** (`docker-compose.observability.yml`): Prometheus, Grafana, Loki, Promtail
+
+When adding new local-only scripts or compose services, update
+[`docs/LOCAL_DEV_ONLY_INVENTORY.md`](docs/LOCAL_DEV_ONLY_INVENTORY.md) in the same PR.
 
 ### 3. Run Tests
 

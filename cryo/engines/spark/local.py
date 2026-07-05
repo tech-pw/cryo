@@ -23,7 +23,7 @@ class SparkLocalEngine:
 
     def __post_init__(self) -> None:
         self.settings = self.settings or get_settings()
-        self._container = str(self.config.get("container") or "iceberg-spark")
+        self._container = str(self.config.get("container") or "cryo-spark")
         self._catalog = str(self.config.get("catalog") or "iceberg")
         self._slot_cap = int(self.config.get("slot_cap") or 3)
 
@@ -41,6 +41,10 @@ class SparkLocalEngine:
         command = [
             "docker",
             "compose",
+            "-f",
+            "docker-compose.dev-datalake.yml",
+            "--profile",
+            "tools",
             "exec",
             "-T",
             "spark",
