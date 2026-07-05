@@ -179,6 +179,119 @@ export interface CostModelEvaluateResponse {
   n_samples: number;
 }
 
+export interface AnomalyRead {
+  metric: string;
+  value: number;
+  baseline: number;
+  z_score: number;
+  severity: string;
+}
+
+export interface AnomalyResponse {
+  table_id: UUID;
+  anomalies: AnomalyRead[];
+}
+
+export interface ExplainHealthResponse {
+  table_id: UUID;
+  explanation: string;
+}
+
+export interface AutoCompCompareResponse {
+  table_id: UUID;
+  static_order: string[];
+  autocomp_order: string[];
+  improvement_ratio: number;
+  autocomp_wins: boolean;
+}
+
+export interface CopilotQuestion {
+  id: string;
+  prompt: string;
+}
+
+export interface CopilotAskResponse {
+  question_id: string;
+  result: JsonObject;
+}
+
+export interface CopilotSearchResponse {
+  source: string;
+  question_id?: string | null;
+  similarity?: number | null;
+  matched_text?: string | null;
+  result?: JsonObject | null;
+  answer?: string | null;
+}
+
+export interface CopilotNaturalResponse {
+  answer: string;
+  context_used?: JsonObject | null;
+  model: string;
+  provider: string;
+}
+
+export interface ColumnQualityMetricRead {
+  column_name: string;
+  null_rate_pct: number;
+  null_rate_baseline_pct?: number | null;
+  null_rate_spike?: boolean;
+  min_value?: string | number | null;
+  max_value?: string | number | null;
+  value_range_changed?: boolean;
+  value_range_explanation?: string | null;
+}
+
+export interface DataQualityProfileRead {
+  table_id: string;
+  table_name: string;
+  profiled_at: string;
+  column_metrics: ColumnQualityMetricRead[];
+  anomalies_detected: number;
+  schema_version_changed: boolean;
+  new_columns: string[];
+  dropped_columns: string[];
+}
+
+export interface AWSIntegrationRead {
+  id: UUID;
+  source_id: UUID;
+  bucket: string;
+  region: string;
+  access_key_id?: string | null;
+  enabled: boolean;
+  last_tested_at?: string | null;
+  last_test_ok?: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AWSIntegrationWrite {
+  bucket: string;
+  region: string;
+  access_key_id?: string;
+  secret_access_key?: string;
+  enabled?: boolean;
+}
+
+export interface AWSConnectionTestResponse {
+  ok: boolean;
+  account_id?: string | null;
+  arn?: string | null;
+  error?: string | null;
+}
+
+export interface AWSUsageResponse {
+  bucket: string;
+  region: string;
+  measured_at?: string | null;
+  size_bytes_by_storage_class?: Record<string, number>;
+  total_size_bytes: number;
+  object_count?: number | null;
+  price_per_gb_month?: number | null;
+  price_source?: string | null;
+}
+
 export interface PaginatedTables {
   items: TableRead[];
   total: number;
