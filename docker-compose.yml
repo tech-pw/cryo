@@ -1,7 +1,41 @@
+version: '3.8'
+
 services:
+  # ==================== Infrastructure ====================
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: cryo-postgres
+    environment:
+      POSTGRES_USER: cryo
+      POSTGRES_PASSWORD: cryo-dev-password
+      POSTGRES_DB: cryo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  redis:
+    image: redis:7-alpine
+    container_name: cryo-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
   minio:
     image: minio/minio:latest
-    container_name: iceberg-minio
+    container_name: cryo-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -10,118 +44,217 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/data
+      - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
       timeout: 5s
       retries: 5
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: iceberg-minio-init
+  
+  # ==================== Iceberg Catalog ====================
+  
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    container_name: cryo-iceberg-rest
+    environment:
+      CATALOG_WAREHOUSE: s3://warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_ACCESS__KEY__ID: minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    ports:
+      - "8181:8181"
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/warehouse &&
-      echo 'MinIO bucket warehouse is ready'
-      "
-
-  iceberg-rest:
-    image: apache/iceberg-rest-fixture:latest
-    container_name: iceberg-rest
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    ports:
-      - "8181:8181"
-    environment:
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
-      AWS_REGION: us-east-1
-      CATALOG_WAREHOUSE: s3://warehouse/
-      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
-      CATALOG_S3_PATH__STYLE__ACCESS: "true"
-
+  
+  # ==================== Trino ====================
+  
   trino:
-    image: trinodb/trino:latest
-    container_name: iceberg-trino
+    image: trinodb/trino:480
+    container_name: cryo-trino
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./deploy/trino/catalog:/etc/trino/catalog
+      - ./deploy/trino/config.properties:/etc/trino/config.properties
     depends_on:
-      - iceberg-rest
-    ports:
-      - "8090:8080"
-    volumes:
-      - ./trino/catalog:/etc/trino/catalog
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: iceberg-postgres
-    environment:
-      POSTGRES_DB: cryo
-      POSTGRES_USER: cryo
-      POSTGRES_PASSWORD: cryo
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cryo -d cryo"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    container_name: iceberg-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  spark:
-    build:
-      context: ./docker/spark-runner
-    image: cryo-spark-runner:local
-    container_name: iceberg-spark
-    depends_on:
-      iceberg-rest:
-        condition: service_started
-    environment:
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
-      AWS_REGION: us-east-1
-      ICEBERG_CATALOG: rest
-      ICEBERG_REST_URI: http://iceberg-rest:8181
-      ICEBERG_WAREHOUSE: s3://warehouse/
-      S3_ENDPOINT: http://minio:9000
-      HOME: /tmp
-      PYTHONPATH: /workspace/scripts
-      SPARK_LOCAL_DIRS: /tmp/spark
-    working_dir: /workspace
-    command: ["bash", "-lc", "sleep infinity"]
-    ports:
-      - "4040:4040"
-    volumes:
-      - .:/workspace
-      - spark-ivy:/tmp/.ivy2
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import pyspark'"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
       interval: 10s
       timeout: 5s
       retries: 10
+  
+  # ==================== Cryo Services ====================
+  
+  cryo-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-api
+    command: uvicorn cryo.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+      - ./migrations:/app/migrations
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  cryo-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-scanner
+    command: python -m cryo.scanner.run
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cryo-api:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+  
+  cryo-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-scheduler
+    command: python -m cryo.scheduler
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+  
+  cryo-governor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-governor
+    command: python -m cryo.governor
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+  
+  cryo-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-worker
+    command: python -m cryo.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+  
+  # ==================== Observability ====================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cryo-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    depends_on:
+      - cryo-api
+  
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cryo-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+  
+  # ==================== Frontend ====================
+  
+  cryo-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: cryo-web
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web/src:/app/src
+      - ./web/public:/app/public
+    depends_on:
+      - cryo-api
 
 volumes:
-  minio-data:
-  postgres-data:
-  redis-data:
-  spark-ivy:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
