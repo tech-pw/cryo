@@ -70,6 +70,9 @@ class Source(TimestampMixin, Base):
     tier_policies: Mapped[list[TierPolicyRecord]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+    aws_integration: Mapped[AWSIntegration | None] = relationship(
+        back_populates="source", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Destination(TimestampMixin, Base):
@@ -410,6 +413,40 @@ class TierPolicyRecord(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
 
     source: Mapped[Source] = relationship(back_populates="tier_policies")
+
+
+class AWSIntegration(TimestampMixin, Base):
+    """Optional, free-tier-only AWS integration for a lakehouse's S3 bucket.
+
+    Deliberately limited to APIs that cost nothing: S3's default daily CloudWatch storage metrics
+    (BucketSizeBytes/NumberOfObjects — published automatically, no setup) read via
+    ``GetMetricStatistics`` (not ``GetMetricData``, which AWS always bills regardless of the
+    CloudWatch free tier), plus the free AWS Price List API for real regional/storage-class unit
+    prices. Cost Explorer, CloudWatch request-metrics filters, and CUR all cost money or need
+    billing-admin setup — none of that is wired up here on purpose. See
+    cryo/integrations/aws_s3_metrics.py.
+    """
+
+    __tablename__ = "aws_integrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    region: Mapped[str] = mapped_column(Text, nullable=False)
+    access_key_id: Mapped[str | None] = mapped_column(Text)
+    secret_ref: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    last_tested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean)
+
+    source: Mapped[Source] = relationship(back_populates="aws_integration")
 
 
 class Preset(TimestampMixin, Base):

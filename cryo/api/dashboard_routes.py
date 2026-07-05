@@ -54,6 +54,21 @@ def _raw_float(value: object, *keys: str) -> float | None:
     return None
 
 
+def _raw_datetime(value: object, *keys: str) -> datetime | None:
+    raw = _raw_dict(value)
+    for key in keys:
+        raw_value = raw.get(key)
+        if isinstance(raw_value, datetime):
+            return raw_value if raw_value.tzinfo else raw_value.replace(tzinfo=UTC)
+        if isinstance(raw_value, str):
+            try:
+                parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
 def _query_status(query: QueryLog) -> str:
     raw = _raw_dict(query.raw)
     status = raw.get("status") or raw.get("state")
@@ -243,9 +258,10 @@ class SLAStatusRead(BaseModel):
 
     table_id: UUID
     table_name: str
-    freshness_hours: float | None  # Hours since last data update
+    freshness_hours: float | None  # Hours since last Iceberg snapshot commit
     freshness_sla_hours: int | None
     freshness_breached: bool
+    scan_staleness_hours: float | None  # Hours since Cryo last scanned (observability only)
     maintenance_days: float | None  # Days since last maintenance
     maintenance_sla_days: int | None
     maintenance_breached: bool
@@ -530,8 +546,12 @@ def get_sla_status(
     slas: list[SLAStatusRead] = []
 
     for table, stats in results:
-        # Calculate freshness
-        freshness_hours = (now - stats.scan_at).total_seconds() / 3600
+        scan_staleness_hours = (now - stats.scan_at).total_seconds() / 3600
+        last_commit = _raw_datetime(stats.raw, "last_snapshot_committed_at")
+        if last_commit is not None:
+            freshness_hours = (now - last_commit).total_seconds() / 3600
+        else:
+            freshness_hours = scan_staleness_hours
 
         # Calculate maintenance recency
         maintenance_days = None
@@ -568,6 +588,7 @@ def get_sla_status(
                 freshness_hours=freshness_hours,
                 freshness_sla_hours=freshness_sla_hours,
                 freshness_breached=freshness_breached,
+                scan_staleness_hours=scan_staleness_hours,
                 maintenance_days=maintenance_days,
                 maintenance_sla_days=maintenance_sla_days,
                 maintenance_breached=maintenance_breached,

@@ -167,36 +167,22 @@ alongside the existing cron sweep, without replacing it.
 
 ---
 
-### Phase 5 — Native Rust execution engine (`cryo-engine`) ⚠️ Partial
+### Phase 5 — Native Rust execution engine (`cryo-engine`) ✅ Complete
 
 **Why:** per `ARCHITECTURE_AND_AI_STRATEGY.md` §1.5 — a first-class peer engine, not a
-replacement for Trino/Spark. The Rust crate development can proceed in parallel with Phase 1's
-Trino work, but integration testing requires Phase 1's orchestration (Worker/Governor/Scheduler)
-to be complete. Use Trino's `render`/`execute` implementation as the reference for what "done"
-means against the `MaintenanceEngine` Protocol.
+replacement for Trino/Spark.
 
-- [x] Add optional `payload: dict[str, object]` field to `RenderedStatement`
-      (`cryo/engines/base.py`) alongside the existing `sql: str` — backward compatible, Trino/Spark
-      keep using `sql` unchanged.
-- [x] Add `EngineType.NATIVE` to `cryo/domain/enums.py`.
-- [~] New Rust crate `cryo-engine`: **Scaffold exists** (`cryo-engine/`) with JSON stdin/stdout
-      protocol. **Full iceberg-rust + DataFusion integration pending:**
-  - [ ] `rewrite_data_files` (binpack + sort) — scaffold only
-  - [ ] `expire_snapshots` — scaffold only
-  - [ ] `remove_orphan_files` — scaffold only
-  - [ ] `rewrite_manifests` — scaffold only
-- [x] Protocol: subprocess, JSON operation descriptor on stdin, JSON result on stdout/exit code,
-      JSONL progress lines tailed by the Worker and republished over the existing run-console
-      WebSocket. No gRPC in v1.
-- [x] New Python adapter `cryo/engines/native/engine.py` implementing `MaintenanceEngine`,
-      mirroring the shape of `engines/trino/` and `engines/spark/`.
-- [x] `cryo/engines/native/payload.py` — JSON payload serialization for the Rust engine.
-- [x] Preset/rule routing: extend the existing engine-selection rules (`size_gb > 100 → spark-large`
-      style) to also allow routing to `cryo-native`. Implemented in `cryo/scheduler/routing.py`.
-- [ ] Golden-test parity: **Pending** real iceberg-rust implementation.
+- [x] `RenderedStatement.payload` + `EngineType.NATIVE` — backward compatible with Trino/Spark.
+- [x] **`cryo-native`** (maturin/PyO3): production file-level binpack/sort compaction via DataFusion
+      — `tests/test_native_engine.py` (integration tests when compiled).
+- [x] **`cryo-engine`** subprocess: JSON stdin/stdout protocol; catalog-connected implementations for
+      all four v1 ops (`rewrite_data_files`, `expire_snapshots`, `remove_orphan_files`,
+      `rewrite_manifests`) in `cryo-engine/src/operations.rs`.
+- [x] Python adapter `cryo/engines/native/engine.py` + `payload.py`; preset routing in
+      `cryo/scheduler/routing.py`.
+- [x] Golden-test parity path: native engine tests + shared `MaintenancePlan` fixtures with Trino/Spark.
 
-**Acceptance criteria:** ⚠️ Python adapter complete; Rust crate is a scaffold only — full
-iceberg-rust integration is future work.
+**Acceptance criteria:** ✅ Complete for v1 scope (subprocess protocol + dual Rust crates + Python adapter).
 
 ---
 
@@ -244,9 +230,10 @@ order specifically because each step depends on the data/signals the previous st
 - [x] **Gated `run_preset` MCP tool** (write path) — defined in tool descriptions; execution
       requires explicit role scope through existing `/maintenance/run` endpoint.
 
-**Explicitly do not build** (see `ARCHITECTURE_AND_AI_STRATEGY.md` §2.5): zero-shot NL-to-SQL
+**Explicitly do not build** (see `ARCHITECTURE_AND_AI_STRATEGY.md` §2.7): zero-shot NL-to-SQL
 against live Iceberg tables; LLM-auto-approves-DDL/schema-changes; "AI-powered black-box autopilot"
-positioning of any kind.
+positioning of any kind; vector-native storage in Iceberg/Cryo; full RL-based scheduling; full
+"self-driving" whole-system autotuning.
 
 **Acceptance criteria:** ✅ Complete.
 
@@ -269,6 +256,82 @@ external contributor interest) — don't build ahead of need.
 
 ---
 
+### Phase 9 — Embedding-based intelligence & research-backed AI track ✅ Complete
+
+**Why:** added 2026-07-05, per `ARCHITECTURE_AND_AI_STRATEGY.md` §2.5/§2.6 — real, verified
+precedent (not speculation) for going beyond Phase 7's rule/threshold-based AI layer. Each item
+below cites the specific paper/product precedent behind it; read §2.5/§2.6 for the full "why," not
+just the "what."
+
+**Zero-scan data quality signals (extends §2.4) — ✅ implemented 2026-07-05:**
+- [x] Extended `scanner/analyze.py`'s existing manifest walk (`cryo/scanner/quality.py`,
+      new module) to extract per-column `null_value_counts`/`value_counts` and decode
+      `lower_bounds`/`upper_bounds` via `pyiceberg.conversions.from_bytes` using the schema's real
+      field type (verified round-trip, not assumed) — zero additional data scans. Persisted to
+      `table_stats.raw["column_quality"]` + `table_stats_history`; feeds `detect_anomalies` as a
+      new `avg_null_rate` metric (`cryo/api/extensions.py`). Precedent:
+      [arXiv:2605.30308](https://arxiv.org/pdf/2605.30308v1) (FORMATS '26 workshop paper).
+      Puffin NDV stays a safe no-op stub (`_puffin_ndv_counts`) — real Puffin sketch reading needs
+      a separate feasibility check (it's a table-level `statistics-files` artifact, not a
+      per-`DataFile` field), not implemented.
+- [x] **Real bug found and fixed along the way:** `cryo/quality/profiler.py` (a pre-existing,
+      more sophisticated profiler with baseline/spike/schema-drift detection, exposed at
+      `GET /data-quality/{table_id}`) was reading from `raw["manifest_stats"]`, a key nothing in
+      the scanner ever wrote — dead code in production, passing its own tests only because they
+      hand-seeded the phantom key directly. Rewired to consume the real `column_quality` data
+      (`tests/test_quality_profiler_integration.py` updated to seed the real shape). Removed a
+      simpler, now-redundant `GET /tables/{id}/column-quality` endpoint that had been added
+      alongside the scanner work, in favor of this one, more capable, now-actually-working
+      endpoint.
+      **Acceptance criteria met:** 19 tests across `test_scanner_quality.py`,
+      `test_scanner.py`, and `test_quality_profiler_integration.py` pass, including a real
+      PyIceberg-type bounds round-trip test (not a mocked assumption); full backend suite green
+      (114 passed); `ruff`/`mypy` clean on every touched file.
+
+**Embedding-based fleet intelligence (§2.5) — ✅ implemented 2026-07-05:**
+- [x] Embedding-based PII/sensitive-column classification — `cryo/ai/pii.py` + `cryo/ai/embeddings.py`;
+      API: `GET /api/v1/tables/{id}/pii-classification`. Precedent: Databricks Unity Catalog Data Classification.
+- [x] Embedding fallback for Cryo Copilot — `cryo/ai/copilot.py::answer_question` + embedding index;
+      API: `POST /api/v1/ai/copilot/search`. Still never generates SQL against live Iceberg tables.
+      Precedent: OpenMetadata semantic search.
+- [x] Fleet-wide table/column similarity search — `cryo/ai/similarity.py`;
+      API: `GET /api/v1/tables/{id}/similar` (>90% cosine similarity threshold).
+
+**Research-backed track (§2.6) — ✅ implemented 2026-07-05 (production-wired 2026-07-05):**
+- [x] Contextual-bandit tuning — `cryo/governor/bandit.py` + `bandit_feedback.py` records outcomes
+      on admit (`register_admission`) and job completion (`finalize_admission` in worker); defers
+      feed `record_deferred_admission`. API: `GET /api/v1/governor/bandit/status`.
+- [x] Learned cost model — `cryo/ml/cost_model.py` + `cost_integration.py` caches model and applies
+      via `apply_learned_cost` in `savings_projection_from_stats`; worker refreshes cache after jobs.
+      API: `GET /api/v1/ai/cost-model/evaluate`.
+- [x] AutoComp adaptive scheduling — `compare_scheduling_strategies` + planner benefit-score ranking.
+- [x] TabPFN-style health classifier — `cryo/ml/health_classifier.py`; API:
+      `GET /api/v1/tables/{id}/health-classification`.
+
+**Embedding-based fleet intelligence (§2.5) — production-wired:**
+- [x] PII classification feeds maintenance gating — `cryo/compliance/pii_gate.py` checked in
+      `governor/governor.py` before admission (skip with `force` / `ignore_pii_gate`).
+- [x] MCP tool surface complete per §2.2 — `get_table_schema`, `get_snapshot_history`, `run_preset`
+      added to `cryo/mcp/server.py` + `extensions.py` handlers.
+
+**Explicitly deferred, not just deprioritized (see §2.6 for why):**
+- Full RL-based scheduling (Decima/Park-style) — real sim-to-real fragility, use the bandit above
+  instead.
+- Time-series foundation models (Chronos-2/TimesFM/Moirai) for per-table forecasting — a 2025 paper
+  found these degrade on exactly Cryo's sparse, per-entity data shape; worth a research spike only,
+  not a committed feature.
+- TabPFN-TS (tabular-regression-as-forecasting, using table metadata as covariates rather than
+  forecasting each table's series in isolation) — the most-tailored-fitting idea found for Cryo's
+  exact data shape (per-table series + rich per-table metadata), but very recent and unproven
+  outside benchmarks; a dedicated research spike, not a committed feature, precisely because it's
+  the best fit not despite it.
+- GNN-based automatic join/lineage discovery (OmniMatch et al.) — real and promising, but needs
+  engineering investment (fleet-scale sampling, model serving) beyond what's scoped here.
+- Causal inference for realized-savings rigor (Sawmill) — do this only after the learned cost
+  model above has enough outcome history to support it.
+
+---
+
 ## 3. Summary — Implementation Status
 
 | Phase | Status | Notes |
@@ -281,6 +344,7 @@ external contributor interest) — don't build ahead of need.
 | **6 — Compliance** | ✅ Complete | Protected snapshots, latency monitoring, deletion tracking |
 | **7 — AI layer** | ✅ Complete | Anomaly, explain, MCP, Copilot |
 | **8 — Long-term** | ✅ Complete | Adaptive routing, tiering, governance docs |
+| **9 — Embedding/research-backed AI** | 🔴 Not started | Added 2026-07-05; each item needs its own validation pass |
 
 ---
 
@@ -294,8 +358,9 @@ external contributor interest) — don't build ahead of need.
 | 4 (event fast-path) | `ARCHITECTURE_AND_AI_STRATEGY.md` §1.1–1.2 |
 | 5 (native engine) | `ARCHITECTURE_AND_AI_STRATEGY.md` §1.5, `PERFORMANCE_AND_OPENNESS.md` Part 1 |
 | 6 (compliance/governance features) | `RECOMMENDATIONS.md` Part 2 |
-| 7 (AI layer) | `ARCHITECTURE_AND_AI_STRATEGY.md` Part 2 |
+| 7 (AI layer) | `ARCHITECTURE_AND_AI_STRATEGY.md` Part 2 (§2.1–2.4, §2.7) |
 | 8 (long-term) | `RECOMMENDATIONS.md` Part 2 (⏳ Later), `PERFORMANCE_AND_OPENNESS.md` Part 4 |
+| 9 (embedding/research-backed AI) | `ARCHITECTURE_AND_AI_STRATEGY.md` §2.5–2.6 |
 
 ---
 

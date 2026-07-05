@@ -32,6 +32,11 @@ from cryo.api.schemas import (
     AssignmentRequest,
     AssignmentResponse,
     AssignmentSelection,
+    AWSConnectionTestResponse,
+    AWSIntegrationCreate,
+    AWSIntegrationPatch,
+    AWSIntegrationRead,
+    AWSUsageResponse,
     CostDashboardResponse,
     DatalakeDashboardResponse,
     DestinationCreate,
@@ -79,6 +84,7 @@ from cryo.api.serializers import table_to_read
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
+    AWSIntegration,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -100,6 +106,12 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
+from cryo.integrations.aws_s3_metrics import (
+    AWSCredentials,
+    fetch_bucket_storage_metrics,
+    fetch_s3_price_per_gb,
+)
+from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
 from cryo.planner.guardrails import validate_operation_order
 from cryo.planner.planner import build_plan
 from cryo.sources.factory import catalog_from_config
@@ -271,6 +283,154 @@ def delete_source(source_id: uuid.UUID, session: SessionDep) -> None:
         raise HTTPException(status_code=404, detail="Source not found")
     source.enabled = False
     session.commit()
+
+
+@router.get(
+    "/sources/{source_id}/aws-integration",
+    response_model=AWSIntegrationRead,
+    dependencies=[Depends(require_viewer)],
+    tags=["sources"],
+)
+def get_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSIntegration:
+    integration = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if integration is None:
+        raise HTTPException(status_code=404, detail="No AWS integration configured")
+    return integration
+
+
+@router.post(
+    "/sources/{source_id}/aws-integration",
+    response_model=AWSIntegrationRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+    tags=["sources"],
+)
+def create_aws_integration(
+    source_id: uuid.UUID, payload: AWSIntegrationCreate, session: SessionDep
+) -> AWSIntegration:
+    if session.get(Source, source_id) is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    existing = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=400, detail="AWS integration already exists for this source"
+        )
+    integration = AWSIntegration(
+        source_id=source_id,
+        bucket=payload.bucket,
+        region=payload.region,
+        access_key_id=payload.access_key_id,
+        secret_ref=payload.secret_access_key,
+        enabled=payload.enabled,
+    )
+    session.add(integration)
+    session.commit()
+    session.refresh(integration)
+    return integration
+
+
+@router.patch(
+    "/sources/{source_id}/aws-integration",
+    response_model=AWSIntegrationRead,
+    dependencies=[Depends(require_admin)],
+    tags=["sources"],
+)
+def patch_aws_integration(
+    source_id: uuid.UUID, payload: AWSIntegrationPatch, session: SessionDep
+) -> AWSIntegration:
+    integration = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if integration is None:
+        raise HTTPException(status_code=404, detail="No AWS integration configured")
+    values = payload.model_dump(exclude_unset=True)
+    if "secret_access_key" in values:
+        values["secret_ref"] = values.pop("secret_access_key")
+    _apply_patch(integration, values)
+    session.commit()
+    session.refresh(integration)
+    return integration
+
+
+@router.delete(
+    "/sources/{source_id}/aws-integration",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
+    tags=["sources"],
+)
+def delete_aws_integration(source_id: uuid.UUID, session: SessionDep) -> None:
+    integration = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if integration is None:
+        raise HTTPException(status_code=404, detail="No AWS integration configured")
+    session.delete(integration)
+    session.commit()
+
+
+@router.post(
+    "/sources/{source_id}/aws-integration/test",
+    response_model=AWSConnectionTestResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["sources"],
+)
+def test_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSConnectionTestResponse:
+    """Verify AWS credentials work via sts:GetCallerIdentity — free, no AWS charges."""
+    integration = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if integration is None:
+        raise HTTPException(status_code=404, detail="No AWS integration configured")
+    result = check_aws_connection(
+        AWSCredentials(
+            region=integration.region,
+            access_key_id=integration.access_key_id,
+            secret_access_key=integration.secret_ref,
+        )
+    )
+    integration.last_tested_at = datetime.now(UTC)
+    integration.last_test_ok = result.ok
+    session.commit()
+    return AWSConnectionTestResponse(
+        ok=result.ok, account_id=result.account_id, arn=result.arn, error=result.error
+    )
+
+
+@router.get(
+    "/sources/{source_id}/aws-usage",
+    response_model=AWSUsageResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["sources"],
+)
+def get_aws_usage(source_id: uuid.UUID, session: SessionDep) -> AWSUsageResponse:
+    """Real S3 bucket size/object count (free daily CloudWatch metrics) and the real regional
+    $/GB-month rate (free Price List API) — no data scan, no AWS charges."""
+    integration = session.scalar(
+        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
+    )
+    if integration is None or not integration.enabled:
+        raise HTTPException(status_code=404, detail="No enabled AWS integration configured")
+    credentials = AWSCredentials(
+        region=integration.region,
+        access_key_id=integration.access_key_id,
+        secret_access_key=integration.secret_ref,
+    )
+    metrics = fetch_bucket_storage_metrics(integration.bucket, credentials)
+    price = fetch_s3_price_per_gb(integration.region, credentials)
+    return AWSUsageResponse(
+        bucket=metrics.bucket,
+        region=metrics.region,
+        measured_at=metrics.measured_at,
+        size_bytes_by_storage_class=dict(metrics.size_bytes_by_storage_class),
+        total_size_bytes=metrics.total_size_bytes,
+        object_count=metrics.object_count,
+        price_per_gb_month=price.price_per_gb_month if price else None,
+        price_source=price.source if price else None,
+    )
 
 
 @router.get(

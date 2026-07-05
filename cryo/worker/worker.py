@@ -373,6 +373,21 @@ class Worker:
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         self._queue.complete(job.id, final_status)
         self._release_table_lock(job)
+        from cryo.governor.bandit_feedback import finalize_admission
+
+        finalize_admission(
+            job.id,
+            job_succeeded=final_status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED},
+        )
+        try:
+            from cryo.config import get_settings
+            from cryo.db.session import SessionLocal
+            from cryo.ml.cost_integration import refresh_cost_model_cache
+
+            with SessionLocal() as session:
+                refresh_cost_model_cache(session, get_settings())
+        except Exception:
+            pass
         self._record_job_metrics(
             destination_id=job.destination_id,
             operation_type=_job_operation_type(job),

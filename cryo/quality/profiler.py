@@ -45,6 +45,27 @@ class DataQualityProfile:
     dropped_columns: list[str]
 
 
+def _column_quality_by_name(raw: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Index a TableStats/TableStatsHistory ``raw["column_quality"]`` list by column name.
+
+    The scanner (``cryo/scanner/quality.py``) persists this as a list of dicts (one per column,
+    each carrying ``field_id``, ``column_name``, ``null_count``, ``value_count``, ``lower_bound``,
+    ``upper_bound``) since field ids can collide across independently-scanned tables in ways column
+    names don't for this profiler's purposes — re-keying by name here is just for lookup
+    convenience.
+    """
+    if not raw or not isinstance(raw, dict):
+        return {}
+    entries = raw.get("column_quality") or []
+    if not isinstance(entries, list):
+        return {}
+    return {
+        str(entry["column_name"]): entry
+        for entry in entries
+        if isinstance(entry, dict) and "column_name" in entry
+    }
+
+
 def profile_table_quality(
     session: Session,
     table_id: str,
@@ -85,112 +106,107 @@ def profile_table_quality(
     column_metrics: list[ColumnQualityMetrics] = []
     anomalies_detected = 0
 
-    # Analyze column statistics from raw metadata
-    if current_stats.raw and isinstance(current_stats.raw, dict):
-        # Extract column stats from manifests
-        # Note: This is a simplified version - real implementation would query $manifests table
-        manifest_stats = current_stats.raw.get("manifest_stats", {})
+    # Column stats come from the scanner's zero-scan manifest walk (cryo/scanner/quality.py),
+    # persisted as a list under raw["column_quality"] — see cryo/scanner/analyze.py. Keyed here by
+    # column name for convenient lookup against historical scans.
+    current_columns_stats = _column_quality_by_name(current_stats.raw)
 
-        for col_name, col_stats in manifest_stats.items():
-            if not isinstance(col_stats, dict):
-                continue
+    for col_name, col_stats in current_columns_stats.items():
+        # Current null rate
+        null_count = col_stats.get("null_count", 0)
+        value_count = col_stats.get("value_count", 1)
+        null_rate_pct = (null_count / value_count) * 100 if value_count > 0 else 0
 
-            # Current null rate
-            null_count = col_stats.get("null_count", 0)
-            value_count = col_stats.get("value_count", 1)
-            null_rate_pct = (null_count / value_count) * 100 if value_count > 0 else 0
+        # Calculate baseline null rate from history
+        null_rate_baseline_pct = null_rate_pct  # Default to current
+        if len(historical_stats) > 5:
+            # Average null rate over history
+            historical_null_rates = []
+            for hist in historical_stats:
+                hist_col = _column_quality_by_name(hist.raw).get(col_name)
+                if hist_col:
+                    hist_null = hist_col.get("null_count", 0)
+                    hist_val = hist_col.get("value_count", 1)
+                    historical_null_rates.append(
+                        (hist_null / hist_val) * 100 if hist_val > 0 else 0
+                    )
 
-            # Calculate baseline null rate from history
-            null_rate_baseline_pct = null_rate_pct  # Default to current
-            if len(historical_stats) > 5:
-                # Average null rate over history
-                historical_null_rates = []
-                for hist in historical_stats:
-                    if hist.raw and isinstance(hist.raw, dict):
-                        hist_manifest = hist.raw.get("manifest_stats", {}).get(col_name, {})
-                        if hist_manifest:
-                            hist_null = hist_manifest.get("null_count", 0)
-                            hist_val = hist_manifest.get("value_count", 1)
-                            historical_null_rates.append(
-                                (hist_null / hist_val) * 100 if hist_val > 0 else 0
-                            )
+            if historical_null_rates:
+                null_rate_baseline_pct = sum(historical_null_rates) / len(historical_null_rates)
 
-                if historical_null_rates:
-                    null_rate_baseline_pct = sum(historical_null_rates) / len(historical_null_rates)
+        # Detect null rate spike (>2x baseline)
+        null_rate_spike = null_rate_pct > null_rate_baseline_pct * 2 and null_rate_pct > 10
+        if null_rate_spike:
+            anomalies_detected += 1
 
-            # Detect null rate spike (>2x baseline)
-            null_rate_spike = null_rate_pct > null_rate_baseline_pct * 2 and null_rate_pct > 10
-            if null_rate_spike:
-                anomalies_detected += 1
+        # Check value bounds (decoded from manifest lower/upper bounds by the scanner)
+        min_value = col_stats.get("lower_bound")
+        max_value = col_stats.get("upper_bound")
 
-            # Check value bounds
-            min_value = col_stats.get("lower_bound")
-            max_value = col_stats.get("upper_bound")
+        value_range_changed = False
+        value_range_explanation = "Normal"
 
-            value_range_changed = False
-            value_range_explanation = "Normal"
+        # Check for bound violations (e.g., negative revenue)
+        if (
+            col_name.lower() in ("revenue", "amount", "price", "cost")
+            and min_value is not None
+            and isinstance(min_value, int | float)
+            and min_value < 0
+        ):
+            value_range_changed = True
+            value_range_explanation = f"Negative values detected (min: {min_value})"
+            anomalies_detected += 1
 
-            # Check for bound violations (e.g., negative revenue)
-            if (
-                col_name.lower() in ("revenue", "amount", "price", "cost")
-                and min_value
-                and min_value < 0
-            ):
-                value_range_changed = True
-                value_range_explanation = f"Negative values detected (min: {min_value})"
-                anomalies_detected += 1
+        # Check for extreme value changes
+        if len(historical_stats) > 5:
+            historical_maxes = []
+            for hist in historical_stats:
+                hist_col = _column_quality_by_name(hist.raw).get(col_name)
+                hist_max = hist_col.get("upper_bound") if hist_col else None
+                if isinstance(hist_max, int | float):
+                    historical_maxes.append(hist_max)
 
-            # Check for extreme value changes
-            if len(historical_stats) > 5:
-                historical_maxes = []
-                for hist in historical_stats:
-                    if hist.raw and isinstance(hist.raw, dict):
-                        hist_manifest = hist.raw.get("manifest_stats", {}).get(col_name, {})
-                        if hist_manifest and hist_manifest.get("upper_bound"):
-                            historical_maxes.append(hist_manifest["upper_bound"])
+            if historical_maxes and isinstance(max_value, int | float):
+                avg_historical_max = sum(historical_maxes) / len(historical_maxes)
+                if avg_historical_max and max_value > avg_historical_max * 10:
+                    value_range_changed = True
+                    value_range_explanation = (
+                        f"Max value spike: {max_value} vs historical avg "
+                        f"{avg_historical_max:.0f}"
+                    )
+                    anomalies_detected += 1
 
-                if historical_maxes and max_value:
-                    avg_historical_max = sum(historical_maxes) / len(historical_maxes)
-                    if max_value > avg_historical_max * 10:
-                        value_range_changed = True
-                        value_range_explanation = (
-                            f"Max value spike: {max_value} vs historical avg "
-                            f"{avg_historical_max:.0f}"
-                        )
-                        anomalies_detected += 1
-
-            column_metrics.append(
-                ColumnQualityMetrics(
-                    column_name=col_name,
-                    null_rate_pct=null_rate_pct,
-                    null_rate_baseline_pct=null_rate_baseline_pct,
-                    null_rate_spike=null_rate_spike,
-                    min_value=min_value,
-                    max_value=max_value,
-                    value_range_changed=value_range_changed,
-                    value_range_explanation=value_range_explanation,
-                )
+        column_metrics.append(
+            ColumnQualityMetrics(
+                column_name=col_name,
+                null_rate_pct=null_rate_pct,
+                null_rate_baseline_pct=null_rate_baseline_pct,
+                null_rate_spike=null_rate_spike,
+                min_value=min_value,
+                max_value=max_value,
+                value_range_changed=value_range_changed,
+                value_range_explanation=value_range_explanation,
             )
+        )
 
     # Detect schema changes
     schema_version_changed = False
     new_columns = []
     dropped_columns = []
 
-    if len(historical_stats) > 0 and current_stats.raw and isinstance(current_stats.raw, dict):
-        current_columns = set(current_stats.raw.get("manifest_stats", {}).keys())
+    if len(historical_stats) > 0:
+        current_columns = set(current_columns_stats.keys())
 
         # Compare with oldest historical record
         oldest = historical_stats[0]
-        if oldest.raw and isinstance(oldest.raw, dict):
-            historical_columns = set(oldest.raw.get("manifest_stats", {}).keys())
+        historical_columns = set(_column_quality_by_name(oldest.raw).keys())
 
-            new_columns = list(current_columns - historical_columns)
-            dropped_columns = list(historical_columns - current_columns)
+        new_columns = list(current_columns - historical_columns)
+        dropped_columns = list(historical_columns - current_columns)
 
-            if new_columns or dropped_columns:
-                schema_version_changed = True
-                anomalies_detected += len(new_columns) + len(dropped_columns)
+        if new_columns or dropped_columns:
+            schema_version_changed = True
+            anomalies_detected += len(new_columns) + len(dropped_columns)
 
     return DataQualityProfile(
         table_id=str(table_id),

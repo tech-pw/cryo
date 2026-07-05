@@ -54,7 +54,8 @@ def compute_health_score(
         score -= 8
 
     score = _deduct(score, int(stats.get("total_snapshots") or 0), "snapshot_count")
-    score = _deduct_snapshot_age(score, stats.get("first_updated_at"), now=now)
+    last_commit = stats.get("last_snapshot_committed_at") or stats.get("first_updated_at")
+    score = _deduct_snapshot_age(score, last_commit, now=now)
     score = _deduct(score, int(stats.get("manifest_count") or 0), "manifest_count")
     score = _deduct(score, int(stats.get("total_partitions") or 0), "partition_count")
     score = _deduct(score, float(stats.get("partition_skew_ratio") or 0), "partition_skew_ratio")

@@ -34,6 +34,7 @@ interface SLAStatus {
   freshness_hours: number | null;
   freshness_sla_hours: number | null;
   freshness_breached: boolean;
+  scan_staleness_hours: number | null;
   maintenance_days: number | null;
   maintenance_sla_days: number | null;
   maintenance_breached: boolean;
@@ -104,12 +105,13 @@ export const SLAStatus = () => {
       ),
     },
     {
-      title: "Freshness",
+      title: "Data freshness",
       key: "freshness",
-      width: "20%",
+      width: "22%",
       render: (_: any, record: SLAStatus) => {
         const breached = record.freshness_breached;
         const percent = getCompliancePercent(record.freshness_hours, record.freshness_sla_hours);
+        const scanLag = record.scan_staleness_hours;
         return (
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
             <Space>
@@ -118,10 +120,19 @@ export const SLAStatus = () => {
               ) : (
                 <CheckCircleOutlined style={{ color: "#52c41a" }} />
               )}
-              <Text type={breached ? "danger" : "secondary"}>
-                {formatHours(record.freshness_hours)} / {formatHours(record.freshness_sla_hours)}
-              </Text>
+              <Tooltip title="Hours since last Iceberg snapshot commit">
+                <Text type={breached ? "danger" : "secondary"}>
+                  {formatHours(record.freshness_hours)} / {formatHours(record.freshness_sla_hours)}
+                </Text>
+              </Tooltip>
             </Space>
+            {scanLag !== null && scanLag !== undefined ? (
+              <Tooltip title="Hours since Cryo last scanned this table (observability only)">
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  Scan lag: {formatHours(scanLag)}
+                </Text>
+              </Tooltip>
+            ) : null}
             <Progress
               percent={percent}
               strokeColor={breached ? "#ff4d4f" : "#52c41a"}
@@ -224,7 +235,7 @@ export const SLAStatus = () => {
             <ClockCircleOutlined /> SLA Monitoring
           </Title>
           <Text type="secondary">
-            Track freshness, maintenance, and query performance SLAs
+            Freshness uses last Iceberg snapshot commit time; scan staleness shows Cryo scan lag
           </Text>
         </div>
         <Space>
@@ -304,10 +315,10 @@ export const SLAStatus = () => {
             title="SLA Status by Table"
             extra={
               <Space>
-                <Tooltip title="Data last updated at table level">
+                <Tooltip title="Last Iceberg snapshot commit vs SLA threshold">
                   <ClockCircleOutlined />
                   <Text type="secondary" style={{ marginLeft: 4 }}>
-                    Freshness SLA
+                    Data freshness SLA
                   </Text>
                 </Tooltip>
                 <Tooltip title="Days since last maintenance">

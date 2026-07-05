@@ -64,6 +64,61 @@ class SourceTestResponse(BaseModel):
     error: str | None = None
 
 
+class AWSIntegrationCreate(BaseModel):
+    """Free-tier-only AWS S3 cost/usage integration for a lakehouse's bucket.
+
+    Only ever calls AWS APIs that cost nothing: S3's default daily CloudWatch storage metrics
+    (read via GetMetricStatistics, not the always-billed GetMetricData) and the free Price List
+    API. See cryo/integrations/aws_s3_metrics.py.
+    """
+
+    bucket: str
+    region: str
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    enabled: bool = True
+
+
+class AWSIntegrationPatch(BaseModel):
+    bucket: str | None = None
+    region: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    enabled: bool | None = None
+
+
+class AWSIntegrationRead(OrmModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    bucket: str
+    region: str
+    access_key_id: str | None = None
+    # secret_access_key is never returned, same as Source/Destination secret_ref
+    enabled: bool
+    last_tested_at: datetime | None = None
+    last_test_ok: bool | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AWSConnectionTestResponse(BaseModel):
+    ok: bool
+    account_id: str | None = None
+    arn: str | None = None
+    error: str | None = None
+
+
+class AWSUsageResponse(BaseModel):
+    bucket: str
+    region: str
+    measured_at: datetime | None = None
+    size_bytes_by_storage_class: JsonDict = Field(default_factory=dict)
+    total_size_bytes: int = 0
+    object_count: int | None = None
+    price_per_gb_month: float | None = None
+    price_source: str | None = None
+
+
 class DestinationCreate(BaseModel):
     name: str
     engine: EngineType

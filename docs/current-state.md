@@ -100,6 +100,19 @@ depend on iceberg-rust's table modification APIs which are still stabilizing ups
   - `POST /ai/copilot/ask`
   - `GET /mcp/tools`
   - `POST /mcp/tools/call`
+  - MCP tools: `get_table_schema`, `get_snapshot_history`, `run_preset` (confirm required)
+
+### Phase 9 — AI Strategy completion ✅
+
+Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §2.5–2.6 (production-wired):
+
+- `cryo/ai/pii.py` + `cryo/compliance/pii_gate.py` — PII classification gates rewrite ops in Governor
+- `cryo/ai/embeddings.py`, `similarity.py`, copilot embedding fallback (`POST /ai/copilot/search`)
+- `cryo/governor/bandit.py` + `bandit_feedback.py` — learn from admit/complete/defer outcomes
+- `cryo/ml/cost_model.py` + `cost_integration.py` — learned savings in `savings_projection_from_stats`
+- `cryo/ml/health_classifier.py` — TabPFN-style few-shot health classification
+- APIs: `/tables/{id}/pii-classification`, `/similar`, `/health-classification`, `/autocomp/compare`,
+  `/governor/bandit/status`, `/ai/cost-model/evaluate`
 
 ### Phase 8 — Long-Term Features ✅
 

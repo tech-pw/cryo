@@ -1,17 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Timeline, Typography, message } from "antd";
+import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Tag, Timeline, Typography, message } from "antd";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assignTables,
   getEffectivePreset,
+  getSimilarTables,
   getTable,
   getTableAudit,
   getTableCost,
+  getTableHealthClassification,
   getTableHealthTrends,
   getTableHistory,
   getTablePartitions,
+  getTablePiiClassification,
   listDestinations,
   listPresets,
   runMaintenance,
@@ -79,6 +82,24 @@ export const TableDetail = () => {
     queryFn: () => getTableCost(api, tableId),
     retry: false
   });
+  const piiClassification = useQuery({
+    queryKey: ["table-pii", tableId, token],
+    queryFn: () => getTablePiiClassification(api, tableId),
+    enabled: Boolean(tableId && token),
+    retry: false
+  });
+  const similarTables = useQuery({
+    queryKey: ["table-similar", tableId, token],
+    queryFn: () => getSimilarTables(api, tableId),
+    enabled: Boolean(tableId && token),
+    retry: false
+  });
+  const healthClassification = useQuery({
+    queryKey: ["table-health-classification", tableId, token],
+    queryFn: () => getTableHealthClassification(api, tableId),
+    enabled: Boolean(tableId && token),
+    retry: false
+  });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
   const assign = useMutation({
@@ -134,6 +155,11 @@ export const TableDetail = () => {
 
   const row = table.data;
   const stats = row?.stats;
+  const statsRaw = stats?.raw ?? {};
+  const lastSnapshotCommittedAt =
+    typeof statsRaw.last_snapshot_committed_at === "string"
+      ? statsRaw.last_snapshot_committed_at
+      : null;
   const hasStatsCostFallback = Boolean(
     stats?.projected_savings_usd_month || stats?.projected_monthly_s3_cost_usd
   );
@@ -209,6 +235,26 @@ export const TableDetail = () => {
                   <Descriptions.Item label="Partition type">{stats?.partition_col_type ?? "-"}</Descriptions.Item>
                   <Descriptions.Item label="Snapshots">{formatNumber(stats?.total_snapshots)}</Descriptions.Item>
                   <Descriptions.Item label="Manifests">{formatNumber(stats?.manifest_count)}</Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Last snapshot commit"
+                        tooltip="When Iceberg last committed a snapshot — used for data freshness SLAs."
+                      />
+                    }
+                  >
+                    {lastSnapshotCommittedAt ? formatTime(lastSnapshotCommittedAt) : "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item
+                    label={
+                      <HintLabel
+                        label="Last Cryo scan"
+                        tooltip="When Cryo last scanned this table — separate from data freshness."
+                      />
+                    }
+                  >
+                    {stats?.scan_at ? formatTime(stats.scan_at) : "—"}
+                  </Descriptions.Item>
                   <Descriptions.Item label="Delete files">{formatNumber(stats?.total_delete_files)}</Descriptions.Item>
                   <Descriptions.Item
                     label={
@@ -396,6 +442,92 @@ export const TableDetail = () => {
             ) : (
               <EmptyState title="No trends yet" description="Health trends appear after multiple scans over time." />
             )}
+          </Card>
+        </Col>
+        <Col xs={24}>
+          <Card title="AI insights" loading={piiClassification.isLoading || similarTables.isLoading}>
+            {row ? (
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={8}>
+                  <Typography.Text strong>PII signals</Typography.Text>
+                  {(piiClassification.data?.matches ?? []).length ? (
+                    <Table
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      pagination={false}
+                      rowKey="column_name"
+                      dataSource={piiClassification.data?.matches ?? []}
+                      columns={[
+                        { title: "Column", dataIndex: "column_name", ellipsis: true },
+                        { title: "Category", dataIndex: "pii_category", render: (v) => <Tag>{v}</Tag> },
+                        {
+                          title: "Score",
+                          dataIndex: "similarity",
+                          align: "right",
+                          render: (v: number) => v.toFixed(2)
+                        }
+                      ]}
+                    />
+                  ) : (
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                      No likely PII columns detected from metadata.
+                    </Typography.Paragraph>
+                  )}
+                </Col>
+                <Col xs={24} md={8}>
+                  <Typography.Text strong>Similar tables</Typography.Text>
+                  {(similarTables.data?.similar ?? []).length ? (
+                    <Table
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      pagination={false}
+                      rowKey="table_id"
+                      dataSource={similarTables.data?.similar ?? []}
+                      columns={[
+                        {
+                          title: "Table",
+                          key: "name",
+                          render: (_, r) => `${r.schema_name}.${r.table_name}`,
+                          ellipsis: true
+                        },
+                        {
+                          title: "Match",
+                          dataIndex: "similarity",
+                          align: "right",
+                          render: (v: number) => `${(v * 100).toFixed(0)}%`
+                        }
+                      ]}
+                    />
+                  ) : (
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                      No similar tables above the similarity threshold.
+                    </Typography.Paragraph>
+                  )}
+                </Col>
+                <Col xs={24} md={8}>
+                  <Typography.Text strong>Emergency compaction risk</Typography.Text>
+                  {healthClassification.data ? (
+                    <Space direction="vertical" size={4} style={{ marginTop: 8 }}>
+                      <Tag color={healthClassification.data.needs_emergency_compaction ? "error" : "success"}>
+                        {healthClassification.data.needs_emergency_compaction ? "Elevated risk" : "Normal"}
+                      </Tag>
+                      <Typography.Text type="secondary">
+                        {(healthClassification.data.probability * 100).toFixed(0)}% ·{" "}
+                        {healthClassification.data.method}
+                      </Typography.Text>
+                    </Space>
+                  ) : healthClassification.isError ? (
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                      Classifier unavailable until stats exist.
+                    </Typography.Paragraph>
+                  ) : (
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                      Loading fleet comparison…
+                    </Typography.Paragraph>
+                  )}
+                </Col>
+              </Row>
+            ) : null}
           </Card>
         </Col>
         <Col xs={24} xl={15}>

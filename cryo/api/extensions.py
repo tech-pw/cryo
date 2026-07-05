@@ -10,9 +10,16 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.ai.anomaly import detect_anomalies
-from cryo.ai.copilot import answer_verified_question, list_verified_questions
+from cryo.ai.copilot import (
+    answer_question,
+    answer_verified_question,
+    build_table_fleet_rows,
+    list_verified_questions,
+)
 from cryo.ai.explain import explain_health_change
 from cryo.ai.llm import SUPPORTED_PROVIDERS, create_llm_client
+from cryo.ai.pii import classify_table_columns
+from cryo.ai.similarity import find_similar_tables
 from cryo.api.deps import require_admin, require_operator, require_viewer
 from cryo.api.preview_cost import savings_projection_from_stats, savings_projection_to_dict
 from cryo.api.schemas import JsonDict
@@ -182,6 +189,7 @@ def get_table_anomalies(table_id: uuid.UUID, session: SessionDep) -> AnomalyResp
                 "total_delete_files": raw.get("total_delete_files"),
                 "manifest_count": raw.get("manifest_count"),
                 "projected_savings_usd_month": raw.get("projected_savings_usd_month"),
+                "avg_null_rate": raw.get("avg_null_rate"),
             }
         )
     return AnomalyResponse(
@@ -203,6 +211,7 @@ def get_table_anomalies(table_id: uuid.UUID, session: SessionDep) -> AnomalyResp
                     "total_snapshots",
                     "total_delete_files",
                     "manifest_count",
+                    "avg_null_rate",
                 ),
             )
         ],
@@ -249,6 +258,293 @@ def copilot_ask(payload: CopilotQuestionRequest, session: SessionDep) -> Copilot
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return CopilotQuestionResponse(question_id=payload.question_id, result=result)
+
+
+class CopilotSearchRequest(BaseModel):
+    question: str
+    min_similarity: float = 0.55
+
+
+class CopilotSearchResponse(BaseModel):
+    source: str
+    question_id: str | None = None
+    similarity: float | None = None
+    matched_text: str | None = None
+    result: JsonDict | None = None
+    answer: str | None = None
+
+
+@router.post(
+    "/ai/copilot/search",
+    response_model=CopilotSearchResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai"],
+)
+def copilot_embedding_search(
+    payload: CopilotSearchRequest,
+    session: SessionDep,
+) -> CopilotSearchResponse:
+    """Embedding fallback when a question misses the verified library."""
+    outcome = answer_question(
+        payload.question,
+        session,
+        min_similarity=payload.min_similarity,
+    )
+    return CopilotSearchResponse(
+        source=str(outcome.get("source", "none")),
+        question_id=outcome.get("question_id"),
+        similarity=outcome.get("similarity"),
+        matched_text=outcome.get("matched_text"),
+        result=outcome.get("result"),
+        answer=outcome.get("answer"),
+    )
+
+
+class PiiClassificationResponse(BaseModel):
+    table_id: uuid.UUID
+    matches: list[JsonDict]
+
+
+@router.get(
+    "/tables/{table_id}/pii-classification",
+    response_model=PiiClassificationResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai", "governance"],
+)
+def get_table_pii_classification(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    threshold: float = 0.72,
+) -> PiiClassificationResponse:
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Table stats not found")
+    raw = stats.raw or {}
+    columns = raw.get("column_quality") or []
+    matches = classify_table_columns(columns, threshold=threshold)
+    return PiiClassificationResponse(
+        table_id=table_id,
+        matches=[
+            {
+                "column_name": m.column_name,
+                "column_type": m.column_type,
+                "pii_category": m.pii_category,
+                "similarity": m.similarity,
+                "already_tagged": m.already_tagged,
+            }
+            for m in matches
+        ],
+    )
+
+
+class SimilarTablesResponse(BaseModel):
+    table_id: uuid.UUID
+    similar: list[JsonDict]
+
+
+@router.get(
+    "/tables/{table_id}/similar",
+    response_model=SimilarTablesResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai"],
+)
+def get_similar_tables(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    min_similarity: float = 0.90,
+    limit: int = 20,
+) -> SimilarTablesResponse:
+    fleet = build_table_fleet_rows(session)
+    target = next((row for row in fleet if row["table_id"] == str(table_id)), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    similar = find_similar_tables(target, fleet, min_similarity=min_similarity, limit=limit)
+    return SimilarTablesResponse(
+        table_id=table_id,
+        similar=[
+            {
+                "table_id": s.table_id,
+                "schema_name": s.schema_name,
+                "table_name": s.table_name,
+                "similarity": s.similarity,
+                "shared_signals": s.shared_signals,
+            }
+            for s in similar
+        ],
+    )
+
+
+class BanditStatusResponse(BaseModel):
+    observations: int
+    confident: bool
+    config: JsonDict
+
+
+@router.get(
+    "/governor/bandit/status",
+    response_model=BanditStatusResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["governor"],
+)
+def governor_bandit_status() -> BanditStatusResponse:
+    import os
+    from pathlib import Path
+
+    from cryo.governor.admission import AdmissionConfig
+    from cryo.governor.bandit import AdmissionBandit
+
+    state_path = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
+    bandit = AdmissionBandit.load(state_path)
+    base = AdmissionConfig()
+    tuned, confident = bandit.suggest_config(base)
+    return BanditStatusResponse(
+        observations=bandit.state.observations,
+        confident=confident,
+        config={
+            "high_load_ratio": tuned.high_load_ratio,
+            "high_load_fraction": tuned.high_load_fraction,
+            "per_replica_cap": tuned.per_replica_cap,
+        },
+    )
+
+
+class CostModelEvaluateResponse(BaseModel):
+    mae_learned: float
+    mae_heuristic: float
+    beats_heuristic: bool
+    band_coverage: float
+    n_samples: int
+
+
+@router.get(
+    "/ai/cost-model/evaluate",
+    response_model=CostModelEvaluateResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai", "cost"],
+)
+def evaluate_learned_cost_model(session: SessionDep) -> CostModelEvaluateResponse:
+    from cryo.config import get_settings
+    from cryo.ml.cost_integration import refresh_cost_model_cache
+    from cryo.ml.cost_model import evaluate_model, load_cached_cost_model, train_cost_model
+
+    rows = session.execute(
+        select(AuditLog, TableStats)
+        .join(TableStats, TableStats.table_id == AuditLog.table_id)
+        .where(AuditLog.actual_bytes_freed.isnot(None))
+        .limit(500)
+    )
+    training: list[dict[str, Any]] = []
+    for audit, stats in rows:
+        training.append(
+            {
+                "action": audit.action,
+                "actual_bytes_freed": audit.actual_bytes_freed,
+                "predicted_bytes_freed": audit.actual_bytes_freed,
+                "small_files_count": stats.small_files_count,
+                "total_size_gb": stats.total_size_gb,
+                "delete_file_pct": stats.delete_file_pct,
+                "input_files_count": audit.input_files_count,
+            }
+        )
+    settings = get_settings()
+    refresh_cost_model_cache(session, settings)
+    model = load_cached_cost_model()
+    if model is None:
+        model = train_cost_model(training, price_per_gb_month=settings.cost_price_per_gb_month)
+    if model is None:
+        return CostModelEvaluateResponse(
+            mae_learned=0.0,
+            mae_heuristic=0.0,
+            beats_heuristic=False,
+            band_coverage=0.0,
+            n_samples=len(training),
+        )
+    holdout = training[-max(1, len(training) // 4) :]
+    metrics = evaluate_model(holdout, model, price_per_gb_month=settings.cost_price_per_gb_month)
+    return CostModelEvaluateResponse(**metrics)
+
+
+class HealthClassifierResponse(BaseModel):
+    table_id: uuid.UUID
+    needs_emergency_compaction: bool
+    probability: float
+    method: str
+
+
+@router.get(
+    "/tables/{table_id}/health-classification",
+    response_model=HealthClassifierResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai"],
+)
+def classify_table_health(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> HealthClassifierResponse:
+    from cryo.ml.health_classifier import HealthLabel, classify_health_few_shot
+
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Table stats not found")
+
+    # Build labeled examples from fleet history (tables with emergency-grade health).
+    labeled: list[HealthLabel] = []
+    example_stats: dict[str, dict[str, Any]] = {}
+    fleet_rows = session.execute(
+        select(Table.id, TableStats)
+        .join(TableStats, TableStats.table_id == Table.id)
+        .where(Table.is_active.is_(True))
+        .limit(100)
+    )
+    for tid, row_stats in fleet_rows:
+        tid_str = str(tid)
+        sig = {
+            "total_files": row_stats.total_files,
+            "small_files_count": row_stats.small_files_count,
+            "delete_file_pct": row_stats.delete_file_pct,
+            "manifest_count": row_stats.manifest_count,
+            "total_snapshots": row_stats.total_snapshots,
+            "partition_skew_ratio": row_stats.partition_skew_ratio,
+            "avg_file_size_mb": row_stats.avg_file_size_mb,
+            "overall_score": row_stats.overall_score,
+        }
+        example_stats[tid_str] = sig
+        emergency = row_stats.grade in ("E", "F") or (row_stats.overall_score or 100) < 50
+        labeled.append(HealthLabel(table_id=tid_str, needs_emergency_compaction=emergency))
+
+    target_sig = example_stats.get(str(table_id), {})
+    target_sig = {**target_sig, "table_id": str(table_id)}
+    pred = classify_health_few_shot(target_sig, labeled, example_stats)
+    return HealthClassifierResponse(
+        table_id=table_id,
+        needs_emergency_compaction=pred.needs_emergency_compaction,
+        probability=pred.probability,
+        method=pred.method,
+    )
+
+
+class AutoCompCompareResponse(BaseModel):
+    table_id: uuid.UUID
+    static_order: list[str]
+    autocomp_order: list[str]
+    improvement_ratio: float
+    autocomp_wins: bool
+
+
+@router.get(
+    "/tables/{table_id}/autocomp/compare",
+    response_model=AutoCompCompareResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["analytics"],
+)
+def compare_autocomp_scheduling(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> AutoCompCompareResponse:
+    from cryo.planner.benefit_score import compare_scheduling_strategies
+
+    result = compare_scheduling_strategies(session, table_id)
+    return AutoCompCompareResponse(table_id=table_id, **result)
 
 
 class NaturalLanguageRequest(BaseModel):
@@ -1113,12 +1409,95 @@ def _mcp_server(session: Session) -> CryoMcpServer:
         projection = savings_projection_from_stats(stats_dict, settings)
         return savings_projection_to_dict(projection)
 
+    def get_table_schema(args: dict[str, Any]) -> dict[str, Any]:
+        table_id = uuid.UUID(str(args["table_id"]))
+        stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
+        if stats is None:
+            raise KeyError("table stats not found")
+        raw = dict(stats.raw or {})
+        return {
+            "table_id": str(table_id),
+            "partition_fields": raw.get("partition_fields") or [],
+            "column_quality": raw.get("column_quality") or [],
+            "format_version": raw.get("format_version"),
+        }
+
+    def get_snapshot_history(args: dict[str, Any]) -> dict[str, Any]:
+        table_id = uuid.UUID(str(args["table_id"]))
+        limit = int(args.get("limit") or 30)
+        rows = session.scalars(
+            select(TableStatsHistory)
+            .where(TableStatsHistory.table_id == table_id)
+            .order_by(TableStatsHistory.scan_at.desc())
+            .limit(limit)
+        ).all()
+        history = []
+        for row in reversed(rows):
+            raw = dict(row.raw or {})
+            history.append(
+                {
+                    "scan_at": row.scan_at.isoformat(),
+                    "total_snapshots": raw.get("total_snapshots"),
+                    "grade": row.grade,
+                    "overall_score": row.overall_score,
+                }
+            )
+        return {"table_id": str(table_id), "history": history}
+
+    def run_preset(args: dict[str, Any]) -> dict[str, Any]:
+        from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Preset
+        from cryo.domain.enums import Mode
+        from cryo.infra.wiring import build_runtime_wiring
+
+        if not args.get("confirm"):
+            raise ValueError("run_preset requires confirm=true")
+        table_id = uuid.UUID(str(args["table_id"]))
+        destination_id = uuid.UUID(str(args["destination_id"]))
+        preset_id = uuid.UUID(str(args["preset_id"])) if args.get("preset_id") else None
+
+        if session.get(Destination, destination_id) is None:
+            raise KeyError("destination not found")
+        if preset_id and session.get(Preset, preset_id) is None:
+            raise KeyError("preset not found")
+        table = session.get(Table, table_id)
+        if table is None:
+            raise KeyError("table not found")
+
+        mode = Mode(str(args.get("mode") or "standard"))
+        run = MaintenanceRun(
+            kind="adhoc",
+            preset_id=preset_id,
+            trigger="mcp",
+            status="queued",
+        )
+        session.add(run)
+        session.flush()
+        job = MaintenanceJob(
+            run_id=run.id,
+            table_id=table_id,
+            destination_id=destination_id,
+            mode=mode.value,
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+        wiring = build_runtime_wiring()
+        wiring.queue.enqueue(str(job.id), str(destination_id))
+        return {
+            "run_id": str(run.id),
+            "job_ids": [str(job.id)],
+            "status": run.status,
+        }
+
     return build_default_mcp_server(
         get_table_health=get_table_health,
         list_stale_tables=list_stale_tables,
         list_compaction_backlog=list_compaction_backlog,
         explain_health_change=explain_tool,
         simulate_preset=simulate_preset,
+        get_table_schema=get_table_schema,
+        get_snapshot_history=get_snapshot_history,
+        run_preset=run_preset,
     )
 
 

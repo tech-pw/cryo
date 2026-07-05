@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from cryo.db.base import Base
 from cryo.db.models import (
     AuditLog,
+    AWSIntegration,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -37,6 +38,7 @@ UUID_ID_MODELS = (
     Table,
     MaintenanceRun,
     MaintenanceJob,
+    AWSIntegration,
 )
 _AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog)
 _next_autoincrement_id = itertools.count(1)

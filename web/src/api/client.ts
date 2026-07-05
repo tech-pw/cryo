@@ -28,6 +28,11 @@ import type {
   SourceRead,
   SourceTestResult,
   SourceWrite,
+  BanditStatusResponse,
+  CostModelEvaluateResponse,
+  HealthClassifierResponse,
+  PiiClassificationResponse,
+  SimilarTablesResponse,
   TableCostRead,
   TableRead,
   UUID
@@ -635,3 +640,18 @@ export const ingestQueryTelemetry = (
     method: "POST",
     body
   });
+
+export const getTablePiiClassification = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<PiiClassificationResponse>(`/tables/${tableId}/pii-classification`, api);
+
+export const getSimilarTables = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<SimilarTablesResponse>(`/tables/${tableId}/similar`, api);
+
+export const getTableHealthClassification = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<HealthClassifierResponse>(`/tables/${tableId}/health-classification`, api);
+
+export const getBanditStatus = (api: ApiOptions) =>
+  apiFetch<BanditStatusResponse>("/governor/bandit/status", api);
+
+export const getCostModelEvaluate = (api: ApiOptions) =>
+  apiFetch<CostModelEvaluateResponse>("/ai/cost-model/evaluate", api);

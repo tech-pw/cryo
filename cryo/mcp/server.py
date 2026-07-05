@@ -1,3 +1,5 @@
+"""Read-only MCP-style tool surface over Cryo metadata."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -42,6 +44,9 @@ def build_default_mcp_server(
     list_compaction_backlog: ToolHandler | None = None,
     explain_health_change: ToolHandler | None = None,
     simulate_preset: ToolHandler | None = None,
+    get_table_schema: ToolHandler | None = None,
+    get_snapshot_history: ToolHandler | None = None,
+    run_preset: ToolHandler | None = None,
 ) -> CryoMcpServer:
     server = CryoMcpServer()
     handlers = {
@@ -50,6 +55,9 @@ def build_default_mcp_server(
         "list_compaction_backlog": list_compaction_backlog,
         "explain_health_change": explain_health_change,
         "simulate_preset": simulate_preset,
+        "get_table_schema": get_table_schema,
+        "get_snapshot_history": get_snapshot_history,
+        "run_preset": run_preset,
     }
     for name, handler in handlers.items():
         if handler is not None:
@@ -69,5 +77,7 @@ _TOOL_DESCRIPTIONS = {
     "list_compaction_backlog": "List tables with high small-file counts ranked by priority.",
     "explain_health_change": "Explain a before/after health diff in plain English.",
     "simulate_preset": "Simulate a preset against current table inventory.",
-    "run_preset": "Trigger a preset run (write path; requires explicit confirmation).",
+    "get_table_schema": "Return partition fields and column quality stats from the latest scan.",
+    "get_snapshot_history": "Return snapshot count trajectory from table stats history.",
+    "run_preset": "Trigger a preset run (write path; requires confirm=true and operator scope).",
 }
