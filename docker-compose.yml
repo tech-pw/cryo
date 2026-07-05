@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ==================== Infrastructure ====================
   
@@ -8,7 +6,7 @@ services:
     container_name: cryo-postgres
     environment:
       POSTGRES_USER: cryo
-      POSTGRES_PASSWORD: cryo-dev-password
+      POSTGRES_PASSWORD: cryo
       POSTGRES_DB: cryo
     ports:
       - "5432:5432"
@@ -50,6 +48,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: cryo-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/warehouse &&
+      echo 'MinIO bucket warehouse is ready'
+      "
   
   # ==================== Iceberg Catalog ====================
   
@@ -66,8 +77,8 @@ services:
     ports:
       - "8181:8181"
     depends_on:
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
   
   # ==================== Trino ====================
   
@@ -77,8 +88,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./deploy/trino/catalog:/etc/trino/catalog
-      - ./deploy/trino/config.properties:/etc/trino/config.properties
+      - ./trino/catalog:/etc/trino/catalog
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,7 +109,7 @@ services:
     container_name: cryo-api
     command: uvicorn cryo.api.app:app --host 0.0.0.0 --port 8000
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       CRYO_JWT_SECRET: dev-secret-change-in-prod
       ENVIRONMENT: development
@@ -126,7 +136,7 @@ services:
     container_name: cryo-scanner
     command: python -m cryo.scanner.run
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     depends_on:
@@ -147,7 +157,7 @@ services:
     container_name: cryo-scheduler
     command: python -m cryo.scheduler
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     depends_on:
@@ -166,7 +176,7 @@ services:
     container_name: cryo-governor
     command: python -m cryo.governor
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     depends_on:
@@ -185,7 +195,7 @@ services:
     container_name: cryo-worker
     command: python -m cryo.worker
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     depends_on:
@@ -198,8 +208,6 @@ services:
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-    deploy:
-      replicas: 2
   
   # ==================== Observability ====================
   

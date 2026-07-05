@@ -26,7 +26,9 @@ START_WORKER="${START_WORKER:-0}"
 START_GOVERNOR="${START_GOVERNOR:-0}"
 START_SCHEDULER="${START_SCHEDULER:-0}"
 START_EVENTS="${START_EVENTS:-0}"
+DOCKER_SERVICES="${DOCKER_SERVICES:-postgres redis minio minio-init iceberg-rest trino}"
 DOCKER_DOWN_ON_STOP="${DOCKER_DOWN_ON_STOP:-0}"
+RESET_LOCAL_POSTGRES="${RESET_LOCAL_POSTGRES:-0}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -62,6 +64,8 @@ Environment:
   START_SCHEDULER=0     Start scheduler alone (ignored when START_SERVE=1)
   START_EVENTS=0         Start event watcher + consumer (Phase 4 fast-path)
   DOCKER_DOWN_ON_STOP=0  Stop Docker stack when running ./start-local.sh stop
+  DOCKER_SERVICES=...    Docker services to start (default: infra only)
+  RESET_LOCAL_POSTGRES=0 Recreate local Postgres volume if credentials are stale
   API_PORT=8000          FastAPI port
   WEB_PORT=5173          Vite dev server port
 EOF
@@ -86,7 +90,10 @@ ensure_venv() {
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
 
-  if ! python -c "import cryo, uvicorn" >/dev/null 2>&1; then
+  if ! python -c "
+import cryo, uvicorn, prometheus_client
+from cryo.infra.wiring import build_runtime_wiring
+" >/dev/null 2>&1; then
     log "Installing backend dependencies"
     python -m pip install --upgrade pip -q
     python -m pip install -e ".[dev]" -q
@@ -145,15 +152,51 @@ wait_for_container_health() {
 }
 
 start_docker() {
-  log "Starting Docker services"
-  docker compose up -d
+  log "Starting Docker services: $DOCKER_SERVICES"
+  # shellcheck disable=SC2086
+  docker compose up -d $DOCKER_SERVICES
 
   wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
   wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
-  wait_for_url "Trino" "http://localhost:8090/v1/info"
+  wait_for_url "Trino" "http://localhost:8080/v1/info"
   wait_for_container_health "postgres" "Postgres"
   wait_for_container_health "redis" "Redis"
-  wait_for_container_health "spark" "Spark runner"
+}
+
+ensure_postgres_auth() {
+  log "Verifying Postgres credentials"
+  if python - <<'PY' >/dev/null 2>&1
+import psycopg
+
+with psycopg.connect("postgresql://cryo:cryo@127.0.0.1:5432/cryo") as conn:
+    with conn.cursor() as cur:
+        cur.execute("select 1")
+PY
+  then
+    return 0
+  fi
+
+  if [[ "$RESET_LOCAL_POSTGRES" != "1" ]]; then
+    die "Postgres rejected cryo/cryo. If this is an old local volume, rerun with RESET_LOCAL_POSTGRES=1 ./start-local.sh start"
+  fi
+
+  warn "Postgres password mismatch; recreating postgres volume for local dev (cryo/cryo)"
+  docker compose stop postgres >/dev/null 2>&1 || true
+  docker compose rm -f postgres >/dev/null 2>&1 || true
+  docker volume rm -f iceberg_compactor_postgres_data >/dev/null 2>&1 || true
+  docker compose up -d postgres
+  wait_for_container_health "postgres" "Postgres"
+
+  if ! python - <<'PY' >/dev/null 2>&1
+import psycopg
+
+with psycopg.connect("postgresql://cryo:cryo@127.0.0.1:5432/cryo") as conn:
+    with conn.cursor() as cur:
+        cur.execute("select 1")
+PY
+  then
+    die "Postgres still unreachable with cryo/cryo after volume reset"
+  fi
 }
 
 migrate_db() {
@@ -204,16 +247,33 @@ start_process() {
   fi
 
   : >"$log_file"
-  nohup bash -c '
-    cd "$1"
-    # shellcheck disable=SC1091
-    source "$2/bin/activate"
-    shift 2
-    exec "$@"
-  ' bash "$ROOT_DIR" "$VENV_DIR" "$@" >>"$log_file" 2>&1 &
-  local pid=$!
-  disown "$pid" 2>/dev/null || true
-  echo "$pid" >"$pid_file"
+  # Detach from the launching shell (start_new_session) so processes survive
+  # after start-local.sh exits.
+  local daemon_pid
+  daemon_pid="$(
+    "$VENV_DIR/bin/python" - "$ROOT_DIR" "$VENV_DIR" "$log_file" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+root_dir, venv_dir, log_file = sys.argv[1:4]
+command = sys.argv[4:]
+env = os.environ.copy()
+env["VIRTUAL_ENV"] = venv_dir
+env["PATH"] = f"{venv_dir}/bin:{env.get('PATH', '')}"
+with open(log_file, "a", encoding="utf-8") as log_handle:
+    proc = subprocess.Popen(
+        command,
+        cwd=root_dir,
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+print(proc.pid)
+PY
+  )"
+  echo "$daemon_pid" >"$pid_file"
   sleep 1
 
   if ! is_running "$pid_file"; then
@@ -232,7 +292,9 @@ start_process() {
 
 start_app_processes() {
   start_process api 1 \
-    uvicorn cryo.api.app:create_app --factory --reload --host "$API_HOST" --port "$API_PORT"
+    uvicorn cryo.api.app:create_app --factory --reload \
+    --reload-dir cryo --reload-exclude '.local/*' \
+    --host "$API_HOST" --port "$API_PORT"
 
   if [[ "$START_WEB" == "1" ]]; then
     ensure_web_deps
@@ -241,7 +303,7 @@ start_app_processes() {
   fi
 
   if [[ "$START_SERVE" == "1" ]]; then
-    start_process serve 0 python -m cryo.cli serve
+    start_process serve 1 python -m cryo.cli serve
   else
     if [[ "$START_WORKER" == "1" ]]; then
       start_process worker 0 python -m cryo.cli worker
@@ -261,6 +323,12 @@ start_app_processes() {
   fi
 }
 
+verify_background_processes() {
+  if [[ "$START_SERVE" == "1" ]] && ! is_running "$PID_DIR/serve.pid"; then
+    die "cryo serve exited during startup; see $LOG_DIR/serve.log"
+  fi
+}
+
 wait_for_app() {
   wait_for_url "Cryo API" "http://${API_HOST}:${API_PORT}/docs" 30
   if [[ "$START_WEB" == "1" ]]; then
@@ -277,21 +345,33 @@ Application:
   Web UI     http://${WEB_HOST}:${WEB_PORT}/
   API        http://${API_HOST}:${API_PORT}/
   API docs   http://${API_HOST}:${API_PORT}/docs
+EOF
+
+  if [[ "$START_SERVE" == "1" ]]; then
+    cat <<EOF
+  Orchestration (cryo serve — governor, worker, scheduler, scanner)
+             log: $LOG_DIR/serve.log
+EOF
+  fi
+
+  cat <<EOF
 
 Infrastructure:
   MinIO API       http://localhost:9000
   MinIO console   http://localhost:9001  (minioadmin / minioadmin)
   Iceberg REST    http://localhost:8181
-  Trino           http://localhost:8090
+  Trino           http://localhost:8080
   Postgres        localhost:5432  (cryo / cryo / cryo)
   Redis           localhost:6379
 
 Useful commands:
   ./start-local.sh status
-  ./start-local.sh logs
+  ./start-local.sh logs              # tails api, web, serve, ...
   ./start-local.sh stop
   make scan
   SEED_TABLES=1 SEED_FIXTURES=1 ./start-local.sh start
+
+Orchestration is started via cryo serve (same as make serve); no separate terminal needed.
 
 Local API auth header:
   Authorization: Bearer admin
@@ -369,10 +449,12 @@ cmd_start() {
   ensure_dirs
   ensure_venv
   start_docker
+  ensure_postgres_auth
   migrate_db
   seed_config
   seed_tables
   start_app_processes
+  verify_background_processes
   wait_for_app
   print_summary
 }
