@@ -91,6 +91,7 @@ export interface PresetSimulationResponse {
 }
 
 export interface TableStatsRead {
+  scan_at?: string;
   needs_compaction?: boolean;
   compaction_priority?: Priority;
   grade?: Grade;
@@ -129,6 +130,53 @@ export interface TableRead {
   is_active: boolean;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
+}
+
+export interface PiiMatchRead {
+  column_name: string;
+  column_type?: string;
+  pii_category: string;
+  similarity: number;
+  already_tagged?: boolean;
+}
+
+export interface PiiClassificationResponse {
+  table_id: UUID;
+  matches: PiiMatchRead[];
+}
+
+export interface SimilarTableRead {
+  table_id: string;
+  schema_name: string;
+  table_name: string;
+  similarity: number;
+  shared_signals?: string[];
+}
+
+export interface SimilarTablesResponse {
+  table_id: UUID;
+  similar: SimilarTableRead[];
+}
+
+export interface HealthClassifierResponse {
+  table_id: UUID;
+  needs_emergency_compaction: boolean;
+  probability: number;
+  method: string;
+}
+
+export interface BanditStatusResponse {
+  observations: number;
+  confident: boolean;
+  config: Record<string, number>;
+}
+
+export interface CostModelEvaluateResponse {
+  mae_learned: number;
+  mae_heuristic: number;
+  beats_heuristic: boolean;
+  band_coverage: number;
+  n_samples: number;
 }
 
 export interface PaginatedTables {

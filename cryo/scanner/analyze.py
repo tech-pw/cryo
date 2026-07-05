@@ -16,11 +16,13 @@ from cryo.scanner.cost import (
     MB,
     MetadataCostAccounting,
     TableCostAnalysis,
+    _snapshot_timestamp,
     account_metadata_cost,
     build_table_cost_analysis,
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_health_score
+from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals
 
 HEALTH_SMALL_FILE_BYTES = 8 * MB
@@ -140,6 +142,8 @@ def analyze_table(
     total_files = total_records = total_size_bytes = 0
     delete_files = delete_bytes = health_small_files = 0
     file_formats: set[str] = set()
+    schema = _call_or_attr(table_obj, "schema", default=None)
+    quality_accum = ColumnQualityAccumulator(schema)
 
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
     for data_file in iter_data_files(
@@ -157,6 +161,8 @@ def analyze_table(
             delete_bytes += file_size
         if file_size < HEALTH_SMALL_FILE_BYTES:
             health_small_files += 1
+        if not _is_delete_file(data_file):
+            quality_accum.add(data_file)
 
         values = data_file_partition_values(data_file, fields)
         key = partition_key(values)
@@ -209,7 +215,9 @@ def analyze_table(
         "delete_file_pct": round((delete_files / max(total_files, 1)) * 100, 2),
         "total_delete_files": delete_files,
         "total_snapshots": snapshot_info["total_snapshots"],
-        "first_updated_at": snapshot_info["first_updated_at"],
+        "first_snapshot_at": snapshot_info["first_snapshot_at"],
+        "last_snapshot_committed_at": snapshot_info["last_snapshot_committed_at"],
+        "first_updated_at": snapshot_info["last_snapshot_committed_at"],
         "manifest_count": len(manifests),
         "avg_file_size_mb": avg_file_size_mb,
         "total_partitions": len(partition_rows),
@@ -256,11 +264,29 @@ def analyze_table(
             format_version=format_version,
         )
     score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
+    column_quality = quality_accum.finish()
+    quality_summary = summarize_column_quality(column_quality)
     raw = {
         "partition_fields": fields,
         "partitions_to_rewrite": [partition.__dict__ for partition in partition_rows],
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
+        "column_quality": [
+            {
+                "field_id": stat.field_id,
+                "column_name": stat.column_name,
+                "null_count": stat.null_count,
+                "value_count": stat.value_count,
+                "null_rate": stat.null_rate,
+                "lower_bound": stat.min_value,
+                "upper_bound": stat.max_value,
+                "ndv_estimate": stat.ndv_estimate,
+            }
+            for stat in column_quality
+        ],
+        **quality_summary,
+        "first_snapshot_at": snapshot_info["first_snapshot_at"],
+        "last_snapshot_committed_at": snapshot_info["last_snapshot_committed_at"],
     }
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
@@ -473,12 +499,16 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
     if snapshots is None:
         snapshots = _attr(metadata, "snapshots", []) or []
     snapshots = list(snapshots or [])
-    first_updated_at = None
-    if snapshots:
-        first_updated_at = _attr(snapshots[0], "committed_at", None) or _attr(
-            snapshots[0], "timestamp_ms", None
-        )
-    return {"total_snapshots": len(snapshots), "first_updated_at": first_updated_at}
+    committed_at = [
+        ts for snapshot in snapshots if (ts := _snapshot_timestamp(snapshot)) is not None
+    ]
+    first_snapshot_at = min(committed_at) if committed_at else None
+    last_snapshot_committed_at = max(committed_at) if committed_at else None
+    return {
+        "total_snapshots": len(snapshots),
+        "first_snapshot_at": first_snapshot_at,
+        "last_snapshot_committed_at": last_snapshot_committed_at,
+    }
 
 
 def _table_properties(table_obj: object) -> dict[str, Any]:

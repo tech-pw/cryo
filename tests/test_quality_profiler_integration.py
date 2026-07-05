@@ -1,4 +1,11 @@
-"""Integration tests for zero-scan data quality profiling."""
+"""Integration tests for zero-scan data quality profiling.
+
+Seeds TableStats/TableStatsHistory.raw in the *real* shape the scanner actually produces
+(raw["column_quality"] — a list of per-column dicts, see cryo/scanner/quality.py and
+cryo/scanner/analyze.py), not a hand-invented structure — this is what previously made this test
+suite pass while the profiler itself silently read from a key (raw["manifest_stats"]) nothing in
+the scanner ever wrote.
+"""
 
 from __future__ import annotations
 
@@ -35,28 +42,34 @@ def _seed_table(session, *, schema_name: str, table_name: str) -> Table:
     return table
 
 
-def _manifest_stats(
+def _column_quality(
     *,
     amount_null_rate: float = 0.0,
     amount_min: float = 0.0,
     amount_max: float = 1000.0,
-) -> dict:
+) -> list[dict]:
     value_count = 1000
     null_count = int(value_count * amount_null_rate / 100)
-    return {
-        "amount": {
+    return [
+        {
+            "field_id": 1,
+            "column_name": "amount",
             "null_count": null_count,
             "value_count": value_count,
+            "null_rate": round(null_count / value_count, 4),
             "lower_bound": amount_min,
             "upper_bound": amount_max,
         },
-        "customer_id": {
+        {
+            "field_id": 2,
+            "column_name": "customer_id",
             "null_count": 0,
             "value_count": value_count,
+            "null_rate": 0.0,
             "lower_bound": 1,
             "upper_bound": 99999,
         },
-    }
+    ]
 
 
 def test_profile_table_quality_detects_negative_amounts(session):
@@ -75,7 +88,7 @@ def test_profile_table_quality_detects_negative_amounts(session):
             total_files=100,
             small_files_count=5,
             total_size_gb=10.0,
-            raw={"manifest_stats": _manifest_stats(amount_min=-50.0, amount_max=500.0)},
+            raw={"column_quality": _column_quality(amount_min=-50.0, amount_max=500.0)},
         )
     )
     session.commit()
@@ -95,7 +108,7 @@ def test_profile_table_quality_detects_null_rate_spike(session):
     table = _seed_table(session, schema_name="finance", table_name="orders")
     scan_at = datetime.now(UTC)
 
-    baseline_stats = _manifest_stats(amount_null_rate=2.0)
+    baseline_stats = _column_quality(amount_null_rate=2.0)
     for days_ago in range(10, 0, -1):
         session.add(
             TableStatsHistory(
@@ -103,7 +116,7 @@ def test_profile_table_quality_detects_null_rate_spike(session):
                 scan_at=scan_at - timedelta(days=days_ago),
                 small_files_count=10,
                 total_size_gb=5.0,
-                raw={"manifest_stats": baseline_stats},
+                raw={"column_quality": baseline_stats},
             )
         )
 
@@ -118,7 +131,7 @@ def test_profile_table_quality_detects_null_rate_spike(session):
             total_files=200,
             small_files_count=20,
             total_size_gb=5.0,
-            raw={"manifest_stats": _manifest_stats(amount_null_rate=25.0)},
+            raw={"column_quality": _column_quality(amount_null_rate=25.0)},
         )
     )
     session.commit()
@@ -141,7 +154,17 @@ def test_profile_table_quality_detects_schema_changes(session):
             scan_at=scan_at - timedelta(days=14),
             small_files_count=50,
             total_size_gb=8.0,
-            raw={"manifest_stats": {"event_id": {"null_count": 0, "value_count": 100}}},
+            raw={
+                "column_quality": [
+                    {
+                        "field_id": 1,
+                        "column_name": "event_id",
+                        "null_count": 0,
+                        "value_count": 100,
+                        "null_rate": 0.0,
+                    }
+                ]
+            },
         )
     )
     session.add(
@@ -156,10 +179,22 @@ def test_profile_table_quality_detects_schema_changes(session):
             small_files_count=10,
             total_size_gb=8.0,
             raw={
-                "manifest_stats": {
-                    "event_id": {"null_count": 0, "value_count": 100},
-                    "event_type": {"null_count": 0, "value_count": 100},
-                }
+                "column_quality": [
+                    {
+                        "field_id": 1,
+                        "column_name": "event_id",
+                        "null_count": 0,
+                        "value_count": 100,
+                        "null_rate": 0.0,
+                    },
+                    {
+                        "field_id": 2,
+                        "column_name": "event_type",
+                        "null_count": 0,
+                        "value_count": 100,
+                        "null_rate": 0.0,
+                    },
+                ]
             },
         )
     )

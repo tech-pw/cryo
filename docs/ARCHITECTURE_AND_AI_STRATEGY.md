@@ -264,6 +264,15 @@ over `table_stats_history` — commit velocity, delete-file growth, manifest cou
 trajectory. Cheap, explainable, no hallucination risk. Use ML only where it earns the complexity;
 a z-score suffices here and is more trustworthy than reaching for an LLM.
 
+**Extending the signal set (added 2026-07-05):** the "negative result" above notes Monte
+Carlo/Bigeye/Anomalo cover downstream DQ signals (null rates, drift) that Cryo doesn't. A May 2026
+workshop paper (see `RECOMMENDATIONS.md`'s "Zero-scan data quality signals" row,
+[arXiv:2605.30308](https://arxiv.org/pdf/2605.30308v1)) shows those same DQ signals are derivable
+straight from Iceberg's own manifest/Puffin metadata, zero data scans — meaning Cryo could close
+that gap itself, feeding the same anomaly detector above, rather than needing a separate DQ tool
+integration. Early-stage (first-edition workshop, no benchmarks or OSS implementation), but a
+low-risk extension since it reuses the manifest-walking pattern `scanner/analyze.py` already has.
+
 ### 2.5 Embedding-based fleet intelligence
 
 **Precedent, split two ways** (checked 2026-07-05): storing embeddings *inside* Iceberg tables is
@@ -271,8 +280,16 @@ a dead end. A real proposal for a native vector type (`apache/iceberg#12636`) wa
 planned," and the industry has converged on the opposite pattern instead — Iceberg holds governed
 structured data, a separate vector-optimized layer (Lance format, or a synced external index) holds
 embeddings for ANN search. This is benchmark-backed, not just caution: Parquet's page-level layout
-is a documented poor fit for high-dimensional random-vector access. **Cryo should never try to
-become a vector store, and shouldn't build vector-native maintenance features.**
+is a documented poor fit for high-dimensional random-vector access (the relevant gap is still open
+— `apache/parquet-format#553`). The most concrete real example of this split today is **DuckDB**,
+which supports both the Lance extension and Iceberg writes side by side — embeddings go to a Lance
+export, business data stays in Iceberg, never mixed in the same files. **Apache Gravitino**
+(Iceberg-adjacent open catalog, graduated ASF TLP June 2025) points the same direction from the
+catalog side: it added Lance vector-dataset support as *adjacent* infrastructure, not a feature of
+Iceberg tables themselves. **Cryo should never try to become a vector store, and shouldn't build
+vector-native maintenance features** — if anything, the only relevant angle is helping maintain the
+plain Iceberg tables that happen to feed a Lance export or an external vector-index sync, not
+touching the vector data itself.
 
 Embedding-based intelligence *about* Cryo's own metadata is a different, validated story:
 - Databricks Unity Catalog's Data Classification (GA ~May 2026) uses an LLM + few-shot embeddings
@@ -310,20 +327,31 @@ bet production reliability on yet."
 
 **Ready to build:**
 - **Bayesian-optimization / contextual-bandit tuning of Governor thresholds** — not full
-  "self-driving" config tuning. OtterTune (CMU's commercialized self-driving-DB config tuner)
-  **shut down in June 2024**, a real signal that full autonomous tuning over hundreds of knobs
-  doesn't hold up commercially. But Cryo's Governor only has ~3–5 well-understood knobs
-  (concurrency caps, cooldown, adaptive budget) — a much narrower, tractable problem, structurally
-  the same as what OtterTune did at a fraction of the scope. A constrained BO or contextual-bandit
-  loop learning per-table-class thresholds from realized outcomes, with a heuristic fallback under
-  low confidence, is a credible upgrade to `governor/admission.py`'s current static constants.
+  "self-driving" config tuning. OtterTune (CMU's commercialized self-driving-DB config tuner, out
+  of the Peloton/NoisePage research line) **shut down in June 2024**, a real signal that full
+  autonomous tuning over hundreds of knobs doesn't hold up commercially. The CMU line's own 2024
+  follow-up work ("Hit the Gym," VLDB 2024) is candid about *why*: bootstrapping the ML behavior
+  models this approach needs requires huge amounts of expensive workload-execution data — the
+  tuning technique isn't the bottleneck, the data-collection cost is. Microsoft's own retrospective
+  on autonomous tuning at real cloud scale ("Towards Building Autonomous Data Services on Azure")
+  reaches the same practical conclusion. Cryo's Governor sidesteps this entirely: it only has ~3–5
+  well-understood knobs (concurrency caps, cooldown, adaptive budget), a much narrower, tractable
+  problem than hundreds of DB knobs, so the expensive bootstrapping problem doesn't apply at this
+  scope. A constrained BO or contextual-bandit loop learning per-table-class thresholds from
+  realized outcomes, with a heuristic fallback under low confidence, is a credible upgrade to
+  `governor/admission.py`'s current static constants — deliberately narrower than what failed
+  commercially, not a smaller bet on the same failed idea.
 - **A learned cost model, replacing the heuristic $/GB savings projection** — Amazon's **Stage**
   (SIGMOD 2024, deployed in Redshift) is the reference architecture: a lightweight per-instance
   model (XGBoost-class) with Bayesian uncertainty, plus a transferable global model, trained on
   realized outcomes (predicted vs. actual). Cryo already has the missing piece this needs —
   `RECOMMENDATIONS.md`'s planned "realized savings" capture (predicted vs. `actual_bytes_freed`) is
-  exactly the training signal. Add conformal-prediction-style confidence bands so Cryo falls back
-  to the current heuristic whenever the model isn't confident, rather than trusting a black box.
+  exactly the training signal. Add uncertainty quantification in the style of **Roq** (risk-aware
+  learned cost models) or **conformal prediction for learned query optimization**, so Cryo falls
+  back to the current heuristic whenever the model isn't confident, rather than trusting a black
+  box. Honesty check built in from the start: a SIGMOD 2025 paper, "How Good are Learned Cost
+  Models, Really?", found mixed results depending on workload shift — exactly why the
+  uncertainty-gated fallback isn't optional, it's the part that makes this safe to ship.
 - **Adaptive compaction scheduling as a genuine research-backed differentiator** — LinkedIn's
   **AutoComp** (SIGMOD 2025, deployed via OpenHouse — an Iceberg-based control plane) is the single
   most directly relevant paper found: automated compaction scheduling for exactly this table-format
@@ -343,20 +371,36 @@ bet production reliability on yet."
   well-published (Decima beat heuristic Spark schedulers by 21%+), but a 2026 survey confirms
   sim-to-real transfer remains an open, unsolved problem for RL broadly, and RL policies are
   notoriously hard to audit when they misbehave — the wrong tradeoff for something gating
-  compaction jobs on customer data. A **contextual bandit** (simpler, safer, degrades gracefully to
-  the heuristic under uncertainty) is the credible middle ground — not full RL.
+  compaction jobs on customer data. Telling that even Decima's own research lineage moved toward
+  "Learning Interpretable Scheduling Algorithms" as a follow-up — an admission that raw
+  Decima-style policies are opaque enough to need a dedicated interpretability fix, not a solved
+  problem. A **contextual bandit** (simpler, safer, degrades gracefully to the heuristic under
+  uncertainty) is the credible middle ground — not full RL.
 - **Time-series foundation models (Chronos-2, TimesFM, Moirai) for forecasting per-table health
   trajectories.** Mature for dense, regular series (retail/energy demand) — but a 2025 paper
   specifically stress-testing them on observability-style metrics found they degrade badly on
   exactly Cryo's data shape: sparse, per-entity, heterogeneous, low-frequency series across
   thousands of distinct tables. Datadog built a bespoke model (Toto) for this exact gap and hasn't
   even open-sourced or deployed it internally yet. Worth a research spike, not a production bet.
-- **GNN-based automatic join/lineage discovery** (OmniMatch, VLDB 2025; AutoG; Magneto) — real,
-  active research that could plausibly power a "these tables are probably joined" feature without
-  relying on Iceberg's often-absent declared foreign keys. Promising, but needs real engineering
-  investment (sampling strategy at fleet scale, model serving) before it's shippable — a future
-  phase, not now.
-- **Causal inference for realized-savings rigor** (Sawmill, SIGMOD 2024) — a real, tractable
+- **TabPFN-TS — the single most-tailored-fitting idea found, and still the least proven.**
+  TabPFN-TS (NeurIPS 2024 workshops) recasts time-series forecasting as tabular in-context
+  regression, ranking #1 on the GIFT-Eval benchmark. This is different from — not a duplicate of —
+  the Chronos/TimesFM bullet above: instead of treating each table's history as an isolated series,
+  it forecasts using the table's *metadata* (schema, write pattern, engine config) as exogenous
+  tabular features alongside the time axis, letting the model transfer knowledge across similar
+  tables in a fleet rather than forecasting each one in isolation. That's exactly the shape of
+  Cryo's data (per-table time series *plus* rich per-table metadata) — but it's very recent,
+  unproven outside benchmark datasets, and nobody in Iceberg tooling has combined tabular-foundation
+  forecasting with fleet-metadata covariates this way. Worth a dedicated research spike specifically
+  because it's the most-tailored fit, not despite being unproven.
+- **GNN-based automatic join/lineage discovery** (OmniMatch, VLDB 2025; AutoG; JOINT; DeepJoin,
+  VLDB 2023; Magneto, VLDB 2025 — surveyed together in "Graph Neural Networks for Databases,"
+  IJCAI 2025) — real, active research that could plausibly power a "these tables are probably
+  joined" feature without relying on Iceberg's often-absent declared foreign keys. Promising, but
+  needs real engineering investment (sampling strategy at fleet scale, model serving) before it's
+  shippable — a future phase, not now.
+- **Causal inference for realized-savings rigor** (Sawmill, SIGMOD 2024, building on Salimi's
+  foundational work on quantifying causal effects in databases via do-calculus) — a real, tractable
   technique for proving compaction *caused* a latency improvement rather than merely coinciding
   with one. Worth adopting once realized-savings tracking has enough data for a diff-in-diff or
   synthetic-control design — premature before that.
@@ -421,6 +465,7 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
 - [Databricks Genie docs](https://docs.databricks.com/aws/en/genie/), [best practices](https://docs.databricks.com/aws/en/genie/best-practices)
 - [Snowflake Cortex Analyst — Verified Query Repository](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst/verified-query-repository)
 - [Monte Carlo — Iceberg best practices](https://www.montecarlodata.com/blog-apache-iceberg-best-practices/)
+- ["Zero-Scan Data Quality: Leveraging Table Format Metadata for Continuous Observability at Scale," FORMATS '26 (added 2026-07-05)](https://arxiv.org/pdf/2605.30308v1) — first-edition workshop paper, no benchmarks/OSS shown; relevant for fit-with-existing-architecture, not for being proven
 - [dbt-mcp](https://github.com/dbt-labs/dbt-mcp), [Snowflake Labs MCP](https://github.com/Snowflake-Labs/mcp), [Ryft iceberg-mcp](https://github.com/ryft-io/iceberg-mcp)
 - [Datadog Bits AI SRE](https://www.datadoghq.com/blog/building-bits-ai-sre/), [Honeycomb AI agents](https://www.honeycomb.io/technologies/ai-agents)
 
@@ -432,13 +477,15 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
 - [apache/parquet-format#553 — no native vector logical type](https://github.com/apache/parquet-format/issues/553)
 
 **Cutting-edge research track (2.6):**
-- [OtterTune shutdown, June 2024](https://ottertune.com/) — commercialized self-driving-DB tuning; cautionary tale for full-system autotuning
-- [Stage — learned cost model deployed in Redshift, SIGMOD 2024](https://arxiv.org/abs/2403.02286)
+- [OtterTune shutdown, June 2024](https://ottertune.com/) — commercialized self-driving-DB tuning (Peloton/NoisePage lineage); cautionary tale for full-system autotuning
+- ["Hit the Gym," VLDB 2024](https://dl.acm.org/doi/10.14778/3681954.3682030) — why bootstrapping self-driving-DB behavior models is the real bottleneck, not the tuning technique itself
+- [Microsoft — "Towards Building Autonomous Data Services on Azure"](https://arxiv.org/abs/2405.01813) — production-grounded retrospective on what actually works vs. doesn't in autonomous config tuning
+- [Stage — learned cost model deployed in Redshift, SIGMOD 2024](https://arxiv.org/abs/2403.02286); [Roq — risk-aware learned cost models](https://arxiv.org/abs/2401.15210); [Conformal Prediction for Verifiable Learned Query Optimization](https://arxiv.org/abs/2505.02284); [How Good are Learned Cost Models, Really?, SIGMOD 2025](https://dl.acm.org/doi/10.1145/3725309)
 - [AutoComp — automated compaction for log-structured tables, LinkedIn/OpenHouse, SIGMOD 2025](https://arxiv.org/abs/2504.04186)
 - [TabPFN — tabular foundation model, Nature 2025](https://www.nature.com/articles/s41586-024-08328-6), [TabPFN-TS for zero-shot time-series forecasting](https://github.com/PriorLabs/tabpfn-time-series)
-- [Decima — RL for cluster scheduling, SIGCOMM 2019](https://dl.acm.org/doi/10.1145/3341302.3342080); [2026 survey on RL sim-to-real transfer](https://arxiv.org/abs/2502.13187)
+- [Decima — RL for cluster scheduling, SIGCOMM 2019](https://dl.acm.org/doi/10.1145/3341302.3342080); ["Learning Interpretable Scheduling Algorithms"](https://arxiv.org/abs/2405.19131); [2026 survey on RL sim-to-real transfer](https://arxiv.org/abs/2502.13187)
 - ["This Time is Different: An Observability Perspective on Time Series Foundation Models"](https://arxiv.org/pdf/2505.14766); [Datadog Toto](https://www.datadoghq.com/blog/datadog-time-series-foundation-model/)
-- [OmniMatch — GNN-based join discovery, VLDB 2025](https://arxiv.org/abs/2403.07653)
-- [Sawmill — causal diagnosis from logs, SIGMOD 2024](https://dl.acm.org/doi/10.14778/3705829.3705836)
+- [OmniMatch — GNN-based join discovery, VLDB 2025](https://arxiv.org/abs/2403.07653); [AutoG](https://arxiv.org/abs/2501.15282); [JOINT](https://arxiv.org/pdf/2509.07230); ["Graph Neural Networks for Databases" survey, IJCAI 2025](https://arxiv.org/pdf/2502.12908)
+- [Sawmill — causal diagnosis from logs, SIGMOD 2024](https://dl.acm.org/doi/10.14778/3705829.3705836); [Salimi — quantifying causal effects on query answering via do-calculus](https://arxiv.org/pdf/1603.02705)
 
 - Internal: [`docs/RECOMMENDATIONS.md`](./RECOMMENDATIONS.md), [`docs/PERFORMANCE_AND_OPENNESS.md`](./PERFORMANCE_AND_OPENNESS.md), [`todo.md`](../todo.md)

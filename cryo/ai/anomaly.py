@@ -23,6 +23,8 @@ def detect_anomalies(
         "total_delete_files",
         "manifest_count",
         "projected_savings_usd_month",
+        "avg_null_rate",
+        "max_null_rate",
     ),
     z_threshold: float = 2.5,
 ) -> list[Anomaly]:

@@ -118,6 +118,13 @@ def persist_table_analysis(
                 "projected_savings_usd_month": (
                     analysis.cost.projected_savings_usd_month if analysis.cost else None
                 ),
+                "avg_null_rate": (analysis.raw or {}).get("avg_null_rate"),
+                "max_null_rate": (analysis.raw or {}).get("max_null_rate"),
+                "worst_null_column": (analysis.raw or {}).get("worst_null_column"),
+                # Full per-column detail, not just the summary scalars above — the quality
+                # profiler (cryo/quality/profiler.py) needs per-column history for baseline
+                # comparison and schema-drift detection, not just the table-level rollup.
+                "column_quality": (analysis.raw or {}).get("column_quality"),
             },
         )
     )

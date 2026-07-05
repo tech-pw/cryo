@@ -87,6 +87,39 @@ def test_analyze_table_supports_fake_manifest_objects() -> None:
     assert analysis.raw["partition_fields"][0]["transform"] == "day"
 
 
+def test_analyze_table_computes_zero_scan_column_quality() -> None:
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[
+            FakeDataFile(
+                10 * MB,
+                10,
+                ("2026-06-29",),
+                null_value_counts={2: 0},
+                value_counts={2: 50},
+            ),
+            FakeDataFile(
+                20 * MB,
+                20,
+                ("2026-06-29",),
+                null_value_counts={2: 10},
+                value_counts={2: 50},
+            ),
+        ],
+        snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
+    )
+
+    analysis = analyze_table(table, "demo", "events", scan_at=scan_at)
+
+    assert analysis.raw["avg_null_rate"] == 0.1
+    assert analysis.raw["max_null_rate"] == 0.1
+    assert analysis.raw["worst_null_column"] == "user_id"
+    [column] = analysis.raw["column_quality"]
+    assert column["column_name"] == "user_id"
+    assert column["null_count"] == 10
+    assert column["value_count"] == 100
+
+
 def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
@@ -118,6 +151,23 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     assert stats.total_files == 2
     assert stats.raw["partition_fields"][0]["base_column"] == "event_date"
     assert len(session.executed) == 3
+
+
+def test_snapshot_info_tracks_first_and_last_commit() -> None:
+    from cryo.scanner.analyze import _snapshot_info
+
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    latest = datetime(2026, 6, 29, tzinfo=UTC)
+    table = FakeTable(
+        files=[],
+        snapshots=[FakeSnapshotMeta(first), FakeSnapshotMeta(latest)],
+    )
+
+    info = _snapshot_info(table)
+
+    assert info["first_snapshot_at"] == first
+    assert info["last_snapshot_committed_at"] == latest
+    assert info["total_snapshots"] == 2
 
 
 def test_parse_args_accepts_cost_full_scan() -> None:
@@ -162,9 +212,13 @@ class FakeSourceColumn:
 
 
 class FakeSchema:
+    _fields = {
+        1: FakeSourceColumn("event_date", "date"),
+        2: FakeSourceColumn("user_id", "string"),
+    }
+
     def find_field(self, source_id: int) -> FakeSourceColumn:
-        assert source_id == 1
-        return FakeSourceColumn("event_date", "date")
+        return self._fields[source_id]
 
 
 @dataclass(frozen=True)
@@ -192,6 +246,8 @@ class FakeDataFile:
     content: str = "DATA"
     file_format: str = "PARQUET"
     spec_id: int = 0
+    null_value_counts: dict[int, int] | None = None
+    value_counts: dict[int, int] | None = None
 
 
 @dataclass(frozen=True)

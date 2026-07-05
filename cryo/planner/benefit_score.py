@@ -192,6 +192,56 @@ def get_top_compaction_candidates(
     )
 
 
+def compare_scheduling_strategies(
+    session: Session,
+    table_id: uuid.UUID,
+    *,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Compare static small-files ordering vs AutoComp benefit-score ordering."""
+    from cryo.db.models import TablePartition
+
+    latest_scan = session.scalar(
+        select(func.max(TablePartition.scan_at)).where(TablePartition.table_id == table_id)
+    )
+    if not latest_scan:
+        return {"static_order": [], "autocomp_order": [], "improvement_ratio": 0.0}
+
+    partitions = list(
+        session.scalars(
+            select(TablePartition).where(
+                TablePartition.table_id == table_id,
+                TablePartition.scan_at == latest_scan,
+            )
+        )
+    )
+
+    static_sorted = sorted(
+        partitions,
+        key=lambda p: (p.small_files_in_partition_count or 0),
+        reverse=True,
+    )[:limit]
+    autocomp_sorted = sorted(
+        partitions,
+        key=lambda p: (p.compaction_benefit_score or 0.0),
+        reverse=True,
+    )[:limit]
+
+    static_score = sum(p.small_files_in_partition_count or 0 for p in static_sorted[:10])
+    autocomp_score = sum(
+        (p.compaction_benefit_score or 0.0) * (p.small_files_in_partition_count or 0)
+        for p in autocomp_sorted[:10]
+    )
+    improvement = autocomp_score / max(static_score, 1.0)
+
+    return {
+        "static_order": [str(p.partition_value) for p in static_sorted[:10]],
+        "autocomp_order": [str(p.partition_value) for p in autocomp_sorted[:10]],
+        "improvement_ratio": round(improvement, 4),
+        "autocomp_wins": improvement > 1.0,
+    }
+
+
 def get_compaction_effectiveness_stats(
     session: Session,
     table_id: uuid.UUID,

@@ -8,7 +8,21 @@
       "WebFetch(domain:www.ryft.io)",
       "Bash(PGPASSWORD=cryo /usr/local/opt/postgresql@15/bin/psql -h localhost -p 5432 -U cryo -d cryo -c \"SELECT current_user, current_database\\(\\);\")",
       "Bash(.venv/bin/alembic upgrade *)",
-      "Bash(.venv/bin/pytest -q)"
+      "Bash(.venv/bin/pytest -q)",
+      "WebFetch(domain:dataformats.org)",
+      "WebFetch(domain:doi.org)",
+      "WebFetch(domain:dl.acm.org)",
+      "Bash(grep -n \"^from cryo.db.models import\\\\|TableStats,\\\\|    TableStats$\" cryo/api/routes.py)",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(.venv/bin/pytest tests/test_scanner_quality.py tests/test_scanner.py tests/test_quality_profiler_integration.py -q)",
+      "Bash(.venv/bin/mypy cryo *)",
+      "Bash(.venv/bin/alembic current *)",
+      "Bash(.venv/bin/alembic heads *)",
+      "Bash(.venv/bin/mypy cryo/integrations/aws_s3_metrics.py)",
+      "Bash(.venv/bin/pytest tests/test_aws_s3_metrics.py -q)",
+      "Bash(python3 -c ' *)",
+      "Bash(.venv/bin/mypy cryo/api/routes.py cryo/api/schemas.py cryo/db/models.py cryo/integrations/aws_s3_metrics.py)",
+      "Bash(.venv/bin/pytest tests/test_aws_integration_api.py -q)"
     ]
   }
 }

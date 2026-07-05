@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -133,8 +134,6 @@ class Governor:
                     if self._enable_signal_triggers:
                         try:
                             with self._session_factory() as session:
-                                import uuid
-
                                 table_uuid = (
                                     uuid.UUID(job.table_id)
                                     if isinstance(job.table_id, str)
@@ -157,13 +156,13 @@ class Governor:
                     approval_needed = False
                     if not signal_triggered:
                         try:
-                            import uuid
+                            import uuid as _uuid
 
                             from cryo.workflows.approvals import job_requires_approval
 
                             with self._session_factory() as session:
                                 table_uuid = (
-                                    uuid.UUID(job.table_id)
+                                    _uuid.UUID(job.table_id)
                                     if isinstance(job.table_id, str)
                                     else job.table_id
                                 )
@@ -189,10 +188,41 @@ class Governor:
                     if approval_needed:
                         continue
 
+                    # PII governance gate for rewrite operations on untagged sensitive columns
+                    try:
+                        from cryo.compliance.pii_gate import maintenance_blocked_for_untagged_pii
+
+                        with self._session_factory() as session:
+                            table_uuid = (
+                                uuid.UUID(job.table_id)
+                                if isinstance(job.table_id, str)
+                                else job.table_id
+                            )
+                            plan_operations = (
+                                job.plan.get("operations") if job.plan else None
+                            )
+                            pii_reason = maintenance_blocked_for_untagged_pii(
+                                session,
+                                table_uuid,
+                                plan_operations,
+                                job_params=job.params,
+                            )
+                            if pii_reason:
+                                logger.info("Job %s deferred: %s", job_id, pii_reason)
+                                self._defer(job, pii_reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Error checking PII gate for job {job_id}: {e}")
+
                     if not signal_triggered:
                         decision = decide_job_admission(_admission_job(job), config, now=current)
                         if not decision.admissible:
                             if decision.defer:
+                                from cryo.governor.bandit_feedback import record_deferred_admission
+
+                                record_deferred_admission(config)
                                 self._defer(job, decision.reason)
                                 deferred += 1
                                 destination_outcomes[destination_id]["deferred"] += 1
@@ -214,6 +244,9 @@ class Governor:
                     replica = replicas.pop(0)
                     self._queue.admit(job.id, destination_id, replica)
                     self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
+                    from cryo.governor.bandit_feedback import register_admission
+
+                    register_admission(job.id, config)
                     admitted += 1
                     destination_outcomes[destination_id]["admitted"] += 1
 
@@ -314,6 +347,21 @@ def _is_valid_job_id(job_id: str) -> bool:
 
 
 def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
+    import os
+    from pathlib import Path
+
+    from cryo.governor.bandit import AdmissionBandit
+
+    config = _admission_config_from_destination(destination, default)
+    state_path = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
+    bandit = AdmissionBandit.load(state_path)
+    tuned, confident = bandit.suggest_config(config)
+    return tuned if confident else config
+
+
+def _admission_config_from_destination(
+    destination: DestinationConfig, default: AdmissionConfig
+) -> AdmissionConfig:
     config = destination.config
     per_replica_cap = config.get("per_replica_cap", config.get("slot_cap", default.per_replica_cap))
     return AdmissionConfig(

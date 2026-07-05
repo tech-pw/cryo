@@ -7,6 +7,7 @@ from cryo.config import Settings
 from cryo.cost.model import CostStatsInput, ReclaimBytes, project_savings
 from cryo.domain.enums import CostPrecision, OperationType
 from cryo.domain.models import SavingsProjection, StorageBreakdown
+from cryo.ml.cost_integration import apply_learned_cost
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
     (OperationType.EXPIRE_SNAPSHOTS, "reclaim_expire_bytes"),
@@ -88,7 +89,7 @@ def savings_projection_from_stats(
             assumptions["retention_days"] = metadata.get("retention_days")
         if assumptions["retain_last"] is None:
             assumptions["retain_last"] = metadata.get("retain_last")
-    return project_savings(
+    projection = project_savings(
         breakdown,
         reclaim,
         cost_stats,
@@ -96,6 +97,7 @@ def savings_projection_from_stats(
         precision=precision,
         assumptions={k: v for k, v in assumptions.items() if v is not None},
     )
+    return apply_learned_cost(projection, effective_stats, settings)
 
 
 def savings_for_plan_operations(
