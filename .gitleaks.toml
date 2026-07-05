@@ -1,0 +1,37 @@
+title = "Cryo gitleaks config"
+
+[extend]
+# Keep upstream secret-detection rules; add Cryo-specific allowlists below.
+useDefault = true
+
+[[allowlists]]
+description = "Local dev compose and bootstrap scripts (MinIO/Postgres fixtures)"
+paths = [
+  '''(?i)(?:^|/)docker-compose\.yml$''',
+  '''(?i)(?:^|/)scripts/seed_local_config\.py$''',
+  '''(?i)(?:^|/)scripts/spark_session\.py$''',
+  '''(?i)(?:^|/)start(?:-local)?\.sh$''',
+  '''(?i)(?:^|/)cryo-engine/README\.md$''',
+]
+
+[[allowlists]]
+description = "Documented local-only credentials and CI ephemeral test DB passwords"
+paths = [
+  '''(?i)(?:^|/)docs/local-development\.md$''',
+  '''(?i)(?:^|/)docs/DEPLOYMENT_GUIDE\.md$''',
+  '''(?i)(?:^|/)docs/OPERATOR_RUNBOOK\.md$''',
+  '''(?i)(?:^|/)README\.md$''',
+  '''(?i)(?:^|/)\.github/workflows/ci\.yml$''',
+]
+
+[[allowlists]]
+description = "Known non-production fixture strings"
+regexTarget = "match"
+regexes = [
+  '''minioadmin''',
+  '''cryo-dev-password''',
+  '''dev-secret-change-in-prod''',
+  '''GF_SECURITY_ADMIN_PASSWORD:\s*admin''',
+  '''POSTGRES_PASSWORD:\s*cryo(?:-dev-password|-test)?''',
+  '''postgresql\+psycopg://cryo:cryo@''',
+]
