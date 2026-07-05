@@ -270,7 +270,65 @@ def requires_approval(
             OperationType.REMOVE_ORPHAN_FILES: True,
         }
 
-    return config_require_approval.get(operation_type.value, False)
+    return config_require_approval.get(operation_type, False)
+
+
+def _parse_operation_type(value: str) -> OperationType | None:
+    try:
+        return OperationType(value)
+    except ValueError:
+        return None
+
+
+def _has_approved_request(
+    session: Session,
+    table_id: UUID,
+    operation_type: OperationType,
+) -> bool:
+    stmt = select(ApprovalRequest).where(
+        ApprovalRequest.table_id == table_id,
+        ApprovalRequest.operation_type == operation_type.value,
+        ApprovalRequest.status == ApprovalStatus.APPROVED,
+        ApprovalRequest.executed_at.is_(None),
+    )
+    return session.execute(stmt).scalars().first() is not None
+
+
+def job_requires_approval(
+    session: Session,
+    table_id: UUID,
+    plan_operations: list[dict[str, Any]] | None,
+) -> bool:
+    """Return True if the job has destructive ops lacking an approved request."""
+    if not plan_operations:
+        return False
+
+    for op in plan_operations:
+        if not isinstance(op, dict):
+            continue
+        op_type = _parse_operation_type(str(op.get("type", "")))
+        if op_type is None or not requires_approval(op_type):
+            continue
+        if not _has_approved_request(session, table_id, op_type):
+            return True
+
+    return False
+
+
+def expire_stale_approval_requests(session: Session) -> int:
+    """Mark pending approval requests past expires_at as expired."""
+    now = datetime.now(UTC)
+    stmt = select(ApprovalRequest).where(
+        ApprovalRequest.status == ApprovalStatus.PENDING,
+        ApprovalRequest.expires_at.isnot(None),
+        ApprovalRequest.expires_at <= now,
+    )
+    stale = list(session.execute(stmt).scalars().all())
+    for request in stale:
+        request.status = ApprovalStatus.EXPIRED
+    if stale:
+        session.commit()
+    return len(stale)
 
 
 def estimate_impact(

@@ -6,6 +6,7 @@ to validate maintenance impact before production rollout.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,8 @@ class WorkloadReplayConfig:
     query_limit: int = 1000  # Number of queries to replay
     trino_url: str = "http://localhost:8080"
     user: str = "cryo-test"
+    max_concurrent: int = 5
+    delay_between_queries_ms: int = 0
 
 
 @dataclass
@@ -141,6 +144,9 @@ async def execute_query_trino(
 async def replay_workload(
     config: WorkloadReplayConfig,
     queries: list[str],
+    *,
+    max_concurrent: int | None = None,
+    delay_between_queries_ms: int | None = None,
 ) -> WorkloadReplayResult:
     """
     Replay captured workload against shadow table.
@@ -148,11 +154,25 @@ async def replay_workload(
     Args:
         config: Replay configuration
         queries: List of query texts to replay
+        max_concurrent: Max concurrent queries (defaults to config.max_concurrent)
+        delay_between_queries_ms: Delay between query starts in ms
 
     Returns:
         Replay results with latency comparison
     """
-    logger.info(f"Replaying {len(queries)} queries against {config.shadow_table_name}")
+    effective_max_concurrent = (
+        max_concurrent if max_concurrent is not None else config.max_concurrent
+    )
+    effective_delay_ms = (
+        delay_between_queries_ms
+        if delay_between_queries_ms is not None
+        else config.delay_between_queries_ms
+    )
+
+    logger.info(
+        f"Replaying {len(queries)} queries against {config.shadow_table_name} "
+        f"(max_concurrent={effective_max_concurrent})"
+    )
 
     # Rewrite queries to use shadow table
     shadow_queries = []
@@ -162,26 +182,37 @@ async def replay_workload(
         shadow_query = query  # Simplified - would need proper table name replacement
         shadow_queries.append(shadow_query)
 
-    # Execute queries and collect latencies
-    latencies = []
+    # Execute queries with rate limiting
+    latencies: list[float] = []
     successful = 0
     failed = 0
+    semaphore = asyncio.Semaphore(effective_max_concurrent)
+    progress_lock = asyncio.Lock()
+    completed = 0
 
-    for i, query in enumerate(shadow_queries):
-        if i % 100 == 0:
-            logger.info(f"Progress: {i}/{len(shadow_queries)}")
+    async def run_one(index: int, query: str) -> None:
+        nonlocal successful, failed, completed
+        if effective_delay_ms > 0:
+            await asyncio.sleep((effective_delay_ms * index) / 1000)
 
-        success, duration_ms = await execute_query_trino(
-            query,
-            config.trino_url,
-            config.user,
-        )
+        async with semaphore:
+            success, duration_ms = await execute_query_trino(
+                query,
+                config.trino_url,
+                config.user,
+            )
 
-        if success:
-            latencies.append(duration_ms)
-            successful += 1
-        else:
-            failed += 1
+        async with progress_lock:
+            if success:
+                latencies.append(duration_ms)
+                successful += 1
+            else:
+                failed += 1
+            completed += 1
+            if completed % 100 == 0 or completed == len(shadow_queries):
+                logger.info(f"Progress: {completed}/{len(shadow_queries)}")
+
+    await asyncio.gather(*(run_one(i, query) for i, query in enumerate(shadow_queries)))
 
     if not latencies:
         return WorkloadReplayResult(

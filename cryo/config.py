@@ -92,6 +92,30 @@ class Settings(BaseSettings):
         description="Hours between AutoComp benefit score recalculations.",
     )
 
+    # API protection
+    api_rate_limit_rps: float = Field(
+        default=0.5,
+        gt=0,
+        description="Token refill rate for expensive API endpoints (requests/sec).",
+    )
+    api_rate_limit_burst: int = Field(
+        default=10,
+        gt=0,
+        description="Burst capacity for expensive API endpoint rate limiting.",
+    )
+
+    # Alerting integrations
+    pagerduty_routing_key: str | None = Field(
+        default=None,
+        description="PagerDuty Events API v2 routing key for high-severity anomalies.",
+    )
+
+    anomaly_detection_batch_size: int = Field(
+        default=100,
+        gt=0,
+        description="Tables processed per batch in fleet-wide anomaly detection.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

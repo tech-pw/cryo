@@ -67,31 +67,14 @@ class LineageNode:
     last_observed_at: datetime
 
 
-def parse_query_for_lineage(
-    query_text: str,
-    target_table_id: UUID,
-) -> list[tuple[str, str]]:  # List of (schema, table_name)
-    """
-    Parse a query to extract source tables for lineage.
-
-    This is a simplified parser. In production, use sqlglot or similar.
-
-    Args:
-        query_text: SQL query text
-        target_table_id: Target table being written to
-
-    Returns:
-        List of (schema, table_name) tuples
-    """
+def _parse_tables_regex(query_text: str) -> list[tuple[str, str]]:
+    """Extract source tables using regex (fallback parser)."""
     import re
 
-    # Simple regex to find "FROM schema.table" patterns
-    # This is very basic - production should use proper SQL parser
-    from_pattern = r"\bFROM\s+([a-z0-9_]+)\.([a-z0-9_]+)"
-    join_pattern = r"\bJOIN\s+([a-z0-9_]+)\.([a-z0-9_]+)"
+    from_pattern = r"\bfrom\s+([a-z0-9_]+)\.([a-z0-9_]+)"
+    join_pattern = r"\bjoin\s+([a-z0-9_]+)\.([a-z0-9_]+)"
 
-    tables = []
-
+    tables: list[tuple[str, str]] = []
     query_lower = query_text.lower()
 
     for match in re.finditer(from_pattern, query_lower):
@@ -102,7 +85,64 @@ def parse_query_for_lineage(
         schema, table = match.groups()
         tables.append((schema, table))
 
-    return list(set(tables))  # Deduplicate
+    return list(set(tables))
+
+
+def _parse_tables_sqlglot(query_text: str) -> list[tuple[str, str]]:
+    """Extract source tables using sqlglot when available."""
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except ImportError:
+        return []
+
+    tables: list[tuple[str, str]] = []
+    parsed = None
+    for dialect in ("trino", "spark", "hive", "postgres"):
+        try:
+            parsed = sqlglot.parse_one(query_text, read=dialect)
+            break
+        except Exception:
+            continue
+
+    if parsed is None:
+        return []
+
+    for table in parsed.find_all(exp.Table):
+        schema = table.db or "default"
+        name = table.name
+        if name:
+            tables.append((schema.lower(), name.lower()))
+
+    return list(set(tables))
+
+
+def parse_query_for_lineage(
+    query_text: str,
+    target_table_id: UUID,
+) -> list[tuple[str, str]]:  # List of (schema, table_name)
+    """
+    Parse a query to extract source tables for lineage.
+
+    Uses sqlglot when installed, otherwise falls back to regex.
+
+    Args:
+        query_text: SQL query text
+        target_table_id: Target table being written to
+
+    Returns:
+        List of (schema, table_name) tuples
+    """
+    del target_table_id  # reserved for future write-target detection
+
+    if not query_text.strip():
+        return []
+
+    tables = _parse_tables_sqlglot(query_text)
+    if not tables:
+        tables = _parse_tables_regex(query_text)
+
+    return tables
 
 
 def record_lineage_from_query(
@@ -192,7 +232,7 @@ def get_lineage_graph(
         depth: Depth of lineage to fetch (1 = direct, 2 = 2-hop, etc.)
 
     Returns:
-        Lineage graph
+        Lineage graph with upstream and downstream tables
     """
     from cryo.db.models import Table
 
@@ -201,52 +241,75 @@ def get_lineage_graph(
         raise ValueError(f"Table {table_id} not found")
 
     table_name = qualified_table_name(table)
+    upstream_tables: list[LineageNode] = []
+    downstream_tables: list[LineageNode] = []
+    jobs: set[str] = set()
+    seen_upstream: set[UUID] = set()
+    seen_downstream: set[UUID] = set()
 
-    # Get upstream tables (sources)
-    upstream_stmt = (
-        select(LineageEdge, Table)
-        .join(Table, LineageEdge.source_table_id == Table.id)
-        .where(LineageEdge.target_table_id == table_id)
-        .order_by(LineageEdge.last_observed_at.desc())
-    )
+    upstream_frontier = {table_id}
+    downstream_frontier = {table_id}
 
-    upstream_results = session.execute(upstream_stmt).all()
-    upstream_tables = [
-        LineageNode(
-            table_id=source_table.id,
-            table_name=qualified_table_name(source_table),
-            edge_type=edge.edge_type,
-            job_name=edge.job_name,
-            last_observed_at=edge.last_observed_at,
-        )
-        for edge, source_table in upstream_results
-    ]
+    for hop in range(max(depth, 1)):
+        if upstream_frontier:
+            upstream_stmt = (
+                select(LineageEdge, Table)
+                .join(Table, LineageEdge.source_table_id == Table.id)
+                .where(LineageEdge.target_table_id.in_(upstream_frontier))
+                .order_by(LineageEdge.last_observed_at.desc())
+            )
+            upstream_results = session.execute(upstream_stmt).all()
+            next_upstream: set[UUID] = set()
 
-    # Get downstream tables (consumers)
-    downstream_stmt = (
-        select(LineageEdge, Table)
-        .join(Table, LineageEdge.target_table_id == Table.id)
-        .where(LineageEdge.source_table_id == table_id)
-        .order_by(LineageEdge.last_observed_at.desc())
-    )
+            for edge, source_table in upstream_results:
+                if edge.job_name:
+                    jobs.add(edge.job_name)
+                if source_table.id in seen_upstream:
+                    continue
+                seen_upstream.add(source_table.id)
+                upstream_tables.append(
+                    LineageNode(
+                        table_id=source_table.id,
+                        table_name=qualified_table_name(source_table),
+                        edge_type=edge.edge_type,
+                        job_name=edge.job_name,
+                        last_observed_at=edge.last_observed_at,
+                    )
+                )
+                if hop + 1 < depth:
+                    next_upstream.add(source_table.id)
 
-    downstream_results = session.execute(downstream_stmt).all()
-    downstream_tables = [
-        LineageNode(
-            table_id=target_table.id,
-            table_name=qualified_table_name(target_table),
-            edge_type=edge.edge_type,
-            job_name=edge.job_name,
-            last_observed_at=edge.last_observed_at,
-        )
-        for edge, target_table in downstream_results
-    ]
+            upstream_frontier = next_upstream
 
-    # Collect unique job names
-    jobs = set()
-    for edge, _ in [*upstream_results, *downstream_results]:
-        if edge.job_name:
-            jobs.add(edge.job_name)
+        if downstream_frontier:
+            downstream_stmt = (
+                select(LineageEdge, Table)
+                .join(Table, LineageEdge.target_table_id == Table.id)
+                .where(LineageEdge.source_table_id.in_(downstream_frontier))
+                .order_by(LineageEdge.last_observed_at.desc())
+            )
+            downstream_results = session.execute(downstream_stmt).all()
+            next_downstream: set[UUID] = set()
+
+            for edge, target_table in downstream_results:
+                if edge.job_name:
+                    jobs.add(edge.job_name)
+                if target_table.id in seen_downstream:
+                    continue
+                seen_downstream.add(target_table.id)
+                downstream_tables.append(
+                    LineageNode(
+                        table_id=target_table.id,
+                        table_name=qualified_table_name(target_table),
+                        edge_type=edge.edge_type,
+                        job_name=edge.job_name,
+                        last_observed_at=edge.last_observed_at,
+                    )
+                )
+                if hop + 1 < depth:
+                    next_downstream.add(target_table.id)
+
+            downstream_frontier = next_downstream
 
     return LineageGraph(
         table_id=table_id,

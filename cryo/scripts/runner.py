@@ -6,6 +6,7 @@ Scripts run in sandboxed Docker containers with resource limits.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import subprocess
@@ -16,6 +17,33 @@ from typing import Any
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
+
+FORBIDDEN_IMPORT_MODULES = frozenset({"os", "subprocess", "socket"})
+FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__"})
+
+
+class _ScriptSecurityVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            root_module = alias.name.split(".", 1)[0]
+            if root_module in FORBIDDEN_IMPORT_MODULES:
+                self.errors.append(f"Forbidden import: {alias.name}")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module:
+            root_module = node.module.split(".", 1)[0]
+            if root_module in FORBIDDEN_IMPORT_MODULES:
+                self.errors.append(f"Forbidden import from: {node.module}")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
+            self.errors.append(f"Forbidden call: {node.func.id}")
+        self.generic_visit(node)
 
 
 @dataclass
@@ -49,25 +77,31 @@ class CustomScriptRunner:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Basic security checks
-        dangerous_imports = [
-            "os.system",
-            "subprocess",
-            "eval",
-            "exec",
-            "__import__",
-            "open(",  # Prevent arbitrary file access
-        ]
+        try:
+            tree = ast.parse(script_code, mode="exec")
+        except SyntaxError as exc:
+            return False, f"Syntax error: {exc}"
 
-        for dangerous in dangerous_imports:
+        visitor = _ScriptSecurityVisitor()
+        visitor.visit(tree)
+        if visitor.errors:
+            return False, visitor.errors[0]
+
+        dangerous_tokens = [
+            "os.system",
+            "eval(",
+            "exec(",
+            "__import__(",
+            "open(",
+        ]
+        for dangerous in dangerous_tokens:
             if dangerous in script_code:
                 return False, f"Forbidden operation: {dangerous}"
 
-        # Check script compiles
         try:
             compile(script_code, "<string>", "exec")
-        except SyntaxError as e:
-            return False, f"Syntax error: {e}"
+        except SyntaxError as exc:
+            return False, f"Syntax error: {exc}"
 
         return True, ""
 

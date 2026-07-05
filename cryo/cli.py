@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from threading import Event, Thread
 from typing import Any, NoReturn
 
+from cryo.config import get_settings
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -102,6 +104,27 @@ class DaemonRunner:
 
     def _tick(self) -> None:
         raise NotImplementedError
+
+
+class BenefitScoreUpdaterRunner(DaemonRunner):
+    """Runs periodic AutoComp benefit score refreshes."""
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().benefit_score_update_interval_hours * 3600
+        super().__init__(
+            "benefit-score-updater",
+            interval or settings_interval,
+        )
+
+    def _tick(self) -> None:
+        from cryo.scheduler.benefit_score_updater import run_benefit_score_update
+
+        partitions_updated = run_benefit_score_update()
+        if partitions_updated:
+            self._logger.info(
+                "Updated benefit scores for %s partitions",
+                partitions_updated,
+            )
 
 
 class GovernorRunner(DaemonRunner):
@@ -382,8 +405,22 @@ def run_worker(args: argparse.Namespace) -> NoReturn:
 
 
 def run_scheduler(args: argparse.Namespace) -> NoReturn:
-    runner = SchedulerRunner(interval=args.check_interval)
-    _run_with_signal(runner)
+    from cryo.scheduler.benefit_score_updater import benefit_score_updater_loop_sync
+
+    updater_stop = Event()
+    updater_thread = Thread(
+        target=benefit_score_updater_loop_sync,
+        kwargs={"stop_event": updater_stop},
+        name="benefit-score-updater",
+        daemon=True,
+    )
+    updater_thread.start()
+    try:
+        runner = SchedulerRunner(interval=args.check_interval)
+        _run_with_signal(runner)
+    finally:
+        updater_stop.set()
+        updater_thread.join(timeout=5)
 
 
 def run_events(args: argparse.Namespace) -> NoReturn:
@@ -401,6 +438,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         WorkerRunner(interval=args.poll_interval, wiring=wiring),
         SchedulerRunner(interval=args.check_interval, wiring=wiring),
         ScannerRunner(interval=args.poll_interval, wiring=wiring),
+        BenefitScoreUpdaterRunner(),
     ]
 
     threads: list[Thread] = []
@@ -420,7 +458,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    logger.info("Cryo serve started (governor + worker + scheduler + scanner)")
+    logger.info("Cryo serve started (governor + worker + scheduler + scanner + benefit scores)")
     while not stop.is_set():
         time.sleep(1)
 

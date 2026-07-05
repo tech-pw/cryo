@@ -265,6 +265,8 @@ async def ingest_from_query_events(
     session: Session,
     source_id: str,
     events: list[dict[str, Any]],
+    *,
+    record_lineage: bool = True,
 ) -> int:
     """Ingest query logs from generic event format.
 
@@ -292,6 +294,7 @@ async def ingest_from_query_events(
         table_lookup[key] = t
 
     ingested = 0
+    lineage_candidates: list[tuple[str, Any, str, str | None]] = []
     for event in events:
         query_id = event.get("query_id", str(uuid.uuid4()))
         query_text = event.get("query", event.get("sql", ""))
@@ -345,15 +348,52 @@ async def ingest_from_query_events(
         session.add(log_entry)
         ingested += 1
 
+        if record_lineage and query_text and table_id:
+            lineage_candidates.append(
+                (query_text, table_id, query_id, event.get("job_name")),
+            )
+
     session.commit()
+
+    if record_lineage and lineage_candidates:
+        from cryo.lineage.tracker import record_lineage_from_query
+
+        for query_text, table_id, query_id, job_name in lineage_candidates:
+            try:
+                record_lineage_from_query(
+                    session,
+                    query_text,
+                    table_id,
+                    job_name=job_name,
+                    job_id=query_id,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record lineage for query {query_id}: {e}")
+
     return ingested
 
 
 class SparkHistoryIngester:
     """Ingest query logs from Spark History Server."""
 
-    def __init__(self, history_server_url: str):
+    def __init__(
+        self,
+        history_server_url: str,
+        *,
+        basic_auth: tuple[str, str] | None = None,
+        bearer_token: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         self.history_server_url = history_server_url.rstrip("/")
+        self.basic_auth = basic_auth
+        self.bearer_token = bearer_token
+        self.headers = headers or {}
+
+    def _build_auth_headers(self) -> dict[str, str]:
+        auth_headers: dict[str, str] = dict(self.headers)
+        if self.bearer_token:
+            auth_headers["Authorization"] = f"Bearer {self.bearer_token}"
+        return auth_headers
 
     async def fetch_recent_queries(
         self,
@@ -373,9 +413,13 @@ class SparkHistoryIngester:
             since = datetime.now(UTC) - timedelta(hours=24)
 
         events: list[dict[str, Any]] = []
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        request_headers = self._build_auth_headers()
+        async with httpx.AsyncClient(timeout=60.0, auth=self.basic_auth) as client:
             # Get list of applications
-            response = await client.get(f"{self.history_server_url}/api/v1/applications")
+            response = await client.get(
+                f"{self.history_server_url}/api/v1/applications",
+                headers=request_headers,
+            )
             response.raise_for_status()
             apps = response.json()
 
@@ -387,7 +431,8 @@ class SparkHistoryIngester:
 
                 try:
                     sql_response = await client.get(
-                        f"{self.history_server_url}/api/v1/applications/{app_id}/sql"
+                        f"{self.history_server_url}/api/v1/applications/{app_id}/sql",
+                        headers=request_headers,
                     )
                     if sql_response.status_code != 200:
                         continue
@@ -459,17 +504,28 @@ class AthenaIngester:
         events: list[dict[str, Any]] = []
         paginator = athena.get_paginator("list_query_executions")
 
+        query_execution_ids: list[str] = []
         for page in paginator.paginate(PaginationConfig={"MaxItems": limit}):
-            query_execution_ids = page.get("QueryExecutionIds", [])
-            if not query_execution_ids:
-                break
+            page_ids = page.get("QueryExecutionIds", [])
+            if not page_ids:
+                continue
+            query_execution_ids.extend(page_ids)
 
-            # Get execution details in batches
-            for query_id in query_execution_ids:
+        # Fetch execution details in batches (Athena API limit: 50 per call)
+        for batch_start in range(0, len(query_execution_ids), 50):
+            batch_ids = query_execution_ids[batch_start : batch_start + 50]
+            try:
+                batch_result = athena.batch_get_query_execution(QueryExecutionIds=batch_ids)
+            except Exception as e:
+                logger.warning(f"Failed to batch-fetch Athena queries: {e}")
+                continue
+
+            for execution in batch_result.get("QueryExecutions", []):
+                query_id = execution.get("QueryExecutionId")
+                if not query_id:
+                    continue
+
                 try:
-                    result = athena.get_query_execution(QueryExecutionId=query_id)
-                    execution = result.get("QueryExecution", {})
-
                     status = execution.get("Status", {})
                     state = status.get("State")
                     if state != "SUCCEEDED":
@@ -498,23 +554,32 @@ class AthenaIngester:
                             "executed_at": submission_time or datetime.now(UTC),
                             "duration_ms": duration_ms,
                             "bytes_read": stats.get("DataScannedInBytes"),
-                            "user": execution.get("ResultConfiguration", {}).get("OutputLocation"),
+                            "user": execution.get("ResultConfiguration", {}).get(
+                                "OutputLocation"
+                            ),
                             "raw": execution,
                         }
                     )
 
                 except Exception as e:
-                    logger.warning(f"Failed to fetch Athena query {query_id}: {e}")
+                    logger.warning(f"Failed to process Athena query {query_id}: {e}")
                     continue
 
         return events
 
 
 class DuckDBIngester:
-    """Ingest query logs from DuckDB local history file."""
+    """Ingest query logs from DuckDB query history."""
 
-    def __init__(self, history_file: str = "~/.duckdb/history"):
+    def __init__(
+        self,
+        history_file: str | None = "~/.duckdb/history",
+        query_log_table: str | None = None,
+        duckdb_database: str | None = None,
+    ):
         self.history_file = history_file
+        self.query_log_table = query_log_table
+        self.duckdb_database = duckdb_database
 
     def fetch_recent_queries(
         self,
@@ -530,15 +595,170 @@ class DuckDBIngester:
         Returns:
             List of normalized query events
         """
-        import os
-        import uuid
-
         if since is None:
             since = datetime.now(UTC) - timedelta(hours=24)
 
         events: list[dict[str, Any]] = []
-        history_path = os.path.expanduser(self.history_file)
 
+        if self.query_log_table and self.duckdb_database:
+            events.extend(
+                self._fetch_from_query_log_table(
+                    self.duckdb_database, self.query_log_table, since, limit
+                )
+            )
+            if events:
+                return events[:limit]
+
+        if self.duckdb_database:
+            events.extend(self._fetch_from_duckdb_database(since, limit))
+            if events:
+                return events[:limit]
+
+        if self.history_file:
+            events.extend(self._fetch_from_history_file(since, limit))
+
+        return events[:limit]
+
+    def _fetch_from_duckdb_database(
+        self,
+        since: datetime,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Read from DuckDB's built-in query_history table when available."""
+        import uuid
+
+        events: list[dict[str, Any]] = []
+        try:
+            import duckdb
+        except ImportError:
+            logger.debug("duckdb package not installed; skipping query_history scan")
+            return events
+
+        db_path = self.duckdb_database
+        if not db_path:
+            return events
+
+        try:
+            conn = duckdb.connect(db_path, read_only=True)
+            try:
+                tables = conn.execute("SHOW TABLES").fetchall()
+                table_names = {row[0].lower() for row in tables}
+                if "query_history" not in table_names:
+                    return events
+
+                rows = conn.execute(
+                    """
+                    SELECT query_text, query_start_time, total_elapsed_time
+                    FROM query_history
+                    WHERE query_start_time >= ?
+                    ORDER BY query_start_time DESC
+                    LIMIT ?
+                    """,
+                    [since, limit],
+                ).fetchall()
+
+                for query_text, query_start_time, total_elapsed_time in rows:
+                    if not query_text:
+                        continue
+                    executed_at = query_start_time
+                    if isinstance(executed_at, str):
+                        executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
+                    elif executed_at is None:
+                        executed_at = datetime.now(UTC)
+                    elif executed_at.tzinfo is None:
+                        executed_at = executed_at.replace(tzinfo=UTC)
+
+                    events.append(
+                        {
+                            "query_id": str(uuid.uuid4()),
+                            "query": query_text,
+                            "engine": "duckdb",
+                            "executed_at": executed_at,
+                            "duration_ms": int(total_elapsed_time)
+                            if total_elapsed_time is not None
+                            else None,
+                            "raw": {"source": "query_history"},
+                        }
+                    )
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to read DuckDB query_history from {db_path}: {e}")
+
+        return events
+
+    def _fetch_from_query_log_table(
+        self,
+        database_path: str,
+        table_name: str,
+        since: datetime,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Read from a user-configured query log table."""
+        import uuid
+
+        events: list[dict[str, Any]] = []
+        try:
+            import duckdb
+        except ImportError:
+            logger.debug("duckdb package not installed; skipping query log table read")
+            return events
+
+        try:
+            conn = duckdb.connect(database_path, read_only=True)
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT query_text, executed_at, duration_ms
+                    FROM {table_name}
+                    WHERE executed_at >= ?
+                    ORDER BY executed_at DESC
+                    LIMIT ?
+                    """,
+                    [since, limit],
+                ).fetchall()
+
+                for query_text, executed_at, duration_ms in rows:
+                    if not query_text:
+                        continue
+                    if isinstance(executed_at, str):
+                        executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
+                    elif executed_at is None:
+                        executed_at = datetime.now(UTC)
+                    elif executed_at.tzinfo is None:
+                        executed_at = executed_at.replace(tzinfo=UTC)
+
+                    events.append(
+                        {
+                            "query_id": str(uuid.uuid4()),
+                            "query": query_text,
+                            "engine": "duckdb",
+                            "executed_at": executed_at,
+                            "duration_ms": duration_ms,
+                            "raw": {"source": table_name},
+                        }
+                    )
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to read DuckDB query log table {table_name}: {e}")
+
+        return events
+
+    def _fetch_from_history_file(
+        self,
+        since: datetime,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fallback: read SQL statements from a plain-text history file."""
+        import os
+        import uuid
+
+        events: list[dict[str, Any]] = []
+        if not self.history_file:
+            return events
+
+        history_path = os.path.expanduser(self.history_file)
         if not os.path.exists(history_path):
             logger.warning(f"DuckDB history file not found: {history_path}")
             return events
@@ -547,7 +767,6 @@ class DuckDBIngester:
             with open(history_path) as f:
                 lines = f.readlines()
 
-            # DuckDB history is just SQL statements, one per line
             for line in lines[-limit:]:
                 query = line.strip()
                 if not query or query.startswith("--"):
@@ -558,8 +777,8 @@ class DuckDBIngester:
                         "query_id": str(uuid.uuid4()),
                         "query": query,
                         "engine": "duckdb",
-                        "executed_at": datetime.now(UTC),  # No timestamp in history file
-                        "raw": {"query": query},
+                        "executed_at": datetime.now(UTC),
+                        "raw": {"query": query, "source": "history_file"},
                     }
                 )
 

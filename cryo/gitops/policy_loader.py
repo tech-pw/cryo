@@ -7,6 +7,7 @@ with version control, PR-based approvals, and automatic sync to Cryo.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -98,6 +99,124 @@ def load_policies_from_directory(
             continue
 
     return policies
+
+
+def detect_policy_conflicts(policies: list[GitOpsPolicyConfig]) -> list[str]:
+    """Detect duplicate or overlapping GitOps policies for the same table."""
+    conflicts: list[str] = []
+    seen_patterns: dict[str, int] = {}
+
+    for index, policy in enumerate(policies):
+        pattern = policy.table_pattern.strip()
+        if not pattern:
+            conflicts.append(f"Policy {index}: empty table pattern")
+            continue
+        if pattern in seen_patterns:
+            conflicts.append(f"Duplicate policy for table pattern '{pattern}'")
+        seen_patterns[pattern] = seen_patterns.get(pattern, 0) + 1
+
+    for left_index, left_policy in enumerate(policies):
+        left_pattern = left_policy.table_pattern.strip()
+        if not left_pattern:
+            continue
+        for right_policy in policies[left_index + 1 :]:
+            right_pattern = right_policy.table_pattern.strip()
+            if not right_pattern:
+                continue
+            if _policy_patterns_overlap(left_pattern, right_pattern):
+                conflicts.append(
+                    f"Overlapping policies: '{left_pattern}' and '{right_pattern}'"
+                )
+
+    return conflicts
+
+
+def _policy_patterns_overlap(left: str, right: str) -> bool:
+    if left == right:
+        return False
+    if "*" not in left and "*" not in right:
+        return False
+    return fnmatchcase(left, right) or fnmatchcase(right, left)
+
+
+def handle_git_webhook(
+    payload: dict[str, Any],
+    *,
+    repo_path: Path,
+    policy_dir_rel: str,
+    session: Session,
+) -> dict[str, Any]:
+    """Reload GitOps policies from a webhook payload ref and sync them to Cryo."""
+    ref = _extract_webhook_ref(payload)
+    if not ref:
+        return {"status": "ignored", "reason": "no ref in payload"}
+
+    checkout_ref(repo_path, ref)
+    policy_dir = repo_path / policy_dir_rel
+    policies = load_policies_from_directory(policy_dir)
+    conflicts = detect_policy_conflicts(policies)
+    if conflicts:
+        logger.error("GitOps policy conflicts detected for ref %s: %s", ref, conflicts)
+        return {
+            "status": "conflict",
+            "ref": ref,
+            "conflicts": conflicts,
+            "policies_loaded": len(policies),
+        }
+
+    synced = 0
+    tables_updated = 0
+    errors: list[str] = []
+    for policy in policies:
+        try:
+            preset = sync_policy_to_preset(session, policy)
+            updated = apply_policy_to_tables(session, policy, preset)
+            synced += 1
+            tables_updated += updated
+        except Exception as exc:
+            message = f"{policy.table_pattern}: {exc}"
+            logger.error("Failed to sync policy %s", message)
+            errors.append(message)
+
+    return {
+        "status": "ok" if not errors else "partial",
+        "ref": ref,
+        "policies_loaded": len(policies),
+        "policies_synced": synced,
+        "tables_updated": tables_updated,
+        "errors": errors,
+    }
+
+
+def _extract_webhook_ref(payload: dict[str, Any]) -> str | None:
+    ref = payload.get("ref")
+    if isinstance(ref, str) and ref:
+        return ref
+    after = payload.get("after")
+    if isinstance(after, str) and after:
+        return after
+    checkout_sha = payload.get("checkout_sha")
+    if isinstance(checkout_sha, str) and checkout_sha:
+        return checkout_sha
+    return None
+
+
+def checkout_ref(repo_path: Path, ref: str) -> None:
+    """Checkout a Git ref in the local policy repository."""
+    subprocess.run(
+        ["git", "fetch", "--all", "--prune"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def sync_policy_to_preset(

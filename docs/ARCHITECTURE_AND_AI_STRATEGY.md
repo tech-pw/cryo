@@ -1,9 +1,10 @@
 # Cryo: Architecture & AI Strategy — Decided
 
-> Written 2026-07-03. This is a **decision** document, not an options survey — the point was to
-> pick one architecture and one AI approach, grounded in real prior art, and commit to
-> implementing them. It extends `docs/RECOMMENDATIONS.md` (what to build) with *how* to build it
-> and *what the AI layer actually is*.
+> Written 2026-07-03; extended 2026-07-05 with §2.5/2.6 (embedding-based intelligence and a
+> research-paper-grounded "cutting edge" track). This is a **decision** document, not an options
+> survey — the point was to pick one architecture and one AI approach, grounded in real prior art,
+> and commit to implementing them. It extends `docs/RECOMMENDATIONS.md` (what to build) with *how*
+> to build it and *what the AI layer actually is*.
 
 ---
 
@@ -263,7 +264,104 @@ over `table_stats_history` — commit velocity, delete-file growth, manifest cou
 trajectory. Cheap, explainable, no hallucination risk. Use ML only where it earns the complexity;
 a z-score suffices here and is more trustworthy than reaching for an LLM.
 
-### 2.5 What we explicitly do NOT build (avoid hype)
+### 2.5 Embedding-based fleet intelligence
+
+**Precedent, split two ways** (checked 2026-07-05): storing embeddings *inside* Iceberg tables is
+a dead end. A real proposal for a native vector type (`apache/iceberg#12636`) was closed as "not
+planned," and the industry has converged on the opposite pattern instead — Iceberg holds governed
+structured data, a separate vector-optimized layer (Lance format, or a synced external index) holds
+embeddings for ANN search. This is benchmark-backed, not just caution: Parquet's page-level layout
+is a documented poor fit for high-dimensional random-vector access. **Cryo should never try to
+become a vector store, and shouldn't build vector-native maintenance features.**
+
+Embedding-based intelligence *about* Cryo's own metadata is a different, validated story:
+- Databricks Unity Catalog's Data Classification (GA ~May 2026) uses an LLM + few-shot embeddings
+  over column name/type/comment to flag likely-PII columns — not regex. Real, shipped pattern.
+- OpenMetadata ships real embedding-based natural-language search over catalog metadata (pluggable
+  Bedrock/OpenAI/HuggingFace embeddings); DataHub has the same thing, earlier-stage.
+- The one genuine, unclaimed whitespace across every source checked: **fleet-wide "find
+  similar/related tables" via embeddings.** This remains research-stage everywhere (2025 academic
+  work like Starmie/TabEmb/"Universal Tabular Embeddings") — nobody ships it as a production
+  feature at real-fleet scale.
+
+**What we build:**
+1. **Embedding-based PII/sensitive-column classification** — extends the governance-gating already
+   planned in 2.3/`RECOMMENDATIONS.md`: embed column name + type + sample values, compare against a
+   small library of known-PII embeddings, flag likely-PII columns that aren't already tagged,
+   feeding the same "don't compact/rewrite untagged sensitive columns" gate.
+2. **Embedding fallback for Cryo Copilot** — when a question doesn't match the curated "verified
+   questions" library (2.1), fall back to an embedding search over table/column descriptions
+   instead of failing outright. Still never generates SQL against live Iceberg tables — same
+   blast-radius guarantee as 2.1.
+3. **Fleet-wide table/column similarity search (the real differentiator)** — embed table/column
+   names, descriptions, and sample stats fleet-wide; surface "these N tables are >90% similar —
+   likely the same entity, possible consolidation opportunity." Directly useful in large,
+   inconsistently-named Iceberg fleets (thousands of tables, no naming convention), and — per the
+   research — not productized by any competitor yet. Atlan's "Context Lakehouse" is the closest
+   analog (Iceberg-native storage + vector-native embeddings per asset, real enterprise customers)
+   but it's a broad governance platform, not a maintenance tool, and no independent technical
+   teardown of their approach exists — this gets built from the published academic pattern, not by
+   reverse-engineering a competitor.
+
+### 2.6 Cutting-edge track: what recent research actually supports (and what it doesn't)
+
+Checked 2026-07-05 against real papers, not vendor blogs — split into "ready to build" and "don't
+bet production reliability on yet."
+
+**Ready to build:**
+- **Bayesian-optimization / contextual-bandit tuning of Governor thresholds** — not full
+  "self-driving" config tuning. OtterTune (CMU's commercialized self-driving-DB config tuner)
+  **shut down in June 2024**, a real signal that full autonomous tuning over hundreds of knobs
+  doesn't hold up commercially. But Cryo's Governor only has ~3–5 well-understood knobs
+  (concurrency caps, cooldown, adaptive budget) — a much narrower, tractable problem, structurally
+  the same as what OtterTune did at a fraction of the scope. A constrained BO or contextual-bandit
+  loop learning per-table-class thresholds from realized outcomes, with a heuristic fallback under
+  low confidence, is a credible upgrade to `governor/admission.py`'s current static constants.
+- **A learned cost model, replacing the heuristic $/GB savings projection** — Amazon's **Stage**
+  (SIGMOD 2024, deployed in Redshift) is the reference architecture: a lightweight per-instance
+  model (XGBoost-class) with Bayesian uncertainty, plus a transferable global model, trained on
+  realized outcomes (predicted vs. actual). Cryo already has the missing piece this needs —
+  `RECOMMENDATIONS.md`'s planned "realized savings" capture (predicted vs. `actual_bytes_freed`) is
+  exactly the training signal. Add conformal-prediction-style confidence bands so Cryo falls back
+  to the current heuristic whenever the model isn't confident, rather than trusting a black box.
+- **Adaptive compaction scheduling as a genuine research-backed differentiator** — LinkedIn's
+  **AutoComp** (SIGMOD 2025, deployed via OpenHouse — an Iceberg-based control plane) is the single
+  most directly relevant paper found: automated compaction scheduling for exactly this table-format
+  family, reporting a real 44% reduction in sub-128MB file counts in production. This isn't an
+  established subfield yet — AutoComp is a lone recent entry — meaning genuine whitespace to build
+  the second real implementation of this idea, informed by a published, production-validated
+  precedent instead of starting from scratch.
+- **TabPFN for few-shot table health classification** (Nature, 2025) — a tabular foundation model
+  pretrained once on synthetic data, doing in-context Bayesian inference with no per-deployment
+  training. Feed it a fleet's table metadata signatures (file count, delete ratio, manifest count,
+  schema complexity) with a handful of labeled examples ("needed emergency compaction" / "didn't")
+  and get few-shot classification — a low-effort way to predict which tables need attention before
+  thresholds are crossed, without training a bespoke model per Cryo deployment.
+
+**Interesting, but don't bet production reliability on yet:**
+- **Full RL-based scheduling** (Decima/Park-style) for Governor admission control. Real and
+  well-published (Decima beat heuristic Spark schedulers by 21%+), but a 2026 survey confirms
+  sim-to-real transfer remains an open, unsolved problem for RL broadly, and RL policies are
+  notoriously hard to audit when they misbehave — the wrong tradeoff for something gating
+  compaction jobs on customer data. A **contextual bandit** (simpler, safer, degrades gracefully to
+  the heuristic under uncertainty) is the credible middle ground — not full RL.
+- **Time-series foundation models (Chronos-2, TimesFM, Moirai) for forecasting per-table health
+  trajectories.** Mature for dense, regular series (retail/energy demand) — but a 2025 paper
+  specifically stress-testing them on observability-style metrics found they degrade badly on
+  exactly Cryo's data shape: sparse, per-entity, heterogeneous, low-frequency series across
+  thousands of distinct tables. Datadog built a bespoke model (Toto) for this exact gap and hasn't
+  even open-sourced or deployed it internally yet. Worth a research spike, not a production bet.
+- **GNN-based automatic join/lineage discovery** (OmniMatch, VLDB 2025; AutoG; Magneto) — real,
+  active research that could plausibly power a "these tables are probably joined" feature without
+  relying on Iceberg's often-absent declared foreign keys. Promising, but needs real engineering
+  investment (sampling strategy at fleet scale, model serving) before it's shippable — a future
+  phase, not now.
+- **Causal inference for realized-savings rigor** (Sawmill, SIGMOD 2024) — a real, tractable
+  technique for proving compaction *caused* a latency improvement rather than merely coinciding
+  with one. Worth adopting once realized-savings tracking has enough data for a diff-in-diff or
+  synthetic-control design — premature before that.
+
+### 2.7 What we explicitly do NOT build (avoid hype)
 
 - **No zero-shot NL-to-SQL against live Iceberg tables.** This is exactly the failure mode Genie
   and Cortex Analyst are engineered to avoid via curation — skipping the semantic-layer step to
@@ -275,6 +373,12 @@ a z-score suffices here and is more trustworthy than reaching for an LLM.
   the marketing pattern that erodes practitioner trust across every competitor that uses it.
 - **Do not use LakeOps as an AI/agentic precedent for anything** — verified no public code or
   GitHub org exists behind their marketing claims.
+- **No vector-native storage or search built into Iceberg tables or Cryo itself** — a real Iceberg
+  spec proposal for this was explicitly rejected; the whole ecosystem keeps vectors in a separate
+  layer. See 2.5.
+- **No full RL-based scheduling and no full "self-driving" whole-system autotuning.** OtterTune's
+  2024 shutdown and RL's documented sim-to-real fragility are the cautionary tales — only the
+  narrow, well-scoped BO/bandit tuning and learned cost model in 2.6 are credible bets today.
 
 ---
 
@@ -292,12 +396,23 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
 - **After the MCP tool surface's read paths are proven useful internally**: add `cryo-mcp` (2.2)
   and Cryo Copilot (2.1) as a pair, since Copilot's "verified questions" library and MCP's
   read-only tools are largely the same underlying queries exposed two different ways.
+- **Alongside Copilot**: the embedding-based PII classifier and Copilot fallback (2.5, items 1–2) —
+  both are natural extensions of the semantic layer Copilot already needs.
+- **Once realized-savings tracking has real data flowing** (predicted vs. `actual_bytes_freed`):
+  the learned cost model (2.6) and, once that's stable, causal-inference-based ROI validation
+  (2.6). These depend on having enough outcome history to train/validate against.
+- **Once the Governor is running real jobs at some volume**: the BO/bandit threshold tuning (2.6) —
+  needs realized admission-control outcomes to learn from, same dependency shape as the cost model.
+- **Longer-term, as dedicated research spikes, not committed features yet**: fleet-wide table
+  similarity search (2.5, item 3), AutoComp-style adaptive compaction scheduling (2.6), and TabPFN
+  health classification (2.6) — each is credible enough to prototype but needs its own validation
+  pass against Cryo's real fleet data before being treated as shipped.
 - **Long-term/optional**: the write-gated `run_preset` MCP tool, once there's enough operational
   trust in the read-only surface to justify agent-triggered execution.
 
 ---
 
-## References (checked 2026-07-03)
+## References (checked 2026-07-03, AI/embeddings + research track added 2026-07-05)
 
 - [Netflix Autotune/Polaris/Janitors](https://vutr.substack.com/p/i-spent-4-hours-learning-how-netflix), [dev.to writeup](https://dev.to/jonisar/netflix-intelligent-lakehouse-solves-iceberg-maintenance-you-can-easily-too-5a84)
 - [LinkedIn OpenHouse architecture](https://github.com/linkedin/openhouse/blob/main/ARCHITECTURE.md)
@@ -308,4 +423,22 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
 - [Monte Carlo — Iceberg best practices](https://www.montecarlodata.com/blog-apache-iceberg-best-practices/)
 - [dbt-mcp](https://github.com/dbt-labs/dbt-mcp), [Snowflake Labs MCP](https://github.com/Snowflake-Labs/mcp), [Ryft iceberg-mcp](https://github.com/ryft-io/iceberg-mcp)
 - [Datadog Bits AI SRE](https://www.datadoghq.com/blog/building-bits-ai-sre/), [Honeycomb AI agents](https://www.honeycomb.io/technologies/ai-agents)
+
+**Embeddings/vector storage (2.5):**
+- [apache/iceberg#12636 — vector/full-text index proposal, closed "not planned"](https://github.com/apache/iceberg/issues/12636)
+- [Databricks Unity Catalog Data Classification](https://www.databricks.com/blog/find-sensitive-data-scale-data-classification-unity-catalog)
+- [OpenMetadata semantic search docs](https://docs.open-metadata.org/v1.12.x/deployment/semantic-search), [DataHub semantic search architecture](https://github.com/datahub-project/datahub/blob/master/docs/dev-guides/semantic-search/ARCHITECTURE.md)
+- [Atlan Context Lakehouse](https://atlan.com/context-lakehouse/)
+- [apache/parquet-format#553 — no native vector logical type](https://github.com/apache/parquet-format/issues/553)
+
+**Cutting-edge research track (2.6):**
+- [OtterTune shutdown, June 2024](https://ottertune.com/) — commercialized self-driving-DB tuning; cautionary tale for full-system autotuning
+- [Stage — learned cost model deployed in Redshift, SIGMOD 2024](https://arxiv.org/abs/2403.02286)
+- [AutoComp — automated compaction for log-structured tables, LinkedIn/OpenHouse, SIGMOD 2025](https://arxiv.org/abs/2504.04186)
+- [TabPFN — tabular foundation model, Nature 2025](https://www.nature.com/articles/s41586-024-08328-6), [TabPFN-TS for zero-shot time-series forecasting](https://github.com/PriorLabs/tabpfn-time-series)
+- [Decima — RL for cluster scheduling, SIGCOMM 2019](https://dl.acm.org/doi/10.1145/3341302.3342080); [2026 survey on RL sim-to-real transfer](https://arxiv.org/abs/2502.13187)
+- ["This Time is Different: An Observability Perspective on Time Series Foundation Models"](https://arxiv.org/pdf/2505.14766); [Datadog Toto](https://www.datadoghq.com/blog/datadog-time-series-foundation-model/)
+- [OmniMatch — GNN-based join discovery, VLDB 2025](https://arxiv.org/abs/2403.07653)
+- [Sawmill — causal diagnosis from logs, SIGMOD 2024](https://dl.acm.org/doi/10.14778/3705829.3705836)
+
 - Internal: [`docs/RECOMMENDATIONS.md`](./RECOMMENDATIONS.md), [`docs/PERFORMANCE_AND_OPENNESS.md`](./PERFORMANCE_AND_OPENNESS.md), [`todo.md`](../todo.md)

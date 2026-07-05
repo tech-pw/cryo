@@ -12,6 +12,7 @@ dependencies = [
     "alembic",
     "boto3",
     "fastapi",
+    "prometheus-client",
     "psycopg[binary]",
     "pydantic-settings",
     "pyiceberg[s3fs,pyarrow]",

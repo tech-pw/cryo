@@ -886,10 +886,12 @@ def update_slack_config(
         config.daily_report_enabled = payload.daily_report_enabled
     if payload.daily_report_cron is not None:
         try:
-            config.daily_report_cron = validate_cron_field(
+            cron = validate_cron_field(
                 payload.daily_report_cron,
                 required=True,
             )
+            if cron is not None:
+                config.daily_report_cron = cron
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if payload.daily_report_use_ai is not None:

@@ -3,82 +3,129 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import pytest
-
-from cryo.db.models import Table
+from cryo.db.models import Source, Table, TableStats
+from cryo.domain.enums import OperationType
 from cryo.workflows.approvals import (
     ApprovalRequestData,
     ApprovalStatus,
     approve_request,
     create_approval_request,
     estimate_impact,
+    expire_stale_approval_requests,
     get_pending_approvals,
+    job_requires_approval,
     reject_request,
     requires_approval,
 )
 
 
-def test_create_approval_request(session):
-    """Test creating an approval request."""
+def _seed_source(session) -> Source:
+    source = Source(
+        id=uuid4(),
+        name=f"source-{uuid4()}",
+        type="rest",
+        config={"catalog_name": "iceberg"},
+    )
+    session.add(source)
+    session.flush()
+    return source
+
+
+def _seed_table(session, *, schema_name: str, table_name: str) -> Table:
+    source = _seed_source(session)
     table = Table(
         id=uuid4(),
-        source_id=uuid4(),
-        name="test.approval_table",
-        location="s3://test/approval",
+        source_id=source.id,
+        schema_name=schema_name,
+        table_name=table_name,
         is_active=True,
     )
     session.add(table)
-    session.commit()
-    
-    request_data = ApprovalRequestData(
+    session.flush()
+    return table
+
+
+def _approval_request_data(
+    session,
+    table: Table,
+    operation_type: OperationType,
+    *,
+    operation_params: dict | None = None,
+    requested_by: str = "user@example.com",
+    request_reason: str | None = None,
+) -> ApprovalRequestData:
+    params = operation_params or {}
+    return ApprovalRequestData(
         table_id=table.id,
-        operation_type="EXPIRE_SNAPSHOTS",
-        operation_params={"retention_days": 1},  # Aggressive!
-        requested_by="user@example.com",
-        reason="Testing approval workflow",
+        operation_type=operation_type,
+        requested_by=requested_by,
+        request_reason=request_reason,
+        impact_preview=estimate_impact(session, table.id, operation_type, params),
+        operation_params=params,
     )
-    
+
+
+def test_create_approval_request(session):
+    """Test creating an approval request."""
+    table = _seed_table(session, schema_name="test", table_name="approval_table")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=True,
+            compaction_priority="HIGH",
+            grade="C",
+            overall_score=50,
+            total_files=100,
+            small_files_count=50,
+            total_size_gb=100.0,
+            total_snapshots=50,
+        )
+    )
+    session.commit()
+
+    request_data = _approval_request_data(
+        session,
+        table,
+        OperationType.EXPIRE_SNAPSHOTS,
+        operation_params={"retention_days": 1},
+        request_reason="Testing approval workflow",
+    )
+
     approval = create_approval_request(session, request_data, auto_expire_hours=24)
-    
+
     assert approval.id is not None
     assert approval.table_id == table.id
-    assert approval.operation_type == "EXPIRE_SNAPSHOTS"
+    assert approval.operation_type == OperationType.EXPIRE_SNAPSHOTS.value
     assert approval.status == ApprovalStatus.PENDING
     assert approval.requested_by == "user@example.com"
     assert approval.impact_preview is not None
-    assert "estimated_snapshots_affected" in approval.impact_preview
+    assert "estimated_snapshots_to_delete" in approval.impact_preview
 
 
 def test_approve_request(session):
     """Test approving a request."""
-    table = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.approve_table",
-        location="s3://test/approve",
-        is_active=True,
-    )
-    session.add(table)
+    table = _seed_table(session, schema_name="test", table_name="approve_table")
     session.commit()
-    
-    request_data = ApprovalRequestData(
-        table_id=table.id,
-        operation_type="REMOVE_ORPHAN_FILES",
+
+    request_data = _approval_request_data(
+        session,
+        table,
+        OperationType.REMOVE_ORPHAN_FILES,
         operation_params={"retention_days": 0},
         requested_by="requester@example.com",
     )
-    
+
     approval = create_approval_request(session, request_data)
     session.commit()
-    
-    # Approve the request
+
     approved = approve_request(
         session,
         approval.id,
         approved_by="approver@example.com",
         approval_reason="Impact is acceptable",
     )
-    
+
     assert approved.status == ApprovalStatus.APPROVED
     assert approved.approved_by == "approver@example.com"
     assert approved.approval_reason == "Impact is acceptable"
@@ -87,158 +134,138 @@ def test_approve_request(session):
 
 def test_reject_request(session):
     """Test rejecting a request."""
-    table = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.reject_table",
-        location="s3://test/reject",
-        is_active=True,
-    )
-    session.add(table)
+    table = _seed_table(session, schema_name="test", table_name="reject_table")
     session.commit()
-    
-    request_data = ApprovalRequestData(
-        table_id=table.id,
-        operation_type="EXPIRE_SNAPSHOTS",
-        operation_params={"retention_days": 0},  # Too aggressive
+
+    request_data = _approval_request_data(
+        session,
+        table,
+        OperationType.EXPIRE_SNAPSHOTS,
+        operation_params={"retention_days": 0},
         requested_by="requester@example.com",
     )
-    
+
     approval = create_approval_request(session, request_data)
     session.commit()
-    
-    # Reject the request
+
     rejected = reject_request(
         session,
         approval.id,
         rejected_by="approver@example.com",
         rejection_reason="Retention too aggressive, risk of data loss",
     )
-    
+
     assert rejected.status == ApprovalStatus.REJECTED
-    assert rejected.rejected_by == "approver@example.com"
-    assert rejected.rejection_reason == "Retention too aggressive, risk of data loss"
+    assert rejected.approved_by == "approver@example.com"
+    assert rejected.approval_reason == "Retention too aggressive, risk of data loss"
 
 
 def test_get_pending_approvals(session):
     """Test fetching pending approvals."""
-    table1 = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.pending1",
-        location="s3://test/pending1",
-        is_active=True,
-    )
-    table2 = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.pending2",
-        location="s3://test/pending2",
-        is_active=True,
-    )
-    session.add_all([table1, table2])
+    table1 = _seed_table(session, schema_name="test", table_name="pending1")
+    table2 = _seed_table(session, schema_name="test", table_name="pending2")
     session.commit()
-    
-    # Create two pending requests
+
     for table in [table1, table2]:
-        request_data = ApprovalRequestData(
-            table_id=table.id,
-            operation_type="EXPIRE_SNAPSHOTS",
-            operation_params={"retention_days": 1},
-            requested_by="user@example.com",
+        create_approval_request(
+            session,
+            _approval_request_data(
+                session,
+                table,
+                OperationType.EXPIRE_SNAPSHOTS,
+                operation_params={"retention_days": 1},
+            ),
         )
-        create_approval_request(session, request_data)
-    
+
     session.commit()
-    
+
     pending = get_pending_approvals(session)
     assert len(pending) == 2
     assert all(r.status == ApprovalStatus.PENDING for r in pending)
 
 
-def test_requires_approval_destructive_ops(session):
+def test_requires_approval_destructive_ops():
     """Test that destructive operations require approval."""
-    table = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.destructive_table",
-        location="s3://test/destructive",
-        is_active=True,
-    )
-    session.add(table)
+    assert requires_approval(OperationType.EXPIRE_SNAPSHOTS) is True
+    assert requires_approval(OperationType.REMOVE_ORPHAN_FILES) is True
+    assert requires_approval(OperationType.OPTIMIZE) is False
+    assert requires_approval(OperationType.OPTIMIZE_MANIFESTS) is False
+
+
+def test_job_requires_approval_without_approved_request(session):
+    """Destructive plan ops defer until an approved request exists."""
+    table = _seed_table(session, schema_name="test", table_name="destructive_table")
     session.commit()
-    
-    # These should require approval
-    assert requires_approval(session, table.id, "EXPIRE_SNAPSHOTS") is True
-    assert requires_approval(session, table.id, "REMOVE_ORPHAN_FILES") is True
-    
-    # These should NOT require approval (read-only or safe)
-    assert requires_approval(session, table.id, "OPTIMIZE") is False
-    assert requires_approval(session, table.id, "OPTIMIZE_MANIFESTS") is False
+
+    plan_operations = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {}}]
+    assert job_requires_approval(session, table.id, plan_operations) is True
+
+    approval = create_approval_request(
+        session,
+        _approval_request_data(
+            session,
+            table,
+            OperationType.EXPIRE_SNAPSHOTS,
+            operation_params={"retention_days": 7},
+        ),
+    )
+    approve_request(session, approval.id, approved_by="approver@example.com")
+    session.commit()
+
+    assert job_requires_approval(session, table.id, plan_operations) is False
 
 
 def test_estimate_impact(session):
     """Test impact estimation for operations."""
-    from cryo.db.models import TableStats
-    
-    table = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.impact_table",
-        location="s3://test/impact",
-        is_active=True,
-    )
-    session.add(table)
-    
+    table = _seed_table(session, schema_name="test", table_name="impact_table")
     stats = TableStats(
         table_id=table.id,
-        total_size_gb=100.0,
-        snapshot_count=50,
+        scan_at=datetime.now(UTC),
+        needs_compaction=True,
+        compaction_priority="HIGH",
+        grade="C",
+        overall_score=50,
+        total_files=100,
         small_files_count=1000,
+        total_size_gb=100.0,
+        total_snapshots=50,
     )
     session.add(stats)
     session.commit()
-    
-    # Estimate impact of aggressive snapshot expiry
+
     impact = estimate_impact(
         session,
         table.id,
-        "EXPIRE_SNAPSHOTS",
+        OperationType.EXPIRE_SNAPSHOTS,
         {"retention_days": 1},
     )
-    
-    assert "estimated_snapshots_affected" in impact
-    assert "risk_level" in impact
-    assert impact["risk_level"] in ["low", "medium", "high"]
+
+    assert "estimated_snapshots_to_delete" in impact
+    assert "warning" in impact
 
 
 def test_request_auto_expiration(session):
-    """Test that requests auto-expire after threshold."""
-    table = Table(
-        id=uuid4(),
-        source_id=uuid4(),
-        name="test.expire_table",
-        location="s3://test/expire",
-        is_active=True,
-    )
-    session.add(table)
+    """Test that stale pending requests are marked expired."""
+    table = _seed_table(session, schema_name="test", table_name="expire_table")
     session.commit()
-    
-    request_data = ApprovalRequestData(
-        table_id=table.id,
-        operation_type="EXPIRE_SNAPSHOTS",
-        operation_params={"retention_days": 1},
-        requested_by="user@example.com",
+
+    approval = create_approval_request(
+        session,
+        _approval_request_data(
+            session,
+            table,
+            OperationType.EXPIRE_SNAPSHOTS,
+            operation_params={"retention_days": 1},
+        ),
+        auto_expire_hours=1,
     )
-    
-    # Create with 1-hour expiry
-    approval = create_approval_request(session, request_data, auto_expire_hours=1)
     session.commit()
-    
-    # Manually set expires_at to past
+
     approval.expires_at = datetime.now(UTC) - timedelta(hours=2)
     session.commit()
-    
-    # Should still be in DB but marked as expired (TODO: implement auto-expiry job)
-    # For now just verify the expires_at was set correctly
-    assert approval.expires_at < datetime.now(UTC)
+
+    expired_count = expire_stale_approval_requests(session)
+    assert expired_count == 1
+
+    session.refresh(approval)
+    assert approval.status == ApprovalStatus.EXPIRED

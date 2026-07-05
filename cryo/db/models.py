@@ -35,6 +35,17 @@ class TimestampMixin:
     )
 
 
+class Tenant(TimestampMixin, Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    admin_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class Source(TimestampMixin, Base):
     __tablename__ = "sources"
 
@@ -46,6 +57,12 @@ class Source(TimestampMixin, Base):
     config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     secret_ref: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     tables: Mapped[list[Table]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
@@ -68,6 +85,12 @@ class Destination(TimestampMixin, Base):
     offpeak_start: Mapped[int | None] = mapped_column(Integer)
     offpeak_end: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     presets: Mapped[list[Preset]] = relationship(back_populates="destination")
     jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="destination")
@@ -157,6 +180,12 @@ class Table(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(
@@ -404,6 +433,12 @@ class Preset(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     guardrails: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     destination: Mapped[Destination] = relationship(back_populates="presets")

@@ -7,12 +7,17 @@ to enable proactive budget management.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import AuditLog, QueryLog, TableStatsHistory
+
+# In-memory daily aggregates keyed by (as_of_date, lookback_days)
+_storage_daily_cache: dict[tuple[str, int], tuple[tuple[str, float], ...]] = {}
+_query_daily_cache: dict[tuple[str, int], tuple[tuple[str, int], ...]] = {}
 
 
 @dataclass
@@ -40,6 +45,90 @@ class CostForecast:
     alert_level: str  # "green", "yellow", "red"
 
 
+@lru_cache(maxsize=32)
+def _daily_aggregate_cache_key(as_of_date: str, lookback_days: int) -> str:
+    """Cache key helper keyed by date for daily aggregate lookups."""
+    return f"{as_of_date}:{lookback_days}"
+
+
+def _fetch_daily_storage_totals(
+    session: Session,
+    lookback_days: int,
+    as_of: date,
+) -> list[tuple[datetime, float]]:
+    """Fetch daily storage totals with SQL GROUP BY day, cached by date."""
+    cache_key = (as_of.isoformat(), lookback_days)
+    _daily_aggregate_cache_key(as_of.isoformat(), lookback_days)
+    if cache_key in _storage_daily_cache:
+        return [
+            (datetime.fromisoformat(day), total)
+            for day, total in _storage_daily_cache[cache_key]
+        ]
+
+    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(
+        days=lookback_days
+    )
+
+    day_bucket = func.date_trunc("day", TableStatsHistory.scan_at).label("day")
+    stmt = (
+        select(
+            day_bucket,
+            func.sum(TableStatsHistory.total_size_gb).label("total_size"),
+        )
+        .where(TableStatsHistory.scan_at >= since)
+        .group_by(day_bucket)
+        .order_by(day_bucket)
+    )
+    rows = session.execute(stmt).all()
+    serializable = tuple(
+        (
+            (row.day.replace(tzinfo=UTC) if row.day.tzinfo is None else row.day).isoformat(),
+            float(row.total_size or 0.0),
+        )
+        for row in rows
+    )
+    _storage_daily_cache[cache_key] = serializable
+
+    return [(datetime.fromisoformat(day), total) for day, total in serializable]
+
+
+def _fetch_daily_query_counts(
+    session: Session,
+    lookback_days: int,
+    as_of: date,
+) -> list[tuple[datetime, int]]:
+    """Fetch daily query counts with SQL GROUP BY day, cached by date."""
+    cache_key = (as_of.isoformat(), lookback_days)
+    _daily_aggregate_cache_key(as_of.isoformat(), lookback_days)
+    if cache_key in _query_daily_cache:
+        return [
+            (datetime.fromisoformat(day), count) for day, count in _query_daily_cache[cache_key]
+        ]
+
+    since = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC) - timedelta(
+        days=lookback_days
+    )
+
+    day_bucket = func.date_trunc("day", QueryLog.executed_at).label("day")
+    stmt = (
+        select(day_bucket, func.count(QueryLog.id).label("query_count"))
+        .where(QueryLog.executed_at >= since)
+        .group_by(day_bucket)
+        .order_by(day_bucket)
+    )
+    rows = session.execute(stmt).all()
+    serializable = tuple(
+        (
+            (row.day.replace(tzinfo=UTC) if row.day.tzinfo is None else row.day).isoformat(),
+            int(row.query_count or 0),
+        )
+        for row in rows
+    )
+    _query_daily_cache[cache_key] = serializable
+
+    return [(datetime.fromisoformat(day), count) for day, count in serializable]
+
+
 def calculate_storage_growth_rate(
     session: Session,
     lookback_days: int = 30,
@@ -54,43 +143,28 @@ def calculate_storage_growth_rate(
     Returns:
         Daily growth rate as percentage
     """
-    since = datetime.now(UTC) - timedelta(days=lookback_days)
-
-    # Get storage size over time from TableStatsHistory
-    stmt = (
-        select(
-            TableStatsHistory.scan_at,
-            func.sum(TableStatsHistory.total_size_gb).label("total_size"),
-        )
-        .where(TableStatsHistory.scan_at >= since)
-        .group_by(TableStatsHistory.scan_at)
-        .order_by(TableStatsHistory.scan_at)
-    )
-
-    results = session.execute(stmt).all()
+    as_of = datetime.now(UTC).date()
+    results = _fetch_daily_storage_totals(session, lookback_days, as_of)
 
     if len(results) < 2:
-        return 0.0  # Not enough data
+        return 0.0
 
-    # Calculate linear growth rate
-    first_size = float(results[0].total_size or 0.0)
-    last_size = float(results[-1].total_size or 0.0)
-    days_elapsed = (results[-1].scan_at - results[0].scan_at).days
+    first_size = results[0][1]
+    last_size = results[-1][1]
+    days_elapsed = (results[-1][0] - results[0][0]).days
 
     if days_elapsed == 0 or first_size == 0:
         return 0.0
 
-    # Daily growth rate
     daily_growth_rate = ((last_size - first_size) / first_size) / days_elapsed
-
-    return float(daily_growth_rate * 100)  # Convert to percentage
+    return float(daily_growth_rate * 100)
 
 
 def forecast_next_month_cost(
     session: Session,
     budget_limit_usd: float | None = None,
     s3_price_per_gb: float = 0.023,
-    compute_hour_cost: float = 50.0,  # Average Trino cluster cost per hour
+    compute_hour_cost: float = 50.0,
     lookback_days: int = 30,
 ) -> CostForecast:
     """
@@ -107,9 +181,9 @@ def forecast_next_month_cost(
         Cost forecast for next month
     """
     now = datetime.now(UTC)
+    as_of = now.date()
     current_month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
 
-    # Next month
     if now.month == 12:
         next_month_start = datetime(now.year + 1, 1, 1, tzinfo=UTC)
     else:
@@ -117,42 +191,24 @@ def forecast_next_month_cost(
 
     forecast_month = next_month_start.strftime("%Y-%m")
 
-    # 1. Storage Cost Forecast
-    current_storage_gb = (
-        session.execute(
-            select(func.sum(TableStatsHistory.total_size_gb))
-            .where(TableStatsHistory.scan_at >= current_month_start)
-            .order_by(TableStatsHistory.scan_at.desc())
-            .limit(1)
-        ).scalar()
-        or 0.0
-    )
+    daily_storage = _fetch_daily_storage_totals(session, lookback_days, as_of)
+    current_storage_gb = daily_storage[-1][1] if daily_storage else 0.0
 
     storage_growth_rate_pct = calculate_storage_growth_rate(session, lookback_days)
-
-    # Assume 30 days of growth
     forecast_storage_gb = current_storage_gb * (1 + (storage_growth_rate_pct / 100) * 30)
 
     current_month_storage_cost = current_storage_gb * s3_price_per_gb
     forecast_storage_cost = forecast_storage_gb * s3_price_per_gb
 
-    # 2. Compute Cost Forecast
-    # Count queries in current month
-    current_month_queries = (
-        session.execute(
-            select(func.count(QueryLog.id)).where(QueryLog.executed_at >= current_month_start)
-        ).scalar()
-        or 0
+    daily_queries = _fetch_daily_query_counts(session, lookback_days, as_of)
+
+    current_month_queries = sum(
+        count for day, count in daily_queries if day >= current_month_start
     )
 
-    # Historical query count (previous month)
     prev_month_start = current_month_start - timedelta(days=30)
     prev_month_queries = (
-        session.execute(
-            select(func.count(QueryLog.id))
-            .where(QueryLog.executed_at >= prev_month_start)
-            .where(QueryLog.executed_at < current_month_start)
-        ).scalar()
+        sum(count for day, count in daily_queries if prev_month_start <= day < current_month_start)
         or 1
     )
 
@@ -160,15 +216,12 @@ def forecast_next_month_cost(
         (current_month_queries - prev_month_queries) / prev_month_queries
     ) * 100
 
-    # Estimate compute hours from query count (rough: 1 query = 0.01 hours avg)
     current_compute_hours = current_month_queries * 0.01
     forecast_compute_hours = current_compute_hours * (1 + query_growth_rate_pct / 100)
 
     current_month_compute_cost = current_compute_hours * compute_hour_cost
     forecast_compute_cost = forecast_compute_hours * compute_hour_cost
 
-    # 3. Maintenance Cost Forecast
-    # Count maintenance operations this month
     current_month_maintenance = (
         session.execute(
             select(func.count(AuditLog.id)).where(AuditLog.ts >= current_month_start)
@@ -176,14 +229,12 @@ def forecast_next_month_cost(
         or 0
     )
 
-    # Estimate maintenance cost (rough: 1 optimize = 0.5 hours avg)
     current_maintenance_hours = current_month_maintenance * 0.5
-    forecast_maintenance_hours = current_maintenance_hours  # Assume constant
+    forecast_maintenance_hours = current_maintenance_hours
 
     current_month_maintenance_cost = current_maintenance_hours * compute_hour_cost
     forecast_maintenance_cost = forecast_maintenance_hours * compute_hour_cost
 
-    # Total costs
     total_current = (
         current_month_storage_cost + current_month_compute_cost + current_month_maintenance_cost
     )
@@ -193,7 +244,6 @@ def forecast_next_month_cost(
         ((total_forecast - total_current) / total_current) * 100 if total_current > 0 else 0
     )
 
-    # Budget alerts
     budget_exceeded_by = None
     alert_level = "green"
 
