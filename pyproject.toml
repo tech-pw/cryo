@@ -18,7 +18,7 @@ dependencies = [
     "psycopg[binary]",
     "pydantic-settings",
     "pyarrow>=17.0.0",
-    "pyiceberg[s3fs,pyarrow]>=0.11.0,<0.11.99",
+    "pyiceberg[hive,s3fs,pyarrow]>=0.11.0,<0.11.99",
     "pyjwt>=2.8.0",
     "redis",
     "sqlalchemy[asyncio]",

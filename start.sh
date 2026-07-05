@@ -13,6 +13,9 @@ JUPYTER_IP="${JUPYTER_IP:-127.0.0.1}"
 SEED_TABLES="${SEED_TABLES:-1}"
 SEED_FIXTURES="${SEED_FIXTURES:-0}"
 
+COMPOSE_CRYO_FILE="docker-compose.yml"
+COMPOSE_DATALAKE_FILE="docker-compose.dev-datalake.yml"
+
 log() {
   printf '==> %s\n' "$*"
 }
@@ -62,13 +65,14 @@ wait_for_url() {
 wait_for_container_health() {
   local service="$1"
   local name="$2"
-  local attempts="${3:-60}"
+  local compose_file="$3"
+  local attempts="${4:-60}"
   local container_id=""
   local status=""
 
   log "Waiting for $name container health"
   for ((i = 1; i <= attempts; i++)); do
-    container_id="$(docker compose ps -q "$service")"
+    container_id="$(docker compose -f "$compose_file" ps -q "$service")"
     if [[ -n "$container_id" ]]; then
       status="$(
         docker inspect \
@@ -88,14 +92,16 @@ wait_for_container_health() {
 
 start_services() {
   log "Starting Docker services"
-  docker compose up -d
+  docker compose -f "$COMPOSE_DATALAKE_FILE" up -d
+  docker compose -f "$COMPOSE_CRYO_FILE" up -d postgres redis
+  docker compose -f "$COMPOSE_DATALAKE_FILE" --profile tools up -d spark
 
   wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
   wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
-  wait_for_url "Trino" "http://localhost:8090/v1/info"
-  wait_for_container_health "postgres" "Postgres"
-  wait_for_container_health "redis" "Redis"
-  wait_for_container_health "spark" "Spark runner"
+  wait_for_url "Trino" "http://localhost:8080/v1/info"
+  wait_for_container_health "postgres" "Postgres" "$COMPOSE_CRYO_FILE"
+  wait_for_container_health "redis" "Redis" "$COMPOSE_CRYO_FILE"
+  wait_for_container_health "spark" "Spark runner" "$COMPOSE_DATALAKE_FILE"
 }
 
 seed_demo_tables() {

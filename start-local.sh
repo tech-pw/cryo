@@ -20,15 +20,25 @@ WEB_PORT="${WEB_PORT:-5173}"
 SEED_CONFIG="${SEED_CONFIG:-1}"
 SEED_TABLES="${SEED_TABLES:-0}"
 SEED_FIXTURES="${SEED_FIXTURES:-0}"
+SEED_HMS_FIXTURES="${SEED_HMS_FIXTURES:-0}"
 START_WEB="${START_WEB:-1}"
 START_SERVE="${START_SERVE:-1}"
 START_WORKER="${START_WORKER:-0}"
 START_GOVERNOR="${START_GOVERNOR:-0}"
 START_SCHEDULER="${START_SCHEDULER:-0}"
 START_EVENTS="${START_EVENTS:-0}"
-DOCKER_SERVICES="${DOCKER_SERVICES:-postgres redis minio minio-init iceberg-rest trino}"
+START_DATALAKE="${START_DATALAKE:-1}"
+START_OBSERVABILITY="${START_OBSERVABILITY:-1}"
+START_CRYO_DOCKER="${START_CRYO_DOCKER:-0}"
+DOCKER_CRYO_SERVICES="${DOCKER_CRYO_SERVICES:-postgres redis}"
+DOCKER_DATALAKE_SERVICES="${DOCKER_DATALAKE_SERVICES:-minio minio-init iceberg-rest hms-postgres hive-metastore trino}"
+DOCKER_OBS_SERVICES="${DOCKER_OBS_SERVICES:-prometheus grafana loki promtail}"
 DOCKER_DOWN_ON_STOP="${DOCKER_DOWN_ON_STOP:-0}"
 RESET_LOCAL_POSTGRES="${RESET_LOCAL_POSTGRES:-0}"
+
+COMPOSE_CRYO_FILE="docker-compose.yml"
+COMPOSE_DATALAKE_FILE="docker-compose.dev-datalake.yml"
+COMPOSE_OBS_FILE="docker-compose.observability.yml"
 
 log() {
   printf '==> %s\n' "$*"
@@ -57,14 +67,20 @@ Environment:
   SEED_CONFIG=1          Upsert local source/destination/preset rows
   SEED_TABLES=0          Seed demo Iceberg tables after Docker is up
   SEED_FIXTURES=0        Also seed fragmented fixture tables
+  SEED_HMS_FIXTURES=0    Seed HMS fixture tables (large; opt-in)
   START_WEB=1            Start Vite dev server
   START_SERVE=1         Start governor + worker + scheduler via cryo serve (default 1)
   START_WORKER=0        Start maintenance worker alone (ignored when START_SERVE=1)
   START_GOVERNOR=0      Start load-aware governor alone (ignored when START_SERVE=1)
   START_SCHEDULER=0     Start scheduler alone (ignored when START_SERVE=1)
   START_EVENTS=0         Start event watcher + consumer (Phase 4 fast-path)
+  START_DATALAKE=1       Start MinIO, catalogs, Trino (dev datalake compose file)
+  START_OBSERVABILITY=1  Start Prometheus, Grafana, Loki, Promtail
+  START_CRYO_DOCKER=0    Start cryo-* containers (default: host-run API + cryo serve)
+  DOCKER_CRYO_SERVICES=postgres redis
+  DOCKER_DATALAKE_SERVICES=minio minio-init iceberg-rest hms-postgres hive-metastore trino
+  DOCKER_OBS_SERVICES=prometheus grafana loki promtail
   DOCKER_DOWN_ON_STOP=0  Stop Docker stack when running ./start-local.sh stop
-  DOCKER_SERVICES=...    Docker services to start (default: infra only)
   RESET_LOCAL_POSTGRES=0 Recreate local Postgres volume if credentials are stale
   API_PORT=8000          FastAPI port
   WEB_PORT=5173          Vite dev server port
@@ -74,6 +90,27 @@ EOF
 require_docker() {
   command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH"
   docker compose version >/dev/null 2>&1 || die "docker compose is not available"
+}
+
+setup_compose_env() {
+  export COMPOSE_FILE="${COMPOSE_CRYO_FILE}:${COMPOSE_DATALAKE_FILE}:${COMPOSE_OBS_FILE}"
+}
+
+compose_cryo() {
+  docker compose -f "$COMPOSE_CRYO_FILE" "$@"
+}
+
+compose_datalake() {
+  docker compose -f "$COMPOSE_DATALAKE_FILE" "$@"
+}
+
+compose_obs() {
+  docker compose -f "$COMPOSE_OBS_FILE" "$@"
+}
+
+compose_all() {
+  setup_compose_env
+  docker compose "$@"
 }
 
 ensure_dirs() {
@@ -133,7 +170,7 @@ wait_for_container_health() {
 
   log "Waiting for $name container health"
   for ((i = 1; i <= attempts; i++)); do
-    container_id="$(docker compose ps -q "$service")"
+    container_id="$(compose_all ps -q "$service")"
     if [[ -n "$container_id" ]]; then
       status="$(
         docker inspect \
@@ -152,15 +189,44 @@ wait_for_container_health() {
 }
 
 start_docker() {
-  log "Starting Docker services: $DOCKER_SERVICES"
-  # shellcheck disable=SC2086
-  docker compose up -d $DOCKER_SERVICES
+  setup_compose_env
 
-  wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
-  wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
-  wait_for_url "Trino" "http://localhost:8080/v1/info"
+  if [[ "$START_DATALAKE" == "1" ]]; then
+    log "Starting dev datalake services: $DOCKER_DATALAKE_SERVICES"
+    # shellcheck disable=SC2086
+    compose_datalake up -d $DOCKER_DATALAKE_SERVICES
+  fi
+
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    log "Starting Cryo Docker services: $DOCKER_CRYO_SERVICES"
+    # shellcheck disable=SC2086
+    compose_cryo up -d $DOCKER_CRYO_SERVICES
+  else
+    log "Starting Cryo dependencies: $DOCKER_CRYO_SERVICES"
+    # shellcheck disable=SC2086
+    compose_cryo up -d $DOCKER_CRYO_SERVICES
+  fi
+
+  if [[ "$START_OBSERVABILITY" == "1" ]]; then
+    log "Starting observability services: $DOCKER_OBS_SERVICES"
+    # shellcheck disable=SC2086
+    compose_obs up -d $DOCKER_OBS_SERVICES
+  fi
+
+  if [[ "$START_DATALAKE" == "1" ]]; then
+    wait_for_url "MinIO" "http://localhost:9000/minio/health/live"
+    wait_for_url "Iceberg REST catalog" "http://localhost:8181/v1/config"
+    wait_for_url "Trino" "http://localhost:8080/v1/info"
+    wait_for_container_health "hive-metastore" "Hive Metastore"
+  fi
+
   wait_for_container_health "postgres" "Postgres"
   wait_for_container_health "redis" "Redis"
+
+  if [[ "$START_OBSERVABILITY" == "1" ]]; then
+    wait_for_url "Prometheus" "http://localhost:9090/-/ready" 30
+    wait_for_url "Grafana" "http://localhost:3000/api/health" 30
+  fi
 }
 
 ensure_postgres_auth() {
@@ -181,10 +247,11 @@ PY
   fi
 
   warn "Postgres password mismatch; recreating postgres volume for local dev (cryo/cryo)"
-  docker compose stop postgres >/dev/null 2>&1 || true
-  docker compose rm -f postgres >/dev/null 2>&1 || true
+  compose_cryo stop postgres >/dev/null 2>&1 || true
+  compose_cryo rm -f postgres >/dev/null 2>&1 || true
+  docker volume rm -f cryo_postgres_data >/dev/null 2>&1 || true
   docker volume rm -f iceberg_compactor_postgres_data >/dev/null 2>&1 || true
-  docker compose up -d postgres
+  compose_cryo up -d postgres
   wait_for_container_health "postgres" "Postgres"
 
   if ! python - <<'PY' >/dev/null 2>&1
@@ -227,6 +294,17 @@ seed_tables() {
     log "Seeding fragmented partition fixture tables"
     python "$ROOT_DIR/scripts/create_partition_fixture_tables.py"
   fi
+}
+
+seed_hms_fixtures() {
+  if [[ "$SEED_HMS_FIXTURES" != "1" ]]; then
+    log "Skipping HMS fixture seed (SEED_HMS_FIXTURES=$SEED_HMS_FIXTURES)"
+    return 0
+  fi
+
+  log "Seeding HMS fixture tables"
+  HMS_FIXTURE_SCALE="${HMS_FIXTURE_SCALE:-smoke}" \
+    python "$ROOT_DIR/tests/integration/hms/generate_hms_fixture_tables.py"
 }
 
 is_running() {
@@ -357,12 +435,32 @@ EOF
   cat <<EOF
 
 Infrastructure:
+EOF
+
+  if [[ "$START_DATALAKE" == "1" ]]; then
+    cat <<EOF
   MinIO API       http://localhost:9000
   MinIO console   http://localhost:9001  (minioadmin / minioadmin)
   Iceberg REST    http://localhost:8181
+  Hive Metastore  thrift://localhost:9083
   Trino           http://localhost:8080
+EOF
+  fi
+
+  cat <<EOF
   Postgres        localhost:5432  (cryo / cryo / cryo)
   Redis           localhost:6379
+EOF
+
+  if [[ "$START_OBSERVABILITY" == "1" ]]; then
+    cat <<EOF
+  Prometheus      http://localhost:9090
+  Grafana         http://localhost:3000  (admin / admin)
+  Loki            http://localhost:3100
+EOF
+  fi
+
+  cat <<EOF
 
 Useful commands:
   ./start-local.sh status
@@ -418,9 +516,10 @@ stop_app_processes() {
 cmd_status() {
   require_docker
   ensure_dirs
+  setup_compose_env
 
   log "Docker services"
-  docker compose ps
+  compose_all ps
 
   printf '\n'
   log "Cryo app processes"
@@ -453,6 +552,7 @@ cmd_start() {
   migrate_db
   seed_config
   seed_tables
+  seed_hms_fixtures
   start_app_processes
   verify_background_processes
   wait_for_app
@@ -465,8 +565,11 @@ cmd_stop() {
 
   if [[ "$DOCKER_DOWN_ON_STOP" == "1" ]]; then
     require_docker
+    setup_compose_env
     log "Stopping Docker services"
-    docker compose down
+    compose_obs down >/dev/null 2>&1 || true
+    compose_cryo down >/dev/null 2>&1 || true
+    compose_datalake down >/dev/null 2>&1 || true
   else
     log "Docker services left running (set DOCKER_DOWN_ON_STOP=1 to stop them)"
   fi

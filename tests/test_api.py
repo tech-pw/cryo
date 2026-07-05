@@ -142,6 +142,35 @@ def test_source_test_endpoint_reports_discovered_tables() -> None:
     assert set(body["sample_tables"]) == {"events.clicks", "events.impressions"}
 
 
+def test_source_test_endpoint_reports_hive_tables() -> None:
+    mock_catalog = MagicMock()
+    mock_catalog.list_namespaces.return_value = ["hms_issues"]
+    mock_catalog.list_tables.return_value = [
+        ("hms_issues", "balanced_control"),
+        ("hms_issues", "day_hot_partition_skew"),
+    ]
+
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog", return_value=mock_catalog):
+        response = _client().post(
+            "/api/v1/sources/test",
+            headers=AUTH_HEADERS,
+            json={
+                "type": "hive",
+                "config": {
+                    "catalog_name": "hms",
+                    "uri": "thrift://localhost:9083",
+                    "warehouse": "s3://warehouse/",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["table_count"] == 2
+    assert "hms_issues.balanced_control" in body["sample_tables"]
+
+
 def test_source_test_endpoint_reports_connection_failure() -> None:
     response = _client().post(
         "/api/v1/sources/test",
