@@ -198,8 +198,6 @@ services:
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-    deploy:
-      replicas: 2
   
   # ==================== Observability ====================
   
