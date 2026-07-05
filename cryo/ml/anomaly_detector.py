@@ -6,16 +6,24 @@ anomalies in table metrics without requiring heavy ML dependencies.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from cryo.config import get_settings
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import Table, TableStatsHistory
+
+logger = logging.getLogger(__name__)
+
+ANOMALY_DETECTION_BATCH_SIZE = 100
+MAD_THRESHOLD = 3.5
 
 
 @dataclass
@@ -53,6 +61,84 @@ def calculate_statistics(values: Sequence[float]) -> tuple[float, float]:
     return mean, std_dev
 
 
+def calculate_median(values: Sequence[float]) -> float:
+    """Calculate median of numeric values."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    mid = len(sorted_values) // 2
+    if len(sorted_values) % 2 == 0:
+        return (sorted_values[mid - 1] + sorted_values[mid]) / 2
+    return sorted_values[mid]
+
+
+def calculate_mad(values: Sequence[float]) -> tuple[float, float]:
+    """
+    Calculate median and median absolute deviation (MAD).
+
+    Returns:
+        Tuple of (median, mad)
+    """
+    if not values:
+        return 0.0, 0.0
+
+    median = calculate_median(values)
+    deviations = [abs(x - median) for x in values]
+    mad = calculate_median(deviations)
+    return median, mad
+
+
+def detect_anomaly_mad(
+    current_value: float,
+    historical_values: Sequence[float],
+    threshold: float = MAD_THRESHOLD,
+) -> tuple[bool, float, float]:
+    """
+    Detect anomaly using modified Z-score based on MAD.
+
+    More robust than standard Z-score for skewed distributions.
+
+    Returns:
+        Tuple of (is_anomaly, expected_value, deviation_sigma)
+    """
+    if len(historical_values) < 5:
+        return False, current_value, 0.0
+
+    median, mad = calculate_mad(historical_values)
+    if mad == 0:
+        return False, median, 0.0
+
+    modified_z = 0.6745 * abs(current_value - median) / mad
+    is_anomaly = modified_z > threshold
+    return is_anomaly, median, modified_z
+
+
+def detect_anomaly_robust(
+    current_value: float,
+    historical_values: Sequence[float],
+    threshold_sigma: float = 3.0,
+    mad_threshold: float = MAD_THRESHOLD,
+) -> tuple[bool, float, float]:
+    """
+    Detect anomaly using both Z-score and MAD; flags if either method triggers.
+    """
+    z_anomaly, z_expected, z_deviation = detect_anomaly_zscore(
+        current_value,
+        historical_values,
+        threshold_sigma,
+    )
+    mad_anomaly, mad_expected, mad_deviation = detect_anomaly_mad(
+        current_value,
+        historical_values,
+        mad_threshold,
+    )
+
+    is_anomaly = z_anomaly or mad_anomaly
+    expected = mad_expected if mad_anomaly else z_expected
+    deviation = max(z_deviation, mad_deviation)
+    return is_anomaly, expected, deviation
+
+
 def detect_anomaly_zscore(
     current_value: float,
     historical_values: Sequence[float],
@@ -83,9 +169,15 @@ def detect_anomaly_zscore(
     return is_anomaly, mean, deviation_sigma
 
 
+def _coerce_table_id(table_id: str | UUID) -> UUID:
+    if isinstance(table_id, UUID):
+        return table_id
+    return UUID(str(table_id))
+
+
 def detect_table_anomalies(
     session: Session,
-    table_id: str,
+    table_id: str | UUID,
     lookback_days: int = 30,
     threshold_sigma: float = 3.0,
 ) -> list[AnomalyAlert]:
@@ -101,7 +193,8 @@ def detect_table_anomalies(
     Returns:
         List of detected anomalies
     """
-    table = session.get(Table, table_id)
+    table_uuid = _coerce_table_id(table_id)
+    table = session.get(Table, table_uuid)
     if not table:
         raise ValueError(f"Table {table_id} not found")
 
@@ -111,7 +204,7 @@ def detect_table_anomalies(
     since = datetime.now(UTC) - timedelta(days=lookback_days)
     stmt = (
         select(TableStatsHistory)
-        .where(TableStatsHistory.table_id == table_id)
+        .where(TableStatsHistory.table_id == table_uuid)
         .where(TableStatsHistory.scan_at >= since)
         .order_by(TableStatsHistory.scan_at)
     )
@@ -134,7 +227,7 @@ def detect_table_anomalies(
         h.small_files_count for h in historical if h.small_files_count is not None
     ]
     if small_files_history and current.small_files_count is not None:
-        is_anomaly, expected, deviation = detect_anomaly_zscore(
+        is_anomaly, expected, deviation = detect_anomaly_robust(
             current.small_files_count,
             small_files_history,
             threshold_sigma,
@@ -154,7 +247,7 @@ def detect_table_anomalies(
             )
             anomalies.append(
                 AnomalyAlert(
-                    table_id=str(table_id),
+                    table_id=str(table_uuid),
                     table_name=table_name,
                     metric_name="small_files_count",
                     current_value=current.small_files_count,
@@ -169,7 +262,7 @@ def detect_table_anomalies(
     # 2. Storage growth anomaly
     size_history = [h.total_size_gb for h in historical if h.total_size_gb is not None]
     if size_history and current.total_size_gb is not None:
-        is_anomaly, expected, deviation = detect_anomaly_zscore(
+        is_anomaly, expected, deviation = detect_anomaly_robust(
             current.total_size_gb,
             size_history,
             threshold_sigma,
@@ -184,7 +277,7 @@ def detect_table_anomalies(
             )
             anomalies.append(
                 AnomalyAlert(
-                    table_id=str(table_id),
+                    table_id=str(table_uuid),
                     table_name=table_name,
                     metric_name="total_size_gb",
                     current_value=current.total_size_gb,
@@ -199,10 +292,10 @@ def detect_table_anomalies(
     # 3. Health score degradation
     score_history = [h.overall_score for h in historical if h.overall_score is not None]
     if score_history and current.overall_score is not None:
-        is_anomaly, expected, deviation = detect_anomaly_zscore(
+        is_anomaly, expected, deviation = detect_anomaly_robust(
             current.overall_score,
             score_history,
-            2.5,  # Lower threshold for score degradation
+            2.5,
         )
 
         if is_anomaly and current.overall_score < expected:  # Only alert on score drops
@@ -214,7 +307,7 @@ def detect_table_anomalies(
             )
             anomalies.append(
                 AnomalyAlert(
-                    table_id=str(table_id),
+                    table_id=str(table_uuid),
                     table_name=table_name,
                     metric_name="health_score",
                     current_value=current.overall_score,
@@ -238,7 +331,7 @@ def detect_table_anomalies(
                         p95_history.append(p95)
 
             if p95_history:
-                is_anomaly, expected, deviation = detect_anomaly_zscore(
+                is_anomaly, expected, deviation = detect_anomaly_robust(
                     current_p95,
                     p95_history,
                     2.5,
@@ -253,7 +346,7 @@ def detect_table_anomalies(
                     )
                     anomalies.append(
                         AnomalyAlert(
-                            table_id=str(table_id),
+                            table_id=str(table_uuid),
                             table_name=table_name,
                             metric_name="p95_query_latency_ms",
                             current_value=current_p95,
@@ -272,6 +365,9 @@ def detect_all_anomalies(
     session: Session,
     min_severity: str = "medium",
     lookback_days: int = 30,
+    threshold_sigma: float = 3.0,
+    *,
+    dispatch_alerts: bool = False,
 ) -> list[AnomalyAlert]:
     """
     Detect anomalies across all monitored tables.
@@ -280,6 +376,8 @@ def detect_all_anomalies(
         session: Database session
         min_severity: Minimum severity to return ("low", "medium", "high")
         lookback_days: Days of historical data
+        threshold_sigma: Z-score threshold passed to per-table detection
+        dispatch_alerts: When True, send alerts via Slack/PagerDuty integrations
 
     Returns:
         List of detected anomalies sorted by severity
@@ -293,15 +391,23 @@ def detect_all_anomalies(
         .distinct()
     )
 
-    table_ids = session.execute(stmt).scalars().all()
+    table_ids = list(session.execute(stmt).scalars().all())
+    batch_size = get_settings().anomaly_detection_batch_size or ANOMALY_DETECTION_BATCH_SIZE
 
     all_anomalies = []
-    for table_id in table_ids:
-        try:
-            anomalies = detect_table_anomalies(session, str(table_id), lookback_days)
-            all_anomalies.extend(anomalies)
-        except Exception:
-            continue
+    for batch_start in range(0, len(table_ids), batch_size):
+        batch = table_ids[batch_start : batch_start + batch_size]
+        for table_id in batch:
+            try:
+                anomalies = detect_table_anomalies(
+                    session,
+                    table_id,
+                    lookback_days,
+                    threshold_sigma,
+                )
+                all_anomalies.extend(anomalies)
+            except Exception:
+                continue
 
     # Filter by severity
     severity_order = {"low": 0, "medium": 1, "high": 2}
@@ -313,5 +419,13 @@ def detect_all_anomalies(
     filtered.sort(
         key=lambda a: (severity_order.get(a.severity, 0), a.deviation_sigma), reverse=True
     )
+
+    if dispatch_alerts and filtered:
+        try:
+            from cryo.integrations.alerts import dispatch_anomaly_alerts
+
+            dispatch_anomaly_alerts(filtered)
+        except Exception:
+            logger.exception("Failed to dispatch anomaly alerts")
 
     return filtered

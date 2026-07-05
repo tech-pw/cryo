@@ -21,3 +21,9 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 def get_session() -> Iterator[Session]:
     with SessionLocal() as session:
         yield session
+
+
+def get_session_maker(settings: Settings | None = None) -> sessionmaker[Session]:
+    """Return a session factory bound to the configured database."""
+    bind = create_db_engine(settings)
+    return sessionmaker(bind=bind, autoflush=False, autocommit=False, expire_on_commit=False)

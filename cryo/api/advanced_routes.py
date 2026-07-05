@@ -19,9 +19,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from cryo.api.deps import require_editor, require_viewer
+from cryo.api.security import Principal
 from cryo.db.session import get_session
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
@@ -58,22 +60,25 @@ class ApprovalAction(BaseModel):
 @router.get("/approvals/pending", response_model=list[ApprovalRequestRead])
 def list_pending_approvals(
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
-):
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> list[ApprovalRequestRead]:
     """List all pending approval requests."""
-    from cryo.workflows.approvals import get_pending_approvals
-    
-    requests = get_pending_approvals(session)
-    
-    # Enrich with table names
+    from cryo.db.model_utils import qualified_table_name
     from cryo.db.models import Table
-    table_map = {
-        t.id: t.name 
-        for t in session.query(Table).filter(
-            Table.id.in_([r.table_id for r in requests])
-        ).all()
-    }
-    
+    from cryo.workflows.approvals import get_pending_approvals
+
+    requests = get_pending_approvals(session)
+
+    table_ids = [r.table_id for r in requests]
+    table_map: dict[UUID, str] = {}
+    if table_ids:
+        tables = session.execute(
+            select(Table)
+            .where(Table.id.in_(table_ids))
+            .options(selectinload(Table.source))
+        ).scalars().all()
+        table_map = {table.id: qualified_table_name(table) for table in tables}
+
     return [
         ApprovalRequestRead(
             id=r.id,
@@ -94,30 +99,54 @@ def list_pending_approvals(
 def create_approval_request(
     request: CreateApprovalRequest,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_editor)],
-):
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> ApprovalRequestRead:
     """Create a new approval request for a destructive operation."""
-    from cryo.workflows.approvals import ApprovalRequestData, create_approval_request as create_req
+    from cryo.db.model_utils import qualified_table_name
     from cryo.db.models import Table
-    
-    table = session.query(Table).filter_by(id=request.table_id).first()
+    from cryo.domain.enums import OperationType
+    from cryo.workflows.approvals import (
+        ApprovalRequestData,
+        estimate_impact,
+    )
+    from cryo.workflows.approvals import (
+        create_approval_request as create_req,
+    )
+
+    try:
+        operation_type = OperationType(request.operation_type)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid operation_type: {request.operation_type}") from exc
+
+    table = session.execute(
+        select(Table)
+        .where(Table.id == request.table_id)
+        .options(selectinload(Table.source))
+    ).scalar_one_or_none()
     if not table:
         raise HTTPException(404, "Table not found")
-    
+
+    impact_preview = estimate_impact(
+        session,
+        request.table_id,
+        operation_type,
+        request.operation_params,
+    )
     req_data = ApprovalRequestData(
         table_id=request.table_id,
-        operation_type=request.operation_type,
-        operation_params=request.operation_params,
+        operation_type=operation_type,
         requested_by=request.requested_by,
-        reason=request.reason,
+        request_reason=request.reason,
+        impact_preview=impact_preview,
+        operation_params=request.operation_params,
     )
-    
+
     approval_req = create_req(session, req_data)
-    
+
     return ApprovalRequestRead(
         id=approval_req.id,
         table_id=approval_req.table_id,
-        table_name=table.name,
+        table_name=qualified_table_name(table),
         operation_type=approval_req.operation_type,
         status=approval_req.status,
         requested_by=approval_req.requested_by,
@@ -132,8 +161,8 @@ def approve_or_reject(
     request_id: UUID,
     action: ApprovalAction,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_editor)],
-):
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> dict[str, str]:
     """Approve or reject an approval request."""
     from cryo.workflows.approvals import approve_request, reject_request
     
@@ -165,39 +194,41 @@ class LineageGraphRead(BaseModel):
 def get_table_lineage(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     depth: int = Query(3, ge=1, le=10),
-):
+) -> LineageGraphRead:
     """Get lineage graph for a table."""
-    from cryo.lineage.tracker import get_lineage_graph
     from cryo.db.models import Table
-    
-    table = session.query(Table).filter_by(id=table_id).first()
+    from cryo.lineage.tracker import get_lineage_graph
+
+    table = session.execute(
+        select(Table).where(Table.id == table_id)
+    ).scalar_one_or_none()
     if not table:
         raise HTTPException(404, "Table not found")
     
-    graph = get_lineage_graph(session, table_id, max_depth=depth)
-    
+    graph = get_lineage_graph(session, table_id, depth=depth)
+
     return LineageGraphRead(
-        root_table_id=graph.root_table_id,
-        root_table_name=graph.root_table_name,
+        root_table_id=str(graph.table_id),
+        root_table_name=graph.table_name,
         upstream=[
             LineageNodeRead(
-                table_id=n.table_id,
+                table_id=str(n.table_id),
                 table_name=n.table_name,
-                depth=n.depth,
-                node_type=n.node_type,
+                depth=1,
+                node_type=n.edge_type,
             )
-            for n in graph.upstream
+            for n in graph.upstream_tables
         ],
         downstream=[
             LineageNodeRead(
-                table_id=n.table_id,
+                table_id=str(n.table_id),
                 table_name=n.table_name,
-                depth=n.depth,
-                node_type=n.node_type,
+                depth=1,
+                node_type=n.edge_type,
             )
-            for n in graph.downstream
+            for n in graph.downstream_tables
         ],
     )
 
@@ -219,17 +250,19 @@ class AnomalyAlertRead(BaseModel):
 @router.get("/anomalies", response_model=list[AnomalyAlertRead])
 def detect_anomalies(
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
-):
+    dispatch_alerts: bool = Query(False, description="Send alerts to Slack/PagerDuty"),
+) -> list[AnomalyAlertRead]:
     """Detect anomalies across all tables."""
     from cryo.ml.anomaly_detector import detect_all_anomalies
     
     alerts = detect_all_anomalies(
-        session, 
-        lookback_days=lookback_days, 
-        threshold_sigma=threshold_sigma
+        session,
+        lookback_days=lookback_days,
+        threshold_sigma=threshold_sigma,
+        dispatch_alerts=dispatch_alerts,
     )
     
     return [
@@ -252,11 +285,10 @@ def detect_anomalies(
 def detect_table_anomalies(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
-):
-    """Detect anomalies for a specific table."""
+) -> list[AnomalyAlertRead]:
     from cryo.ml.anomaly_detector import detect_table_anomalies as detect
     
     alerts = detect(
@@ -288,9 +320,11 @@ class ColumnQualityMetricRead(BaseModel):
     column_name: str
     null_rate_pct: float
     null_rate_baseline_pct: float
-    null_spike_detected: bool
-    value_bounds: dict | None
-    value_bound_violations: int
+    null_rate_spike: bool
+    min_value: object | None = None
+    max_value: object | None = None
+    value_range_changed: bool = False
+    value_range_explanation: str = ""
 
 
 class DataQualityProfileRead(BaseModel):
@@ -308,9 +342,9 @@ class DataQualityProfileRead(BaseModel):
 def get_data_quality_profile(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
-):
+) -> DataQualityProfileRead:
     """Get zero-scan data quality profile for a table."""
     from cryo.quality.profiler import profile_table_quality
     
@@ -325,9 +359,11 @@ def get_data_quality_profile(
                 column_name=m.column_name,
                 null_rate_pct=m.null_rate_pct,
                 null_rate_baseline_pct=m.null_rate_baseline_pct,
-                null_spike_detected=m.null_spike_detected,
-                value_bounds=m.value_bounds,
-                value_bound_violations=m.value_bound_violations,
+                null_rate_spike=m.null_rate_spike,
+                min_value=m.min_value,
+                max_value=m.max_value,
+                value_range_changed=m.value_range_changed,
+                value_range_explanation=m.value_range_explanation,
             )
             for m in profile.column_metrics
         ],
@@ -351,13 +387,16 @@ class PartitionEvolutionRecommendationRead(BaseModel):
     query_patterns_analyzed: int
 
 
-@router.get("/partition-evolution/{table_id}", response_model=PartitionEvolutionRecommendationRead | None)
+@router.get(
+    "/partition-evolution/{table_id}",
+    response_model=PartitionEvolutionRecommendationRead | None,
+)
 def get_partition_evolution_recommendation(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     min_query_threshold: int = Query(100, ge=10),
-):
+) -> PartitionEvolutionRecommendationRead | None:
     """Get partition evolution recommendation for a table."""
     from cryo.optimizer.partition_analyzer import analyze_partition_evolution
     
@@ -399,8 +438,8 @@ class MaintenanceSignalRead(BaseModel):
 @router.get("/signals", response_model=list[MaintenanceSignalRead])
 def detect_maintenance_signals(
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
-):
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> list[MaintenanceSignalRead]:
     """Detect all maintenance signals (file degradation, latency spikes, cost spikes)."""
     from cryo.signals import detect_all_signals
     
@@ -440,9 +479,9 @@ class CostForecastRead(BaseModel):
 @router.get("/finops/forecast", response_model=CostForecastRead)
 def get_cost_forecast(
     session: Annotated[Session, Depends(get_session)],
-    _principal: Annotated[dict, Depends(require_viewer)],
+    _principal: Annotated[Principal, Depends(require_viewer)],
     budget_limit_usd: float | None = Query(None, ge=0),
-):
+) -> CostForecastRead:
     """Get next month cost forecast."""
     from cryo.finops.forecast import forecast_next_month_cost
     

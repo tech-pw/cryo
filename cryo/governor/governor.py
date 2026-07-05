@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Protocol, cast
 
 from cryo.db.repositories.run_finalizer import finalize_open_runs
@@ -17,6 +18,11 @@ from cryo.governor.admission import (
     ReplicaBudget,
     compute_admission_budget,
     decide_job_admission,
+)
+from cryo.observability.metrics import (
+    governor_admission_decisions,
+    governor_queue_depth,
+    governor_wave_duration_seconds,
 )
 from cryo.queue.locks import LockStore
 from cryo.queue.reconcile import (
@@ -79,122 +85,154 @@ class Governor:
         self._enable_signal_triggers = enable_signal_triggers
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
-        finalize_open_runs(self._session_factory)
-        current = now or datetime.now(UTC)
-        re_enqueued = reconcile_queued_jobs(self._store, self._queue)
-        re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
-        orphaned = purge_stale_queue_entries(self._store, self._queue)
-        admitted = 0
-        deferred = 0
-        blocked = 0
+        wave_start = perf_counter()
+        destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        try:
+            finalize_open_runs(self._session_factory)
+            current = now or datetime.now(UTC)
+            re_enqueued = reconcile_queued_jobs(self._store, self._queue)
+            re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
+            orphaned = purge_stale_queue_entries(self._store, self._queue)
+            admitted = 0
+            deferred = 0
+            blocked = 0
 
-        for destination_id, job_ids in self._queue.pending_by_destination().items():
-            destination = _try_get_destination(self._store, destination_id)
-            if destination is None:
-                orphaned += self._fail_orphaned_jobs(destination_id, job_ids)
-                continue
-            config = _admission_config(destination, self._default_config)
-            live_capacity = self._capacity_provider.probe(destination)
-            local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
-            budget = compute_admission_budget(live_capacity, local_in_flight, config)
-            replicas = self._round_robin_slots(destination_id, budget.replicas)
+            pending_by_destination = self._queue.pending_by_destination()
+            for destination_id, job_ids in pending_by_destination.items():
+                governor_queue_depth.labels(destination=destination_id).set(len(job_ids))
 
-            for job_id in job_ids:
-                if not replicas:
-                    blocked += 1
-                    break
-
-                try:
-                    job = self._store.get_job(job_id)
-                except KeyError:
-                    logger.warning("Purging queue entry for unknown job %s", job_id)
-                    self._queue.cancel_pending(job_id)
-                    orphaned += 1
+            for destination_id, job_ids in pending_by_destination.items():
+                destination = _try_get_destination(self._store, destination_id)
+                if destination is None:
+                    orphan_count = self._fail_orphaned_jobs(destination_id, job_ids)
+                    orphaned += orphan_count
+                    destination_outcomes[destination_id]["orphaned"] += orphan_count
                     continue
+                config = _admission_config(destination, self._default_config)
+                live_capacity = self._capacity_provider.probe(destination)
+                local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
+                budget = compute_admission_budget(live_capacity, local_in_flight, config)
+                replicas = self._round_robin_slots(destination_id, budget.replicas)
 
-                signal_triggered = False
-                if self._enable_signal_triggers:
+                for job_id in job_ids:
+                    if not replicas:
+                        blocked += 1
+                        destination_outcomes[destination_id]["blocked"] += 1
+                        break
+
                     try:
-                        with self._session_factory() as session:
-                            import uuid
-
-                            table_uuid = (
-                                uuid.UUID(job.table_id)
-                                if isinstance(job.table_id, str)
-                                else job.table_id
-                            )
-                            trigger_result = self._trigger_evaluator.evaluate(
-                                session,
-                                table_uuid,
-                                is_due_for_schedule=False,
-                            )
-                            if (
-                                trigger_result.should_run
-                                and trigger_result.trigger_type.value != "schedule"
-                            ):
-                                signal_triggered = True
-                    except Exception:
-                        pass
-
-                # Check approval workflow for destructive operations
-                approval_needed = False
-                if not signal_triggered:
-                    try:
-                        from cryo.workflows.approvals import requires_approval
-                        with self._session_factory() as session:
-                            import uuid
-                            table_uuid = (
-                                uuid.UUID(job.table_id)
-                                if isinstance(job.table_id, str)
-                                else job.table_id
-                            )
-                            # Check if any operation in this job requires approval
-                            # For now, assume job.params contains operation_type
-                            op_type = job.params.get("operation_type") if job.params else None
-                            if op_type and requires_approval(session, table_uuid, op_type):
-                                logger.info(
-                                    f"Job {job_id} deferred: operation {op_type} requires approval"
-                                )
-                                self._defer(job, f"Operation {op_type} requires approval")
-                                deferred += 1
-                                approval_needed = True
-                    except Exception as e:
-                        logger.warning(f"Error checking approval for job {job_id}: {e}")
-                
-                if approval_needed:
-                    continue
-
-                if not signal_triggered:
-                    decision = decide_job_admission(_admission_job(job), config, now=current)
-                    if not decision.admissible:
-                        if decision.defer:
-                            self._defer(job, decision.reason)
-                            deferred += 1
-                        else:
-                            blocked += 1
+                        job = self._store.get_job(job_id)
+                    except KeyError:
+                        logger.warning("Purging queue entry for unknown job %s", job_id)
+                        self._queue.cancel_pending(job_id)
+                        orphaned += 1
+                        destination_outcomes[destination_id]["orphaned"] += 1
                         continue
 
-                if not self._lock_store.acquire_table_lock(
-                    job.table_id,
-                    job.id,
-                    self._lock_ttl_seconds,
-                ):
-                    self._defer(job, "table_locked")
-                    deferred += 1
-                    continue
+                    signal_triggered = False
+                    if self._enable_signal_triggers:
+                        try:
+                            with self._session_factory() as session:
+                                import uuid
 
-                replica = replicas.pop(0)
-                self._queue.admit(job.id, destination_id, replica)
-                self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
-                admitted += 1
+                                table_uuid = (
+                                    uuid.UUID(job.table_id)
+                                    if isinstance(job.table_id, str)
+                                    else job.table_id
+                                )
+                                trigger_result = self._trigger_evaluator.evaluate(
+                                    session,
+                                    table_uuid,
+                                    is_due_for_schedule=False,
+                                )
+                                if (
+                                    trigger_result.should_run
+                                    and trigger_result.trigger_type.value != "schedule"
+                                ):
+                                    signal_triggered = True
+                        except Exception:
+                            pass
 
-        return WaveResult(
-            admitted=admitted,
-            deferred=deferred,
-            blocked=blocked,
-            orphaned=orphaned,
-            re_enqueued=re_enqueued,
-        )
+                    # Check approval workflow for destructive operations
+                    approval_needed = False
+                    if not signal_triggered:
+                        try:
+                            import uuid
+
+                            from cryo.workflows.approvals import job_requires_approval
+
+                            with self._session_factory() as session:
+                                table_uuid = (
+                                    uuid.UUID(job.table_id)
+                                    if isinstance(job.table_id, str)
+                                    else job.table_id
+                                )
+                                plan_operations = (
+                                    job.plan.get("operations") if job.plan else None
+                                )
+                                if job_requires_approval(
+                                    session, table_uuid, plan_operations
+                                ):
+                                    logger.info(
+                                        "Job %s deferred: destructive operation requires approval",
+                                        job_id,
+                                    )
+                                    self._defer(
+                                        job, "Destructive operation requires approval"
+                                    )
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                    approval_needed = True
+                        except Exception as e:
+                            logger.warning(f"Error checking approval for job {job_id}: {e}")
+
+                    if approval_needed:
+                        continue
+
+                    if not signal_triggered:
+                        decision = decide_job_admission(_admission_job(job), config, now=current)
+                        if not decision.admissible:
+                            if decision.defer:
+                                self._defer(job, decision.reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                            else:
+                                blocked += 1
+                                destination_outcomes[destination_id]["blocked"] += 1
+                            continue
+
+                    if not self._lock_store.acquire_table_lock(
+                        job.table_id,
+                        job.id,
+                        self._lock_ttl_seconds,
+                    ):
+                        self._defer(job, "table_locked")
+                        deferred += 1
+                        destination_outcomes[destination_id]["deferred"] += 1
+                        continue
+
+                    replica = replicas.pop(0)
+                    self._queue.admit(job.id, destination_id, replica)
+                    self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
+                    admitted += 1
+                    destination_outcomes[destination_id]["admitted"] += 1
+
+            return WaveResult(
+                admitted=admitted,
+                deferred=deferred,
+                blocked=blocked,
+                orphaned=orphaned,
+                re_enqueued=re_enqueued,
+            )
+        finally:
+            for destination_id, outcomes in destination_outcomes.items():
+                for outcome, count in outcomes.items():
+                    if count:
+                        governor_admission_decisions.labels(
+                            destination=destination_id,
+                            outcome=outcome,
+                        ).inc(count)
+            governor_wave_duration_seconds.observe(perf_counter() - wave_start)
 
     def _fail_orphaned_jobs(self, destination_id: str, job_ids: list[str]) -> int:
         logger.warning(

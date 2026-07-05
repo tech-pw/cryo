@@ -25,10 +25,10 @@ Data Transfer:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class S3StorageClass(str, Enum):
+class S3StorageClass(StrEnum):
     """S3 storage classes."""
     
     STANDARD = "STANDARD"
@@ -219,7 +219,9 @@ def calculate_savings_from_compaction(
     # Estimate LIST requests (assume 1 LIST per query to scan metadata)
     list_requests_before = queries_per_day * 30 * (current_file_count / 1000)
     list_requests_after = queries_per_day * 30 * (target_file_count / 1000)
-    list_savings = (list_requests_before - list_requests_after) * pricing.put_request_cost_per_1k / 1000
+    list_savings = (
+        (list_requests_before - list_requests_after) * pricing.put_request_cost_per_1k / 1000
+    )
     
     # Estimate GET requests (assume each query reads files)
     # Queries read fewer files after compaction (fewer small files)
@@ -228,7 +230,9 @@ def calculate_savings_from_compaction(
     
     get_requests_before = queries_per_day * 30 * files_per_query_before
     get_requests_after = queries_per_day * 30 * files_per_query_after
-    get_savings = (get_requests_before - get_requests_after) * pricing.get_request_cost_per_1k / 1000
+    get_savings = (
+        (get_requests_before - get_requests_after) * pricing.get_request_cost_per_1k / 1000
+    )
     
     # Monitoring savings (Intelligent-Tiering only)
     monitoring_savings = 0.0

@@ -44,7 +44,7 @@ def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
     
-    result = {}
+    result: dict[str, Any] = {}
     for key, value in data.items():
         key_lower = key.lower()
         

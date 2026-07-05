@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from cryo.cost.s3_pricing import S3StorageClass, calculate_monthly_storage_cost
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import QueryLog, Table, TableStats
 
@@ -36,9 +37,6 @@ def analyze_table_for_tiering(
     session: Session,
     table_id: str,
     lookback_days: int = 90,
-    s3_standard_price_per_gb: float = 0.023,
-    s3_ia_price_per_gb: float = 0.0125,
-    s3_archive_instant_price_per_gb: float = 0.004,
     min_file_size_kb: int = 128,
 ) -> S3TieringRecommendation:
     """
@@ -48,9 +46,6 @@ def analyze_table_for_tiering(
         session: Database session
         table_id: Table UUID
         lookback_days: Days to look back for access patterns (default: 90)
-        s3_standard_price_per_gb: S3 Standard storage price per GB/month
-        s3_ia_price_per_gb: S3 Infrequent Access price per GB/month
-        s3_archive_instant_price_per_gb: Archive Instant Access price per GB/month
         min_file_size_kb: Minimum file size for Intelligent-Tiering (default: 128 KB)
 
     Returns:
@@ -72,13 +67,16 @@ def analyze_table_for_tiering(
 
     # Check if files are large enough for Intelligent-Tiering
     if avg_file_size_kb < min_file_size_kb:
+        current_monthly_cost = calculate_monthly_storage_cost(
+            current_size_gb, S3StorageClass.STANDARD
+        )
         return S3TieringRecommendation(
             table_id=str(table_id),
             table_name=table_name,
             current_size_gb=current_size_gb,
             avg_file_size_kb=avg_file_size_kb,
             days_since_last_access=0,
-            current_monthly_cost_usd=current_size_gb * s3_standard_price_per_gb,
+            current_monthly_cost_usd=current_monthly_cost,
             intelligent_tiering_monthly_cost_usd=0,
             estimated_annual_savings_usd=0,
             recommendation="not_suitable",
@@ -103,13 +101,8 @@ def analyze_table_for_tiering(
         # No queries in lookback period - assume maximum
         days_since_last_access = lookback_days
 
-    # Calculate cost savings
-    current_monthly_cost = current_size_gb * s3_standard_price_per_gb
-
-    # Intelligent-Tiering tiers:
-    # - First 30 days: Same as Standard ($0.023/GB)
-    # - 30-90 days: Infrequent Access ($0.0125/GB)
-    # - 90+ days: Archive Instant Access ($0.004/GB)
+    # Calculate cost savings using centralized S3 pricing
+    current_monthly_cost = calculate_monthly_storage_cost(current_size_gb, S3StorageClass.STANDARD)
 
     if days_since_last_access < 30:
         # Too recently accessed - no savings yet
@@ -118,11 +111,13 @@ def analyze_table_for_tiering(
         reason = f"Table accessed {days_since_last_access} days ago (< 30 days threshold)"
     elif days_since_last_access < 90:
         # Would move to Infrequent Access tier
-        intelligent_tiering_cost = current_size_gb * s3_ia_price_per_gb
+        intelligent_tiering_cost = calculate_monthly_storage_cost(
+            current_size_gb, S3StorageClass.STANDARD_IA
+        )
         monthly_savings = current_monthly_cost - intelligent_tiering_cost
         annual_savings = monthly_savings * 12
 
-        if annual_savings > 100:  # Only recommend if savings > $100/year
+        if annual_savings > 100:
             recommendation = "enable"
             reason = (
                 f"Table not accessed in {days_since_last_access} days. "
@@ -133,7 +128,9 @@ def analyze_table_for_tiering(
             reason = f"Estimated savings (${annual_savings:.2f}/year) too low to justify"
     else:
         # Would move to Archive Instant Access tier
-        intelligent_tiering_cost = current_size_gb * s3_archive_instant_price_per_gb
+        intelligent_tiering_cost = calculate_monthly_storage_cost(
+            current_size_gb, S3StorageClass.GLACIER_IR
+        )
         monthly_savings = current_monthly_cost - intelligent_tiering_cost
         annual_savings = monthly_savings * 12
 

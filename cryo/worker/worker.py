@@ -10,6 +10,7 @@ from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
 from cryo.engines.base import ExecCtx, RenderedStatement
 from cryo.engines.base import ExecResult as BaseExecResult
+from cryo.observability.metrics import worker_job_duration_seconds, worker_job_executions_total
 from cryo.planner.planner import build_plan
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
@@ -268,11 +269,18 @@ class Worker:
         if job_id is None:
             return None
 
+        job_start = perf_counter()
         job = self._store.get_job(job_id)
         destination = _try_get_destination(self._store, job.destination_id)
         if destination is None:
             self._store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
             self._queue.complete(job.id, JobStatus.FAILED)
+            self._record_job_metrics(
+                destination_id=job.destination_id,
+                operation_type=_job_operation_type(job),
+                status=JobStatus.FAILED,
+                started_at=job_start,
+            )
             if self._on_job_finished is not None:
                 self._on_job_finished()
             return self._store.get_job(job.id)
@@ -365,9 +373,36 @@ class Worker:
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         self._queue.complete(job.id, final_status)
         self._release_table_lock(job)
+        self._record_job_metrics(
+            destination_id=job.destination_id,
+            operation_type=_job_operation_type(job),
+            status=final_status,
+            started_at=job_start,
+        )
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _record_job_metrics(
+        self,
+        *,
+        destination_id: str,
+        operation_type: str,
+        status: JobStatus,
+        started_at: float,
+    ) -> None:
+        metric_status = _metric_status(status)
+        duration = perf_counter() - started_at
+        worker_job_duration_seconds.labels(
+            destination=destination_id,
+            operation_type=operation_type,
+            status=metric_status,
+        ).observe(duration)
+        worker_job_executions_total.labels(
+            destination=destination_id,
+            operation_type=operation_type,
+            status=metric_status,
+        ).inc()
 
     def _ensure_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is None or self._lock_store.is_table_locked(job.table_id):
@@ -377,6 +412,21 @@ class Worker:
     def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is not None:
             self._lock_store.release_table_lock(job.table_id, job.id)
+
+
+def _metric_status(status: JobStatus) -> str:
+    if status is JobStatus.SUCCEEDED:
+        return "ok"
+    if status is JobStatus.SKIPPED:
+        return "ok"
+    return "error"
+
+
+def _job_operation_type(job: MaintenanceJobRecord) -> str:
+    mode = job.mode
+    if isinstance(mode, Mode):
+        return mode.value
+    return str(mode)
 
 
 def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintenanceEngine:

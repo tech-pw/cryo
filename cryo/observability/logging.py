@@ -13,6 +13,8 @@ import logging
 import sys
 from typing import Any
 
+from cryo.observability.log_redaction import SensitiveDataFilter
+
 try:
     import structlog
     HAS_STRUCTLOG = True
@@ -63,7 +65,10 @@ def configure_logging(
         )
     
     # Set root logger level
-    logging.getLogger().setLevel(log_level)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    if not any(isinstance(f, SensitiveDataFilter) for f in root_logger.filters):
+        root_logger.addFilter(SensitiveDataFilter())
     
     # Configure third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -72,13 +77,22 @@ def configure_logging(
     
     # Log configuration
     logger = get_logger(__name__)
-    logger.info(
-        "Logging configured",
-        level=level,
-        json_format=json_format,
-        environment=environment,
-        has_structlog=HAS_STRUCTLOG,
-    )
+    if HAS_STRUCTLOG:
+        logger.info(
+            "Logging configured",
+            level=level,
+            json_format=json_format,
+            environment=environment,
+            has_structlog=HAS_STRUCTLOG,
+        )
+    else:
+        logger.info(
+            "Logging configured (level=%s, json_format=%s, environment=%s, has_structlog=%s)",
+            level,
+            json_format,
+            environment,
+            HAS_STRUCTLOG,
+        )
 
 
 def get_logger(name: str) -> Any:

@@ -17,6 +17,7 @@ from cryo.cost.model import CostStatsInput
 from cryo.db.models import Source, Table, TableCost
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import CostPrecision
+from cryo.observability.metrics import scanner_tables_scanned_total
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
@@ -223,6 +224,7 @@ def _run_scan_serial(
             )
             session.commit()
             scanned += 1
+            scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
             _emit_progress(
                 progress_callback,
                 {"event": "table_result", "table_ref": table_ref, "outcome": "scanned"},
@@ -312,6 +314,7 @@ def _run_scan_parallel(
                     table=table_row,
                 )
                 table_session.commit()
+                scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
                 return ("scanned", None)
             except Exception as exc:
                 table_session.rollback()

@@ -9,8 +9,23 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
+
+from cryo.db.models import Destination, Preset, Source, Table
+
+TENANT_SCOPED_MODELS: dict[str, type[Any]] = {
+    "table": Table,
+    "source": Source,
+    "destination": Destination,
+    "preset": Preset,
+}
+
+
+def model_has_tenant_id(model: type[Any]) -> bool:
+    """Return True when the ORM model exposes a tenant_id column."""
+    mapper = inspect(model)
+    return "tenant_id" in {col.key for col in mapper.columns}
 
 
 def add_tenant_filter(query: Any, tenant_id: UUID) -> Any:
@@ -29,9 +44,7 @@ def add_tenant_filter(query: Any, tenant_id: UUID) -> Any:
     # Get model from query
     model = query.column_descriptions[0]["entity"]
 
-    # Check if model has tenant_id column
-    mapper = inspect(model)
-    if "tenant_id" in [col.key for col in mapper.columns]:
+    if model_has_tenant_id(model):
         query = query.filter(model.tenant_id == tenant_id)
 
     return query
@@ -81,12 +94,23 @@ def verify_tenant_access(
         # No tenant context - allow access (backward compatibility)
         return True
 
-    UUID(tenant_id_str)
+    tenant_id = UUID(tenant_id_str)
+    model = TENANT_SCOPED_MODELS.get(resource_type)
+    if model is None or not model_has_tenant_id(model):
+        return True
 
-    # Check resource belongs to tenant
-    # In production, query the resource table with tenant_id filter
+    row = session.scalar(select(model.id).where(model.id == resource_id))
+    if row is None:
+        return False
 
-    return True  # Simplified for now
+    tenant_col = getattr(model, "tenant_id", None)
+    if tenant_col is None:
+        return True
+
+    scoped = session.scalar(
+        select(model.id).where(model.id == resource_id, model.tenant_id == tenant_id)
+    )
+    return scoped is not None
 
 
 # Migration note: To add multi-tenancy to existing deployments:

@@ -62,6 +62,8 @@ class SchedulerService:
 
         current = now or datetime.now(UTC)
 
+        self._expire_stale_approval_requests()
+
         # Update benefit scores periodically (helps AutoComp prioritization)
         self._maybe_update_benefit_scores(current)
         due_presets = self._store.list_due_presets(current)
@@ -109,6 +111,25 @@ class SchedulerService:
             jobs_enqueued=jobs_enqueued,
             preset_ids=tuple(fired),
         )
+
+    def _expire_stale_approval_requests(self) -> None:
+        try:
+            from cryo.workflows.approvals import expire_stale_approval_requests
+
+            with SessionLocal() as session:
+                expired = expire_stale_approval_requests(session)
+                if expired:
+                    import logging
+
+                    logging.getLogger(__name__).info(
+                        "Expired %s stale approval requests", expired
+                    )
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Failed to expire stale approval requests: %s", e
+            )
 
     def _maybe_update_benefit_scores(self, current: datetime) -> None:
         """Update partition benefit scores periodically for AutoComp prioritization."""

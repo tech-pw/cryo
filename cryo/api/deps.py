@@ -33,3 +33,8 @@ def require_operator(principal: CurrentPrincipal) -> Principal:
 
 def require_admin(principal: CurrentPrincipal) -> Principal:
     return require_role(principal, Role.ADMIN)
+
+
+def require_editor(principal: CurrentPrincipal) -> Principal:
+    """Alias for operator role (create/trigger operations)."""
+    return require_role(principal, Role.OPERATOR)

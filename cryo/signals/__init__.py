@@ -11,13 +11,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, QueryLog, Table, TableStats, TableStatsHistory
+from cryo.db.model_utils import qualified_table_name
+from cryo.db.models import QueryLog, Table, TableStats, TableStatsHistory
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def detect_file_degradation_signal(
         .where(
             TableStatsHistory.table_id == table_id,
             TableStatsHistory.scan_at >= since,
-            TableStatsHistory.scan_at < current_stats.updated_at,
+            TableStatsHistory.scan_at < current_stats.scan_at,
         )
     ).scalar()
     
@@ -95,8 +95,8 @@ def detect_file_degradation_signal(
     severity = "critical" if ratio >= critical_ratio else "warning"
     
     table = session.scalar(select(Table).where(Table.id == table_id))
-    table_name = table.name if table else str(table_id)
-    
+    table_name = qualified_table_name(table) if table else str(table_id)
+
     return MaintenanceSignal(
         table_id=table_id,
         table_name=table_name,
@@ -145,12 +145,12 @@ def detect_latency_spike_signal(
     
     # Get baseline p95 latency
     baseline_latencies = session.scalars(
-        select(QueryLog.execution_time_ms)
+        select(QueryLog.duration_ms)
         .where(
             QueryLog.table_id == table_id,
             QueryLog.executed_at >= baseline_since,
             QueryLog.executed_at < recent_since,
-            QueryLog.execution_time_ms.isnot(None),
+            QueryLog.duration_ms.isnot(None),
         )
         .limit(10000)
     ).all()
@@ -160,11 +160,11 @@ def detect_latency_spike_signal(
     
     # Get recent p95 latency
     recent_latencies = session.scalars(
-        select(QueryLog.execution_time_ms)
+        select(QueryLog.duration_ms)
         .where(
             QueryLog.table_id == table_id,
             QueryLog.executed_at >= recent_since,
-            QueryLog.execution_time_ms.isnot(None),
+            QueryLog.duration_ms.isnot(None),
         )
         .limit(10000)
     ).all()
@@ -172,13 +172,13 @@ def detect_latency_spike_signal(
     if len(recent_latencies) < min_queries:
         return None
     
-    # Compute p95
-    baseline_sorted = sorted(baseline_latencies)
-    recent_sorted = sorted(recent_latencies)
-    
-    baseline_p95_idx = int(len(baseline_sorted) * 0.95)
-    recent_p95_idx = int(len(recent_sorted) * 0.95)
-    
+    # Compute p95 (cast to float for type safety)
+    baseline_sorted = sorted(float(v) for v in baseline_latencies if v is not None)
+    recent_sorted = sorted(float(v) for v in recent_latencies if v is not None)
+
+    baseline_p95_idx = min(int(len(baseline_sorted) * 0.95), len(baseline_sorted) - 1)
+    recent_p95_idx = min(int(len(recent_sorted) * 0.95), len(recent_sorted) - 1)
+
     baseline_p95 = baseline_sorted[baseline_p95_idx]
     recent_p95 = recent_sorted[recent_p95_idx]
     
@@ -193,8 +193,8 @@ def detect_latency_spike_signal(
     severity = "critical" if ratio >= critical_multiplier else "warning"
     
     table = session.scalar(select(Table).where(Table.id == table_id))
-    table_name = table.name if table else str(table_id)
-    
+    table_name = qualified_table_name(table) if table else str(table_id)
+
     return MaintenanceSignal(
         table_id=table_id,
         table_name=table_name,
@@ -272,8 +272,8 @@ def detect_cost_spike_signal(
     severity = "critical" if ratio >= critical_multiplier else "warning"
     
     table = session.scalar(select(Table).where(Table.id == table_id))
-    table_name = table.name if table else str(table_id)
-    
+    table_name = qualified_table_name(table) if table else str(table_id)
+
     # Estimate monthly cost increase
     cost_increase_gb = recent_size - baseline_size
     # S3 Standard = ~$0.023/GB/month

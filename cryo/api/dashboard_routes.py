@@ -355,7 +355,11 @@ def get_query_performance(
     )
 
 
-@router.get("/tables/{table_id}/health-trends", response_model=TableHealthTrendsResponse, tags=["dashboards"])
+@router.get(
+    "/tables/{table_id}/health-trends",
+    response_model=TableHealthTrendsResponse,
+    tags=["dashboards"],
+)
 def get_table_health_trends(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
@@ -698,7 +702,11 @@ def get_s3_tiering_recommendations(
     )
 
 
-@router.get("/tables/{table_id}/s3-tiering", response_model=S3TieringRecommendationRead, tags=["tables"])
+@router.get(
+    "/tables/{table_id}/s3-tiering",
+    response_model=S3TieringRecommendationRead,
+    tags=["tables"],
+)
 def get_table_s3_tiering(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
