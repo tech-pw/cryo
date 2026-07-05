@@ -16,19 +16,21 @@ import {
   ThunderboltOutlined
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Button, ConfigProvider, Layout, Menu, Select, Space, Tooltip, Typography, theme } from "antd";
+import { Button, ConfigProvider, Layout, Menu, Space, Tooltip, Typography, theme } from "antd";
 import type { MenuProps } from "antd";
 import { useMemo } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AuthProvider, roleOptions, useAuth } from "./lib/auth";
+import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { Connections } from "./pages/Connections";
-import { CostAttribution } from "./pages/CostAttribution";
 import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
+import { Governance } from "./pages/Governance";
 import { Intelligence } from "./pages/Intelligence";
 import { JobDetail } from "./pages/JobDetail";
+import { Login } from "./pages/Login";
+import { LoginCallback } from "./pages/LoginCallback";
 import LayoutOptimization from "./pages/LayoutOptimization";
 import { MultiCatalog } from "./pages/MultiCatalog";
 import { Presets } from "./pages/Presets";
@@ -54,9 +56,9 @@ const navItems = [
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
+  { key: "/governance", icon: <TeamOutlined />, label: <Link to="/governance">Governance</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
-  { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
@@ -110,11 +112,28 @@ const ThemeToggle = () => {
 
 const Shell = () => {
   const location = useLocation();
-  const { token, setToken } = useAuth();
+  const { subject, role, loading: authLoading, error: authError, isAuthenticated, signOut } = useAuth();
   const selectedKey = useMemo(() => {
     const alias = [...routeSelectionAliases.entries()].find(([route]) => location.pathname.startsWith(route))?.[1];
     return alias ?? navItems.find((item) => location.pathname.startsWith(item.key))?.key ?? "/health";
   }, [location.pathname]);
+
+  if (authLoading) {
+    return (
+      <Layout className="app-shell">
+        <Layout.Content className="content login-screen">
+          <Typography.Text type="secondary">Restoring session…</Typography.Text>
+        </Layout.Content>
+      </Layout>
+    );
+  }
+
+  if (!isAuthenticated) {
+    if (location.pathname === "/login/callback") {
+      return <LoginCallback />;
+    }
+    return <Login />;
+  }
 
   return (
     <Layout className="app-shell">
@@ -130,8 +149,17 @@ const Shell = () => {
           <Typography.Text type="secondary">Apache Iceberg maintenance and health</Typography.Text>
           <Space>
             <ThemeToggle />
-            <Typography.Text type="secondary">Dev role</Typography.Text>
-            <Select value={token} options={roleOptions} onChange={setToken} style={{ width: 120 }} />
+            {authError ? (
+              <Typography.Text type="danger" style={{ maxWidth: 280 }}>
+                Auth: {authError}
+              </Typography.Text>
+            ) : null}
+            <Typography.Text type="secondary">
+              {subject} · {role}
+            </Typography.Text>
+            <Button size="small" onClick={signOut}>
+              Sign out
+            </Button>
           </Space>
         </Layout.Header>
         <Layout.Content className="content">
@@ -140,12 +168,13 @@ const Shell = () => {
             <Route path="/health" element={<DatalakeHealth />} />
             <Route path="/catalogs" element={<MultiCatalog />} />
             <Route path="/cost" element={<CostSavings />} />
-            <Route path="/attribution" element={<CostAttribution />} />
+            <Route path="/attribution" element={<Navigate to="/cost" replace />} />
             <Route path="/tables" element={<TableExplorer />} />
             <Route path="/tables/:tableId" element={<TableDetail />} />
             <Route path="/scans" element={<Scans />} />
             <Route path="/scans/:runId" element={<Scans />} />
             <Route path="/ai" element={<Intelligence />} />
+            <Route path="/governance" element={<Governance />} />
             <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/sla" element={<SLAStatus />} />
             <Route path="/optimize" element={<LayoutOptimization />} />

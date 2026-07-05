@@ -46,12 +46,19 @@ class BanditState:
         return arm.successes / total if total else 0.5
 
     def confidence_width(self, knob: str) -> float:
-        arm = self.arms.get(knob, _ArmStats())
-        total = arm.successes + arm.failures
-        if total <= 1:
+        prefix = f"{knob}:"
+        matching = [arm for key, arm in self.arms.items() if key.startswith(prefix)]
+        if not matching:
             return 1.0
-        p = arm.successes / total
-        return _CONFIDENCE_Z * math.sqrt(p * (1 - p) / total)
+        widths = []
+        for arm in matching:
+            total = arm.successes + arm.failures
+            if total <= 1:
+                widths.append(1.0)
+                continue
+            p = arm.successes / total
+            widths.append(_CONFIDENCE_Z * math.sqrt(p * (1 - p) / total))
+        return max(widths)
 
 
 class AdmissionBandit:
@@ -74,8 +81,10 @@ class AdmissionBandit:
         if self._state.observations < _MIN_OBSERVATIONS:
             return base, False
 
-        confident = all(
-            self._state.confidence_width(knob) < 0.25 for knob in _KNOBS if knob in self._state.arms
+        confident = self._state.observations >= _MIN_OBSERVATIONS and all(
+            self._state.confidence_width(knob) < 0.25
+            for knob in _KNOBS
+            if any(key.startswith(f"{knob}:") for key in self._state.arms)
         )
         if not confident:
             return base, False

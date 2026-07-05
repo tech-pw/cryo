@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cryo.api.app import create_app
+from cryo.api.deps import get_tenant_session
 from cryo.config import Settings
 from cryo.db.base import Base
 from cryo.db.models import (
@@ -26,11 +27,13 @@ from cryo.db.models import (
     Table,
     TableStats,
 )
-from cryo.db.session import get_session
+from tests.auth_helpers import (
+    ADMIN_HEADERS,
+    OPERATOR_HEADERS,
+    VIEWER_HEADERS,
+    ensure_test_jwt_secret,
+)
 
-ADMIN_HEADERS = {"Authorization": "Bearer admin"}
-OPERATOR_HEADERS = {"Authorization": "Bearer operator"}
-VIEWER_HEADERS = {"Authorization": "Bearer viewer"}
 UUID_ID_MODELS = (Source, Destination, Preset, PresetRule, Table, MaintenanceRun, MaintenanceJob)
 
 
@@ -47,6 +50,7 @@ class ApiDb:
 
 @pytest.fixture()
 def api_db() -> Iterator[ApiDb]:
+    ensure_test_jwt_secret()
     _patch_sqlite_incompatible_defaults()
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -70,7 +74,7 @@ def api_db() -> Iterator[ApiDb]:
             yield session
 
     app = create_app(Settings(_env_file=None, environment="test"))
-    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_tenant_session] = override_session
     with TestClient(app) as client:
         yield ApiDb(client=client, session_factory=session_factory)
 

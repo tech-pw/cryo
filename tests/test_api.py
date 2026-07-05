@@ -6,14 +6,12 @@ from fastapi.testclient import TestClient
 
 from cryo.api.app import create_app
 from cryo.config import Settings
+from tests.auth_helpers import OPERATOR_HEADERS as AUTH_HEADERS
 
 
 def _client() -> TestClient:
     app = create_app(Settings(_env_file=None, environment="test"))
     return TestClient(app)
-
-
-AUTH_HEADERS = {"Authorization": "Bearer operator"}
 
 
 def test_healthz() -> None:

@@ -54,7 +54,7 @@ import { serializePredicate, type Predicate } from "../lib/predicate";
 export const API_PREFIX = "/api/v1";
 
 export interface ApiOptions {
-  token: RoleToken;
+  token: string;
 }
 
 export class ApiError extends Error {
@@ -257,8 +257,13 @@ export const cancelRun = (api: ApiOptions, id: UUID) =>
   apiFetch<RunRead>(`/runs/${id}/cancel`, api, { method: "POST" });
 export const getJob = (api: ApiOptions, id: UUID) => apiFetch<JobRead>(`/jobs/${id}`, api);
 
-export const getDatalakeDashboard = (api: ApiOptions) =>
-  apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api).then(normalizeDashboard);
+export const getDatalakeDashboard = (
+  api: ApiOptions,
+  args: { top_limit?: number; drift_limit?: number } = {}
+) =>
+  apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api, {
+    query: { top_limit: args.top_limit, drift_limit: args.drift_limit }
+  }).then(normalizeDashboard);
 export const getSchemaCost = (api: ApiOptions) =>
   apiFetch<RawSchemaCost>("/dashboards/schema-cost", api).then((payload) =>
     payload.items.map((item) => ({
@@ -268,7 +273,7 @@ export const getSchemaCost = (api: ApiOptions) =>
     }))
   );
 
-export const wsRunUrl = (runId: UUID, token: RoleToken): string => {
+export const wsRunUrl = (runId: UUID, token: string): string => {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL(`${proto}//${window.location.host}${API_PREFIX}/ws/runs/${runId}`);
   url.searchParams.set("token", token);
@@ -723,3 +728,224 @@ export const testAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
 
 export const getAwsUsage = (api: ApiOptions, sourceId: UUID) =>
   apiFetch<AWSUsageResponse>(`/sources/${sourceId}/aws-usage`, api);
+
+/** Dashboard routes live under `/api` (not `/api/v1`). */
+const DASHBOARD_PREFIX = "/api";
+
+async function dashboardFetch<T>(path: string, api: ApiOptions): Promise<T> {
+  const response = await fetch(`${DASHBOARD_PREFIX}${path}`, {
+    headers: { Authorization: `Bearer ${api.token}` }
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
+    throw new ApiError(response.status, String(detail || response.statusText), detail);
+  }
+  return payload as T;
+}
+
+export interface MultiCatalogDashboard {
+  catalogs: Array<{
+    catalog_id: string;
+    catalog_name: string;
+    catalog_type: string;
+    table_count: number;
+    total_size_gb: number;
+    small_files_count: number;
+    needs_compaction_count: number;
+    monthly_cost_usd: number;
+    projected_savings_usd_month: number | null;
+    avg_health_score: number;
+    enabled: boolean;
+  }>;
+  total_catalogs: number;
+  total_tables: number;
+  total_cost_usd: number;
+}
+
+export const getMultiCatalogDashboard = (api: ApiOptions) =>
+  dashboardFetch<MultiCatalogDashboard>("/multi-catalog", api);
+
+export const getQueryPerformanceDashboard = (api: ApiOptions, hours = 24, engine?: string) => {
+  const params = new URLSearchParams({ hours: String(hours), limit: "100" });
+  if (engine) params.set("engine", engine);
+  return dashboardFetch<QueryPerformanceData>(`/query-performance?${params}`, api);
+};
+
+export interface QueryPerformanceData {
+  queries: Array<{
+    query_id: string;
+    query_text: string | null;
+    engine: string;
+    user: string | null;
+    duration_ms: number;
+    bytes_scanned: number | null;
+    rows_produced: number | null;
+    status: string;
+    started_at: string;
+    table_name: string | null;
+  }>;
+  total: number;
+  p50_latency_ms: number | null;
+  p95_latency_ms: number | null;
+  p99_latency_ms: number | null;
+  avg_bytes_scanned: number | null;
+  failed_count: number;
+}
+
+export interface CostAttributionResponse {
+  attributions: Array<{
+    cost_center: string | null;
+    department: string | null;
+    storage_cost_usd: number;
+    compute_cost_usd: number;
+    maintenance_cost_usd: number;
+    total_cost_usd: number;
+    table_count: number;
+    month: string;
+  }>;
+  total_cost_usd: number;
+  unattributed_cost_usd: number;
+  month: string;
+}
+
+export interface SLAResponse {
+  slas: Array<{
+    table_id: string;
+    table_name: string;
+    freshness_hours: number | null;
+    freshness_sla_hours: number | null;
+    freshness_breached: boolean;
+    scan_staleness_hours: number | null;
+    maintenance_days: number | null;
+    maintenance_sla_days: number | null;
+    maintenance_breached: boolean;
+    p95_latency_ms: number | null;
+    p95_latency_sla_ms: number | null;
+    p95_latency_breached: boolean;
+  }>;
+  total_breached: number;
+  total_monitored: number;
+}
+
+export interface JobDetailDashboard {
+  job_id: string;
+  table_id: string;
+  table_name: string;
+  operation_type: string;
+  status: string;
+  engine: string;
+  replica: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  input_files_count: number | null;
+  output_files_count: number | null;
+  effectiveness_ratio: number | null;
+  error_message: string | null;
+  sql_statements: string[] | null;
+  partition_predicates: string[] | null;
+}
+
+export const getCostAttributionDashboard = (api: ApiOptions, month?: string) =>
+  dashboardFetch<CostAttributionResponse>(
+    month ? `/cost-attribution?month=${encodeURIComponent(month)}` : "/cost-attribution",
+    api
+  );
+
+export const getSlaStatusDashboard = (api: ApiOptions, breachedOnly = false) =>
+  dashboardFetch<SLAResponse>(
+    breachedOnly ? "/sla-status?breached_only=true" : "/sla-status",
+    api
+  );
+
+export const getJobDetailDashboard = (api: ApiOptions, jobId: UUID) =>
+  dashboardFetch<JobDetailDashboard>(`/jobs/${jobId}/detail`, api);
+
+export interface PendingApprovalRead {
+  id: string;
+  table_id: string;
+  table_name: string;
+  operation_type: string;
+  status: string;
+  requested_by: string;
+  impact_preview: Record<string, unknown> | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface AnomalyAlertRead {
+  table_id: string;
+  table_name: string;
+  metric_name: string;
+  current_value: number;
+  expected_value: number;
+  deviation_sigma: number;
+  severity: string;
+  description: string;
+  detected_at: string;
+}
+
+export interface CostForecastRead {
+  forecast_month: string;
+  current_month_storage_cost_usd: number;
+  current_month_compute_cost_usd: number;
+  current_month_maintenance_cost_usd: number;
+  forecast_storage_cost_usd: number;
+  forecast_compute_cost_usd: number;
+  forecast_maintenance_cost_usd: number;
+  total_forecast_usd: number;
+  budget_limit_usd: number | null;
+  alert_level: string;
+}
+
+export interface TierPolicyRead {
+  id: string;
+  name: string;
+  source_id: string;
+  storage_class: string;
+  min_age_days: number;
+  enabled: boolean;
+}
+
+export interface LineageNodeRead {
+  table_id: string;
+  table_name: string;
+  depth: number;
+  node_type: string;
+}
+
+export interface LineageGraphRead {
+  root_table_id: string;
+  root_table_name: string;
+  upstream: LineageNodeRead[];
+  downstream: LineageNodeRead[];
+}
+
+export const listPendingApprovals = (api: ApiOptions) =>
+  apiFetch<PendingApprovalRead[]>("/advanced/approvals/pending", api);
+
+export const listFleetAnomalies = (api: ApiOptions) =>
+  apiFetch<AnomalyAlertRead[]>("/advanced/anomalies", api);
+
+export const getCostForecast = (api: ApiOptions, budgetLimitUsd?: number) =>
+  apiFetch<CostForecastRead>("/advanced/finops/forecast", api, {
+    query: { budget_limit_usd: budgetLimitUsd }
+  });
+
+export const listTierPolicies = (api: ApiOptions) =>
+  apiFetch<TierPolicyRead[]>("/tier-policies", api);
+
+export const getTableLineage = (api: ApiOptions, tableId: string, depth = 3) =>
+  apiFetch<LineageGraphRead>(`/advanced/lineage/${tableId}`, api, { query: { depth } });
+
+export const approvalAction = (
+  api: ApiOptions,
+  requestId: string,
+  body: { approved: boolean; approver: string; reason?: string }
+) =>
+  apiFetch<{ status: string; message: string }>(`/advanced/approvals/${requestId}/action`, api, {
+    method: "POST",
+    body
+  });

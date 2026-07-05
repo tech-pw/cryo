@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cryo.fullname" . }}-governor
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: governor
+spec:
+  replicas: {{ .Values.governor.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: governor
+  template:
+    metadata:
+      labels:
+        {{- include "cryo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: governor
+    spec:
+      containers:
+        - name: governor
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "cryo.governor.run"]
+          env:
+            {{- range $k, $v := .Values.global.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            {{- include "cryo.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.governor.resources | nindent 12 }}

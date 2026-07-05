@@ -1,12 +1,29 @@
+# Cryo Helm chart — deploy API, worker, governor, scheduler, and scanner CronJob.
+
 image:
   repository: cryo
   tag: latest
   pullPolicy: IfNotPresent
 
-scanner:
-  env: {}
+global:
+  env:
+    CRYO_ENVIRONMENT: prod
   envFromSecret: ""
   envFromConfigMap: ""
+
+api:
+  replicas: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+worker:
+  replicas: 2
   resources:
     requests:
       cpu: 500m
@@ -14,3 +31,37 @@ scanner:
     limits:
       cpu: "2"
       memory: 4Gi
+
+governor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+scanner:
+  schedule: "0 */6 * * *"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+service:
+  type: ClusterIP
+  port: 8000

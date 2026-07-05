@@ -9,6 +9,7 @@ import {
   testAwsIntegration
 } from "../api/client";
 import type { AWSIntegrationWrite, UUID } from "../api/types";
+import { ConfirmAction } from "./confirm";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatTime } from "../lib/format";
 
@@ -129,9 +130,15 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
               <Button loading={test.isPending} onClick={() => test.mutate()}>
                 Test STS
               </Button>
-              <Button danger loading={remove.isPending} onClick={() => remove.mutate()}>
-                Remove
-              </Button>
+              <ConfirmAction
+                title="Remove AWS integration?"
+                description="CloudWatch cost metrics for this source will stop updating."
+                onConfirm={() => remove.mutate()}
+              >
+                <Button danger loading={remove.isPending}>
+                  Remove
+                </Button>
+              </ConfirmAction>
             </>
           ) : null}
         </Space>

@@ -29,7 +29,7 @@ const destination: DestinationRead = {
 };
 
 describe("BulkAssignBar", () => {
-  it("runs with the filter selection when all matching is active", () => {
+  it("runs with the filter selection when all matching is active", async () => {
     const onRun = vi.fn();
     const filter = leaf("grade", "in", ["D", "F"]);
     render(
@@ -50,6 +50,8 @@ describe("BulkAssignBar", () => {
       screen.getByText("Actions now apply to every table matching the current filters, across all pages.")
     ).toBeInTheDocument();
     fireEvent.click(screen.getByText("Run now"));
+    expect(onRun).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
   });
 

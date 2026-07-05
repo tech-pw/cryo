@@ -97,7 +97,7 @@ def test_pii_gate_allows_with_force(session) -> None:
             session,
             table_id,
             [{"type": "optimize"}],
-            job_params={"force": True},
+            job_params={"force": True, "pii_gate_bypass_authorized": True},
         )
         is None
     )

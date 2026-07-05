@@ -111,6 +111,10 @@ finished Python/Trino/Spark path actually justifies it, not speculatively.
 
 ### 1.5 The execution-engine layer: build a native Rust engine AND stay interoperable
 
+> **Status (2026-07): experimental, not production-ready.** `EngineType.NATIVE` is disabled by
+> default (`CRYO_NATIVE_ENGINE_ENABLED=false`). The OPTIMIZE execution path is not implemented;
+> use Trino or Spark for compaction until cryo-native is CI-tested on every release.
+
 **Decision: build a native Rust/DataFusion engine (`cryo-engine`) as a first-class peer to Trino
 and Spark — not a replacement, and not a fallback.** All three sit behind the
 `MaintenanceEngine` Protocol that already exists at `cryo/engines/base.py`
@@ -185,6 +189,45 @@ fixtures.
 
 Every feature below is tied to a specific, verified real-world precedent. Where the precedent is
 thin or unproven, it's explicitly called out in 2.3 as something we are *not* building yet.
+
+### Build status (verified 2026-07-05)
+
+Audited against the real codebase — file existence, substance, test coverage, and production
+wiring (not just docs claims). ✅ = built, tested, and wired end-to-end. 🔬 = deliberately deferred
+research spike (precedent not solid enough yet). ⛔ = deliberately excluded, will not be built.
+
+| § | Feature | Status | Implementation |
+|---|---|---|---|
+| 2.1 | Cryo Copilot | ✅ Built | `cryo/ai/copilot.py` |
+| 2.2 | cryo-mcp tool surface | ✅ Built | `cryo/mcp/server.py` |
+| 2.3 | Explainable health-change narration | ✅ Built | `cryo/ai/explain.py` |
+| 2.4 | Statistical anomaly detection | ✅ Built | `cryo/ai/anomaly.py` |
+| 2.4 | Zero-scan data quality signals ([arXiv:2605.30308](https://arxiv.org/pdf/2605.30308v1)) | ✅ Built | `cryo/scanner/quality.py`, `cryo/quality/profiler.py` |
+| 2.5.1 | Embedding-based PII/sensitive-column classification | ✅ Built | `cryo/ai/pii.py`, `cryo/ai/embeddings.py` |
+| 2.5.2 | Copilot embedding fallback | ✅ Built | `cryo/ai/embeddings.py` |
+| 2.5.3 | Fleet-wide table similarity search | ✅ Built | `cryo/ai/similarity.py` |
+| 2.6 | BO/contextual-bandit Governor threshold tuning | ✅ Built | `cryo/governor/bandit.py`, `cryo/governor/bandit_feedback.py` |
+| 2.6 | Learned cost model (Stage-style, uncertainty-gated) | ✅ Built | `cryo/ml/cost_model.py`, `cryo/ml/cost_integration.py` |
+| 2.6 | AutoComp-style adaptive compaction benefit scoring | ✅ Built | `cryo/planner/benefit_score.py` |
+| 2.6 | TabPFN few-shot table health classification | ✅ Built | `cryo/ml/health_classifier.py` |
+| 2.6 | Full RL-based scheduling (Decima/Park-style) | ⛔ Not built — by design | contextual bandit above is the deliberate substitute; see 2.7 |
+| 2.6 | Time-series foundation models (Chronos-2/TimesFM/Moirai) | 🔬 Deferred research spike | degrades on Cryo's sparse, per-table, heterogeneous series shape |
+| 2.6 | TabPFN-TS (tabular-in-context time-series forecasting) | 🔬 Deferred research spike | best-tailored fit found, but least proven outside benchmarks |
+| 2.6 | GNN-based join/lineage discovery (OmniMatch/AutoG/JOINT/DeepJoin) | 🔬 Deferred — future phase | needs fleet-scale sampling/serving investment first |
+| 2.6 | Causal inference for realized-savings rigor (Sawmill/Salimi) | 🔬 Deferred | needs realized-savings history to accumulate first |
+| 2.7 | Vector-native storage/search in Iceberg or Cryo | ⛔ Not built — by design | rejected upstream, `apache/iceberg#12636` closed "not planned" |
+| 2.7 | LLM auto-approves schema/DDL changes | ⛔ Not built — by design | no production precedent exists; human sign-off stays required |
+| 2.7 | Zero-shot NL-to-SQL against live Iceberg tables | ⛔ Not built — by design | Copilot only ever queries Cryo's own metadata store |
+
+Verified test coverage (all passing): `tests/test_ai_strategy_completion.py`,
+`tests/test_phase9_ai.py`, `tests/test_anomaly_detection_integration.py`,
+`tests/test_benefit_score_integration.py`, `tests/test_scanner_quality.py`,
+`tests/test_quality_profiler_integration.py`, `tests/test_aws_s3_metrics.py`,
+`tests/test_aws_integration_api.py`. Production wiring confirmed into
+`cryo/api/advanced_routes.py`, `cryo/api/preview_cost.py`, `cryo/api/extensions.py`,
+`cryo/governor/governor.py`, `cryo/worker/worker.py`, and the frontend
+(`web/src/pages/Intelligence.tsx`, routed at `/ai`; `web/src/components/AwsIntegrationPanel.tsx`,
+embedded in `web/src/pages/Connections.tsx`).
 
 ### 2.1 Cryo Copilot — natural language over table/datalake metadata
 

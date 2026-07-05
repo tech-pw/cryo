@@ -23,58 +23,30 @@ import {
   FilterOutlined,
 } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
+import { getJobDetailDashboard, type JobDetailDashboard } from "../api/client";
+import { PageHeader, QueryErrorAlert } from "../components/common";
+import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { formatDuration } from "../lib/format";
 
 const { Title, Text, Paragraph } = Typography;
 
-interface JobDetail {
-  job_id: string;
-  table_id: string;
-  table_name: string;
-  operation_type: string;
-  status: string;
-  engine: string;
-  replica: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  duration_seconds: number | null;
-  input_files_count: number | null;
-  output_files_count: number | null;
-  effectiveness_ratio: number | null;
-  error_message: string | null;
-  sql_statements: string[] | null;
-  partition_predicates: string[] | null;
-}
+interface JobDetail extends JobDetailDashboard {}
 
-const statusConfig: Record<string, { icon: any; color: string }> = {
-  succeeded: { icon: <CheckCircleOutlined />, color: "success" },
-  failed: { icon: <CloseCircleOutlined />, color: "error" },
-  running: { icon: <ClockCircleOutlined />, color: "processing" },
-  queued: { icon: <ClockCircleOutlined />, color: "default" },
-};
-
-const formatDuration = (seconds: number | null) => {
+const formatJobDuration = (seconds: number | null) => {
   if (!seconds) return "—";
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
-  return `${(seconds / 3600).toFixed(1)}h`;
+  return formatDuration(seconds * 1000);
 };
 
 export const JobDetail = () => {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { api } = useAuth();
 
   const { data, isLoading, error } = useQuery<JobDetail>({
-    queryKey: ["job-detail", jobId],
-    queryFn: async () => {
-      const response = await fetch(`/api/jobs/${jobId}/detail`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch job detail");
-      return response.json();
-    },
-    enabled: !!jobId,
+    queryKey: ["job-detail", api.token, jobId],
+    queryFn: () => getJobDetailDashboard(api, jobId!),
+    enabled: Boolean(jobId)
   });
 
   if (isLoading) {
@@ -86,42 +58,23 @@ export const JobDetail = () => {
   }
 
   if (error || !data) {
-    return (
-      <Alert
-        message="Error"
-        description="Failed to load job details"
-        type="error"
-        showIcon
-      />
-    );
+    return <QueryErrorAlert error={error ?? new Error("Job not found")} title="Failed to load job details" />;
   }
-
-  const statusInfo = statusConfig[data.status] || statusConfig.queued;
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate("/runs")}
-            style={{ marginBottom: 16 }}
-          >
-            Back to Runs
-          </Button>
-          <Title level={2}>
-            <DatabaseOutlined /> Maintenance Job Detail
-          </Title>
-          <Text type="secondary">Job ID: {data.job_id}</Text>
-        </div>
-        <Tag
-          icon={statusInfo.icon}
-          color={statusInfo.color}
-          style={{ fontSize: "14px", padding: "6px 12px" }}
-        >
-          {data.status.toUpperCase()}
-        </Tag>
-      </div>
+      <Button
+        icon={<ArrowLeftOutlined />}
+        onClick={() => navigate("/runs")}
+        style={{ marginBottom: 16 }}
+      >
+        Back to Runs
+      </Button>
+      <PageHeader
+        title="Maintenance job detail"
+        subtitle={`Job ID: ${data.job_id}`}
+        actions={<StatusTag status={data.status} />}
+      />
 
       {data.error_message && (
         <Alert
@@ -139,7 +92,7 @@ export const JobDetail = () => {
           <Card>
             <Statistic
               title="Duration"
-              value={formatDuration(data.duration_seconds)}
+              value={formatJobDuration(data.duration_seconds)}
               prefix={<ClockCircleOutlined />}
             />
           </Card>

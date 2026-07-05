@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Protocol, cast
 
@@ -115,30 +116,28 @@ class Governor:
                 budget = compute_admission_budget(live_capacity, local_in_flight, config)
                 replicas = self._round_robin_slots(destination_id, budget.replicas)
 
-                for job_id in job_ids:
-                    if not replicas:
-                        blocked += 1
-                        destination_outcomes[destination_id]["blocked"] += 1
-                        break
+                with self._session_factory() as session:
+                    for job_id in job_ids:
+                        if not replicas:
+                            blocked += 1
+                            destination_outcomes[destination_id]["blocked"] += 1
+                            break
 
-                    try:
-                        job = self._store.get_job(job_id)
-                    except KeyError:
-                        logger.warning("Purging queue entry for unknown job %s", job_id)
-                        self._queue.cancel_pending(job_id)
-                        orphaned += 1
-                        destination_outcomes[destination_id]["orphaned"] += 1
-                        continue
-
-                    signal_triggered = False
-                    if self._enable_signal_triggers:
                         try:
-                            with self._session_factory() as session:
-                                table_uuid = (
-                                    uuid.UUID(job.table_id)
-                                    if isinstance(job.table_id, str)
-                                    else job.table_id
-                                )
+                            job = self._store.get_job(job_id)
+                        except KeyError:
+                            logger.warning("Purging queue entry for unknown job %s", job_id)
+                            self._queue.cancel_pending(job_id)
+                            orphaned += 1
+                            destination_outcomes[destination_id]["orphaned"] += 1
+                            continue
+
+                        table_uuid = _job_table_uuid(job)
+                        plan_operations = job.plan.get("operations") if job.plan else None
+
+                        signal_triggered = False
+                        if self._enable_signal_triggers and table_uuid is not None:
+                            try:
                                 trigger_result = self._trigger_evaluator.evaluate(
                                     session,
                                     table_uuid,
@@ -149,24 +148,19 @@ class Governor:
                                     and trigger_result.trigger_type.value != "schedule"
                                 ):
                                     signal_triggered = True
-                        except Exception:
-                            pass
-
-                    # Check approval workflow for destructive operations
-                    approval_needed = False
-                    if not signal_triggered:
-                        try:
-                            import uuid as _uuid
-
-                            from cryo.workflows.approvals import job_requires_approval
-
-                            with self._session_factory() as session:
-                                table_uuid = (
-                                    _uuid.UUID(job.table_id)
-                                    if isinstance(job.table_id, str)
-                                    else job.table_id
+                            except Exception as exc:
+                                logger.warning(
+                                    "Trigger evaluation failed for job %s table %s: %s",
+                                    job_id,
+                                    table_uuid,
+                                    exc,
                                 )
-                                plan_operations = job.plan.get("operations") if job.plan else None
+
+                        approval_needed = False
+                        if not signal_triggered and table_uuid is not None:
+                            try:
+                                from cryo.workflows.approvals import job_requires_approval
+
                                 if job_requires_approval(session, table_uuid, plan_operations):
                                     logger.info(
                                         "Job %s deferred: destructive operation requires approval",
@@ -176,71 +170,84 @@ class Governor:
                                     deferred += 1
                                     destination_outcomes[destination_id]["deferred"] += 1
                                     approval_needed = True
-                        except Exception as e:
-                            logger.warning(f"Error checking approval for job {job_id}: {e}")
+                            except Exception as exc:
+                                logger.warning(
+                                    "Approval check failed for job %s table %s: %s",
+                                    job_id,
+                                    table_uuid,
+                                    exc,
+                                )
 
-                    if approval_needed:
-                        continue
+                        if approval_needed:
+                            continue
 
-                    # PII governance gate for rewrite operations on untagged sensitive columns
-                    try:
-                        from cryo.compliance.pii_gate import maintenance_blocked_for_untagged_pii
+                        if table_uuid is not None:
+                            try:
+                                from cryo.compliance.pii_gate import (
+                                    maintenance_blocked_for_untagged_pii,
+                                )
 
-                        with self._session_factory() as session:
-                            table_uuid = (
-                                uuid.UUID(job.table_id)
-                                if isinstance(job.table_id, str)
-                                else job.table_id
-                            )
-                            plan_operations = job.plan.get("operations") if job.plan else None
-                            pii_reason = maintenance_blocked_for_untagged_pii(
-                                session,
-                                table_uuid,
-                                plan_operations,
-                                job_params=job.params,
-                            )
-                            if pii_reason:
-                                logger.info("Job %s deferred: %s", job_id, pii_reason)
-                                self._defer(job, pii_reason)
+                                pii_reason = maintenance_blocked_for_untagged_pii(
+                                    session,
+                                    table_uuid,
+                                    plan_operations,
+                                    job_params=job.params,
+                                )
+                                if pii_reason:
+                                    logger.info("Job %s deferred: %s", job_id, pii_reason)
+                                    self._defer(job, pii_reason)
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                    continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "PII gate check failed for job %s table %s: %s",
+                                    job_id,
+                                    table_uuid,
+                                    exc,
+                                )
+                                self._defer(job, "pii_gate_check_failed")
                                 deferred += 1
                                 destination_outcomes[destination_id]["deferred"] += 1
                                 continue
-                    except Exception as e:
-                        logger.warning(f"Error checking PII gate for job {job_id}: {e}")
 
-                    if not signal_triggered:
-                        decision = decide_job_admission(_admission_job(job), config, now=current)
-                        if not decision.admissible:
-                            if decision.defer:
-                                from cryo.governor.bandit_feedback import record_deferred_admission
+                        if not signal_triggered:
+                            decision = decide_job_admission(
+                                _admission_job(job), config, now=current
+                            )
+                            if not decision.admissible:
+                                if decision.defer:
+                                    from cryo.governor.bandit_feedback import (
+                                        record_deferred_admission,
+                                    )
 
-                                record_deferred_admission(config)
-                                self._defer(job, decision.reason)
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                            else:
-                                blocked += 1
-                                destination_outcomes[destination_id]["blocked"] += 1
+                                    record_deferred_admission(config)
+                                    self._defer(job, decision.reason)
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                else:
+                                    blocked += 1
+                                    destination_outcomes[destination_id]["blocked"] += 1
+                                continue
+
+                        if not self._lock_store.acquire_table_lock(
+                            job.table_id,
+                            job.id,
+                            self._lock_ttl_seconds,
+                        ):
+                            self._defer(job, "table_locked")
+                            deferred += 1
+                            destination_outcomes[destination_id]["deferred"] += 1
                             continue
 
-                    if not self._lock_store.acquire_table_lock(
-                        job.table_id,
-                        job.id,
-                        self._lock_ttl_seconds,
-                    ):
-                        self._defer(job, "table_locked")
-                        deferred += 1
-                        destination_outcomes[destination_id]["deferred"] += 1
-                        continue
+                        replica = replicas.pop(0)
+                        self._queue.admit(job.id, destination_id, replica)
+                        self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
+                        from cryo.governor.bandit_feedback import register_admission
 
-                    replica = replicas.pop(0)
-                    self._queue.admit(job.id, destination_id, replica)
-                    self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
-                    from cryo.governor.bandit_feedback import register_admission
-
-                    register_admission(job.id, config)
-                    admitted += 1
-                    destination_outcomes[destination_id]["admitted"] += 1
+                        register_admission(job.id, config)
+                        admitted += 1
+                        destination_outcomes[destination_id]["admitted"] += 1
 
             return WaveResult(
                 admitted=admitted,
@@ -338,17 +345,34 @@ def _is_valid_job_id(job_id: str) -> bool:
     return bool(job_id) and job_id.lower() != "none"
 
 
-def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
-    import os
-    from pathlib import Path
+def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:
+    try:
+        raw = job.table_id
+        return uuid.UUID(raw) if isinstance(raw, str) else raw
+    except (ValueError, AttributeError, TypeError):
+        return None
 
+
+def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
+
+    from cryo.db.session import SessionLocal
     from cryo.governor.bandit import AdmissionBandit
+    from cryo.governor.bandit_store import load_bandit
 
     config = _admission_config_from_destination(destination, default)
-    state_path = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
-    bandit = AdmissionBandit.load(state_path)
+    try:
+        with SessionLocal() as session:
+            bandit = load_bandit(session)
+    except Exception:
+        bandit = AdmissionBandit.load(_bandit_path())
     tuned, confident = bandit.suggest_config(config)
     return tuned if confident else config
+
+
+def _bandit_path() -> Path:
+    import os
+
+    return Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
 
 
 def _admission_config_from_destination(

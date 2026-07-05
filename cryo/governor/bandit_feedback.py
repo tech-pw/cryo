@@ -7,12 +7,10 @@ import os
 from pathlib import Path
 from typing import cast
 
+from cryo.db.session import SessionLocal
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.bandit import AdmissionBandit
-
-_STATE_DIR = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo"))
-_BANDIT_PATH = _STATE_DIR / "admission_bandit.json"
-_PENDING_PATH = _STATE_DIR / "admission_pending.json"
+from cryo.governor.bandit_store import load_bandit, save_bandit
 
 
 def _state_dir() -> Path:
@@ -29,6 +27,25 @@ def _pending_path() -> Path:
 
 def _ensure_state_dir() -> None:
     _state_dir().mkdir(parents=True, exist_ok=True)
+
+
+def _load_bandit() -> AdmissionBandit:
+    try:
+        with SessionLocal() as session:
+            return load_bandit(session)
+    except Exception:
+        return AdmissionBandit.load(_bandit_path())
+
+
+def _persist_bandit(bandit: AdmissionBandit) -> None:
+    try:
+        with SessionLocal() as session:
+            save_bandit(session, bandit)
+            return
+    except Exception:
+        pass
+    _ensure_state_dir()
+    bandit.save(_bandit_path())
 
 
 def _load_pending() -> dict[str, dict[str, float | int | bool]]:
@@ -79,13 +96,13 @@ def finalize_admission(job_id: str, *, job_succeeded: bool) -> None:
         high_load_ratio=float(raw["high_load_ratio"]),
         high_load_fraction=float(raw["high_load_fraction"]),
     )
-    bandit = AdmissionBandit.load(_bandit_path())
+    bandit = _load_bandit()
     bandit.record_outcome(config, admitted=True, job_completed=job_succeeded)
-    bandit.save(_bandit_path())
+    _persist_bandit(bandit)
 
 
 def record_deferred_admission(config: AdmissionConfig) -> None:
     """Record a deferred admission decision (not enough capacity / off-peak / cooldown)."""
-    bandit = AdmissionBandit.load(_bandit_path())
+    bandit = _load_bandit()
     bandit.record_outcome(config, admitted=False, job_completed=False)
-    bandit.save(_bandit_path())
+    _persist_bandit(bandit)

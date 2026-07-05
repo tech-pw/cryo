@@ -11,6 +11,8 @@ class LockStore(Protocol):
 
     def acquire_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool: ...
 
+    def renew_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool: ...
+
     def release_table_lock(self, table_id: str, job_id: str) -> None: ...
 
     def is_table_locked(self, table_id: str) -> bool: ...
@@ -33,6 +35,14 @@ class InMemoryLockStore:
 
     def acquire_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool:
         return self._acquire(self._table_locks, table_id, job_id, ttl_seconds)
+
+    def renew_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool:
+        self._purge_expired(self._table_locks)
+        lock = self._table_locks.get(table_id)
+        if lock is None or lock.holder != job_id:
+            return False
+        lock.expires_at = self._clock() + timedelta(seconds=ttl_seconds)
+        return True
 
     def release_table_lock(self, table_id: str, job_id: str) -> None:
         lock = self._table_locks.get(table_id)
@@ -80,6 +90,13 @@ class RedisLockStore:
     def acquire_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool:
         token = job_id or str(uuid4())
         return bool(self._redis.set(self._table_key(table_id), token, nx=True, ex=ttl_seconds))
+
+    def renew_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool:
+        key = self._table_key(table_id)
+        current = self._redis.get(key)
+        if _decode(current) != job_id:
+            return False
+        return bool(self._redis.expire(key, ttl_seconds))
 
     def release_table_lock(self, table_id: str, job_id: str) -> None:
         key = self._table_key(table_id)

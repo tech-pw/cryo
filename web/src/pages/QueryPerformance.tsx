@@ -20,30 +20,11 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
+import { getQueryPerformanceDashboard, type QueryPerformanceData } from "../api/client";
+import { PageHeader, QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
 
-const { Title, Text } = Typography;
-
-interface QueryPerformanceData {
-  queries: Array<{
-    query_id: string;
-    query_text: string | null;
-    engine: string;
-    user: string | null;
-    duration_ms: number;
-    bytes_scanned: number | null;
-    rows_produced: number | null;
-    status: string;
-    started_at: string;
-    table_name: string | null;
-  }>;
-  total: number;
-  p50_latency_ms: number | null;
-  p95_latency_ms: number | null;
-  p99_latency_ms: number | null;
-  avg_bytes_scanned: number | null;
-  failed_count: number;
-}
+const { Text } = Typography;
 
 const formatBytes = (bytes: number | null) => {
   if (!bytes) return "—";
@@ -60,26 +41,14 @@ const formatDuration = (ms: number) => {
 };
 
 export const QueryPerformance = () => {
-  const { token } = useAuth();
+  const { api } = useAuth();
   const [engine, setEngine] = useState<string | undefined>(undefined);
   const [hours, setHours] = useState(24);
 
-  const { data, isLoading } = useQuery<QueryPerformanceData>({
-    queryKey: ["query-performance", engine, hours],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        hours: hours.toString(),
-        limit: "100",
-      });
-      if (engine) params.append("engine", engine);
-
-      const response = await fetch(`/api/query-performance?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch query performance");
-      return response.json();
-    },
-    refetchInterval: 30000, // Refresh every 30 seconds
+  const { data, isLoading, error } = useQuery<QueryPerformanceData>({
+    queryKey: ["query-performance", api.token, engine, hours],
+    queryFn: () => getQueryPerformanceDashboard(api, hours, engine),
+    refetchInterval: 30000
   });
 
   const columns = [
@@ -163,42 +132,40 @@ export const QueryPerformance = () => {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <Title level={2}>
-            <ThunderboltOutlined /> Query Performance
-          </Title>
-          <Text type="secondary">
-            Monitor query latency, throughput, and failure rates
-          </Text>
-        </div>
-        <Space>
-          <Select
-            style={{ width: 120 }}
-            placeholder="All Engines"
-            allowClear
-            value={engine}
-            onChange={setEngine}
-            options={[
-              { label: "Trino", value: "trino" },
-              { label: "Spark", value: "spark" },
-              { label: "Athena", value: "athena" },
-              { label: "DuckDB", value: "duckdb" },
-            ]}
-          />
-          <Select
-            style={{ width: 120 }}
-            value={hours}
-            onChange={setHours}
-            options={[
-              { label: "Last 1 hour", value: 1 },
-              { label: "Last 6 hours", value: 6 },
-              { label: "Last 24 hours", value: 24 },
-              { label: "Last 7 days", value: 168 },
-            ]}
-          />
-        </Space>
-      </div>
+      <PageHeader
+        title="Query performance"
+        subtitle="Monitor query latency, throughput, and failure rates."
+        actions={
+          <Space>
+            <Select
+              style={{ width: 120 }}
+              placeholder="All Engines"
+              allowClear
+              value={engine}
+              onChange={setEngine}
+              options={[
+                { label: "Trino", value: "trino" },
+                { label: "Spark", value: "spark" },
+                { label: "Athena", value: "athena" },
+                { label: "DuckDB", value: "duckdb" }
+              ]}
+            />
+            <Select
+              style={{ width: 120 }}
+              value={hours}
+              onChange={setHours}
+              options={[
+                { label: "Last 1 hour", value: 1 },
+                { label: "Last 6 hours", value: 6 },
+                { label: "Last 24 hours", value: 24 },
+                { label: "Last 7 days", value: 168 }
+              ]}
+            />
+          </Space>
+        }
+      />
+
+      <QueryErrorAlert error={error} title="Failed to load query performance" />
 
       {isLoading ? (
         <div style={{ textAlign: "center", padding: "60px" }}>
@@ -207,7 +174,7 @@ export const QueryPerformance = () => {
       ) : (
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="Total Queries"
@@ -216,7 +183,7 @@ export const QueryPerformance = () => {
                 />
               </Card>
             </Col>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="P50 Latency"
@@ -227,7 +194,7 @@ export const QueryPerformance = () => {
                 />
               </Card>
             </Col>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="P95 Latency"
@@ -238,7 +205,7 @@ export const QueryPerformance = () => {
                 />
               </Card>
             </Col>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="P99 Latency"
@@ -249,7 +216,7 @@ export const QueryPerformance = () => {
                 />
               </Card>
             </Col>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="Avg Data Scanned"
@@ -257,7 +224,7 @@ export const QueryPerformance = () => {
                 />
               </Card>
             </Col>
-            <Col span={4}>
+            <Col xs={24} sm={12} md={8} lg={4}>
               <Card>
                 <Statistic
                   title="Failed Queries"

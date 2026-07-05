@@ -59,6 +59,7 @@ export const FilterBar = ({
           mode="multiple"
           allowClear
           maxTagCount="responsive"
+          aria-label="Filter by health grade"
           placeholder="Grade"
           value={value.grades}
           onChange={(grades) => patch({ grades })}
@@ -69,6 +70,7 @@ export const FilterBar = ({
           mode="multiple"
           allowClear
           maxTagCount="responsive"
+          aria-label="Filter by compaction priority"
           placeholder="Priority"
           value={value.priorities}
           onChange={(priorities) => patch({ priorities })}

@@ -142,20 +142,25 @@ def fetch_bucket_storage_metrics(
     now = datetime.now(UTC)
     start = now - timedelta(days=lookback_days)
 
-    size_by_class: dict[str, int] = {}
-    for storage_type in _STORAGE_TYPES:
-        datapoints = _get_metric_statistics(
-            cloudwatch,
-            metric_name="BucketSizeBytes",
-            dimensions=[
-                {"Name": "BucketName", "Value": bucket},
-                {"Name": "StorageType", "Value": storage_type},
-            ],
-            start=start,
-            end=now,
-        )
-        if datapoints:
-            size_by_class[storage_type] = int(_latest(datapoints)["Average"])
+    try:
+        size_by_class: dict[str, int] = {}
+        for storage_type in _STORAGE_TYPES:
+            datapoints = _get_metric_statistics(
+                cloudwatch,
+                metric_name="BucketSizeBytes",
+                dimensions=[
+                    {"Name": "BucketName", "Value": bucket},
+                    {"Name": "StorageType", "Value": storage_type},
+                ],
+                start=start,
+                end=now,
+            )
+            if datapoints:
+                size_by_class[storage_type] = int(_latest(datapoints)["Average"])
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to fetch S3 storage metrics for bucket {bucket}: {exc}"
+        ) from exc
 
     object_count: int | None = None
     object_datapoints = _get_metric_statistics(

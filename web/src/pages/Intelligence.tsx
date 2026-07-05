@@ -26,7 +26,7 @@ import {
   getCostModelEvaluate,
   searchCopilot
 } from "../api/client";
-import { EmptyState, PageHeader } from "../components/common";
+import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { formatNumber } from "../lib/format";
 
@@ -105,6 +105,10 @@ export const Intelligence = () => {
           </Link>
         }
       />
+
+      <QueryErrorAlert error={questions.error} title="Failed to load copilot questions" />
+      <QueryErrorAlert error={bandit.error} title="Failed to load governor bandit status" />
+      <QueryErrorAlert error={costModel.error} title="Failed to load cost model evaluation" />
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>

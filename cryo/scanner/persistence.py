@@ -62,6 +62,34 @@ def already_scanned_today(
     )
 
 
+def stats_history_for_signals(
+    session: Session,
+    table_id: uuid.UUID,
+    *,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Recent scan history rows for streaming/commit-velocity signal detection."""
+    rows = session.scalars(
+        select(TableStatsHistory)
+        .where(TableStatsHistory.table_id == table_id)
+        .order_by(TableStatsHistory.scan_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "scan_at": row.scan_at.isoformat() if row.scan_at else None,
+            "total_snapshots": _history_snapshot_count(row),
+        }
+        for row in reversed(rows)
+    ]
+
+
+def _history_snapshot_count(row: TableStatsHistory) -> int:
+    raw = row.raw if isinstance(row.raw, dict) else {}
+    value = raw.get("total_snapshots", raw.get("snapshot_count", 0))
+    return int(value or 0)
+
+
 def persist_table_analysis(
     session: Session,
     *,

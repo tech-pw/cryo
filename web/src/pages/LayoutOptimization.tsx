@@ -354,7 +354,7 @@ const QueryPatternsTab = ({
   api,
   tables
 }: {
-  api: { token: import("../api/types").RoleToken };
+  api: import("../api/client").ApiOptions;
   tables: TableRead[];
 }) => {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
@@ -453,7 +453,7 @@ const ClusteringPlanDrawer = ({
   tableId: string;
   tableName: string;
   onClose: () => void;
-  api: { token: import("../api/types").RoleToken };
+  api: import("../api/client").ApiOptions;
 }) => {
   const [strategy, setStrategy] = useState<string>("sort");
   const [plan, setPlan] = useState<ClusteringPlanResponse | null>(null);

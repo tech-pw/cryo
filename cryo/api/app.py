@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
+from cryo.api.auth_routes import router as auth_router
 from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.metrics_routes import router as metrics_router
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "environment": settings.environment}
 
     app.include_router(api_router)
+    app.include_router(auth_router)
     app.include_router(extensions_router)
     app.include_router(phase8_router)
     app.include_router(dashboard_router)

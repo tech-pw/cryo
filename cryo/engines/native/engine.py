@@ -189,19 +189,15 @@ class NativeEngine:
                 duration_ms=_elapsed_ms(start),
             )
 
-        table_ref = stmt.sql.split(":", 1)[1]
-
         try:
-            # This is a placeholder - actual implementation would:
-            # 1. Get file paths from Iceberg metadata
-            # 2. Call the native engine to compact
-            # 3. Update Iceberg metadata with new files
-
-            logger.info(f"Native compaction for {table_ref}")
-
+            # OPTIMIZE via native engine is not production-ready — use Trino or Spark.
             return ExecResult(
-                ok=True,
-                detail=f"Native compaction completed for {table_ref}",
+                ok=False,
+                detail=stmt.sql,
+                error=(
+                    "Native engine OPTIMIZE is experimental and not implemented. "
+                    "Use Trino or Spark for compaction."
+                ),
                 duration_ms=_elapsed_ms(start),
             )
 

@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Col, Row, Space, Table, Typography, message } from "antd";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { cancelRun, listRuns } from "../api/client";
 import type { RunRead } from "../api/types";
+import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader } from "../components/common";
 import { RunConsole } from "../components/RunConsole";
 import { StatusTag } from "../components/status";
@@ -25,11 +27,15 @@ export const Runs = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { api, token } = useAuth();
+  const [page, setPage] = useState(1);
+  const pageSize = 12;
   const runs = useQuery({
-    queryKey: ["runs", token],
-    queryFn: () => listRuns(api),
+    queryKey: ["runs", token, page],
+    queryFn: () => listRuns(api, { limit: pageSize, offset: (page - 1) * pageSize }),
     refetchInterval: 5000
   });
+  const pageRows = runs.data ?? [];
+  const mayHaveMore = pageRows.length === pageSize;
   const cancel = useMutation({
     mutationFn: (id: string) => cancelRun(api, id),
     onSuccess: () => {
@@ -53,8 +59,14 @@ export const Runs = () => {
               size="small"
               rowKey="id"
               loading={runs.isLoading}
-              dataSource={runs.data ?? []}
-              pagination={{ pageSize: 12 }}
+              dataSource={pageRows}
+              pagination={{
+                current: page,
+                pageSize,
+                showSizeChanger: false,
+                total: mayHaveMore ? page * pageSize + 1 : (page - 1) * pageSize + pageRows.length,
+                onChange: setPage
+              }}
               onRow={(row) => ({ onClick: () => navigate(`/runs/${row.id}`) })}
               columns={[
                 {
@@ -111,18 +123,21 @@ export const Runs = () => {
                   title: "",
                   width: 84,
                   render: (_, row) => (
-                    <Button
-                      size="small"
-                      danger
-                      disabled={["succeeded", "failed", "cancelled"].includes(row.status)}
-                      loading={cancel.isPending}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        cancel.mutate(row.id);
-                      }}
+                    <ConfirmAction
+                      title="Cancel this run?"
+                      description="Queued jobs will be stopped; jobs already running may finish."
+                      onConfirm={() => cancel.mutate(row.id)}
                     >
-                      Cancel
-                    </Button>
+                      <Button
+                        size="small"
+                        danger
+                        disabled={["succeeded", "failed", "cancelled"].includes(row.status)}
+                        loading={cancel.isPending}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        Cancel
+                      </Button>
+                    </ConfirmAction>
                   )
                 }
               ]}

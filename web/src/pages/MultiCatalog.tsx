@@ -22,9 +22,13 @@ import {
 } from "@ant-design/icons";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { useNavigate } from "react-router-dom";
+import { getMultiCatalogDashboard, type MultiCatalogDashboard } from "../api/client";
+import { PageHeader, QueryErrorAlert } from "../components/common";
+import { healthScoreColor } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { formatCurrency, formatGb } from "../lib/format";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface CatalogStats {
   catalog_id: string;
@@ -40,44 +44,18 @@ interface CatalogStats {
   enabled: boolean;
 }
 
-interface MultiCatalogResponse {
-  catalogs: CatalogStats[];
-  total_catalogs: number;
-  total_tables: number;
-  total_cost_usd: number;
-}
-
-const formatCurrency = (value: number) =>
-  `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-const formatSize = (gb: number) => {
-  if (gb < 1) return `${(gb * 1024).toFixed(0)} GB`;
-  if (gb < 1024) return `${gb.toFixed(1)} GB`;
-  return `${(gb / 1024).toFixed(2)} TB`;
-};
-
-const getHealthColor = (score: number) => {
-  if (score >= 80) return "#52c41a";
-  if (score >= 60) return "#faad14";
-  return "#ff4d4f";
-};
+type MultiCatalogResponse = MultiCatalogDashboard;
 
 const COLORS = ["#3d6fd4", "#52c41a", "#faad14", "#ff4d4f", "#722ed1", "#13c2c2", "#eb2f96"];
 
 export const MultiCatalog = () => {
-  const { token } = useAuth();
+  const { api } = useAuth();
   const navigate = useNavigate();
 
-  const { data, isLoading } = useQuery<MultiCatalogResponse>({
-    queryKey: ["multi-catalog"],
-    queryFn: async () => {
-      const response = await fetch("/api/multi-catalog", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch multi-catalog stats");
-      return response.json();
-    },
-    refetchInterval: 60000, // Refresh every minute
+  const { data, isLoading, error } = useQuery<MultiCatalogResponse>({
+    queryKey: ["multi-catalog", api.token],
+    queryFn: () => getMultiCatalogDashboard(api),
+    refetchInterval: 60000
   });
 
   const columns = [
@@ -115,7 +93,7 @@ export const MultiCatalog = () => {
       key: "size",
       width: "12%",
       align: "right" as const,
-      render: (gb: number) => formatSize(gb),
+      render: (gb: number) => formatGb(gb),
     },
     {
       title: "Small Files",
@@ -148,10 +126,10 @@ export const MultiCatalog = () => {
       width: "14%",
       render: (score: number) => (
         <Space direction="vertical" size={2} style={{ width: "100%" }}>
-          <Text style={{ color: getHealthColor(score) }}>{score.toFixed(1)}</Text>
+          <Text style={{ color: healthScoreColor(score) }}>{score.toFixed(1)}</Text>
           <Progress
             percent={score}
-            strokeColor={getHealthColor(score)}
+            strokeColor={healthScoreColor(score)}
             showInfo={false}
             size="small"
           />
@@ -187,25 +165,21 @@ export const MultiCatalog = () => {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <Title level={2}>
-            <CloudServerOutlined /> Multi-Catalog Federation
-          </Title>
-          <Text type="secondary">
-            Manage and monitor Iceberg tables across multiple catalogs
-          </Text>
-        </div>
-      </div>
+      <PageHeader
+        title="Multi-catalog federation"
+        subtitle="Manage and monitor Iceberg tables across multiple catalogs."
+      />
+
+      <QueryErrorAlert error={error} title="Failed to load multi-catalog dashboard" />
 
       {isLoading ? (
         <div style={{ textAlign: "center", padding: "60px" }}>
           <Spin size="large" />
         </div>
-      ) : (
+      ) : error ? null : (
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Total Catalogs"
@@ -217,7 +191,7 @@ export const MultiCatalog = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Total Tables"
@@ -229,7 +203,7 @@ export const MultiCatalog = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Combined Cost"
@@ -243,7 +217,7 @@ export const MultiCatalog = () => {
                 </Text>
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card>
                 <Statistic
                   title="Potential Savings"
@@ -336,7 +310,7 @@ export const MultiCatalog = () => {
                       <Col span={12}>
                         <Statistic
                           title="Size"
-                          value={formatSize(catalog.total_size_gb)}
+                          value={formatGb(catalog.total_size_gb)}
                           valueStyle={{ fontSize: "18px" }}
                         />
                       </Col>
@@ -349,7 +323,7 @@ export const MultiCatalog = () => {
                           suffix="/100"
                           valueStyle={{
                             fontSize: "18px",
-                            color: getHealthColor(catalog.avg_health_score),
+                            color: healthScoreColor(catalog.avg_health_score),
                           }}
                         />
                       </Col>

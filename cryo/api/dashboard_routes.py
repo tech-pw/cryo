@@ -10,9 +10,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import case, desc, func, select
-from sqlalchemy.orm import Session
 
-from cryo.api.deps import require_viewer
+from cryo.api.deps import SessionDep, require_viewer
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import (
     AuditLog,
@@ -23,7 +22,7 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
-from cryo.db.session import get_session
+from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
 from cryo.domain.enums import JobStatus
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
@@ -105,12 +104,12 @@ class MultiCatalogResponse(BaseModel):
 
 @router.get("/multi-catalog", response_model=MultiCatalogResponse, tags=["dashboards"])
 def get_multi_catalog_stats(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
 ) -> MultiCatalogResponse:
     """Get aggregated statistics across all catalogs for federation view."""
-    # Get all sources (catalogs)
-    sources_stmt = select(Source).where(Source.enabled == True)  # noqa: E712
+    tenant_id = require_tenant(session)
+    sources_stmt = scoped_select(session, Source).where(Source.enabled == True)  # noqa: E712
     sources = session.execute(sources_stmt).scalars().all()
 
     catalogs: list[CatalogStatsRead] = []
@@ -137,6 +136,7 @@ def get_multi_catalog_stats(
             .join(TableStats, Table.id == TableStats.table_id)
             .where(Table.source_id == source.id)
         )
+        stats_stmt = scope_by_tenant(stats_stmt, Table, tenant_id)
 
         agg = session.execute(stats_stmt).one_or_none()
 
@@ -305,7 +305,7 @@ class CostAttributionResponse(BaseModel):
 
 @router.get("/query-performance", response_model=QueryPerformanceResponse, tags=["dashboards"])
 def get_query_performance(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     table_id: Annotated[UUID | None, Query(description="Filter by table ID")] = None,
     engine: Annotated[
@@ -316,8 +316,14 @@ def get_query_performance(
 ) -> QueryPerformanceResponse:
     """Get query performance metrics for the dashboard."""
     since = datetime.now(UTC) - timedelta(hours=hours)
+    tenant_id = require_tenant(session)
 
-    stmt = select(QueryLog).where(QueryLog.executed_at >= since)
+    stmt = (
+        select(QueryLog)
+        .join(Table, QueryLog.table_id == Table.id)
+        .where(QueryLog.executed_at >= since)
+    )
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
 
     if table_id:
         stmt = stmt.where(QueryLog.table_id == table_id)
@@ -331,13 +337,19 @@ def get_query_performance(
     queries = session.execute(stmt).scalars().all()
 
     # Compute percentiles
-    percentile_stmt = select(
-        func.percentile_cont(0.5).within_group(QueryLog.duration_ms).label("p50"),
-        func.percentile_cont(0.95).within_group(QueryLog.duration_ms).label("p95"),
-        func.percentile_cont(0.99).within_group(QueryLog.duration_ms).label("p99"),
-        func.avg(QueryLog.bytes_read).label("avg_bytes"),
-        func.count().label("total"),
-    ).where(QueryLog.executed_at >= since)
+    percentile_stmt = (
+        select(
+            func.percentile_cont(0.5).within_group(QueryLog.duration_ms).label("p50"),
+            func.percentile_cont(0.95).within_group(QueryLog.duration_ms).label("p95"),
+            func.percentile_cont(0.99).within_group(QueryLog.duration_ms).label("p99"),
+            func.avg(QueryLog.bytes_read).label("avg_bytes"),
+            func.count().label("total"),
+        )
+        .select_from(QueryLog)
+        .join(Table, QueryLog.table_id == Table.id)
+        .where(QueryLog.executed_at >= since)
+    )
+    percentile_stmt = scope_by_tenant(percentile_stmt, Table, tenant_id)
 
     if table_id:
         percentile_stmt = percentile_stmt.where(QueryLog.table_id == table_id)
@@ -378,14 +390,12 @@ def get_query_performance(
 )
 def get_table_health_trends(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     days: Annotated[int, Query(description="Days of history to fetch", ge=1, le=90)] = 30,
 ) -> TableHealthTrendsResponse:
     """Get health trends for a table over time."""
-    table = session.get(Table, table_id)
-    if not table:
-        raise HTTPException(status_code=404, detail="Table not found")
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
 
     since = datetime.now(UTC) - timedelta(days=days)
 
@@ -446,13 +456,14 @@ def get_table_health_trends(
 @router.get("/jobs/{job_id}/detail", response_model=JobDetailRead, tags=["runs"])
 def get_job_detail(
     job_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
 ) -> JobDetailRead:
     """Get detailed information about a maintenance job."""
     job = session.get(MaintenanceJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    get_scoped_resource(session, Table, job.table_id, resource_type="Table")
 
     # Get associated audit log entry
     audit_stmt = (
@@ -526,7 +537,7 @@ def get_job_detail(
 
 @router.get("/sla-status", response_model=SLAResponse, tags=["dashboards"])
 def get_sla_status(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     breached_only: Annotated[bool, Query(description="Show only breached SLAs")] = False,
 ) -> SLAResponse:
@@ -537,9 +548,10 @@ def get_sla_status(
     p95_latency_sla_ms = 5000
 
     now = datetime.now(UTC)
+    tenant_id = require_tenant(session)
 
-    # Get all tables with stats
     stmt = select(Table, TableStats).join(TableStats).where(Table.first_seen_at.isnot(None))
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
 
     results = session.execute(stmt).all()
 
@@ -613,7 +625,7 @@ def get_sla_status(
 
 @router.get("/cost-attribution", response_model=CostAttributionResponse, tags=["dashboards"])
 def get_cost_attribution(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     month: Annotated[
         str | None,
@@ -681,7 +693,7 @@ class S3TieringResponse(BaseModel):
 
 @router.get("/s3-tiering-recommendations", response_model=S3TieringResponse, tags=["dashboards"])
 def get_s3_tiering_recommendations(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     min_size_gb: Annotated[float, Query(description="Minimum table size in GB")] = 100.0,
     lookback_days: Annotated[
@@ -730,7 +742,7 @@ def get_s3_tiering_recommendations(
 )
 def get_table_s3_tiering(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     lookback_days: Annotated[
         int,
@@ -740,6 +752,7 @@ def get_table_s3_tiering(
     """
     Get S3 Intelligent-Tiering recommendation for a specific table.
     """
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
     rec = analyze_table_for_tiering(
         session=session,
         table_id=str(table_id),

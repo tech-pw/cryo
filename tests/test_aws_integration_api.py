@@ -74,7 +74,7 @@ def test_create_get_and_patch_aws_integration(session):
 
 def test_create_aws_integration_rejects_duplicate(session):
     source = _seed_source(session)
-    payload = AWSIntegrationCreate(bucket="b", region="us-east-1")
+    payload = AWSIntegrationCreate(bucket="b", region="us-east-1", secret_access_key="test-secret")
     create_aws_integration(source.id, payload, session)
 
     with pytest.raises(HTTPException) as exc_info:
@@ -85,7 +85,9 @@ def test_create_aws_integration_rejects_duplicate(session):
 def test_create_aws_integration_requires_existing_source(session):
     with pytest.raises(HTTPException) as exc_info:
         create_aws_integration(
-            uuid4(), AWSIntegrationCreate(bucket="b", region="us-east-1"), session
+            uuid4(),
+            AWSIntegrationCreate(bucket="b", region="us-east-1", secret_access_key="test-secret"),
+            session,
         )
     assert exc_info.value.status_code == 404
 
@@ -99,7 +101,11 @@ def test_get_aws_integration_404_when_not_configured(session):
 
 def test_delete_aws_integration_removes_it(session):
     source = _seed_source(session)
-    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
+    create_aws_integration(
+        source.id,
+        AWSIntegrationCreate(bucket="b", region="us-east-1", secret_access_key="test-secret"),
+        session,
+    )
 
     delete_aws_integration(source.id, session)
 
@@ -109,7 +115,11 @@ def test_delete_aws_integration_removes_it(session):
 
 def test_test_aws_integration_records_result(session):
     source = _seed_source(session)
-    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
+    create_aws_integration(
+        source.id,
+        AWSIntegrationCreate(bucket="b", region="us-east-1", secret_access_key="test-secret"),
+        session,
+    )
 
     with patch(
         "cryo.api.routes.check_aws_connection",
@@ -129,7 +139,11 @@ def test_test_aws_integration_records_result(session):
 
 def test_get_aws_usage_combines_metrics_and_pricing(session):
     source = _seed_source(session)
-    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
+    create_aws_integration(
+        source.id,
+        AWSIntegrationCreate(bucket="b", region="us-east-1", secret_access_key="test-secret"),
+        session,
+    )
 
     with (
         patch(
@@ -169,7 +183,9 @@ def test_get_aws_usage_404_when_disabled(session):
     source = _seed_source(session)
     create_aws_integration(
         source.id,
-        AWSIntegrationCreate(bucket="b", region="us-east-1", enabled=False),
+        AWSIntegrationCreate(
+            bucket="b", region="us-east-1", enabled=False, secret_access_key="test-secret"
+        ),
         session,
     )
     with pytest.raises(HTTPException) as exc_info:

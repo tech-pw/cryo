@@ -2,6 +2,7 @@ import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import type { DestinationRead, Mode, PresetRead, UUID } from "../api/types";
 import type { Predicate } from "../lib/predicate";
+import { ConfirmAction } from "./confirm";
 
 export type BulkSelection =
   | { mode: "ids"; ids: UUID[]; totalSelected: number }
@@ -88,11 +89,15 @@ export const BulkAssignBar = ({
             <Button onClick={onPreview}>Preview</Button>
           </Tooltip>
           {onScan ? (
-            <Tooltip title="Queue a metadata scan for the current selection.">
-              <Button loading={scanning} onClick={onScan}>
-                Scan selected
-              </Button>
-            </Tooltip>
+            <ConfirmAction
+              title="Scan selected tables?"
+              description="Queue a metadata scan for every table in the current selection."
+              onConfirm={onScan}
+            >
+              <Tooltip title="Queue a metadata scan for the current selection.">
+                <Button loading={scanning}>Scan selected</Button>
+              </Tooltip>
+            </ConfirmAction>
           ) : null}
           <Tooltip
             title={
@@ -112,26 +117,31 @@ export const BulkAssignBar = ({
               loading={running}
             />
           </Tooltip>
-          <Tooltip title="Queue maintenance for the current selection using the chosen preset and engine.">
-            <span>
-              <Button
-                type="primary"
-                loading={running}
-                disabled={!activeDestinationId}
-                onClick={() =>
-                  activeDestinationId
-                    ? onRun({
-                        destinationId: activeDestinationId,
-                        presetId: activePresetId,
-                        mode: activePreset?.mode ?? "standard"
-                      })
-                    : undefined
-                }
-              >
-                Run now
-              </Button>
-            </span>
-          </Tooltip>
+          <ConfirmAction
+            title={
+              isFilterSelection
+                ? `Run maintenance on all ${selection.totalSelected.toLocaleString()} matching tables?`
+                : `Run maintenance on ${selection.totalSelected.toLocaleString()} selected tables?`
+            }
+            description="This queues real maintenance jobs. Review the preset and engine before confirming."
+            onConfirm={() =>
+              activeDestinationId
+                ? onRun({
+                    destinationId: activeDestinationId,
+                    presetId: activePresetId,
+                    mode: activePreset?.mode ?? "standard"
+                  })
+                : undefined
+            }
+          >
+            <Tooltip title="Queue maintenance for the current selection using the chosen preset and engine.">
+              <span>
+                <Button type="primary" loading={running} disabled={!activeDestinationId}>
+                  Run now
+                </Button>
+              </span>
+            </Tooltip>
+          </ConfirmAction>
           <Tooltip title="Clear the current bulk selection.">
             <Button onClick={onClear}>Clear</Button>
           </Tooltip>

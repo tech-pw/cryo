@@ -45,6 +45,13 @@ export const StatusTag = ({ status }: { status?: string | null }) => (
   </Tag>
 );
 
+/** Map a 0–100 health score to a chart/progress color (shared across dashboard pages). */
+export const healthScoreColor = (score: number): string => {
+  if (score >= 80) return "#52c41a";
+  if (score >= 60) return "#faad14";
+  return "#ff4d4f";
+};
+
 export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (
   <Tag color={needsCompaction ? "gold" : "default"}>
     {needsCompaction ? "Needs compaction" : "Healthy"}
