@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'cryo-local'
+    environment: 'development'
+
+scrape_configs:
+  - job_name: 'cryo-api'
+    static_configs:
+      - targets: ['cryo-api:8000']
+    metrics_path: '/metrics'
+  
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

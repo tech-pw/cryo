@@ -7,6 +7,7 @@ from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
+from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
 from cryo.config import Settings, get_settings
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             {"name": "phase8", "description": "Adaptive routing and data tiering policies."},
             {"name": "advanced", "description": "Advanced features: lineage, anomalies, approvals, quality, signals, FinOps."},
+            {"name": "observability", "description": "Prometheus metrics and health checks."},
         ],
     )
     if settings.cors_allow_origins:
@@ -50,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(phase8_router)
     app.include_router(dashboard_router)
     app.include_router(advanced_router)
+    app.include_router(metrics_router)
     return app
 
 
