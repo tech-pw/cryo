@@ -44,6 +44,7 @@ class RestCatalogCredentialVendor:
 
         self._access_token: str | None = None
         self._token_expires_at: datetime | None = None
+        self._vended_cache: dict[str, VendedCredentials] = {}
 
     async def get_access_token(self) -> str:
         """
@@ -134,6 +135,25 @@ class RestCatalogCredentialVendor:
                 scope=f"{namespace}.{table_name}",
             )
 
+    def _cache_key(self, namespace: str, table_name: str) -> str:
+        return f"{namespace}.{table_name}"
+
+    async def refresh_if_needed(
+        self,
+        namespace: str,
+        table_name: str,
+        *,
+        buffer_minutes: int = 5,
+    ) -> VendedCredentials:
+        """Return cached vended credentials, refreshing when near expiry."""
+        key = self._cache_key(namespace, table_name)
+        cached = self._vended_cache.get(key)
+        if cached and cached.expiration > datetime.now(UTC) + timedelta(minutes=buffer_minutes):
+            return cached
+        creds = await self.vend_credentials(namespace, table_name)
+        self._vended_cache[key] = creds
+        return creds
+
     async def get_s3_client_for_table(
         self,
         namespace: str,
@@ -151,7 +171,7 @@ class RestCatalogCredentialVendor:
         """
         import boto3
 
-        creds = await self.vend_credentials(namespace, table_name)
+        creds = await self.refresh_if_needed(namespace, table_name)
 
         # Create S3 client with short-lived credentials
         s3_client = boto3.client(

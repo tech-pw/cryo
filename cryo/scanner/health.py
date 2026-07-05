@@ -30,40 +30,67 @@ HEALTH_THRESHOLDS = {
 }
 
 
+def _size_scale(total_size_gb: float) -> float:
+    """Scale count-based thresholds for large tables (sqrt of 100 GB units)."""
+    return float(max(1.0, ((total_size_gb or 0) / 100.0) ** 0.5))
+
+
+def _scaled_thresholds(total_size_gb: float) -> dict[str, int | float]:
+    scale = _size_scale(total_size_gb)
+    scaled: dict[str, int | float] = {}
+    for key, value in HEALTH_THRESHOLDS.items():
+        if "pct" in key or "ratio" in key or "age" in key:
+            scaled[key] = value
+        elif isinstance(value, int):
+            scaled[key] = int(value * scale)
+        else:
+            scaled[key] = value * scale
+    return scaled
+
+
 def compute_health_score(
     stats: Mapping[str, Any],
     health_small_file_count: int,
     *,
     now: datetime | None = None,
 ) -> tuple[int, str]:
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
     score = 100
     total_files = int(stats.get("total_files") or 0)
     small_pct = (health_small_file_count / max(total_files, 1)) * 100
-    score = _deduct(score, small_pct, "small_file_pct")
-    score = _deduct(score, total_files, "total_files")
+    score = _deduct(score, small_pct, "small_file_pct", thresholds)
+    score = _deduct(score, total_files, "total_files", thresholds)
 
     delete_pct = float(stats.get("delete_file_pct") or 0)
     delete_files = int(stats.get("total_delete_files") or 0)
-    if delete_pct >= HEALTH_THRESHOLDS["delete_file_pct_crit"]:
+    if delete_pct >= thresholds["delete_file_pct_crit"]:
         score -= 20
-    elif delete_files >= HEALTH_THRESHOLDS["delete_file_count_crit"]:
+    elif delete_files >= thresholds["delete_file_count_crit"]:
         score -= 20
-    elif delete_pct >= HEALTH_THRESHOLDS["delete_file_pct_warn"]:
+    elif delete_pct >= thresholds["delete_file_pct_warn"]:
         score -= 8
-    elif delete_files >= HEALTH_THRESHOLDS["delete_file_count_warn"]:
+    elif delete_files >= thresholds["delete_file_count_warn"]:
         score -= 8
 
-    score = _deduct(score, int(stats.get("total_snapshots") or 0), "snapshot_count")
+    score = _deduct(score, int(stats.get("total_snapshots") or 0), "snapshot_count", thresholds)
     last_commit = stats.get("last_snapshot_committed_at") or stats.get("first_updated_at")
-    score = _deduct_snapshot_age(score, last_commit, now=now)
-    score = _deduct(score, int(stats.get("manifest_count") or 0), "manifest_count")
-    score = _deduct(score, int(stats.get("total_partitions") or 0), "partition_count")
-    score = _deduct(score, float(stats.get("partition_skew_ratio") or 0), "partition_skew_ratio")
+    score = _deduct_snapshot_age(score, last_commit, now=now, thresholds=thresholds)
+    score = _deduct(score, int(stats.get("manifest_count") or 0), "manifest_count", thresholds)
+    score = _deduct(score, int(stats.get("total_partitions") or 0), "partition_count", thresholds)
     score = _deduct(
-        score, float(stats.get("avg_files_per_partition") or 0), "avg_files_per_partition"
+        score, float(stats.get("partition_skew_ratio") or 0), "partition_skew_ratio", thresholds
     )
     score = _deduct(
-        score, float(stats.get("metadata_to_data_ratio") or 0), "metadata_to_data_ratio"
+        score,
+        float(stats.get("avg_files_per_partition") or 0),
+        "avg_files_per_partition",
+        thresholds,
+    )
+    score = _deduct(
+        score,
+        float(stats.get("metadata_to_data_ratio") or 0),
+        "metadata_to_data_ratio",
+        thresholds,
     )
 
     if stats.get("v3_upgrade_candidate"):
@@ -90,15 +117,27 @@ def compute_health_score(
     return score, _grade(score)
 
 
-def _deduct(score: int, value: float, key: str) -> int:
-    if value >= HEALTH_THRESHOLDS[f"{key}_crit"]:
+def _deduct(
+    score: int,
+    value: float,
+    key: str,
+    thresholds: Mapping[str, int | float] | None = None,
+) -> int:
+    t = thresholds or HEALTH_THRESHOLDS
+    if value >= t[f"{key}_crit"]:
         return score - 20
-    if value >= HEALTH_THRESHOLDS[f"{key}_warn"]:
+    if value >= t[f"{key}_warn"]:
         return score - 8
     return score
 
 
-def _deduct_snapshot_age(score: int, first_updated_at: Any, *, now: datetime | None) -> int:
+def _deduct_snapshot_age(
+    score: int,
+    first_updated_at: Any,
+    *,
+    now: datetime | None,
+    thresholds: Mapping[str, int | float] | None = None,
+) -> int:
     first_updated = _as_datetime(first_updated_at)
     if first_updated is None:
         return score
@@ -106,7 +145,7 @@ def _deduct_snapshot_age(score: int, first_updated_at: Any, *, now: datetime | N
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     age_days = (current.astimezone(UTC) - first_updated.astimezone(UTC)).days
-    return _deduct(score, age_days, "snapshot_age_days")
+    return _deduct(score, age_days, "snapshot_age_days", thresholds)
 
 
 def _as_datetime(value: Any) -> datetime | None:

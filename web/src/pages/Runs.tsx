@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Col, Row, Space, Table, Typography, message } from "antd";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { cancelRun, listRuns } from "../api/client";
-import type { RunRead } from "../api/types";
+import { cancelRun, getRunJobs, listRuns } from "../api/client";
+import type { JobRead, RunRead } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader } from "../components/common";
 import { RunConsole } from "../components/RunConsole";
@@ -33,6 +33,12 @@ export const Runs = () => {
     queryKey: ["runs", token, page],
     queryFn: () => listRuns(api, { limit: pageSize, offset: (page - 1) * pageSize }),
     refetchInterval: 5000
+  });
+  const selectedRunJobs = useQuery({
+    queryKey: ["run-jobs", runId, token],
+    queryFn: () => getRunJobs(api, runId!),
+    enabled: Boolean(runId),
+    retry: 1
   });
   const pageRows = runs.data ?? [];
   const mayHaveMore = pageRows.length === pageSize;
@@ -115,8 +121,24 @@ export const Runs = () => {
                 { title: "Trigger", dataIndex: "trigger", width: 104, render: (value) => value ?? "-" },
                 {
                   title: "Jobs",
-                  width: 84,
-                  render: (_, row) => formatNumber(Number(row.summary?.jobs_total ?? row.summary?.job_count ?? 0))
+                  width: 120,
+                  render: (_, row) => {
+                    const count = formatNumber(Number(row.summary?.jobs_total ?? row.summary?.job_count ?? 0));
+                    const firstJobId =
+                      typeof row.summary?.first_job_id === "string" ? row.summary.first_job_id : undefined;
+                    return (
+                      <Space direction="vertical" size={0} onClick={(event) => event.stopPropagation()}>
+                        <Typography.Text>{count}</Typography.Text>
+                        {runId === row.id && selectedRunJobs.data?.length ? (
+                          <Link to={`/jobs/${selectedRunJobs.data[0].id}`}>Open job detail</Link>
+                        ) : firstJobId ? (
+                          <Link to={`/jobs/${firstJobId}`}>Open job detail</Link>
+                        ) : runId === row.id ? null : (
+                          <Typography.Text type="secondary">Select run</Typography.Text>
+                        )}
+                      </Space>
+                    );
+                  }
                 },
                 { title: "Created", dataIndex: "created_at", width: 148, render: formatTime },
                 {
@@ -154,6 +176,22 @@ export const Runs = () => {
                   <span>Live console</span>
                   <Typography.Text type="secondary">{runId.slice(0, 8)}</Typography.Text>
                 </Space>
+              }
+              extra={
+                selectedRunJobs.data?.length ? (
+                  <Space wrap size={4}>
+                    {selectedRunJobs.data.slice(0, 4).map((job: JobRead) => (
+                      <Link key={job.id} to={`/jobs/${job.id}`}>
+                        Job {shortId(job.id)}
+                      </Link>
+                    ))}
+                    {selectedRunJobs.data.length > 4 ? (
+                      <Typography.Text type="secondary">
+                        +{selectedRunJobs.data.length - 4} more in table
+                      </Typography.Text>
+                    ) : null}
+                  </Space>
+                ) : null
               }
             >
               <RunConsole runId={runId} />

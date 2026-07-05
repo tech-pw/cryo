@@ -16,6 +16,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from cryo.config import get_settings
 from cryo.db.models import QueryLog
 
 logger = logging.getLogger(__name__)
@@ -160,8 +161,9 @@ async def replay_workload(
     Returns:
         Replay results with latency comparison
     """
-    effective_max_concurrent = (
-        max_concurrent if max_concurrent is not None else config.max_concurrent
+    effective_max_concurrent = min(
+        max_concurrent if max_concurrent is not None else config.max_concurrent,
+        max(1, int(get_settings().api_rate_limit_burst)),
     )
     effective_delay_ms = (
         delay_between_queries_ms

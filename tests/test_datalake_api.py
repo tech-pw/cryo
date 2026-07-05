@@ -473,6 +473,8 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
         lambda **kwargs: MaintenanceRun(id=run_id, **kwargs),
     )
 
+    from cryo.api.security import Principal, Role
+
     response = routes.create_maintenance_run(
         MaintenanceRunRequest(
             selection=AssignmentSelection(
@@ -484,6 +486,7 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
             trigger="web",
         ),
         RunSession(),  # type: ignore[arg-type]
+        Principal(subject="test-user", roles=frozenset({Role.OPERATOR}), tenant_id=None),
     )
 
     assert response.run_id == run_id

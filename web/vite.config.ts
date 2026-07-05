@@ -3,6 +3,17 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
+          antd: ["antd", "@ant-design/icons"],
+          recharts: ["recharts"]
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {

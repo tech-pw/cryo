@@ -49,6 +49,10 @@ def _provider_api_key(stored: str | None) -> str | None:
     return decrypt_secret(stored)
 
 
+def _slack_webhook_url(stored: str | None) -> str | None:
+    return decrypt_secret(stored)
+
+
 class AnomalyResponse(BaseModel):
     table_id: uuid.UUID
     anomalies: list[JsonDict]
@@ -88,6 +92,8 @@ class ComplianceStatusResponse(BaseModel):
     table_id: uuid.UUID
     table_ref: str
     pending_deletion: JsonDict | None = None
+    abac_policy_count: int = 0
+    abac_enforcement_note: str | None = None
 
 
 class ProtectSnapshotRequest(BaseModel):
@@ -674,6 +680,8 @@ def mcp_call_tool(payload: McpToolCallRequest, session: SessionDep) -> McpToolCa
     tags=["compliance"],
 )
 def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> ComplianceStatusResponse:
+    from cryo.security.abac import ABACPolicy
+
     table = session.get(Table, table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -682,6 +690,14 @@ def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> Complianc
     pending = track_pending_deletions(
         f"iceberg.{table.schema_name}.{table.table_name}",
         stats_dict,
+    )
+    abac_count = len(
+        session.scalars(select(ABACPolicy).where(ABACPolicy.table_id == table_id)).all()
+    )
+    abac_note = (
+        "ABAC maintenance enforcement active; scan-time row/column filters require catalog proxy."
+        if abac_count
+        else None
     )
     return ComplianceStatusResponse(
         table_id=table_id,
@@ -697,6 +713,8 @@ def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> Complianc
             if pending
             else None
         ),
+        abac_policy_count=abac_count,
+        abac_enforcement_note=abac_note,
     )
 
 
@@ -1103,7 +1121,7 @@ def create_slack_config(payload: SlackConfigCreate, session: SessionDep) -> Slac
 
     config = SlackConfig(
         name=payload.name,
-        webhook_url_encrypted=payload.webhook_url,  # TODO: encrypt in production
+        webhook_url_encrypted=encrypt_secret(payload.webhook_url),
         channel=payload.channel,
         daily_report_enabled=payload.daily_report_enabled,
         daily_report_cron=daily_report_cron,
@@ -1175,7 +1193,7 @@ def update_slack_config(
     if payload.name is not None:
         config.name = payload.name
     if payload.webhook_url is not None:
-        config.webhook_url_encrypted = payload.webhook_url  # TODO: encrypt
+        config.webhook_url_encrypted = encrypt_secret(payload.webhook_url)
     if payload.channel is not None:
         config.channel = payload.channel
     if payload.daily_report_enabled is not None:
@@ -1254,7 +1272,7 @@ async def test_slack_config(config_id: uuid.UUID, session: SessionDep) -> JsonDi
     if not config.webhook_url_encrypted:
         raise HTTPException(status_code=400, detail="No webhook URL configured")
 
-    client = SlackClient(config.webhook_url_encrypted, config.channel)
+    client = SlackClient(_slack_webhook_url(config.webhook_url_encrypted) or "", config.channel)
     blocks = [
         header_block("🧊 Cryo Test Message"),
         section_block(
@@ -1314,7 +1332,10 @@ async def generate_report(
 
     slack_client = None
     if send_to_slack and slack_config and slack_config.webhook_url_encrypted:
-        slack_client = SlackClient(slack_config.webhook_url_encrypted, slack_config.channel)
+        slack_client = SlackClient(
+            _slack_webhook_url(slack_config.webhook_url_encrypted) or "",
+            slack_config.channel,
+        )
 
     result = await generate_daily_report(
         session,

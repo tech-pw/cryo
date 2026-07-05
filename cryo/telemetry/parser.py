@@ -58,17 +58,58 @@ _TABLE_REF_PATTERN = re.compile(
 
 
 def parse_query_predicates(sql: str) -> PredicateInfo:
-    """Parse a SQL query to extract predicate information.
+    """Parse a SQL query to extract predicate information."""
+    sqlglot_result = _parse_with_sqlglot(sql)
+    if sqlglot_result is not None:
+        return sqlglot_result
+    return _parse_with_regex(sql)
 
-    This is a regex-based parser that handles common SQL patterns.
-    It's not a full SQL parser and may miss complex expressions.
 
-    Args:
-        sql: The SQL query string
+def _parse_with_sqlglot(sql: str) -> PredicateInfo | None:
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except ImportError:
+        return None
 
-    Returns:
-        PredicateInfo with extracted columns and predicates
-    """
+    info = PredicateInfo()
+    try:
+        parsed = sqlglot.parse_one(sql, read="trino")
+    except Exception:
+        return None
+
+    if isinstance(parsed, exp.Select):
+        info.query_type = "SELECT"
+    elif isinstance(parsed, exp.Insert):
+        info.query_type = "INSERT"
+    elif isinstance(parsed, exp.Update):
+        info.query_type = "UPDATE"
+    elif isinstance(parsed, exp.Delete):
+        info.query_type = "DELETE"
+    else:
+        info.query_type = "OTHER"
+
+    for table in parsed.find_all(exp.Table):
+        name = table.name
+        schema = table.db or table.catalog
+        if schema and name:
+            info.tables_referenced.append(f"{schema}.{name}")
+        elif name:
+            info.tables_referenced.append(name)
+
+    where = parsed.find(exp.Where)
+    if where is not None:
+        for col in where.find_all(exp.Column):
+            col_name = col.name
+            if not col_name:
+                continue
+            info.filter_columns.append(
+                ColumnReference(column=col_name, table_alias=col.table, is_equality=True)
+            )
+    return info
+
+
+def _parse_with_regex(sql: str) -> PredicateInfo:
     info = PredicateInfo()
 
     # Determine query type

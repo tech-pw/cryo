@@ -17,14 +17,13 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import selectinload
 
-from cryo.api.deps import require_editor, require_viewer
+from cryo.api.deps import SessionDep, require_editor, require_viewer
 from cryo.api.security import Principal
-from cryo.db.session import get_session
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
@@ -60,7 +59,7 @@ class ApprovalAction(BaseModel):
 
 @router.get("/approvals/pending", response_model=list[ApprovalRequestRead])
 def list_pending_approvals(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
 ) -> list[ApprovalRequestRead]:
     """List all pending approval requests."""
@@ -101,7 +100,7 @@ def list_pending_approvals(
 @router.post("/approvals/request", response_model=ApprovalRequestRead)
 def create_approval_request(
     request: CreateApprovalRequest,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_editor)],
 ) -> ApprovalRequestRead:
     """Create a new approval request for a destructive operation."""
@@ -161,7 +160,7 @@ def create_approval_request(
 def approve_or_reject(
     request_id: UUID,
     action: ApprovalAction,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_editor)],
 ) -> dict[str, str]:
     """Approve or reject an approval request."""
@@ -195,7 +194,7 @@ class LineageGraphRead(BaseModel):
 @router.get("/lineage/{table_id}", response_model=LineageGraphRead)
 def get_table_lineage(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     depth: int = Query(3, ge=1, le=10),
 ) -> LineageGraphRead:
@@ -250,7 +249,7 @@ class AnomalyAlertRead(BaseModel):
 
 @router.get("/anomalies", response_model=list[AnomalyAlertRead])
 def detect_anomalies(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
@@ -285,7 +284,7 @@ def detect_anomalies(
 @router.get("/anomalies/{table_id}", response_model=list[AnomalyAlertRead])
 def detect_table_anomalies(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
@@ -343,7 +342,7 @@ class DataQualityProfileRead(BaseModel):
 @router.get("/data-quality/{table_id}", response_model=DataQualityProfileRead)
 def get_data_quality_profile(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
 ) -> DataQualityProfileRead:
@@ -388,6 +387,8 @@ class PartitionEvolutionRecommendationRead(BaseModel):
     confidence: float
     estimated_pruning_improvement_pct: float
     query_patterns_analyzed: int
+    cardinality_estimate: str = "unknown"
+    warnings: list[str] = []
 
 
 @router.get(
@@ -396,7 +397,7 @@ class PartitionEvolutionRecommendationRead(BaseModel):
 )
 def get_partition_evolution_recommendation(
     table_id: UUID,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     min_query_threshold: int = Query(100, ge=10),
 ) -> PartitionEvolutionRecommendationRead | None:
@@ -419,6 +420,8 @@ def get_partition_evolution_recommendation(
         confidence=rec.confidence,
         estimated_pruning_improvement_pct=rec.estimated_pruning_improvement_pct,
         query_patterns_analyzed=rec.query_patterns_analyzed,
+        cardinality_estimate=rec.cardinality_estimate,
+        warnings=rec.warnings,
     )
 
 
@@ -439,7 +442,7 @@ class MaintenanceSignalRead(BaseModel):
 
 @router.get("/signals", response_model=list[MaintenanceSignalRead])
 def detect_maintenance_signals(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
 ) -> list[MaintenanceSignalRead]:
     """Detect all maintenance signals (file degradation, latency spikes, cost spikes)."""
@@ -481,7 +484,7 @@ class CostForecastRead(BaseModel):
 
 @router.get("/finops/forecast", response_model=CostForecastRead)
 def get_cost_forecast(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
     budget_limit_usd: float | None = Query(None, ge=0),
 ) -> CostForecastRead:
@@ -502,3 +505,36 @@ def get_cost_forecast(
         budget_limit_usd=forecast.budget_limit_usd,
         alert_level=forecast.alert_level,
     )
+
+
+@router.post("/gitops/webhook", tags=["gitops"])
+def gitops_webhook(
+    payload: dict,
+    session: SessionDep,
+    request: Request,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> dict[str, object]:
+    """Reload GitOps policies when a git push webhook fires."""
+    from pathlib import Path
+
+    from cryo.config import get_settings
+    from cryo.gitops.policy_loader import handle_git_webhook
+
+    settings = get_settings()
+    if settings.gitops_webhook_secret:
+        token = request.headers.get("X-Cryo-GitOps-Secret", "")
+        if token != settings.gitops_webhook_secret:
+            raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    if not settings.gitops_repo_path:
+        raise HTTPException(
+            status_code=503,
+            detail="GitOps repository path is not configured (CRYO_GITOPS_REPO_PATH)",
+        )
+    result = handle_git_webhook(
+        payload,
+        repo_path=Path(settings.gitops_repo_path),
+        policy_dir_rel=settings.gitops_policy_dir,
+        session=session,
+    )
+    session.commit()
+    return result

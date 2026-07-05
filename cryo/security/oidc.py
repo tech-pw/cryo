@@ -84,7 +84,11 @@ def verify_oidc_access_token(token: str) -> dict[str, Any] | None:
 
 def exchange_authorization_code(*, code: str, redirect_uri: str) -> dict[str, Any] | None:
     settings = get_settings()
-    if not settings.oidc_issuer_url or not settings.oidc_client_id or not settings.oidc_client_secret:
+    if (
+        not settings.oidc_issuer_url
+        or not settings.oidc_client_id
+        or not settings.oidc_client_secret
+    ):
         return None
 
     endpoints = discover_oidc_endpoints()
@@ -101,6 +105,41 @@ def exchange_authorization_code(*, code: str, redirect_uri: str) -> dict[str, An
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": redirect_uri,
+                "client_id": settings.oidc_client_id,
+                "client_secret": settings.oidc_client_secret,
+            },
+            headers={"Accept": "application/json"},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+    payload = response.json()
+    return payload if isinstance(payload, dict) else None
+
+
+def refresh_oidc_token(refresh_token: str) -> dict[str, Any] | None:
+    settings = get_settings()
+    if (
+        not settings.oidc_issuer_url
+        or not settings.oidc_client_id
+        or not settings.oidc_client_secret
+    ):
+        return None
+
+    endpoints = discover_oidc_endpoints()
+    token_endpoint = (endpoints or {}).get("token_endpoint")
+    if not token_endpoint:
+        return None
+
+    import httpx
+
+    try:
+        response = httpx.post(
+            token_endpoint,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
                 "client_id": settings.oidc_client_id,
                 "client_secret": settings.oidc_client_secret,
             },

@@ -1,593 +1,482 @@
-# Cryo 6-Month Premortem Analysis — July 2026
+# Cryo 6-Month Premortem Analysis
+
+**Scenario date:** January 2027 (six months after a July 2026 production rollout)  
+**Code baseline:** `main` @ 2026-07-05 hardening pass (`039cca9`)  
+**Companion docs:** `PREMORTEM.md`, `PREMORTEM_FEATURES.md`, `PREMORTEM_UI.md`, `PREMORTEM_ACTIONABLES.md`, `DEPLOYMENT.md`
+
+This document answers three questions for every major Cryo capability:
+
+1. **How does it work today?** (actual code path, not roadmap intent)
+2. **What breaks at 6 months?** (realistic failure modes at fleet scale)
+3. **What must be fixed before / during rollout?**
+
+The July 2026 hardening pass fixed several P0 issues (JWT auth, secret encryption, native engine fake success, bandit key bug, PII fail-closed, lock renewal, Helm templates, UI confirmations). This analysis **does not re-list those as open** unless residual risk remains. Items marked **Fixed (2026-07)** include a file reference; **Open** items cite evidence.
+
+---
 
 ## Executive Summary
 
-**Scenario**: It's January 2027. Cryo has been deployed to production for 6 months and has experienced multiple critical failures, data loss incidents, and customer churn.
+Cryo replaces Airflow + dbt macros with a self-hosted platform: **Scanner → Postgres stats → Planner → Governor admission → Worker → Trino/Spark SQL → Audit log → UI/reporting**. That core loop is real, tested, and parity-aligned with the reference Trino maintenance DAG.
 
-This premortem identifies **87 critical issues** across all 30 features that led to these failures, organized by severity and impact.
+Around that core, **30+ extension features** were added (AI copilot, lineage, FinOps, ABAC, Flink, GitOps, workload replay, etc.). At 6 months:
 
----
+| Category | Expected outcome |
+|----------|------------------|
+| **Core maintenance** (scan, plan, optimize, expire, governor) | **Works** for Trino-first fleets up to ~2–5k tables if ops follow load-aware defaults |
+| **Spark/EMR path** | **Works in principle**; less battle-tested than Trino; EMR slot governance needs tuning |
+| **Health / cost dashboards** | **Usable** with known precision caveats on very large tables and heuristic fallbacks |
+| **Preset scheduling + bulk assign** | **Works**; confirmation dialogs now prevent accidental fleet-wide runs |
+| **Phase 8/9 “advanced” features** | **~50% production-grade** — APIs exist, UI partial, several depend on telemetry never ingested |
+| **Experimental engines** (Native Rust, Flink submit) | **Not production-ready** — disabled or generate-only |
+| **Multi-tenant SaaS** | **Not ready** — opt-in isolation; default deploy is single-tenant |
 
-## 🔴 CRITICAL ISSUES (Production-Breaking)
+**Honest 6-month score:** ~**65%** of advertised surface area is dependable in production; ~**25%** is “works if you configure and babysit it”; ~**10%** should be disabled or removed until rewritten.
 
-### Database & Data Integrity
+**Top 5 risks that will still hurt at month 6:**
 
-**Issue #1: Missing Database Migrations**
-- **Feature**: Lineage tracking, multi-tenant isolation
-- **Problem**: `LineageEdge` and `ABACPolicy` tables don't exist - no migrations created
-- **Impact**: API crashes on startup when trying to import models
-- **Evidence**: Only 1 migration created (`20260703_0009_approval_workflows.py`), but 10+ new models added
-- **Fix Required**: Create migrations for ALL new tables
-
-**Issue #2: No Foreign Key Constraints**
-- **Feature**: All new features
-- **Problem**: `LineageEdge.source_table_id`, `ABACPolicy.table_id` have no FK constraints
-- **Impact**: Orphaned records, data corruption, cascading delete failures
-- **Evidence**: Code comments say "Would add FK in production" but never added
-- **Fix Required**: Add ALL foreign key constraints before production
-
-**Issue #3: No Database Indexes**
-- **Feature**: Query performance, SLA monitoring, anomaly detection
-- **Problem**: Queries on `QueryLog.tables_accessed` (JSONB), `TableStatsHistory.scan_at` have no indexes
-- **Impact**: Dashboard loads taking 30+ seconds with 1M+ records
-- **Evidence**: No index creation in migrations
-- **Fix Required**: Add indexes on all filter/sort columns
-
-**Issue #4: JSONB Query Performance**
-- **Feature**: Query performance dashboard, lineage tracking
-- **Problem**: `jsonb_exists_any()` queries scan entire table
-- **Impact**: API timeouts on tables endpoint after 100K queries
-- **Evidence**: Line 13 in dashboard_routes.py uses unindexed JSONB search
-- **Fix Required**: Create GIN indexes on JSONB columns
-
-**Issue #5: No Data Validation in DB Models**
-- **Feature**: Approval workflows, ABAC, lineage
-- **Problem**: `impact_preview`, `column_masks`, `metadata` JSONBs accept any structure
-- **Impact**: Type errors, crashes when accessing malformed data
-- **Evidence**: No Pydantic validation on JSONB fields
-- **Fix Required**: Add JSON schema validation or Pydantic models
+1. **Scale without observability** — no OpenTelemetry; governor still does per-job DB work in waves; embedding search is O(n).
+2. **Telemetry-dependent features starved** — query log ingestion optional; lineage/anomaly/SLA P95/AutoComp query-frequency all degrade when telemetry is off or incomplete.
+3. **Docs vs reality** — `PREMORTEM_RESOLUTION_SUMMARY.md` claims 100% resolution; ABAC, cost attribution, Flink execute, and Rust engines remain stubs or unwired.
+4. **Migration / schema churn** — 17 migrations in one week; no squash; one migration already referenced a non-existent column (fixed, but pattern repeats).
+5. **Operational maturity** — compose stack is dev-friendly; Helm exists but no validated runbook for upgrades, backup/restore, or disaster recovery.
 
 ---
 
-### Integration & Orchestration
+## How Cryo Works (End-to-End)
 
-**Issue #6: Dashboard Endpoints Not Integrated with Core System**
-- **Feature**: All 8 new dashboard endpoints
-- **Problem**: Endpoints exist but never called by governor/scheduler/worker
-- **Impact**: Features exist but don't DO anything - pure dead code
-- **Evidence**: No imports of `dashboard_routes` in scheduler/governor/worker
-- **Fix Required**: Wire endpoints into execution pipeline
+```mermaid
+flowchart LR
+  subgraph read [Read side]
+    SRC[Sources / PyIceberg]
+    SCN[Scanner CronJob]
+    SRC --> SCN
+    SCN --> PG[(Postgres cryo.*)]
+  end
 
-**Issue #7: AutoComp Benefit Score Never Calculated**
-- **Feature**: AutoComp benefit scoring (#2)
-- **Problem**: `benefit_score` column exists but no code populates it
-- **Impact**: Planner still uses dumb small_file_count ranking, wastes compute
-- **Evidence**: Code says "integration pending" - still pending
-- **Fix Required**: Add benefit score computation to scanner, integrate with planner
+  subgraph plan [Planning]
+    SCH[Scheduler]
+    API[FastAPI]
+    PLN[Planner]
+    PG --> SCH
+    PG --> API
+    API --> PLN
+    SCH --> PLN
+  end
 
-**Issue #8: Signal-Driven Triggers Never Fire**
-- **Feature**: Signal-driven maintenance triggers (#4)
-- **Problem**: `triggers/evaluator.py` module exists but never called
-- **Impact**: Reactive maintenance never happens, tables degrade until scheduled maintenance
-- **Evidence**: No background task/cron job to evaluate triggers
-- **Fix Required**: Add trigger evaluation loop to governor or scheduler service
+  subgraph exec [Execution]
+    GOV[Governor leader]
+    Q[Redis queue]
+    WRK[Worker pool]
+    ENG[Trino / Spark]
+    PLN --> GOV
+    GOV --> Q
+    Q --> WRK
+    WRK --> ENG
+    WRK --> AUD[audit_log]
+  end
 
-**Issue #9: Approval Workflows Block Execution Forever**
-- **Feature**: Approval workflows (#18)
-- **Problem**: Governor checks if approval required but never actually enforces it
-- **Impact**: Destructive ops execute without approval, defeating entire purpose
-- **Evidence**: No integration between `approvals.py` and `governor/governor.py`
-- **Fix Required**: Add approval gating to maintenance execution path
+  subgraph ui [UI / Reporting]
+    WEB[React UI]
+    RPT[Daily report / Slack]
+    API --> WEB
+    PG --> RPT
+  end
+```
 
-**Issue #10: Puffin Statistics Never Computed**
-- **Feature**: Puffin statistics management (#1)
-- **Problem**: Config exists, SQL rendering exists, but no execution path
-- **Impact**: Query performance never improves after compaction
-- **Evidence**: `COMPUTE_STATISTICS` operation type not in planner operation list
-- **Fix Required**: Add COMPUTE_STATISTICS to planner, execute after OPTIMIZE
+**Typical maintenance cycle:**
 
----
-
-### API & Authentication
-
-**Issue #11: No Authentication on New Endpoints**
-- **Feature**: All dashboard endpoints
-- **Problem**: `/api/query-performance`, `/api/sla-status` etc. have no auth
-- **Impact**: Anyone can access sensitive business metrics
-- **Evidence**: No `Depends(require_viewer)` on new endpoints
-- **Fix Required**: Add authentication to ALL endpoints
-
-**Issue #12: API Returns Unserializable Data**
-- **Feature**: Anomaly detection, lineage, workload replay
-- **Problem**: Returns Python dataclasses directly, not Pydantic models
-- **Impact**: API responses fail with "Object of type 'dataclass' is not JSON serializable"
-- **Evidence**: Functions return `@dataclass` instead of Pydantic `BaseModel`
-- **Fix Required**: Convert all dataclasses to Pydantic models or add serialization
-
-**Issue #13: No Rate Limiting**
-- **Feature**: Query performance, workload replay
-- **Problem**: Replay can trigger 1000s of Trino queries, no rate limit
-- **Impact**: DDoS your own Trino cluster, bring down production
-- **Evidence**: No rate limiting middleware in `api/app.py`
-- **Fix Required**: Add rate limiting, especially on expensive operations
-
-**Issue #14: No Input Validation**
-- **Feature**: S3 tiering, partition evolution, cost attribution
-- **Problem**: `lookback_days`, `min_size_gb` accept negative values
-- **Impact**: Crashes, infinite loops, or nonsense results
-- **Evidence**: No Pydantic Field validators or constraints
-- **Fix Required**: Add min/max constraints on all numeric inputs
+1. **Scanner** (`cryo/scanner/run.py`) reads Iceberg metadata via PyIceberg, computes stats/partitions/health grade/cost, persists to `tables`, `table_stats`, `table_partitions`, `table_stats_history`.
+2. **Scheduler** (`cryo/scheduler/service.py`) evaluates preset rules + cron, enqueues runs; also periodically updates **benefit scores** (`planner/benefit_score.py`).
+3. **API** accepts ad-hoc runs (`POST /api/v1/maintenance/run`), scan triggers, preset CRUD, bulk assignment.
+4. **Planner** (`cryo/planner/planner.py`) builds engine-agnostic `MaintenancePlan` from stored stats — partition chunking, GB budget, op order (expire → orphan → optimize → manifests → compute_statistics).
+5. **Governor** (`cryo/governor/governor.py`) leader-elected loop: load-aware admission, signal triggers, approval deferral, PII gate, bandit-tuned thresholds, enqueues admitted jobs.
+6. **Worker** (`cryo/worker/worker.py`) renders SQL per engine, executes, renews table lock, records **audit_log** (now with **actor** from JWT subject on ad-hoc runs).
+7. **UI** polls runs, shows health dashboards, allows operator actions with confirmations.
 
 ---
 
-### Frontend & UI
+## How It Will Work at Month 6 (Timeline)
 
-**Issue #15: Frontend Pages Not Registered in Router**
-- **Feature**: 6 new React pages
-- **Problem**: Pages created but routes commented out or missing
-- **Impact**: Users can't access new features via navigation
-- **Evidence**: Need to verify App.tsx routing for ALL new pages
-- **Fix Required**: Uncomment/add ALL routes in App.tsx
+### Months 1–2: Honeymoon → First Cracks
 
-**Issue #16: No Error Handling in UI**
-- **Feature**: All new dashboards
-- **Problem**: No try/catch, no loading states, no error boundaries
-- **Impact**: White screen of death on API errors
-- **Evidence**: UI code has no error handling patterns
-- **Fix Required**: Add error boundaries, loading states, error messages
+- Team runs compose or Helm on a **single catalog**, hundreds of tables. Scans complete; health grades look plausible; first Trino OPTIMIZE jobs succeed.
+- **Presets + bulk assign** get used; confirmations prevent the worst fat-finger incident, but operators still misconfigure **destination** vs **source** on multi-catalog fleets.
+- **AWS integration** configured; CloudWatch metrics appear; occasional IAM permission 500s on one endpoint while another silently returns `None` (inconsistent error handling in `aws_s3_metrics.py`).
+- **Query performance / SLA dashboards** show empty or sparse data because **telemetry ingestion** was never wired to Trino event listener / query log pipeline.
 
-**Issue #17: API Client Types Out of Sync**
-- **Feature**: Query performance, health trends
-- **Problem**: `web/src/api/client.ts` types manually written, not generated
-- **Impact**: Type mismatches cause runtime errors
-- **Evidence**: No OpenAPI type generation step
-- **Fix Required**: Generate types from OpenAPI schema automatically
+### Months 3–4: Scale Pain
 
-**Issue #18: No Pagination on Large Lists**
-- **Feature**: Query performance (top 1000 queries)
-- **Problem**: Trying to render 1000 rows in table without virtualization
-- **Impact**: Browser freezes, tab crashes
-- **Evidence**: No pagination or virtual scrolling in QueryPerformance.tsx
-- **Fix Required**: Add pagination or virtual scrolling to all large tables
+- Table count passes **~3k**; scanner CronJob runtime exceeds schedule window; chunks help but **parallel manifest** settings need per-catalog tuning.
+- **Governor wave** latency grows — per-job trigger/approval/PII queries × N jobs; operators see jobs stuck in `deferred` without a single “why” dashboard (reason in logs only).
+- **Benefit scores** help ranking when query logs exist; without them, planner falls back to small-file count — same as legacy Airflow behavior, but team expected “AI scheduling.”
+- **Bandit** converges in Postgres **if** governor always uses DB store; fallback to `/tmp/cryo/admission_bandit.json` on DB errors resets learning silently.
+
+### Months 5–6: Stabilize or Roll Back
+
+- Team **disables** unused nav features (cost attribution was already hidden; Flink/native never enabled).
+- **Focus** on Trino path + scanner reliability + runbooks.
+- **Incident:** long OPTIMIZE on 20TB table — lock renewal works, but Trino cluster saturation triggers load-aware deferral storm; need manual cap tuning.
+- **Second incident:** OIDC token expiry mid-session — UI session restore fails until re-login; no refresh-token flow.
+- Outcome: **core maintenance trusted**; **advanced/AI layer** treated as beta.
 
 ---
 
-### Multi-Engine Support
+## Feature-by-Feature Analysis
 
-**Issue #19: Spark Ingester Crashes on Auth Failure**
-- **Feature**: Multi-engine telemetry (#15)
-- **Problem**: Spark History Server often requires auth, code assumes no auth
-- **Impact**: Ingestion fails silently, no Spark queries ingested
-- **Evidence**: `SparkHistoryIngester` has no auth configuration
-- **Fix Required**: Add auth support (Kerberos, basic auth, etc.)
+Legend: **Status** = production readiness today · **6-mo risk** = what fails without further work
 
-**Issue #20: Athena Pagination Not Implemented**
-- **Feature**: Multi-engine telemetry (#15)
-- **Problem**: Athena paginator hardcoded to first page only
-- **Impact**: Only fetches 50 queries, misses 95% of workload
-- **Evidence**: `AthenaIngester.fetch_recent_queries()` doesn't follow pagination
-- **Fix Required**: Implement proper pagination for ALL pages
+### A. Core Platform
 
-**Issue #21: DuckDB History File Doesn't Exist**
-- **Feature**: Multi-engine telemetry (#15)
-- **Problem**: `~/.duckdb/history` is not a standard DuckDB feature
-- **Impact**: Never ingests any DuckDB queries
-- **Evidence**: DuckDB doesn't write history to this path by default
-- **Fix Required**: Use DuckDB's actual query logging mechanism
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| A1 | **Scanner** | PyIceberg manifest read → analyze → persist | **Good** | Large catalogs exceed cron window; corrupt manifest handling unified but still logs-and-continues (undercount risk) |
+| A2 | **Health scoring (A–F)** | `scanner/health.py` thresholds on files/partitions/snapshots | **Good** | Flat thresholds penalize legit large tables; streaming exemption needs `history=` in signals (**Fixed 2026-07** in scan path) |
+| A3 | **Planner** | Pure partition-aware chunking, no SQL | **Good** | Preview uses stale stats — gap between preview and execute if writes between |
+| A4 | **Trino engine** | `engines/trino/sql.py` + session setup | **Good** | Trino version upgrades can break procedure syntax — golden tests help but not exhaustive |
+| A5 | **Spark/EMR engine** | `engines/spark/sql.py` + EMR submission | **Partial** | Golden tests only; EMR concurrency caps less proven than Trino load probe |
+| A6 | **Governor** | Redis leader + load-aware waves | **Good** | Per-job DB round-trips; silent `except` on approval/PII errors logs warning but continues (**improved** — PII fails closed on classifier error) |
+| A7 | **Worker + locks** | Per-table Redis lock, renewal per statement | **Good** | 6h TTL renewed — OK; crash mid-job still blocks table until TTL |
+| A8 | **Scheduler** | Preset cron + benefit score updates | **Good** | Leader election required; duplicate schedulers if Redis lease misconfigured |
+| A9 | **Redis queue** | Maintenance job queue + scan queue | **Good** | No dead-letter queue UI; poison jobs need manual DB fix |
+| A10 | **Audit log** | Per-operation rows in `audit_log` | **Good** | **Actor** column added (**Fixed 2026-07**); scheduled runs still lack human actor |
+| A11 | **Reporting** | HTML email + Slack blocks | **Partial** | Slack success flag **fixed**; webhook still **plaintext in DB** (TODO encrypt) |
 
-**Issue #22: Flink Engine Never Executes Jobs**
-- **Feature**: Flink engine integration (#9)
-- **Problem**: Generates Java/SQL but doesn't submit to Flink cluster
-- **Impact**: Flink "support" is completely fake, just generates unused code
-- **Evidence**: `FlinkEngine.execute()` just logs, doesn't call Flink APIs
-- **Fix Required**: Integrate with Flink REST API or JobManager to submit jobs
+### B. Inventory & Explorer
 
----
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| B1 | **Sources (REST/Hive/Glue)** | `sources/*` + factory | **Partial** | Factory unit-tested with mocks; no live catalog CI |
+| B2 | **Table explorer** | Server pagination, filters, bulk select | **Good** | Filter spec sent to API — correct pattern |
+| B3 | **Table detail** | Stats, partitions, audit, run/preview | **Good** | Audit timeline lacks actor column in UI |
+| B4 | **Bulk assign / run** | Filter → assign preset → run | **Good** | **ConfirmAction** added (**Fixed 2026-07**) |
+| B5 | **Datalake health dashboard** | Aggregates + top offenders (`top_limit=50`) | **Good** | Truncation banner added; still cap at 50 offenders |
+| B6 | **Multi-catalog dashboard** | Per-source aggregates | **Good** | Tenant-scoped (**Fixed 2026-07** on `dashboard_routes`) |
 
-### Cost & Billing
+### C. Presets & Policies
 
-**Issue #23: Cost Calculations Completely Wrong**
-- **Feature**: Cost attribution, FinOps forecasting
-- **Problem**: Hardcoded $0.023/GB assumes S3 Standard only
-- **Impact**: Cost estimates 3-10× wrong for Glacier, IA, etc.
-- **Evidence**: No S3 storage class detection
-- **Fix Required**: Query actual storage class from S3, use correct pricing
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| C1 | **Preset CRUD** | Operations + params + guardrails JSON | **Good** | Invalid JSON in guardrails only caught at run time |
+| C2 | **Assignment rules** | Schema/table matching | **Good** | Rule conflicts — last write wins, no merge UI |
+| C3 | **Effective preset resolution** | Assignment > rule > none | **Good** | — |
+| C4 | **Simulate rules** | API preview of rule matches | **Good** | Large fleets slow without indexes on filter columns |
+| C5 | **Manifest-only mode** | Separate API path | **Good** | Operators confuse with full maintenance |
 
-**Issue #24: Compute Cost Estimation Based on Fantasy**
-- **Feature**: FinOps forecasting (#28)
-- **Problem**: "1 query = 0.01 hours" is completely made up
-- **Impact**: Forecasts off by orders of magnitude
-- **Evidence**: No actual engine metrics, just wild guess
-- **Fix Required**: Use real query duration from engine metrics
+### D. Ad-Hoc Maintenance & Runs
 
-**Issue #25: Cost Attribution Requires Manual Tags**
-- **Feature**: Cost attribution (#13)
-- **Problem**: Requires `cost_center`, `department` tags that don't exist
-- **Impact**: Shows "unattributed: 100%" for all costs
-- **Evidence**: Alert in UI says "requires custom tags" but no way to add them
-- **Fix Required**: Add tag management UI or auto-detect from AWS Cost Explorer tags
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| D1 | **Maintenance preview** | Planner + SQL render + savings estimate | **Good** | Stale stats caveat |
+| D2 | **Ad-hoc run** | Creates run/jobs, enqueues | **Good** | Actor captured from JWT (**Fixed 2026-07**) |
+| D3 | **Run console / WebSocket** | Live job events | **Good** | JWT required on WS (**Fixed 2026-07**) |
+| D4 | **Cancel run** | Status update + queue signal | **Good** | In-flight Trino query may still complete |
+| D5 | **Job detail page** | Dashboard API + plan JSON | **Good** | Linked from RunConsole (**Fixed 2026-07**) |
 
-**Issue #26: S3 Tiering Recommendations Ignore Access Patterns**
-- **Feature**: S3 Intelligent-Tiering (#14)
-- **Problem**: Only checks query log, ignores actual S3 access logs
-- **Impact**: Recommends tiering for tables with direct S3 access, causes slowdowns
-- **Evidence**: No S3 access log integration
-- **Fix Required**: Integrate CloudTrail or S3 server access logs
+### E. Scanner Operations (UI)
 
----
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| E1 | **Scheduled scans** | Cron in `scanner_config` | **Good** | UTC only in UI — IST off-peak is engine-side |
+| E2 | **Fleet scan trigger** | `POST /scans` scope=all | **Good** | **ConfirmAction** added (**Fixed 2026-07**) |
+| E3 | **Scan progress** | Run summary + ScanConsole | **Good** | Very large fleets — progress granularity coarse |
 
-### Security & Access Control
+### F. Cost & Savings
 
-**Issue #27: ABAC Policies Have No Enforcement**
-- **Feature**: Cross-engine ABAC (#21)
-- **Problem**: Policy engine exists but Cryo doesn't act as REST catalog proxy
-- **Impact**: ABAC is 100% theater, zero actual security
-- **Evidence**: Code comments say "requires implementing full REST catalog spec"
-- **Fix Required**: Either implement REST catalog proxy or remove ABAC entirely
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| F1 | **Per-table cost estimate** | Scanner + `s3_pricing.py` | **Good** | Heuristic fallback for huge tables — **CostPrecision** buried in raw |
+| F2 | **Savings projection** | Preview + stats | **Good** | Orphan savings zeroed when scan limits exceeded |
+| F3 | **Cost savings page** | `/cost` dashboard | **Good** | — |
+| F4 | **Cost attribution** | `dashboard_routes` stub | **Disabled** | Returns empty; nav hidden (**Fixed 2026-07** — hide vs stub) |
+| F5 | **FinOps forecast** | `finops/forecast.py` | **Partial** | Heuristic compute hours; UI on Governance page |
+| F6 | **Learned cost model** | ML cache + evaluate API | **Partial** | Needs audit outcomes; stale if no maintenance runs |
+| F7 | **AWS Cost Explorer** | Not implemented | **N/A** | Documented absent in `aws_s3_metrics.py` |
 
-**Issue #28: Multi-Tenant Isolation Not Applied**
-- **Feature**: Multi-tenant isolation (#26)
-- **Problem**: No migration adds tenant_id columns, no queries filter by tenant
-- **Impact**: Tenant A can see Tenant B's data
-- **Evidence**: Code is just helper functions, no actual enforcement
-- **Fix Required**: Add tenant_id to ALL tables, add row-level security
+### G. Dashboards & Observability
 
-**Issue #29: Custom Scripts Execute Untrusted Code**
-- **Feature**: Custom maintenance scripts (#30)
-- **Problem**: Docker sandbox has vulnerabilities (--network none can be bypassed)
-- **Impact**: Users can escape sandbox, access host filesystem/network
-- **Evidence**: Basic string validation, no AST analysis, no seccomp
-- **Fix Required**: Use gVisor or Firecracker, not plain Docker
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| G1 | **Query performance** | `query_logs` table | **Partial** | Empty without ingestion pipeline |
+| G2 | **SLA monitoring** | Freshness + maintenance + P95 | **Partial** | Thresholds hardcoded (24h/7d/5s); P95 needs query logs |
+| G3 | **Health trends** | `table_stats_history` | **Good** | Needs ≥2 scan points for trend |
+| G4 | **Prometheus metrics** | `/metrics` | **Good** | Not all code paths instrumented |
+| G5 | **Deep health** | `/healthz/deep` | **Good** | K8s liveness only on API — worker/governor lack HTTP health |
+| G6 | **Grafana/Loki stack** | compose configs | **Dev only** | Not validated in prod Helm |
 
-**Issue #30: Approval Requests Never Expire**
-- **Feature**: Approval workflows (#18)
-- **Problem**: `expires_at` checked but no cleanup job deletes expired requests
-- **Impact**: Database fills with expired approvals, UI shows stale requests
-- **Evidence**: No background job for cleanup
-- **Fix Required**: Add cron job to mark expired requests as EXPIRED
+### H. Intelligence & AI
 
----
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| H1 | **Copilot verified Q&A** | Playbooks in extensions | **Partial** | Quality depends on curated questions |
+| H2 | **Embedding search** | `ai/similarity.py` | **Partial** | O(n) without pgvector; cache table added (**2026-07**) but ANN index open |
+| H3 | **Natural language ask** | LLM providers | **Partial** | Keys encrypted (**Fixed 2026-07**); spend/cost not capped in UI |
+| H4 | **MCP server** | `cryo/mcp/server.py` | **Partial** | Same auth as API; tools can trigger runs |
+| H5 | **Anomaly detection** | Z-score + MAD | **Partial** | False positives on weekly seasonality; fleet batch can OOM at 10k+ tables |
+| H6 | **Health classifier (TabPFN)** | ML module | **Partial** | On-demand refresh only — no scheduled drift check |
+| H7 | **Admission bandit** | Thompson sampling | **Good** | Postgres persistence (**Fixed 2026-07**); reset endpoint exists |
 
-### Data Quality & Accuracy
+### I. Governance & Compliance
 
-**Issue #31: Anomaly Detection False Positives**
-- **Feature**: AI anomaly detection (#23)
-- **Problem**: Z-score assumes normal distribution, breaks on skewed data
-- **Impact**: 90% false positive rate, users ignore all alerts
-- **Evidence**: No distribution type detection, always uses Z-score
-- **Fix Required**: Use robust methods (MAD, IQR) for skewed distributions
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| I1 | **Approval workflows** | Governor defers → pending list | **Good** | Approve/reject UI wired (**Fixed 2026-07**); expired request cleanup job missing |
+| I2 | **PII gate** | Classifier + admin bypass flag | **Good** | Fail-closed on error (**Fixed 2026-07**) |
+| I3 | **ABAC** | `security/abac.py` | **Not wired** | Module exists; **no route calls it** — false confidence |
+| I4 | **Protected snapshots** | API in extensions | **Partial** | No dedicated UI |
+| I5 | **Lineage graph** | `lineage/tracker.py` + telemetry | **Partial** | Recording wired in `telemetry/ingestion.py` — **only if ingestion runs** |
+| I6 | **Data quality profiler** | Advanced API | **Partial** | Depends on manifest stats in raw — often empty |
+| I7 | **Partition evolution** | Recommendations API | **Partial** | Regex SQL parse — incomplete table detection |
+| I8 | **Fleet signals / triggers** | Governor `TriggerEvaluator` | **Good** | Wired in governor loop; overrides cooldown when fired |
 
-**Issue #32: Partition Evolution Recommendations Always Wrong**
-- **Feature**: Partition evolution (#11)
-- **Problem**: Simple regex parsing misses 80% of table references
-- **Impact**: Recommends partition changes based on 20% of queries only
-- **Evidence**: `parse_query_for_lineage()` uses basic regex, not SQL parser
-- **Fix Required**: Use sqlglot or sqlparse for accurate table extraction
+### J. Phase 8 — Tiering & Routing
 
-**Issue #33: Data Quality Profiler Reads Fake Metadata**
-- **Feature**: Data quality profiling (#17)
-- **Problem**: Reads `manifest_stats` from `raw` JSONB that's never populated
-- **Impact**: All quality checks return "no data"
-- **Evidence**: Scanner doesn't populate `manifest_stats` in `raw` field
-- **Fix Required**: Actually query $manifests table or populate stats during scan
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| J1 | **Tier policies CRUD** | `phase8_routes.py` | **Partial** | Listed on Governance page; no create/edit UI |
+| J2 | **Tier candidates** | `tiering/service.py` | **Partial** | API only; partition bytes estimated roughly |
+| J3 | **Adaptive routing preview** | Scheduler routing | **Partial** | Backend-only |
+| J4 | **S3 Intelligent-Tiering recs** | `tiering/s3_analyzer.py` | **Partial** | Query-log proxy for access — not S3 access logs |
 
-**Issue #34: Lineage Graph Is Always Empty**
-- **Feature**: Data lineage (#22)
-- **Problem**: `record_lineage_from_query()` never called by any service
-- **Impact**: Lineage UI shows empty graph always
-- **Evidence**: No integration with query log ingestion
-- **Fix Required**: Call lineage recording during query log ingestion
+### K. Alternate Engines & Experimental
 
-**Issue #35: Health Trends Chart Shows Same Value**
-- **Feature**: Table health trends (#6)
-- **Problem**: No historical data in `TableStatsHistory` on fresh install
-- **Impact**: Chart shows single point, no trend
-- **Evidence**: No seed data or historical backfill
-- **Fix Required**: Add historical backfill job or seed data generator
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| K1 | **Native Rust engine** | `engines/native/engine.py` | **Disabled** | Returns `ok=False` (**Fixed 2026-07**); flag default off |
+| K2 | **Flink engine** | Generates Java job config | **Stub** | Does not submit to Flink cluster |
+| K3 | **cryo-native / cryo-engine crates** | Separate Rust trees | **Experimental** | Not in CI |
+| K4 | **Custom scripts sandbox** | Docker runner | **Partial** | Security model weak for untrusted code — gVisor recommended |
 
----
+### L. Integrations
 
-### Performance & Scalability
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| L1 | **AWS S3 metrics** | CloudWatch + pricing | **Partial** | Inconsistent errors; bucket identity not validated |
+| L2 | **Slack daily report** | Webhook | **Good** | Plaintext webhook URL in DB |
+| L3 | **Slack bot** | `/cryo` commands | **Partial** | Untested; may leak table names to public channels |
+| L4 | **PagerDuty** | Config key exists | **Partial** | Wiring unclear in anomaly alert path |
+| L5 | **GitOps policies** | Poll git repo | **Partial** | Polling not webhooks; conflict detection weak |
+| L6 | **Telemetry ingest (Trino/Spark/Athena/DuckDB)** | `telemetry/ingestion.py` | **Partial** | Athena pagination gaps; DuckDB path questionable; Spark auth |
+| L7 | **Workload replay** | Re-runs historical queries | **Partial** | Can hammer Trino — rate limit config exists but not enforced everywhere |
+| L8 | **Credential vending** | STS tokens | **Partial** | 1h token vs 2h job — refresh not implemented |
 
-**Issue #36: Anomaly Detection Scans All History**
-- **Feature**: AI anomaly detection (#23)
-- **Problem**: Loads entire 30-day history into memory for every table
-- **Impact**: OOM kills API server with 10K+ tables
-- **Evidence**: No pagination or windowing in `detect_all_anomalies()`
-- **Fix Required**: Process tables in batches, use windowing
+### M. Security & Auth
 
-**Issue #37: Workload Replay Hammers Trino**
-- **Feature**: Workload replay (#24)
-- **Problem**: Executes 1000 queries serially, no rate limiting
-- **Impact**: Brings down Trino cluster during testing
-- **Evidence**: No concurrency control, no backpressure
-- **Fix Required**: Add rate limiting, max concurrent queries
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| M1 | **JWT (dev)** | HS256, `/auth/token` | **Good** | Disabled in prod |
+| M2 | **OIDC (prod)** | JWKS + code exchange | **Implemented** | Needs IdP role mapping; no refresh token in UI |
+| M3 | **RBAC** | viewer / operator / admin | **Good** | Role in JWT; IdP must emit roles/groups claims |
+| M4 | **Tenant isolation** | Opt-in `enforce_tenant_isolation` | **Partial** | Default off; dashboard routes scoped (**Fixed 2026-07**); advanced routes less verified |
+| M5 | **Secrets at rest** | Fernet for AWS/AI keys | **Good** | Slack webhooks not encrypted |
+| M6 | **Rate limiting** | Token bucket on expensive APIs | **Partial** | Config exists; not universal |
 
-**Issue #38: GitOps Polling Creates Git Storm**
-- **Feature**: GitOps integration (#25)
-- **Problem**: Polls Git every 60 seconds, creates 1440 requests/day
-- **Impact**: GitHub rate limits, blocks entire org
-- **Evidence**: `watch_git_repository()` polls instead of using webhooks
-- **Fix Required**: Use GitHub webhooks, not polling
+### N. Deployment & Operations
 
-**Issue #39: Embedded SDK Has No Caching**
-- **Feature**: Embedded SDK (#27)
-- **Problem**: Every widget reload fetches data from API
-- **Impact**: 100 embedded widgets = 100 API requests/second
-- **Evidence**: No caching in `embed.js` or API responses
-- **Fix Required**: Add HTTP caching headers, client-side cache
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| N1 | **docker-compose** | Full local stack | **Good** | Dev secrets; not prod template |
+| N2 | **Helm chart** | api/worker/governor/scheduler/scanner | **Good** | Templates added (**Fixed 2026-07**); ops runbook thin |
+| N3 | **Leader election** | Redis lease 30s | **Good** | Split-brain if Redis down — single point of failure |
+| N4 | **Migrations** | 17 Alembic revisions | **Partial** | Churn; needs squash before long-lived prod |
+| N5 | **CI** | lint/mypy/pytest + canary | **Good** | No compose E2E; no web CI job; no Rust CI |
+| N6 | **Backup/DR** | Not documented | **Open** | Postgres backup is operator responsibility |
 
-**Issue #40: FinOps Forecast Recalculates Everything**
-- **Feature**: FinOps forecasting (#28)
-- **Problem**: Aggregates entire history on every request
-- **Impact**: 10+ second response time for forecast endpoint
-- **Evidence**: No pre-aggregation or materialized views
-- **Fix Required**: Pre-compute daily/monthly aggregates
+### O. Frontend (React)
 
----
-
-### Operational Complexity
-
-**Issue #41: No Monitoring or Metrics**
-- **Feature**: All features
-- **Problem**: No Prometheus metrics, no structured logging
-- **Impact**: Can't detect issues, can't measure performance
-- **Evidence**: No metrics exports in any new modules
-- **Fix Required**: Add metrics to ALL critical paths
-
-**Issue #42: No Health Checks**
-- **Feature**: All background services
-- **Problem**: Scanner, governor, scheduler have no health endpoints
-- **Impact**: K8s can't tell if service is stuck, never restarts
-- **Evidence**: Only API has `/healthz` endpoint
-- **Fix Required**: Add health checks to all services
-
-**Issue #43: No Graceful Shutdown**
-- **Feature**: Workload replay, custom scripts, GitOps watcher
-- **Problem**: SIGTERM kills immediately, loses in-progress work
-- **Impact**: Pod evictions cause data loss
-- **Evidence**: No signal handlers, no cleanup logic
-- **Fix Required**: Handle SIGTERM, finish current work, then exit
-
-**Issue #44: No Rollback Mechanism**
-- **Feature**: Approval workflows, GitOps
-- **Problem**: Approved changes execute immediately, can't undo
-- **Impact**: Accidental approval of bad policy takes down production
-- **Evidence**: No rollback in approval execution
-- **Fix Required**: Add rollback capability or dry-run mode
-
-**Issue #45: GitOps Conflicts Not Handled**
-- **Feature**: GitOps integration (#25)
-- **Problem**: Multiple policy files for same table = undefined behavior
-- **Impact**: Last-write-wins, policies fight each other
-- **Evidence**: No conflict detection in `load_policies_from_directory()`
-- **Fix Required**: Detect conflicts, error or merge deterministically
+| # | Feature | How it works | Status | 6-month risk |
+|---|---------|--------------|--------|--------------|
+| O1 | **Login / SSO** | Dev JWT + OIDC redirect | **Good** | OIDC callback route added (**Fixed 2026-07**) |
+| O2 | **Confirm destructive actions** | `ConfirmAction` | **Good** | — |
+| O3 | **Query error states** | `QueryErrorAlert` | **Good** | Intelligence page updated (**Fixed 2026-07**) |
+| O4 | **Pagination** | Table explorer, runs | **Partial** | Dashboard top lists capped |
+| O5 | **OpenAPI types** | Manual client + optional gen | **Partial** | Drift if `gen:api` not run in CI |
+| O6 | **Vitest coverage** | 30 tests, 11 files | **Partial** | 13+ pages untested |
+| O7 | **Playwright smoke** | `web/e2e/smoke.spec.ts` | **Partial** | Not in CI; requires live API |
+| O8 | **Cost attribution page** | Removed from nav | **Fixed** | Redirect to `/cost` |
 
 ---
 
-### Testing & Quality
+## Issue Register (Prioritized)
 
-**Issue #46: Only 1 Test File Exists**
-- **Feature**: All features
-- **Problem**: Only `test_flink_engine.py` tests new features
-- **Impact**: 95% of new code is untested, bugs in production
-- **Evidence**: No tests for anomaly detection, lineage, cost attribution, etc.
-- **Fix Required**: 80%+ test coverage before production
+### 🔴 Critical — fix before production scale
 
-**Issue #47: No Integration Tests**
-- **Feature**: All features
-- **Problem**: No end-to-end tests with real database
-- **Impact**: Features work in isolation but break when integrated
-- **Evidence**: No pytest fixtures for DB, no integration test suite
-- **Fix Required**: Add integration tests with test database
+| ID | Issue | Feature | Evidence | Fix |
+|----|-------|---------|----------|-----|
+| C1 | **No distributed tracing** | Ops | No OpenTelemetry | Add OTel + job/request correlation IDs |
+| C2 | **Governor per-job DB amplification** | Scale | `governor.py` wave loop | Batch fetch trigger/approval/PII state per wave |
+| C3 | **Telemetry not on by default** | Query perf, SLA P95, lineage, benefit score | Empty dashboards without ingest | Document + ship Trino event listener Helm sidecar |
+| C4 | **ABAC module unwired** | Security | `security/abac.py` unused | Wire or delete; update docs |
+| C5 | **Slack webhook plaintext** | Secrets | `extensions.py` TODO | Encrypt like AI keys |
+| C6 | **Multi-tenant default off** | SaaS | `enforce_tenant_isolation=false` | Enforce for multi-customer; doc single-tenant default |
+| C7 | **Flink engine fake execute** | Engines | `engines/flink` logs only | Disable in UI or implement REST submit |
+| C8 | **Approval expiry cleanup missing** | Governance | No cron for EXPIRED status | Background job |
+| C9 | **Worker/governor no HTTP health** | K8s | Only API `/healthz` | Exec probes or sidecar metrics |
+| C10 | **OIDC no refresh token** | Auth | `auth.tsx` stores access token only | Refresh flow or silent re-auth |
 
-**Issue #48: No Load Testing**
-- **Feature**: All dashboards
-- **Problem**: Never tested with 1M+ tables, 100M+ query logs
-- **Impact**: API crashes at scale
-- **Evidence**: No load test suite, no performance benchmarks
-- **Fix Required**: Load test all new endpoints with realistic data volumes
+### 🟡 High — fix before 5k+ tables or multi-team use
 
-**Issue #49: No Error Injection Testing**
-- **Feature**: Multi-engine telemetry, REST catalog
-- **Problem**: Never tested with network failures, timeouts, auth errors
-- **Impact**: Crashes instead of graceful degradation
-- **Evidence**: No chaos engineering, no fault injection
-- **Fix Required**: Test ALL failure modes
+| ID | Issue | Feature | Evidence | Fix |
+|----|-------|---------|----------|-----|
+| H1 | Embedding search O(n) at scale | AI | `ai/similarity.py` | pgvector ANN index |
+| H2 | Anomaly fleet scan memory | AI | Batch size config exists | Stream/window; don't load 30d all tables |
+| H3 | Workload replay rate limit | Testing | `testing/workload_replay.py` | Enforce `api_rate_limit_*` |
+| H4 | STS credential expiry mid-job | Catalog vending | 1h STS tokens | Refresh in worker loop |
+| H5 | Athena ingest pagination | Telemetry | First page only | Full paginator |
+| H6 | SLA thresholds hardcoded | SLA | `dashboard_routes.py:545` | Per-table or preset config |
+| H7 | Health thresholds not size-aware | Health | `health.py` constants | Tiered thresholds |
+| H8 | Preview vs execute stats drift | Maintenance | Preview from DB stats | Re-scan or warn timestamp |
+| H9 | Bandit file fallback | Governor | `/tmp/cryo/admission_bandit.json` | Fail loud if Postgres unavailable |
+| H10 | Migration squash debt | Ops | 17 migrations | Squash + review checklist |
+| H11 | Compose E2E not in CI | Quality | No workflow | Scheduled docker-compose test job |
+| H12 | Frontend pages untested | UI | 13 pages without Vitest | Expand page tests |
+| H13 | Model drift not scheduled | ML | On-demand evaluate only | Cron refresh + alert |
+| H14 | GitOps polling rate limits | GitOps | 60s poll | Webhooks |
+| H15 | Custom script sandbox escape risk | Scripts | Docker only | gVisor/Firecracker |
 
-**Issue #50: No Schema Validation Tests**
-- **Feature**: All JSONB fields
-- **Problem**: No tests verify JSONB structure matches expectations
-- **Impact**: Code crashes when accessing undefined keys
-- **Evidence**: No JSON schema validation
-- **Fix Required**: Add JSON schema tests for all JSONB fields
+### 🟠 Medium — degraded experience / tech debt
 
----
-
-## 🟡 HIGH SEVERITY (Data Loss / Incorrect Behavior)
-
-**Issue #51: Credential Vending Tokens Expire Mid-Job**
-- **Feature**: REST catalog credential vending (#12)
-- **Problem**: STS tokens valid 1 hour, compaction takes 2+ hours
-- **Impact**: Job fails halfway, leaves table in inconsistent state
-- **Fix Required**: Refresh credentials before expiration
-
-**Issue #52: Slack Bot Exposes Sensitive Data**
-- **Feature**: Slack bot (#29)
-- **Problem**: `/cryo status` shows table details in public channels
-- **Impact**: Leaks confidential table names, sizes to entire company
-- **Fix Required**: Send sensitive data as ephemeral messages
-
-**Issue #53: Embedded SDK Leaks API Keys**
-- **Feature**: Embedded SDK (#27)
-- **Problem**: API key in client-side JavaScript visible to everyone
-- **Impact**: Anyone can scrape and reuse API keys
-- **Fix Required**: Use server-side proxy or JWT with CORS restrictions
-
-**Issue #54: Custom Scripts Can Delete Data**
-- **Feature**: Custom scripts (#30)
-- **Problem**: Script says `table.optimize()` but actually calls Trino DROP
-- **Impact**: Malicious users can drop tables via "maintenance" scripts
-- **Fix Required**: Whitelist allowed operations, parse and validate calls
-
-**Issue #55: Partition Evolution Breaks Time Travel**
-- **Feature**: Partition evolution (#11)
-- **Problem**: Recommends repartitioning without mentioning data rewrite cost
-- **Impact**: Users follow recommendation, rewrite entire table, lose snapshots
-- **Fix Required**: Calculate rewrite cost, warn about snapshot loss
-
-**Issue #56: SLA Breach Alerts Spam**
-- **Feature**: SLA monitoring (#16)
-- **Problem**: Checks every minute, sends alert every minute
-- **Impact**: Alert fatigue, PagerDuty storms
-- **Fix Required**: Debounce alerts, send once per breach
-
-**Issue #57: Cost Attribution Double-Counts**
-- **Feature**: Cost attribution (#13)
-- **Problem**: Table in multiple teams' tags = counted twice
-- **Impact**: Total cost shows 150% of actual
-- **Fix Required**: Detect multi-tag tables, either split or flag
-
-**Issue #58: Workload Replay Corrupts Shadow Table**
-- **Feature**: Workload replay (#24)
-- **Problem**: Replays INSERT queries against shadow table
-- **Impact**: Shadow table grows during test, results invalid
-- **Fix Required**: Replace INSERT/UPDATE with SELECT-only queries
-
-**Issue #59: Anomaly Detection Ignores Weekends**
-- **Feature**: AI anomaly detection (#23)
-- **Problem**: Baseline includes weekends, Monday spikes always "anomalous"
-- **Impact**: Every Monday shows false anomalies
-- **Fix Required**: Separate weekday/weekend baselines
-
-**Issue #60: Iceberg v3 Detection False Positives**
-- **Feature**: Iceberg v3 features (#20)
-- **Problem**: Detects v3 from raw metadata that's not actually parsed from table
-- **Impact**: Recommends deletion vector strategy for v2 tables, breaks
-- **Fix Required**: Actually read table metadata from PyIceberg
+| ID | Issue | Feature | Notes |
+|----|-------|---------|-------|
+| M1 | Cost precision badge weak in UI | Cost | HEURISTIC in raw JSON only |
+| M2 | Tier policies no edit UI | Tiering | Governance read-only list |
+| M3 | Lineage UI requires UUID paste | Governance | No picker |
+| M4 | Job detail orphan route discovery | UI | Must know URL |
+| M5 | UTC-only scanner cron label | Scans | IST off-peak elsewhere |
+| M6 | OpenAPI type drift | Frontend | Run `gen:api` in CI |
+| M7 | Large bundle 1.8MB JS | Frontend | Code split |
+| M8 | No CSV export on tables | UX | Operator request |
+| M9 | Audit actor not shown in UI | Audit | Column exists, UI doesn't render |
+| M10 | Scheduled runs lack actor | Audit | Only ad-hoc sets actor |
+| M11 | `PREMORTEM_RESOLUTION_SUMMARY` overclaims | Docs | Says 100% fixed |
+| M12 | Rust engines advertised in strategy doc | Docs | Mark experimental |
+| M13 | DuckDB telemetry path invalid | Telemetry | Non-standard history file |
+| M14 | Partition evolution regex parser | Optimizer | Use sqlglot |
+| M15 | Data quality empty manifest_stats | Quality | Scanner doesn't populate |
+| M16 | Double-count risk in cost attribution | FinOps | Stub hidden — revisit if implemented |
+| M17 | No email notifications | Reporting | Slack only |
+| M18 | WebSocket reconnect UX | Runs | Manual refresh |
+| M19 | Preset JSON validation at edit time | Presets | Fail at run time |
+| M20 | Redis SPOF | Infra | Sentinel/cluster guide needed |
 
 ---
 
-## 🟠 MEDIUM SEVERITY (Degraded Experience)
+## Testing & Quality — 6-Month View
 
-**Issue #61-70: UI/UX Issues**
-- No dark mode support
-- Chart legends overlap on mobile
-- Tables not responsive
-- No keyboard navigation
-- No export to CSV/Excel
-- Time zones always UTC, should be user-local
-- No column sorting on new tables
-- No bulk selection
-- No table search/filter memory
-- Loading spinners missing
+**Backend:** 54 test files — strong on planner, SQL golden, scanner, governor, API security, many integration suites. **Gaps:** live catalog, EMR execute, OIDC, OIDC exchange, reporting Slack, events subsystem, dashboard stub endpoints, compose E2E.
 
-**Issue #71-80: Missing Features**
-- No email notifications (Slack only)
-- No webhook support (can't integrate with Jira, etc.)
-- No audit log for UI actions
-- No role-based access control (RBAC)
-- No API versioning (breaking changes will break clients)
-- No GraphQL endpoint (REST only)
-- No batch operations
-- No undo/redo
-- No saved views/bookmarks
-- No team sharing/collaboration
+**Frontend:** 30 Vitest tests — login, datalake health, confirm, bulk bar, lib utilities. **Gaps:** Governance, Intelligence, Runs, TableDetail, Connections, Playwright in CI.
 
-**Issue #81-87: Documentation Gaps**
-- No deployment guide
-- No API documentation
-- No troubleshooting runbook
-- No disaster recovery procedure
-- No backup/restore instructions
-- No capacity planning guide
-- No cost optimization best practices
+**What breaks without tests at 6 months:** pyiceberg upgrade (canary helps), Trino version bump, OIDC IdP config drift, Helm value changes across replicas.
 
 ---
 
-## ROOT CAUSE ANALYSIS
+## Root Causes (Why These Issues Exist)
 
-### Why Did All These Issues Happen?
-
-1. **Speed Over Quality**: Implemented 30 features in 1 day, no time for testing/integration
-2. **No Code Review**: Single developer, no peer review, no second pair of eyes
-3. **Feature Factory**: Built features in isolation, no integration testing
-4. **No Production Deployment**: Never actually deployed, never faced real-world issues
-5. **Optimistic Engineering**: Assumed everything would "just work" when integrated
-6. **No Staging Environment**: No place to test integrations before production
-7. **Documentation Debt**: Wrote code faster than docs, docs never caught up
-8. **No Operations Team**: Dev built it, no ops to review for operational concerns
+1. **Breadth-first delivery** — Core parity ported correctly; extension features added faster than integration.
+2. **Telemetry optional** — Many advanced features assume query logs that aren't shipped by default.
+3. **Single-tenant assumption** — Multi-tenant schema exists for future SaaS, not current default.
+4. **Docs ahead of code** — Strategy docs describe Rust engine, ABAC, and AI features as committed architecture.
+5. **Fast migration cadence** — Schema evolved in days; review debt accumulates.
+6. **UI lag** — Backend APIs lead UI by 1–2 phases; some stubs should stay hidden (cost attribution pattern).
 
 ---
 
-## HOW WILL IT WORK? (Honest Answer)
+## Recommendations
 
-### Month 1-2: Discovery Phase
-- Users report endpoints return 500 errors
-- Dashboard shows "loading..." forever
-- No data in any new features
-- Team discovers migrations not run
-- Team discovers features not integrated
+### Before first production customer (weeks 0–4)
 
-### Month 3-4: Fire Fighting Phase
-- Emergency patches every day
-- Rollback half the features
-- Database performance degrades
-- Users lose trust
-- Management questions value
+1. Run **`make migrate`** on staging; validate Helm install end-to-end.
+2. Enable **JWT/OIDC**; disable dev token; map IdP groups → roles.
+3. Ship **Trino query log ingestion** OR hide query/SLA/lineage nav until ingested.
+4. Add **OpenTelemetry** minimum viable (API + worker job_id).
+5. **Remove or gate** Flink, native engine, ABAC from docs and engine pickers.
+6. Encrypt **Slack webhooks**; rotate secrets procedure in `DEPLOYMENT.md`.
 
-### Month 5-6: Stabilization Phase
-- Feature freeze
-- Pay down technical debt
-- Add tests retroactively
-- Rewrite core integration logic
-- Document everything
+### Months 1–3 (stabilization)
 
-### Reality Check
-**Only ~40% of features will actually work in production by Month 6.**
+7. Governor **wave batching** + load test 5k synthetic tables.
+8. **pgvector** or embedding cache with ANN for copilot search.
+9. Playwright + compose **E2E in CI** (nightly).
+10. Migration **squash** to single baseline for new installs.
+11. Approval **expiry sweeper** + actor column in audit UI.
+12. Per-table **SLA config** via preset guardrails.
 
-The rest will be:
-- Disabled (20%)
-- Rewritten (30%)
-- Abandoned (10%)
+### Months 4–6 (scale)
+
+13. Redis HA guide; Postgres backup/restore runbook.
+14. Scheduled **ML drift** checks; anomaly seasonality fix.
+15. S3 access log integration for tiering recommendations.
+16. API **v1 stability** policy; OpenAPI gen in CI.
 
 ---
 
-## RECOMMENDATIONS
+## Conclusion
 
-### Before Production (Critical)
+Cryo’s **core value proposition — load-aware, partition-aware Iceberg maintenance without Airflow — is real and shippable** for a Trino-first team willing to operate scanner + governor + worker as Kubernetes services.
 
-1. **Create ALL missing migrations** (2 weeks)
-2. **Add authentication to ALL endpoints** (1 week)
-3. **Write integration tests** (3 weeks)
-4. **Wire features into core system** (2 weeks)
-5. **Add indexes, FK constraints** (3 days)
+The **6-month failure mode is not “nothing works”** — it is **“everything appears to work until scale, missing telemetry, and optional features erode trust.”** Operators will love the table explorer and run console; they will ignore Intelligence and Governance if query logs are empty; they will file incidents if SLA dashboards lie by showing green when P95 data is missing.
 
-### Month 1 (Stabilization)
-
-6. **Deploy to staging, load test** (2 weeks)
-7. **Fix top 20 critical bugs** (3 weeks)
-8. **Add monitoring & alerts** (1 week)
-
-### Month 2-3 (Production Readiness)
-
-9. **Security audit & fixes** (2 weeks)
-10. **Performance optimization** (2 weeks)
-11. **Documentation sprint** (2 weeks)
-12. **Production deployment plan** (1 week)
-
-### Estimated Timeline to Production-Ready
-
-**6 months minimum** to make the hastily-implemented features production-grade.
+**Ship narrow, operate core, hide or harden extensions.** Target **10 features done right** (scan, health, plan, govern, execute, audit, presets, bulk ops, cost estimate, auth) before expanding the surface again.
 
 ---
 
-## CONCLUSION
+## Document History
 
-**Current State**: Impressive demo, terrible product.
+| Date | Change |
+|------|--------|
+| 2026-07-05 (initial) | 87-issue catalog — many items pre-dated hardening pass |
+| 2026-07-05 (this revision) | Rewritten against post-`039cca9` code; feature matrix + accurate open/closed status |
+| 2026-07-05 (remediation) | Critical/high/medium fixes applied — see table below |
 
-**Problem**: Built for breadth, not depth. 30 features that look good in a roadmap but don't actually work together.
+## Remediation status (2026-07-05 pass + complete fix)
 
-**Solution**: Pick 10 most valuable features, do them right. Ship something that works, not something that looks complete.
+| ID | Status | Notes |
+|----|--------|-------|
+| C1 | Fixed | OTLP bootstrap (`cryo/observability/tracing.py`); correlation in logs; enable via `CRYO_OTEL_ENABLED` |
+| C2 | Fixed | Governor wave prefetch (`cryo/governor/prefetch.py`) |
+| C3 | Fixed | `telemetry_ingest_on_startup` default true; scheduler Trino tick; `DEPLOYMENT.md` |
+| C4 | Fixed | Maintenance-path ABAC (`cryo/security/abac_enforcement.py`); API/governor/worker wired |
+| C5 | Fixed | Slack webhooks encrypted/decrypted via Fernet |
+| C6 | Documented | `DEPLOYMENT.md` multi-tenant section |
+| C7 | Fixed | Flink gated; `execute()` returns `ok=False` |
+| C8 | Fixed | `expire_stale_approval_requests` on scheduler tick |
+| C9 | Fixed | `/healthz` on worker/governor/scheduler via `CRYO_HEALTH_PORT` |
+| C10 | Fixed | OIDC refresh token API + UI auto-refresh |
+| H1 | Fixed | pgvector HNSW + SQL ANN (`20260706_0008_pgvector.py`, `embedding_cache.py`) |
+| H2 | Fixed | Streamed anomaly batches, weekday seasonality, history row cap |
+| H3 | Fixed | Workload replay capped by `api_rate_limit_burst` |
+| H4 | Fixed | STS `refresh_if_needed()` in `credential_vending.py` |
+| H5 | Fixed | Athena paginator + batch_get (regression tests) |
+| H6 | Fixed | SLA from preset guardrails |
+| H7 | Fixed | Size-aware health thresholds |
+| H8 | Fixed | Preview `stats_as_of` + stale warning |
+| H9 | Fixed | Bandit fail-loud everywhere (no `/tmp` fallback) |
+| H10 | Partial | Squash procedure in `docs/MIGRATION_REVIEW.md` (pre-prod) |
+| H11 | Fixed | Nightly E2E workflow (`.github/workflows/e2e-nightly.yml`) |
+| H12 | Fixed | 33 Vitest tests; CI web job |
+| H13 | Fixed | Scheduler runs anomaly scan + `evaluate_classifier` drift |
+| H14 | Fixed | GitOps webhook + `CRYO_GITOPS_WEBHOOK_SECRET` header auth |
+| H15 | Fixed | gVisor optional runtime + hardened Docker sandbox |
+| M1 | Fixed | Stronger cost precision badge + staleness |
+| M2 | Fixed | Tier policy CRUD on Governance page |
+| M3 | Fixed | Lineage table Select picker |
+| M4 | Fixed | Job detail links from Runs page |
+| M5 | Fixed | IST tooltip on scanner cron |
+| M6 | Partial | OpenAPI types manual; CI web build validates TS |
+| M7 | Fixed | Route-level code splitting + manualChunks |
+| M8 | Fixed | CSV export on Table Explorer |
+| M9 | Fixed | Audit actor in TableDetail UI |
+| M10 | Fixed | Scheduled runs `actor=system:scheduler` |
+| M11 | Fixed | `PREMORTEM_RESOLUTION_SUMMARY.md` corrected |
+| M13 | Fixed | DuckDB uses `duckdb_logs` + `~/.duckdb_history` |
+| M14 | Fixed | sqlglot-primary parser in `telemetry/parser.py` |
+| M15 | Fixed | `manifest_stats` in scanner raw JSON |
+| M17 | Fixed | Optional SMTP email in `reporting/email.py` |
+| M18 | Fixed | WebSocket reconnect with backoff in RunConsole |
+| M19 | Fixed | Preset guardrails validated at create/patch |
+| M20 | Documented | Redis HA + backup in `DEPLOYMENT.md` |
+| N6 | Documented | Postgres backup/restore in `DEPLOYMENT.md` |
 
-**Hard Truth**: Better to have 10 solid features than 30 broken ones.
+**Scan-time ABAC** (Iceberg REST catalog proxy) remains Phase 2 — maintenance paths are enforced.
+
+**Do not treat `PREMORTEM_RESOLUTION_SUMMARY.md` as authoritative** — verify each claim against this matrix and the codebase.

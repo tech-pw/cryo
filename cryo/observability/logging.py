@@ -13,6 +13,7 @@ import logging
 import sys
 from typing import Any
 
+from cryo.observability.correlation import correlation_fields
 from cryo.observability.log_redaction import SensitiveDataFilter
 
 try:
@@ -40,18 +41,26 @@ def configure_logging(
 
     if HAS_STRUCTLOG and json_format:
         # Configure structlog for JSON output
+        def _inject_correlation(
+            logger: Any, method_name: str, event_dict: dict[str, Any]
+        ) -> dict[str, Any]:
+            event_dict.update(correlation_fields())
+            return event_dict
+
+        processors: list[Any] = [
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            _inject_correlation,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer(),
+        ]
         structlog.configure(
-            processors=[
-                structlog.stdlib.filter_by_level,
-                structlog.stdlib.add_logger_name,
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.TimeStamper(fmt="iso"),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                structlog.processors.UnicodeDecoder(),
-                structlog.processors.JSONRenderer(),
-            ],
+            processors=processors,
             context_class=dict,
             logger_factory=structlog.stdlib.LoggerFactory(),
             cache_logger_on_first_use=True,

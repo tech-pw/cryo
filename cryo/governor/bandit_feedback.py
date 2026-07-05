@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import cast
@@ -12,13 +13,11 @@ from cryo.governor.admission import AdmissionConfig
 from cryo.governor.bandit import AdmissionBandit
 from cryo.governor.bandit_store import load_bandit, save_bandit
 
+logger = logging.getLogger(__name__)
+
 
 def _state_dir() -> Path:
     return Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo"))
-
-
-def _bandit_path() -> Path:
-    return _state_dir() / "admission_bandit.json"
 
 
 def _pending_path() -> Path:
@@ -29,23 +28,21 @@ def _ensure_state_dir() -> None:
     _state_dir().mkdir(parents=True, exist_ok=True)
 
 
-def _load_bandit() -> AdmissionBandit:
+def _load_bandit() -> AdmissionBandit | None:
     try:
         with SessionLocal() as session:
             return load_bandit(session)
-    except Exception:
-        return AdmissionBandit.load(_bandit_path())
+    except Exception as exc:
+        logger.error("Bandit state unavailable from Postgres; skipping learning update: %s", exc)
+        return None
 
 
 def _persist_bandit(bandit: AdmissionBandit) -> None:
     try:
         with SessionLocal() as session:
             save_bandit(session, bandit)
-            return
-    except Exception:
-        pass
-    _ensure_state_dir()
-    bandit.save(_bandit_path())
+    except Exception as exc:
+        logger.error("Failed to persist bandit state to Postgres; update skipped: %s", exc)
 
 
 def _load_pending() -> dict[str, dict[str, float | int | bool]]:
@@ -97,6 +94,8 @@ def finalize_admission(job_id: str, *, job_succeeded: bool) -> None:
         high_load_fraction=float(raw["high_load_fraction"]),
     )
     bandit = _load_bandit()
+    if bandit is None:
+        return
     bandit.record_outcome(config, admitted=True, job_completed=job_succeeded)
     _persist_bandit(bandit)
 
@@ -104,5 +103,7 @@ def finalize_admission(job_id: str, *, job_succeeded: bool) -> None:
 def record_deferred_admission(config: AdmissionConfig) -> None:
     """Record a deferred admission decision (not enough capacity / off-peak / cooldown)."""
     bandit = _load_bandit()
+    if bandit is None:
+        return
     bandit.record_outcome(config, admitted=False, job_completed=False)
     _persist_bandit(bandit)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, desc, func, select
 
 from cryo.api.deps import SessionDep, require_viewer
+from cryo.api.sla import sla_from_guardrails
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import (
     AuditLog,
@@ -22,6 +23,7 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
 from cryo.domain.enums import JobStatus
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
@@ -542,22 +544,28 @@ def get_sla_status(
     breached_only: Annotated[bool, Query(description="Show only breached SLAs")] = False,
 ) -> SLAResponse:
     """Get SLA status for all monitored tables."""
-    # Default SLA thresholds (TODO: make configurable per table)
-    freshness_sla_hours = 24
-    maintenance_sla_days = 7
-    p95_latency_sla_ms = 5000
-
     now = datetime.now(UTC)
     tenant_id = require_tenant(session)
 
-    stmt = select(Table, TableStats).join(TableStats).where(Table.first_seen_at.isnot(None))
-    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    base_stmt = select(Table, TableStats).join(TableStats).where(Table.first_seen_at.isnot(None))
+    stmt: Any = (
+        scope_by_tenant(cast(Any, base_stmt), Table, tenant_id)
+        if tenant_id is not None
+        else base_stmt
+    )
 
     results = session.execute(stmt).all()
 
     slas: list[SLAStatusRead] = []
 
     for table, stats in results:
+        effective = preset_repo.resolve_effective_preset(session, table)
+        guardrails = dict(effective.preset.guardrails) if effective and effective.preset else {}
+        sla = sla_from_guardrails(guardrails)
+        freshness_sla_hours = sla.freshness_hours
+        maintenance_sla_days = sla.maintenance_days
+        p95_latency_sla_ms = sla.p95_latency_ms
+
         scan_staleness_hours = (now - stats.scan_at).total_seconds() / 3600
         last_commit = _raw_datetime(stats.raw, "last_snapshot_committed_at")
         if last_commit is not None:

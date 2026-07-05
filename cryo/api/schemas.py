@@ -525,6 +525,7 @@ class TablePreviewRead(BaseModel):
     notes: list[str]
     statements: list[RenderedStatementRead]
     savings: SavingsProjectionRead | None = None
+    stats_as_of: datetime | None = None
 
 
 class MaintenancePreviewResponse(BaseModel):

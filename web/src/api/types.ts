@@ -317,6 +317,7 @@ export interface AuditEntry {
   detail?: string | JsonObject | null;
   engine?: string | null;
   duration_ms?: number | null;
+  actor?: string | null;
 }
 
 export interface HistoryPoint {

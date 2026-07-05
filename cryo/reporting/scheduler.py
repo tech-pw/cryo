@@ -12,8 +12,13 @@ from cryo.db.models import SlackConfig
 from cryo.db.session import SessionLocal
 from cryo.reporting import SlackClient, generate_daily_report
 from cryo.scheduler.cron import cron_is_due
+from cryo.security.crypto import decrypt_secret
 
 logger = logging.getLogger(__name__)
+
+
+def _slack_webhook_url(stored: str | None) -> str | None:
+    return decrypt_secret(stored)
 
 
 class ReportScheduler:
@@ -75,7 +80,7 @@ class ReportScheduler:
         session = SessionLocal()
         try:
             slack_client = SlackClient(
-                config.webhook_url_encrypted,
+                _slack_webhook_url(config.webhook_url_encrypted) or "",
                 config.channel,
             )
             await generate_daily_report(
@@ -111,7 +116,7 @@ async def run_daily_report_now() -> dict:
         use_ai = True
         if slack_config and slack_config.webhook_url_encrypted:
             slack_client = SlackClient(
-                slack_config.webhook_url_encrypted,
+                _slack_webhook_url(slack_config.webhook_url_encrypted) or "",
                 slack_config.channel,
             )
             use_ai = slack_config.daily_report_use_ai

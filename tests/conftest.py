@@ -21,6 +21,7 @@ from cryo.db.models import (
     Preset,
     PresetRule,
     QueryLog,
+    QueryPattern,
     Source,
     Table,
     TablePartition,
@@ -40,7 +41,7 @@ UUID_ID_MODELS = (
     MaintenanceJob,
     AWSIntegration,
 )
-_AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog)
+_AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog, QueryPattern)
 _next_autoincrement_id = itertools.count(1)
 
 

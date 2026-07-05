@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Form, InputNumber, Row, Space, Switch, Table, Typography, message } from "antd";
+import { Button, Card, Col, Form, InputNumber, Row, Space, Switch, Table, Tooltip, Typography, message } from "antd";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getScannerConfig,
@@ -128,10 +128,22 @@ export const Scans = () => {
               <Form.Item name="enabled" label="Enable scheduled scans" valuePropName="checked">
                 <Switch />
               </Form.Item>
-              <Form.Item name="schedule_cron" label="Cron schedule" rules={[{ validator: cronFormValidator() }]}>
+              <Form.Item
+                name="schedule_cron"
+                label={
+                  <Tooltip title="Cron expressions here are evaluated in UTC. Maintenance off-peak windows elsewhere in Cryo use IST (UTC+5:30). Example: 30 18 * * * UTC = midnight IST.">
+                    <span>Cron schedule</span>
+                  </Tooltip>
+                }
+                rules={[{ validator: cronFormValidator() }]}
+              >
                 <CronInput />
               </Form.Item>
-              <Typography.Paragraph type="secondary">Timezone: UTC</Typography.Paragraph>
+              <Tooltip title="Scheduled scans run in UTC. Translate to IST when aligning with off-peak maintenance windows (UTC+5:30).">
+                <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+                  Timezone: UTC (see IST in tooltip)
+                </Typography.Paragraph>
+              </Tooltip>
               <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
                 <InputNumber min={1} max={128} style={{ width: "100%" }} />
               </Form.Item>

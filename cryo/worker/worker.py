@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Protocol, cast
+from uuid import UUID
 
 from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
@@ -271,6 +272,10 @@ class Worker:
         if job_id is None:
             return None
 
+        from cryo.observability.correlation import set_job_id
+
+        set_job_id(job_id)
+
         job_start = perf_counter()
         job = self._store.get_job(job_id)
         destination = _try_get_destination(self._store, job.destination_id)
@@ -304,6 +309,25 @@ class Worker:
                 final_status = JobStatus.SKIPPED
             for index, statement in enumerate(statements):
                 self._renew_table_lock(job)
+                from cryo.db.session import SessionLocal
+                from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+                try:
+                    table_uuid = UUID(job.table_id)
+                except ValueError:
+                    table_uuid = None
+                if table_uuid is not None:
+                    with SessionLocal() as abac_session:
+                        allowed, reason = evaluate_maintenance_allowed(
+                            abac_session,
+                            table_uuid,
+                            None,
+                            statement.action,
+                        )
+                    if not allowed:
+                        final_status = JobStatus.FAILED
+                        error = reason or "abac_denied"
+                        break
                 started = perf_counter()
                 exec_ctx = ExecContext(
                     job_id=job.id,

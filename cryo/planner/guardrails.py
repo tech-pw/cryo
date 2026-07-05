@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from cryo.domain.enums import OperationType
 
@@ -33,3 +33,24 @@ def validate_operation_order(operations: Sequence[OperationType | str]) -> list[
 
 def is_safe_manual_sequence(operations: Sequence[OperationType | str]) -> bool:
     return not validate_operation_order(operations)
+
+
+def validate_guardrails(guardrails: Mapping[str, object]) -> list[str]:
+    """Return validation errors for preset guardrails JSON."""
+    errors: list[str] = []
+    int_keys = (
+        "cooldown_hours",
+        "sla_freshness_hours",
+        "sla_maintenance_days",
+        "sla_p95_latency_ms",
+    )
+    for key in int_keys:
+        if key not in guardrails:
+            continue
+        value = guardrails[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            errors.append(f"guardrails.{key} must be a number")
+            continue
+        if int(value) < 0:
+            errors.append(f"guardrails.{key} must be non-negative")
+    return errors

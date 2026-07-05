@@ -27,6 +27,7 @@ import { SavingsByOperation } from "../components/SavingsByOperation";
 import { PlanPreview } from "../components/PlanPreview";
 import { GradePill, HealthBadge, PriorityTag, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { isOrphanScanStale } from "../lib/costStaleness";
 import { formatBytesGb, formatCurrency, formatDuration, formatGb, formatNumber, formatTime } from "../lib/format";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 
@@ -273,7 +274,11 @@ export const TableDetail = () => {
                 <Space wrap>
                   <CostPrecisionBadge
                     precision={costView?.precision ?? stats?.cost_precision}
-                    lastFullCostScanAt={costView?.last_full_cost_scan_at}
+                    lastFullCostScanAt={costView?.last_full_cost_scan_at ?? stats?.cost_last_full_scan_at}
+                    orphanScanStale={isOrphanScanStale(
+                      costView?.precision ?? stats?.cost_precision,
+                      costView?.last_full_cost_scan_at ?? stats?.cost_last_full_scan_at
+                    )}
                   />
                   {costView?.last_full_cost_scan_at ? (
                     <Typography.Text type="secondary">
@@ -471,7 +476,8 @@ export const TableDetail = () => {
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong>{item.action ?? "maintenance"}</Typography.Text>
                       <Typography.Text type="secondary">
-                        {formatTime(item.ts ?? item.created_at)} · {item.engine ?? "-"} · {formatDuration(item.duration_ms)}
+                        {formatTime(item.ts ?? item.created_at)} · {item.engine ?? "-"} ·{" "}
+                        {item.actor ?? "system"} · {formatDuration(item.duration_ms)}
                       </Typography.Text>
                     </Space>
                   )

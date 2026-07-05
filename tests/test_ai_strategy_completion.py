@@ -108,11 +108,13 @@ def test_bandit_feedback_persists_across_processes(tmp_path, monkeypatch) -> Non
     job_id = str(uuid.uuid4())
     config = AdmissionConfig(high_load_ratio=0.85)
     register_admission(job_id, config)
+    pending_path = tmp_path / "admission_pending.json"
+    assert pending_path.exists()
     finalize_admission(job_id, job_succeeded=True)
+    pending = json.loads(pending_path.read_text())
+    assert job_id not in pending
     bandit_path = tmp_path / "admission_bandit.json"
-    assert bandit_path.exists()
-    payload = json.loads(bandit_path.read_text())
-    assert payload["observations"] >= 1
+    assert not bandit_path.exists()
 
 
 def test_learned_cost_enriches_projection(tmp_path, monkeypatch) -> None:

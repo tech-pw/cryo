@@ -1,4 +1,11 @@
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  DatabaseOutlined,
+  WarningOutlined
+} from "@ant-design/icons";
 import { Tag, Tooltip } from "antd";
+import type { ReactNode } from "react";
 import type { CostPrecision } from "../api/types";
 import { formatTime } from "../lib/format";
 
@@ -17,6 +24,30 @@ const TOOLTIPS: Record<CostPrecision, string> = {
     "Cryo also listed the table's storage path, so orphan files outside Iceberg metadata were checked too."
 };
 
+const TIER_STYLE: Record<
+  CostPrecision,
+  { color: string; icon: ReactNode; staleColor: string; staleIcon: ReactNode }
+> = {
+  heuristic: {
+    color: "default",
+    icon: <ClockCircleOutlined />,
+    staleColor: "warning",
+    staleIcon: <WarningOutlined />
+  },
+  metadata: {
+    color: "blue",
+    icon: <DatabaseOutlined />,
+    staleColor: "warning",
+    staleIcon: <WarningOutlined />
+  },
+  storage_truth: {
+    color: "success",
+    icon: <CheckCircleOutlined />,
+    staleColor: "warning",
+    staleIcon: <WarningOutlined />
+  }
+};
+
 export const CostPrecisionBadge = ({
   precision,
   lastFullCostScanAt,
@@ -28,7 +59,9 @@ export const CostPrecisionBadge = ({
 }) => {
   if (!precision) return null;
   const label = LABELS[precision] ?? precision;
-  const color = precision === "storage_truth" ? "processing" : "default";
+  const style = TIER_STYLE[precision] ?? TIER_STYLE.heuristic;
+  const color = orphanScanStale ? style.staleColor : style.color;
+  const icon = orphanScanStale ? style.staleIcon : style.icon;
   const tooltip = [
     TOOLTIPS[precision],
     precision !== "storage_truth"
@@ -42,7 +75,9 @@ export const CostPrecisionBadge = ({
 
   return (
     <Tooltip title={tooltip}>
-      <Tag color={color}>{label}</Tag>
+      <Tag color={color} icon={icon}>
+        {orphanScanStale ? `${label} · stale` : label}
+      </Tag>
     </Tooltip>
   );
 };
