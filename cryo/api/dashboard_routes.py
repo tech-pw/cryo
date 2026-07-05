@@ -88,7 +88,7 @@ class MultiCatalogResponse(BaseModel):
     total_cost_usd: float
 
 
-@router.get("/multi-catalog", response_model=MultiCatalogResponse)
+@router.get("/multi-catalog", response_model=MultiCatalogResponse, tags=["dashboards"])
 def get_multi_catalog_stats(
     session: Annotated[Session, Depends(get_session)],
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -287,7 +287,7 @@ class CostAttributionResponse(BaseModel):
 # ===================== Endpoints =====================
 
 
-@router.get("/query-performance", response_model=QueryPerformanceResponse)
+@router.get("/query-performance", response_model=QueryPerformanceResponse, tags=["dashboards"])
 def get_query_performance(
     session: Annotated[Session, Depends(get_session)],
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -355,7 +355,7 @@ def get_query_performance(
     )
 
 
-@router.get("/tables/{table_id}/health-trends", response_model=TableHealthTrendsResponse)
+@router.get("/tables/{table_id}/health-trends", response_model=TableHealthTrendsResponse, tags=["dashboards"])
 def get_table_health_trends(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],
@@ -423,7 +423,7 @@ def get_table_health_trends(
     )
 
 
-@router.get("/jobs/{job_id}/detail", response_model=JobDetailRead)
+@router.get("/jobs/{job_id}/detail", response_model=JobDetailRead, tags=["runs"])
 def get_job_detail(
     job_id: UUID,
     session: Annotated[Session, Depends(get_session)],
@@ -504,7 +504,7 @@ def get_job_detail(
     )
 
 
-@router.get("/sla-status", response_model=SLAResponse)
+@router.get("/sla-status", response_model=SLAResponse, tags=["dashboards"])
 def get_sla_status(
     session: Annotated[Session, Depends(get_session)],
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -586,7 +586,7 @@ def get_sla_status(
     )
 
 
-@router.get("/cost-attribution", response_model=CostAttributionResponse)
+@router.get("/cost-attribution", response_model=CostAttributionResponse, tags=["dashboards"])
 def get_cost_attribution(
     session: Annotated[Session, Depends(get_session)],
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -654,7 +654,7 @@ class S3TieringResponse(BaseModel):
     total_potential_savings_usd: float
 
 
-@router.get("/s3-tiering-recommendations", response_model=S3TieringResponse)
+@router.get("/s3-tiering-recommendations", response_model=S3TieringResponse, tags=["dashboards"])
 def get_s3_tiering_recommendations(
     session: Annotated[Session, Depends(get_session)],
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -698,7 +698,7 @@ def get_s3_tiering_recommendations(
     )
 
 
-@router.get("/tables/{table_id}/s3-tiering", response_model=S3TieringRecommendationRead)
+@router.get("/tables/{table_id}/s3-tiering", response_model=S3TieringRecommendationRead, tags=["tables"])
 def get_table_s3_tiering(
     table_id: UUID,
     session: Annotated[Session, Depends(get_session)],

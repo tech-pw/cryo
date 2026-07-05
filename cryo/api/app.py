@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cryo import __version__
+from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.phase8_routes import router as phase8_router
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "description": "Compliance status, protected snapshots, catalog latency.",
             },
             {"name": "phase8", "description": "Adaptive routing and data tiering policies."},
+            {"name": "advanced", "description": "Advanced features: lineage, anomalies, approvals, quality, signals, FinOps."},
         ],
     )
     if settings.cors_allow_origins:
@@ -47,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(extensions_router)
     app.include_router(phase8_router)
     app.include_router(dashboard_router)
+    app.include_router(advanced_router)
     return app
 
 

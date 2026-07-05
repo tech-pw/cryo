@@ -136,6 +136,34 @@ class Governor:
                     except Exception:
                         pass
 
+                # Check approval workflow for destructive operations
+                approval_needed = False
+                if not signal_triggered:
+                    try:
+                        from cryo.workflows.approvals import requires_approval
+                        with self._session_factory() as session:
+                            import uuid
+                            table_uuid = (
+                                uuid.UUID(job.table_id)
+                                if isinstance(job.table_id, str)
+                                else job.table_id
+                            )
+                            # Check if any operation in this job requires approval
+                            # For now, assume job.params contains operation_type
+                            op_type = job.params.get("operation_type") if job.params else None
+                            if op_type and requires_approval(session, table_uuid, op_type):
+                                logger.info(
+                                    f"Job {job_id} deferred: operation {op_type} requires approval"
+                                )
+                                self._defer(job, f"Operation {op_type} requires approval")
+                                deferred += 1
+                                approval_needed = True
+                    except Exception as e:
+                        logger.warning(f"Error checking approval for job {job_id}: {e}")
+                
+                if approval_needed:
+                    continue
+
                 if not signal_triggered:
                     decision = decide_job_admission(_admission_job(job), config, now=current)
                     if not decision.admissible:
