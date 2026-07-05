@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from cryo.api.redact import redact_sensitive_dict
 from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
 
 JsonDict = dict[str, Any]
@@ -23,10 +24,21 @@ class SourceCreate(BaseModel):
     enabled: bool = True
 
 
-class SourceRead(SourceCreate, OrmModel):
+class SourceRead(OrmModel):
+    """Source read schema with sensitive data redacted."""
     id: uuid.UUID
+    name: str
+    type: str
+    config: JsonDict = Field(default_factory=dict)
+    # NEVER return secret_ref in API responses
+    enabled: bool
     created_at: datetime
     updated_at: datetime
+    
+    @field_serializer('config')
+    def redact_config(self, config: JsonDict) -> JsonDict:
+        """Redact sensitive keys in config before serialization."""
+        return redact_sensitive_dict(config)
 
 
 class SourcePatch(BaseModel):
@@ -62,10 +74,23 @@ class DestinationCreate(BaseModel):
     enabled: bool = True
 
 
-class DestinationRead(DestinationCreate, OrmModel):
+class DestinationRead(OrmModel):
+    """Destination read schema with sensitive data redacted."""
     id: uuid.UUID
+    name: str
+    engine: EngineType
+    config: JsonDict = Field(default_factory=dict)
+    # NEVER return secret_ref in API responses
+    offpeak_start: int | None = None
+    offpeak_end: int | None = None
+    enabled: bool
     created_at: datetime
     updated_at: datetime
+    
+    @field_serializer('config')
+    def redact_config(self, config: JsonDict) -> JsonDict:
+        """Redact sensitive keys in config before serialization."""
+        return redact_sensitive_dict(config)
 
 
 class DestinationPatch(BaseModel):
