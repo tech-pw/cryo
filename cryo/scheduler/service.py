@@ -121,15 +121,11 @@ class SchedulerService:
                 if expired:
                     import logging
 
-                    logging.getLogger(__name__).info(
-                        "Expired %s stale approval requests", expired
-                    )
+                    logging.getLogger(__name__).info("Expired %s stale approval requests", expired)
         except Exception as e:
             import logging
 
-            logging.getLogger(__name__).warning(
-                "Failed to expire stale approval requests: %s", e
-            )
+            logging.getLogger(__name__).warning("Failed to expire stale approval requests: %s", e)
 
     def _maybe_update_benefit_scores(self, current: datetime) -> None:
         """Update partition benefit scores periodically for AutoComp prioritization."""

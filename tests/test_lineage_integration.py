@@ -96,9 +96,7 @@ def test_record_lineage_from_query_increments_observation_count(session):
     record_lineage_from_query(session, query, target_table.id)
     record_lineage_from_query(session, query, target_table.id)
 
-    edge = session.scalar(
-        select(LineageEdge).where(LineageEdge.target_table_id == target_table.id)
-    )
+    edge = session.scalar(select(LineageEdge).where(LineageEdge.target_table_id == target_table.id))
     assert edge is not None
     assert edge.observation_count == 2
 

@@ -30,8 +30,7 @@ _PII_LIBRARY: tuple[tuple[str, str, str], ...] = (
 )
 
 _PII_EMBEDDINGS = tuple(
-    (label, embed_column(label, col_type, sample))
-    for label, col_type, sample in _PII_LIBRARY
+    (label, embed_column(label, col_type, sample)) for label, col_type, sample in _PII_LIBRARY
 )
 
 DEFAULT_PII_THRESHOLD = 0.72

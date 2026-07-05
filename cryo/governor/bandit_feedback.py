@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.bandit import AdmissionBandit
@@ -35,7 +36,8 @@ def _load_pending() -> dict[str, dict[str, float | int | bool]]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return cast(dict[str, dict[str, float | int | bool]], raw)
     except (json.JSONDecodeError, OSError):
         return {}
 

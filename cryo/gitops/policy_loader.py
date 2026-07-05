@@ -124,9 +124,7 @@ def detect_policy_conflicts(policies: list[GitOpsPolicyConfig]) -> list[str]:
             if not right_pattern:
                 continue
             if _policy_patterns_overlap(left_pattern, right_pattern):
-                conflicts.append(
-                    f"Overlapping policies: '{left_pattern}' and '{right_pattern}'"
-                )
+                conflicts.append(f"Overlapping policies: '{left_pattern}' and '{right_pattern}'")
 
     return conflicts
 

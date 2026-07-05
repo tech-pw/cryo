@@ -554,9 +554,7 @@ class AthenaIngester:
                             "executed_at": submission_time or datetime.now(UTC),
                             "duration_ms": duration_ms,
                             "bytes_read": stats.get("DataScannedInBytes"),
-                            "user": execution.get("ResultConfiguration", {}).get(
-                                "OutputLocation"
-                            ),
+                            "user": execution.get("ResultConfiguration", {}).get("OutputLocation"),
                             "raw": execution,
                         }
                     )

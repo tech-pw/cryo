@@ -99,9 +99,7 @@ def test_get_aws_integration_404_when_not_configured(session):
 
 def test_delete_aws_integration_removes_it(session):
     source = _seed_source(session)
-    create_aws_integration(
-        source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session
-    )
+    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
 
     delete_aws_integration(source.id, session)
 
@@ -111,9 +109,7 @@ def test_delete_aws_integration_removes_it(session):
 
 def test_test_aws_integration_records_result(session):
     source = _seed_source(session)
-    create_aws_integration(
-        source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session
-    )
+    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
 
     with patch(
         "cryo.api.routes.check_aws_connection",
@@ -133,9 +129,7 @@ def test_test_aws_integration_records_result(session):
 
 def test_get_aws_usage_combines_metrics_and_pricing(session):
     source = _seed_source(session)
-    create_aws_integration(
-        source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session
-    )
+    create_aws_integration(source.id, AWSIntegrationCreate(bucket="b", region="us-east-1"), session)
 
     with (
         patch(

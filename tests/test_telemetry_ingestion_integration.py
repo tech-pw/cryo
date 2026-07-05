@@ -134,11 +134,7 @@ def test_athena_ingester_paginates_and_batches_query_executions():
 def test_duckdb_ingester_falls_back_to_history_file(tmp_path):
     """DuckDBIngester should read plain-text history when DB sources are unavailable."""
     history_file = tmp_path / "history"
-    history_file.write_text(
-        "-- comment\n"
-        "SELECT 1;\n"
-        "SELECT COUNT(*) FROM analytics.events;\n"
-    )
+    history_file.write_text("-- comment\nSELECT 1;\nSELECT COUNT(*) FROM analytics.events;\n")
 
     ingester = DuckDBIngester(
         history_file=str(history_file),

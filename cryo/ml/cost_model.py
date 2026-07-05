@@ -80,10 +80,7 @@ def train_cost_model(
                 weights[i] += learning_rate * (error * features[i] - ridge_lambda * weights[i])
 
     residuals = sorted(
-        abs(
-            target
-            - (bias + sum(w * x for w, x in zip(weights, features, strict=True)))
-        )
+        abs(target - (bias + sum(w * x for w, x in zip(weights, features, strict=True))))
         for features, target in zip(feature_rows, targets, strict=True)
     )
     idx = int(_CONFIDENCE_COVERAGE * (len(residuals) - 1))

@@ -26,6 +26,7 @@ class SourceCreate(BaseModel):
 
 class SourceRead(OrmModel):
     """Source read schema with sensitive data redacted."""
+
     id: uuid.UUID
     name: str
     type: str
@@ -34,8 +35,8 @@ class SourceRead(OrmModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
-    
-    @field_serializer('config')
+
+    @field_serializer("config")
     def redact_config(self, config: JsonDict) -> JsonDict:
         """Redact sensitive keys in config before serialization."""
         return redact_sensitive_dict(config)
@@ -131,6 +132,7 @@ class DestinationCreate(BaseModel):
 
 class DestinationRead(OrmModel):
     """Destination read schema with sensitive data redacted."""
+
     id: uuid.UUID
     name: str
     engine: EngineType
@@ -141,8 +143,8 @@ class DestinationRead(OrmModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
-    
-    @field_serializer('config')
+
+    @field_serializer("config")
     def redact_config(self, config: JsonDict) -> JsonDict:
         """Redact sensitive keys in config before serialization."""
         return redact_sensitive_dict(config)

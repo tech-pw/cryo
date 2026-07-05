@@ -8,7 +8,7 @@ from typing import Any
 SENSITIVE_KEYS = {
     # AWS
     "aws_access_key_id",
-    "aws_secret_access_key", 
+    "aws_secret_access_key",
     "aws_session_token",
     # Generic
     "secret",
@@ -34,23 +34,23 @@ SENSITIVE_KEYS = {
 
 def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Redact sensitive fields in a dictionary recursively.
-    
+
     Args:
         data: Dictionary that may contain sensitive keys
-        
+
     Returns:
         Copy of dictionary with sensitive values redacted
     """
     if not isinstance(data, dict):
         return data
-    
+
     result: dict[str, Any] = {}
     for key, value in data.items():
         key_lower = key.lower()
-        
+
         # Check if key matches any sensitive pattern
         is_sensitive = any(pattern in key_lower for pattern in SENSITIVE_KEYS)
-        
+
         if is_sensitive and value:
             # Redact but show hint about value type
             if isinstance(value, str):
@@ -63,12 +63,11 @@ def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, list):
             # Recursively redact lists of dicts
             result[key] = [
-                redact_sensitive_dict(item) if isinstance(item, dict) else item
-                for item in value
+                redact_sensitive_dict(item) if isinstance(item, dict) else item for item in value
             ]
         else:
             result[key] = value
-    
+
     return result
 
 

@@ -166,19 +166,13 @@ class Governor:
                                     if isinstance(job.table_id, str)
                                     else job.table_id
                                 )
-                                plan_operations = (
-                                    job.plan.get("operations") if job.plan else None
-                                )
-                                if job_requires_approval(
-                                    session, table_uuid, plan_operations
-                                ):
+                                plan_operations = job.plan.get("operations") if job.plan else None
+                                if job_requires_approval(session, table_uuid, plan_operations):
                                     logger.info(
                                         "Job %s deferred: destructive operation requires approval",
                                         job_id,
                                     )
-                                    self._defer(
-                                        job, "Destructive operation requires approval"
-                                    )
+                                    self._defer(job, "Destructive operation requires approval")
                                     deferred += 1
                                     destination_outcomes[destination_id]["deferred"] += 1
                                     approval_needed = True
@@ -198,9 +192,7 @@ class Governor:
                                 if isinstance(job.table_id, str)
                                 else job.table_id
                             )
-                            plan_operations = (
-                                job.plan.get("operations") if job.plan else None
-                            )
+                            plan_operations = job.plan.get("operations") if job.plan else None
                             pii_reason = maintenance_blocked_for_untagged_pii(
                                 session,
                                 table_uuid,
