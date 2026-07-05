@@ -28,8 +28,20 @@ import type {
   SourceRead,
   SourceTestResult,
   SourceWrite,
+  AnomalyResponse,
+  AutoCompCompareResponse,
+  AWSConnectionTestResponse,
+  AWSIntegrationRead,
+  AWSIntegrationWrite,
+  AWSUsageResponse,
   BanditStatusResponse,
+  CopilotAskResponse,
+  CopilotNaturalResponse,
+  CopilotQuestion,
+  CopilotSearchResponse,
   CostModelEvaluateResponse,
+  DataQualityProfileRead,
+  ExplainHealthResponse,
   HealthClassifierResponse,
   PiiClassificationResponse,
   SimilarTablesResponse,
@@ -655,3 +667,59 @@ export const getBanditStatus = (api: ApiOptions) =>
 
 export const getCostModelEvaluate = (api: ApiOptions) =>
   apiFetch<CostModelEvaluateResponse>("/ai/cost-model/evaluate", api);
+
+export const getTableAnomalies = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<AnomalyResponse>(`/tables/${tableId}/anomalies`, api);
+
+export const explainTableHealth = (api: ApiOptions, tableId: UUID, body?: { preset_name?: string }) =>
+  apiFetch<ExplainHealthResponse>(`/tables/${tableId}/explain-health`, api, {
+    method: "POST",
+    body: body ?? {}
+  });
+
+export const getAutoCompCompare = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<AutoCompCompareResponse>(`/tables/${tableId}/autocomp/compare`, api);
+
+export const getCopilotQuestions = (api: ApiOptions) =>
+  apiFetch<CopilotQuestion[]>("/ai/copilot/questions", api);
+
+export const askCopilotQuestion = (
+  api: ApiOptions,
+  body: { question_id: string; context?: Record<string, unknown> }
+) => apiFetch<CopilotAskResponse>("/ai/copilot/ask", api, { method: "POST", body });
+
+export const searchCopilot = (api: ApiOptions, body: { question: string; min_similarity?: number }) =>
+  apiFetch<CopilotSearchResponse>("/ai/copilot/search", api, { method: "POST", body });
+
+export const askCopilotNatural = (
+  api: ApiOptions,
+  body: { question: string; include_context?: boolean }
+) => apiFetch<CopilotNaturalResponse>("/ai/copilot/natural", api, { method: "POST", body });
+
+export const getDataQualityProfile = (api: ApiOptions, tableId: UUID, lookbackDays?: number) =>
+  apiFetch<DataQualityProfileRead>(`/advanced/data-quality/${tableId}`, api, {
+    query: { lookback_days: lookbackDays ?? 30 }
+  });
+
+export const getAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSIntegrationRead>(`/sources/${sourceId}/aws-integration`, api);
+
+export const createAwsIntegration = (api: ApiOptions, sourceId: UUID, body: AWSIntegrationWrite) =>
+  apiFetch<AWSIntegrationRead>(`/sources/${sourceId}/aws-integration`, api, { method: "POST", body });
+
+export const patchAwsIntegration = (
+  api: ApiOptions,
+  sourceId: UUID,
+  body: Partial<AWSIntegrationWrite>
+) => apiFetch<AWSIntegrationRead>(`/sources/${sourceId}/aws-integration`, api, { method: "PATCH", body });
+
+export const deleteAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<void>(`/sources/${sourceId}/aws-integration`, api, { method: "DELETE" });
+
+export const testAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSConnectionTestResponse>(`/sources/${sourceId}/aws-integration/test`, api, {
+    method: "POST"
+  });
+
+export const getAwsUsage = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSUsageResponse>(`/sources/${sourceId}/aws-usage`, api);

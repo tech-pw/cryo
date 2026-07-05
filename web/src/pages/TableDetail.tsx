@@ -1,20 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Tag, Timeline, Typography, message } from "antd";
+import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Timeline, Typography, message } from "antd";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assignTables,
   getEffectivePreset,
-  getSimilarTables,
   getTable,
   getTableAudit,
   getTableCost,
-  getTableHealthClassification,
   getTableHealthTrends,
   getTableHistory,
   getTablePartitions,
-  getTablePiiClassification,
   listDestinations,
   listPresets,
   runMaintenance,
@@ -22,6 +19,7 @@ import {
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
+import { TableAiInsights } from "../components/TableAiInsights";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
 import { SavingsByOperation } from "../components/SavingsByOperation";
@@ -80,24 +78,6 @@ export const TableDetail = () => {
   const tableCost = useQuery({
     queryKey: ["table-cost", tableId, token],
     queryFn: () => getTableCost(api, tableId),
-    retry: false
-  });
-  const piiClassification = useQuery({
-    queryKey: ["table-pii", tableId, token],
-    queryFn: () => getTablePiiClassification(api, tableId),
-    enabled: Boolean(tableId && token),
-    retry: false
-  });
-  const similarTables = useQuery({
-    queryKey: ["table-similar", tableId, token],
-    queryFn: () => getSimilarTables(api, tableId),
-    enabled: Boolean(tableId && token),
-    retry: false
-  });
-  const healthClassification = useQuery({
-    queryKey: ["table-health-classification", tableId, token],
-    queryFn: () => getTableHealthClassification(api, tableId),
-    enabled: Boolean(tableId && token),
     retry: false
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
@@ -445,90 +425,9 @@ export const TableDetail = () => {
           </Card>
         </Col>
         <Col xs={24}>
-          <Card title="AI insights" loading={piiClassification.isLoading || similarTables.isLoading}>
-            {row ? (
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={8}>
-                  <Typography.Text strong>PII signals</Typography.Text>
-                  {(piiClassification.data?.matches ?? []).length ? (
-                    <Table
-                      size="small"
-                      style={{ marginTop: 8 }}
-                      pagination={false}
-                      rowKey="column_name"
-                      dataSource={piiClassification.data?.matches ?? []}
-                      columns={[
-                        { title: "Column", dataIndex: "column_name", ellipsis: true },
-                        { title: "Category", dataIndex: "pii_category", render: (v) => <Tag>{v}</Tag> },
-                        {
-                          title: "Score",
-                          dataIndex: "similarity",
-                          align: "right",
-                          render: (v: number) => v.toFixed(2)
-                        }
-                      ]}
-                    />
-                  ) : (
-                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                      No likely PII columns detected from metadata.
-                    </Typography.Paragraph>
-                  )}
-                </Col>
-                <Col xs={24} md={8}>
-                  <Typography.Text strong>Similar tables</Typography.Text>
-                  {(similarTables.data?.similar ?? []).length ? (
-                    <Table
-                      size="small"
-                      style={{ marginTop: 8 }}
-                      pagination={false}
-                      rowKey="table_id"
-                      dataSource={similarTables.data?.similar ?? []}
-                      columns={[
-                        {
-                          title: "Table",
-                          key: "name",
-                          render: (_, r) => `${r.schema_name}.${r.table_name}`,
-                          ellipsis: true
-                        },
-                        {
-                          title: "Match",
-                          dataIndex: "similarity",
-                          align: "right",
-                          render: (v: number) => `${(v * 100).toFixed(0)}%`
-                        }
-                      ]}
-                    />
-                  ) : (
-                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                      No similar tables above the similarity threshold.
-                    </Typography.Paragraph>
-                  )}
-                </Col>
-                <Col xs={24} md={8}>
-                  <Typography.Text strong>Emergency compaction risk</Typography.Text>
-                  {healthClassification.data ? (
-                    <Space direction="vertical" size={4} style={{ marginTop: 8 }}>
-                      <Tag color={healthClassification.data.needs_emergency_compaction ? "error" : "success"}>
-                        {healthClassification.data.needs_emergency_compaction ? "Elevated risk" : "Normal"}
-                      </Tag>
-                      <Typography.Text type="secondary">
-                        {(healthClassification.data.probability * 100).toFixed(0)}% ·{" "}
-                        {healthClassification.data.method}
-                      </Typography.Text>
-                    </Space>
-                  ) : healthClassification.isError ? (
-                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                      Classifier unavailable until stats exist.
-                    </Typography.Paragraph>
-                  ) : (
-                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                      Loading fleet comparison…
-                    </Typography.Paragraph>
-                  )}
-                </Col>
-              </Row>
-            ) : null}
-          </Card>
+          {row ? (
+            <TableAiInsights tableId={tableId} lastSnapshotCommittedAt={lastSnapshotCommittedAt} />
+          ) : null}
         </Col>
         <Col xs={24} xl={15}>
           <Card title="Partitions">

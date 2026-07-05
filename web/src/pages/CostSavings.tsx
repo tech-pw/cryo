@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Tooltip, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
 import { useMemo, useState } from "react";
@@ -7,6 +7,7 @@ import {
   assignTables,
   deriveCostDashboard,
   getCostDashboard,
+  getCostModelEvaluate,
   listDestinations,
   listPresets,
   listTables,
@@ -53,6 +54,11 @@ export const CostSavings = () => {
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
+  const costModel = useQuery({
+    queryKey: ["cost-model-evaluate", token],
+    queryFn: () => getCostModelEvaluate(api),
+    retry: false
+  });
 
   const data: CostDashboard = cost.data ?? deriveCostDashboard(tables.data?.items ?? []);
   const usingFallback = cost.isError;
@@ -208,6 +214,24 @@ export const CostSavings = () => {
               }
             ]}
           />
+          {costModel.data ? (
+            <Card size="small" style={{ marginBottom: 12 }} title="Learned cost model (holdout)">
+              <Space wrap size="large">
+                <Typography.Text>
+                  MAE learned {formatCurrency(costModel.data.mae_learned)}/mo vs heuristic{" "}
+                  {formatCurrency(costModel.data.mae_heuristic)}/mo
+                </Typography.Text>
+                <Tag color={costModel.data.beats_heuristic ? "success" : "default"}>
+                  {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
+                </Tag>
+                <Typography.Text type="secondary">
+                  {costModel.data.n_samples} labeled outcomes · {(costModel.data.band_coverage * 100).toFixed(0)}%
+                  conformal coverage
+                </Typography.Text>
+                <Link to="/ai">Governor & copilot →</Link>
+              </Space>
+            </Card>
+          ) : null}
           <Row gutter={[12, 12]}>
             <Col xs={24} xl={16}>
               <Card title="Current to projected">

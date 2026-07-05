@@ -9,6 +9,7 @@ import {
   HistoryOutlined,
   MoonOutlined,
   SettingOutlined,
+  RobotOutlined,
   SunOutlined,
   SyncOutlined,
   TeamOutlined,
@@ -26,6 +27,7 @@ import { Connections } from "./pages/Connections";
 import { CostAttribution } from "./pages/CostAttribution";
 import { CostSavings } from "./pages/CostSavings";
 import { DatalakeHealth } from "./pages/DatalakeHealth";
+import { Intelligence } from "./pages/Intelligence";
 import { JobDetail } from "./pages/JobDetail";
 import LayoutOptimization from "./pages/LayoutOptimization";
 import { MultiCatalog } from "./pages/MultiCatalog";
@@ -51,6 +53,7 @@ const navItems = [
   { key: "/catalogs", icon: <DatabaseOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
+  { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
   { key: "/attribution", icon: <TeamOutlined />, label: <Link to="/attribution">Attribution</Link> },
@@ -65,7 +68,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Overview",
-    children: [navItems[0], navItems[7]]
+    children: [navItems[0], navItems[8]]
   },
   {
     type: "group",
@@ -75,17 +78,17 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Operations",
-    children: [navItems[8], navItems[9], navItems[10]]
+    children: [navItems[9], navItems[10], navItems[11]]
   },
   {
     type: "group",
     label: "Insights",
-    children: [navItems[4], navItems[5], navItems[6]]
+    children: [navItems[4], navItems[5], navItems[6], navItems[7]]
   },
   {
     type: "group",
     label: "Settings",
-    children: [navItems[11]]
+    children: [navItems[12]]
   }
 ];
 
@@ -142,6 +145,7 @@ const Shell = () => {
             <Route path="/tables/:tableId" element={<TableDetail />} />
             <Route path="/scans" element={<Scans />} />
             <Route path="/scans/:runId" element={<Scans />} />
+            <Route path="/ai" element={<Intelligence />} />
             <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/sla" element={<SLAStatus />} />
             <Route path="/optimize" element={<LayoutOptimization />} />

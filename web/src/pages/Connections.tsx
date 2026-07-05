@@ -47,6 +47,7 @@ import {
 } from "../api/client";
 import type { DestinationRead, DestinationWrite, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
 import { CronInput } from "../components/CronInput";
+import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -891,6 +892,19 @@ const SourceDrawer = ({
             }
           ]}
         />
+
+        {isEditing ? (
+          <Collapse
+            style={{ marginTop: 16, marginBottom: 16 }}
+            items={[
+              {
+                key: "aws-integration",
+                label: "AWS S3 cost metrics (free tier)",
+                children: <AwsIntegrationPanel sourceId={value.id} />
+              }
+            ]}
+          />
+        ) : null}
 
         <Form.Item name="secret_ref" label="Secret reference" style={{ marginTop: 16 }}>
           <Input placeholder="Encrypted secret reference, never raw credentials" />

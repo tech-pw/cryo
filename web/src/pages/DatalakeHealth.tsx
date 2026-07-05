@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Table, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Typography } from "antd";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
 import { getDatalakeDashboard, listTables } from "../api/client";
@@ -43,9 +43,14 @@ export const DatalakeHealth = () => {
         title="Datalake health"
         subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
-          <Link to="/cost">
-            <Button>View cost savings</Button>
-          </Link>
+          <Space>
+            <Link to="/ai">
+              <Button>Intelligence hub</Button>
+            </Link>
+            <Link to="/cost">
+              <Button>View cost savings</Button>
+            </Link>
+          </Space>
         }
       />
       {dashboard.isError ? (
