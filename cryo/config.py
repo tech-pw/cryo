@@ -91,6 +91,103 @@ class Settings(BaseSettings):
         default=False,
         description="Enable experimental cryo-native engine (disabled by default).",
     )
+    flink_engine_enabled: bool = Field(
+        default=False,
+        description="Enable Flink config-generation engine (does not submit jobs).",
+    )
+    health_port: int = Field(
+        default=8081,
+        ge=1024,
+        le=65535,
+        description="HTTP port for /healthz on worker/governor/scheduler processes.",
+    )
+    telemetry_ingest_on_startup: bool = Field(
+        default=True,
+        description="When true, scheduler attempts query-log ingest ticks if configured.",
+    )
+    telemetry_trino_url: str | None = Field(
+        default=None,
+        description=(
+            "Trino coordinator URL for scheduled query-log ingestion (CRYO_TELEMETRY_TRINO_URL)."
+        ),
+    )
+    telemetry_athena_workgroup: str | None = Field(
+        default=None,
+        description="Optional Athena workgroup filter for query-log ingestion.",
+    )
+    query_log_retention_days: int = Field(
+        default=90,
+        gt=0,
+        description=(
+            "Days of raw query_logs rows to keep before the scheduler purges them. "
+            "query_patterns (the aggregated signal partition/layout recommendations actually "
+            "consume) is unaffected by purging, since it's aggregated before rows age out. "
+            "Default (90d) is set at or above every consumer's own lookback window "
+            "(the longest being cryo/tiering/s3_analyzer.py's 90-day default) so purging never "
+            "silently starves a feature of data it still needs."
+        ),
+    )
+    telemetry_duckdb_enabled: bool = Field(
+        default=False,
+        description="Enable DuckDB query-log ingestion (dev-only).",
+    )
+    telemetry_duckdb_database: str | None = Field(
+        default=None,
+        description="DuckDB database path for query_history / duckdb_logs ingestion.",
+    )
+    gitops_repo_path: str | None = Field(
+        default=None,
+        description="Local path to GitOps policy repository for webhook/poll sync.",
+    )
+    gitops_policy_dir: str = Field(
+        default="policies",
+        description="Relative directory within gitops_repo_path containing YAML policies.",
+    )
+    gitops_webhook_secret: str | None = Field(
+        default=None,
+        description="HMAC secret for GitOps webhook signature verification.",
+    )
+    otel_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry tracing and OTLP export.",
+    )
+    otel_endpoint: str = Field(
+        default="http://localhost:4318/v1/traces",
+        description="OTLP HTTP endpoint for trace export.",
+    )
+    otel_service_name: str = Field(
+        default="cryo",
+        description="Service name attached to exported spans.",
+    )
+    otel_sample_rate: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Trace sampling rate (0.0-1.0).",
+    )
+    script_runtime: Literal["docker", "runsc"] = Field(
+        default="docker",
+        description="Container runtime for custom maintenance scripts (runsc=gVisor).",
+    )
+    credential_vending_enabled: bool = Field(
+        default=False,
+        description="Enable REST catalog STS credential vending in worker.",
+    )
+    smtp_host: str | None = Field(default=None, description="SMTP host for email notifications.")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str | None = Field(default=None)
+    smtp_password: str | None = Field(default=None)
+    smtp_from: str | None = Field(default=None, description="From address for report emails.")
+    smtp_use_tls: bool = Field(default=True)
+    report_email_recipients: list[str] = Field(
+        default_factory=list,
+        description="Email recipients for daily anomaly reports.",
+    )
+    ml_drift_check_interval_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Hours between scheduled health-classifier drift evaluations.",
+    )
 
     # Slack notifications
     slack_webhook_url: str | None = Field(
@@ -147,6 +244,16 @@ class Settings(BaseSettings):
         default=100,
         gt=0,
         description="Tables processed per batch in fleet-wide anomaly detection.",
+    )
+    anomaly_history_rows_per_table: int = Field(
+        default=60,
+        gt=5,
+        description="Max history rows loaded per table during anomaly detection.",
+    )
+    anomaly_max_results: int = Field(
+        default=500,
+        gt=0,
+        description="Maximum anomaly alerts retained from a fleet-wide scan.",
     )
 
 

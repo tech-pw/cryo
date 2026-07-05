@@ -38,6 +38,7 @@ import {
   ClusteringPlanResponse,
   createClusteringPlan,
   getLayoutRecommendation,
+  getPartitionEvolutionRecommendation,
   getTableQueryPatterns,
   ingestQueryTelemetry,
   LayoutRecommendationRead,
@@ -464,6 +465,12 @@ const ClusteringPlanDrawer = ({
     enabled: open && !!tableId
   });
 
+  const partitionRecommendation = useQuery({
+    queryKey: ["partition-evolution-rec", tableId],
+    queryFn: () => getPartitionEvolutionRecommendation(api, tableId),
+    enabled: open && !!tableId
+  });
+
   const generatePlan = useMutation({
     mutationFn: () =>
       createClusteringPlan(api, tableId, {
@@ -521,6 +528,49 @@ const ClusteringPlanDrawer = ({
                 <Text>
                   Confidence: {(recommendation.data.confidence * 100).toFixed(0)}%
                 </Text>
+              </Space>
+            }
+          />
+        )}
+
+        {partitionRecommendation.data && (
+          <Alert
+            type={partitionRecommendation.data.cardinality_estimate === "unknown" ? "warning" : "info"}
+            showIcon
+            icon={<FilterOutlined />}
+            message="Partition Evolution Recommendation"
+            description={
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Text>
+                  Current: <Tag>{partitionRecommendation.data.current_partition_spec}</Tag>
+                </Text>
+                <Text>
+                  Recommended: <Tag color="blue">{partitionRecommendation.data.recommended_partition_spec}</Tag>
+                </Text>
+                <Text>{partitionRecommendation.data.reason}</Text>
+                <Space>
+                  <Text>
+                    Confidence: {(partitionRecommendation.data.confidence * 100).toFixed(0)}%
+                  </Text>
+                  <Text>
+                    Est. pruning improvement:{" "}
+                    {partitionRecommendation.data.estimated_pruning_improvement_pct.toFixed(0)}%
+                  </Text>
+                  <Tag
+                    color={
+                      partitionRecommendation.data.cardinality_estimate === "high"
+                        ? "purple"
+                        : partitionRecommendation.data.cardinality_estimate === "low"
+                          ? "green"
+                          : "orange"
+                    }
+                  >
+                    {partitionRecommendation.data.cardinality_estimate} cardinality
+                  </Tag>
+                </Space>
+                {partitionRecommendation.data.warnings.map((w) => (
+                  <Alert key={w} type="warning" message={w} showIcon banner />
+                ))}
               </Space>
             }
           />

@@ -18,8 +18,8 @@ from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-FORBIDDEN_IMPORT_MODULES = frozenset({"os", "subprocess", "socket"})
-FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__"})
+FORBIDDEN_IMPORT_MODULES = frozenset({"os", "subprocess", "socket", "builtins", "ctypes"})
+FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__", "getattr", "setattr"})
 
 
 class _ScriptSecurityVisitor(ast.NodeVisitor):
@@ -64,8 +64,10 @@ class CustomScriptRunner:
     def __init__(
         self,
         docker_image: str = "python:3.12-slim",
+        runtime: str = "docker",
     ):
         self.docker_image = docker_image
+        self.runtime = runtime
 
     def validate_script(self, script_code: str) -> tuple[bool, str]:
         """
@@ -174,18 +176,22 @@ except Exception as e:
                 "run",
                 "--rm",
                 "--network",
-                "none",  # No network access
+                "none",
                 "--memory",
                 f"{config.memory_limit_mb}m",
                 "--cpus",
                 str(config.cpu_limit),
-                "--read-only",  # Read-only filesystem
+                "--read-only",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=64m",
+                "--user",
+                "nobody",
                 "-v",
                 f"{script_path}:/script.py:ro",
-                self.docker_image,
-                "python",
-                "/script.py",
             ]
+            if self.runtime == "runsc":
+                cmd.extend(["--runtime", "runsc"])
+            cmd.extend([self.docker_image, "python", "/script.py"])
 
             result = subprocess.run(
                 cmd,

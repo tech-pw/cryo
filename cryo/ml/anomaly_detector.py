@@ -200,16 +200,17 @@ def detect_table_anomalies(
 
     table_name = qualified_table_name(table)
 
-    # Get historical stats
+    # Get historical stats (capped rows per table to limit memory)
     since = datetime.now(UTC) - timedelta(days=lookback_days)
+    max_history_rows = get_settings().anomaly_history_rows_per_table
     stmt = (
         select(TableStatsHistory)
         .where(TableStatsHistory.table_id == table_uuid)
         .where(TableStatsHistory.scan_at >= since)
-        .order_by(TableStatsHistory.scan_at)
+        .order_by(TableStatsHistory.scan_at.desc())
+        .limit(max_history_rows)
     )
-
-    history = list(session.execute(stmt).scalars().all())
+    history = list(reversed(session.execute(stmt).scalars().all()))
 
     if len(history) < 5:
         return []  # Not enough history for anomaly detection
@@ -217,8 +218,12 @@ def detect_table_anomalies(
     # Get current (latest) stats
     current = history[-1]
 
-    # Historical values (all except current)
+    # Historical values (all except current); prefer same weekday for seasonality
     historical = history[:-1]
+    current_weekday = current.scan_at.weekday()
+    weekday_historical = [h for h in historical if h.scan_at.weekday() == current_weekday]
+    if len(weekday_historical) >= 3:
+        historical = weekday_historical
 
     anomalies = []
 
@@ -394,10 +399,13 @@ def detect_all_anomalies(
     table_ids = list(session.execute(stmt).scalars().all())
     batch_size = get_settings().anomaly_detection_batch_size or ANOMALY_DETECTION_BATCH_SIZE
 
-    all_anomalies = []
+    all_anomalies: list[AnomalyAlert] = []
+    max_results = get_settings().anomaly_max_results
     for batch_start in range(0, len(table_ids), batch_size):
         batch = table_ids[batch_start : batch_start + batch_size]
         for table_id in batch:
+            if len(all_anomalies) >= max_results:
+                break
             try:
                 anomalies = detect_table_anomalies(
                     session,
@@ -408,6 +416,8 @@ def detect_all_anomalies(
                 all_anomalies.extend(anomalies)
             except Exception:
                 continue
+        if len(all_anomalies) >= max_results:
+            break
 
     # Filter by severity
     severity_order = {"low": 0, "medium": 1, "high": 2}

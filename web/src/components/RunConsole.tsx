@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Drawer, List, Space, Table, Typography } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { getRun, getRunJobs, wsRunUrl } from "../api/client";
 import type { JobRead, UUID } from "../api/types";
@@ -10,6 +10,9 @@ import { formatTime } from "../lib/format";
 import { StatusTag } from "./status";
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
+const MAX_WS_RETRIES = 8;
+const BASE_RECONNECT_MS = 1_000;
+const MAX_RECONNECT_MS = 30_000;
 
 const tableRef = (job: JobRead) =>
   job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
@@ -26,7 +29,13 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
   const [messages, setMessages] = useState<LiveMessage[]>([]);
   const [wsOpen, setWsOpen] = useState(false);
+  const [wsExhausted, setWsExhausted] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [manualReconnectKey, setManualReconnectKey] = useState(0);
   const [logJob, setLogJob] = useState<JobRead | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
 
   const run = useQuery({
     queryKey: ["run", runId, token],
@@ -40,9 +49,51 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
     refetchInterval: wsOpen ? false : 5000
   });
 
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (retryCountRef.current >= MAX_WS_RETRIES) {
+      setWsExhausted(true);
+      setWsOpen(false);
+      return;
+    }
+    const delay = Math.min(BASE_RECONNECT_MS * 2 ** retryCountRef.current, MAX_RECONNECT_MS);
+    retryCountRef.current += 1;
+    setReconnectAttempt(retryCountRef.current);
+    retryTimerRef.current = window.setTimeout(() => {
+      setManualReconnectKey((current) => current + 1);
+    }, delay);
+  }, []);
+
+  const handleManualReconnect = useCallback(() => {
+    clearRetryTimer();
+    retryCountRef.current = 0;
+    setReconnectAttempt(0);
+    setWsExhausted(false);
+    setManualReconnectKey((current) => current + 1);
+  }, [clearRetryTimer]);
+
   useEffect(() => {
+    clearRetryTimer();
+    retryCountRef.current = 0;
+    setReconnectAttempt(0);
+    setWsExhausted(false);
+    setWsOpen(false);
+
     const socket = new WebSocket(wsRunUrl(runId, token));
-    socket.onopen = () => setWsOpen(true);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      retryCountRef.current = 0;
+      setReconnectAttempt(0);
+      setWsExhausted(false);
+      setWsOpen(true);
+    };
     socket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as LiveMessage;
@@ -52,9 +103,19 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
       }
     };
     socket.onerror = () => setWsOpen(false);
-    socket.onclose = () => setWsOpen(false);
-    return () => socket.close();
-  }, [runId, token]);
+    socket.onclose = () => {
+      setWsOpen(false);
+      if (socketRef.current === socket) {
+        scheduleReconnect();
+      }
+    };
+
+    return () => {
+      socketRef.current = null;
+      clearRetryTimer();
+      socket.close();
+    };
+  }, [runId, token, manualReconnectKey, clearRetryTimer, scheduleReconnect]);
 
   const jobRows = useMemo(() => jobs.data ?? [], [jobs.data]);
   const concurrency = useMemo(() => {
@@ -79,9 +140,20 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
     <Space direction="vertical" size={12} className="full-width">
       {!wsOpen ? (
         <Alert
-          type="info"
+          type={wsExhausted ? "warning" : "info"}
           showIcon
-          message="Live socket unavailable; polling run state every 5 seconds."
+          message={
+            wsExhausted
+              ? "Live socket disconnected after multiple retries; polling run state every 5 seconds."
+              : reconnectAttempt > 0
+                ? `Live socket unavailable; reconnecting (attempt ${reconnectAttempt}/${MAX_WS_RETRIES})…`
+                : "Live socket unavailable; polling run state every 5 seconds."
+          }
+          action={
+            <Button size="small" onClick={handleManualReconnect}>
+              Reconnect
+            </Button>
+          }
         />
       ) : null}
       <div className="console-summary">

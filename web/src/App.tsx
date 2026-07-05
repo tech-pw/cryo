@@ -16,30 +16,39 @@ import {
   ThunderboltOutlined
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Button, ConfigProvider, Layout, Menu, Space, Tooltip, Typography, theme } from "antd";
+import { Button, ConfigProvider, Layout, Menu, Space, Spin, Tooltip, Typography, theme } from "antd";
 import type { MenuProps } from "antd";
-import { useMemo } from "react";
+import { Suspense, lazy, useMemo } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
-import { Connections } from "./pages/Connections";
-import { CostSavings } from "./pages/CostSavings";
-import { DatalakeHealth } from "./pages/DatalakeHealth";
-import { Governance } from "./pages/Governance";
-import { Intelligence } from "./pages/Intelligence";
-import { JobDetail } from "./pages/JobDetail";
-import { Login } from "./pages/Login";
-import { LoginCallback } from "./pages/LoginCallback";
-import LayoutOptimization from "./pages/LayoutOptimization";
-import { MultiCatalog } from "./pages/MultiCatalog";
-import { Presets } from "./pages/Presets";
-import { QueryPerformance } from "./pages/QueryPerformance";
-import { Runs } from "./pages/Runs";
-import { SLAStatus } from "./pages/SLAStatus";
-import { Scans } from "./pages/Scans";
-import { TableDetail } from "./pages/TableDetail";
-import { TableExplorer } from "./pages/TableExplorer";
+
+const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
+const CostSavings = lazy(() => import("./pages/CostSavings").then((m) => ({ default: m.CostSavings })));
+const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
+const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
+const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
+const JobDetail = lazy(() => import("./pages/JobDetail").then((m) => ({ default: m.JobDetail })));
+const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
+const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
+const LayoutOptimization = lazy(() => import("./pages/LayoutOptimization"));
+const MultiCatalog = lazy(() => import("./pages/MultiCatalog").then((m) => ({ default: m.MultiCatalog })));
+const Presets = lazy(() => import("./pages/Presets").then((m) => ({ default: m.Presets })));
+const QueryPerformance = lazy(() =>
+  import("./pages/QueryPerformance").then((m) => ({ default: m.QueryPerformance }))
+);
+const Runs = lazy(() => import("./pages/Runs").then((m) => ({ default: m.Runs })));
+const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
+const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
+const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ default: m.TableDetail })));
+const TableExplorer = lazy(() => import("./pages/TableExplorer").then((m) => ({ default: m.TableExplorer })));
+
+const PageFallback = () => (
+  <div className="content" style={{ display: "grid", placeItems: "center", minHeight: 240 }}>
+    <Spin size="large" />
+  </div>
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -130,9 +139,17 @@ const Shell = () => {
 
   if (!isAuthenticated) {
     if (location.pathname === "/login/callback") {
-      return <LoginCallback />;
+      return (
+        <Suspense fallback={<PageFallback />}>
+          <LoginCallback />
+        </Suspense>
+      );
     }
-    return <Login />;
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <Login />
+      </Suspense>
+    );
   }
 
   return (
@@ -163,27 +180,29 @@ const Shell = () => {
           </Space>
         </Layout.Header>
         <Layout.Content className="content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/health" replace />} />
-            <Route path="/health" element={<DatalakeHealth />} />
-            <Route path="/catalogs" element={<MultiCatalog />} />
-            <Route path="/cost" element={<CostSavings />} />
-            <Route path="/attribution" element={<Navigate to="/cost" replace />} />
-            <Route path="/tables" element={<TableExplorer />} />
-            <Route path="/tables/:tableId" element={<TableDetail />} />
-            <Route path="/scans" element={<Scans />} />
-            <Route path="/scans/:runId" element={<Scans />} />
-            <Route path="/ai" element={<Intelligence />} />
-            <Route path="/governance" element={<Governance />} />
-            <Route path="/queries" element={<QueryPerformance />} />
-            <Route path="/sla" element={<SLAStatus />} />
-            <Route path="/optimize" element={<LayoutOptimization />} />
-            <Route path="/presets" element={<Presets />} />
-            <Route path="/runs" element={<Runs />} />
-            <Route path="/runs/:runId" element={<Runs />} />
-            <Route path="/jobs/:jobId" element={<JobDetail />} />
-            <Route path="/connections" element={<Connections />} />
-          </Routes>
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/health" replace />} />
+              <Route path="/health" element={<DatalakeHealth />} />
+              <Route path="/catalogs" element={<MultiCatalog />} />
+              <Route path="/cost" element={<CostSavings />} />
+              <Route path="/attribution" element={<Navigate to="/cost" replace />} />
+              <Route path="/tables" element={<TableExplorer />} />
+              <Route path="/tables/:tableId" element={<TableDetail />} />
+              <Route path="/scans" element={<Scans />} />
+              <Route path="/scans/:runId" element={<Scans />} />
+              <Route path="/ai" element={<Intelligence />} />
+              <Route path="/governance" element={<Governance />} />
+              <Route path="/queries" element={<QueryPerformance />} />
+              <Route path="/sla" element={<SLAStatus />} />
+              <Route path="/optimize" element={<LayoutOptimization />} />
+              <Route path="/presets" element={<Presets />} />
+              <Route path="/runs" element={<Runs />} />
+              <Route path="/runs/:runId" element={<Runs />} />
+              <Route path="/jobs/:jobId" element={<JobDetail />} />
+              <Route path="/connections" element={<Connections />} />
+            </Routes>
+          </Suspense>
         </Layout.Content>
       </Layout>
     </Layout>

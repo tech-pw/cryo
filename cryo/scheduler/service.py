@@ -55,6 +55,9 @@ class SchedulerService:
         self._leader_check = leader_check or (lambda: True)
         self._benefit_score_interval_hours = benefit_score_update_interval_hours
         self._last_benefit_score_update: datetime | None = None
+        self._last_ml_drift_check: datetime | None = None
+        self._last_telemetry_ingest: datetime | None = None
+        self._last_query_log_purge: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -66,6 +69,9 @@ class SchedulerService:
 
         # Update benefit scores periodically (helps AutoComp prioritization)
         self._maybe_update_benefit_scores(current)
+        self._maybe_check_ml_drift(current)
+        self._maybe_ingest_telemetry(current)
+        self._maybe_purge_query_logs(current)
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
             return SchedulerTickResult()
@@ -151,6 +157,158 @@ class SchedulerService:
                 import logging
 
                 logging.getLogger(__name__).warning(f"Failed to update benefit scores: {e}")
+
+    def _maybe_check_ml_drift(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        interval_hours = get_settings().ml_drift_check_interval_hours
+        if self._last_ml_drift_check is not None:
+            elapsed = current - self._last_ml_drift_check
+            if elapsed < timedelta(hours=interval_hours):
+                return
+        try:
+            from cryo.ml.anomaly_detector import detect_all_anomalies
+            from cryo.ml.health_classifier import HealthLabel, evaluate_classifier
+
+            with SessionLocal() as session:
+                anomalies = detect_all_anomalies(session, min_severity="high")
+                drift_report: dict[str, object] = {"anomalies": len(anomalies)}
+                from sqlalchemy import select
+
+                from cryo.db.models import Table, TableStats
+
+                rows = session.execute(
+                    select(Table, TableStats)
+                    .join(TableStats, TableStats.table_id == Table.id)
+                    .limit(200)
+                ).all()
+                labeled: list[HealthLabel] = []
+                stats_by_table: dict[str, dict[str, object]] = {}
+                for table, stats in rows:
+                    if stats is None:
+                        continue
+                    tid = str(table.id)
+                    stats_dict = {
+                        "table_id": tid,
+                        "total_files": stats.total_files,
+                        "small_files_count": stats.small_files_count,
+                        "overall_score": stats.overall_score,
+                        "delete_file_pct": (stats.raw or {}).get("delete_file_pct", 0)
+                        if stats.raw
+                        else 0,
+                    }
+                    stats_by_table[tid] = stats_dict
+                    needs = (
+                        float(stats.small_files_count or 0) > 500
+                        or float(stats.overall_score or 100) < 50
+                    )
+                    labeled.append(HealthLabel(table_id=tid, needs_emergency_compaction=needs))
+                if len(labeled) >= 4:
+                    eval_result = evaluate_classifier(labeled, stats_by_table)
+                    drift_report["classifier"] = eval_result
+                    if not eval_result.get("beats_threshold"):
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "Health classifier drift: accuracy below threshold baseline %s",
+                            eval_result,
+                        )
+                session.commit()
+            import logging
+
+            logging.getLogger(__name__).info("Scheduled ML drift scan: %s", drift_report)
+            self._last_ml_drift_check = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("ML drift check failed: %s", exc)
+
+    def _maybe_ingest_telemetry(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        settings = get_settings()
+        if not settings.telemetry_trino_url:
+            return
+        if not settings.telemetry_ingest_on_startup:
+            return
+        if self._last_telemetry_ingest is not None:
+            elapsed = current - self._last_telemetry_ingest
+            if elapsed < timedelta(hours=1):
+                return
+        try:
+            import asyncio
+
+            from sqlalchemy import select
+
+            from cryo.db.models import Source
+            from cryo.telemetry.ingestion import TrinoQueryIngester, ingest_trino_query_log
+            from cryo.telemetry.patterns import aggregate_query_patterns
+
+            ingester = TrinoQueryIngester(settings.telemetry_trino_url)
+
+            async def _run() -> tuple[int, int]:
+                total_ingested = 0
+                total_patterns_updated = 0
+                with SessionLocal() as session:
+                    sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
+                    for source in sources:
+                        count = await ingest_trino_query_log(
+                            session,
+                            source,
+                            ingester,
+                            limit=500,
+                        )
+                        total_ingested += count
+                        # Aggregate immediately so query_patterns (what partition/layout
+                        # recommendations actually read) reflects this tick's data -- without
+                        # this, the scheduled path only ever wrote raw query_logs rows and
+                        # relied on someone manually re-triggering ingestion via the UI to
+                        # get patterns updated at all.
+                        total_patterns_updated += aggregate_query_patterns(session, table_id=None)
+                    session.commit()
+                return total_ingested, total_patterns_updated
+
+            ingested, patterns_updated = asyncio.run(_run())
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Telemetry ingest tick: %s query logs, %s patterns updated",
+                ingested,
+                patterns_updated,
+            )
+            self._last_telemetry_ingest = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Telemetry ingest tick failed: %s", exc)
+
+    def _maybe_purge_query_logs(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        if self._last_query_log_purge is not None:
+            elapsed = current - self._last_query_log_purge
+            if elapsed < timedelta(days=1):
+                return
+        try:
+            from cryo.telemetry.patterns import purge_old_query_logs
+
+            settings = get_settings()
+            with SessionLocal() as session:
+                deleted = purge_old_query_logs(session, settings.query_log_retention_days)
+            import logging
+
+            logging.getLogger(__name__).info("Query log purge tick: %s rows deleted", deleted)
+            self._last_query_log_purge = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Query log purge tick failed: %s", exc)
 
 
 def _apply_routing(

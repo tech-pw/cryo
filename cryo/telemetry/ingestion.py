@@ -571,7 +571,7 @@ class DuckDBIngester:
 
     def __init__(
         self,
-        history_file: str | None = "~/.duckdb/history",
+        history_file: str | None = "~/.duckdb_history",
         query_log_table: str | None = None,
         duckdb_database: str | None = None,
     ):
@@ -622,14 +622,14 @@ class DuckDBIngester:
         since: datetime,
         limit: int,
     ) -> list[dict[str, Any]]:
-        """Read from DuckDB's built-in query_history table when available."""
-        import uuid
+        """Read from DuckDB duckdb_logs view when logging is enabled."""
+        import hashlib
 
         events: list[dict[str, Any]] = []
         try:
             import duckdb
         except ImportError:
-            logger.debug("duckdb package not installed; skipping query_history scan")
+            logger.debug("duckdb package not installed; skipping duckdb_logs scan")
             return events
 
         db_path = self.duckdb_database
@@ -639,49 +639,40 @@ class DuckDBIngester:
         try:
             conn = duckdb.connect(db_path, read_only=True)
             try:
-                tables = conn.execute("SHOW TABLES").fetchall()
-                table_names = {row[0].lower() for row in tables}
-                if "query_history" not in table_names:
-                    return events
-
                 rows = conn.execute(
                     """
-                    SELECT query_text, query_start_time, total_elapsed_time
-                    FROM query_history
-                    WHERE query_start_time >= ?
-                    ORDER BY query_start_time DESC
+                    SELECT message, timestamp
+                    FROM duckdb_logs
+                    WHERE type = 'QueryLog'
+                      AND timestamp >= ?
+                    ORDER BY timestamp DESC
                     LIMIT ?
                     """,
                     [since, limit],
                 ).fetchall()
-
-                for query_text, query_start_time, total_elapsed_time in rows:
-                    if not query_text:
-                        continue
-                    executed_at = query_start_time
-                    if isinstance(executed_at, str):
-                        executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
-                    elif executed_at is None:
-                        executed_at = datetime.now(UTC)
-                    elif executed_at.tzinfo is None:
-                        executed_at = executed_at.replace(tzinfo=UTC)
-
-                    events.append(
-                        {
-                            "query_id": str(uuid.uuid4()),
-                            "query": query_text,
-                            "engine": "duckdb",
-                            "executed_at": executed_at,
-                            "duration_ms": int(total_elapsed_time)
-                            if total_elapsed_time is not None
-                            else None,
-                            "raw": {"source": "query_history"},
-                        }
-                    )
+            except Exception:
+                logger.debug("duckdb_logs view unavailable in %s", db_path)
+                return events
             finally:
                 conn.close()
+
+            for message, timestamp in rows:
+                if not message:
+                    continue
+                query_id = hashlib.sha256(f"{message}:{timestamp}".encode()).hexdigest()[:32]
+                events.append(
+                    {
+                        "query_id": query_id,
+                        "query_text": str(message),
+                        "executed_at": timestamp,
+                        "duration_ms": None,
+                        "user": "duckdb",
+                        "engine": "duckdb",
+                        "status": "FINISHED",
+                    }
+                )
         except Exception as e:
-            logger.warning(f"Failed to read DuckDB query_history from {db_path}: {e}")
+            logger.warning("Failed to read DuckDB logs from %s: %s", db_path, e)
 
         return events
 

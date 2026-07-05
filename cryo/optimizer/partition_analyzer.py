@@ -2,17 +2,68 @@
 
 Analyzes query patterns to recommend partition spec changes
 for better query pruning and performance.
+
+Guards against the two classic over/under-partitioning anti-patterns (see
+docs/RECOMMENDATIONS.md's Iceberg partitioning research):
+- Recommending `identity` partitioning on a high-cardinality column (one partition per
+  distinct value) — uses the same name-based cardinality heuristic as
+  `cryo/optimizer/layout_analyzer.py`'s Bloom filter recommender, since no real NDV stats
+  are available yet (Puffin NDV reading is still a stub).
+- Recommending a finer time granularity than the data volume can support — estimates
+  resulting average partition size and skips the recommendation if it would fall below the
+  commonly-cited 128MB-per-partition floor.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import QueryPattern, Table, TableStats
+
+# Same keyword heuristic used by layout_analyzer.py's Bloom filter recommender.
+_LOW_CARDINALITY_HINTS = (
+    "date",
+    "day",
+    "month",
+    "year",
+    "status",
+    "type",
+    "flag",
+    "region",
+    "country",
+)
+_HIGH_CARDINALITY_HINTS = (
+    "id",
+    "uuid",
+    "key",
+    "hash",
+    "token",
+    "code",
+    "ref",
+    "guid",
+    "sku",
+)
+
+# Iceberg partitioning best practice: a partition should hold roughly 128MB-1GB of data
+# post-compaction. Recommending a spec that would push average partition size below the
+# low end reproduces the over-partitioning anti-pattern (excess small files, bloated
+# manifests) even though pruning looks good on paper.
+_MIN_HEALTHY_PARTITION_GB = 0.125
+_TARGET_HEALTHY_PARTITION_GB = 0.5
+
+_GRANULARITY_ORDER = ("year", "month", "day")
+# Approximate multiplier in partition *count* when moving from a coarser to a finer
+# time transform — a rough calendar estimate used only to size-check a recommendation,
+# not an exact computation.
+_GRANULARITY_FACTOR = {
+    ("year", "month"): 12,
+    ("year", "day"): 365,
+    ("month", "day"): 30,
+}
 
 
 @dataclass
@@ -27,6 +78,68 @@ class PartitionEvolutionRecommendation:
     confidence: float  # 0.0 to 1.0
     estimated_pruning_improvement_pct: float
     query_patterns_analyzed: int
+    # "high" / "low" / "unknown" — name-based heuristic, not a measured NDV.
+    cardinality_estimate: str = "unknown"
+    warnings: list[str] = field(default_factory=list)
+
+
+def _cardinality_hint(column_name: str) -> str:
+    """Best-effort cardinality guess from column name alone — "high", "low", or "unknown"."""
+    col_lower = column_name.lower()
+    if any(kw in col_lower for kw in _HIGH_CARDINALITY_HINTS):
+        return "high"
+    if any(kw in col_lower for kw in _LOW_CARDINALITY_HINTS):
+        return "low"
+    return "unknown"
+
+
+def _bucket_count_for(total_size_gb: float) -> int:
+    """Pick a bucket count targeting ~_TARGET_HEALTHY_PARTITION_GB per bucket."""
+    if total_size_gb <= 0:
+        return 16
+    estimated = max(4, round(total_size_gb / _TARGET_HEALTHY_PARTITION_GB))
+    power = 1
+    while power < estimated:
+        power *= 2
+    return min(2048, power)
+
+
+def _time_partition_field(partition_spec: object) -> tuple[str, str, str] | None:
+    """Return (column_name, lowercased transform, original transform text) for the first
+    year/month/day field in a partition spec — the original text is kept so the recommended
+    spec string can substitute it back in with matching case."""
+    if not isinstance(partition_spec, list):
+        return None
+    for entry in partition_spec:
+        if not isinstance(entry, dict):
+            continue
+        transform_raw = str(entry.get("transform", ""))
+        transform = transform_raw.lower()
+        if transform in _GRANULARITY_ORDER:
+            return str(entry.get("name", "")), transform, transform_raw
+    return None
+
+
+def _finer_transforms(current: str) -> list[str]:
+    if current not in _GRANULARITY_ORDER:
+        return []
+    idx = _GRANULARITY_ORDER.index(current)
+    return list(_GRANULARITY_ORDER[idx + 1 :])
+
+
+def _estimated_avg_partition_gb_after_switch(
+    total_size_gb: float,
+    total_partitions: int | None,
+    current: str,
+    candidate: str,
+) -> float | None:
+    factor = _GRANULARITY_FACTOR.get((current, candidate))
+    if not factor or not total_partitions or total_partitions <= 0 or total_size_gb <= 0:
+        return None
+    estimated_new_partitions = total_partitions * factor
+    if estimated_new_partitions <= 0:
+        return None
+    return total_size_gb / estimated_new_partitions
 
 
 def analyze_partition_evolution(
@@ -55,7 +168,6 @@ def analyze_partition_evolution(
 
     table_name = qualified_table_name(table)
 
-    # Get query patterns for this table
     pattern_stmt = (
         select(QueryPattern)
         .where(QueryPattern.table_id == table_id)
@@ -66,45 +178,68 @@ def analyze_partition_evolution(
     if len(patterns) < min_query_threshold:
         return None  # Not enough query data for recommendation
 
-    # Analyze filter patterns
     filter_column_counts: dict[str, int] = {}
     total_queries = 0
 
     for pattern in patterns:
         query_count = pattern.filter_count
         total_queries += query_count
-
         # QueryPattern is already aggregated at table+column granularity.
         filter_column_counts[pattern.column_name] = (
             filter_column_counts.get(pattern.column_name, 0) + query_count
         )
 
-    if not filter_column_counts:
+    if not filter_column_counts or total_queries <= 0:
         return None  # No filter patterns found
 
-    # Get current partition spec from raw stats
+    raw_partition_spec = (
+        stats.raw.get("partition_spec", []) if stats.raw and isinstance(stats.raw, dict) else []
+    )
     current_spec = "unpartitioned"
-    if stats.raw and isinstance(stats.raw, dict):
-        partition_spec = stats.raw.get("partition_spec", [])
-        if partition_spec and isinstance(partition_spec, list):
-            current_spec = ", ".join(
-                [f"{p.get('name', '')} ({p.get('transform', '')})" for p in partition_spec]
-            )
+    if raw_partition_spec and isinstance(raw_partition_spec, list):
+        current_spec = ", ".join(
+            f"{p.get('name', '')} ({p.get('transform', '')})" for p in raw_partition_spec
+        )
 
-    # Find most frequently filtered column
+    total_size_gb = float(stats.total_size_gb or 0.0)
+
+    # Case 1: wrong column — a dominant filter column isn't in the partition spec at all.
     most_filtered_column = max(filter_column_counts.items(), key=lambda x: x[1])
     filter_column, filter_count = most_filtered_column
     filter_pct = (filter_count / total_queries) * 100
-
-    # Check if this column is already in partition spec
     is_partitioned_by_filter_col = filter_column.lower() in current_spec.lower()
 
     if not is_partitioned_by_filter_col and filter_pct >= 80:
-        # Strong recommendation: 80%+ of queries filter on non-partitioned column
+        cardinality = _cardinality_hint(filter_column)
+        warnings: list[str] = []
+
+        if cardinality == "high":
+            # Partitioning a near-unique column with `identity` creates one partition per
+            # distinct value — the over-partitioning anti-pattern. Recommend bucket()
+            # instead, which still prunes on equality filters without that blowup.
+            bucket_count = _bucket_count_for(total_size_gb)
+            new_field = f"{filter_column} (bucket[{bucket_count}])"
+            reason = (
+                f"{filter_pct:.0f}% of queries filter on '{filter_column}' but the table isn't "
+                f"partitioned by it. '{filter_column}' looks high-cardinality by name, so "
+                f"bucket({bucket_count}) is recommended instead of identity — partitioning a "
+                "near-unique column with identity would create one partition per distinct "
+                "value."
+            )
+        else:
+            new_field = f"{filter_column} (identity)"
+            reason = (
+                f"{filter_pct:.0f}% of queries filter on '{filter_column}' "
+                "but table is not partitioned by this column."
+            )
+            if cardinality == "unknown":
+                warnings.append(
+                    f"Cardinality of '{filter_column}' could not be estimated from its name; "
+                    "verify it isn't near-unique before applying identity partitioning."
+                )
+
         recommended_spec = (
-            f"{current_spec}, {filter_column} (identity)"
-            if current_spec != "unpartitioned"
-            else f"{filter_column} (identity)"
+            f"{current_spec}, {new_field}" if current_spec != "unpartitioned" else new_field
         )
 
         return PartitionEvolutionRecommendation(
@@ -112,24 +247,43 @@ def analyze_partition_evolution(
             table_name=table_name,
             current_partition_spec=current_spec,
             recommended_partition_spec=recommended_spec,
-            reason=(
-                f"{filter_pct:.0f}% of queries filter on '{filter_column}' "
-                "but table is not partitioned by this column"
-            ),
-            confidence=min(0.95, filter_pct / 100),
-            estimated_pruning_improvement_pct=filter_pct * 0.7,  # Conservative estimate
+            reason=reason,
+            confidence=min(0.95, filter_pct / 100) * (0.85 if cardinality == "unknown" else 1.0),
+            estimated_pruning_improvement_pct=filter_pct * 0.7,
             query_patterns_analyzed=len(patterns),
+            cardinality_estimate=cardinality,
+            warnings=warnings,
         )
 
-    # Check for granularity mismatch (e.g., YEAR partition but queries use DAY ranges)
-    if "year" in current_spec.lower() and filter_column.lower() in current_spec.lower():
-        # Check if queries use fine-grained date filters
-        daily_filter_count = sum(
-            p.range_filter_count for p in patterns if "day" in p.column_name.lower()
-        )
+    # Case 2: granularity mismatch — table is partitioned by a coarser time transform than
+    # its queries actually filter at (e.g., year-partitioned but day-level query filters).
+    time_field = _time_partition_field(raw_partition_spec)
+    if time_field is not None:
+        current_column, current_transform, current_transform_raw = time_field
+        for candidate in _finer_transforms(current_transform):
+            fine_filter_count = sum(
+                p.range_filter_count for p in patterns if candidate in p.column_name.lower()
+            )
+            ratio = fine_filter_count / total_queries
+            if ratio <= 0.6:
+                continue
 
-        if daily_filter_count / total_queries > 0.6:
-            recommended_spec = current_spec.replace("year", "day")
+            avg_gb_after = _estimated_avg_partition_gb_after_switch(
+                total_size_gb, stats.total_partitions, current_transform, candidate
+            )
+            if avg_gb_after is not None and avg_gb_after < _MIN_HEALTHY_PARTITION_GB:
+                # Switching would produce mostly-empty partitions — the under-partitioning
+                # anti-pattern. Don't recommend it; the data volume doesn't support it yet.
+                continue
+
+            recommended_spec = current_spec.replace(f"({current_transform_raw})", f"({candidate})")
+            size_note = (
+                f" Estimated avg partition size after switching stays at "
+                f"~{avg_gb_after * 1024:.0f}MB, above the "
+                f"{_MIN_HEALTHY_PARTITION_GB * 1024:.0f}MB healthy minimum."
+                if avg_gb_after is not None
+                else ""
+            )
 
             return PartitionEvolutionRecommendation(
                 table_id=str(table_id),
@@ -137,15 +291,15 @@ def analyze_partition_evolution(
                 current_partition_spec=current_spec,
                 recommended_partition_spec=recommended_spec,
                 reason=(
-                    f"{(daily_filter_count / total_queries) * 100:.0f}% of queries "
-                    "use day-level filters but table is partitioned by year"
+                    f"{ratio * 100:.0f}% of queries use {candidate}-level filters but "
+                    f"'{current_column}' is partitioned by {current_transform}.{size_note}"
                 ),
                 confidence=0.85,
                 estimated_pruning_improvement_pct=60.0,
                 query_patterns_analyzed=len(patterns),
+                cardinality_estimate="low",  # time columns are always low-cardinality
             )
 
-    # No recommendation needed
     return None
 
 
@@ -163,7 +317,6 @@ def get_all_partition_recommendations(
     Returns:
         List of recommendations sorted by confidence
     """
-    # Get all tables with query patterns
     stmt = (
         select(Table.id)
         .join(QueryPattern, Table.id == QueryPattern.table_id)
@@ -182,7 +335,6 @@ def get_all_partition_recommendations(
         except Exception:
             continue
 
-    # Sort by confidence descending
     recommendations.sort(key=lambda r: r.confidence, reverse=True)
 
     return recommendations

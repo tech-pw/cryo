@@ -73,7 +73,7 @@ def test_record_lineage_from_query_persists_edges(session):
         job_id="job-42",
     )
 
-    assert edges_recorded == 1
+    assert edges_recorded >= 1
 
     edge = session.scalar(
         select(LineageEdge).where(

@@ -20,11 +20,14 @@ from threading import Event, Thread
 from typing import Any, NoReturn
 
 from cryo.config import get_settings
+from cryo.observability.logging import configure_logging
+from cryo.observability.tracing import init_tracing, shutdown_tracing
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+settings = get_settings()
+configure_logging(
+    level="DEBUG" if settings.environment == "dev" else "INFO",
+    json_format=settings.environment in {"staging", "prod"},
+    environment=settings.environment,
 )
 logger = logging.getLogger("cryo")
 
@@ -396,12 +399,12 @@ class ScannerRunner(DaemonRunner):
 
 def run_governor(args: argparse.Namespace) -> NoReturn:
     runner = GovernorRunner(interval=args.wave_interval)
-    _run_with_signal(runner)
+    _run_with_signal(runner, service_name="governor")
 
 
 def run_worker(args: argparse.Namespace) -> NoReturn:
     runner = WorkerRunner(interval=args.poll_interval)
-    _run_with_signal(runner)
+    _run_with_signal(runner, service_name="worker")
 
 
 def run_scheduler(args: argparse.Namespace) -> NoReturn:
@@ -417,7 +420,7 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     updater_thread.start()
     try:
         runner = SchedulerRunner(interval=args.check_interval)
-        _run_with_signal(runner)
+        _run_with_signal(runner, service_name="scheduler")
     finally:
         updater_stop.set()
         updater_thread.join(timeout=5)
@@ -433,6 +436,15 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     from cryo.infra.wiring import build_runtime_wiring
 
     wiring = build_runtime_wiring()
+    settings = get_settings()
+    from cryo.observability.health_server import start_health_server
+
+    health_services = (
+        ("governor", settings.health_port),
+        ("worker", settings.health_port + 1),
+        ("scheduler", settings.health_port + 2),
+        ("scanner", settings.health_port + 3),
+    )
     runners = [
         GovernorRunner(interval=args.wave_interval, wiring=wiring),
         WorkerRunner(interval=args.poll_interval, wiring=wiring),
@@ -440,6 +452,16 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         ScannerRunner(interval=args.poll_interval, wiring=wiring),
         BenefitScoreUpdaterRunner(),
     ]
+    for runner, (service_name, port) in zip(runners[:4], health_services, strict=True):
+
+        def _readiness(r: DaemonRunner = runner) -> bool:
+            return not r._stop.is_set()
+
+        start_health_server(
+            port=port,
+            service_name=service_name,
+            readiness_check=_readiness,
+        )
 
     threads: list[Thread] = []
     for runner in runners:
@@ -469,7 +491,18 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     sys.exit(0)
 
 
-def _run_with_signal(runner: DaemonRunner) -> NoReturn:
+def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -> NoReturn:
+    settings = get_settings()
+    init_tracing(settings, service_name=service_name or runner.name)
+    if service_name and settings.health_port:
+        from cryo.observability.health_server import start_health_server
+
+        start_health_server(
+            port=settings.health_port,
+            service_name=service_name,
+            readiness_check=lambda: not runner._stop.is_set(),
+        )
+
     def handle_signal(signum: int, frame: object) -> None:
         logger.info("Received signal %d, shutting down...", signum)
         runner.stop()
@@ -478,6 +511,7 @@ def _run_with_signal(runner: DaemonRunner) -> NoReturn:
     signal.signal(signal.SIGTERM, handle_signal)
 
     runner.run()
+    shutdown_tracing()
     sys.exit(0)
 
 

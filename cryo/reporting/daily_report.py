@@ -116,6 +116,16 @@ async def generate_daily_report(
         )
         result["slack_sent"] = slack_sent
 
+    from cryo.reporting.email import send_report_email
+
+    summary_text = ai_summary or f"Cryo daily report: {report_data.total_anomalies} anomalies"
+    email_sent = send_report_email(
+        f"Cryo Daily Report — {report_data.report_date.date()}",
+        f"<pre>{summary_text}</pre>",
+    )
+    if email_sent:
+        result["email_sent"] = True
+
     return result
 
 

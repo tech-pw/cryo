@@ -95,6 +95,7 @@ class SQLSchedulerStore:
                 trigger=run.trigger,
                 status="queued",
                 deadline_at=run.deadline_at,
+                summary={"actor": "system:scheduler"},
             )
             session.add(db_run)
             for job in run.jobs:

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.auth_routes import router as auth_router
+from cryo.api.correlation_middleware import CorrelationMiddleware
 from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.metrics_routes import router as metrics_router
@@ -14,6 +15,7 @@ from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
 from cryo.config import Settings, get_settings
 from cryo.observability.logging import configure_logging
+from cryo.observability.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -23,6 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         json_format=settings.environment in {"staging", "prod"},
         environment=settings.environment,
     )
+    init_tracing(settings, service_name=f"{settings.otel_service_name}-api")
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
@@ -62,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rate=settings.api_rate_limit_rps,
         capacity=settings.api_rate_limit_burst,
     )
+    app.add_middleware(CorrelationMiddleware)
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:
@@ -74,6 +78,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(advanced_router)
     app.include_router(metrics_router)
+    instrument_fastapi(app)
+
+    @app.on_event("shutdown")
+    def _shutdown_tracing() -> None:
+        shutdown_tracing()
+
     return app
 
 

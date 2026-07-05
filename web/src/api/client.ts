@@ -621,8 +621,32 @@ export interface ClusteringPlanResponse {
   trino_sql?: string | null;
 }
 
+export interface PartitionEvolutionRecommendationRead {
+  table_id: UUID;
+  table_name: string;
+  current_partition_spec: string;
+  recommended_partition_spec: string;
+  reason: string;
+  confidence: number;
+  estimated_pruning_improvement_pct: number;
+  query_patterns_analyzed: number;
+  cardinality_estimate: string;
+  warnings: string[];
+}
+
 export const getTableQueryPatterns = (api: ApiOptions, tableId: UUID) =>
   apiFetch<TableQueryPatternsResponse>(`/tables/${tableId}/query-patterns`, api);
+
+export const getPartitionEvolutionRecommendation = (
+  api: ApiOptions,
+  tableId: UUID,
+  minQueryThreshold?: number
+) =>
+  apiFetch<PartitionEvolutionRecommendationRead | null>(
+    `/advanced/partition-evolution/${tableId}`,
+    api,
+    { query: { min_query_threshold: minQueryThreshold } }
+  );
 
 export const getLayoutRecommendation = (api: ApiOptions, tableId: UUID, refresh?: boolean) =>
   apiFetch<LayoutRecommendationRead>(`/tables/${tableId}/layout-recommendation`, api, {
@@ -909,6 +933,23 @@ export interface TierPolicyRead {
   enabled: boolean;
 }
 
+export interface TierPolicyWrite {
+  source_id: string;
+  name: string;
+  storage_class: string;
+  min_age_days: number;
+  predicate?: JsonObject | null;
+  enabled?: boolean;
+}
+
+export interface TierPolicyPatch {
+  name?: string;
+  storage_class?: string;
+  min_age_days?: number;
+  predicate?: JsonObject | null;
+  enabled?: boolean;
+}
+
 export interface LineageNodeRead {
   table_id: string;
   table_name: string;
@@ -936,6 +977,15 @@ export const getCostForecast = (api: ApiOptions, budgetLimitUsd?: number) =>
 
 export const listTierPolicies = (api: ApiOptions) =>
   apiFetch<TierPolicyRead[]>("/tier-policies", api);
+
+export const createTierPolicy = (api: ApiOptions, body: TierPolicyWrite) =>
+  apiFetch<TierPolicyRead>("/tier-policies", api, { method: "POST", body });
+
+export const patchTierPolicy = (api: ApiOptions, id: string, body: TierPolicyPatch) =>
+  apiFetch<TierPolicyRead>(`/tier-policies/${id}`, api, { method: "PATCH", body });
+
+export const deleteTierPolicy = (api: ApiOptions, id: string) =>
+  apiFetch<void>(`/tier-policies/${id}`, api, { method: "DELETE" });
 
 export const getTableLineage = (api: ApiOptions, tableId: string, depth = 3) =>
   apiFetch<LineageGraphRead>(`/advanced/lineage/${tableId}`, api, { query: { depth } });

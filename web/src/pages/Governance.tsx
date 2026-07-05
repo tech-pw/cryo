@@ -1,14 +1,38 @@
+import { PlusOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Input, Row, Space, Table, Tag, Typography, message } from "antd";
+import {
+  Button,
+  Card,
+  Col,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+  message
+} from "antd";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   approvalAction,
+  createTierPolicy,
+  deleteTierPolicy,
   getCostForecast,
   getTableLineage,
   listFleetAnomalies,
   listPendingApprovals,
-  listTierPolicies
+  listSources,
+  listTables,
+  listTierPolicies,
+  patchTierPolicy,
+  type TierPolicyRead,
+  type TierPolicyWrite
 } from "../api/client";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
@@ -16,11 +40,16 @@ import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatTime } from "../lib/format";
 
+type TierPolicyFormValues = TierPolicyWrite;
+
 export const Governance = () => {
   const { api, subject, role } = useAuth();
   const queryClient = useQueryClient();
-  const canApprove = role === "admin" || role === "operator";
+  const canManage = role === "admin" || role === "operator";
+  const canApprove = canManage;
   const [lineageTableId, setLineageTableId] = useState("");
+  const [policyModal, setPolicyModal] = useState<TierPolicyRead | "new" | null>(null);
+  const [policyForm] = Form.useForm<TierPolicyFormValues>();
 
   const approvals = useQuery({
     queryKey: ["pending-approvals", api.token],
@@ -40,6 +69,14 @@ export const Governance = () => {
     queryKey: ["tier-policies", api.token],
     queryFn: () => listTierPolicies(api)
   });
+  const sources = useQuery({
+    queryKey: ["sources", api.token],
+    queryFn: () => listSources(api)
+  });
+  const tableOptions = useQuery({
+    queryKey: ["governance-table-picker", api.token],
+    queryFn: () => listTables(api, { limit: 200, offset: 0 })
+  });
   const lineage = useQuery({
     queryKey: ["table-lineage", api.token, lineageTableId],
     queryFn: () => getTableLineage(api, lineageTableId),
@@ -55,6 +92,49 @@ export const Governance = () => {
     },
     onError: (error) => message.error((error as Error).message)
   });
+
+  const saveTierPolicy = useMutation({
+    mutationFn: (values: TierPolicyFormValues) =>
+      policyModal && policyModal !== "new"
+        ? patchTierPolicy(api, policyModal.id, values)
+        : createTierPolicy(api, values),
+    onSuccess: () => {
+      message.success("Tier policy saved");
+      setPolicyModal(null);
+      void queryClient.invalidateQueries({ queryKey: ["tier-policies"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const removeTierPolicy = useMutation({
+    mutationFn: (id: string) => deleteTierPolicy(api, id),
+    onSuccess: () => {
+      message.success("Tier policy deleted");
+      void queryClient.invalidateQueries({ queryKey: ["tier-policies"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const openPolicyModal = (policy: TierPolicyRead | "new") => {
+    setPolicyModal(policy);
+    if (policy === "new") {
+      policyForm.setFieldsValue({
+        name: "",
+        source_id: sources.data?.[0]?.id ?? "",
+        storage_class: "STANDARD_IA",
+        min_age_days: 30,
+        enabled: true
+      });
+      return;
+    }
+    policyForm.setFieldsValue({
+      name: policy.name,
+      source_id: policy.source_id,
+      storage_class: policy.storage_class,
+      min_age_days: policy.min_age_days,
+      enabled: policy.enabled
+    });
+  };
 
   return (
     <div>
@@ -179,7 +259,16 @@ export const Governance = () => {
         </Col>
 
         <Col xs={24} lg={14}>
-          <Card title="Tier policies">
+          <Card
+            title="Tier policies"
+            extra={
+              canManage ? (
+                <Button size="small" icon={<PlusOutlined />} onClick={() => openPolicyModal("new")}>
+                  Add policy
+                </Button>
+              ) : null
+            }
+          >
             <QueryErrorAlert error={tierPolicies.error} title="Failed to load tier policies" />
             <Table
               size="small"
@@ -188,7 +277,12 @@ export const Governance = () => {
               dataSource={tierPolicies.data ?? []}
               pagination={{ pageSize: 8, hideOnSinglePage: true }}
               locale={{
-                emptyText: <EmptyState title="No tier policies" description="Create policies via the phase8 API or Helm seed config." />
+                emptyText: (
+                  <EmptyState
+                    title="No tier policies"
+                    description="Create policies here or seed them via Helm for automated S3 tiering."
+                  />
+                )
               }}
               columns={[
                 { title: "Name", dataIndex: "name" },
@@ -199,7 +293,31 @@ export const Governance = () => {
                   dataIndex: "enabled",
                   width: 90,
                   render: (enabled: boolean) => (enabled ? "Yes" : "No")
-                }
+                },
+                ...(canManage
+                  ? [
+                      {
+                        title: "Actions",
+                        width: 140,
+                        render: (_: unknown, row: TierPolicyRead) => (
+                          <Space size={4}>
+                            <Button size="small" onClick={() => openPolicyModal(row)}>
+                              Edit
+                            </Button>
+                            <ConfirmAction
+                              title="Delete this tier policy?"
+                              description="Tables will no longer be evaluated against this policy."
+                              onConfirm={() => removeTierPolicy.mutate(row.id)}
+                            >
+                              <Button size="small" danger loading={removeTierPolicy.isPending}>
+                                Delete
+                              </Button>
+                            </ConfirmAction>
+                          </Space>
+                        )
+                      }
+                    ]
+                  : [])
               ]}
             />
           </Card>
@@ -208,13 +326,19 @@ export const Governance = () => {
         <Col xs={24}>
           <Card title="Table lineage">
             <Space direction="vertical" size={12} className="full-width">
-              <Input.Search
-                placeholder="Table UUID for lineage graph"
-                enterButton="Load lineage"
-                value={lineageTableId}
-                onChange={(event) => setLineageTableId(event.target.value.trim())}
-                onSearch={(value) => setLineageTableId(value.trim())}
-                style={{ maxWidth: 480 }}
+              <Select
+                showSearch
+                allowClear
+                placeholder="Select a table for lineage"
+                optionFilterProp="label"
+                style={{ maxWidth: 480, width: "100%" }}
+                loading={tableOptions.isLoading}
+                options={(tableOptions.data?.items ?? []).map((table) => ({
+                  value: table.id,
+                  label: `${table.schema_name}.${table.table_name}`
+                }))}
+                value={lineageTableId || undefined}
+                onChange={(value) => setLineageTableId(value ?? "")}
               />
               <QueryErrorAlert error={lineage.error} title="Failed to load lineage" />
               {lineage.data ? (
@@ -256,6 +380,50 @@ export const Governance = () => {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title={policyModal === "new" ? "Create tier policy" : "Edit tier policy"}
+        open={policyModal !== null}
+        onCancel={() => setPolicyModal(null)}
+        onOk={() => policyForm.submit()}
+        confirmLoading={saveTierPolicy.isPending}
+        destroyOnHidden
+      >
+        <Form<TierPolicyFormValues>
+          form={policyForm}
+          layout="vertical"
+          onFinish={(values) => saveTierPolicy.mutate(values)}
+        >
+          <Form.Item name="name" label="Name" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="source_id" label="Source" rules={[{ required: true }]}>
+            <Select
+              loading={sources.isLoading}
+              options={(sources.data ?? []).map((source) => ({
+                value: source.id,
+                label: source.name
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="storage_class" label="Storage class" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: "STANDARD_IA", label: "STANDARD_IA" },
+                { value: "GLACIER", label: "GLACIER" },
+                { value: "DEEP_ARCHIVE", label: "DEEP_ARCHIVE" },
+                { value: "INTELLIGENT_TIERING", label: "INTELLIGENT_TIERING" }
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="min_age_days" label="Minimum age (days)" rules={[{ required: true }]}>
+            <InputNumber min={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

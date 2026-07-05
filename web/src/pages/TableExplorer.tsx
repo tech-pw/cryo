@@ -11,6 +11,8 @@ import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { PlanPreview } from "../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { isOrphanScanStale } from "../lib/costStaleness";
+import { exportCsv } from "../lib/exportCsv";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
 import { useMemo, useState } from "react";
@@ -135,6 +137,37 @@ export const TableExplorer = () => {
     [allMatching, selectedRowKeys, pageItems]
   );
 
+  const exportTablesCsv = () => {
+    const rows = pageItems.map((row) => [
+      `${row.schema_name}.${row.table_name}`,
+      row.stats?.grade ?? "",
+      row.stats?.compaction_priority ?? "",
+      row.stats?.needs_compaction ? "yes" : "no",
+      row.stats?.small_files_count ?? "",
+      row.stats?.total_files ?? "",
+      row.stats?.total_size_gb ?? "",
+      row.stats?.projected_savings_usd_month ?? "",
+      row.stats?.reclaimable_bytes ?? "",
+      row.stats?.cost_precision ?? "",
+      row.stats?.partition_col ?? "",
+      row.first_seen_at
+    ]);
+    exportCsv(`cryo-tables-page-${page}`, [
+      "table",
+      "grade",
+      "priority",
+      "needs_compaction",
+      "small_files",
+      "total_files",
+      "size_gb",
+      "savings_usd_month",
+      "reclaimable_bytes",
+      "cost_precision",
+      "partition_col",
+      "first_seen_at"
+    ], rows);
+  };
+
   return (
     <>
       <PageHeader
@@ -151,6 +184,9 @@ export const TableExplorer = () => {
               }}
             >
               Savings view
+            </Button>
+            <Button onClick={exportTablesCsv} disabled={!pageItems.length}>
+              Export CSV
             </Button>
             <Button onClick={() => tables.refetch()}>Refresh</Button>
           </Space>
@@ -311,6 +347,10 @@ export const TableExplorer = () => {
               <CostPrecisionBadge
                 precision={row.stats?.cost_precision}
                 lastFullCostScanAt={row.stats?.cost_last_full_scan_at}
+                orphanScanStale={isOrphanScanStale(
+                  row.stats?.cost_precision,
+                  row.stats?.cost_last_full_scan_at
+                )}
               />
             )
           },

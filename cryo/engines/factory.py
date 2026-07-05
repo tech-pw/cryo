@@ -55,8 +55,15 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
         return NativeEngine(config=dict(config))
 
     if engine_type is EngineType.FLINK:
+        from cryo.config import get_settings
         from cryo.engines.flink.engine import FlinkEngine
 
+        settings = get_settings()
+        if not settings.flink_engine_enabled:
+            raise ValueError(
+                "Flink engine is disabled by default — it generates deploy configs only. "
+                "Set CRYO_FLINK_ENGINE_ENABLED=true to select it."
+            )
         return FlinkEngine(config=dict(config))
 
     raise ValueError(f"Unsupported engine type: {engine_type}")

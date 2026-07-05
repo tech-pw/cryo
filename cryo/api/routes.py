@@ -21,7 +21,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from cryo.api.deps import CurrentPrincipal, SessionDep, require_admin, require_operator, require_viewer
+from cryo.api.deps import (
+    CurrentPrincipal,
+    SessionDep,
+    require_admin,
+    require_operator,
+    require_viewer,
+)
 from cryo.api.predicates import compile_predicate
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
@@ -119,7 +125,7 @@ from cryo.integrations.aws_s3_metrics import (
     fetch_s3_price_per_gb,
 )
 from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
-from cryo.planner.guardrails import validate_operation_order
+from cryo.planner.guardrails import validate_guardrails, validate_operation_order
 from cryo.planner.planner import build_plan
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config
@@ -570,6 +576,9 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
         values["schedule_cron"] = validate_cron_field(values.get("schedule_cron"), required=False)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    guardrail_errors = validate_guardrails(values.get("guardrails") or {})
+    if guardrail_errors:
+        raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
     preset = Preset(**values)
     session.add(preset)
     session.commit()
@@ -598,6 +607,10 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
     destination_id = values.get("destination_id")
     if destination_id is not None:
         get_scoped_resource(session, Destination, destination_id, resource_type="Destination")
+    if "guardrails" in values:
+        guardrail_errors = validate_guardrails(values.get("guardrails") or {})
+        if guardrail_errors:
+            raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
     _apply_patch(preset, values)
     session.commit()
     session.refresh(preset)
@@ -864,6 +877,22 @@ def unassign_tables(payload: AssignmentDeleteRequest, session: SessionDep) -> As
     return AssignmentResponse(affected=affected)
 
 
+def _parse_stats_as_of(stats: dict[str, Any]) -> datetime | None:
+    raw = stats.get("scan_at") or stats.get("stats_as_of")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        parsed = raw
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 @router.post(
     "/maintenance/preview",
     response_model=MaintenancePreviewResponse,
@@ -902,12 +931,22 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
             stats, settings, params=payload.params, operations=op_types
         )
         savings_payload = SavingsProjectionRead(**savings_projection_to_dict(projection))
+        stats_as_of = _parse_stats_as_of(table.stats)
+        notes = list(plan.notes)
+        if stats_as_of is not None:
+            age_hours = (datetime.now(UTC) - stats_as_of).total_seconds() / 3600
+            if age_hours > 24:
+                notes.append(
+                    f"Stats as of {stats_as_of.isoformat()} ({age_hours:.0f}h old) — "
+                    "re-scan before execute if the table changed."
+                )
         items.append(
             TablePreviewRead(
                 table_ref=plan.table_ref,
-                notes=list(plan.notes),
+                notes=notes,
                 statements=statements,
                 savings=savings_payload,
+                stats_as_of=stats_as_of,
             )
         )
     return MaintenancePreviewResponse(items=items)
@@ -961,6 +1000,20 @@ def create_maintenance_run(
 
     jobs: list[MaintenanceJob] = []
     for table_id in selection.table_ids:
+        if preset is not None and requested_ops:
+            for op_name in requested_ops:
+                from cryo.domain.enums import OperationType
+                from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+                try:
+                    op_enum = OperationType(op_name)
+                except ValueError:
+                    op_enum = op_name  # type: ignore[assignment]
+                allowed, reason = evaluate_maintenance_allowed(
+                    session, table_id, principal, op_enum
+                )
+                if not allowed:
+                    raise HTTPException(status_code=403, detail=reason)
         job = MaintenanceJob(
             run_id=run.id,
             table_id=table_id,

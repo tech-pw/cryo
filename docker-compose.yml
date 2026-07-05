@@ -4,7 +4,7 @@ services:
   # ==================== Infrastructure ====================
   
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: cryo-postgres
     environment:
       POSTGRES_USER: cryo

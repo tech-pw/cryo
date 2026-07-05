@@ -5,6 +5,7 @@ import type { RoleToken } from "../api/types";
 const ROLE_STORAGE_KEY = "cryo.devRole";
 const SUBJECT_STORAGE_KEY = "cryo.devSubject";
 const TOKEN_STORAGE_KEY = "cryo.accessToken";
+const REFRESH_STORAGE_KEY = "cryo.refreshToken";
 const AUTH_MODE_STORAGE_KEY = "cryo.authMode";
 const TOKENS: RoleToken[] = ["viewer", "operator", "admin"];
 
@@ -49,6 +50,12 @@ async function fetchAuthConfig(): Promise<AuthConfigResponse> {
   return (await response.json()) as AuthConfigResponse;
 }
 
+interface TokenPayload {
+  access_token: string;
+  refresh_token?: string | null;
+  expires_in?: number | null;
+}
+
 async function fetchAccessToken(role: RoleToken, subject: string): Promise<string> {
   const response = await fetch("/api/v1/auth/token", {
     method: "POST",
@@ -59,11 +66,11 @@ async function fetchAccessToken(role: RoleToken, subject: string): Promise<strin
     const detail = await response.text();
     throw new Error(detail || `Token request failed (${response.status})`);
   }
-  const payload = (await response.json()) as { access_token: string };
+  const payload = (await response.json()) as TokenPayload;
   return payload.access_token;
 }
 
-async function exchangeOidcCode(code: string, redirectUri: string): Promise<string> {
+async function exchangeOidcCode(code: string, redirectUri: string): Promise<TokenPayload> {
   const response = await fetch("/api/v1/auth/oidc/exchange", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -73,8 +80,31 @@ async function exchangeOidcCode(code: string, redirectUri: string): Promise<stri
     const detail = await response.text();
     throw new Error(detail || `OIDC exchange failed (${response.status})`);
   }
-  const payload = (await response.json()) as { access_token: string };
-  return payload.access_token;
+  return (await response.json()) as TokenPayload;
+}
+
+async function refreshOidcAccessToken(refreshToken: string): Promise<TokenPayload> {
+  const response = await fetch("/api/v1/auth/oidc/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `OIDC refresh failed (${response.status})`);
+  }
+  return (await response.json()) as TokenPayload;
+}
+
+function decodeJwtExpiry(token: string): number | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeJwtSubject(token: string): string {
@@ -131,7 +161,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     nextRole: RoleToken,
     nextSubject: string,
     token: string,
-    mode: AuthMode
+    mode: AuthMode,
+    refreshToken?: string | null
   ) => {
     setRole(nextRole);
     setSubject(nextSubject);
@@ -141,6 +172,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     window.localStorage.setItem(SUBJECT_STORAGE_KEY, nextSubject);
     window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
     window.localStorage.setItem(AUTH_MODE_STORAGE_KEY, mode);
+    if (refreshToken) {
+      window.localStorage.setItem(REFRESH_STORAGE_KEY, refreshToken);
+    }
   };
 
   const signIn = async (nextRole: RoleToken, nextSubject: string) => {
@@ -170,7 +204,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     url.searchParams.set("client_id", oidcConfig.client_id);
     url.searchParams.set("redirect_uri", oidcConfig.redirect_uri);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid profile email");
+    url.searchParams.set("scope", "openid profile email offline_access");
     url.searchParams.set("state", state);
     window.location.assign(url.toString());
   };
@@ -182,10 +216,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     setError(null);
     try {
-      const token = await exchangeOidcCode(code, oidcConfig.redirect_uri);
-      const nextSubject = decodeJwtSubject(token);
-      const nextRole = decodeJwtRole(token);
-      persistSession(nextRole, nextSubject, token, "oidc");
+      const payload = await exchangeOidcCode(code, oidcConfig.redirect_uri);
+      const nextSubject = decodeJwtSubject(payload.access_token);
+      const nextRole = decodeJwtRole(payload.access_token);
+      persistSession(nextRole, nextSubject, payload.access_token, "oidc", payload.refresh_token);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "OIDC sign-in failed");
       setAccessToken("");
@@ -201,6 +235,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setRole("operator");
     setError(null);
     window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(REFRESH_STORAGE_KEY);
     window.localStorage.removeItem(SUBJECT_STORAGE_KEY);
     window.localStorage.removeItem(ROLE_STORAGE_KEY);
     window.localStorage.removeItem(AUTH_MODE_STORAGE_KEY);
@@ -221,7 +256,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         if (storedToken && storedSubject) {
           if (storedMode === "oidc") {
-            persistSession(decodeJwtRole(storedToken), storedSubject, storedToken, "oidc");
+            const storedRefresh = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+            persistSession(
+              decodeJwtRole(storedToken),
+              storedSubject,
+              storedToken,
+              "oidc",
+              storedRefresh
+            );
             return;
           }
           if (config.dev_token_enabled) {
@@ -247,6 +289,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (authMode !== "oidc" || !accessToken) return undefined;
+    const refreshToken = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+    if (!refreshToken) return undefined;
+
+    const refreshIfNeeded = async () => {
+      const expiresAt = decodeJwtExpiry(accessToken);
+      if (expiresAt === null) return;
+      const msUntilExpiry = expiresAt - Date.now();
+      if (msUntilExpiry > 5 * 60 * 1000) return;
+      try {
+        const payload = await refreshOidcAccessToken(refreshToken);
+        persistSession(
+          decodeJwtRole(payload.access_token),
+          decodeJwtSubject(payload.access_token),
+          payload.access_token,
+          "oidc",
+          payload.refresh_token ?? refreshToken
+        );
+      } catch {
+        signOut();
+      }
+    };
+
+    void refreshIfNeeded();
+    const timer = window.setInterval(() => {
+      void refreshIfNeeded();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [authMode, accessToken]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

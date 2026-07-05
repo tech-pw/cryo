@@ -21,6 +21,13 @@ from cryo.governor.admission import (
     compute_admission_budget,
     decide_job_admission,
 )
+from cryo.governor.prefetch import (
+    batch_job_requires_approval,
+    batch_pii_block_reason,
+    prefetch_approved_operation_keys,
+    prefetch_table_stats,
+)
+from cryo.observability.correlation import set_job_id
 from cryo.observability.metrics import (
     governor_admission_decisions,
     governor_queue_depth,
@@ -117,12 +124,13 @@ class Governor:
                 replicas = self._round_robin_slots(destination_id, budget.replicas)
 
                 with self._session_factory() as session:
+                    wave_jobs: list[MaintenanceJobRecord] = []
+                    table_uuids: set[uuid.UUID] = set()
                     for job_id in job_ids:
                         if not replicas:
                             blocked += 1
                             destination_outcomes[destination_id]["blocked"] += 1
                             break
-
                         try:
                             job = self._store.get_job(job_id)
                         except KeyError:
@@ -131,8 +139,47 @@ class Governor:
                             orphaned += 1
                             destination_outcomes[destination_id]["orphaned"] += 1
                             continue
-
+                        wave_jobs.append(job)
                         table_uuid = _job_table_uuid(job)
+                        if table_uuid is not None:
+                            table_uuids.add(table_uuid)
+
+                    approved_keys = prefetch_approved_operation_keys(session, table_uuids)
+                    stats_cache = prefetch_table_stats(session, table_uuids)
+
+                    for job in wave_jobs:
+                        if not replicas:
+                            break
+
+                        set_job_id(job.id)
+                        job_id = job.id
+                        table_uuid = _job_table_uuid(job)
+                        abac_blocked = False
+                        if table_uuid is not None and job.plan:
+                            from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+                            for op in job.plan.get("operations") or []:
+                                op_type = op.get("type") if isinstance(op, dict) else op
+                                allowed, reason = evaluate_maintenance_allowed(
+                                    session,
+                                    table_uuid,
+                                    None,
+                                    str(op_type),
+                                )
+                                if not allowed:
+                                    logger.warning("Deferring job %s: %s", job_id, reason)
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                    from cryo.governor.bandit_feedback import (
+                                        record_deferred_admission,
+                                    )
+
+                                    record_deferred_admission(config)
+                                    abac_blocked = True
+                                    break
+                        if abac_blocked:
+                            continue
+
                         plan_operations = job.plan.get("operations") if job.plan else None
 
                         signal_triggered = False
@@ -156,42 +203,30 @@ class Governor:
                                     exc,
                                 )
 
-                        approval_needed = False
-                        if not signal_triggered and table_uuid is not None:
-                            try:
-                                from cryo.workflows.approvals import job_requires_approval
-
-                                if job_requires_approval(session, table_uuid, plan_operations):
-                                    logger.info(
-                                        "Job %s deferred: destructive operation requires approval",
-                                        job_id,
-                                    )
-                                    self._defer(job, "Destructive operation requires approval")
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                    approval_needed = True
-                            except Exception as exc:
-                                logger.warning(
-                                    "Approval check failed for job %s table %s: %s",
-                                    job_id,
-                                    table_uuid,
-                                    exc,
-                                )
-
-                        if approval_needed:
+                        if (
+                            not signal_triggered
+                            and table_uuid is not None
+                            and batch_job_requires_approval(
+                                table_uuid, plan_operations, approved_keys
+                            )
+                        ):
+                            logger.info(
+                                "Job %s deferred: destructive operation requires approval",
+                                job_id,
+                            )
+                            self._defer(job, "Destructive operation requires approval")
+                            deferred += 1
+                            destination_outcomes[destination_id]["deferred"] += 1
                             continue
 
                         if table_uuid is not None:
                             try:
-                                from cryo.compliance.pii_gate import (
-                                    maintenance_blocked_for_untagged_pii,
-                                )
-
-                                pii_reason = maintenance_blocked_for_untagged_pii(
+                                pii_reason = batch_pii_block_reason(
                                     session,
                                     table_uuid,
                                     plan_operations,
                                     job_params=job.params,
+                                    stats_cache=stats_cache,
                                 )
                                 if pii_reason:
                                     logger.info("Job %s deferred: %s", job_id, pii_reason)
@@ -356,15 +391,17 @@ def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:
 def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
 
     from cryo.db.session import SessionLocal
-    from cryo.governor.bandit import AdmissionBandit
     from cryo.governor.bandit_store import load_bandit
 
     config = _admission_config_from_destination(destination, default)
     try:
         with SessionLocal() as session:
             bandit = load_bandit(session)
-    except Exception:
-        bandit = AdmissionBandit.load(_bandit_path())
+    except Exception as exc:
+        logger.error(
+            "Bandit state unavailable from Postgres; using static admission config: %s", exc
+        )
+        return config
     tuned, confident = bandit.suggest_config(config)
     return tuned if confident else config
 

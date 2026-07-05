@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -155,6 +155,29 @@ def aggregate_query_patterns(
     session.commit()
     logger.info(f"Updated {updated} query patterns")
     return updated
+
+
+def purge_old_query_logs(session: Session, retention_days: int) -> int:
+    """Delete raw query_logs rows older than retention_days.
+
+    Safe to run on a schedule: query_patterns (what partition/layout recommendations actually
+    read) is a separate, already-aggregated table and is unaffected by this. Callers should
+    aggregate recent data (aggregate_query_patterns) *before* purging so nothing recent is
+    dropped without first being rolled up -- this function itself does not aggregate.
+
+    Args:
+        session: Database session
+        retention_days: Delete rows with executed_at older than this many days
+
+    Returns:
+        Number of rows deleted
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    result = session.execute(delete(QueryLog).where(QueryLog.executed_at < cutoff))
+    session.commit()
+    deleted = int(getattr(result, "rowcount", 0) or 0)
+    logger.info(f"Purged {deleted} query_logs rows older than {retention_days}d")
+    return deleted
 
 
 def get_table_query_patterns(

@@ -303,6 +303,10 @@ def analyze_table(
     }
     if manifest_read_errors:
         raw["manifest_read_errors"] = manifest_read_errors
+    raw["manifest_stats"] = {
+        "manifest_count": len(manifests),
+        "avg_files_per_manifest": round(total_files / max(len(manifests), 1), 2),
+    }
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
