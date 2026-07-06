@@ -1893,7 +1893,7 @@ const AIProviderDrawer = ({
         ))}
 
         <Form.Item name="model" label={selectedType === "azure_openai" ? "Deployment Name" : "Model"} rules={[{ required: true }]}>
-          <Select options={modelOptions} />
+          <AutoComplete options={modelOptions} placeholder={selectedType === "azure_openai" ? "e.g. gpt-4o or my-custom-deployment" : "e.g. gpt-4o"} />
         </Form.Item>
 
         <Form.Item>

@@ -380,13 +380,11 @@ export const TableDetail = () => {
                   ]}
                 />
                 {costByOperation.length ? (
-                  <div className="chart-frame compact">
-                    <CostSavingsWaterfall
-                      currentCostUsd={currentCostUsd}
-                      currentStorageBytes={storageBytes || (stats?.total_size_gb ?? 0) * 1024 ** 3}
-                      byOperation={costByOperation}
-                    />
-                  </div>
+                  <CostSavingsWaterfall
+                    currentCostUsd={currentCostUsd}
+                    currentStorageBytes={storageBytes || (stats?.total_size_gb ?? 0) * 1024 ** 3}
+                    byOperation={costByOperation}
+                  />
                 ) : null}
                 {costView ? (
                   <Descriptions size="small" column={2}>
