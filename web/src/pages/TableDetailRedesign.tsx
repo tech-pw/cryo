@@ -90,6 +90,7 @@ import {
   formatNumber,
   formatTime
 } from "../lib/format";
+import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 
 const provenanceLabel = (provenance?: string | null): string => {
@@ -398,7 +399,7 @@ export const TableDetail = () => {
         <div className="td-hero-info">
           <div className="td-hero-title-row">
             <Typography.Title level={3} style={{ margin: 0, color: "inherit" }}>
-              {row ? `${row.schema_name}.${row.table_name}` : "Loading..."}
+              {row ? qualifiedTableName(row) : "Loading..."}
             </Typography.Title>
             {stats?.grade ? <GradePill grade={stats.grade} /> : null}
             {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}

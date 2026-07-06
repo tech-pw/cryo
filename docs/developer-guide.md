@@ -42,6 +42,28 @@ Add fields in `FIELD_MAP` in `cryo/api/predicates.py` and add parity tests in
 `tests/test_predicates.py`. The same predicate must behave consistently for SQLAlchemy filtering and
 in-memory rule evaluation.
 
+`source_id` is the supported catalog filter for table lists and bulk selection. The Tables UI exposes
+this as a multi-select **Catalog** filter backed by `cryo.sources`.
+
+## Table Identifiers
+
+Cryo uses three related identifiers for Iceberg tables:
+
+| Layer | Identifier | Notes |
+|-------|------------|-------|
+| API primary key | `tables.id` (UUID) | Stable key for routes, jobs, assignments |
+| Natural key | `(source_id, schema_name, table_name)` | Enforced in Postgres; one row per catalog table |
+| Display / SQL reference | `catalog.schema.table` | Derived from source config via `cryo/db/model_utils.py` |
+
+Helpers:
+
+- `catalog_name_for_source(source)` — `config.catalog_name` / `config.catalog`, else `source.name`
+- `qualified_table_name(table)` — full `catalog.schema.table` for UI, logs, and planner `table_ref`
+
+`GET /tables` returns `catalog_name`, `source_name`, and `qualified_table_name` on each `TableRead`.
+The Tables page shows `schema.table` in the name column, a separate **Catalog** column, and uses the
+qualified name in tooltips, CSV export, and cross-catalog pickers.
+
 ## API Auth
 
 Local development uses role tokens:

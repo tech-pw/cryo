@@ -13,6 +13,7 @@ import {
 import type { SimilarTableRead, UUID } from "../api/types";
 import { EmptyState } from "../components/common";
 import { useAuth } from "../lib/auth";
+import { schemaTableName } from "../lib/tableLabels";
 import { formatTime } from "../lib/format";
 
 interface TableAiInsightsProps {
@@ -80,7 +81,7 @@ export const TableAiInsights = ({
       key: "name",
       render: (_: unknown, record: SimilarTableRead) => (
         <Link to={`/tables/${record.table_id}`}>
-          {record.schema_name}.{record.table_name}
+          {schemaTableName(record)}
         </Link>
       ),
       ellipsis: true
