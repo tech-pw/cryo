@@ -300,7 +300,12 @@ class Worker:
         engine_ref: str | None = None
         try:
             table_data = self._store.get_table_data(job.table_id)
-            plan = build_plan(table_data.stats, table_data.partitions, job.mode, job.params)
+            plan = build_plan(
+                table_data.stats,
+                table_data.partitions,
+                job.mode,
+                _execution_plan_params(job.params, destination, table_data.stats),
+            )
             self._store.save_plan(job.id, plan_to_dict(plan))
 
             engine = self._engine_factory(destination)
@@ -470,6 +475,24 @@ def _metric_status(status: JobStatus) -> str:
     if status is JobStatus.SKIPPED:
         return "ok"
     return "error"
+
+
+def _execution_plan_params(
+    params: Mapping[str, Any],
+    destination: DestinationConfig,
+    stats: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge destination Trino/Spark catalog into planner params for rendered SQL."""
+    merged = dict(params)
+    catalog = destination.config.get("catalog") or destination.config.get("catalog_name")
+    if not isinstance(catalog, str) or not catalog:
+        return merged
+    merged["catalog"] = catalog
+    schema = stats.get("schema_name")
+    table = stats.get("table_name")
+    if schema and table:
+        merged["table_ref"] = f"{catalog}.{schema}.{table}"
+    return merged
 
 
 def _job_operation_type(job: MaintenanceJobRecord) -> str:

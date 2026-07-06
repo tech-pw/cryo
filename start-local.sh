@@ -39,6 +39,31 @@ RESET_LOCAL_POSTGRES="${RESET_LOCAL_POSTGRES:-0}"
 COMPOSE_CRYO_FILE="docker-compose.yml"
 COMPOSE_DATALAKE_FILE="docker-compose.dev-datalake.yml"
 COMPOSE_OBS_FILE="docker-compose.observability.yml"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-cryo}"
+LEGACY_COMPOSE_PROJECT="${LEGACY_COMPOSE_PROJECT:-iceberg_compactor}"
+
+# Fixed container_name values across compose files (used to reconcile pre-split stacks).
+CRYO_CONTAINER_NAMES=(
+  cryo-minio
+  cryo-minio-init
+  cryo-iceberg-rest
+  cryo-hms-postgres
+  cryo-hive-metastore
+  cryo-trino
+  cryo-spark
+  cryo-postgres
+  cryo-redis
+  cryo-api
+  cryo-scanner
+  cryo-scheduler
+  cryo-governor
+  cryo-worker
+  cryo-web
+  cryo-prometheus
+  cryo-grafana
+  cryo-loki
+  cryo-promtail
+)
 
 log() {
   printf '==> %s\n' "$*"
@@ -97,20 +122,50 @@ setup_compose_env() {
 }
 
 compose_cryo() {
-  docker compose -f "$COMPOSE_CRYO_FILE" "$@"
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_CRYO_FILE" "$@"
 }
 
 compose_datalake() {
-  docker compose -f "$COMPOSE_DATALAKE_FILE" "$@"
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_DATALAKE_FILE" "$@"
 }
 
 compose_obs() {
-  docker compose -f "$COMPOSE_OBS_FILE" "$@"
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_OBS_FILE" "$@"
 }
 
 compose_all() {
   setup_compose_env
-  docker compose "$@"
+  docker compose -p "$COMPOSE_PROJECT" "$@"
+}
+
+reconcile_stale_compose_containers() {
+  local name project
+  for name in "${CRYO_CONTAINER_NAMES[@]}"; do
+    if ! docker container inspect "$name" >/dev/null 2>&1; then
+      continue
+    fi
+    project="$(
+      docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true
+    )"
+    if [[ -n "$project" && "$project" != "$COMPOSE_PROJECT" ]]; then
+      warn "Removing stale container $name (compose project $project, expected $COMPOSE_PROJECT)"
+      docker rm -f "$name" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+stop_legacy_compose_project() {
+  if docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep -qx "$LEGACY_COMPOSE_PROJECT"; then
+    warn "Stopping legacy compose project $LEGACY_COMPOSE_PROJECT (pre-split monolithic docker-compose.yml)"
+    docker compose -p "$LEGACY_COMPOSE_PROJECT" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+}
+
+stop_docker_stacks() {
+  setup_compose_env
+  log "Stopping Docker services"
+  compose_all down --remove-orphans >/dev/null 2>&1 || true
+  stop_legacy_compose_project
 }
 
 ensure_dirs() {
@@ -190,6 +245,7 @@ wait_for_container_health() {
 
 start_docker() {
   setup_compose_env
+  reconcile_stale_compose_containers
 
   if [[ "$START_DATALAKE" == "1" ]]; then
     log "Starting dev datalake services: $DOCKER_DATALAKE_SERVICES"
@@ -565,11 +621,7 @@ cmd_stop() {
 
   if [[ "$DOCKER_DOWN_ON_STOP" == "1" ]]; then
     require_docker
-    setup_compose_env
-    log "Stopping Docker services"
-    compose_obs down >/dev/null 2>&1 || true
-    compose_cryo down >/dev/null 2>&1 || true
-    compose_datalake down >/dev/null 2>&1 || true
+    stop_docker_stacks
   else
     log "Docker services left running (set DOCKER_DOWN_ON_STOP=1 to stop them)"
   fi
