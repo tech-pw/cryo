@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Form, InputNumber, Row, Segmented, Select, Space, Switch, Table, Tooltip, Typography, message } from "antd";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
+  cancelRun,
   getScannerConfig,
   getScannerStatus,
   getSourceNamespaces,
@@ -66,6 +67,9 @@ const ScanScopeCard = ({
   const [sourceId, setSourceId] = useState<string | undefined>();
   const [schemaNames, setSchemaNames] = useState<string[]>([]);
   const [tableIds, setTableIds] = useState<string[]>([]);
+  // Names of live-but-never-scanned tables selected for targeting -- sent as table_names, not
+  // table_ids, since no Cryo-assigned id exists for them yet (see TableNameRef).
+  const [unscannedTableSelection, setUnscannedTableSelection] = useState<string[]>([]);
 
   const needsSource = scope === "source" || scope === "schemas" || scope === "tables";
 
@@ -114,8 +118,8 @@ const ScanScopeCard = ({
       .map((name) => ({ label: name, value: name }));
   }, [sourceNamespaces.data, sourceTables.data]);
 
-  // Live tables that exist in the narrowed-to schema but haven't been scanned yet -- shown as
-  // an informational preview, not selectable (no Cryo id exists for them yet).
+  // Live tables that exist in the narrowed-to schema but haven't been scanned yet -- selectable
+  // via table_names (no Cryo id exists for them yet, so they can't go through table_ids).
   const unscannedTablesInSchema = useMemo(() => {
     if (!singleNarrowedSchema || !namespaceTables.data?.tables.length) return [];
     const known = new Set(
@@ -138,6 +142,7 @@ const ScanScopeCard = ({
     setSourceId(undefined);
     setSchemaNames([]);
     setTableIds([]);
+    setUnscannedTableSelection([]);
   };
 
   const trigger = useMutation({
@@ -155,7 +160,17 @@ const ScanScopeCard = ({
         });
       }
       if (scope === "tables") {
-        return triggerScan(api, { scope: "tables", table_ids: tableIds, full_scan: true, trigger: "web-scanner" });
+        return triggerScan(api, {
+          scope: "tables",
+          source_id: sourceId,
+          table_ids: tableIds,
+          table_names: unscannedTableSelection.map((table_name) => ({
+            schema_name: singleNarrowedSchema as string,
+            table_name
+          })),
+          full_scan: true,
+          trigger: "web-scanner"
+        });
       }
       return triggerScan(api, { scope: "all", full_scan: true, trigger: "web-scanner" });
     },
@@ -170,7 +185,15 @@ const ScanScopeCard = ({
     scope === "all" ||
     (scope === "source" && Boolean(sourceId)) ||
     (scope === "schemas" && Boolean(sourceId) && schemaNames.length > 0) ||
-    (scope === "tables" && tableIds.length > 0);
+    (scope === "tables" && (tableIds.length > 0 || unscannedTableSelection.length > 0));
+
+  const disabledReason = !canOperate
+    ? "You don't have permission to trigger scans (viewer role)."
+    : hasActiveRun
+      ? "A scan is already running -- cancel it (above) or wait for it to finish before starting another."
+      : !canSubmit
+        ? "Select a valid scope before triggering."
+        : undefined;
 
   // Only relevant to "tables" scope -- "schemas" is populated from the full, uncapped live
   // namespace list (sourceNamespaces), not the 500-row table fetch this warns about.
@@ -207,6 +230,7 @@ const ScanScopeCard = ({
                   setSourceId(value);
                   setSchemaNames([]);
                   setTableIds([]);
+                  setUnscannedTableSelection([]);
                 }}
                 filterOption={(input, option) => (option?.label ?? "").toLowerCase().includes(input.toLowerCase())}
                 options={(sources.data ?? []).map((s: SourceRead) => ({ label: s.name, value: s.id }))}
@@ -238,7 +262,10 @@ const ScanScopeCard = ({
                   allowClear
                   loading={sourceNamespaces.isLoading}
                   value={schemaNames}
-                  onChange={setSchemaNames}
+                  onChange={(value) => {
+                    setSchemaNames(value);
+                    setUnscannedTableSelection([]);
+                  }}
                   options={schemaOptions}
                   placeholder="All schemas"
                   style={{ width: "100%" }}
@@ -265,31 +292,24 @@ const ScanScopeCard = ({
               ) : null}
 
               {unscannedTablesInSchema.length > 0 ? (
-                <Alert
-                  type="info"
-                  showIcon
-                  message={`${unscannedTablesInSchema.length} table${unscannedTablesInSchema.length === 1 ? "" : "s"} found in "${singleNarrowedSchema}" but not scanned yet`}
-                  description={
-                    <Space direction="vertical" size={8}>
-                      <Typography.Text>
-                        These exist in the catalog but can't be targeted individually until Cryo
-                        scans them at least once (it needs to assign each a real id first):{" "}
-                        {unscannedTablesInSchema.slice(0, 20).join(", ")}
-                        {unscannedTablesInSchema.length > 20 ? ", …" : ""}
-                      </Typography.Text>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          setScope("schemas");
-                          setTableIds([]);
-                        }}
-                      >
-                        Scan schema "{singleNarrowedSchema}" instead
-                      </Button>
-                    </Space>
-                  }
-                  style={{ marginBottom: 16, width: "100%" }}
-                />
+                <Form.Item
+                  label={`Not-yet-scanned tables in "${singleNarrowedSchema}"`}
+                  extra={`Selecting any of these scans just them by name -- Cryo will assign each a real id as part of this run.`}
+                >
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    allowClear
+                    value={unscannedTableSelection}
+                    onChange={setUnscannedTableSelection}
+                    options={unscannedTablesInSchema.map((name) => ({ label: name, value: name }))}
+                    filterOption={(input, option) =>
+                      (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
+                    }
+                    placeholder="Select one or more tables to scan for the first time"
+                    style={{ width: "100%" }}
+                  />
+                </Form.Item>
               ) : null}
 
               {tableOptions.length === 0 && schemaNames.length === 0 ? (
@@ -310,6 +330,7 @@ const ScanScopeCard = ({
                           setScope("source");
                           setSchemaNames([]);
                           setTableIds([]);
+                          setUnscannedTableSelection([]);
                         }}
                       >
                         Switch to "One lakehouse" scope
@@ -340,14 +361,18 @@ const ScanScopeCard = ({
             }
             onConfirm={() => trigger.mutate()}
           >
-            <Button
-              type="primary"
-              loading={trigger.isPending}
-              disabled={!canOperate || !canSubmit || hasActiveRun}
-              style={{ width: "100%" }}
-            >
-              Trigger scan
-            </Button>
+            <Tooltip title={disabledReason}>
+              <span style={{ display: "block", width: "100%" }}>
+                <Button
+                  type="primary"
+                  loading={trigger.isPending}
+                  disabled={!canOperate || !canSubmit || hasActiveRun}
+                  style={{ width: "100%" }}
+                >
+                  Trigger scan
+                </Button>
+              </span>
+            </Tooltip>
           </ConfirmAction>
         </Form>
       </Space>
@@ -420,6 +445,16 @@ export const Scans = () => {
       void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
       navigate(`/scans/${result.run_id}`, { replace: true, state: {} });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const cancelActiveRun = useMutation({
+    mutationFn: (id: string) => cancelRun(api, id),
+    onSuccess: () => {
+      message.success("Scan cancelled");
+      void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -505,13 +540,25 @@ export const Scans = () => {
               description="Queues a full fleet scan across every registered table. This can be expensive on large catalogs."
               onConfirm={() => scanAll.mutate()}
             >
-              <Button
-                type="primary"
-                loading={scanAll.isPending}
-                disabled={!canOperate || Boolean(activeRun)}
+              <Tooltip
+                title={
+                  !canOperate
+                    ? "You don't have permission to trigger scans (viewer role)."
+                    : activeRun
+                      ? "A scan is already running -- cancel it below or wait for it to finish before starting another."
+                      : undefined
+                }
               >
-                Scan all tables now
-              </Button>
+                <span>
+                  <Button
+                    type="primary"
+                    loading={scanAll.isPending}
+                    disabled={!canOperate || Boolean(activeRun)}
+                  >
+                    Scan all tables now
+                  </Button>
+                </span>
+              </Tooltip>
             </ConfirmAction>
           </Space>
         }
@@ -523,7 +570,7 @@ export const Scans = () => {
           type="success"
           showIcon
           closable
-          title={
+          message={
             connectionNotice.kind === "lakehouse"
               ? `Lakehouse "${connectionNotice.name}" is connected`
               : `Engine "${connectionNotice.name}" is connected`
@@ -572,10 +619,10 @@ export const Scans = () => {
         />
       ) : null}
 
-      <Row gutter={[12, 12]}>
+      <Row gutter={[12, 12]} align="stretch">
         {/* Left Column: Operational Hub */}
-        <Col xs={24} xl={16}>
-          <Space direction="vertical" size={12} className="full-width">
+        <Col xs={24} xl={16} style={{ display: "flex" }}>
+          <Space direction="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
             <Card title="Scanner status" loading={status.isLoading}>
               <Space direction="vertical" size={12} className="full-width">
                 <StatStrip
@@ -586,12 +633,12 @@ export const Scans = () => {
                     { label: "Latest table scan", value: formatTime(status.data?.latest_table_scan_at) }
                   ]}
                 />
-                {activeRun ? (
-                  <Alert
-                    type="info"
-                    showIcon
-                    icon={<div className="pulse-dot" style={{ marginInlineEnd: 4 }} />}
-                    message={
+                <Alert
+                  type={activeRun ? "info" : "warning"}
+                  showIcon
+                  icon={<div className={activeRun ? "pulse-dot" : "pulse-dot warning"} style={{ marginInlineEnd: 4 }} />}
+                  message={
+                    activeRun ? (
                       <Space>
                         <Typography.Text strong>Active scan in progress</Typography.Text>
                         <Link to={`/scans/${activeRun.id}`}>
@@ -599,75 +646,75 @@ export const Scans = () => {
                         </Link>
                         <StatusTag status={activeRun.status} />
                       </Space>
-                    }
-                    description={
-                      <div style={{ marginTop: 2 }}>
-                        <Typography.Text type="secondary" style={{ fontSize: "12px" }}>
-                          Discovering schemas and compiling health statistics. Click the Run ID or select it below to view live logs.
-                        </Typography.Text>
-                      </div>
-                    }
-                    style={{ marginTop: 4, width: "100%" }}
-                  />
-                ) : (
-                  <Typography.Text type="secondary">
-                    <span className="pulse-dot warning" style={{ marginInlineEnd: 8, width: 8, height: 8 }} />
-                    No active scan run. Ready for ad-hoc triggers.
-                  </Typography.Text>
-                )}
-                {latestRun ? (
-                  <Typography.Text type="secondary" style={{ display: "block", marginTop: activeRun ? 8 : 0 }}>
-                    Latest run {shortId(latestRun.id)} finished {formatTime(latestRun.finished_at)}
-                  </Typography.Text>
-                ) : null}
+                    ) : (
+                      <Typography.Text strong>No active scan run</Typography.Text>
+                    )
+                  }
+                  description={
+                    <Typography.Text type="secondary" style={{ fontSize: "12px" }}>
+                      {activeRun
+                        ? "Discovering schemas and compiling health statistics. Click the Run ID or select it below to view live logs."
+                        : latestRun
+                          ? `Ready for ad-hoc triggers. Latest run ${shortId(latestRun.id)} finished ${formatTime(latestRun.finished_at)}.`
+                          : "Ready for ad-hoc triggers."}
+                    </Typography.Text>
+                  }
+                  action={
+                    activeRun && canOperate ? (
+                      <ConfirmAction
+                        title="Cancel this scan?"
+                        description="Stops the in-progress run so a new scan can be triggered. Already-scanned tables keep their results."
+                        onConfirm={() => cancelActiveRun.mutate(activeRun.id)}
+                      >
+                        <Button size="small" danger loading={cancelActiveRun.isPending}>
+                          Cancel scan
+                        </Button>
+                      </ConfirmAction>
+                    ) : undefined
+                  }
+                  style={{ width: "100%" }}
+                />
               </Space>
             </Card>
 
-            <Row gutter={[12, 12]}>
-              <Col xs={24} lg={runId ? 11 : 24}>
-                <Card title="Recent scans">
-                  <Table<RunRead>
-                    size="small"
-                    rowKey="id"
-                    loading={runs.isLoading}
-                    dataSource={runs.data ?? []}
-                    pagination={{ pageSize: 12 }}
-                    onRow={(row) => ({ onClick: () => navigate(`/scans/${row.id}`) })}
-                    columns={tableColumns}
-                    locale={{
-                      emptyText: (
-                        <EmptyState
-                          title="No scan runs yet"
-                          description="Scheduled and ad-hoc scanner runs will appear here."
-                        />
-                      )
-                    }}
-                    scroll={runId ? undefined : { x: 960 }}
-                  />
-                </Card>
-              </Col>
+            {runId ? (
+              <Card
+                title={
+                  <Space>
+                    <span>Scan progress</span>
+                    <Typography.Text type="secondary">{shortId(runId)}</Typography.Text>
+                  </Space>
+                }
+              >
+                <ScanConsole runId={runId} />
+              </Card>
+            ) : null}
 
-              {runId ? (
-                <Col xs={24} lg={13}>
-                  <Card
-                    title={
-                      <Space>
-                        <span>Scan progress</span>
-                        <Typography.Text type="secondary">{shortId(runId)}</Typography.Text>
-                      </Space>
-                    }
-                  >
-                    <ScanConsole runId={runId} />
-                  </Card>
-                </Col>
-              ) : null}
-            </Row>
+            <Card title="Recent scans" style={{ flex: 1 }}>
+              <Table<RunRead>
+                size="small"
+                rowKey="id"
+                loading={runs.isLoading}
+                dataSource={runs.data ?? []}
+                pagination={{ pageSize: 12 }}
+                onRow={(row) => ({ onClick: () => navigate(`/scans/${row.id}`) })}
+                columns={tableColumns}
+                locale={{
+                  emptyText: (
+                    <EmptyState
+                      title="No scan runs yet"
+                      description="Scheduled and ad-hoc scanner runs will appear here."
+                    />
+                  )
+                }}
+              />
+            </Card>
           </Space>
         </Col>
 
         {/* Right Column: Controls & Configuration */}
-        <Col xs={24} xl={8}>
-          <Space direction="vertical" size={12} className="full-width">
+        <Col xs={24} xl={8} style={{ display: "flex" }}>
+          <Space direction="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
             <ScanScopeCard
               canOperate={canOperate}
               hasActiveRun={Boolean(activeRun)}
@@ -678,7 +725,7 @@ export const Scans = () => {
               }}
             />
 
-            <Card title="Schedule">
+            <Card title="Schedule" style={{ flex: 1 }}>
               <Form<ScannerConfigUpdate>
                 form={form}
                 layout="vertical"
