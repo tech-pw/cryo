@@ -1,3 +1,4 @@
+import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { Badge, Tag, type TagProps } from "antd";
 import type { ReactNode } from "react";
 
@@ -61,3 +62,10 @@ export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean |
 export const HealthBadge = ({ healthy, children }: { healthy?: boolean; children?: ReactNode }) => (
   <Badge status={healthy ? "success" : "warning"} text={children ?? (healthy ? "Healthy" : "Attention")} />
 );
+
+export const PendingDeletionTag = ({ pending }: { pending?: boolean }) =>
+  pending ? (
+    <Tag color="warning" icon={<LockOutlined />}>Pending</Tag>
+  ) : (
+    <Tag color="success" icon={<CheckCircleOutlined />}>None</Tag>
+  );
