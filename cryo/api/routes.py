@@ -112,6 +112,10 @@ from cryo.db.models import (
 from cryo.db.repositories import datalake, presets
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.repositories.run_finalizer import finalize_open_runs
+from cryo.db.repositories.sources import (
+    deactivate_out_of_scope_tables,
+    normalize_maintenance_schema_names,
+)
 from cryo.db.session import SessionLocal
 from cryo.db.tenant_scope import (
     bind_tenant,
@@ -294,6 +298,9 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
         data["tenant_id"] = tenant_id
     if data.get("secret_ref"):
         data["secret_ref"] = encrypt_secret(data["secret_ref"])
+    data["maintenance_schema_names"] = normalize_maintenance_schema_names(
+        data.get("maintenance_schema_names")
+    )
     source = Source(**data)
     session.add(source)
     session.commit()
@@ -402,7 +409,17 @@ def patch_source(source_id: uuid.UUID, payload: SourcePatch, session: SessionDep
         # edit that didn't touch a secret field would otherwise persist the literal placeholder
         # string over the real value.
         values["config"] = unredact_merge(values["config"], dict(source.config or {}))
+    if "maintenance_schema_names" in values:
+        values["maintenance_schema_names"] = normalize_maintenance_schema_names(
+            values["maintenance_schema_names"]
+        )
     _apply_patch(source, values)
+    if "maintenance_schema_names" in values:
+        deactivate_out_of_scope_tables(
+            session,
+            source_id=source.id,
+            maintenance_schema_names=source.maintenance_schema_names or [],
+        )
     session.commit()
     session.refresh(source)
     return source

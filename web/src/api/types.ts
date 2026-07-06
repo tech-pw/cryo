@@ -19,11 +19,15 @@ export interface SourceRead {
   config: JsonObject;
   secret_ref?: string | null;
   enabled: boolean;
+  maintenance_schema_names: string[];
   created_at: string;
   updated_at: string;
 }
 
-export type SourceWrite = Pick<SourceRead, "name" | "type" | "config" | "enabled"> & {
+export type SourceWrite = Pick<
+  SourceRead,
+  "name" | "type" | "config" | "enabled" | "maintenance_schema_names"
+> & {
   secret_ref?: string | null;
 };
 

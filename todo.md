@@ -130,6 +130,8 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] **Scanner** page (`/scans`): schedule form, scan status, scan-only run list, progress console;
       ad-hoc scans from scanner page, table selection, and table detail.
 - [x] **Sources & Destinations** management + health checks.
+- [x] **Lakehouse schema filter**: per-source `maintenance_schema_names` allowlist on Connections;
+      empty = all namespaces; scanner + scheduler + ad-hoc runs honor the filter.
 - [x] **UI/UX polish** per `docs/UI_UX_DESIGN.md`: dark theme toggle, always-dark sidebar,
       IBM Plex typography, focus rings, reduced-motion, log-line animation.
 - [x] WebSocket endpoint `/ws/runs/{id}` streams run snapshots plus Redis-backed live log events.

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.db.models import Source, Table, TableCost
+from cryo.db.repositories.sources import intersect_requested_schemas, source_allowed_schemas
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import CostPrecision
 from cryo.observability.metrics import scanner_tables_scanned_total
@@ -556,9 +557,21 @@ def _discover_candidates(
     candidates: list[ScanCandidate] = []
     for source in session.scalars(stmt):
         try:
+            allowed = source_allowed_schemas(source)
+            if requested_schemas:
+                effective_schemas = intersect_requested_schemas(source, requested_schemas)
+                if allowed is not None and not effective_schemas:
+                    continue
+            elif allowed is not None:
+                effective_schemas = allowed
+            else:
+                effective_schemas = set()
+
             catalog = source_factory(source)
-            for schema_name, table_name in _list_candidate_tables(catalog, requested_schemas):
-                if requested_schemas and schema_name not in requested_schemas:
+            for schema_name, table_name in _list_candidate_tables(catalog, effective_schemas):
+                if effective_schemas and schema_name not in effective_schemas:
+                    continue
+                if allowed is not None and schema_name not in allowed:
                     continue
                 if (
                     requested_tables is not None

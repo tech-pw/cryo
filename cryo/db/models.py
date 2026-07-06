@@ -57,6 +57,10 @@ class Source(TimestampMixin, Base):
     config: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     secret_ref: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # Empty list = all namespaces in the catalog are in scope for scan + maintenance.
+    maintenance_schema_names: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),

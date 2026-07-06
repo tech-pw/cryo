@@ -142,6 +142,9 @@ CREATE TABLE cryo.sources (
     config        jsonb NOT NULL,             -- uri, warehouse, region, catalog name...
     secret_ref    text,                       -- encrypted credentials ref
     enabled       boolean NOT NULL DEFAULT true,
+    maintenance_schema_names jsonb NOT NULL DEFAULT '[]'::jsonb,
+                                              -- optional allowlist of Iceberg namespaces Cryo may
+                                              -- scan and schedule for maintenance; empty = all
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
