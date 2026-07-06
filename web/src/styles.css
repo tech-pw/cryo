@@ -1115,6 +1115,60 @@ textarea.mono-input {
   font-size: 12px;
 }
 
+/* Table Metadata icon tile grid -- denser variant of .td-metric-tile reused at card scope */
+.td-meta-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line, #e1e6ed);
+  border-radius: 8px;
+  background: var(--line, #e1e6ed);
+}
+
+.td-meta-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 52px;
+  padding: 10px 12px;
+  background: var(--bg, #ffffff);
+}
+
+.td-meta-tile-wide {
+  grid-column: 1 / -1;
+}
+
+.td-meta-tile-icon {
+  font-size: 14px;
+  color: var(--ink-faint, #8791a0);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.td-meta-tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.td-meta-tile-label {
+  font-size: 11px;
+  color: var(--muted, #5c667a);
+  white-space: nowrap;
+}
+
+.td-meta-tile-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink, #131b24);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* Compliance card inline form spacing */
 .td-compliance-card .ant-form {
   padding: 0 14px 8px;
