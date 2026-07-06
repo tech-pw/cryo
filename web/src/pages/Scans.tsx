@@ -641,9 +641,14 @@ export const Scans = () => {
                   ]}
                 />
                 <Alert
-                  type={activeRun ? "info" : "warning"}
+                  type="info"
                   showIcon
-                  icon={<div className={activeRun ? "pulse-dot" : "pulse-dot warning"} style={{ marginInlineEnd: 4 }} />}
+                  className={activeRun ? undefined : "scanner-status-note"}
+                  icon={
+                    activeRun ? (
+                      <div className="pulse-dot" style={{ marginInlineEnd: 4 }} />
+                    ) : undefined
+                  }
                   message={
                     activeRun ? (
                       <Space>
@@ -654,7 +659,7 @@ export const Scans = () => {
                         <StatusTag status={activeRun.status} />
                       </Space>
                     ) : (
-                      <Typography.Text strong>No active scan run</Typography.Text>
+                      <Typography.Text>Scanner idle</Typography.Text>
                     )
                   }
                   description={
