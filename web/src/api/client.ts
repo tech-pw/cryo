@@ -243,10 +243,14 @@ export const createPreset = (api: ApiOptions, body: PresetWrite) =>
   apiFetch<PresetRead>("/presets", api, { method: "POST", body });
 export const patchPreset = (api: ApiOptions, id: UUID, body: Partial<PresetWrite>) =>
   apiFetch<PresetRead>(`/presets/${id}`, api, { method: "PATCH", body });
+export const deletePreset = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/presets/${id}`, api, { method: "DELETE" });
 export const listPresetRules = (api: ApiOptions, id: UUID) =>
   apiFetch<PresetRuleRead[]>(`/presets/${id}/rules`, api);
 export const createPresetRule = (api: ApiOptions, id: UUID, body: { predicate: Predicate; enabled: boolean }) =>
   apiFetch<PresetRuleRead>(`/presets/${id}/rules`, api, { method: "POST", body });
+export const deletePresetRule = (api: ApiOptions, presetId: UUID, ruleId: UUID) =>
+  apiFetch<void>(`/presets/${presetId}/rules/${ruleId}`, api, { method: "DELETE" });
 export const simulatePreset = (api: ApiOptions, id: UUID) =>
   apiFetch<PresetSimulationResponse>(`/presets/${id}/simulate`, api, { method: "POST" });
 
@@ -254,6 +258,11 @@ export const assignTables = (
   api: ApiOptions,
   body: { selection: { mode: "ids"; ids: UUID[] } | { mode: "filter"; filter: Predicate | null }; preset_id: UUID }
 ) => apiFetch<{ affected: number }>("/assignments", api, { method: "POST", body });
+
+export const unassignTables = (
+  api: ApiOptions,
+  body: { selection: { mode: "ids"; ids: UUID[] } | { mode: "filter"; filter: Predicate | null } }
+) => apiFetch<{ affected: number }>("/assignments", api, { method: "DELETE", body });
 
 export const previewMaintenance = (
   api: ApiOptions,
@@ -283,6 +292,18 @@ export const runMaintenance = (
         trigger?: string;
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
+
+export const runManifestRewrite = (
+  api: ApiOptions,
+  body:
+    | { table_ids: UUID[]; destination_id: UUID; preset_id?: UUID | null; trigger?: string }
+    | {
+        selection: { mode: "filter"; filter: Predicate | null };
+        destination_id: UUID;
+        preset_id?: UUID | null;
+        trigger?: string;
+      }
+) => apiFetch<MaintenanceRunResponse>("/maintenance/manifest-rewrite", api, { method: "POST", body });
 
 export const listRuns = (
   api: ApiOptions,
@@ -1053,6 +1074,286 @@ export const deleteTierPolicy = (api: ApiOptions, id: string) =>
 
 export const getTableLineage = (api: ApiOptions, tableId: string, depth = 3) =>
   apiFetch<LineageGraphRead>(`/advanced/lineage/${tableId}`, api, { query: { depth } });
+
+export interface ComplianceStatusRead {
+  table_id: UUID;
+  table_ref: string;
+  pending_deletion: {
+    pending_rows?: number;
+    blocked_until?: string | null;
+    reason?: string;
+  } | null;
+  abac_policy_count: number;
+  abac_enforcement_note: string | null;
+}
+
+export const getComplianceStatus = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<ComplianceStatusRead>(`/tables/${tableId}/compliance`, api);
+
+export const protectSnapshot = (
+  api: ApiOptions,
+  tableId: UUID,
+  body: { snapshot_id: number; label?: string | null }
+) =>
+  apiFetch<{ table_id: UUID; snapshot_id: number; label: string | null }>(
+    `/tables/${tableId}/protected-snapshots`,
+    api,
+    { method: "POST", body }
+  );
+
+export interface S3TieringRecommendationRead {
+  table_id: UUID;
+  table_name: string;
+  current_size_gb: number;
+  avg_file_size_kb: number;
+  days_since_last_access: number;
+  current_monthly_cost_usd: number;
+  intelligent_tiering_monthly_cost_usd: number;
+  estimated_annual_savings_usd: number;
+  recommendation: string;
+  reason: string;
+}
+
+export interface S3TieringResponse {
+  recommendations: S3TieringRecommendationRead[];
+  total_potential_savings_usd: number;
+}
+
+export const getS3TieringRecommendations = (
+  api: ApiOptions,
+  args: { min_size_gb?: number; lookback_days?: number } = {}
+) => {
+  const params = new URLSearchParams();
+  if (args.min_size_gb !== undefined) params.set("min_size_gb", String(args.min_size_gb));
+  if (args.lookback_days !== undefined) params.set("lookback_days", String(args.lookback_days));
+  const query = params.toString();
+  return dashboardFetch<S3TieringResponse>(
+    query ? `/s3-tiering-recommendations?${query}` : "/s3-tiering-recommendations",
+    api
+  );
+};
+
+export interface TierCandidateRead {
+  table_ref: string;
+  partition_value: string | null;
+  age_days: number;
+  target_storage_class: string;
+}
+
+export interface TierCandidatesResponse {
+  table_id: UUID;
+  candidates: TierCandidateRead[];
+  summary: JsonObject;
+}
+
+export const getTierCandidates = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<TierCandidatesResponse>(`/tables/${tableId}/tier-candidates`, api);
+
+export const createApprovalRequest = (
+  api: ApiOptions,
+  body: {
+    table_id: UUID;
+    operation_type: string;
+    operation_params?: JsonObject;
+    requested_by: string;
+    reason?: string | null;
+  }
+) => apiFetch<PendingApprovalRead>("/advanced/approvals/request", api, { method: "POST", body });
+
+export interface McpToolRead {
+  name: string;
+  description: string;
+}
+
+export const listMcpTools = (api: ApiOptions) => apiFetch<McpToolRead[]>("/mcp/tools", api);
+
+export const callMcpTool = (api: ApiOptions, body: { name: string; arguments?: JsonObject }) =>
+  apiFetch<{ result: JsonObject }>("/mcp/tools/call", api, { method: "POST", body });
+
+export interface AIChatResponse {
+  response: string;
+  model: string;
+  provider: string;
+  tokens_used: number;
+}
+
+export const aiChat = (api: ApiOptions, body: { prompt: string; context?: JsonObject }) =>
+  apiFetch<AIChatResponse>("/ai/chat", api, { method: "POST", body });
+
+export interface CatalogLatencyRead {
+  source_id: UUID;
+  source_name: string;
+  operations: JsonObject;
+}
+
+export const getCatalogLatency = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<CatalogLatencyRead>(`/sources/${sourceId}/catalog-latency`, api);
+
+export const resetBandit = (api: ApiOptions) =>
+  apiFetch<{ status: string }>("/auth/governor/bandit/reset", api, { method: "POST" });
+
+export interface DailyReportResponse {
+  report_date: string;
+  summary: JsonObject;
+  grade_distribution: JsonObject;
+  maintenance_stats: JsonObject;
+  top_issues: JsonObject[];
+  critical_anomalies: JsonObject[];
+  cost: JsonObject;
+  ai_summary: string | null;
+  slack_sent: boolean;
+}
+
+export const triggerDailyReport = (
+  api: ApiOptions,
+  args: { send_to_slack?: boolean; use_ai?: boolean } = {}
+) => {
+  const params = new URLSearchParams();
+  if (args.send_to_slack) params.set("send_to_slack", "true");
+  if (args.use_ai === false) params.set("use_ai", "false");
+  const query = params.toString();
+  return apiFetch<DailyReportResponse>(
+    query ? `/reporting/daily?${query}` : "/reporting/daily",
+    api,
+    { method: "POST" }
+  );
+};
+
+export interface RankedDestinationRead {
+  destination_id: string;
+  engine: string;
+  score: number;
+  reason: string;
+}
+
+export interface RoutingPreviewResponse {
+  table_id: UUID;
+  preset_id: UUID;
+  selected_destination_id: string;
+  selected_reason: string;
+  ranked_destinations: RankedDestinationRead[];
+}
+
+export const previewRouting = (api: ApiOptions, body: { table_id: UUID; preset_id: UUID }) =>
+  apiFetch<RoutingPreviewResponse>("/routing/preview", api, { method: "POST", body });
+
+export interface BenefitScoreCandidate {
+  partition_value?: string | null;
+  small_files?: number;
+  size_gb?: number;
+  query_frequency?: number;
+  benefit_score?: number;
+}
+
+export interface BenefitScoreResponse {
+  table_id: UUID;
+  partitions_scored: number;
+  top_candidates: BenefitScoreCandidate[];
+}
+
+export const getTableBenefitScores = (api: ApiOptions, tableId: UUID, topN = 10) =>
+  apiFetch<BenefitScoreResponse>(`/tables/${tableId}/benefit-scores`, api, { query: { top_n: topN } });
+
+export const updateTableBenefitScores = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<BenefitScoreResponse>(`/tables/${tableId}/benefit-scores/update`, api, { method: "POST" });
+
+export interface EffectivenessStatsResponse {
+  table_id: UUID;
+  total_input_files: number;
+  total_output_files: number;
+  run_count: number;
+  effectiveness_ratio: number;
+  effectiveness: string;
+  avg_duration_ms: number;
+  recommendation: string;
+}
+
+export const getTableEffectiveness = (api: ApiOptions, tableId: UUID, lookbackDays = 30) =>
+  apiFetch<EffectivenessStatsResponse>(`/tables/${tableId}/effectiveness`, api, {
+    query: { lookback_days: lookbackDays }
+  });
+
+export interface TableSignalRead {
+  triggered: boolean;
+  signal_name: string;
+  reason: string;
+  severity: string;
+  metric_value: number | null;
+  threshold: number | null;
+}
+
+export interface TableSignalsResponse {
+  table_id: UUID;
+  checked_at: string;
+  signals: TableSignalRead[];
+  any_triggered: boolean;
+}
+
+export const getTableSignals = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<TableSignalsResponse>(`/tables/${tableId}/signals`, api);
+
+export interface MaintenanceSignalRead {
+  table_id: string;
+  table_name: string;
+  signal_type: string;
+  severity: string;
+  current_value: number;
+  baseline_value: number;
+  threshold: number;
+  description: string;
+  detected_at: string;
+}
+
+export const listMaintenanceSignals = (api: ApiOptions) =>
+  apiFetch<MaintenanceSignalRead[]>("/advanced/signals", api);
+
+export interface DeepHealthResponse {
+  status: string;
+  checks: Record<string, { status: string; detail?: string }>;
+}
+
+export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
+  const response = await fetch("/healthz/deep");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new ApiError(response.status, "Deep health check failed", payload);
+  }
+  return payload as DeepHealthResponse;
+};
+
+export const getMetricsText = async (maxLines = 60): Promise<string> => {
+  const response = await fetch("/metrics");
+  const text = await response.text();
+  if (!response.ok) {
+    throw new ApiError(response.status, "Failed to fetch metrics", text);
+  }
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return `${lines.slice(0, maxLines).join("\n")}\n… (${lines.length - maxLines} more lines)`;
+};
+
+export const triggerGitOpsWebhook = async (
+  api: ApiOptions,
+  body: JsonObject,
+  options: { gitopsSecret?: string } = {}
+): Promise<JsonObject> => {
+  const response = await fetch(`${API_PREFIX}/advanced/gitops/webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${api.token}`,
+      "Content-Type": "application/json",
+      ...(options.gitopsSecret ? { "X-Cryo-GitOps-Secret": options.gitopsSecret } : {})
+    },
+    body: JSON.stringify(body)
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
+    throw new ApiError(response.status, String(detail || response.statusText), detail);
+  }
+  return payload as JsonObject;
+};
 
 export const approvalAction = (
   api: ApiOptions,

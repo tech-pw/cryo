@@ -5,12 +5,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from cryo.db.models import Table, TablePartition, TableStats, TableStatsHistory
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import sessionmaker
+
+from cryo.db.base import Base
+from cryo.db.models import Source, Table, TablePartition, TableStats, TableStatsHistory
 from cryo.scanner.analyze import analyze_table
 from cryo.scanner.cost import GB, estimate_storage_cost
 from cryo.scanner.health import compute_health_score
-from cryo.scanner.persistence import persist_table_analysis
+from cryo.scanner.persistence import persist_table_analysis, record_table_scan_outcome
 from cryo.scanner.run import deterministic_chunk, parse_args
+from tests.test_presets_api_db import (
+    _assign_missing_uuid_primary_keys,
+    _patch_sqlite_incompatible_defaults,
+)
 
 MB = 1024 * 1024
 
@@ -167,6 +175,53 @@ def test_json_safe_strips_nul_bytes_postgres_cannot_store() -> None:
         "count": 3,
     }
     assert _json_safe(["a\x00b", ("c\x00d",)]) == ["ab", ["cd"]]
+
+
+def test_record_table_scan_outcome_tracks_and_resets_consecutive_failures() -> None:
+    """The whole point of tracking this: a table failing once (a network blip) shouldn't be
+    flagged as broken, only a run of repeated failures -- and any later success must clear the
+    streak entirely, not just decrement it."""
+    _patch_sqlite_incompatible_defaults()
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
+    with engine.begin() as connection:
+        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+        Base.metadata.create_all(connection, tables=[Source.__table__, Table.__table__])
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+
+    source_id = uuid.uuid4()
+    with session_factory() as session:
+        session.add(Source(id=source_id, name="demo", type="rest", config={}))
+        session.commit()
+
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
+    kwargs = {"source_id": source_id, "schema_name": "sch", "table_name": "gold_dbt_tmp"}
+
+    with session_factory() as session:
+        table = record_table_scan_outcome(session, **kwargs, error=None, scanned_at=scan_at)
+        session.commit()
+        assert table.consecutive_scan_failures == 0
+
+    with session_factory() as session:
+        table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
+        session.commit()
+        assert table.consecutive_scan_failures == 1
+        assert table.last_scan_error == "boom"
+
+    with session_factory() as session:
+        table = record_table_scan_outcome(session, **kwargs, error="boom again", scanned_at=scan_at)
+        session.commit()
+        assert table.consecutive_scan_failures == 2
+        assert table.last_scan_error == "boom again"
+
+    with session_factory() as session:
+        table = record_table_scan_outcome(session, **kwargs, error=None, scanned_at=scan_at)
+        session.commit()
+        assert table.consecutive_scan_failures == 0
+        assert table.last_scan_error is None
+        assert table.last_scan_error_at is None
 
 
 def test_snapshot_info_tracks_first_and_last_commit() -> None:

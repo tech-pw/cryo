@@ -14,6 +14,7 @@ BASE_ROW: dict[str, Any] = {
     "schema_name": "mview",
     "table_name": "orders_daily",
     "is_active": True,
+    "consecutive_scan_failures": 3,
     "needs_compaction": True,
     "compaction_priority": "critical",
     "grade": "F",
@@ -53,6 +54,10 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
         ),
         ({"field": "schema_name", "op": "=", "value": "mview"}, {"schema_name": "raw"}),
         ({"field": "table_name", "op": "!=", "value": "tmp"}, {"table_name": "tmp"}),
+        (
+            {"field": "consecutive_scan_failures", "op": ">=", "value": 2},
+            {"consecutive_scan_failures": 0},
+        ),
         ({"field": "overall_score", "op": "<", "value": 60}, {"overall_score": 60}),
         ({"field": "overall_score", "op": "<=", "value": 55}, {"overall_score": 56}),
         ({"field": "total_size_gb", "op": ">", "value": 100}, {"total_size_gb": 100}),

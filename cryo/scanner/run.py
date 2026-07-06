@@ -24,6 +24,7 @@ from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run
 from cryo.scanner.persistence import (
     already_scanned_today,
     persist_table_analysis,
+    record_table_scan_outcome,
     stats_history_for_signals,
     upsert_table,
 )
@@ -235,6 +236,14 @@ def _run_scan_serial(
                 analysis=analysis,
                 table=table_row,
             )
+            record_table_scan_outcome(
+                session,
+                source_id=candidate.source.id,
+                schema_name=candidate.schema_name,
+                table_name=candidate.table_name,
+                error=None,
+                scanned_at=scan_at,
+            )
             session.commit()
             scanned += 1
             scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
@@ -250,6 +259,14 @@ def _run_scan_serial(
                 candidate.schema_name,
                 candidate.table_name,
                 candidate.source.name,
+            )
+            _record_scan_failure(
+                session,
+                source_id=candidate.source.id,
+                schema_name=candidate.schema_name,
+                table_name=candidate.table_name,
+                error=str(exc),
+                scanned_at=scan_at,
             )
             _emit_progress(
                 progress_callback,
@@ -328,6 +345,14 @@ def _run_scan_parallel(
                     analysis=analysis,
                     table=table_row,
                 )
+                record_table_scan_outcome(
+                    table_session,
+                    source_id=candidate.source.id,
+                    schema_name=candidate.schema_name,
+                    table_name=candidate.table_name,
+                    error=None,
+                    scanned_at=scan_at,
+                )
                 table_session.commit()
                 scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
                 return ("scanned", None)
@@ -338,6 +363,14 @@ def _run_scan_parallel(
                     candidate.schema_name,
                     candidate.table_name,
                     candidate.source.name,
+                )
+                _record_scan_failure(
+                    table_session,
+                    source_id=candidate.source.id,
+                    schema_name=candidate.schema_name,
+                    table_name=candidate.table_name,
+                    error=str(exc),
+                    scanned_at=scan_at,
                 )
                 return ("failed", str(exc))
 
@@ -384,6 +417,39 @@ def _run_scan_parallel(
         failed=failed,
         cancelled=_cancel_requested(cancel_checker),
     )
+
+
+def _record_scan_failure(
+    session: Session,
+    *,
+    source_id: UUID,
+    schema_name: str,
+    table_name: str,
+    error: str,
+    scanned_at: datetime,
+) -> None:
+    """Best-effort wrapper around record_table_scan_outcome for the failure path.
+
+    Called right after session.rollback(), which can discard a same-transaction table insert
+    from earlier in this attempt -- record_table_scan_outcome re-upserts to handle that, but if
+    even that fails (e.g. the session/connection itself is broken), this must not let a
+    bookkeeping problem mask the real scan failure being reported to the caller.
+    """
+    try:
+        record_table_scan_outcome(
+            session,
+            source_id=source_id,
+            schema_name=schema_name,
+            table_name=table_name,
+            error=error,
+            scanned_at=scanned_at,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "Failed to record scan-failure bookkeeping for %s.%s", schema_name, table_name
+        )
 
 
 def _emit_progress(callback: ScanProgressCallback | None, event: dict[str, Any]) -> None:

@@ -21,6 +21,7 @@ FIELD_MAP = {
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
     "is_active": Table.is_active,
+    "consecutive_scan_failures": Table.consecutive_scan_failures,
     "needs_compaction": TableStats.needs_compaction,
     "compaction_priority": TableStats.compaction_priority,
     "grade": TableStats.grade,

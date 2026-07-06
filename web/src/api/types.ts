@@ -1,7 +1,7 @@
 export type UUID = string;
 export type RoleToken = "viewer" | "operator" | "admin";
 export type EngineType = "trino" | "spark_emr";
-export type Mode = "light" | "standard" | "deep";
+export type Mode = "light" | "standard" | "deep" | "manifest_only";
 export type Grade = "A" | "B" | "C" | "D" | "F" | string;
 export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
 export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
@@ -131,6 +131,9 @@ export interface TableRead {
   table_name: string;
   first_seen_at: string;
   is_active: boolean;
+  consecutive_scan_failures?: number;
+  last_scan_error?: string | null;
+  last_scan_error_at?: string | null;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
 }

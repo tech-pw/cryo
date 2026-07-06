@@ -10,6 +10,7 @@ SUPPORTED_FIELDS = frozenset(
         "schema_name",
         "table_name",
         "is_active",
+        "consecutive_scan_failures",
         "needs_compaction",
         "compaction_priority",
         "grade",

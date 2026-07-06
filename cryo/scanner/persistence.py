@@ -58,6 +58,42 @@ def upsert_table(
     return table
 
 
+def record_table_scan_outcome(
+    session: Session,
+    *,
+    source_id: uuid.UUID,
+    schema_name: str,
+    table_name: str,
+    error: str | None,
+    scanned_at: datetime,
+) -> Table:
+    """Idempotently records whether a table's scan attempt succeeded or failed.
+
+    Callers pass ``error=None`` on success (resets the failure streak) or the exception message
+    on failure (increments it). A single failed scan is often just a transient blip -- this is
+    meant to catch tables that fail *repeatedly* (e.g. a stale dbt __dbt_tmp pointer whose
+    metadata.json was deleted), so callers/consumers should threshold on
+    ``consecutive_scan_failures`` rather than treating any nonzero value as "broken".
+
+    Re-upserts the table row rather than trusting a caller-held reference, since callers on the
+    failure path typically call this right after ``session.rollback()`` -- which can discard a
+    same-transaction insert from an earlier ``upsert_table`` call for a table's very first scan,
+    leaving no row to update by id.
+    """
+    table = upsert_table(
+        session, source_id=source_id, schema_name=schema_name, table_name=table_name
+    )
+    if error is None:
+        table.consecutive_scan_failures = 0
+        table.last_scan_error = None
+        table.last_scan_error_at = None
+    else:
+        table.consecutive_scan_failures = (table.consecutive_scan_failures or 0) + 1
+        table.last_scan_error = _json_safe(error)[:2000]
+        table.last_scan_error_at = scanned_at
+    return table
+
+
 def already_scanned_today(
     session: Session,
     *,

@@ -20,6 +20,7 @@ def test_table_serializer_exposes_cost_precision_context() -> None:
         table_name="orders",
         first_seen_at=scan_at,
         is_active=True,
+        consecutive_scan_failures=0,
     )
     table.stats = TableStats(
         table_id=table_id,
