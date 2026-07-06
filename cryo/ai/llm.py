@@ -353,6 +353,7 @@ SUPPORTED_PROVIDERS = [
             "gpt-4",
             "gpt-4-turbo",
             "gpt-35-turbo",
+            "gpt-5.4-nano",
         ],
         "default_model": "gpt4o",
         "config_fields": [
