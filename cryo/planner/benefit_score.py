@@ -179,11 +179,21 @@ def get_top_compaction_candidates(
     Returns:
         Partitions sorted by benefit score descending
     """
+    # table_partitions is append-only (one row per partition per scan) -- without pinning to the
+    # latest scan, a partition that scored high in more than one past scan shows up as multiple
+    # "different" candidates with identical stats, since only update_partition_benefit_scores'
+    # write side is scoped to the latest scan; older rows' scores are never cleared.
+    latest_scan = session.scalar(
+        select(func.max(TablePartition.scan_at)).where(TablePartition.table_id == table_id)
+    )
+    if latest_scan is None:
+        return []
     return list(
         session.scalars(
             select(TablePartition)
             .where(
                 TablePartition.table_id == table_id,
+                TablePartition.scan_at == latest_scan,
                 TablePartition.compaction_benefit_score >= min_score,
             )
             .order_by(TablePartition.compaction_benefit_score.desc())

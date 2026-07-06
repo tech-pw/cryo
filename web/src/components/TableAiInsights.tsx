@@ -85,15 +85,16 @@ export const TableAiInsights = ({ tableId, lastSnapshotCommittedAt }: TableAiIns
   ];
 
   return (
-    <Card
-      title="AI & observability"
-      extra={
-        <Button size="small" loading={explain.isPending} onClick={() => explain.mutate()}>
-          Explain health change
-        </Button>
-      }
-      loading={loading}
-    >
+    <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }} loading={loading}>
+      <div className="td-chart-card-header">
+        <span className="td-chart-card-title">AI & observability</span>
+        <div className="td-chart-card-actions">
+          <Button size="small" loading={explain.isPending} onClick={() => explain.mutate()}>
+            Explain health change
+          </Button>
+        </div>
+      </div>
+      <div className="td-chart-card-content">
       {lastSnapshotCommittedAt ? (
         <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
           Data freshness anchor: last snapshot commit {formatTime(lastSnapshotCommittedAt)}
@@ -311,6 +312,7 @@ export const TableAiInsights = ({ tableId, lastSnapshotCommittedAt }: TableAiIns
           }
         ]}
       />
+      </div>
     </Card>
   );
 };

@@ -10,18 +10,21 @@ export const ChartFrame = ({
   emptyTitle = "No chart data",
   emptyDescription = "Run a scan to populate this panel.",
   ariaLabel,
+  size = "md",
   children
 }: {
   empty: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
   ariaLabel?: string;
+  /** "xs" is for small fixed-radius charts (e.g. a donut) that don't need a full-size frame. */
+  size?: "md" | "xs";
   children: React.ReactNode;
 }) =>
   empty ? (
     <EmptyState title={emptyTitle} description={emptyDescription} />
   ) : (
-    <div className="chart-frame" role="img" aria-label={ariaLabel}>
+    <div className={size === "xs" ? "chart-frame xs" : "chart-frame"} role="img" aria-label={ariaLabel}>
       <ResponsiveContainer>{children}</ResponsiveContainer>
     </div>
   );

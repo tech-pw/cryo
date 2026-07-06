@@ -80,16 +80,18 @@ export const TableCompactionAnalytics = ({ tableId }: Props) => {
   ];
 
   return (
-    <Card
-      title="Compaction analytics & signals"
-      extra={
-        canUpdate ? (
-          <Button size="small" loading={refreshScores.isPending} onClick={() => refreshScores.mutate()}>
-            Refresh benefit scores
-          </Button>
-        ) : null
-      }
-    >
+    <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
+      <div className="td-chart-card-header">
+        <span className="td-chart-card-title">Compaction analytics & signals</span>
+        {canUpdate ? (
+          <div className="td-chart-card-actions">
+            <Button size="small" loading={refreshScores.isPending} onClick={() => refreshScores.mutate()}>
+              Refresh benefit scores
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <div className="td-chart-card-content">
       <Row gutter={[12, 12]}>
         <Col xs={24} lg={12}>
           <Typography.Title level={5}>Top compaction candidates</Typography.Title>
@@ -192,6 +194,7 @@ export const TableCompactionAnalytics = ({ tableId }: Props) => {
           ) : null}
         </Col>
       </Row>
+      </div>
     </Card>
   );
 };
