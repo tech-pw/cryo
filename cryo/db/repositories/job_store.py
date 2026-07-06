@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
+from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import (
     AuditLog,
     Destination,
@@ -56,7 +57,7 @@ class SQLJobStore:
             table = session.scalar(
                 select(Table)
                 .where(Table.id == uuid.UUID(table_id))
-                .options(selectinload(Table.stats))
+                .options(selectinload(Table.stats), selectinload(Table.source))
             )
             if table is None:
                 raise KeyError(f"table not found: {table_id}")
@@ -233,16 +234,24 @@ def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | Non
 
 def _stats_dict(table: Table) -> dict[str, Any]:
     stats = table.stats
+    catalog = catalog_name_for_table(table) if table.source is not None else "iceberg"
+    table_ref = (
+        qualified_table_name(table)
+        if table.source is not None
+        else f"{catalog}.{table.schema_name}.{table.table_name}"
+    )
     if stats is None:
         return {
+            "catalog": catalog,
             "schema_name": table.schema_name,
             "table_name": table.table_name,
-            "table_ref": f"iceberg.{table.schema_name}.{table.table_name}",
+            "table_ref": table_ref,
         }
     return {
+        "catalog": catalog,
         "schema_name": table.schema_name,
         "table_name": table.table_name,
-        "table_ref": f"iceberg.{table.schema_name}.{table.table_name}",
+        "table_ref": table_ref,
         "needs_compaction": stats.needs_compaction,
         "compaction_priority": stats.compaction_priority,
         "grade": stats.grade,
