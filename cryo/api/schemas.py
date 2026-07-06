@@ -318,6 +318,9 @@ class TableRead(OrmModel):
     table_name: str
     first_seen_at: datetime
     is_active: bool
+    consecutive_scan_failures: int = 0
+    last_scan_error: str | None = None
+    last_scan_error_at: datetime | None = None
     stats: TableStatsRead | None = None
 
 

@@ -21,11 +21,15 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   approvalAction,
+  createApprovalRequest,
   createTierPolicy,
   deleteTierPolicy,
   getCostForecast,
+  getS3TieringRecommendations,
   getTableLineage,
+  getTierCandidates,
   listFleetAnomalies,
+  listMaintenanceSignals,
   listPendingApprovals,
   listSources,
   listTables,
@@ -34,13 +38,20 @@ import {
   type TierPolicyRead,
   type TierPolicyWrite
 } from "../api/client";
+import type { TableRead } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatTime } from "../lib/format";
+import { leaf } from "../lib/predicate";
 
 type TierPolicyFormValues = TierPolicyWrite;
+
+// A table failing once is often just a transient blip (network hiccup) -- this only flags
+// tables that have failed to scan at least this many times *in a row*, e.g. a stale dbt
+// __dbt_tmp pointer whose metadata.json was deleted and will never come back on its own.
+const BROKEN_TABLE_FAILURE_THRESHOLD = 2;
 
 export const Governance = () => {
   const { api, subject, role } = useAuth();
@@ -48,8 +59,15 @@ export const Governance = () => {
   const canManage = role === "admin" || role === "operator";
   const canApprove = canManage;
   const [lineageTableId, setLineageTableId] = useState("");
+  const [tierTableId, setTierTableId] = useState("");
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [policyModal, setPolicyModal] = useState<TierPolicyRead | "new" | null>(null);
   const [policyForm] = Form.useForm<TierPolicyFormValues>();
+  const [approvalForm] = Form.useForm<{
+    table_id: string;
+    operation_type: string;
+    reason?: string;
+  }>();
 
   const approvals = useQuery({
     queryKey: ["pending-approvals", api.token],
@@ -61,6 +79,21 @@ export const Governance = () => {
     queryFn: () => listFleetAnomalies(api),
     refetchInterval: 60_000
   });
+  const maintenanceSignals = useQuery({
+    queryKey: ["maintenance-signals", api.token],
+    queryFn: () => listMaintenanceSignals(api),
+    refetchInterval: 60_000
+  });
+  const brokenTables = useQuery({
+    queryKey: ["broken-tables", api.token],
+    queryFn: () =>
+      listTables(api, {
+        predicate: leaf("consecutive_scan_failures", ">=", BROKEN_TABLE_FAILURE_THRESHOLD),
+        sort: "-consecutive_scan_failures",
+        limit: 50
+      }),
+    refetchInterval: 60_000
+  });
   const forecast = useQuery({
     queryKey: ["cost-forecast", api.token],
     queryFn: () => getCostForecast(api)
@@ -68,6 +101,16 @@ export const Governance = () => {
   const tierPolicies = useQuery({
     queryKey: ["tier-policies", api.token],
     queryFn: () => listTierPolicies(api)
+  });
+  const s3Tiering = useQuery({
+    queryKey: ["s3-tiering-recommendations", api.token],
+    queryFn: () => getS3TieringRecommendations(api, { min_size_gb: 50 }),
+    retry: false
+  });
+  const tierCandidates = useQuery({
+    queryKey: ["tier-candidates", api.token, tierTableId],
+    queryFn: () => getTierCandidates(api, tierTableId),
+    enabled: tierTableId.length > 8
   });
   const sources = useQuery({
     queryKey: ["sources", api.token],
@@ -115,6 +158,23 @@ export const Governance = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
+  const requestApproval = useMutation({
+    mutationFn: (values: { table_id: string; operation_type: string; reason?: string }) =>
+      createApprovalRequest(api, {
+        table_id: values.table_id,
+        operation_type: values.operation_type,
+        requested_by: subject || "ui-user",
+        reason: values.reason
+      }),
+    onSuccess: () => {
+      message.success("Approval request submitted");
+      setApprovalModalOpen(false);
+      approvalForm.resetFields();
+      void queryClient.invalidateQueries({ queryKey: ["pending-approvals"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
   const openPolicyModal = (policy: TierPolicyRead | "new") => {
     setPolicyModal(policy);
     if (policy === "new") {
@@ -145,7 +205,19 @@ export const Governance = () => {
 
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={12}>
-          <Card title="Pending approvals" extra={<Tag>{approvals.data?.length ?? 0}</Tag>}>
+          <Card
+            title="Pending approvals"
+            extra={
+              <Space>
+                <Tag>{approvals.data?.length ?? 0}</Tag>
+                {canManage ? (
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => setApprovalModalOpen(true)}>
+                    Request
+                  </Button>
+                ) : null}
+              </Space>
+            }
+          >
             <QueryErrorAlert error={approvals.error} title="Failed to load approvals" />
             <Table
               size="small"
@@ -229,6 +301,109 @@ export const Governance = () => {
                   render: (value: string) => <Tag color={value === "critical" ? "red" : "gold"}>{value}</Tag>
                 },
                 { title: "σ", dataIndex: "deviation_sigma", width: 64, align: "right" as const }
+              ]}
+            />
+          </Card>
+        </Col>
+
+        <Col xs={24}>
+          <Card
+            title="Broken tables"
+            extra={<Tag color={brokenTables.data?.items.length ? "red" : undefined}>{brokenTables.data?.items.length ?? 0}</Tag>}
+          >
+            <QueryErrorAlert error={brokenTables.error} title="Failed to load broken tables" />
+            <Table<TableRead>
+              size="small"
+              rowKey="id"
+              loading={brokenTables.isLoading}
+              dataSource={brokenTables.data?.items ?? []}
+              pagination={{ pageSize: 8, hideOnSinglePage: true }}
+              locale={{
+                emptyText: (
+                  <EmptyState
+                    title="No broken tables"
+                    description={`Tables that fail to scan ${BROKEN_TABLE_FAILURE_THRESHOLD}+ times in a row (e.g. a stale metadata pointer) show up here.`}
+                  />
+                )
+              }}
+              columns={[
+                {
+                  title: "Table",
+                  render: (_, row) => (
+                    <Link to={`/tables/${row.id}`}>{row.schema_name}.{row.table_name}</Link>
+                  )
+                },
+                {
+                  title: "Consecutive failures",
+                  dataIndex: "consecutive_scan_failures",
+                  width: 160,
+                  align: "right" as const,
+                  render: (value: number | undefined) => <Tag color="red">{value ?? 0}</Tag>
+                },
+                {
+                  title: "Last error",
+                  dataIndex: "last_scan_error",
+                  ellipsis: { showTitle: false },
+                  render: (value: string | null) => (
+                    <Typography.Text type="secondary" ellipsis={{ tooltip: value }}>
+                      {value ?? "-"}
+                    </Typography.Text>
+                  )
+                },
+                {
+                  title: "Last failed",
+                  dataIndex: "last_scan_error_at",
+                  width: 160,
+                  render: formatTime
+                }
+              ]}
+            />
+          </Card>
+        </Col>
+
+        <Col xs={24} xl={12}>
+          <Card title="Maintenance signals">
+            <QueryErrorAlert error={maintenanceSignals.error} title="Failed to load maintenance signals" />
+            <Table
+              size="small"
+              rowKey={(row) => `${row.table_id}-${row.signal_type}-${row.detected_at}`}
+              loading={maintenanceSignals.isLoading}
+              dataSource={maintenanceSignals.data ?? []}
+              pagination={{ pageSize: 8, hideOnSinglePage: true }}
+              locale={{
+                emptyText: (
+                  <EmptyState
+                    title="No maintenance signals"
+                    description="File degradation, latency spikes, and cost spikes appear here when detected."
+                  />
+                )
+              }}
+              columns={[
+                {
+                  title: "Table",
+                  render: (_, row) => (
+                    <Link to={`/tables/${row.table_id}`}>{row.table_name}</Link>
+                  )
+                },
+                { title: "Type", dataIndex: "signal_type", width: 140 },
+                {
+                  title: "Severity",
+                  dataIndex: "severity",
+                  width: 100,
+                  render: (value: string) => (
+                    <Tag color={value === "critical" ? "red" : value === "warning" ? "gold" : "default"}>
+                      {value}
+                    </Tag>
+                  )
+                },
+                {
+                  title: "Current",
+                  dataIndex: "current_value",
+                  width: 80,
+                  align: "right" as const,
+                  render: (value: number) => value.toFixed(2)
+                },
+                { title: "Description", dataIndex: "description", ellipsis: true }
               ]}
             />
           </Card>
@@ -324,6 +499,118 @@ export const Governance = () => {
         </Col>
 
         <Col xs={24}>
+          <Card
+            title="S3 Intelligent-Tiering recommendations"
+            extra={
+              s3Tiering.data ? (
+                <Tag color="green">
+                  {formatCurrency(s3Tiering.data.total_potential_savings_usd)}/yr potential
+                </Tag>
+              ) : null
+            }
+          >
+            <QueryErrorAlert error={s3Tiering.error} title="Failed to load S3 tiering recommendations" />
+            <Table
+              size="small"
+              rowKey="table_id"
+              loading={s3Tiering.isLoading}
+              dataSource={s3Tiering.data?.recommendations ?? []}
+              pagination={{ pageSize: 8, hideOnSinglePage: true }}
+              locale={{
+                emptyText: (
+                  <EmptyState
+                    title="No tiering candidates"
+                    description="Large tables with cold access patterns appear here after cost scans."
+                  />
+                )
+              }}
+              columns={[
+                {
+                  title: "Table",
+                  render: (_, row) => <Link to={`/tables/${row.table_id}`}>{row.table_name}</Link>
+                },
+                {
+                  title: "Size",
+                  dataIndex: "current_size_gb",
+                  width: 90,
+                  align: "right" as const,
+                  render: (value: number) => `${value.toFixed(1)} GB`
+                },
+                {
+                  title: "Days idle",
+                  dataIndex: "days_since_last_access",
+                  width: 90,
+                  align: "right" as const
+                },
+                {
+                  title: "Annual savings",
+                  dataIndex: "estimated_annual_savings_usd",
+                  width: 120,
+                  align: "right" as const,
+                  render: (value: number) => formatCurrency(value)
+                },
+                {
+                  title: "Recommendation",
+                  dataIndex: "recommendation",
+                  width: 140,
+                  render: (value: string) => <Tag>{value}</Tag>
+                }
+              ]}
+            />
+          </Card>
+        </Col>
+
+        <Col xs={24}>
+          <Card title="Tier candidates by policy">
+            <Space direction="vertical" size={12} className="full-width">
+              <Select
+                showSearch
+                allowClear
+                placeholder="Select a table to evaluate tier policies"
+                optionFilterProp="label"
+                style={{ maxWidth: 480, width: "100%" }}
+                loading={tableOptions.isLoading}
+                options={(tableOptions.data?.items ?? []).map((table) => ({
+                  value: table.id,
+                  label: `${table.schema_name}.${table.table_name}`
+                }))}
+                value={tierTableId || undefined}
+                onChange={(value) => setTierTableId(value ?? "")}
+              />
+              <QueryErrorAlert error={tierCandidates.error} title="Failed to load tier candidates" />
+              {tierCandidates.data ? (
+                <>
+                  <Space wrap>
+                    <Tag>Candidates: {tierCandidates.data.candidates.length}</Tag>
+                    {typeof tierCandidates.data.summary.estimated_monthly_savings_usd === "number" ? (
+                      <Tag color="green">
+                        Est. savings {formatCurrency(tierCandidates.data.summary.estimated_monthly_savings_usd)}/mo
+                      </Tag>
+                    ) : null}
+                  </Space>
+                  <Table
+                    size="small"
+                    rowKey={(row, index) => `${row.partition_value ?? "all"}-${index}`}
+                    pagination={{ pageSize: 8, hideOnSinglePage: true }}
+                    dataSource={tierCandidates.data.candidates}
+                    columns={[
+                      { title: "Partition", dataIndex: "partition_value", render: (v) => v ?? "(table)" },
+                      { title: "Age (days)", dataIndex: "age_days", width: 100, align: "right" as const },
+                      { title: "Target class", dataIndex: "target_storage_class", width: 140 }
+                    ]}
+                  />
+                </>
+              ) : (
+                <EmptyState
+                  title="Select a table"
+                  description="Tier candidates are computed from scan partitions and enabled tier policies."
+                />
+              )}
+            </Space>
+          </Card>
+        </Col>
+
+        <Col xs={24}>
           <Card title="Table lineage">
             <Space direction="vertical" size={12} className="full-width">
               <Select
@@ -380,6 +667,46 @@ export const Governance = () => {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title="Request approval"
+        open={approvalModalOpen}
+        onCancel={() => setApprovalModalOpen(false)}
+        onOk={() => approvalForm.submit()}
+        confirmLoading={requestApproval.isPending}
+        destroyOnHidden
+      >
+        <Form
+          form={approvalForm}
+          layout="vertical"
+          onFinish={(values) => requestApproval.mutate(values)}
+        >
+          <Form.Item name="table_id" label="Table" rules={[{ required: true }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              loading={tableOptions.isLoading}
+              options={(tableOptions.data?.items ?? []).map((table) => ({
+                value: table.id,
+                label: `${table.schema_name}.${table.table_name}`
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="operation_type" label="Operation" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { label: "Expire snapshots", value: "expire_snapshots" },
+                { label: "Remove orphan files", value: "remove_orphan_files" },
+                { label: "Optimize", value: "optimize" },
+                { label: "Optimize manifests", value: "optimize_manifests" }
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="reason" label="Reason">
+            <Input.TextArea rows={3} placeholder="Why this destructive operation is needed" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={policyModal === "new" ? "Create tier policy" : "Edit tier policy"}
