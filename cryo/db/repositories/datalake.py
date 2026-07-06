@@ -654,6 +654,7 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
             "scope": payload["scope"],
             "source_id": str(payload["source_id"]) if payload.get("source_id") else None,
             "table_ids": [str(table_id) for table_id in payload.get("table_ids", [])],
+            "table_names": list(payload.get("table_names", [])),
             "schema_names": list(payload.get("schema_names", [])),
             "requested_by": payload.get("requested_by"),
             "cost_full_scan": bool(payload.get("cost_full_scan")),
@@ -676,6 +677,7 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
         ),
         "source_id": payload.get("source_id"),
         "table_ids": payload.get("table_ids", []),
+        "table_names": payload.get("table_names", []),
         "schema_names": payload.get("schema_names", []),
         "cost_full_scan": bool(payload.get("cost_full_scan")),
         "full_scan": bool(payload.get("full_scan", True)),
@@ -714,12 +716,18 @@ def _validate_scan_scope(session: Session, payload: dict[str, Any]) -> None:
             raise ValueError("Source does not exist")
     elif scope == "tables":
         table_ids = payload.get("table_ids", [])
-        if not table_ids:
-            raise ValueError("tables scan requires table_ids")
-        existing = set(session.scalars(select(Table.id).where(Table.id.in_(table_ids))))
-        missing = set(table_ids) - existing
-        if missing:
-            missing_ids = sorted(str(item) for item in missing)
-            raise ValueError(f"Unknown table ids: {missing_ids}")
+        table_names = payload.get("table_names", [])
+        if not table_ids and not table_names:
+            raise ValueError("tables scan requires table_ids or table_names")
+        if table_ids:
+            existing = set(session.scalars(select(Table.id).where(Table.id.in_(table_ids))))
+            missing = set(table_ids) - existing
+            if missing:
+                missing_ids = sorted(str(item) for item in missing)
+                raise ValueError(f"Unknown table ids: {missing_ids}")
+        if table_names and not payload.get("source_id"):
+            # Name-only identifiers are ambiguous across lakehouses -- the same schema.table name
+            # could exist in more than one, so this path requires knowing which one to look in.
+            raise ValueError("table_names requires source_id")
     elif scope == "schemas" and not payload.get("schema_names"):
         raise ValueError("schemas scan requires schema_names")
