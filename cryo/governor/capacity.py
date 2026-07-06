@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot
 from cryo.worker.worker import DestinationConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LiveCapacityProvider:
@@ -82,3 +86,63 @@ def _static_capacity(config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot
         replicas = (replicas,)
     cap = int(config.get("per_replica_cap") or config.get("slot_cap") or 5)
     return {str(replica): CapacitySnapshot(capacity=cap, used=0) for replica in replicas}
+
+
+def evaluate_qpp_for_job(
+    *,
+    table_id: uuid.UUID | None,
+    files_scanned: int,
+    partition_count: int,
+    cotenant_load_pct: float,
+    target_p95_ms: int,
+    is_cached: bool = False,
+    query_text: str | None = None,
+    model: Any | None = None,
+) -> tuple[bool, float]:
+    """Run the variance-aware QPP gate for a single maintenance job.
+
+    Returns ``(admit, predicted_p95_ms)``. The caller is responsible for honoring the
+    decision (refusing the job, deferring it, etc.). ``model`` is optional -- if not
+    supplied, a fresh :class:`cryo.governor.qpp.QPPModel` is created and used in heuristic
+    mode. Pass a pre-loaded model from a worker cache to amortize the training cost.
+    """
+    from cryo.config import get_settings
+    from cryo.governor.qpp import QPPFeatures, QPPModel, hash_query_text, predict_admission
+
+    settings = get_settings()
+    if not settings.qpp_enabled:
+        return True, 0.0
+
+    if model is None:
+        model = QPPModel(min_observations=settings.qpp_min_observations)
+    if table_id is None:
+        # No table identity means we can't evaluate the per-table variance signal; admit
+        # to avoid breaking jobs that don't carry enough metadata.
+        return True, 0.0
+
+    features = QPPFeatures(
+        query_text_hash=hash_query_text(query_text),
+        table_id=table_id,
+        partition_count=max(0, int(partition_count)),
+        files_scanned=max(1, int(files_scanned)),
+        is_cached=bool(is_cached),
+        cotenant_load_pct=max(0.0, float(cotenant_load_pct)),
+        hour_of_day=0,
+        day_of_week=0,
+    )
+    admit, prediction = predict_admission(
+        model,
+        features,
+        target_p95_ms=int(target_p95_ms),
+    )
+    if not admit:
+        logger.info(
+            "QPP refuse: table=%s files=%d parts=%d load=%.2f predicted_p95=%.0fms target=%dms",
+            table_id,
+            files_scanned,
+            partition_count,
+            cotenant_load_pct,
+            prediction.p95_ms,
+            target_p95_ms,
+        )
+    return admit, prediction.p95_ms

@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["full"] }
 # Apache Iceberg (use git main for latest fixes)
 iceberg = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
 iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", branch = "main" }
+iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust", branch = "main", features = ["opendal-s3"] }
 
 # Arrow/Parquet - rely on iceberg's versions via re-exports where possible
 # We don't include direct arrow/parquet deps to avoid version conflicts

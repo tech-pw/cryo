@@ -38,9 +38,9 @@ import hashlib
 import math
 import random
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable
 
 # Sketch format constants. Bumping these invalidates previously-serialized blobs.
 SKETCH_MAGIC_THETA = b"CRYOTH1\x00"

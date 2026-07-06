@@ -15,6 +15,7 @@ use iceberg::spec::Snapshot;
 use iceberg::table::Table;
 use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
 use iceberg_catalog_rest::{RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
+use iceberg_storage_opendal::OpenDalStorageFactory;
 
 const DEFAULT_TARGET_FILE_SIZE_BYTES: u64 = 268_435_456; // 256 MB
 const DEFAULT_MIN_FILE_SIZE_BYTES: u64 = 104_857_600; // 100 MB
@@ -42,6 +43,9 @@ async fn load_catalog(request: &ExecuteRequest) -> Result<impl Catalog> {
     }
 
     let catalog = RestCatalogBuilder::default()
+        .with_storage_factory(Arc::new(OpenDalStorageFactory::S3 {
+            customized_credential_load: None,
+        }))
         .load("rest", props)
         .await
         .context("failed to connect to REST catalog")?;

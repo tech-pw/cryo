@@ -26,10 +26,11 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
 

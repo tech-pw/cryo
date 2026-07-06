@@ -4,8 +4,33 @@ import uuid
 from datetime import UTC, datetime
 
 from cryo.api.serializers import table_to_read
-from cryo.db.models import Table, TableCost, TableStats
+from cryo.db.models import Source, Table, TableCost, TableStats
 from cryo.domain.enums import CostPrecision
+
+
+def test_table_serializer_exposes_catalog_identity() -> None:
+    source = Source(
+        id=uuid.uuid4(),
+        name="rest-source",
+        type="rest",
+        config={"catalog_name": "prod"},
+    )
+    table = Table(
+        id=uuid.uuid4(),
+        source=source,
+        source_id=source.id,
+        schema_name="sales",
+        table_name="orders",
+        first_seen_at=datetime(2026, 7, 3, tzinfo=UTC),
+        is_active=True,
+        consecutive_scan_failures=0,
+    )
+
+    read = table_to_read(table)
+
+    assert read.catalog_name == "prod"
+    assert read.source_name == "rest-source"
+    assert read.qualified_table_name == "prod.sales.orders"
 
 
 def test_table_serializer_exposes_cost_precision_context() -> None:

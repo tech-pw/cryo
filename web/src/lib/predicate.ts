@@ -19,6 +19,7 @@ export interface TableFilterState {
   priorities?: string[];
   needsCompaction?: boolean;
   schemaSearch?: string;
+  sourceIds?: string[];
   minSizeGb?: number | null;
   minSmallFiles?: number | null;
   minMonthlySavings?: number | null;
@@ -55,6 +56,7 @@ export const serializePredicate = (predicate: Predicate | null | undefined): str
 export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | null =>
   all([
     filters.activeOnly === false ? null : leaf("is_active", "=", true),
+    filters.sourceIds?.length ? leaf("source_id", "in", filters.sourceIds) : null,
     filters.grades?.length ? leaf("grade", "in", filters.grades) : null,
     filters.priorities?.length ? leaf("compaction_priority", "in", filters.priorities) : null,
     typeof filters.needsCompaction === "boolean"
@@ -81,24 +83,49 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
     filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null
   ]);
 
-export const predicateSummary = (filters: TableFilterState): string => {
+export const predicateSummary = (
+  filters: TableFilterState,
+  catalogOptions: Array<{ label: string; value: string }> = []
+): string => {
+  const catalogById = new Map(catalogOptions.map((option) => [option.value, option.label]));
   const parts = [
-    filters.grades?.length ? `grade ${filters.grades.join(",")}` : null,
-    filters.priorities?.length ? `priority ${filters.priorities.join(",")}` : null,
+    filters.sourceIds?.length
+      ? `Catalog: ${filters.sourceIds.map((id) => catalogById.get(id) ?? id).join(", ")}`
+      : null,
+    filters.grades?.length ? `Grade: ${filters.grades.join(", ")}` : null,
+    filters.priorities?.length
+      ? `Priority: ${filters.priorities.map((p) => p.charAt(0) + p.slice(1).toLowerCase()).join(", ")}`
+      : null,
     typeof filters.needsCompaction === "boolean"
       ? filters.needsCompaction
-        ? "needs compaction"
-        : "healthy"
+        ? "Needs compaction"
+        : "Healthy only"
       : null,
-    filters.schemaSearch ? `schema/table "${filters.schemaSearch}"` : null,
-    filters.minSizeGb ? `>= ${filters.minSizeGb} GB` : null,
-    filters.minSmallFiles ? `>= ${filters.minSmallFiles} small files` : null,
-    filters.minMonthlySavings ? `>= $${filters.minMonthlySavings}/mo savings` : null,
-    filters.minReclaimableGb ? `>= ${filters.minReclaimableGb} GB reclaimable` : null,
-    filters.costPrecision ? `precision ${filters.costPrecision}` : null
+    filters.schemaSearch?.trim() ? `Name contains "${filters.schemaSearch.trim()}"` : null,
+    typeof filters.minSizeGb === "number" && Number.isFinite(filters.minSizeGb)
+      ? `Size ≥ ${filters.minSizeGb} GB`
+      : null,
+    typeof filters.minSmallFiles === "number" && Number.isFinite(filters.minSmallFiles)
+      ? `Small files ≥ ${filters.minSmallFiles}`
+      : null,
+    typeof filters.minMonthlySavings === "number" && Number.isFinite(filters.minMonthlySavings)
+      ? `Savings ≥ $${filters.minMonthlySavings}/mo`
+      : null,
+    typeof filters.minReclaimableGb === "number" && Number.isFinite(filters.minReclaimableGb)
+      ? `Reclaimable ≥ ${filters.minReclaimableGb} GB`
+      : null,
+    filters.costPrecision
+      ? `Cost: ${filters.costPrecision === "heuristic" ? "estimated" : filters.costPrecision.replace("_", " ")}`
+      : null
   ].filter(Boolean);
 
-  return parts.length ? parts.join(" · ") : "all active tables";
+  if (parts.length) {
+    if (filters.activeOnly === false) {
+      parts.unshift("Include inactive tables");
+    }
+    return parts.join(" · ");
+  }
+  return filters.activeOnly === false ? "All tables" : "Active tables";
 };
 
 const escapeGlob = (value: string): string => value.replace(/([?*])/g, "\\$1");

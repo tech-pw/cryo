@@ -111,6 +111,7 @@ import {
   formatSlaHours,
   formatTime
 } from "../lib/format";
+import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 
 const provenanceLabel = (provenance?: string | null): string => {
@@ -2028,7 +2029,7 @@ export const TableDetail = () => {
       <div className="td-header-row">
         <div className="td-header-info">
           <Typography.Title level={3} className="td-header-title">
-            {row ? `${row.schema_name}.${row.table_name}` : "Loading..."}
+            {row ? qualifiedTableName(row) : "Loading..."}
           </Typography.Title>
           <div className="td-header-tags">
             {stats?.grade ? <GradePill grade={stats.grade} /> : null}

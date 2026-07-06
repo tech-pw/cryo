@@ -34,6 +34,7 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth";
+import { qualifiedTableName } from "../lib/tableLabels";
 import {
   ClusteringPlanResponse,
   createClusteringPlan,
@@ -118,7 +119,7 @@ const LayoutOptimization = () => {
       key: "table",
       render: (_: unknown, row: LayoutRecommendationRead) => {
         const table = tables.data?.items.find((t) => t.id === row.table_id);
-        return table ? `${table.schema_name}.${table.table_name}` : row.table_id;
+        return table ? qualifiedTableName(table) : row.table_id;
       }
     },
     {
@@ -189,7 +190,7 @@ const LayoutOptimization = () => {
               if (table) {
                 setClusteringDrawer({
                   tableId: row.table_id,
-                  tableName: `${table.schema_name}.${table.table_name}`
+                  tableName: qualifiedTableName(table)
                 });
               }
             }}
@@ -400,7 +401,7 @@ const QueryPatternsTab = ({
           (option?.label?.toString() ?? "").toLowerCase().includes(input.toLowerCase())
         }
         options={tables.map((t) => ({
-          label: `${t.schema_name}.${t.table_name}`,
+          label: qualifiedTableName(t),
           value: t.id
         }))}
         onChange={(v) => setSelectedTableId(v)}

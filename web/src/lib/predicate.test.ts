@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { serializePredicate, tableFiltersToPredicate } from "./predicate";
+import { predicateSummary, serializePredicate, tableFiltersToPredicate } from "./predicate";
 
 describe("tableFiltersToPredicate", () => {
   it("maps quick filters to backend predicate grammar", () => {
@@ -48,7 +48,45 @@ describe("tableFiltersToPredicate", () => {
     });
   });
 
+  it("maps catalog filters to source_id predicates", () => {
+    expect(
+      tableFiltersToPredicate({
+        sourceIds: ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+      })
+    ).toEqual({
+      all: [
+        { field: "is_active", op: "=", value: true },
+        {
+          field: "source_id",
+          op: "in",
+          value: ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+        }
+      ]
+    });
+  });
+
   it("serializes empty filters as undefined", () => {
     expect(serializePredicate(null)).toBeUndefined();
+  });
+});
+
+describe("predicateSummary", () => {
+  it("uses standardized labels for active filters", () => {
+    expect(
+      predicateSummary(
+        {
+          grades: ["B"],
+          priorities: ["MEDIUM"],
+          needsCompaction: true,
+          sourceIds: ["catalog-1"]
+        },
+        [{ label: "Prod", value: "catalog-1" }]
+      )
+    ).toBe("Catalog: Prod · Grade: B · Priority: Medium · Needs compaction");
+  });
+
+  it("uses standardized default scope labels", () => {
+    expect(predicateSummary({ activeOnly: true })).toBe("Active tables");
+    expect(predicateSummary({ activeOnly: false })).toBe("All tables");
   });
 });

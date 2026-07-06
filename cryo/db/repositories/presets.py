@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.api.predicates import compile_predicate
+from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import (
     MaintenanceJob,
     MaintenanceRun,
@@ -265,7 +266,7 @@ def _run_target_summary(run: MaintenanceRun) -> dict[str, object]:
         ),
     )[0]
     if first.table is not None:
-        table_ref = f"{first.table.schema_name}.{first.table.table_name}"
+        table_ref = qualified_table_name(first.table)
         table_id = str(first.table.id)
     else:
         table_ref = str(first.table_id)

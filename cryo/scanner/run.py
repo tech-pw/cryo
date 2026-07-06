@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
+from cryo.db.model_utils import catalog_name_for_source, qualified_name
 from cryo.db.models import Source, Table, TableCost
 from cryo.db.repositories.sources import intersect_requested_schemas, source_allowed_schemas
 from cryo.db.session import SessionLocal
@@ -473,7 +474,8 @@ def _cancel_requested(cancel_checker: Any | None) -> bool:
 
 
 def _table_ref(candidate: ScanCandidate) -> str:
-    return f"{candidate.schema_name}.{candidate.table_name}"
+    catalog = catalog_name_for_source(candidate.source)
+    return qualified_name(catalog, candidate.schema_name, candidate.table_name)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

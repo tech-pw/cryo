@@ -179,7 +179,15 @@ CREATE TABLE cryo.tables (
     is_active        boolean NOT NULL DEFAULT true,
     UNIQUE (source_id, schema_name, table_name)
 );
+```
 
+`TableRead` (API) exposes derived catalog fields without denormalizing them into `cryo.tables`:
+
+- `catalog_name` — engine/catalog display name from the parent source config
+- `source_name` — Cryo source record name
+- `qualified_table_name` — `catalog.schema.table` for display, logs, and maintenance plans
+
+```sql
 -- latest stats (1 row per table; upserted each scan) — superset of iceberg_compaction_scan
 CREATE TABLE cryo.table_stats (
     table_id                       uuid PRIMARY KEY REFERENCES cryo.tables(id) ON DELETE CASCADE,
