@@ -260,7 +260,7 @@ class Settings(BaseSettings):
         gt=5,
         description="Max history rows loaded per table during anomaly detection.",
     )
-anomaly_max_results: int = Field(
+    anomaly_max_results: int = Field(
         default=500,
         gt=0,
         description="Maximum anomaly alerts retained from a fleet-wide scan.",
