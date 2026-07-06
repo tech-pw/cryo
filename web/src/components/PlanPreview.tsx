@@ -128,8 +128,8 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
             ]}
           />
           <Tabs
-            items={(preview.data?.items ?? []).map((item) => ({
-              key: item.table_ref,
+            items={(preview.data?.items ?? []).map((item, tableIndex) => ({
+              key: item.table_ref ?? `table-${tableIndex}`,
               label: item.table_ref,
               children: (
                 <Space direction="vertical" size={12} className="full-width">

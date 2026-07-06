@@ -119,8 +119,11 @@ export const DatalakeHealth = () => {
                 <ChartFrame empty={!data.grade_distribution?.length}>
                   <PieChart>
                     <Pie data={data.grade_distribution} dataKey="count" nameKey="grade" innerRadius={46} outerRadius={82}>
-                      {(data.grade_distribution ?? []).map((entry) => (
-                        <Cell key={entry.grade} fill={gradePalette[entry.grade] ?? cryoColors.mutedSubtle} />
+                      {(data.grade_distribution ?? []).map((entry, index) => (
+                        <Cell
+                          key={entry.grade ?? `grade-${index}`}
+                          fill={gradePalette[entry.grade] ?? cryoColors.mutedSubtle}
+                        />
                       ))}
                     </Pie>
                     <Tooltip {...chartTooltipProps} />

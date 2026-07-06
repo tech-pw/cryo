@@ -75,3 +75,41 @@ def is_sensitive_key(key: str) -> bool:
     """Check if a key name indicates sensitive data."""
     key_lower = key.lower()
     return any(pattern in key_lower for pattern in SENSITIVE_KEYS)
+
+
+REDACTED_PLACEHOLDER = "***REDACTED***"
+
+
+def unredact_merge(new_config: dict[str, Any], stored_config: dict[str, Any]) -> dict[str, Any]:
+    """Replace any literal REDACTED_PLACEHOLDER leaf in `new_config` with the corresponding real
+    value from `stored_config`, recursively.
+
+    `redact_sensitive_dict` is what a client ever *sees* for a saved Source/Destination config
+    (real secrets are masked before being sent to the browser). Without this, submitting an edit
+    form without retyping an untouched password field would silently persist the literal string
+    "***REDACTED***" as the new password, permanently destroying the real one -- since the config
+    column is a single JSON blob overwritten wholesale on PATCH, not a per-field update.
+    """
+    if not isinstance(new_config, dict):
+        return new_config
+
+    merged: dict[str, Any] = {}
+    for key, value in new_config.items():
+        stored_value = stored_config.get(key) if isinstance(stored_config, dict) else None
+        if value == REDACTED_PLACEHOLDER:
+            merged[key] = stored_value
+        elif isinstance(value, dict):
+            stored_dict = stored_value if isinstance(stored_value, dict) else {}
+            merged[key] = unredact_merge(value, stored_dict)
+        elif isinstance(value, list) and isinstance(stored_value, list):
+            merged[key] = [
+                unredact_merge(item, stored_value[i])
+                if isinstance(item, dict)
+                and i < len(stored_value)
+                and isinstance(stored_value[i], dict)
+                else item
+                for i, item in enumerate(value)
+            ]
+        else:
+            merged[key] = value
+    return merged

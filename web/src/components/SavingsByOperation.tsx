@@ -26,8 +26,11 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
       >
         <PieChart>
           <Pie data={active} dataKey="savings_usd_month" nameKey="operation" innerRadius={42} outerRadius={72}>
-            {active.map((item) => (
-              <Cell key={item.operation} fill={operationColors[item.operation] ?? "#8b95a8"} />
+            {active.map((item, index) => (
+              <Cell
+                key={item.operation ?? `operation-${index}`}
+                fill={operationColors[item.operation] ?? "#8b95a8"}
+              />
             ))}
           </Pie>
           <Tooltip
@@ -43,8 +46,8 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
         </PieChart>
       </ChartFrame>
       <div className="operation-list">
-        {active.map((item) => (
-          <div key={item.operation} className="operation-list-row">
+        {active.map((item, index) => (
+          <div key={item.operation ?? `operation-${index}`} className="operation-list-row">
             <span className="operation-swatch" style={{ background: operationColors[item.operation] }} />
             <Typography.Text>{operationLabels[item.operation] ?? item.operation}</Typography.Text>
             <Typography.Text type="secondary">{formatCurrency(item.savings_usd_month)}/mo</Typography.Text>

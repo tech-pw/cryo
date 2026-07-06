@@ -239,7 +239,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         title={logJob ? `Job ${shortId(logJob.id)}` : "Job logs"}
         open={Boolean(logJob)}
         onClose={() => setLogJob(null)}
-        width={560}
+        size={560}
         extra={
           logJob ? (
             <Link to={`/jobs/${logJob.id}`}>

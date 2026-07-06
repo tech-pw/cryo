@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Descriptions, Form, Input, Space, Switch, Typography, message } from "antd";
+import { Alert, Button, Descriptions, Form, Input, Select, Space, Switch, Typography, message } from "antd";
 import {
   createAwsIntegration,
   deleteAwsIntegration,
@@ -16,6 +16,40 @@ import { formatBytesGb, formatCurrency, formatTime } from "../lib/format";
 interface AwsIntegrationPanelProps {
   sourceId: UUID;
 }
+
+// Real AWS regions only -- this integration calls CloudWatch/Pricing directly, so unlike the
+// lakehouse S3 config (which also has to support MinIO/S3-compatible endpoints), there's no
+// legitimate custom value here. A strict Select prevents typos entirely rather than just
+// suggesting corrections.
+const AWS_REGIONS = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+  "af-south-1",
+  "ap-east-1",
+  "ap-south-1",
+  "ap-south-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-3",
+  "ap-southeast-4",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-northeast-3",
+  "ca-central-1",
+  "eu-central-1",
+  "eu-central-2",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "eu-north-1",
+  "eu-south-1",
+  "eu-south-2",
+  "me-central-1",
+  "me-south-1",
+  "sa-east-1"
+].map((region) => ({ value: region, label: region }));
 
 export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
   const { api } = useAuth();
@@ -110,7 +144,7 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
           <Input placeholder="my-iceberg-bucket" />
         </Form.Item>
         <Form.Item name="region" label="Region" rules={[{ required: true }]}>
-          <Input placeholder="ap-south-1" />
+          <Select showSearch options={AWS_REGIONS} placeholder="ap-south-1" />
         </Form.Item>
         <Form.Item name="access_key_id" label="Access key ID (optional)">
           <Input placeholder="Uses IRSA / default chain if blank" autoComplete="off" />

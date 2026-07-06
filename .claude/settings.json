@@ -24,7 +24,13 @@
       "Bash(.venv/bin/mypy cryo/api/routes.py cryo/api/schemas.py cryo/db/models.py cryo/integrations/aws_s3_metrics.py)",
       "Bash(.venv/bin/pytest tests/test_aws_integration_api.py -q)",
       "Bash(.venv/bin/mypy tests/test_aws_integration_api.py tests/test_aws_s3_metrics.py)",
-      "Bash(.venv/bin/pytest)"
+      "Bash(.venv/bin/pytest)",
+      "Bash(.venv/bin/mypy cryo/ml/health_classifier.py cryo/ml/cost_model.py cryo/ml/anomaly_detector.py cryo/ml/cost_integration.py cryo/governor/bandit.py cryo/governor/bandit_feedback.py cryo/planner/benefit_score.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('cryo/optimizer/partition_analyzer.py'\\).read\\(\\)\\)\")",
+      "Bash(python -m pytest tests/test_partition_analyzer.py -v)",
+      "Bash(.venv/bin/python -m pytest tests/test_partition_analyzer.py -v)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/pip install *)"
     ]
   }
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -33,6 +34,7 @@ from cryo.api.preview_cost import (
     savings_projection_for_plan,
     savings_projection_to_dict,
 )
+from cryo.api.redact import unredact_merge
 from cryo.api.schemas import (
     AssignmentDeleteRequest,
     AssignmentRequest,
@@ -48,6 +50,8 @@ from cryo.api.schemas import (
     DestinationCreate,
     DestinationPatch,
     DestinationRead,
+    DestinationTestRequest,
+    DestinationTestResponse,
     EffectivePresetResponse,
     JobRead,
     MaintenancePreviewRequest,
@@ -245,20 +249,77 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
     return source
 
 
+_CONNECTION_TEST_TIMEOUT_SECONDS = 10.0
+
+
+def _run_with_timeout(
+    fn: Callable[[], Any], *, seconds: float = _CONNECTION_TEST_TIMEOUT_SECONDS
+) -> Any:
+    """Run a blocking call with a hard wall-clock timeout.
+
+    Needed because some catalog/engine clients block indefinitely with no timeout of their own
+    -- verified PyIceberg's HiveCatalog opens a raw Thrift TSocket with zero timeout handling
+    anywhere in its code, so an unreachable metastore host (wrong network, VPN required,
+    firewalled) hangs the request forever instead of failing. The underlying worker thread can
+    still be stuck after this returns (a blocking socket connect can't be cleanly interrupted
+    from another thread), but the caller gets a bounded, honest "timed out" response instead of
+    an infinite spinner.
+
+    Uses a plain daemon Thread, not ThreadPoolExecutor: (1) ThreadPoolExecutor's worker threads
+    are NOT daemon threads, so a leaked one (still blocked on the underlying call) would prevent
+    a clean process shutdown -- e.g. a k8s pod failing to terminate on SIGTERM during a rolling
+    restart, exactly the kind of thing that's easy to miss until it happens in production. (2)
+    ThreadPoolExecutor used as a context manager also calls shutdown(wait=True) on exit, which
+    blocks on that same stuck thread and defeats the entire point of this function -- an earlier
+    version of this had exactly that bug, caught by tests/test_connection_test_timeout.py.
+    """
+    result_box: dict[str, Any] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def _target() -> None:
+        try:
+            result_box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the calling thread below
+            error_box["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout=seconds)
+
+    if thread.is_alive():
+        raise TimeoutError(
+            f"Connection attempt timed out after {seconds:.0f}s -- check the host is "
+            "reachable from the Cryo backend's network (VPN, firewall, DNS)."
+        )
+    if "error" in error_box:
+        raise error_box["error"]
+    return result_box.get("value")
+
+
 @router.post(
     "/sources/test",
     response_model=SourceTestResponse,
     dependencies=[Depends(require_operator)],
 )
-def test_source(payload: SourceTestRequest) -> SourceTestResponse:
+def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestResponse:
     """Verify a not-yet-saved catalog config and show what's actually in it.
 
     Used by the "Test connection" action while creating/editing a lakehouse, so a user can see
     real discovered namespaces and tables before committing to a Warehouse/URI guess.
     """
+    config = payload.config
+    if payload.source_id is not None:
+        existing = get_scoped_resource(
+            session, Source, payload.source_id, resource_type="Source"
+        )
+        config = unredact_merge(config, dict(existing.config or {}))
+
+    def _connect_and_list() -> list[tuple[str, str]]:
+        catalog = catalog_from_config("__test__", payload.type, config)
+        return catalog.list_tables()
+
     try:
-        catalog = catalog_from_config("__test__", payload.type, payload.config)
-        tables = catalog.list_tables()
+        tables = _run_with_timeout(_connect_and_list)
     except Exception as exc:
         return SourceTestResponse(ok=False, error=str(exc))
 
@@ -282,6 +343,11 @@ def patch_source(source_id: uuid.UUID, payload: SourcePatch, session: SessionDep
     values = payload.model_dump(exclude_unset=True)
     if "secret_ref" in values and values["secret_ref"]:
         values["secret_ref"] = encrypt_secret(values["secret_ref"])
+    if "config" in values and values["config"] is not None:
+        # The client only ever sees a redacted config (see cryo/api/redact.py); submitting an
+        # edit that didn't touch a secret field would otherwise persist the literal placeholder
+        # string over the real value.
+        values["config"] = unredact_merge(values["config"], dict(source.config or {}))
     _apply_patch(source, values)
     session.commit()
     session.refresh(source)
@@ -486,6 +552,10 @@ def patch_destination(
     values = payload.model_dump(exclude_unset=True, mode="json")
     if values.get("secret_ref"):
         values["secret_ref"] = encrypt_secret(values["secret_ref"])
+    if values.get("config") is not None:
+        # See patch_source's comment: the client only ever sees a redacted config, so an edit
+        # that didn't touch a secret field must not persist the literal placeholder over it.
+        values["config"] = unredact_merge(values["config"], dict(destination.config or {}))
     _apply_patch(destination, values)
     session.commit()
     session.refresh(destination)
@@ -506,6 +576,41 @@ def delete_destination(destination_id: uuid.UUID, session: SessionDep) -> None:
 
 
 @router.post(
+    "/destinations/test",
+    response_model=DestinationTestResponse,
+    dependencies=[Depends(require_operator)],
+)
+def test_destination_config(
+    payload: DestinationTestRequest, session: SessionDep
+) -> DestinationTestResponse:
+    """Verify a not-yet-saved engine config, so a user can see it actually connects before
+    committing to it. Mirrors /sources/test for lakehouses -- both let the create/edit drawer
+    test with the form's current values instead of requiring a save first."""
+    config = payload.config
+    if payload.destination_id is not None:
+        existing = get_scoped_resource(
+            session, Destination, payload.destination_id, resource_type="Destination"
+        )
+        config = unredact_merge(config, dict(existing.config or {}))
+
+    if payload.engine == EngineType.TRINO:
+        try:
+            snapshot = _run_with_timeout(TrinoEngine(dict(config)).probe_capacity)
+            return DestinationTestResponse(
+                ok=True,
+                capacity=snapshot.capacity,
+                used=snapshot.used,
+                available=snapshot.available,
+            )
+        except Exception as exc:
+            return DestinationTestResponse(ok=False, message=str(exc))
+    return DestinationTestResponse(
+        ok=True,
+        message="Configuration present; live engine probe is implemented in the governor/worker.",
+    )
+
+
+@router.post(
     "/destinations/{destination_id}/test",
     dependencies=[Depends(require_operator)],
 )
@@ -515,7 +620,7 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
     )
     if destination.engine == EngineType.TRINO.value:
         try:
-            snapshot = TrinoEngine(dict(destination.config)).probe_capacity()
+            snapshot = _run_with_timeout(TrinoEngine(dict(destination.config)).probe_capacity)
             return {
                 "ok": destination.enabled,
                 "engine": destination.engine,

@@ -2,6 +2,7 @@ import { CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, RobotOutlined, 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  AutoComplete,
   Button,
   Collapse,
   Divider,
@@ -36,9 +37,13 @@ import {
   patchSlackConfig,
   patchSource,
   testAIProvider,
+  testAIProviderConfig,
   testDestination,
+  testDestinationConfig,
   testSlackConfig,
+  testSlackConfigValues,
   testSource,
+  ApiError,
   type AIProviderRead,
   type AIProviderType,
   type AIProviderWrite,
@@ -53,6 +58,12 @@ import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
+
+// Matches cryo/api/redact.py's REDACTED_PLACEHOLDER -- a saved secret field is never sent back
+// to the browser as its real value, only this sentinel. Used to decide when a "Test connection"
+// click should ask the backend to test against the real stored secret (via source_id/
+// destination_id/provider_id/config_id) instead of this literal placeholder string.
+const REDACTED_PLACEHOLDER = "***REDACTED***";
 
 export const Connections = () => {
   const { api, token } = useAuth();
@@ -99,7 +110,13 @@ export const Connections = () => {
       setDestinationDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["destinations"] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+        message.error("Admin role required to create or edit engines. Sign in with role admin.");
+        return;
+      }
+      message.error((error as Error).message);
+    }
   });
 
   const probe = useMutation({
@@ -583,6 +600,39 @@ const S3_AUTH_METHODS = [
   { value: "assume_role", label: "Assume IAM Role (cross-account)" }
 ];
 
+// AutoComplete, not a strict Select: S3-compatible endpoints (MinIO, etc.) can use arbitrary
+// region strings, so the field must still accept free text -- this just prevents typos like
+// "ap-south21" for the common case of real AWS regions.
+const AWS_REGIONS = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+  "af-south-1",
+  "ap-east-1",
+  "ap-south-1",
+  "ap-south-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-3",
+  "ap-southeast-4",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-northeast-3",
+  "ca-central-1",
+  "eu-central-1",
+  "eu-central-2",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "eu-north-1",
+  "eu-south-1",
+  "eu-south-2",
+  "me-central-1",
+  "me-south-1",
+  "sa-east-1"
+].map((region) => ({ value: region }));
+
 interface SourceFormValues {
   name: string;
   type: string;
@@ -689,9 +739,9 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
         <Space direction="vertical" size={6} className="full-width">
           {result.namespaces.length ? (
             <Space size={[4, 4]} wrap>
-              {result.namespaces.map((namespace) => (
-                <Typography.Text key={namespace} code>
-                  {namespace}
+              {result.namespaces.map((namespace, index) => (
+                <Typography.Text key={namespace || `namespace-${index}`} code>
+                  {namespace || "(unnamed)"}
                 </Typography.Text>
               ))}
             </Space>
@@ -728,16 +778,28 @@ const SourceDrawer = ({
     (existingConfig as { s3_auth_method?: "default" | "access_key" | "assume_role" }).s3_auth_method ?? "default"
   );
 
+  const [testPassed, setTestPassed] = useState(false);
+
   const testConnection = useMutation({
     mutationFn: () => {
       const current = form.getFieldsValue(true) as SourceFormValues;
-      return testSource(api, { type: current.type, config: buildSourceConfig(current) });
+      return testSource(api, {
+        type: current.type,
+        config: buildSourceConfig(current),
+        // If editing and a secret field still holds the redacted placeholder (untouched), test
+        // against the real stored value instead of the literal "***REDACTED***" string.
+        source_id: isEditing ? value.id : undefined
+      });
     },
-    onError: () => message.error("Advanced properties must be valid JSON before testing.")
+    onSuccess: (data) => setTestPassed(Boolean(data.ok)),
+    onError: () => {
+      setTestPassed(false);
+      message.error("Advanced properties must be valid JSON before testing.");
+    }
   });
 
   return (
-    <Drawer title={isEditing ? "Edit lakehouse" : "New lakehouse"} open={Boolean(value)} onClose={onClose} width={620} destroyOnHidden>
+    <Drawer title={isEditing ? "Edit lakehouse" : "New lakehouse"} open={Boolean(value)} onClose={onClose} size={620} destroyOnHidden>
       <Form<SourceFormValues>
         form={form}
         layout="vertical"
@@ -752,6 +814,7 @@ const SourceDrawer = ({
         onValuesChange={(changed) => {
           if (changed.type) setCatalogType(changed.type);
           if (changed.s3_auth_method) setS3AuthMethod(changed.s3_auth_method);
+          setTestPassed(false);
         }}
         onFinish={(values) => {
           try {
@@ -817,7 +880,11 @@ const SourceDrawer = ({
 
         <Space size={12} className="full-width" style={{ display: "flex" }}>
           <Form.Item name="s3_region" label="AWS Region" style={{ flex: 1 }}>
-            <Input placeholder="us-east-1" />
+            <AutoComplete
+              options={AWS_REGIONS}
+              filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+              placeholder="us-east-1"
+            />
           </Form.Item>
           <Form.Item name="s3_endpoint" label="S3 endpoint (optional)" style={{ flex: 1 }}>
             <Input placeholder="http://localhost:9000" />
@@ -917,7 +984,16 @@ const SourceDrawer = ({
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Button type="primary" htmlType="submit" loading={saving}>
+        {!testPassed && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Test the connection before saving"
+            description={'Click "Test connection" above with a passing result to enable Save.'}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!testPassed}>
           Save
         </Button>
       </Form>
@@ -1054,6 +1130,7 @@ const DestinationDrawer = ({
   onClose: () => void;
   onSave: (body: DestinationWrite) => void;
 }) => {
+  const { api } = useAuth();
   const [form] = Form.useForm<DestinationFormValues>();
   const isEditing = value && value !== "new";
   const initialEngine = isEditing ? value.engine : "trino";
@@ -1062,9 +1139,29 @@ const DestinationDrawer = ({
     ? decomposeDestinationConfig(initialEngine, value.config as Record<string, unknown>)
     : decomposeDestinationConfig("trino", undefined);
   const useBasicAuth = Form.useWatch("use_basic_auth", form);
+  const [testPassed, setTestPassed] = useState(false);
+
+  const testConnection = useMutation({
+    mutationFn: () => {
+      const current = form.getFieldsValue(true) as DestinationFormValues;
+      return testDestinationConfig(api, {
+        engine: current.engine,
+        config: buildDestinationConfig(current),
+        destination_id: isEditing ? value.id : undefined
+      });
+    },
+    onSuccess: (data) => {
+      setTestPassed(Boolean(data.ok));
+      if (!data.ok) message.error(data.message ?? "Test failed");
+    },
+    onError: () => {
+      setTestPassed(false);
+      message.error("Spark submit params must be valid JSON before testing.");
+    }
+  });
 
   return (
-    <Drawer title={isEditing ? "Edit engine" : "New engine"} open={Boolean(value)} onClose={onClose} width={620} destroyOnHidden>
+    <Drawer title={isEditing ? "Edit engine" : "New engine"} open={Boolean(value)} onClose={onClose} size={620} destroyOnHidden>
       <Form<DestinationFormValues>
         form={form}
         layout="vertical"
@@ -1079,6 +1176,7 @@ const DestinationDrawer = ({
         }}
         onValuesChange={(changed) => {
           if (changed.engine) setEngine(changed.engine);
+          setTestPassed(false);
         }}
         onFinish={(values) => {
           try {
@@ -1116,23 +1214,26 @@ const DestinationDrawer = ({
                   }
                 >
                   <Space direction="vertical" size={8} className="full-width">
-                    {fields.map((field) => (
-                      <Space key={field.key} align="baseline" size={8}>
-                        <Form.Item {...field} name={[field.name, "host"]} noStyle rules={[{ required: true, message: "Host required" }]}>
+                    {fields.map((field) => {
+                      const { key: fieldKey, name: fieldName, ...fieldRest } = field;
+                      return (
+                      <Space key={fieldKey} align="baseline" size={8}>
+                        <Form.Item {...fieldRest} name={[fieldName, "host"]} noStyle rules={[{ required: true, message: "Host required" }]}>
                           <Input placeholder="trino.internal" style={{ width: 240 }} />
                         </Form.Item>
-                        <Form.Item {...field} name={[field.name, "port"]} noStyle>
+                        <Form.Item {...fieldRest} name={[fieldName, "port"]} noStyle>
                           <InputNumber placeholder="8080" min={1} max={65535} style={{ width: 90 }} />
                         </Form.Item>
-                        <Form.Item {...field} name={[field.name, "http_scheme"]} noStyle>
+                        <Form.Item {...fieldRest} name={[fieldName, "http_scheme"]} noStyle>
                           <Select
                             style={{ width: 90 }}
                             options={[{ label: "http", value: "http" }, { label: "https", value: "https" }]}
                           />
                         </Form.Item>
-                        {fields.length > 1 ? <Button size="small" danger onClick={() => remove(field.name)}>Remove</Button> : null}
+                        {fields.length > 1 ? <Button size="small" danger onClick={() => remove(fieldName)}>Remove</Button> : null}
                       </Space>
-                    ))}
+                      );
+                    })}
                     <Button
                       size="small"
                       icon={<PlusOutlined />}
@@ -1179,7 +1280,11 @@ const DestinationDrawer = ({
             </Form.Item>
             <Space size={12} className="full-width" style={{ display: "flex" }}>
               <Form.Item name="region" label="AWS region" style={{ flex: 1 }}>
-                <Input placeholder="us-east-1" />
+                <AutoComplete
+                  options={AWS_REGIONS}
+                  filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+                  placeholder="us-east-1"
+                />
               </Form.Item>
               <Form.Item name="s3_logs_bucket" label="S3 logs bucket (optional)" style={{ flex: 1 }}>
                 <Input placeholder="my-emr-logs" />
@@ -1229,6 +1334,26 @@ const DestinationDrawer = ({
           </>
         )}
 
+        <Form.Item>
+          <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
+            Test connection
+          </Button>
+        </Form.Item>
+        {testConnection.data ? (
+          <Alert
+            type={testConnection.data.ok ? "success" : "error"}
+            showIcon
+            message={testConnection.data.ok ? "Connection succeeded" : "Connection failed"}
+            description={
+              testConnection.data.ok
+                ? testConnection.data.message ??
+                  `Capacity: ${testConnection.data.used ?? 0}/${testConnection.data.capacity ?? 0} in use`
+                : testConnection.data.message
+            }
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
+
         <Divider titlePlacement="left" plain style={{ fontSize: 12, color: "var(--ink-faint, rgba(0,0,0,0.45))" }}>
           Scheduling
         </Divider>
@@ -1250,7 +1375,16 @@ const DestinationDrawer = ({
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Button type="primary" htmlType="submit" loading={saving}>
+        {!testPassed && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Test the connection before saving"
+            description={'Click "Test connection" above with a passing result to enable Save.'}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!testPassed}>
           Save
         </Button>
       </Form>
@@ -1317,6 +1451,7 @@ const AIProviderDrawer = ({
   onClose: () => void;
   onSave: (body: AIProviderWrite & { id?: string }) => void;
 }) => {
+  const { api } = useAuth();
   const [form] = Form.useForm<AIProviderFormValues>();
   const isEditing = value && value !== "new";
   const existingConfig = isEditing ? (value.config as Record<string, string>) : {};
@@ -1327,13 +1462,39 @@ const AIProviderDrawer = ({
   const currentTypeInfo = effectiveProviderTypes.find((t) => t.type === selectedType);
   const modelOptions = currentTypeInfo?.models.map((m) => ({ label: m, value: m })) ?? [];
   const configFields = currentTypeInfo?.config_fields ?? [];
+  const [testPassed, setTestPassed] = useState(false);
+
+  const testConnection = useMutation({
+    mutationFn: () => {
+      const current = form.getFieldsValue(true) as AIProviderFormValues;
+      const config: Record<string, string> = {};
+      if (current.config_api_base) config.api_base = current.config_api_base;
+      if (current.config_api_version) config.api_version = current.config_api_version;
+      return testAIProviderConfig(api, {
+        provider_type: current.provider_type,
+        api_key: current.api_key || "",
+        model: current.model,
+        config,
+        provider_id: isEditing ? value.id : undefined
+      });
+    },
+    onSuccess: (data) => {
+      setTestPassed(data.success);
+      if (!data.success) message.error(`Test failed: ${data.error}`);
+      else message.success(`AI responded: "${data.response}"`);
+    },
+    onError: (error) => {
+      setTestPassed(false);
+      message.error((error as Error).message);
+    }
+  });
 
   return (
     <Drawer
       title={isEditing ? "Edit AI provider" : "New AI provider"}
       open={Boolean(value)}
       onClose={onClose}
-      width={520}
+      size={520}
       destroyOnHidden
     >
       <Form<AIProviderFormValues>
@@ -1363,6 +1524,7 @@ const AIProviderDrawer = ({
               });
             }
           }
+          setTestPassed(false);
         }}
         onFinish={(values) => {
           // Build config object from config_ prefixed fields
@@ -1424,9 +1586,9 @@ const AIProviderDrawer = ({
         </Form.Item>
 
         {/* Dynamic config fields for providers like Azure OpenAI */}
-        {configFields.map((field) => (
+        {configFields.map((field, index) => (
           <Form.Item
-            key={field.name}
+            key={field.name || `config-field-${index}`}
             name={`config_${field.name}`}
             label={field.label}
             rules={[{ required: field.required, message: `${field.label} is required` }]}
@@ -1437,6 +1599,12 @@ const AIProviderDrawer = ({
 
         <Form.Item name="model" label={selectedType === "azure_openai" ? "Deployment Name" : "Model"} rules={[{ required: true }]}>
           <Select options={modelOptions} />
+        </Form.Item>
+
+        <Form.Item>
+          <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
+            Test connection
+          </Button>
         </Form.Item>
 
         <Divider />
@@ -1466,7 +1634,16 @@ const AIProviderDrawer = ({
           style={{ marginBottom: 16 }}
         />
 
-        <Button type="primary" htmlType="submit" loading={saving}>
+        {!testPassed && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Test the connection before saving"
+            description={'Click "Test connection" above with a passing result to enable Save.'}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!testPassed}>
           Save
         </Button>
       </Form>
@@ -1500,15 +1677,36 @@ const SlackDrawer = ({
   onClose: () => void;
   onSave: (body: SlackConfigWrite & { id?: string }) => void;
 }) => {
+  const { api } = useAuth();
   const [form] = Form.useForm<SlackFormValues>();
   const isEditing = value && value !== "new";
+  const [testPassed, setTestPassed] = useState(false);
+
+  const testConnection = useMutation({
+    mutationFn: () => {
+      const current = form.getFieldsValue(true) as SlackFormValues;
+      return testSlackConfigValues(api, {
+        webhook_url: current.webhook_url || "",
+        channel: current.channel || undefined,
+        config_id: isEditing ? value.id : undefined
+      });
+    },
+    onSuccess: () => {
+      setTestPassed(true);
+      message.success("Test message sent to Slack!");
+    },
+    onError: (error) => {
+      setTestPassed(false);
+      message.error((error as Error).message);
+    }
+  });
 
   return (
     <Drawer
       title={isEditing ? "Edit Slack connection" : "New Slack connection"}
       open={Boolean(value)}
       onClose={onClose}
-      width={520}
+      size={520}
       destroyOnHidden
     >
       <Form<SlackFormValues>
@@ -1524,6 +1722,7 @@ const SlackDrawer = ({
           enabled: isEditing ? value.enabled : true,
           is_default: isEditing ? value.is_default : false
         }}
+        onValuesChange={() => setTestPassed(false)}
         onFinish={(values) => {
           const body: SlackConfigWrite & { id?: string } = {
             name: values.name,
@@ -1575,6 +1774,12 @@ const SlackDrawer = ({
           }
         >
           <Input placeholder="#cryo-alerts" />
+        </Form.Item>
+
+        <Form.Item>
+          <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
+            Send test message
+          </Button>
         </Form.Item>
 
         <Divider>Daily Report Settings</Divider>
@@ -1643,7 +1848,16 @@ const SlackDrawer = ({
           style={{ marginBottom: 16 }}
         />
 
-        <Button type="primary" htmlType="submit" loading={saving}>
+        {!testPassed && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Send a test message before saving"
+            description={'Click "Send test message" above with a passing result to enable Save.'}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Button type="primary" htmlType="submit" loading={saving} disabled={!testPassed}>
           Save
         </Button>
       </Form>
