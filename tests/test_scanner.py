@@ -153,6 +153,22 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     assert len(session.executed) == 3
 
 
+def test_json_safe_strips_nul_bytes_postgres_cannot_store() -> None:
+    """A dirty VARCHAR min/max bound decoded straight from manifest stats can legally contain a
+    NUL byte -- Postgres text/JSONB columns can never store one, and would fail the whole row's
+    INSERT rather than just that one field (see the psycopg UntranslatableCharacter error this
+    guards against)."""
+    from cryo.scanner.persistence import _json_safe
+
+    assert _json_safe("clean") == "clean"
+    assert _json_safe("dirty\x00value") == "dirtyvalue"
+    assert _json_safe({"lower_bound": "\x00leading", "count": 3}) == {
+        "lower_bound": "leading",
+        "count": 3,
+    }
+    assert _json_safe(["a\x00b", ("c\x00d",)]) == ["ab", ["cd"]]
+
+
 def test_snapshot_info_tracks_first_and_last_commit() -> None:
     from cryo.scanner.analyze import _snapshot_info
 

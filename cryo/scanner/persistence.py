@@ -27,6 +27,11 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(item) for item in value]
     if isinstance(value, tuple):
         return [_json_safe(item) for item in value]
+    if isinstance(value, str) and "\x00" in value:
+        # Postgres text/JSONB can never store a NUL byte -- unlike the source column data being
+        # profiled here (e.g. a dirty VARCHAR min/max bound), which can legally contain one. A
+        # single such value would otherwise fail the whole row's INSERT, not just that one field.
+        return value.replace("\x00", "")
     return value
 
 
