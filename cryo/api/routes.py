@@ -249,7 +249,7 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
     return source
 
 
-_CONNECTION_TEST_TIMEOUT_SECONDS = 10.0
+_CONNECTION_TEST_TIMEOUT_SECONDS = 120.0
 
 
 def _run_with_timeout(
