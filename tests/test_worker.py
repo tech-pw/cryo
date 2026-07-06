@@ -63,6 +63,47 @@ def test_worker_marks_failed_when_engine_statement_fails() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig("dest", config={"catalog": "cdp", "host": "trino.example"})
+    )
+    store.add_table_data(
+        "table-1",
+        TableMaintenanceData(
+            stats={
+                "schema_name": "admin",
+                "table_name": "orphan_files_removal_audit_log",
+                "table_ref": "iceberg.admin.orphan_files_removal_audit_log",
+                "small_files_count": 500,
+                "total_size_gb": 10,
+            },
+            partitions=[],
+        ),
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            params={"min_small_files": 10, "chunk_size_gb": 100},
+            status=JobStatus.ADMITTED,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", "r1")
+
+    result = Worker(queue, store, lambda destination: FakeMaintenanceEngine(), locks).process_next()
+
+    assert result is not None
+    assert result.plan is not None
+    assert result.plan["table_ref"] == "cdp.admin.orphan_files_removal_audit_log"
+
+
 def _worker_fixture() -> tuple[InMemoryMaintenanceQueue, InMemoryLockStore, InMemoryJobStore]:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
