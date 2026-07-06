@@ -399,10 +399,18 @@ export type ScannerConfigUpdate = Partial<
   >
 >;
 
+export interface TableNameRef {
+  schema_name: string;
+  table_name: string;
+}
+
 export interface ScanTriggerRequest {
   scope?: "all" | "source" | "tables" | "schemas";
   source_id?: UUID | null;
   table_ids?: UUID[];
+  // Targets a table by name instead of id -- unlike table_ids, doesn't require the table to
+  // have already been scanned once (no Cryo-assigned id needed). Requires source_id.
+  table_names?: TableNameRef[];
   schema_names?: string[];
   selection?: { mode: "ids"; ids: UUID[] } | { mode: "filter"; filter: unknown };
   trigger?: string;

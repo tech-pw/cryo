@@ -111,9 +111,18 @@ def scanner_status(
     }
 
 
+def _table_name_key(item: Any) -> str:
+    """Normalize a table_names entry (dict with schema_name/table_name, or already a "a.b"
+    string) into one comparable key."""
+    if isinstance(item, dict):
+        return f"{item.get('schema_name', '')}.{item.get('table_name', '')}".lower()
+    return str(item).lower()
+
+
 def active_scan_conflict(session: Session, payload: dict[str, Any]) -> str | None:
     incoming_scope = str(payload.get("scope") or "all")
     incoming_table_ids = {str(item) for item in payload.get("table_ids", [])}
+    incoming_table_names = {_table_name_key(item) for item in payload.get("table_names", [])}
     incoming_schemas = {str(item) for item in payload.get("schema_names", [])}
     incoming_source = str(payload.get("source_id") or "")
 
@@ -137,6 +146,9 @@ def active_scan_conflict(session: Session, payload: dict[str, Any]) -> str | Non
         if incoming_scope == "tables" and active_scope == "tables":
             active_table_ids = {str(item) for item in summary.get("table_ids", [])}
             if incoming_table_ids & active_table_ids:
+                return "A scan is already active for one or more selected tables"
+            active_table_names = {_table_name_key(item) for item in summary.get("table_names", [])}
+            if incoming_table_names & active_table_names:
                 return "A scan is already active for one or more selected tables"
         if incoming_scope == "schemas" and active_scope == "schemas":
             active_schemas = {str(item) for item in summary.get("schema_names", [])}

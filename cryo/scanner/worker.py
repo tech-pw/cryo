@@ -86,6 +86,7 @@ class ScanWorker:
                     session,
                     source_id=_parse_uuid(payload.get("source_id")),
                     table_ids=_parse_uuid_list(payload.get("table_ids")),
+                    table_names=_table_name_ref_list(payload.get("table_names")),
                     schema_names=_string_list(payload.get("schema_names")),
                     chunk_id=chunk_id,
                     num_chunks=num_chunks,
@@ -176,6 +177,7 @@ class ScanWorker:
                 "scope": summary.get("scope", "all"),
                 "source_id": summary.get("source_id"),
                 "table_ids": summary.get("table_ids", []),
+                "table_names": summary.get("table_names", []),
                 "schema_names": summary.get("schema_names", []),
                 "cost_full_scan": bool(summary.get("cost_full_scan")),
                 "full_scan": bool(summary.get("full_scan", True)),
@@ -205,6 +207,20 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item) for item in value if item]
+
+
+def _table_name_ref_list(value: object) -> list[tuple[str, str]]:
+    if not value or not isinstance(value, (list, tuple)):
+        return []
+    refs: list[tuple[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        schema_name = item.get("schema_name")
+        table_name = item.get("table_name")
+        if schema_name and table_name:
+            refs.append((str(schema_name), str(table_name)))
+    return refs
 
 
 def _int_value(value: object, *, default: int) -> int:

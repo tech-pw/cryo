@@ -412,6 +412,7 @@ export const triggerScan = (api: ApiOptions, body: ScanTriggerRequest = {}) =>
       scope: body.scope ?? "all",
       source_id: body.source_id,
       table_ids: body.table_ids ?? [],
+      table_names: body.table_names ?? [],
       schema_names: body.schema_names ?? [],
       selection: body.selection,
       full_scan: body.full_scan ?? true,

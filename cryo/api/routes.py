@@ -1289,8 +1289,10 @@ def create_scan_trigger(
         wiring = build_runtime_wiring()
         scan_queue = RedisScanQueue(wiring.redis_client)
         raw_table_ids = result.get("table_ids", [])
+        raw_table_names = result.get("table_names", [])
         raw_schema_names = result.get("schema_names", [])
         table_ids = raw_table_ids if isinstance(raw_table_ids, list) else []
+        table_names = raw_table_names if isinstance(raw_table_names, list) else []
         schema_names = raw_schema_names if isinstance(raw_schema_names, list) else []
         enqueue_result = enqueue_scan_run(
             session,
@@ -1301,6 +1303,7 @@ def create_scan_trigger(
                 "scope": result["scope"],
                 "source_id": str(result["source_id"]) if result.get("source_id") else None,
                 "table_ids": [str(table_id) for table_id in table_ids],
+                "table_names": [dict(item) for item in table_names],
                 "schema_names": [str(schema_name) for schema_name in schema_names],
                 "cost_full_scan": bool(payload.cost_full_scan),
                 "full_scan": bool(payload.full_scan),

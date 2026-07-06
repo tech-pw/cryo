@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Form, InputNumber, Row, Select, Space, Switch, Table, Tooltip, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Form, InputNumber, Row, Segmented, Select, Space, Switch, Table, Tooltip, Typography, message } from "antd";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   getScannerConfig,
@@ -46,10 +46,10 @@ const targetLabel = (run: RunRead): string => {
 };
 
 const SCOPE_OPTIONS: Array<{ label: string; value: ScanScope }> = [
-  { label: "All lakehouses", value: "all" },
-  { label: "One lakehouse", value: "source" },
-  { label: "Specific schemas", value: "schemas" },
-  { label: "Specific tables", value: "tables" }
+  { label: "All", value: "all" },
+  { label: "Lakehouse", value: "source" },
+  { label: "Schemas", value: "schemas" },
+  { label: "Tables", value: "tables" }
 ];
 
 const ScanScopeCard = ({
@@ -184,14 +184,14 @@ const ScanScopeCard = ({
       <Space direction="vertical" size={12} className="full-width">
         <Form layout="vertical">
           <Form.Item label="Scope">
-            <Select<ScanScope>
+            <Segmented<ScanScope>
               value={scope}
               onChange={(value) => {
                 setScope(value);
                 resetSelection();
               }}
               options={SCOPE_OPTIONS}
-              style={{ width: "100%" }}
+              block
             />
           </Form.Item>
 
@@ -441,6 +441,58 @@ export const Scans = () => {
   const activeRun = status.data?.active_run;
   const latestRun = status.data?.latest_run;
 
+  const tableColumns = useMemo(() => {
+    const baseColumns = [
+      {
+        title: "Run",
+        width: 90,
+        render: (_: any, row: RunRead) => (
+          <Link to={`/scans/${row.id}`}>
+            <Typography.Text code className="mono-id">{shortId(row.id)}</Typography.Text>
+          </Link>
+        )
+      },
+      {
+        title: "Target",
+        render: (_: any, row: RunRead) => (
+          <Typography.Text ellipsis={{ tooltip: true }} style={{ maxWidth: runId ? 110 : "none" }}>
+            {targetLabel(row)}
+          </Typography.Text>
+        )
+      },
+      {
+        title: "Status",
+        dataIndex: "status",
+        width: 100,
+        render: (value: string) => <StatusTag status={value} />
+      }
+    ];
+
+    if (runId) {
+      return [
+        ...baseColumns,
+        {
+          title: "Time",
+          dataIndex: "created_at",
+          width: 90,
+          render: (value: string) => {
+            const str = formatTime(value);
+            return <span style={{ fontSize: "12px" }}>{str.includes(", ") ? str.split(", ")[1] : str}</span>;
+          }
+        }
+      ];
+    }
+
+    return [
+      ...baseColumns,
+      { title: "Trigger", dataIndex: "trigger", width: 110, render: (value: string) => value ?? "-" },
+      { title: "Scanned", width: 85, align: "right" as const, render: (_: any, row: RunRead) => formatNumber(summaryNumber(row, "scanned")) },
+      { title: "Skipped", width: 85, align: "right" as const, render: (_: any, row: RunRead) => formatNumber(summaryNumber(row, "skipped")) },
+      { title: "Failed", width: 85, align: "right" as const, render: (_: any, row: RunRead) => formatNumber(summaryNumber(row, "failed")) },
+      { title: "Created", dataIndex: "created_at", width: 140, render: formatTime }
+    ];
+  }, [runId]);
+
   return (
     <div>
       <PageHeader
@@ -535,15 +587,36 @@ export const Scans = () => {
                   ]}
                 />
                 {activeRun ? (
-                  <Typography.Text>
-                    Active scan <Link to={`/scans/${activeRun.id}`}>{shortId(activeRun.id)}</Link>{" "}
-                    <StatusTag status={activeRun.status} />
-                  </Typography.Text>
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<div className="pulse-dot" style={{ marginInlineEnd: 4 }} />}
+                    message={
+                      <Space>
+                        <Typography.Text strong>Active scan in progress</Typography.Text>
+                        <Link to={`/scans/${activeRun.id}`}>
+                          <Typography.Text code className="mono-id">{shortId(activeRun.id)}</Typography.Text>
+                        </Link>
+                        <StatusTag status={activeRun.status} />
+                      </Space>
+                    }
+                    description={
+                      <div style={{ marginTop: 2 }}>
+                        <Typography.Text type="secondary" style={{ fontSize: "12px" }}>
+                          Discovering schemas and compiling health statistics. Click the Run ID or select it below to view live logs.
+                        </Typography.Text>
+                      </div>
+                    }
+                    style={{ marginTop: 4, width: "100%" }}
+                  />
                 ) : (
-                  <Typography.Text type="secondary">No active scan run.</Typography.Text>
+                  <Typography.Text type="secondary">
+                    <span className="pulse-dot warning" style={{ marginInlineEnd: 8, width: 8, height: 8 }} />
+                    No active scan run. Ready for ad-hoc triggers.
+                  </Typography.Text>
                 )}
                 {latestRun ? (
-                  <Typography.Text type="secondary">
+                  <Typography.Text type="secondary" style={{ display: "block", marginTop: activeRun ? 8 : 0 }}>
                     Latest run {shortId(latestRun.id)} finished {formatTime(latestRun.finished_at)}
                   </Typography.Text>
                 ) : null}
@@ -560,28 +633,7 @@ export const Scans = () => {
                     dataSource={runs.data ?? []}
                     pagination={{ pageSize: 12 }}
                     onRow={(row) => ({ onClick: () => navigate(`/scans/${row.id}`) })}
-                    columns={[
-                      {
-                        title: "Run",
-                        width: 104,
-                        render: (_, row) => (
-                          <Link to={`/scans/${row.id}`}>
-                            <Typography.Text code>{shortId(row.id)}</Typography.Text>
-                          </Link>
-                        )
-                      },
-                      {
-                        title: "Target",
-                        width: 220,
-                        render: (_, row) => targetLabel(row)
-                      },
-                      { title: "Status", dataIndex: "status", width: 112, render: (value) => <StatusTag status={value} /> },
-                      { title: "Trigger", dataIndex: "trigger", width: 120, render: (value) => value ?? "-" },
-                      { title: "Scanned", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "scanned")) },
-                      { title: "Skipped", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "skipped")) },
-                      { title: "Failed", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "failed")) },
-                      { title: "Created", dataIndex: "created_at", width: 148, render: formatTime }
-                    ]}
+                    columns={tableColumns}
                     locale={{
                       emptyText: (
                         <EmptyState
@@ -590,7 +642,7 @@ export const Scans = () => {
                         />
                       )
                     }}
-                    scroll={{ x: runId ? 1000 : 1120 }}
+                    scroll={runId ? undefined : { x: 960 }}
                   />
                 </Card>
               </Col>
@@ -633,9 +685,19 @@ export const Scans = () => {
                 disabled={!canOperate}
                 onFinish={(values) => saveConfig.mutate(values)}
               >
-                <Form.Item name="enabled" label="Enable scheduled scans" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item name="enabled" label="Scheduled scans" valuePropName="checked">
+                      <Switch checkedChildren="Enabled" unCheckedChildren="Disabled" style={{ width: "100%" }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="full_scan_default" label="Force rescan" valuePropName="checked">
+                      <Switch checkedChildren="Yes" unCheckedChildren="No" style={{ width: "100%" }} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
                 <Form.Item
                   name="schedule_cron"
                   label={
@@ -648,23 +710,29 @@ export const Scans = () => {
                   <CronInput />
                 </Form.Item>
                 <Tooltip title="Scheduled scans run in UTC. Translate to IST when aligning with off-peak maintenance windows (UTC+5:30).">
-                  <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+                  <Typography.Paragraph type="secondary" style={{ marginTop: -8, fontSize: "12px", marginBottom: 12 }}>
                     Timezone: UTC (see IST in tooltip)
                   </Typography.Paragraph>
                 </Tooltip>
-                <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
-                  <InputNumber min={1} max={128} style={{ width: "100%" }} />
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
+                      <InputNumber min={1} max={128} style={{ width: "100%" }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="max_concurrent_runs" label="Max concurrency">
+                      <InputNumber min={1} max={4} style={{ width: "100%" }} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Form.Item name="cost_full_scan_default" label="Include full cost scan" valuePropName="checked">
+                  <Switch checkedChildren="Yes" unCheckedChildren="No" />
                 </Form.Item>
-                <Form.Item name="full_scan_default" label="Scheduled scans force rescan" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-                <Form.Item name="cost_full_scan_default" label="Scheduled scans include full cost scan" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-                <Form.Item name="max_concurrent_runs" label="Max concurrent scan runs">
-                  <InputNumber min={1} max={4} style={{ width: "100%" }} />
-                </Form.Item>
-                <Button type="primary" htmlType="submit" loading={saveConfig.isPending} style={{ width: "100%" }}>
+
+                <Button type="primary" htmlType="submit" loading={saveConfig.isPending} style={{ width: "100%", marginTop: 8 }}>
                   Save schedule
                 </Button>
               </Form>

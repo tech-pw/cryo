@@ -618,10 +618,21 @@ class ScannerConfigUpdate(BaseModel):
     max_concurrent_runs: int | None = Field(default=None, ge=1)
 
 
+class TableNameRef(BaseModel):
+    """A table identified by name rather than by Cryo's own id -- lets scope="tables" target a
+    table that's never been scanned before (no Table row/id exists for it yet). Requires
+    source_id on the request, since the same schema.table name could exist in more than one
+    lakehouse."""
+
+    schema_name: str
+    table_name: str
+
+
 class ScanTriggerRequest(BaseModel):
     scope: Literal["all", "source", "tables", "schemas"] = "all"
     source_id: uuid.UUID | None = None
     table_ids: list[uuid.UUID] = Field(default_factory=list)
+    table_names: list[TableNameRef] = Field(default_factory=list)
     schema_names: list[str] = Field(default_factory=list)
     selection: AssignmentSelection | None = None
     trigger: str = "api"

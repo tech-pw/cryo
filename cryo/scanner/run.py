@@ -69,6 +69,7 @@ def run_scan(
     settings: Settings | None = None,
     source_id: UUID | None = None,
     table_ids: Sequence[UUID] | None = None,
+    table_names: Sequence[tuple[str, str]] | None = None,
     schema_names: Sequence[str] | None = None,
     chunk_id: int = 0,
     num_chunks: int | None = None,
@@ -86,6 +87,10 @@ def run_scan(
         session: Database session for persisting results.
         settings: Scanner settings.
         source_id: Optional filter to scan only one source.
+        table_names: (schema_name, table_name) pairs to target directly by name -- unlike
+            table_ids, these don't need to already exist as a Table row, so this is how a table
+            that's never been scanned before can still be targeted individually. Requires
+            source_id (the same name could exist in more than one lakehouse).
         chunk_id: Which chunk this scanner instance handles (0-indexed).
         num_chunks: Total number of scanner chunks (for distributed scanning).
         full_scan: If True, rescan tables already scanned today.
@@ -110,6 +115,7 @@ def run_scan(
         session,
         source_id=source_id,
         table_ids=table_ids,
+        table_names=table_names,
         schema_names=schema_names,
         source_factory=source_factory,
     )
@@ -449,6 +455,7 @@ def _discover_candidates(
     *,
     source_id: UUID | None,
     table_ids: Sequence[UUID] | None = None,
+    table_names: Sequence[tuple[str, str]] | None = None,
     schema_names: Sequence[str] | None = None,
     source_factory: Any,
 ) -> list[ScanCandidate]:
@@ -457,19 +464,34 @@ def _discover_candidates(
         stmt = stmt.where(Source.id == source_id)
 
     requested_tables: set[tuple[UUID, str, str]] | None = None
-    if table_ids:
-        requested_tables = {
-            (row.source_id, row.schema_name, row.table_name)
-            for row in session.scalars(select(Table).where(Table.id.in_(table_ids)))
-        }
+    if table_ids or table_names:
+        requested_tables = set()
+        if table_ids:
+            requested_tables.update(
+                (row.source_id, row.schema_name, row.table_name)
+                for row in session.scalars(select(Table).where(Table.id.in_(table_ids)))
+            )
+        if table_names and source_id is not None:
+            # Name-only refs (no Table row/id exists yet -- e.g. a table that's never been
+            # scanned before) are only meaningful when scoped to one source; the same
+            # schema.table name could otherwise exist in more than one lakehouse. Callers are
+            # expected to have validated source_id is set whenever table_names is used (see
+            # cryo/db/repositories/datalake.py::_validate_scan_scope).
+            requested_tables.update(
+                (source_id, schema_name, table_name) for schema_name, table_name in table_names
+            )
 
     requested_schemas = set(schema_names or ())
+    # Knowing exactly which tables we want also tells us exactly which schemas matter --
+    # narrows the live catalog walk below to just those namespaces.
+    if requested_tables is not None and not requested_schemas:
+        requested_schemas = {schema_name for _, schema_name, _ in requested_tables}
 
     candidates: list[ScanCandidate] = []
     for source in session.scalars(stmt):
         try:
             catalog = source_factory(source)
-            for schema_name, table_name in catalog.list_tables():
+            for schema_name, table_name in _list_candidate_tables(catalog, requested_schemas):
                 if requested_schemas and schema_name not in requested_schemas:
                     continue
                 if (
@@ -495,6 +517,24 @@ def _discover_candidates(
     return sorted(
         candidates, key=lambda item: (item.source.name, item.schema_name, item.table_name)
     )
+
+
+def _list_candidate_tables(catalog: Any, requested_schemas: set[str]) -> list[tuple[str, str]]:
+    """Prefer the cheap per-namespace listing when specific schemas are already known -- the
+    unscoped list_tables() walks every namespace in the source, which is wasteful (and can be
+    genuinely slow against a large Hive Metastore) when only a handful of schemas are in scope.
+    Falls back to the full walk for catalogs/test doubles that don't implement the narrower call.
+    """
+    if not requested_schemas or not hasattr(catalog, "list_tables_in_namespace"):
+        return list(catalog.list_tables())
+    pairs: list[tuple[str, str]] = []
+    for schema_name in sorted(requested_schemas):
+        try:
+            table_names_in_schema = catalog.list_tables_in_namespace(schema_name)
+            pairs.extend((schema_name, table_name) for table_name in table_names_in_schema)
+        except Exception:
+            logger.exception("Failed to list tables in namespace %s", schema_name)
+    return pairs
 
 
 def _apply_orphan_scan(
