@@ -97,7 +97,8 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
             options={[
               { label: "Light", value: "light" },
               { label: "Standard", value: "standard" },
-              { label: "Deep", value: "deep" }
+              { label: "Deep", value: "deep" },
+              { label: "Manifest only", value: "manifest_only" }
             ]}
             style={{ width: 120 }}
           />

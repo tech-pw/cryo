@@ -29,6 +29,25 @@ finding cites a real file/line. Actionables are appended to `docs/PREMORTEM_ACTI
 | Responsive stat grids | Fixed `span={4-6}` | **Partial** | `xs/sm/md` breakpoints on MultiCatalog, QueryPerformance, CostAttribution |
 | Production SSO | Dev token endpoint | **Open** | Documented on login screen; prod must disable `/auth/token` |
 
+## Remediation status (2026-07-06 full API coverage pass)
+
+| Gap | Status | Where surfaced |
+|---|---|---|
+| Cost attribution orphan page | **Fixed** | `/attribution` route + nav; cross-link from `/cost` |
+| S3 tiering (fleet + per-table) | **Fixed** | Governance fleet table; Table detail cost card |
+| Compliance + protected snapshots | **Fixed** | Table detail compliance card |
+| Manifest rewrite + `manifest_only` mode | **Fixed** | Bulk bar, table detail, plan preview, presets |
+| Preset/rule delete, unassign, approval request | **Fixed** | Presets, Tables, Governance |
+| Routing preview | **Fixed** | Presets → Routing drawer |
+| Benefit scores, effectiveness, table signals | **Fixed** | Table detail compaction analytics card |
+| Fleet maintenance signals | **Fixed** | Governance maintenance signals table |
+| MCP, AI chat, bandit reset | **Fixed** | Intelligence page |
+| Catalog latency, daily report trigger | **Fixed** | Connections lakehouse + Slack tab |
+| Metrics, deep/shallow health, GitOps webhook | **Fixed** | Connections → Ops (admin) |
+| Raw `/jobs/{id}` API | **Fixed** | Job detail collapsible |
+
+**Remaining intentionally external:** Prometheus scrapes `/metrics` in prod; GitLab/GitHub posts to GitOps webhook; OIDC SSO in prod.
+
 ---
 
 ## The single scariest finding

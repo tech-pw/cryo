@@ -13,19 +13,25 @@ import {
   Switch,
   Table,
   Typography,
-  message
+  message,
+  Alert
 } from "antd";
 import { useState } from "react";
 import {
   createPreset,
   createPresetRule,
+  deletePreset,
+  deletePresetRule,
   listDestinations,
   listPresetRules,
   listPresets,
+  listTables,
   patchPreset,
+  previewRouting,
   simulatePreset
 } from "../api/client";
 import type { PresetRead, PresetWrite, UUID } from "../api/types";
+import { ConfirmAction } from "../components/confirm";
 import { CronInput } from "../components/CronInput";
 import { EmptyState, PageHeader } from "../components/common";
 import { FilterBar } from "../components/FilterBar";
@@ -39,12 +45,13 @@ const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "opti
 type SimulationSample = NonNullable<Awaited<ReturnType<typeof simulatePreset>>["sample"]>[number];
 
 export const Presets = () => {
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<PresetRead | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [rulePreset, setRulePreset] = useState<PresetRead | null>(null);
   const [simPreset, setSimPreset] = useState<PresetRead | null>(null);
+  const [routingPreset, setRoutingPreset] = useState<PresetRead | null>(null);
 
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
@@ -55,6 +62,15 @@ export const Presets = () => {
       message.success("Preset saved");
       setDrawerOpen(false);
       setEditing(null);
+      void queryClient.invalidateQueries({ queryKey: ["presets"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const removePreset = useMutation({
+    mutationFn: (id: UUID) => deletePreset(api, id),
+    onSuccess: () => {
+      message.success("Preset disabled");
       void queryClient.invalidateQueries({ queryKey: ["presets"] });
     },
     onError: (error) => message.error((error as Error).message)
@@ -106,6 +122,20 @@ export const Presets = () => {
                 <Button size="small" onClick={() => setSimPreset(row)}>
                   Simulate
                 </Button>
+                <Button size="small" onClick={() => setRoutingPreset(row)}>
+                  Routing
+                </Button>
+                {role === "admin" ? (
+                  <ConfirmAction
+                    title="Disable this preset?"
+                    description="The preset will be disabled and no longer assignable."
+                    onConfirm={() => removePreset.mutate(row.id)}
+                  >
+                    <Button size="small" danger loading={removePreset.isPending}>
+                      Disable
+                    </Button>
+                  </ConfirmAction>
+                ) : null}
               </Space>
             )
           }
@@ -123,6 +153,7 @@ export const Presets = () => {
       />
       <RulesDrawer preset={rulePreset} onClose={() => setRulePreset(null)} />
       <SimulatorDrawer preset={simPreset} onClose={() => setSimPreset(null)} />
+      <RoutingDrawer preset={routingPreset} onClose={() => setRoutingPreset(null)} />
     </div>
   );
 };
@@ -195,7 +226,8 @@ const PresetDrawer = ({
               options={[
                 { label: "Light", value: "light" },
                 { label: "Standard", value: "standard" },
-                { label: "Deep", value: "deep" }
+                { label: "Deep", value: "deep" },
+                { label: "Manifest only", value: "manifest_only" }
               ]}
               style={{ width: 160 }}
             />
@@ -228,7 +260,7 @@ const PresetDrawer = ({
 };
 
 const RulesDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose: () => void }) => {
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<TableFilterState>({ activeOnly: true });
   const rules = useQuery({
@@ -244,6 +276,14 @@ const RulesDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose: 
     },
     onSuccess: () => {
       message.success("Rule added");
+      void queryClient.invalidateQueries({ queryKey: ["preset-rules", preset?.id] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+  const removeRule = useMutation({
+    mutationFn: (ruleId: UUID) => deletePresetRule(api, preset!.id, ruleId),
+    onSuccess: () => {
+      message.success("Rule deleted");
       void queryClient.invalidateQueries({ queryKey: ["preset-rules", preset?.id] });
     },
     onError: (error) => message.error((error as Error).message)
@@ -265,7 +305,29 @@ const RulesDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose: 
           dataSource={rules.data ?? []}
           columns={[
             { title: "Enabled", dataIndex: "enabled", render: (value) => String(value) },
-            { title: "Predicate", dataIndex: "predicate", render: (value) => <pre className="inline-json">{JSON.stringify(value)}</pre> }
+            {
+              title: "Predicate",
+              dataIndex: "predicate",
+              render: (value) => <pre className="inline-json">{JSON.stringify(value)}</pre>
+            },
+            ...(role === "admin"
+              ? [
+                  {
+                    title: "Actions",
+                    width: 90,
+                    render: (_: unknown, row: { id: UUID }) => (
+                      <ConfirmAction
+                        title="Delete this rule?"
+                        onConfirm={() => removeRule.mutate(row.id)}
+                      >
+                        <Button size="small" danger loading={removeRule.isPending}>
+                          Delete
+                        </Button>
+                      </ConfirmAction>
+                    )
+                  }
+                ]
+              : [])
           ]}
         />
       </Space>
@@ -313,3 +375,83 @@ const StatSummary = ({ matched, size, smallFiles }: { matched?: number; size?: n
     <div><Typography.Text type="secondary">Small files</Typography.Text><strong>{formatNumber(smallFiles, true)}</strong></div>
   </div>
 );
+
+const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose: () => void }) => {
+  const { api, token } = useAuth();
+  const [tableId, setTableId] = useState<string | undefined>();
+  const tables = useQuery({
+    queryKey: ["routing-table-picker", token],
+    queryFn: () => listTables(api, { limit: 200, offset: 0 }),
+    enabled: Boolean(preset)
+  });
+  const routing = useMutation({
+    mutationFn: () => previewRouting(api, { table_id: tableId!, preset_id: preset!.id }),
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  return (
+    <Drawer
+      title={`Adaptive routing: ${preset?.name ?? ""}`}
+      open={Boolean(preset)}
+      onClose={onClose}
+      width={720}
+      destroyOnHidden
+    >
+      <Space direction="vertical" size={12} className="full-width">
+        <Typography.Text type="secondary">
+          Preview how the governor would rank engines for this preset on a specific table.
+        </Typography.Text>
+        <Select
+          showSearch
+          allowClear
+          placeholder="Select table"
+          optionFilterProp="label"
+          style={{ width: "100%" }}
+          loading={tables.isLoading}
+          options={(tables.data?.items ?? []).map((table) => ({
+            value: table.id,
+            label: `${table.schema_name}.${table.table_name}`
+          }))}
+          value={tableId}
+          onChange={setTableId}
+        />
+        <Button
+          type="primary"
+          disabled={!tableId}
+          loading={routing.isPending}
+          onClick={() => routing.mutate()}
+        >
+          Preview routing
+        </Button>
+        {routing.data ? (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message={`Selected: ${routing.data.selected_destination_id}`}
+              description={routing.data.selected_reason}
+            />
+            <Table
+              size="small"
+              rowKey="destination_id"
+              pagination={false}
+              dataSource={routing.data.ranked_destinations}
+              columns={[
+                { title: "Engine", dataIndex: "engine", width: 100 },
+                { title: "Destination", dataIndex: "destination_id", ellipsis: true },
+                {
+                  title: "Score",
+                  dataIndex: "score",
+                  width: 80,
+                  align: "right" as const,
+                  render: (value: number) => value.toFixed(3)
+                },
+                { title: "Reason", dataIndex: "reason", ellipsis: true }
+              ]}
+            />
+          </>
+        ) : null}
+      </Space>
+    </Drawer>
+  );
+};

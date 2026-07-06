@@ -8,6 +8,7 @@ import {
   Input,
   List,
   Row,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -15,17 +16,22 @@ import {
   Typography,
   message
 } from "antd";
-import { RobotOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { RobotOutlined, ThunderboltOutlined, ToolOutlined } from "@ant-design/icons";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  aiChat,
   askCopilotNatural,
   askCopilotQuestion,
+  callMcpTool,
   getBanditStatus,
   getCopilotQuestions,
   getCostModelEvaluate,
+  listMcpTools,
+  resetBandit,
   searchCopilot
 } from "../api/client";
+import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { formatNumber } from "../lib/format";
@@ -33,10 +39,17 @@ import { formatNumber } from "../lib/format";
 const { TextArea } = Input;
 
 export const Intelligence = () => {
-  const { api } = useAuth();
+  const { api, role } = useAuth();
   const [question, setQuestion] = useState("");
   const [lastAnswer, setLastAnswer] = useState<string | null>(null);
   const [answerMeta, setAnswerMeta] = useState<string | null>(null);
+  const [chatPrompt, setChatPrompt] = useState("");
+  const [chatContext, setChatContext] = useState("{}");
+  const [chatResponse, setChatResponse] = useState<string | null>(null);
+  const [chatMeta, setChatMeta] = useState<string | null>(null);
+  const [mcpTool, setMcpTool] = useState<string | undefined>();
+  const [mcpArgs, setMcpArgs] = useState("{}");
+  const [mcpResult, setMcpResult] = useState<string | null>(null);
 
   const questions = useQuery({
     queryKey: ["copilot-questions"],
@@ -52,6 +65,11 @@ export const Intelligence = () => {
     queryKey: ["cost-model-evaluate"],
     queryFn: () => getCostModelEvaluate(api),
     refetchInterval: 120_000
+  });
+  const mcpTools = useQuery({
+    queryKey: ["mcp-tools"],
+    queryFn: () => listMcpTools(api),
+    retry: false
   });
 
   const verifiedAsk = useMutation({
@@ -85,6 +103,47 @@ export const Intelligence = () => {
     onSuccess: (data) => {
       setLastAnswer(data.answer);
       setAnswerMeta(`${data.provider} · ${data.model}`);
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const directChat = useMutation({
+    mutationFn: () => {
+      let context = {};
+      try {
+        context = JSON.parse(chatContext || "{}");
+      } catch {
+        throw new Error("Context must be valid JSON.");
+      }
+      return aiChat(api, { prompt: chatPrompt.trim(), context });
+    },
+    onSuccess: (data) => {
+      setChatResponse(data.response);
+      setChatMeta(`${data.provider} · ${data.model} · ${data.tokens_used} tokens`);
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const mcpCall = useMutation({
+    mutationFn: () => {
+      if (!mcpTool) throw new Error("Select a tool.");
+      let args = {};
+      try {
+        args = JSON.parse(mcpArgs || "{}");
+      } catch {
+        throw new Error("Arguments must be valid JSON.");
+      }
+      return callMcpTool(api, { name: mcpTool, arguments: args });
+    },
+    onSuccess: (data) => setMcpResult(JSON.stringify(data.result, null, 2)),
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const banditReset = useMutation({
+    mutationFn: () => resetBandit(api),
+    onSuccess: () => {
+      message.success("Bandit state reset to heuristics");
+      void bandit.refetch();
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -222,6 +281,22 @@ export const Intelligence = () => {
                       message="Still learning — using heuristic admission until enough outcomes are recorded."
                     />
                   ) : null}
+                  {role === "admin" ? (
+                    <ConfirmAction
+                      title="Reset admission bandit?"
+                      description="Clears learned governor bandit state and reverts to static heuristics."
+                      onConfirm={() => banditReset.mutate()}
+                    >
+                      <Button
+                        size="small"
+                        danger
+                        style={{ marginTop: 12 }}
+                        loading={banditReset.isPending}
+                      >
+                        Reset bandit
+                      </Button>
+                    </ConfirmAction>
+                  ) : null}
                 </>
               ) : (
                 <EmptyState title="Bandit unavailable" description="Governor state file not readable." />
@@ -281,6 +356,92 @@ export const Intelligence = () => {
               )}
             </Card>
           </Space>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={12}>
+          <Card title="MCP tools" extra={<ToolOutlined />}>
+            <QueryErrorAlert error={mcpTools.error} title="Failed to load MCP tools" />
+            <Space direction="vertical" className="full-width" size={12}>
+              <Select
+                placeholder="Select tool"
+                value={mcpTool}
+                loading={mcpTools.isLoading}
+                options={(mcpTools.data ?? []).map((tool) => ({
+                  value: tool.name,
+                  label: tool.name,
+                  title: tool.description
+                }))}
+                onChange={setMcpTool}
+                style={{ width: "100%" }}
+              />
+              {mcpTool ? (
+                <Typography.Text type="secondary">
+                  {(mcpTools.data ?? []).find((tool) => tool.name === mcpTool)?.description}
+                </Typography.Text>
+              ) : null}
+              <Input.TextArea
+                rows={4}
+                value={mcpArgs}
+                onChange={(e) => setMcpArgs(e.target.value)}
+                placeholder='{"table_id": "..."}'
+                className="mono-input"
+              />
+              <Button
+                type="primary"
+                loading={mcpCall.isPending}
+                disabled={!mcpTool || role === "viewer"}
+                onClick={() => mcpCall.mutate()}
+              >
+                Call tool
+              </Button>
+              {mcpResult ? (
+                <Card size="small" type="inner" title="Result">
+                  <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+                    <pre className="inline-json">{mcpResult}</pre>
+                  </Typography.Paragraph>
+                </Card>
+              ) : null}
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card title="Direct AI chat" extra={<RobotOutlined />}>
+            <Space direction="vertical" className="full-width" size={12}>
+              <Typography.Text type="secondary">
+                Uses the default AI provider via <Typography.Text code>/ai/chat</Typography.Text> with optional JSON context.
+              </Typography.Text>
+              <TextArea
+                rows={3}
+                value={chatPrompt}
+                onChange={(e) => setChatPrompt(e.target.value)}
+                placeholder="Ask anything about your datalake…"
+              />
+              <Input.TextArea
+                rows={3}
+                value={chatContext}
+                onChange={(e) => setChatContext(e.target.value)}
+                placeholder='Optional context JSON, e.g. {"table_id": "..."}'
+                className="mono-input"
+              />
+              <Button
+                type="primary"
+                loading={directChat.isPending}
+                disabled={!chatPrompt.trim()}
+                onClick={() => directChat.mutate()}
+              >
+                Send
+              </Button>
+              {chatResponse ? (
+                <Card size="small" type="inner" title={chatMeta ?? "Response"}>
+                  <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+                    {chatResponse}
+                  </Typography.Paragraph>
+                </Card>
+              ) : null}
+            </Space>
+          </Card>
         </Col>
       </Row>
     </div>

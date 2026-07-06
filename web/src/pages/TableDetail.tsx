@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Descriptions, Row, Select, Space, Table, Timeline, Typography, message } from "antd";
+import { Button, Card, Col, Descriptions, Form, Input, InputNumber, Row, Select, Space, Table, Timeline, Typography, Alert, message } from "antd";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assignTables,
+  getComplianceStatus,
   getEffectivePreset,
   getTable,
   getTableAudit,
@@ -12,15 +13,20 @@ import {
   getTableHealthTrends,
   getTableHistory,
   getTablePartitions,
+  getTableS3Tiering,
   listDestinations,
   listPresets,
+  protectSnapshot,
   runMaintenance,
-  triggerScan
+  runManifestRewrite,
+  triggerScan,
+  unassignTables
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
 import { EmptyState, HintLabel, PageHeader, StatStrip } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { TableAiInsights } from "../components/TableAiInsights";
+import { TableCompactionAnalytics } from "../components/TableCompactionAnalytics";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
 import { SavingsByOperation } from "../components/SavingsByOperation";
@@ -48,7 +54,7 @@ export const TableDetail = () => {
   const { tableId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const table = useQuery({ queryKey: ["table", tableId, token], queryFn: () => getTable(api, tableId) });
@@ -82,8 +88,18 @@ export const TableDetail = () => {
     queryFn: () => getTableCost(api, tableId),
     retry: false
   });
+  const s3Tiering = useQuery({
+    queryKey: ["table-s3-tiering", tableId, token],
+    queryFn: () => getTableS3Tiering(api, tableId),
+    retry: false
+  });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
+  const compliance = useQuery({
+    queryKey: ["table-compliance", tableId, token],
+    queryFn: () => getComplianceStatus(api, tableId),
+    retry: false
+  });
   const assign = useMutation({
     mutationFn: (presetId: string) =>
       assignTables(api, {
@@ -94,6 +110,43 @@ export const TableDetail = () => {
       message.success("Preset assigned");
       void effectivePreset.refetch();
     },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const unassign = useMutation({
+    mutationFn: () =>
+      unassignTables(api, {
+        selection: { mode: "ids", ids: [tableId] }
+      }),
+    onSuccess: () => {
+      message.success("Preset unassigned");
+      void effectivePreset.refetch();
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const manifestRewrite = useMutation({
+    mutationFn: () => {
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id) ?? presets.data?.[0];
+      const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
+      if (!destinationId) {
+        throw new Error("No engine configured. Add one under Connections.");
+      }
+      return runManifestRewrite(api, {
+        table_ids: [tableId],
+        destination_id: destinationId,
+        preset_id: preset?.id,
+        trigger: "web-detail-manifest"
+      });
+    },
+    onSuccess: (result) => message.success(`Manifest rewrite queued: ${result.run_id}`),
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const protect = useMutation({
+    mutationFn: (values: { snapshot_id: number; label?: string }) =>
+      protectSnapshot(api, tableId, values),
+    onSuccess: () => message.success("Snapshot protected"),
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -188,6 +241,26 @@ export const TableDetail = () => {
             <Button onClick={() => setPreviewOpen(true)} disabled={!row}>
               Preview
             </Button>
+            <ConfirmAction
+              title="Rewrite manifests for this table?"
+              description="Queues manifest-only maintenance without data file compaction."
+              onConfirm={() => manifestRewrite.mutate()}
+            >
+              <Button loading={manifestRewrite.isPending} disabled={!row}>
+                Manifest rewrite
+              </Button>
+            </ConfirmAction>
+            {effectivePreset.data?.preset_id ? (
+              <ConfirmAction
+                title="Unassign preset from this table?"
+                description="Clears the manual preset assignment."
+                onConfirm={() => unassign.mutate()}
+              >
+                <Button loading={unassign.isPending} disabled={!row}>
+                  Unassign
+                </Button>
+              </ConfirmAction>
+            ) : null}
             <Button loading={scan.isPending} onClick={() => scan.mutate()} disabled={!row}>
               Scan
             </Button>
@@ -361,6 +434,24 @@ export const TableDetail = () => {
                     Query request savings: {formatCurrency(costView.query_request_savings_usd_month)}/mo
                   </Typography.Text>
                 ) : null}
+                {s3Tiering.data ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={`S3 tiering: ${s3Tiering.data.recommendation}`}
+                    description={
+                      <>
+                        {s3Tiering.data.reason}
+                        {s3Tiering.data.estimated_annual_savings_usd > 0 ? (
+                          <>
+                            {" "}
+                            · Est. {formatCurrency(s3Tiering.data.estimated_annual_savings_usd)}/yr
+                          </>
+                        ) : null}
+                      </>
+                    }
+                  />
+                ) : null}
                 {costByOperation.length ? <SavingsByOperation items={costByOperation} /> : null}
               </Space>
             ) : (
@@ -441,6 +532,69 @@ export const TableDetail = () => {
               <EmptyState title="No trends yet" description="Health trends appear after multiple scans over time." />
             )}
           </Card>
+        </Col>
+        <Col xs={24}>
+          <Card title="Compliance & snapshot protection">
+            <Space direction="vertical" size={12} className="full-width">
+              {compliance.data ? (
+                <Descriptions size="small" column={2} bordered>
+                  <Descriptions.Item label="Table ref">{compliance.data.table_ref}</Descriptions.Item>
+                  <Descriptions.Item label="ABAC policies">
+                    {compliance.data.abac_policy_count}
+                  </Descriptions.Item>
+                  {compliance.data.abac_enforcement_note ? (
+                    <Descriptions.Item label="ABAC note" span={2}>
+                      {compliance.data.abac_enforcement_note}
+                    </Descriptions.Item>
+                  ) : null}
+                  {compliance.data.pending_deletion ? (
+                    <Descriptions.Item label="Pending deletion" span={2}>
+                      {compliance.data.pending_deletion.pending_rows?.toLocaleString() ?? 0} rows blocked
+                      {compliance.data.pending_deletion.blocked_until
+                        ? ` until ${formatTime(compliance.data.pending_deletion.blocked_until)}`
+                        : ""}
+                      {compliance.data.pending_deletion.reason
+                        ? ` — ${compliance.data.pending_deletion.reason}`
+                        : ""}
+                    </Descriptions.Item>
+                  ) : (
+                    <Descriptions.Item label="Pending deletion" span={2}>
+                      None
+                    </Descriptions.Item>
+                  )}
+                </Descriptions>
+              ) : compliance.isLoading ? (
+                <Typography.Text type="secondary">Loading compliance status…</Typography.Text>
+              ) : (
+                <EmptyState title="Compliance unavailable" description="Could not load compliance status for this table." />
+              )}
+              {role === "admin" || role === "operator" ? (
+                <Form
+                  layout="inline"
+                  onFinish={(values: { snapshot_id: number; label?: string }) => protect.mutate(values)}
+                >
+                  <Form.Item
+                    name="snapshot_id"
+                    label="Protect snapshot"
+                    rules={[{ required: true, message: "Snapshot ID required" }]}
+                  >
+                    <InputNumber min={1} placeholder="Snapshot ID" style={{ width: 140 }} />
+                  </Form.Item>
+                  <Form.Item name="label" label="Label">
+                    <Input placeholder="e.g. audit-2024" style={{ width: 160 }} />
+                  </Form.Item>
+                  <Form.Item>
+                    <Button type="primary" htmlType="submit" loading={protect.isPending}>
+                      Protect
+                    </Button>
+                  </Form.Item>
+                </Form>
+              ) : null}
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24}>
+          {row ? <TableCompactionAnalytics tableId={tableId} /> : null}
         </Col>
         <Col xs={24}>
           {row ? (

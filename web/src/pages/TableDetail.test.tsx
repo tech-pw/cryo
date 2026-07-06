@@ -22,6 +22,10 @@ vi.mock("../components/TableAiInsights", () => ({
   TableAiInsights: () => <div>Mock AI insights</div>
 }));
 
+vi.mock("../components/TableCompactionAnalytics", () => ({
+  TableCompactionAnalytics: () => null
+}));
+
 vi.mock("../components/PlanPreview", () => ({
   PlanPreview: () => null
 }));
@@ -72,8 +76,18 @@ vi.mock("../api/client", () => ({
   }),
   listPresets: vi.fn().mockResolvedValue([]),
   listDestinations: vi.fn().mockResolvedValue([]),
+  getComplianceStatus: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_ref: "iceberg.public.events",
+    pending_deletion: null,
+    abac_policy_count: 0,
+    abac_enforcement_note: null
+  }),
   assignTables: vi.fn(),
+  unassignTables: vi.fn(),
   runMaintenance: vi.fn(),
+  runManifestRewrite: vi.fn(),
+  protectSnapshot: vi.fn(),
   triggerScan: vi.fn()
 }));
 

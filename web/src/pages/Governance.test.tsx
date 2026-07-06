@@ -21,6 +21,7 @@ vi.mock("../lib/auth", () => ({
 vi.mock("../api/client", () => ({
   listPendingApprovals: vi.fn().mockResolvedValue([]),
   listFleetAnomalies: vi.fn().mockResolvedValue([]),
+  listMaintenanceSignals: vi.fn().mockResolvedValue([]),
   getCostForecast: vi.fn().mockResolvedValue({
     forecast_month: "2026-08",
     total_forecast_usd: 1200,
@@ -42,6 +43,12 @@ vi.mock("../api/client", () => ({
   listSources: vi.fn().mockResolvedValue([{ id: "source-1", name: "demo", type: "rest", enabled: true }]),
   listTables: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   getTableLineage: vi.fn(),
+  getS3TieringRecommendations: vi.fn().mockResolvedValue({
+    recommendations: [],
+    total_potential_savings_usd: 0
+  }),
+  getTierCandidates: vi.fn(),
+  createApprovalRequest: vi.fn(),
   approvalAction: vi.fn(),
   createTierPolicy: vi.fn(),
   patchTierPolicy: vi.fn(),

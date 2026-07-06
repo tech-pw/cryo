@@ -11,6 +11,7 @@ import {
   Statistic,
   Button,
   Space,
+  Collapse,
 } from "antd";
 import {
   ClockCircleOutlined,
@@ -23,7 +24,7 @@ import {
   FilterOutlined,
 } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
-import { getJobDetailDashboard, type JobDetailDashboard } from "../api/client";
+import { getJob, getJobDetailDashboard, type JobDetailDashboard } from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -47,6 +48,12 @@ export const JobDetail = () => {
     queryKey: ["job-detail", api.token, jobId],
     queryFn: () => getJobDetailDashboard(api, jobId!),
     enabled: Boolean(jobId)
+  });
+  const rawJob = useQuery({
+    queryKey: ["job-raw", api.token, jobId],
+    queryFn: () => getJob(api, jobId!),
+    enabled: Boolean(jobId),
+    retry: false
   });
 
   if (isLoading) {
@@ -219,6 +226,23 @@ export const JobDetail = () => {
           ))}
         </Card>
       )}
+
+      <Collapse
+        style={{ marginTop: 16 }}
+        items={[
+          {
+            key: "raw",
+            label: "Raw job record (API)",
+            children: rawJob.data ? (
+              <pre className="inline-json">{JSON.stringify(rawJob.data, null, 2)}</pre>
+            ) : rawJob.isLoading ? (
+              <Spin />
+            ) : (
+              <Alert type="warning" message={(rawJob.error as Error)?.message ?? "Unavailable"} />
+            )
+          }
+        ]}
+      />
     </div>
   );
 };

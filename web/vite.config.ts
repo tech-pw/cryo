@@ -18,7 +18,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:8000",
-      "/healthz": "http://localhost:8000"
+      "/healthz": "http://localhost:8000",
+      "/metrics": "http://localhost:8000"
     }
   },
   test: {
