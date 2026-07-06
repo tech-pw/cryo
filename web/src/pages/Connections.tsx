@@ -37,6 +37,8 @@ import {
   patchDestination,
   patchSlackConfig,
   patchSource,
+  purgeDestination,
+  purgeSource,
   testAIProvider,
   testAIProviderConfig,
   testDestination,
@@ -144,6 +146,29 @@ export const Connections = () => {
   const probe = useMutation({
     mutationFn: (destination: DestinationRead) => testDestination(api, destination.id),
     onSuccess: setTestResult,
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  // Permanent delete -- unlike the Disable toggle above (a reversible patch), this cannot be
+  // undone: it removes the lakehouse and everything Cryo scanned from it (tables, stats, tier
+  // policies, AWS integration).
+  const purgeSourceMutation = useMutation({
+    mutationFn: (id: string) => purgeSource(api, id),
+    onSuccess: () => {
+      message.success("Lakehouse deleted");
+      void queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  // Permanent delete -- fails with a clear error if presets/maintenance runs still reference
+  // this engine, rather than silently destroying preset configs or run history.
+  const purgeDestinationMutation = useMutation({
+    mutationFn: (id: string) => purgeDestination(api, id),
+    onSuccess: () => {
+      message.success("Engine deleted");
+      void queryClient.invalidateQueries({ queryKey: ["destinations"] });
+    },
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -281,6 +306,15 @@ export const Connections = () => {
                           <Button size="small" onClick={() => patchSource(api, row.id, { enabled: !row.enabled }).then(() => queryClient.invalidateQueries({ queryKey: ["sources"] }))}>
                             {row.enabled ? "Disable" : "Enable"}
                           </Button>
+                          <ConfirmAction
+                            title={`Permanently delete "${row.name}"?`}
+                            description="This deletes the lakehouse and everything Cryo scanned from it -- all its tables, health/cost history, and tier policies. This cannot be undone. If you just want to pause it, use Disable instead."
+                            onConfirm={() => purgeSourceMutation.mutate(row.id)}
+                          >
+                            <Button size="small" danger loading={purgeSourceMutation.isPending}>
+                              Delete
+                            </Button>
+                          </ConfirmAction>
                         </Space>
                       )
                     }
@@ -336,6 +370,15 @@ export const Connections = () => {
                           <Button size="small" onClick={() => patchDestination(api, row.id, { enabled: !row.enabled }).then(() => queryClient.invalidateQueries({ queryKey: ["destinations"] }))}>
                             {row.enabled ? "Disable" : "Enable"}
                           </Button>
+                          <ConfirmAction
+                            title={`Permanently delete "${row.name}"?`}
+                            description="This cannot be undone. If any presets or maintenance runs still reference this engine, deletion will fail until those are reassigned or removed. If you just want to pause it, use Disable instead."
+                            onConfirm={() => purgeDestinationMutation.mutate(row.id)}
+                          >
+                            <Button size="small" danger loading={purgeDestinationMutation.isPending}>
+                              Delete
+                            </Button>
+                          </ConfirmAction>
                         </Space>
                       )
                     }

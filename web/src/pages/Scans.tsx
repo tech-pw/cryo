@@ -4,6 +4,8 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   getScannerConfig,
   getScannerStatus,
+  getSourceNamespaces,
+  getSourceNamespaceTables,
   listRuns,
   listSources,
   listTables,
@@ -41,6 +43,316 @@ const summaryNumber = (run: RunRead, key: string): number => {
 const targetLabel = (run: RunRead): string => {
   const value = run.summary?.target_label;
   return typeof value === "string" ? value : "Scan run";
+};
+
+const SCOPE_OPTIONS: Array<{ label: string; value: ScanScope }> = [
+  { label: "All lakehouses", value: "all" },
+  { label: "One lakehouse", value: "source" },
+  { label: "Specific schemas", value: "schemas" },
+  { label: "Specific tables", value: "tables" }
+];
+
+const ScanScopeCard = ({
+  canOperate,
+  hasActiveRun,
+  onQueued
+}: {
+  canOperate: boolean;
+  hasActiveRun: boolean;
+  onQueued: (runId: string) => void;
+}) => {
+  const { api, token } = useAuth();
+  const [scope, setScope] = useState<ScanScope>("all");
+  const [sourceId, setSourceId] = useState<string | undefined>();
+  const [schemaNames, setSchemaNames] = useState<string[]>([]);
+  const [tableIds, setTableIds] = useState<string[]>([]);
+
+  const needsSource = scope === "source" || scope === "schemas" || scope === "tables";
+
+  const sources = useQuery({
+    queryKey: ["sources-for-scan", token],
+    queryFn: () => listSources(api),
+    enabled: needsSource
+  });
+
+  // Fleets can have thousands of tables per lakehouse; this is a best-effort picker, not a
+  // guarantee of completeness -- see the truncation warning below when it's capped. Only
+  // populated once a lakehouse has actually been scanned at least once (Cryo only knows real
+  // table names/ids from its own persisted Table rows).
+  const sourceTables = useQuery({
+    queryKey: ["source-tables-for-scan", token, sourceId],
+    queryFn: () => listTables(api, { predicate: leaf("source_id", "=", sourceId as string), limit: 500 }),
+    enabled: Boolean(sourceId) && (scope === "schemas" || scope === "tables")
+  });
+
+  // Live namespace list straight from the catalog (same cheap call "Test connection" uses) --
+  // unlike sourceTables above, this works even before a lakehouse has ever been scanned, so
+  // narrowing by schema doesn't force a scan-then-rescan round trip just to see what's there.
+  const sourceNamespaces = useQuery({
+    queryKey: ["source-namespaces-for-scan", token, sourceId],
+    queryFn: () => getSourceNamespaces(api, sourceId as string),
+    enabled: Boolean(sourceId) && (scope === "schemas" || scope === "tables")
+  });
+
+  // Live table names within exactly one namespace -- only fetched once "tables" scope has
+  // narrowed to a single schema, so this stays a single cheap call, not a full lakehouse walk.
+  // These are for *visibility* only: selecting a specific table still needs its Cryo-assigned
+  // id, which only exists after that table has actually been scanned once.
+  const singleNarrowedSchema = scope === "tables" && schemaNames.length === 1 ? schemaNames[0] : undefined;
+  const namespaceTables = useQuery({
+    queryKey: ["source-namespace-tables-for-scan", token, sourceId, singleNarrowedSchema],
+    queryFn: () => getSourceNamespaceTables(api, sourceId as string, singleNarrowedSchema as string),
+    enabled: Boolean(sourceId) && Boolean(singleNarrowedSchema)
+  });
+
+  const schemaOptions = useMemo(() => {
+    const fromCatalog = sourceNamespaces.data?.namespaces ?? [];
+    const fromScannedTables = (sourceTables.data?.items ?? []).map((t) => t.schema_name);
+    const names = new Set([...fromCatalog, ...fromScannedTables]);
+    return Array.from(names)
+      .sort()
+      .map((name) => ({ label: name, value: name }));
+  }, [sourceNamespaces.data, sourceTables.data]);
+
+  // Live tables that exist in the narrowed-to schema but haven't been scanned yet -- shown as
+  // an informational preview, not selectable (no Cryo id exists for them yet).
+  const unscannedTablesInSchema = useMemo(() => {
+    if (!singleNarrowedSchema || !namespaceTables.data?.tables.length) return [];
+    const known = new Set(
+      (sourceTables.data?.items ?? [])
+        .filter((t) => t.schema_name === singleNarrowedSchema)
+        .map((t) => t.table_name)
+    );
+    return namespaceTables.data.tables.filter((name) => !known.has(name));
+  }, [singleNarrowedSchema, namespaceTables.data, sourceTables.data]);
+
+  const tableOptions = useMemo(
+    () =>
+      (sourceTables.data?.items ?? [])
+        .filter((t) => schemaNames.length === 0 || schemaNames.includes(t.schema_name))
+        .map((t) => ({ label: `${t.schema_name}.${t.table_name}`, value: t.id })),
+    [sourceTables.data, schemaNames]
+  );
+
+  const resetSelection = () => {
+    setSourceId(undefined);
+    setSchemaNames([]);
+    setTableIds([]);
+  };
+
+  const trigger = useMutation({
+    mutationFn: () => {
+      if (scope === "source") {
+        return triggerScan(api, { scope: "source", source_id: sourceId, full_scan: true, trigger: "web-scanner" });
+      }
+      if (scope === "schemas") {
+        return triggerScan(api, {
+          scope: "schemas",
+          source_id: sourceId,
+          schema_names: schemaNames,
+          full_scan: true,
+          trigger: "web-scanner"
+        });
+      }
+      if (scope === "tables") {
+        return triggerScan(api, { scope: "tables", table_ids: tableIds, full_scan: true, trigger: "web-scanner" });
+      }
+      return triggerScan(api, { scope: "all", full_scan: true, trigger: "web-scanner" });
+    },
+    onSuccess: (result) => {
+      message.success(result.message || `Scan queued: ${result.run_id}`);
+      onQueued(result.run_id);
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const canSubmit =
+    scope === "all" ||
+    (scope === "source" && Boolean(sourceId)) ||
+    (scope === "schemas" && Boolean(sourceId) && schemaNames.length > 0) ||
+    (scope === "tables" && tableIds.length > 0);
+
+  // Only relevant to "tables" scope -- "schemas" is populated from the full, uncapped live
+  // namespace list (sourceNamespaces), not the 500-row table fetch this warns about.
+  const truncated =
+    scope === "tables" &&
+    sourceTables.data &&
+    sourceTables.data.total > sourceTables.data.items.length;
+
+  return (
+    <Card title="Trigger a scan">
+      <Space direction="vertical" size={12} className="full-width">
+        <Form layout="vertical">
+          <Form.Item label="Scope">
+            <Select<ScanScope>
+              value={scope}
+              onChange={(value) => {
+                setScope(value);
+                resetSelection();
+              }}
+              options={SCOPE_OPTIONS}
+              style={{ width: "100%" }}
+            />
+          </Form.Item>
+
+          {needsSource ? (
+            <Form.Item label="Lakehouse" required>
+              <Select
+                showSearch
+                allowClear
+                placeholder="Select a lakehouse"
+                loading={sources.isLoading}
+                value={sourceId}
+                onChange={(value) => {
+                  setSourceId(value);
+                  setSchemaNames([]);
+                  setTableIds([]);
+                }}
+                filterOption={(input, option) => (option?.label ?? "").toLowerCase().includes(input.toLowerCase())}
+                options={(sources.data ?? []).map((s: SourceRead) => ({ label: s.name, value: s.id }))}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+          ) : null}
+
+          {scope === "schemas" && sourceId ? (
+            <Form.Item label="Schemas" required>
+              <Select
+                mode="multiple"
+                allowClear
+                loading={sourceNamespaces.isLoading}
+                value={schemaNames}
+                onChange={setSchemaNames}
+                options={schemaOptions}
+                placeholder="Select one or more schemas"
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+          ) : null}
+
+          {scope === "tables" && sourceId ? (
+            <>
+              <Form.Item label="Narrow by schema (optional)">
+                <Select
+                  mode="multiple"
+                  allowClear
+                  loading={sourceNamespaces.isLoading}
+                  value={schemaNames}
+                  onChange={setSchemaNames}
+                  options={schemaOptions}
+                  placeholder="All schemas"
+                  style={{ width: "100%" }}
+                />
+              </Form.Item>
+
+              {tableOptions.length > 0 ? (
+                <Form.Item label="Tables" required>
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    allowClear
+                    loading={sourceTables.isLoading}
+                    value={tableIds}
+                    onChange={setTableIds}
+                    options={tableOptions}
+                    filterOption={(input, option) =>
+                      (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
+                    }
+                    placeholder="Select one or more tables"
+                    style={{ width: "100%" }}
+                  />
+                </Form.Item>
+              ) : null}
+
+              {unscannedTablesInSchema.length > 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`${unscannedTablesInSchema.length} table${unscannedTablesInSchema.length === 1 ? "" : "s"} found in "${singleNarrowedSchema}" but not scanned yet`}
+                  description={
+                    <Space direction="vertical" size={8}>
+                      <Typography.Text>
+                        These exist in the catalog but can't be targeted individually until Cryo
+                        scans them at least once (it needs to assign each a real id first):{" "}
+                        {unscannedTablesInSchema.slice(0, 20).join(", ")}
+                        {unscannedTablesInSchema.length > 20 ? ", …" : ""}
+                      </Typography.Text>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          setScope("schemas");
+                          setTableIds([]);
+                        }}
+                      >
+                        Scan schema "{singleNarrowedSchema}" instead
+                      </Button>
+                    </Space>
+                  }
+                  style={{ marginBottom: 16, width: "100%" }}
+                />
+              ) : null}
+
+              {tableOptions.length === 0 && schemaNames.length === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="No tables known yet"
+                  description={
+                    <Space direction="vertical" size={8}>
+                      <Typography.Text>
+                        Cryo only knows individual table ids once they've been scanned at least
+                        once. Narrow by a schema above to see what's actually in the catalog, or
+                        scan this whole lakehouse first.
+                      </Typography.Text>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          setScope("source");
+                          setSchemaNames([]);
+                          setTableIds([]);
+                        }}
+                      >
+                        Switch to "One lakehouse" scope
+                      </Button>
+                    </Space>
+                  }
+                  style={{ marginBottom: 16, width: "100%" }}
+                />
+              ) : null}
+            </>
+          ) : null}
+
+          {truncated ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`Only showing the first ${sourceTables.data?.items.length} of ${sourceTables.data?.total} tables in this lakehouse -- narrow by schema to see the rest.`}
+              style={{ marginBottom: 16, width: "100%" }}
+            />
+          ) : null}
+
+          <ConfirmAction
+            title="Trigger this scan?"
+            description={
+              scope === "all"
+                ? "Queues a full fleet scan across every registered table. This can be expensive on large catalogs."
+                : "Queues a scan for the selected scope."
+            }
+            onConfirm={() => trigger.mutate()}
+          >
+            <Button
+              type="primary"
+              loading={trigger.isPending}
+              disabled={!canOperate || !canSubmit || hasActiveRun}
+              style={{ width: "100%" }}
+            >
+              Trigger scan
+            </Button>
+          </ConfirmAction>
+        </Form>
+      </Space>
+    </Card>
+  );
 };
 
 export const Scans = () => {
@@ -209,138 +521,156 @@ export const Scans = () => {
       ) : null}
 
       <Row gutter={[12, 12]}>
-        <Col xs={24} xl={8}>
-          <Card title="Schedule">
-            <Form<ScannerConfigUpdate>
-              form={form}
-              layout="vertical"
-              disabled={!canOperate}
-              onFinish={(values) => saveConfig.mutate(values)}
-            >
-              <Form.Item name="enabled" label="Enable scheduled scans" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item
-                name="schedule_cron"
-                label={
-                  <Tooltip title="Cron expressions here are evaluated in UTC. Maintenance off-peak windows elsewhere in Cryo use IST (UTC+5:30). Example: 30 18 * * * UTC = midnight IST.">
-                    <span>Cron schedule</span>
-                  </Tooltip>
-                }
-                rules={[{ validator: cronFormValidator() }]}
-              >
-                <CronInput />
-              </Form.Item>
-              <Tooltip title="Scheduled scans run in UTC. Translate to IST when aligning with off-peak maintenance windows (UTC+5:30).">
-                <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-                  Timezone: UTC (see IST in tooltip)
-                </Typography.Paragraph>
-              </Tooltip>
-              <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
-                <InputNumber min={1} max={128} style={{ width: "100%" }} />
-              </Form.Item>
-              <Form.Item name="full_scan_default" label="Scheduled scans force rescan" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="cost_full_scan_default" label="Scheduled scans include full cost scan" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="max_concurrent_runs" label="Max concurrent scan runs">
-                <InputNumber min={1} max={4} style={{ width: "100%" }} />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" loading={saveConfig.isPending}>
-                Save schedule
-              </Button>
-            </Form>
-          </Card>
-        </Col>
-
+        {/* Left Column: Operational Hub */}
         <Col xs={24} xl={16}>
-          <Card title="Scanner status" loading={status.isLoading}>
-            <Space direction="vertical" size={12} className="full-width">
-              <StatStrip
-                items={[
-                  { label: "Tables with stats", value: `${formatNumber(status.data?.tables_with_stats)} / ${formatNumber(status.data?.total_tables)}` },
-                  { label: "Queue depth", value: formatNumber(status.data?.queue_depth ?? null) },
-                  { label: "Next scheduled scan", value: formatTime(status.data?.next_scan_at) },
-                  { label: "Latest table scan", value: formatTime(status.data?.latest_table_scan_at) }
-                ]}
-              />
-              {activeRun ? (
-                <Typography.Text>
-                  Active scan <Link to={`/scans/${activeRun.id}`}>{shortId(activeRun.id)}</Link>{" "}
-                  <StatusTag status={activeRun.status} />
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="secondary">No active scan run.</Typography.Text>
-              )}
-              {latestRun ? (
-                <Typography.Text type="secondary">
-                  Latest run {shortId(latestRun.id)} finished {formatTime(latestRun.finished_at)}
-                </Typography.Text>
-              ) : null}
-            </Space>
-          </Card>
-        </Col>
-
-        <Col xs={24} xl={runId ? 11 : 24}>
-          <Card title="Recent scans">
-            <Table<RunRead>
-              size="small"
-              rowKey="id"
-              loading={runs.isLoading}
-              dataSource={runs.data ?? []}
-              pagination={{ pageSize: 12 }}
-              onRow={(row) => ({ onClick: () => navigate(`/scans/${row.id}`) })}
-              columns={[
-                {
-                  title: "Run",
-                  width: 104,
-                  render: (_, row) => (
-                    <Link to={`/scans/${row.id}`}>
-                      <Typography.Text code>{shortId(row.id)}</Typography.Text>
-                    </Link>
-                  )
-                },
-                {
-                  title: "Target",
-                  width: 220,
-                  render: (_, row) => targetLabel(row)
-                },
-                { title: "Status", dataIndex: "status", width: 112, render: (value) => <StatusTag status={value} /> },
-                { title: "Trigger", dataIndex: "trigger", width: 120, render: (value) => value ?? "-" },
-                { title: "Scanned", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "scanned")) },
-                { title: "Skipped", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "skipped")) },
-                { title: "Failed", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "failed")) },
-                { title: "Created", dataIndex: "created_at", width: 148, render: formatTime }
-              ]}
-              locale={{
-                emptyText: (
-                  <EmptyState
-                    title="No scan runs yet"
-                    description="Scheduled and ad-hoc scanner runs will appear here."
-                  />
-                )
-              }}
-              scroll={{ x: runId ? 1000 : 1120 }}
-            />
-          </Card>
-        </Col>
-
-        {runId ? (
-          <Col xs={24} xl={13}>
-            <Card
-              title={
-                <Space>
-                  <span>Scan progress</span>
-                  <Typography.Text type="secondary">{shortId(runId)}</Typography.Text>
-                </Space>
-              }
-            >
-              <ScanConsole runId={runId} />
+          <Space direction="vertical" size={12} className="full-width">
+            <Card title="Scanner status" loading={status.isLoading}>
+              <Space direction="vertical" size={12} className="full-width">
+                <StatStrip
+                  items={[
+                    { label: "Tables with stats", value: `${formatNumber(status.data?.tables_with_stats)} / ${formatNumber(status.data?.total_tables)}` },
+                    { label: "Queue depth", value: formatNumber(status.data?.queue_depth ?? null) },
+                    { label: "Next scheduled scan", value: formatTime(status.data?.next_scan_at) },
+                    { label: "Latest table scan", value: formatTime(status.data?.latest_table_scan_at) }
+                  ]}
+                />
+                {activeRun ? (
+                  <Typography.Text>
+                    Active scan <Link to={`/scans/${activeRun.id}`}>{shortId(activeRun.id)}</Link>{" "}
+                    <StatusTag status={activeRun.status} />
+                  </Typography.Text>
+                ) : (
+                  <Typography.Text type="secondary">No active scan run.</Typography.Text>
+                )}
+                {latestRun ? (
+                  <Typography.Text type="secondary">
+                    Latest run {shortId(latestRun.id)} finished {formatTime(latestRun.finished_at)}
+                  </Typography.Text>
+                ) : null}
+              </Space>
             </Card>
-          </Col>
-        ) : null}
+
+            <Row gutter={[12, 12]}>
+              <Col xs={24} lg={runId ? 11 : 24}>
+                <Card title="Recent scans">
+                  <Table<RunRead>
+                    size="small"
+                    rowKey="id"
+                    loading={runs.isLoading}
+                    dataSource={runs.data ?? []}
+                    pagination={{ pageSize: 12 }}
+                    onRow={(row) => ({ onClick: () => navigate(`/scans/${row.id}`) })}
+                    columns={[
+                      {
+                        title: "Run",
+                        width: 104,
+                        render: (_, row) => (
+                          <Link to={`/scans/${row.id}`}>
+                            <Typography.Text code>{shortId(row.id)}</Typography.Text>
+                          </Link>
+                        )
+                      },
+                      {
+                        title: "Target",
+                        width: 220,
+                        render: (_, row) => targetLabel(row)
+                      },
+                      { title: "Status", dataIndex: "status", width: 112, render: (value) => <StatusTag status={value} /> },
+                      { title: "Trigger", dataIndex: "trigger", width: 120, render: (value) => value ?? "-" },
+                      { title: "Scanned", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "scanned")) },
+                      { title: "Skipped", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "skipped")) },
+                      { title: "Failed", width: 96, align: "right", render: (_, row) => formatNumber(summaryNumber(row, "failed")) },
+                      { title: "Created", dataIndex: "created_at", width: 148, render: formatTime }
+                    ]}
+                    locale={{
+                      emptyText: (
+                        <EmptyState
+                          title="No scan runs yet"
+                          description="Scheduled and ad-hoc scanner runs will appear here."
+                        />
+                      )
+                    }}
+                    scroll={{ x: runId ? 1000 : 1120 }}
+                  />
+                </Card>
+              </Col>
+
+              {runId ? (
+                <Col xs={24} lg={13}>
+                  <Card
+                    title={
+                      <Space>
+                        <span>Scan progress</span>
+                        <Typography.Text type="secondary">{shortId(runId)}</Typography.Text>
+                      </Space>
+                    }
+                  >
+                    <ScanConsole runId={runId} />
+                  </Card>
+                </Col>
+              ) : null}
+            </Row>
+          </Space>
+        </Col>
+
+        {/* Right Column: Controls & Configuration */}
+        <Col xs={24} xl={8}>
+          <Space direction="vertical" size={12} className="full-width">
+            <ScanScopeCard
+              canOperate={canOperate}
+              hasActiveRun={Boolean(activeRun)}
+              onQueued={(runId) => {
+                void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
+                void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
+                navigate(`/scans/${runId}`);
+              }}
+            />
+
+            <Card title="Schedule">
+              <Form<ScannerConfigUpdate>
+                form={form}
+                layout="vertical"
+                disabled={!canOperate}
+                onFinish={(values) => saveConfig.mutate(values)}
+              >
+                <Form.Item name="enabled" label="Enable scheduled scans" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+                <Form.Item
+                  name="schedule_cron"
+                  label={
+                    <Tooltip title="Cron expressions here are evaluated in UTC. Maintenance off-peak windows elsewhere in Cryo use IST (UTC+5:30). Example: 30 18 * * * UTC = midnight IST.">
+                      <span>Cron schedule</span>
+                    </Tooltip>
+                  }
+                  rules={[{ validator: cronFormValidator() }]}
+                >
+                  <CronInput />
+                </Form.Item>
+                <Tooltip title="Scheduled scans run in UTC. Translate to IST when aligning with off-peak maintenance windows (UTC+5:30).">
+                  <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+                    Timezone: UTC (see IST in tooltip)
+                  </Typography.Paragraph>
+                </Tooltip>
+                <Form.Item name="num_chunks" label="Chunks" rules={[{ required: true }]}>
+                  <InputNumber min={1} max={128} style={{ width: "100%" }} />
+                </Form.Item>
+                <Form.Item name="full_scan_default" label="Scheduled scans force rescan" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+                <Form.Item name="cost_full_scan_default" label="Scheduled scans include full cost scan" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+                <Form.Item name="max_concurrent_runs" label="Max concurrent scan runs">
+                  <InputNumber min={1} max={4} style={{ width: "100%" }} />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={saveConfig.isPending} style={{ width: "100%" }}>
+                  Save schedule
+                </Button>
+              </Form>
+            </Card>
+          </Space>
+        </Col>
       </Row>
     </div>
   );

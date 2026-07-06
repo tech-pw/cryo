@@ -18,5 +18,10 @@ class SourceCatalog(Protocol):
         whole catalog. See PyIcebergSourceCatalog.list_namespaces for why this matters.
         """
 
+    def list_tables_in_namespace(self, namespace: str) -> list[str]:
+        """Table names within one already-known namespace -- one cheap call, not the
+        O(all namespaces) walk list_tables() does. See PyIcebergSourceCatalog for why this
+        matters."""
+
     def load_table(self, schema: str, table: str) -> Any:
         """Load and return a PyIceberg table object."""

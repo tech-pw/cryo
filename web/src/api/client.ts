@@ -187,6 +187,31 @@ export const testSource = (
   body: { type: string; config: Record<string, unknown>; source_id?: UUID }
 ) => apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
 
+export interface SourceNamespacesResult {
+  ok: boolean;
+  namespaces: string[];
+  error?: string | null;
+}
+
+export const getSourceNamespaces = (api: ApiOptions, id: UUID) =>
+  apiFetch<SourceNamespacesResult>(`/sources/${id}/namespaces`, api);
+
+export interface SourceNamespaceTablesResult {
+  ok: boolean;
+  tables: string[];
+  error?: string | null;
+}
+
+export const getSourceNamespaceTables = (api: ApiOptions, id: UUID, namespace: string) =>
+  apiFetch<SourceNamespaceTablesResult>(
+    `/sources/${id}/namespaces/${encodeURIComponent(namespace)}/tables`,
+    api
+  );
+
+// Permanent delete -- unlike patchSource({ enabled: false }), this cannot be undone.
+export const purgeSource = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/sources/${id}/purge`, api, { method: "DELETE" });
+
 export const listDestinations = (api: ApiOptions) => apiFetch<DestinationRead[]>("/destinations", api);
 export const createDestination = (api: ApiOptions, body: DestinationWrite) =>
   apiFetch<DestinationRead>("/destinations", api, { method: "POST", body });
@@ -194,6 +219,11 @@ export const patchDestination = (api: ApiOptions, id: UUID, body: Partial<Destin
   apiFetch<DestinationRead>(`/destinations/${id}`, api, { method: "PATCH", body });
 export const testDestination = (api: ApiOptions, id: UUID) =>
   apiFetch<Record<string, unknown>>(`/destinations/${id}/test`, api, { method: "POST" });
+
+// Permanent delete -- unlike patchDestination({ enabled: false }), this cannot be undone. Fails
+// with a 409 if presets/maintenance runs still reference this engine.
+export const purgeDestination = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/destinations/${id}/purge`, api, { method: "DELETE" });
 
 export interface DestinationTestResult {
   ok: boolean;
