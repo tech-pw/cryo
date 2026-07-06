@@ -625,11 +625,14 @@ def _metric_status(status: JobStatus) -> str:
 
 
 def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
-    table_ref = stats.get("table_ref")
+    table_ref = stats.get("table_ref") or stats.get("qualified_table_name")
     if isinstance(table_ref, str) and table_ref:
         return table_ref
     schema_name = stats.get("schema_name")
     table_name = stats.get("table_name")
+    catalog = stats.get("catalog") or stats.get("catalog_name")
+    if catalog and schema_name and table_name:
+        return f"{catalog}.{schema_name}.{table_name}"
     if schema_name and table_name:
         return f"{schema_name}.{table_name}"
     return None

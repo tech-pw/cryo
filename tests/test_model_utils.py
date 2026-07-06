@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
+from cryo.db.model_utils import catalog_name_for_table, qualified_name, qualified_table_name
 from cryo.db.models import Source, Table
 
 
@@ -23,6 +23,10 @@ def test_qualified_table_name_uses_source_catalog_name() -> None:
 
     assert catalog_name_for_table(table) == "prod"
     assert qualified_table_name(table) == "prod.sales.orders"
+
+
+def test_qualified_name_helper() -> None:
+    assert qualified_name("prod", "sales", "orders") == "prod.sales.orders"
 
 
 def test_qualified_table_name_falls_back_to_source_name() -> None:

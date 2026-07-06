@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
-import { Link, useNavigate } from "react-router-dom";
-import { assignTables, listDestinations, listPresets, listTables, runMaintenance, runManifestRewrite, triggerScan, unassignTables } from "../api/client";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { assignTables, listDestinations, listPresets, listSources, listTables, runMaintenance, runManifestRewrite, triggerScan, unassignTables } from "../api/client";
 import type { Mode, TableRead, UUID } from "../api/types";
 import { BulkAssignBar } from "../components/BulkAssignBar";
 import { FilterBar } from "../components/FilterBar";
@@ -15,16 +15,28 @@ import { isOrphanScanStale } from "../lib/costStaleness";
 import { exportCsv } from "../lib/exportCsv";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
-import { useMemo, useState } from "react";
+import { schemaTableName, tableTooltipName } from "../lib/tableLabels";
+import { useEffect, useMemo, useState } from "react";
 import { useTableExplorerSelection } from "./useTableExplorerSelection";
 
 const pageSize = 50;
 
+const initialFiltersFromSearch = (sourceParam: string | null): TableFilterState => {
+  const base: TableFilterState = { activeOnly: true };
+  if (sourceParam) {
+    return { ...base, sourceIds: [sourceParam] };
+  }
+  return base;
+};
+
 export const TableExplorer = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { api, token } = useAuth();
-  const [filters, setFilters] = useState<TableFilterState>({ activeOnly: true });
+  const [filters, setFilters] = useState<TableFilterState>(() =>
+    initialFiltersFromSearch(searchParams.get("source"))
+  );
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<string | undefined>("-small_files_count");
   const [savingsView, setSavingsView] = useState(false);
@@ -37,6 +49,21 @@ export const TableExplorer = () => {
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
+  const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
+
+  const catalogOptions = useMemo(
+    () => (sources.data ?? []).map((source) => ({ label: source.name, value: source.id })),
+    [sources.data]
+  );
+
+  useEffect(() => {
+    const sourceParam = searchParams.get("source");
+    if (!sourceParam) return;
+    setFilters((current) => {
+      if (current.sourceIds?.includes(sourceParam)) return current;
+      return { ...current, sourceIds: [sourceParam] };
+    });
+  }, [searchParams]);
 
   const pageItems = tables.data?.items ?? [];
   const matchingTotal = tables.data?.total ?? 0;
@@ -175,7 +202,9 @@ export const TableExplorer = () => {
 
   const exportTablesCsv = () => {
     const rows = pageItems.map((row) => [
-      `${row.schema_name}.${row.table_name}`,
+      row.catalog_name ?? "",
+      row.qualified_table_name ?? schemaTableName(row),
+      schemaTableName(row),
       row.stats?.grade ?? "",
       row.stats?.compaction_priority ?? "",
       row.stats?.needs_compaction ? "yes" : "no",
@@ -189,6 +218,8 @@ export const TableExplorer = () => {
       row.first_seen_at
     ]);
     exportCsv(`cryo-tables-page-${page}`, [
+      "catalog",
+      "qualified_table",
       "table",
       "grade",
       "priority",
@@ -230,6 +261,7 @@ export const TableExplorer = () => {
       />
       <FilterBar
         value={filters}
+        catalogOptions={catalogOptions}
         matchingTotal={matchingTotal}
         hasSelection={hasSelection}
         filterSelectionActive={filterSelectionActive}
@@ -276,19 +308,31 @@ export const TableExplorer = () => {
             title: "Table",
             key: "table",
             fixed: "left",
-            width: 320,
+            width: 280,
             className: "table-name-cell",
             ellipsis: { showTitle: false },
             render: (_, row) => {
-              const name = `${row.schema_name}.${row.table_name}`;
+              const name = schemaTableName(row);
+              const tooltip = tableTooltipName(row);
               return (
                 <Link to={`/tables/${row.id}`} className="table-name-link">
-                  <Typography.Text strong ellipsis={{ tooltip: name }}>
+                  <Typography.Text strong ellipsis={{ tooltip }}>
                     {name}
                   </Typography.Text>
                 </Link>
               );
             }
+          },
+          {
+            title: "Catalog",
+            key: "catalog",
+            width: 140,
+            ellipsis: { showTitle: false },
+            render: (_, row) => (
+              <Typography.Text ellipsis={{ tooltip: row.catalog_name ?? row.source_name ?? undefined }}>
+                {row.catalog_name ?? row.source_name ?? "-"}
+              </Typography.Text>
+            )
           },
           {
             title: "Grade",
@@ -415,7 +459,7 @@ export const TableExplorer = () => {
             />
           )
         }}
-        scroll={{ x: 1620 }}
+        scroll={{ x: 1760 }}
       />
       <BulkAssignBar
         selection={selection}

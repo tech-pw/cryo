@@ -133,6 +133,9 @@ export interface TableRead {
   source_id: UUID;
   schema_name: string;
   table_name: string;
+  catalog_name?: string | null;
+  source_name?: string | null;
+  qualified_table_name?: string | null;
   first_seen_at: string;
   is_active: boolean;
   consecutive_scan_failures?: number;

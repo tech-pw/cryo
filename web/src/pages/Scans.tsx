@@ -28,6 +28,7 @@ import {
   type ConnectionScanNotice
 } from "../lib/connectionScanPrompt";
 import { formatNumber, formatTime } from "../lib/format";
+import { qualifiedTableName } from "../lib/tableLabels";
 import { useEffect, useMemo, useState } from "react";
 
 type ScanScope = "all" | "source" | "schemas" | "tables";
@@ -134,7 +135,7 @@ const ScanScopeCard = ({
     () =>
       (sourceTables.data?.items ?? [])
         .filter((t) => schemaNames.length === 0 || schemaNames.includes(t.schema_name))
-        .map((t) => ({ label: `${t.schema_name}.${t.table_name}`, value: t.id })),
+        .map((t) => ({ label: qualifiedTableName(t), value: t.id })),
     [sourceTables.data, schemaNames]
   );
 

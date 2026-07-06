@@ -115,6 +115,8 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] Vite + TS + AntD + Recharts + TanStack Query scaffold; OpenAPI client generation.
 - [x] **Table Explorer**: server-side filter/sort/paginate; column filters → predicate grammar;
       `rowSelection` + "select all matching filter"; sticky **BulkAssignBar** (Assign / Run now).
+- [x] **Table Explorer multi-catalog**: catalog column + catalog filter (`source_id` predicate);
+      qualified `catalog.schema.table` identifiers on API/UI; `/tables?source=` deep link from Catalogs.
 - [x] **PlanPreview** modal (per-table Trino/Spark SQL + chunk/partition/load estimate).
 - [x] **Presets** editor (operations/params/schedule/rules/guardrails) + **Simulator**.
 - [x] **Runs / Live Console**: WebSocket; per-engine concurrency gauges; job rows; log drawer.

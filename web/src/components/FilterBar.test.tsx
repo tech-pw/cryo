@@ -19,6 +19,43 @@ describe("FilterBar", () => {
     expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
   });
 
+  it("renders catalog filter when options are provided", () => {
+    render(
+      <FilterBar
+        value={{ activeOnly: true, sourceIds: ["catalog-1"] }}
+        onChange={vi.fn()}
+        catalogOptions={[
+          { label: "Prod", value: "catalog-1" },
+          { label: "Staging", value: "catalog-2" }
+        ]}
+        matchingTotal={13}
+        onSelectAllMatching={vi.fn()}
+        onClearSelection={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Filter by catalog")).toBeInTheDocument();
+    expect(screen.getByText("Catalog: Prod")).toBeInTheDocument();
+    expect(screen.getByText("13 tables match")).toBeInTheDocument();
+    expect(screen.getByText("Filtered view")).toBeInTheDocument();
+  });
+
+  it("shows default scope label when only active tables are included", () => {
+    render(
+      <FilterBar
+        value={{ activeOnly: true }}
+        onChange={vi.fn()}
+        matchingTotal={42}
+        onSelectAllMatching={vi.fn()}
+        onClearSelection={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Active tables")).toBeInTheDocument();
+    expect(screen.getByText("42 tables match")).toBeInTheDocument();
+    expect(screen.queryByText("all active tables")).not.toBeInTheDocument();
+  });
+
   it("shows filter selection state and clear action", () => {
     const onClearSelection = vi.fn();
     render(

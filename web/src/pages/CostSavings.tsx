@@ -28,6 +28,7 @@ import { SavingsByOperation } from "../components/SavingsByOperation";
 import { GradePill } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../lib/format";
+import { qualifiedTableName } from "../lib/tableLabels";
 import type { Predicate } from "../lib/predicate";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 
@@ -397,7 +398,7 @@ export const CostSavings = () => {
                       render: (_, row) => (
                         <Link to={`/tables/${row.id}`}>
                           <Typography.Text strong>
-                            {row.schema_name}.{row.table_name}
+                            {qualifiedTableName(row)}
                           </Typography.Text>
                         </Link>
                       )
