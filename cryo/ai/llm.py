@@ -141,22 +141,39 @@ class OpenAIClient(LLMClient):
         if context:
             system_prompt += f"\n\nContext:\n```json\n{json.dumps(context, indent=2)}\n```"
 
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        base_payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 OPENAI_API_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                },
+                headers=headers,
+                json={**base_payload, "max_tokens": max_tokens},
             )
+            
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", "")
+                    if "max_completion_tokens" in error_msg:
+                        response = await client.post(
+                            OPENAI_API_URL,
+                            headers=headers,
+                            json={**base_payload, "max_completion_tokens": max_tokens},
+                        )
+                except Exception:
+                    pass
+
             response.raise_for_status()
             data = response.json()
 
@@ -225,21 +242,40 @@ class AzureOpenAIClient(LLMClient):
 
         url = self._build_url()
 
+        headers = {
+            "api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        
+        base_payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+
         async with httpx.AsyncClient(timeout=60.0) as client:
+            # Try with max_tokens first (standard for most models)
             response = await client.post(
                 url,
-                headers={
-                    "api-key": self.api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                },
+                headers=headers,
+                json={**base_payload, "max_tokens": max_tokens},
             )
+            
+            # If we get a 400 about max_tokens, retry with max_completion_tokens (for o1, nano, etc.)
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", "")
+                    if "max_completion_tokens" in error_msg:
+                        response = await client.post(
+                            url,
+                            headers=headers,
+                            json={**base_payload, "max_completion_tokens": max_tokens},
+                        )
+                except Exception:
+                    pass
+
             response.raise_for_status()
             data = response.json()
 
