@@ -122,7 +122,10 @@ def test_preview_skips_bucket_filter_without_unsafe_sql() -> None:
     assert any("bucket_filter" in note for note in item["notes"])
 
 
-def test_source_test_endpoint_reports_discovered_tables() -> None:
+def test_source_test_endpoint_reports_namespaces_without_listing_tables() -> None:
+    """test_source must call list_namespaces() only -- list_tables() is O(namespaces)
+    round-trips and can take minutes against a real Hive Metastore, unsuitable for a
+    "Test connection" click a human is waiting on. Table discovery is the async Scanner's job."""
     mock_catalog = MagicMock()
     mock_catalog.list_namespaces.return_value = ["events"]
     mock_catalog.list_tables.return_value = [("events", "clicks"), ("events", "impressions")]
@@ -138,11 +141,13 @@ def test_source_test_endpoint_reports_discovered_tables() -> None:
     body = response.json()
     assert body["ok"] is True
     assert body["namespaces"] == ["events"]
-    assert body["table_count"] == 2
-    assert set(body["sample_tables"]) == {"events.clicks", "events.impressions"}
+    assert body["table_count"] == 0
+    assert body["sample_tables"] == []
+    assert body["note"]
+    mock_catalog.list_tables.assert_not_called()
 
 
-def test_source_test_endpoint_reports_hive_tables() -> None:
+def test_source_test_endpoint_hive_reports_namespaces_without_listing_tables() -> None:
     mock_catalog = MagicMock()
     mock_catalog.list_namespaces.return_value = ["hms_issues"]
     mock_catalog.list_tables.return_value = [
@@ -167,8 +172,10 @@ def test_source_test_endpoint_reports_hive_tables() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["table_count"] == 2
-    assert "hms_issues.balanced_control" in body["sample_tables"]
+    assert body["namespaces"] == ["hms_issues"]
+    assert body["table_count"] == 0
+    assert body["sample_tables"] == []
+    mock_catalog.list_tables.assert_not_called()
 
 
 def test_source_test_endpoint_reports_connection_failure() -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 SUPPORTED_FIELDS = frozenset(
     {
+        "source_id",
         "schema_name",
         "table_name",
         "is_active",

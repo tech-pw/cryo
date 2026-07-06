@@ -17,6 +17,7 @@ from cryo.domain.predicates import (
 __all__ = ["compile_predicate", "evaluate_predicate"]
 
 FIELD_MAP = {
+    "source_id": Table.source_id,
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
     "is_active": Table.is_active,

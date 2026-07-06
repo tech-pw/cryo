@@ -83,12 +83,18 @@ class ReportScheduler:
                 _slack_webhook_url(config.webhook_url_encrypted) or "",
                 config.channel,
             )
-            await generate_daily_report(
+            res = await generate_daily_report(
                 session,
                 slack_client=slack_client,
                 use_ai_summary=config.daily_report_use_ai,
             )
-            logger.info(f"Daily report sent successfully to '{config.name}'")
+            if res.get("slack_sent"):
+                logger.info(f"Daily report sent successfully to '{config.name}'")
+            else:
+                logger.warning(
+                    "Daily report generated but Slack notification failed to send for '%s'",
+                    config.name,
+                )
         except Exception:
             logger.exception(f"Failed to send daily report to '{config.name}'")
         finally:

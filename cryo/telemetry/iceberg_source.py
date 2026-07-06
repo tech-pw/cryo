@@ -155,12 +155,10 @@ def aggregate_from_iceberg_query_log(
         _persist_watermark(session, source, now)
         return 0
 
-    tables = session.query(Table).filter(
-        Table.source_id == source.id, Table.is_active.is_(True)
-    ).all()
-    table_lookup: dict[str, Table] = {
-        f"{t.schema_name}.{t.table_name}".lower(): t for t in tables
-    }
+    tables = (
+        session.query(Table).filter(Table.source_id == source.id, Table.is_active.is_(True)).all()
+    )
+    table_lookup: dict[str, Table] = {f"{t.schema_name}.{t.table_name}".lower(): t for t in tables}
 
     table_stats: defaultdict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(dict)
     matched = 0

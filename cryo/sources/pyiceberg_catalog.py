@@ -37,6 +37,17 @@ class PyIcebergSourceCatalog:
                 tables.add(_schema_table(identifier, default_schema=_namespace_name(namespace)))
         return sorted(tables)
 
+    def list_namespaces(self) -> list[str]:
+        """Cheap connectivity check: one call, no per-namespace table enumeration.
+
+        `list_tables()` above is O(namespaces) round-trips (list_tables per namespace) and can
+        take minutes against a real Hive Metastore with many databases -- unsuitable for a
+        "Test connection" click a human is waiting on. This is the single call that proves auth
+        and reachability; real table discovery belongs to the async Scanner
+        (cryo/scanner/run.py), not the test button.
+        """
+        return sorted({_namespace_name(namespace) for namespace in self._catalog.list_namespaces()})
+
     def load_table(self, schema: str, table: str) -> Any:
         return self._catalog.load_table((schema, table))
 

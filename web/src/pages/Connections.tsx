@@ -20,6 +20,7 @@ import {
   message
 } from "antd";
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   createAIProvider,
   createDestination,
@@ -58,6 +59,11 @@ import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
+import {
+  markConnectionNeedsScan,
+  isConnectionPendingScan,
+  type ConnectionScanNotice
+} from "../lib/connectionScanPrompt";
 
 // Matches cryo/api/redact.py's REDACTED_PLACEHOLDER -- a saved secret field is never sent back
 // to the browser as its real value, only this sentinel. Used to decide when a "Test connection"
@@ -67,12 +73,20 @@ const REDACTED_PLACEHOLDER = "***REDACTED***";
 
 export const Connections = () => {
   const { api, token } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sourceDrawer, setSourceDrawer] = useState<SourceRead | "new" | null>(null);
   const [destinationDrawer, setDestinationDrawer] = useState<DestinationRead | "new" | null>(null);
   const [aiProviderDrawer, setAiProviderDrawer] = useState<AIProviderRead | "new" | null>(null);
   const [slackDrawer, setSlackDrawer] = useState<SlackConfigRead | "new" | null>(null);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
+  const [pendingScanVersion, setPendingScanVersion] = useState(0);
+
+  const redirectToScanner = (notice: ConnectionScanNotice) => {
+    markConnectionNeedsScan(notice);
+    setPendingScanVersion((value) => value + 1);
+    navigate("/scans", { state: { connectionNotice: notice } });
+  };
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
@@ -92,10 +106,14 @@ export const Connections = () => {
   const saveSource = useMutation({
     mutationFn: (body: SourceWrite) =>
       sourceDrawer && sourceDrawer !== "new" ? patchSource(api, sourceDrawer.id, body) : createSource(api, body),
-    onSuccess: () => {
-      message.success("Lakehouse saved");
+    onSuccess: (saved) => {
+      const isNew = sourceDrawer === "new";
+      message.success(isNew ? "Lakehouse connected" : "Lakehouse saved");
       setSourceDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["sources"] });
+      if (isNew) {
+        redirectToScanner({ kind: "lakehouse", id: saved.id, name: saved.name });
+      }
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -105,10 +123,14 @@ export const Connections = () => {
       destinationDrawer && destinationDrawer !== "new"
         ? patchDestination(api, destinationDrawer.id, body)
         : createDestination(api, body),
-    onSuccess: () => {
-      message.success("Engine saved");
+    onSuccess: (saved) => {
+      const isNew = destinationDrawer === "new";
+      message.success(isNew ? "Engine connected" : "Engine saved");
       setDestinationDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["destinations"] });
+      if (isNew) {
+        redirectToScanner({ kind: "engine", id: saved.id, name: saved.name });
+      }
     },
     onError: (error) => {
       if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
@@ -226,12 +248,24 @@ export const Connections = () => {
                   New lakehouse
                 </Button>
                 <Table<SourceRead>
+                  key={`lakehouses-${pendingScanVersion}`}
                   size="small"
                   rowKey="id"
                   loading={sources.isLoading}
                   dataSource={sources.data ?? []}
                   columns={[
-                    { title: "Name", dataIndex: "name", render: (value) => <Typography.Text strong>{value}</Typography.Text> },
+                    {
+                      title: "Name",
+                      dataIndex: "name",
+                      render: (value, row) => (
+                        <Space size={8}>
+                          <Typography.Text strong>{value}</Typography.Text>
+                          {isConnectionPendingScan("lakehouse", row.id) ? (
+                            <Tag color="gold">Scan required</Tag>
+                          ) : null}
+                        </Space>
+                      )
+                    },
                     { title: "Type", dataIndex: "type" },
                     { title: "Enabled", dataIndex: "enabled", render: (value) => <StatusTag status={value ? "succeeded" : "skipped"} /> },
                     {
@@ -270,13 +304,20 @@ export const Connections = () => {
                   New engine
                 </Button>
                 <Table<DestinationRead>
+                  key={`engines-${pendingScanVersion}`}
                   size="small"
                   rowKey="id"
                   loading={destinations.isLoading}
                   dataSource={destinations.data ?? []}
                   columns={[
-                    { title: "Name", dataIndex: "name", render: (value) => <Typography.Text strong>{value}</Typography.Text> },
-                    { title: "Engine", dataIndex: "engine" },
+                    { title: "Name", dataIndex: "name", render: (value, row) => (
+                      <Space size={8}>
+                        <Typography.Text strong>{value}</Typography.Text>
+                        {isConnectionPendingScan("engine", row.id) ? (
+                          <Tag color="gold">Scan lakehouse first</Tag>
+                        ) : null}
+                      </Space>
+                    ) },
                     {
                       title: "Enabled",
                       dataIndex: "enabled",
@@ -734,7 +775,7 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
       className="page-alert"
       type="success"
       showIcon
-      message={`Connected — found ${result.table_count} table${result.table_count === 1 ? "" : "s"} across ${result.namespaces.length} namespace${result.namespaces.length === 1 ? "" : "s"}`}
+      message={`Connected — found ${result.namespaces.length} namespace${result.namespaces.length === 1 ? "" : "s"}`}
       description={
         <Space direction="vertical" size={6} className="full-width">
           {result.namespaces.length ? (
@@ -746,10 +787,9 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
               ))}
             </Space>
           ) : null}
-          {result.sample_tables.length ? (
+          {result.note ? (
             <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
-              e.g. {result.sample_tables.slice(0, 5).join(", ")}
-              {result.table_count > 5 ? ", …" : ""}
+              {result.note}
             </Typography.Text>
           ) : null}
         </Space>
@@ -815,6 +855,7 @@ const SourceDrawer = ({
           if (changed.type) setCatalogType(changed.type);
           if (changed.s3_auth_method) setS3AuthMethod(changed.s3_auth_method);
           setTestPassed(false);
+          testConnection.reset();
         }}
         onFinish={(values) => {
           try {
@@ -1183,6 +1224,7 @@ const DestinationDrawer = ({
         onValuesChange={(changed) => {
           if (changed.engine) setEngine(changed.engine);
           setTestPassed(false);
+          testConnection.reset();
         }}
         onFinish={(values) => {
           try {
@@ -1537,6 +1579,7 @@ const AIProviderDrawer = ({
             }
           }
           setTestPassed(false);
+          testConnection.reset();
         }}
         onFinish={(values) => {
           // Build config object from config_ prefixed fields
@@ -1739,7 +1782,10 @@ const SlackDrawer = ({
           enabled: isEditing ? value.enabled : true,
           is_default: isEditing ? value.is_default : false
         }}
-        onValuesChange={() => setTestPassed(false)}
+        onValuesChange={() => {
+          setTestPassed(false);
+          testConnection.reset();
+        }}
         onFinish={(values) => {
           const body: SlackConfigWrite & { id?: string } = {
             name: values.name,

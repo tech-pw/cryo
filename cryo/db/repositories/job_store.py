@@ -121,6 +121,29 @@ class SQLJobStore:
                     actor=record.actor,
                 )
             )
+            if record.status == "OK":
+                from cryo.workflows.approvals import (
+                    ApprovalRequest,
+                    ApprovalStatus,
+                    requires_approval,
+                )
+
+                if requires_approval(record.action):
+                    stmt = (
+                        select(ApprovalRequest)
+                        .where(
+                            ApprovalRequest.table_id == uuid.UUID(record.table_id),
+                            ApprovalRequest.operation_type == record.action.value,
+                            ApprovalRequest.status == ApprovalStatus.APPROVED,
+                            ApprovalRequest.executed_at.is_(None),
+                        )
+                        .order_by(ApprovalRequest.created_at.asc())
+                        .limit(1)
+                    )
+                    req = session.scalar(stmt)
+                    if req:
+                        req.executed_at = datetime.now(UTC)
+                        req.execution_job_id = uuid.UUID(record.job_id)
             session.commit()
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]:

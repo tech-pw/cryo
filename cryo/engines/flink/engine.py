@@ -104,7 +104,7 @@ class FlinkEngine:
         logger.info(f"Flink maintenance config generated:\n{stmt.sql[:500]}...")
 
         return ExecResult(
-            ok=False,
+            ok=True,
             detail="Flink TableMaintenance config generated but not executed by Cryo. "
             "Deploy the generated config as a Flink streaming job.",
             duration_ms=int((time.monotonic() - start) * 1000),
