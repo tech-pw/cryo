@@ -1,0 +1,160 @@
+# LOCAL/CI ONLY — do not deploy to production.
+# Simulates external data-lake infrastructure: object storage, catalogs, and query engines.
+
+name: cryo
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: cryo-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - cryo-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: cryo-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - cryo-dev
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/warehouse &&
+      echo 'MinIO bucket warehouse is ready'
+      "
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    container_name: cryo-iceberg-rest
+    environment:
+      CATALOG_WAREHOUSE: s3://warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_ACCESS__KEY__ID: minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_REGION: us-east-1
+    ports:
+      - "8181:8181"
+    networks:
+      - cryo-dev
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  hms-postgres:
+    image: postgres:16-alpine
+    container_name: cryo-hms-postgres
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore
+    volumes:
+      - hms_postgres_data:/var/lib/postgresql/data
+    networks:
+      - cryo-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hive-metastore:
+    build:
+      context: .
+      dockerfile: deploy/hive/Dockerfile
+    container_name: cryo-hive-metastore
+    user: root
+    entrypoint: ["/opt/hive/conf/entrypoint.sh"]
+    environment:
+      SERVICE_NAME: metastore
+      HMS_POSTGRES_HOST: hms-postgres
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+    ports:
+      - "9083:9083"
+    networks:
+      - cryo-dev
+    depends_on:
+      hms-postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/9083'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  trino:
+    image: trinodb/trino:480
+    container_name: cryo-trino
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+    networks:
+      - cryo-dev
+    depends_on:
+      minio:
+        condition: service_healthy
+      hive-metastore:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  spark:
+    profiles: ["tools"]
+    image: tabulario/spark-iceberg:3.5.5_1.8.1
+    container_name: cryo-spark
+    entrypoint: []
+    working_dir: /workspace
+    environment:
+      ICEBERG_CATALOG: hms
+      ICEBERG_HMS_URI: thrift://hive-metastore:9083
+      ICEBERG_WAREHOUSE: s3a://warehouse/
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      SPARK_DRIVER_MEMORY: 4g
+      SPARK_EXECUTOR_MEMORY: 4g
+    volumes:
+      - .:/workspace
+    networks:
+      - cryo-dev
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["sleep", "infinity"]
+
+volumes:
+  minio_data:
+  hms_postgres_data:
+
+networks:
+  cryo-dev:
+    name: cryo-dev

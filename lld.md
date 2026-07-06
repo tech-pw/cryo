@@ -11,7 +11,9 @@ Governor/Scheduler logic. This is the build spec; `hld.md` is the map.
 ```
 iceberg_compactor/                  # repo root (codename: Cryo)
 ├── pyproject.toml                  # backend package + tooling (ruff, mypy, pytest)
-├── docker-compose.yml              # local: minio, iceberg-rest, trino, spark, postgres, redis
+├── docker-compose.yml              # Cryo platform (postgres, redis, cryo-* services)
+├── docker-compose.dev-datalake.yml # LOCAL/CI ONLY: minio, iceberg-rest, hms, trino, spark
+├── docker-compose.observability.yml # optional prometheus, grafana, loki, promtail
 ├── Makefile                        # dev shortcuts (up, scan, api, worker, migrate, test)
 ├── deploy/
 │   └── helm/cryo/                  # Helm chart (api, web, scheduler, governor, worker, scanner, redis)
