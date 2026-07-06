@@ -323,6 +323,41 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     assert cancelled_job_response.json()["error"] == "cancelled"
 
 
+def test_list_runs_filters_by_source_id(api_db: ApiDb) -> None:
+    """A lakehouse's own "Scans" panel (Connections page) only wants runs scoped to it --
+    fleet-wide "all" scans have no source_id in their summary and must not leak in."""
+    source_id, _ = _seed_source_destination(api_db.session_factory)
+    other_source_id, _ = _seed_source_destination(api_db.session_factory)
+    client = api_db.client
+
+    with api_db.session_factory() as session:
+        matching_run = MaintenanceRun(
+            id=uuid.uuid4(),
+            kind="scan",
+            status="succeeded",
+            summary={"scope": "source", "source_id": str(source_id)},
+        )
+        other_run = MaintenanceRun(
+            id=uuid.uuid4(),
+            kind="scan",
+            status="succeeded",
+            summary={"scope": "source", "source_id": str(other_source_id)},
+        )
+        fleet_run = MaintenanceRun(
+            id=uuid.uuid4(),
+            kind="scan",
+            status="succeeded",
+            summary={"scope": "all"},
+        )
+        session.add_all([matching_run, other_run, fleet_run])
+        session.commit()
+        matching_run_id = matching_run.id
+
+    response = client.get(f"/api/v1/runs?source_id={source_id}", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == [str(matching_run_id)]
+
+
 def _seed_source_destination(
     session_factory: sessionmaker[Session],
 ) -> tuple[uuid.UUID, uuid.UUID]:

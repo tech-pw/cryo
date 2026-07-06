@@ -286,11 +286,12 @@ export const runMaintenance = (
 
 export const listRuns = (
   api: ApiOptions,
-  args: { kind?: string; limit?: number; offset?: number } = {}
+  args: { kind?: string; source_id?: UUID; limit?: number; offset?: number } = {}
 ) =>
   apiFetch<RunRead[]>("/runs", api, {
     query: {
       kind: args.kind,
+      source_id: args.source_id,
       limit: args.limit,
       offset: args.offset
     }
