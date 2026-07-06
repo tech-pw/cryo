@@ -19,6 +19,8 @@ interface Props {
   onAssign: (presetId: UUID) => void;
   onPreview: () => void;
   onRun: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => void;
+  onManifestRewrite?: (args: { destinationId: UUID; presetId?: UUID }) => void;
+  onUnassign?: () => void;
   onScan?: () => void;
 }
 
@@ -33,6 +35,8 @@ export const BulkAssignBar = ({
   onAssign,
   onPreview,
   onRun,
+  onManifestRewrite,
+  onUnassign,
   onScan
 }: Props) => {
   const [destinationId, setDestinationId] = useState<UUID | undefined>();
@@ -142,6 +146,47 @@ export const BulkAssignBar = ({
               </span>
             </Tooltip>
           </ConfirmAction>
+          {onManifestRewrite ? (
+            <ConfirmAction
+              title={
+                isFilterSelection
+                  ? `Rewrite manifests for all ${selection.totalSelected.toLocaleString()} matching tables?`
+                  : `Rewrite manifests for ${selection.totalSelected.toLocaleString()} selected tables?`
+              }
+              description="Runs manifest-only maintenance (optimize_manifests) without data file compaction."
+              onConfirm={() =>
+                activeDestinationId
+                  ? onManifestRewrite({
+                      destinationId: activeDestinationId,
+                      presetId: activePresetId
+                    })
+                  : undefined
+              }
+            >
+              <Tooltip title="Queue manifest rewrite only — no data file compaction.">
+                <span>
+                  <Button loading={running} disabled={!activeDestinationId}>
+                    Manifest rewrite
+                  </Button>
+                </span>
+              </Tooltip>
+            </ConfirmAction>
+          ) : null}
+          {onUnassign ? (
+            <ConfirmAction
+              title={
+                isFilterSelection
+                  ? `Unassign presets from all ${selection.totalSelected.toLocaleString()} matching tables?`
+                  : `Unassign presets from ${selection.totalSelected.toLocaleString()} selected tables?`
+              }
+              description="Clears manual preset assignments for the selected tables."
+              onConfirm={onUnassign}
+            >
+              <Tooltip title="Remove preset assignments from the current selection.">
+                <Button loading={assigning}>Unassign</Button>
+              </Tooltip>
+            </ConfirmAction>
+          ) : null}
           <Tooltip title="Clear the current bulk selection.">
             <Button onClick={onClear}>Clear</Button>
           </Tooltip>

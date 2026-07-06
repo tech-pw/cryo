@@ -8,6 +8,7 @@ import {
   ExperimentOutlined,
   HistoryOutlined,
   MoonOutlined,
+  PartitionOutlined,
   SettingOutlined,
   RobotOutlined,
   SunOutlined,
@@ -26,6 +27,9 @@ import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
 
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
+const CostAttribution = lazy(() =>
+  import("./pages/CostAttribution").then((m) => ({ default: m.CostAttribution }))
+);
 const CostSavings = lazy(() => import("./pages/CostSavings").then((m) => ({ default: m.CostSavings })));
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
 const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
@@ -69,6 +73,7 @@ const navItems = [
   { key: "/governance", icon: <TeamOutlined />, label: <Link to="/governance">Governance</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
+  { key: "/attribution", icon: <PartitionOutlined />, label: <Link to="/attribution">Attribution</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
@@ -80,7 +85,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Overview",
-    children: [navItems[0], navItems[8]]
+    children: [navItems[0], navItems[9]]
   },
   {
     type: "group",
@@ -90,17 +95,17 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Operations",
-    children: [navItems[9], navItems[10], navItems[11]]
+    children: [navItems[10], navItems[11], navItems[12]]
   },
   {
     type: "group",
     label: "Insights",
-    children: [navItems[4], navItems[5], navItems[6], navItems[7]]
+    children: [navItems[4], navItems[5], navItems[6], navItems[7], navItems[8]]
   },
   {
     type: "group",
     label: "Settings",
-    children: [navItems[12]]
+    children: [navItems[13]]
   }
 ];
 
@@ -197,7 +202,7 @@ const Shell = () => {
               <Route path="/health" element={<DatalakeHealth />} />
               <Route path="/catalogs" element={<MultiCatalog />} />
               <Route path="/cost" element={<CostSavings />} />
-              <Route path="/attribution" element={<Navigate to="/cost" replace />} />
+              <Route path="/attribution" element={<CostAttribution />} />
               <Route path="/tables" element={<TableExplorer />} />
               <Route path="/tables/:tableId" element={<TableDetail />} />
               <Route path="/scans" element={<Scans />} />

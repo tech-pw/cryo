@@ -12,6 +12,7 @@ import {
   Alert,
   Progress,
   Tag,
+  Button,
 } from "antd";
 import {
   DollarOutlined,
@@ -21,6 +22,7 @@ import {
   TeamOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { getCostAttributionDashboard, type CostAttributionResponse } from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
@@ -144,14 +146,19 @@ export const CostAttribution = () => {
         title="Cost attribution"
         subtitle="Storage, compute, and maintenance costs by team and department."
         actions={
-          <Select
-            style={{ width: 200 }}
-            value={selectedMonth}
-            onChange={setSelectedMonth}
-            options={monthOptions}
-            placeholder="Current month"
-            allowClear
-          />
+          <Space>
+            <Link to="/cost">
+              <Button>Savings overview</Button>
+            </Link>
+            <Select
+              style={{ width: 200 }}
+              value={selectedMonth}
+              onChange={setSelectedMonth}
+              options={monthOptions}
+              placeholder="Current month"
+              allowClear
+            />
+          </Space>
         }
       />
 

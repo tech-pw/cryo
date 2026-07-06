@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
 import { Link, useNavigate } from "react-router-dom";
-import { assignTables, listDestinations, listPresets, listTables, runMaintenance, triggerScan } from "../api/client";
-import type { TableRead, UUID } from "../api/types";
+import { assignTables, listDestinations, listPresets, listTables, runMaintenance, runManifestRewrite, triggerScan, unassignTables } from "../api/client";
+import type { Mode, TableRead, UUID } from "../api/types";
 import { BulkAssignBar } from "../components/BulkAssignBar";
 import { FilterBar } from "../components/FilterBar";
 import { EmptyState, HintLabel, PageHeader, Sparkline } from "../components/common";
@@ -78,7 +78,7 @@ export const TableExplorer = () => {
   });
 
   const run = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: "light" | "standard" | "deep" }) => {
+    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => {
       if (selection?.mode === "filter") {
         return runMaintenance(api, {
           selection: { mode: "filter", filter: selection.filter },
@@ -97,6 +97,42 @@ export const TableExplorer = () => {
       });
     },
     onSuccess: (result) => antdMessage.success(`Run queued: ${result.run_id}`),
+    onError: (error) => antdMessage.error((error as Error).message)
+  });
+
+  const manifestRewrite = useMutation({
+    mutationFn: (args: { destinationId: UUID; presetId?: UUID }) => {
+      if (selection?.mode === "filter") {
+        return runManifestRewrite(api, {
+          selection: { mode: "filter", filter: selection.filter },
+          destination_id: args.destinationId,
+          preset_id: args.presetId,
+          trigger: "web-manifest-rewrite"
+        });
+      }
+      return runManifestRewrite(api, {
+        table_ids: selectedRowKeys,
+        destination_id: args.destinationId,
+        preset_id: args.presetId,
+        trigger: "web-manifest-rewrite"
+      });
+    },
+    onSuccess: (result) => antdMessage.success(`Manifest rewrite queued: ${result.run_id}`),
+    onError: (error) => antdMessage.error((error as Error).message)
+  });
+
+  const unassign = useMutation({
+    mutationFn: () => {
+      if (!selection) throw new Error("No tables selected");
+      if (selection.mode === "filter") {
+        return unassignTables(api, { selection: { mode: "filter", filter: selection.filter } });
+      }
+      return unassignTables(api, { selection: { mode: "ids", ids: selectedRowKeys } });
+    },
+    onSuccess: (result) => {
+      antdMessage.success(`Unassigned ${result.affected.toLocaleString()} tables`);
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    },
     onError: (error) => antdMessage.error((error as Error).message)
   });
 
@@ -386,12 +422,14 @@ export const TableExplorer = () => {
         presets={presets.data ?? []}
         destinations={destinations.data ?? []}
         assigning={assign.isPending}
-        running={run.isPending}
+        running={run.isPending || manifestRewrite.isPending}
         scanning={scan.isPending}
         onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}
         onPreview={() => setPreviewOpen(true)}
         onRun={(args) => run.mutate(args)}
+        onManifestRewrite={(args) => manifestRewrite.mutate(args)}
+        onUnassign={() => unassign.mutate()}
         onScan={() => scan.mutate()}
       />
       <PlanPreview open={previewOpen} tables={selectedTables} onClose={() => setPreviewOpen(false)} />

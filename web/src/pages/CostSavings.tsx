@@ -16,7 +16,7 @@ import {
   savingsOpportunityFilter,
   triggerCostScan
 } from "../api/client";
-import type { CostDashboard, TableRead, UUID } from "../api/types";
+import type { CostDashboard, Mode, TableRead, UUID } from "../api/types";
 import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
 import { ChartFrame, EmptyState, PageHeader, StatStrip } from "../components/common";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
@@ -110,7 +110,7 @@ export const CostSavings = () => {
   });
 
   const bulkRun = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: "light" | "standard" | "deep" }) => {
+    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => {
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return runMaintenance(api, {
@@ -167,11 +167,16 @@ export const CostSavings = () => {
         title="Cost & savings"
         subtitle="Expected storage and monthly cost impact after standard maintenance."
         actions={
-          <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
-            <Button loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
-              Run full cost scan
-            </Button>
-          </Tooltip>
+          <Space>
+            <Link to="/attribution">
+              <Button>Team attribution</Button>
+            </Link>
+            <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
+              <Button loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
+                Run full cost scan
+              </Button>
+            </Tooltip>
+          </Space>
         }
       />
       {usingFallback ? (

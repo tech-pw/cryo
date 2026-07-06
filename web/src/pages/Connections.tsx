@@ -1,15 +1,17 @@
-import { CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, RobotOutlined, SlackOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, RobotOutlined, SettingOutlined, SlackOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   AutoComplete,
   Button,
+  Card,
   Collapse,
   Divider,
   Drawer,
   Form,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   Switch,
@@ -28,6 +30,7 @@ import {
   createSource,
   deleteAIProvider,
   deleteSlackConfig,
+  getCatalogLatency,
   listAIProviders,
   listAIProviderTypes,
   listDestinations,
@@ -47,6 +50,7 @@ import {
   testSlackConfig,
   testSlackConfigValues,
   testSource,
+  triggerDailyReport,
   triggerScan,
   ApiError,
   type AIProviderRead,
@@ -58,6 +62,7 @@ import {
 import type { DestinationRead, DestinationWrite, RunRead, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
+import { OpsPanel } from "../components/OpsPanel";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
@@ -77,13 +82,17 @@ import {
 const REDACTED_PLACEHOLDER = "***REDACTED***";
 
 export const Connections = () => {
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sourceDrawer, setSourceDrawer] = useState<SourceRead | "new" | null>(null);
   const [destinationDrawer, setDestinationDrawer] = useState<DestinationRead | "new" | null>(null);
   const [aiProviderDrawer, setAiProviderDrawer] = useState<AIProviderRead | "new" | null>(null);
   const [slackDrawer, setSlackDrawer] = useState<SlackConfigRead | "new" | null>(null);
+  const [latencySource, setLatencySource] = useState<SourceRead | null>(null);
+  const [dailyReportResult, setDailyReportResult] = useState<Awaited<ReturnType<typeof triggerDailyReport>> | null>(null);
+  const [sendReportToSlack, setSendReportToSlack] = useState(false);
+  const [reportUseAi, setReportUseAi] = useState(true);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [pendingScanVersion, setPendingScanVersion] = useState(0);
 
@@ -94,6 +103,11 @@ export const Connections = () => {
   };
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
+  const catalogLatency = useQuery({
+    queryKey: ["catalog-latency", token, latencySource?.id],
+    queryFn: () => getCatalogLatency(api, latencySource!.id),
+    enabled: Boolean(latencySource)
+  });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
   const aiProviders = useQuery({
     queryKey: ["ai-providers", token],
@@ -243,6 +257,16 @@ export const Connections = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
+  const dailyReport = useMutation({
+    mutationFn: () =>
+      triggerDailyReport(api, { send_to_slack: sendReportToSlack, use_ai: reportUseAi }),
+    onSuccess: (result) => {
+      setDailyReportResult(result);
+      message.success(result.slack_sent ? "Report generated and sent to Slack" : "Report generated");
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
   return (
     <div>
       <PageHeader
@@ -306,6 +330,9 @@ export const Connections = () => {
                       render: (_, row) => (
                         <Space>
                           <Button size="small" onClick={() => setSourceDrawer(row)}>Edit</Button>
+                          <Button size="small" onClick={() => setLatencySource(row)}>
+                            Latency
+                          </Button>
                           <Button size="small" onClick={() => patchSource(api, row.id, { enabled: !row.enabled }).then(() => queryClient.invalidateQueries({ queryKey: ["sources"] }))}>
                             {row.enabled ? "Disable" : "Enable"}
                           </Button>
@@ -508,6 +535,41 @@ export const Connections = () => {
                   Connect Slack to receive daily anomaly reports with AI-generated summaries.
                   Configure your webhook URL, reporting schedule, and channel.
                 </Typography.Paragraph>
+                {role !== "viewer" ? (
+                  <Card size="small" title="Manual daily report">
+                    <Space direction="vertical" size={12} className="full-width">
+                      <Space wrap>
+                        <Space>
+                          <Switch checked={sendReportToSlack} onChange={setSendReportToSlack} />
+                          <Typography.Text>Send to Slack</Typography.Text>
+                        </Space>
+                        <Space>
+                          <Switch checked={reportUseAi} onChange={setReportUseAi} />
+                          <Typography.Text>AI summary</Typography.Text>
+                        </Space>
+                      </Space>
+                      <Button type="primary" loading={dailyReport.isPending} onClick={() => dailyReport.mutate()}>
+                        Generate report now
+                      </Button>
+                      {dailyReportResult ? (
+                        <Alert
+                          type="success"
+                          showIcon
+                          message={`Report for ${dailyReportResult.report_date}${dailyReportResult.slack_sent ? " · posted to Slack" : ""}`}
+                          description={
+                            dailyReportResult.ai_summary ? (
+                              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
+                                {dailyReportResult.ai_summary}
+                              </Typography.Paragraph>
+                            ) : (
+                              <pre className="inline-json">{JSON.stringify(dailyReportResult.summary, null, 2)}</pre>
+                            )
+                          }
+                        />
+                      ) : null}
+                    </Space>
+                  </Card>
+                ) : null}
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setSlackDrawer("new")}>
                   New Slack connection
                 </Button>
@@ -603,9 +665,64 @@ export const Connections = () => {
                 />
               </Space>
             )
-          }
+          },
+          ...(role === "admin"
+            ? [
+                {
+                  key: "ops",
+                  label: (
+                    <Space>
+                      <SettingOutlined />
+                      Ops
+                    </Space>
+                  ),
+                  children: <OpsPanel />
+                }
+              ]
+            : [])
         ]}
       />
+      <Modal
+        title={latencySource ? `Catalog latency · ${latencySource.name}` : "Catalog latency"}
+        open={Boolean(latencySource)}
+        onCancel={() => setLatencySource(null)}
+        footer={null}
+        width={640}
+        destroyOnHidden
+      >
+        {catalogLatency.isLoading ? (
+          <Typography.Text type="secondary">Loading latency samples…</Typography.Text>
+        ) : catalogLatency.error ? (
+          <Alert type="error" showIcon message={(catalogLatency.error as Error).message} />
+        ) : catalogLatency.data ? (
+          <Space direction="vertical" size={12} className="full-width">
+            <Typography.Text type="secondary">
+              Rolling latency summaries for catalog operations on this lakehouse.
+            </Typography.Text>
+            {Object.keys(catalogLatency.data.operations).length ? (
+              <Table
+                size="small"
+                pagination={false}
+                rowKey="operation"
+                dataSource={Object.entries(catalogLatency.data.operations).map(([operation, stats]) => ({
+                  operation,
+                  stats
+                }))}
+                columns={[
+                  { title: "Operation", dataIndex: "operation", width: 160 },
+                  {
+                    title: "Summary",
+                    dataIndex: "stats",
+                    render: (value) => <pre className="inline-json">{JSON.stringify(value, null, 2)}</pre>
+                  }
+                ]}
+              />
+            ) : (
+              <EmptyState title="No samples yet" description="Latency is recorded after catalog reads during scans." />
+            )}
+          </Space>
+        ) : null}
+      </Modal>
       <SourceDrawer
         key={sourceDrawer && sourceDrawer !== "new" ? sourceDrawer.id : String(sourceDrawer)}
         value={sourceDrawer}

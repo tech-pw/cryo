@@ -1133,6 +1133,12 @@ export const getS3TieringRecommendations = (
   );
 };
 
+export const getTableS3Tiering = (api: ApiOptions, tableId: UUID, lookbackDays = 90) =>
+  dashboardFetch<S3TieringRecommendationRead>(
+    `/tables/${tableId}/s3-tiering?lookback_days=${lookbackDays}`,
+    api
+  );
+
 export interface TierCandidateRead {
   table_ref: string;
   partition_value: string | null;
@@ -1311,6 +1317,15 @@ export interface DeepHealthResponse {
   status: string;
   checks: Record<string, { status: string; detail?: string }>;
 }
+
+export const getShallowHealth = async (): Promise<{ status: string }> => {
+  const response = await fetch("/healthz");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new ApiError(response.status, "Health check failed", payload);
+  }
+  return payload as { status: string };
+};
 
 export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
   const response = await fetch("/healthz/deep");
