@@ -1,46 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Drawer, List, Space, Table, Typography } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getRun, getRunJobs, wsRunUrl } from "../api/client";
+import { getRun, getRunJobs } from "../api/client";
 import type { JobRead, UUID } from "../api/types";
+import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
 import { formatTime } from "../lib/format";
 import { StatusTag } from "./status";
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
-const MAX_WS_RETRIES = 8;
-const BASE_RECONNECT_MS = 1_000;
-const MAX_RECONNECT_MS = 30_000;
 
 const tableRef = (job: JobRead) =>
   job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
 
-interface LiveMessage {
-  ts?: string;
-  level?: string;
-  message?: string;
-  job_id?: string;
-  [key: string]: unknown;
-}
-
 export const RunConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
-  const [messages, setMessages] = useState<LiveMessage[]>([]);
-  const [wsOpen, setWsOpen] = useState(false);
-  const [wsExhausted, setWsExhausted] = useState(false);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [manualReconnectKey, setManualReconnectKey] = useState(0);
   const [logJob, setLogJob] = useState<JobRead | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const retryTimerRef = useRef<number | null>(null);
-  const retryCountRef = useRef(0);
+  const { messages, snapshot, wsOpen, wsExhausted, reconnectAttempt, manualReconnect } =
+    useRunLiveEvents(runId, token);
 
   const run = useQuery({
     queryKey: ["run", runId, token],
     queryFn: () => getRun(api, runId),
-    refetchInterval: 5000
+    refetchInterval: wsOpen ? false : 5000
   });
   const jobs = useQuery({
     queryKey: ["run-jobs", runId, token],
@@ -49,75 +33,11 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
     refetchInterval: wsOpen ? false : 5000
   });
 
-  const clearRetryTimer = useCallback(() => {
-    if (retryTimerRef.current !== null) {
-      window.clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleReconnect = useCallback(() => {
-    if (retryCountRef.current >= MAX_WS_RETRIES) {
-      setWsExhausted(true);
-      setWsOpen(false);
-      return;
-    }
-    const delay = Math.min(BASE_RECONNECT_MS * 2 ** retryCountRef.current, MAX_RECONNECT_MS);
-    retryCountRef.current += 1;
-    setReconnectAttempt(retryCountRef.current);
-    retryTimerRef.current = window.setTimeout(() => {
-      setManualReconnectKey((current) => current + 1);
-    }, delay);
-  }, []);
-
-  const handleManualReconnect = useCallback(() => {
-    clearRetryTimer();
-    retryCountRef.current = 0;
-    setReconnectAttempt(0);
-    setWsExhausted(false);
-    setManualReconnectKey((current) => current + 1);
-  }, [clearRetryTimer]);
-
-  useEffect(() => {
-    clearRetryTimer();
-    retryCountRef.current = 0;
-    setReconnectAttempt(0);
-    setWsExhausted(false);
-    setWsOpen(false);
-
-    const socket = new WebSocket(wsRunUrl(runId, token));
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      retryCountRef.current = 0;
-      setReconnectAttempt(0);
-      setWsExhausted(false);
-      setWsOpen(true);
-    };
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as LiveMessage;
-        setMessages((current) => [payload, ...current].slice(0, 200));
-      } catch {
-        setMessages((current) => [{ message: event.data, ts: new Date().toISOString() }, ...current].slice(0, 200));
-      }
-    };
-    socket.onerror = () => setWsOpen(false);
-    socket.onclose = () => {
-      setWsOpen(false);
-      if (socketRef.current === socket) {
-        scheduleReconnect();
-      }
-    };
-
-    return () => {
-      socketRef.current = null;
-      clearRetryTimer();
-      socket.close();
-    };
-  }, [runId, token, manualReconnectKey, clearRetryTimer, scheduleReconnect]);
-
-  const jobRows = useMemo(() => jobs.data ?? [], [jobs.data]);
+  const runData = snapshot?.run ?? run.data;
+  const jobRows = useMemo(
+    () => snapshot?.jobs ?? jobs.data ?? [],
+    [snapshot?.jobs, jobs.data]
+  );
   const concurrency = useMemo(() => {
     const active = jobRows.filter((job) => ["admitted", "running"].includes(job.status));
     const queued = jobRows.filter((job) => job.status === "queued").length;
@@ -136,6 +56,13 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
     };
   }, [jobRows]);
 
+  const jobLogMessages = useMemo(() => {
+    if (!logJob) {
+      return [];
+    }
+    return messages.filter((item) => item.job_id === logJob.id);
+  }, [logJob, messages]);
+
   return (
     <Space direction="vertical" size={12} className="full-width">
       {!wsOpen ? (
@@ -146,20 +73,20 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
             wsExhausted
               ? "Live socket disconnected after multiple retries; polling run state every 5 seconds."
               : reconnectAttempt > 0
-                ? `Live socket unavailable; reconnecting (attempt ${reconnectAttempt}/${MAX_WS_RETRIES})…`
+                ? `Live socket unavailable; reconnecting (attempt ${reconnectAttempt}/${8})…`
                 : "Live socket unavailable; polling run state every 5 seconds."
           }
           action={
-            <Button size="small" onClick={handleManualReconnect}>
+            <Button size="small" onClick={manualReconnect}>
               Reconnect
             </Button>
           }
         />
       ) : null}
       <div className="console-summary">
-        <Typography.Text strong>{run.data?.kind ?? "Run"}</Typography.Text>
-        <StatusTag status={run.data?.status} />
-        <Typography.Text type="secondary">Created {formatTime(run.data?.created_at)}</Typography.Text>
+        <Typography.Text strong>{runData?.kind ?? "Run"}</Typography.Text>
+        <StatusTag status={runData?.status} />
+        <Typography.Text type="secondary">Created {formatTime(runData?.created_at)}</Typography.Text>
       </div>
       <StatStrip
         items={[
@@ -176,7 +103,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         size="small"
         rowKey="id"
         dataSource={jobRows}
-        loading={jobs.isLoading}
+        loading={jobs.isLoading && !snapshot?.jobs}
         pagination={false}
         columns={[
           {
@@ -226,12 +153,15 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
       <List
         className="log-list"
         size="small"
+        header="Live log"
         dataSource={messages}
         locale={{ emptyText: "No live events yet." }}
         renderItem={(item) => (
           <List.Item>
             <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-            <Typography.Text>{item.message ?? JSON.stringify(item)}</Typography.Text>
+            <Typography.Text type={item.level === "error" ? "danger" : undefined}>
+              {item.message ?? item.status ?? item.event}
+            </Typography.Text>
           </List.Item>
         )}
       />
@@ -263,13 +193,13 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
             <List
               size="small"
               locale={{ emptyText: "No live events for this job yet." }}
-              dataSource={messages.filter(
-                (item) => !item.job_id || item.job_id === logJob.id
-              )}
+              dataSource={jobLogMessages}
               renderItem={(item) => (
                 <List.Item>
                   <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-                  <Typography.Text>{item.message ?? JSON.stringify(item)}</Typography.Text>
+                  <Typography.Text type={item.level === "error" ? "danger" : undefined}>
+                    {item.message ?? item.status ?? item.event}
+                  </Typography.Text>
                 </List.Item>
               )}
             />

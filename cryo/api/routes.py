@@ -92,7 +92,7 @@ from cryo.api.schemas import (
     TableRead,
     TableStatsHistoryResponse,
 )
-from cryo.api.security import Role, principal_from_token
+from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
@@ -114,6 +114,7 @@ from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal
 from cryo.db.tenant_scope import (
+    bind_tenant,
     get_scoped_resource,
     require_tenant,
     scope_by_tenant,
@@ -135,6 +136,7 @@ from cryo.integrations.aws_s3_metrics import (
 from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
 from cryo.planner.guardrails import validate_guardrails, validate_operation_order
 from cryo.planner.planner import build_plan
+from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config, source_catalog_for
 
@@ -1236,9 +1238,38 @@ def create_maintenance_run(
         jobs.append(job)
     session.commit()
     wiring = build_runtime_wiring()
+    safe_publish(
+        wiring.run_events,
+        run.id,
+        build_log_line(
+            run_id=run.id,
+            message=f"Submitted maintenance run with {len(jobs)} job(s)",
+        ),
+    )
     for job in jobs:
-        wiring.queue.enqueue(str(job.id), str(job.destination_id))
         session.refresh(job)
+        wiring.queue.enqueue(str(job.id), str(job.destination_id))
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_job_status(
+                run_id=run.id,
+                job_id=job.id,
+                status=JobStatus.QUEUED.value,
+                table_id=job.table_id,
+                message="Job queued",
+            ),
+        )
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_log_line(
+                run_id=run.id,
+                job_id=job.id,
+                table_id=job.table_id,
+                message=f"Queued maintenance job for table {job.table_id}",
+            ),
+        )
     return MaintenanceRunResponse(
         run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
     )
@@ -1461,36 +1492,151 @@ def get_run_jobs(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
     return snapshot
 
 
+_TERMINAL_RUN_STATUSES = {
+    "succeeded",
+    "failed",
+    "partial_failed",
+    "cancelled",
+}
+
+
+def _snapshot_run_status(snapshot: dict[str, object]) -> str:
+    run = snapshot.get("run")
+    if not isinstance(run, dict):
+        return ""
+    status = run.get("status")
+    return str(status) if status is not None else ""
+
+
+async def _send_run_snapshot(
+    websocket: WebSocket,
+    session: Session,
+    run_id: uuid.UUID,
+) -> dict[str, object] | None:
+    if hasattr(session, "expire_all"):
+        session.expire_all()
+    snapshot = datalake.run_jobs_snapshot(session, run_id)
+    if snapshot is None:
+        return None
+    payload = RunSnapshotPayload.model_validate({"type": "run_snapshot", **snapshot})
+    await websocket.send_json(jsonable_encoder(payload))
+    return snapshot
+
+
 @router.websocket("/ws/runs/{run_id}")
 async def watch_run(
     websocket: WebSocket,
     run_id: uuid.UUID,
-    session: SessionDep,
     token: Annotated[str | None, Query()] = None,
     once: Annotated[bool, Query()] = False,
     poll_interval_sec: Annotated[float, Query(ge=0.2, le=30.0)] = 2.0,
 ) -> None:
-    if not _websocket_allows_viewer(websocket, token):
+    principal = _websocket_viewer_principal(websocket, token)
+    if principal is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     await websocket.accept()
-    try:
-        while True:
-            if hasattr(session, "expire_all"):
-                session.expire_all()
-            snapshot = datalake.run_jobs_snapshot(session, run_id)
-            if snapshot is None:
-                await websocket.send_json({"type": "error", "detail": "Run not found"})
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
+    with SessionLocal() as session:
+        bind_tenant(session, principal.tenant_id)
+        await _watch_run_with_session(
+            websocket,
+            run_id,
+            session,
+            once=once,
+            poll_interval_sec=poll_interval_sec,
+        )
 
-            payload = RunSnapshotPayload.model_validate({"type": "run_snapshot", **snapshot})
-            await websocket.send_json(jsonable_encoder(payload))
-            if once:
-                await websocket.close()
-                return
-            await asyncio.sleep(poll_interval_sec)
+
+async def _watch_run_with_session(
+    websocket: WebSocket,
+    run_id: uuid.UUID,
+    session: Session,
+    *,
+    once: bool,
+    poll_interval_sec: float,
+) -> None:
+    try:
+        snapshot = await _send_run_snapshot(websocket, session, run_id)
+        if snapshot is None:
+            await websocket.send_json({"type": "error", "detail": "Run not found"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        if once:
+            await websocket.close()
+            return
+
+        run_events: Any = None
+        events_available = False
+        try:
+            wiring = build_runtime_wiring()
+            run_events = wiring.run_events
+            events_available = hasattr(run_events, "replay_with_ids")
+        except Exception:
+            events_available = False
+
+        if not events_available or run_events is None:
+            await websocket.send_json(
+                jsonable_encoder(
+                    {
+                        "type": "log_line",
+                        "ts": datetime.now(UTC).isoformat(),
+                        "run_id": str(run_id),
+                        "level": "info",
+                        "message": "Live log stream unavailable; showing polling snapshots.",
+                    }
+                )
+            )
+            while True:
+                await asyncio.sleep(poll_interval_sec)
+                snapshot = await _send_run_snapshot(websocket, session, run_id)
+                if snapshot is None:
+                    return
+                run_status = _snapshot_run_status(snapshot)
+                if run_status in _TERMINAL_RUN_STATUSES:
+                    return
+            return
+
+        replayed = await asyncio.to_thread(run_events.replay_with_ids, run_id)
+        last_event_id = "0-0"
+        for message_id, event in replayed:
+            await websocket.send_json(jsonable_encoder(event))
+            last_event_id = message_id
+
+        snapshot_ticks = 0
+        snapshot_every = max(1, int(poll_interval_sec / 0.5))
+        while True:
+            rows = await asyncio.to_thread(
+                run_events.read_blocking,
+                run_id,
+                last_id=last_event_id,
+                block_ms=500,
+                count=50,
+            )
+            for message_id, event in rows:
+                await websocket.send_json(jsonable_encoder(event))
+                last_event_id = message_id
+
+            snapshot_ticks += 1
+            if snapshot_ticks >= snapshot_every:
+                snapshot_ticks = 0
+                snapshot = await _send_run_snapshot(websocket, session, run_id)
+                if snapshot is None:
+                    return
+                run_status = _snapshot_run_status(snapshot)
+                if run_status in _TERMINAL_RUN_STATUSES:
+                    # Drain any remaining events before closing.
+                    rows = await asyncio.to_thread(
+                        run_events.read_blocking,
+                        run_id,
+                        last_id=last_event_id,
+                        block_ms=100,
+                        count=50,
+                    )
+                    for message_id, event in rows:
+                        await websocket.send_json(jsonable_encoder(event))
+                        last_event_id = message_id
+                    return
     except WebSocketDisconnect:
         return
 
@@ -1541,7 +1687,7 @@ def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
     return JobRead.model_validate(presets.job_summary(job))
 
 
-def _websocket_allows_viewer(websocket: WebSocket, token: str | None) -> bool:
+def _websocket_viewer_principal(websocket: WebSocket, token: str | None) -> Principal | None:
     auth_header = websocket.headers.get("authorization")
     token_value = token
     if auth_header:
@@ -1550,9 +1696,11 @@ def _websocket_allows_viewer(websocket: WebSocket, token: str | None) -> bool:
             token_value = credentials
 
     if not token_value:
-        return False
+        return None
     principal = principal_from_token(token_value)
-    return principal is not None and principal.can(Role.VIEWER)
+    if principal is None or not principal.can(Role.VIEWER):
+        return None
+    return principal
 
 
 def _run_read_or_none(run: object | None) -> RunRead | None:
