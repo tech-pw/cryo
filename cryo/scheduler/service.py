@@ -231,8 +231,6 @@ class SchedulerService:
         from cryo.config import get_settings
 
         settings = get_settings()
-        if not settings.telemetry_trino_url:
-            return
         if not settings.telemetry_ingest_on_startup:
             return
         if self._last_telemetry_ingest is not None:
@@ -245,10 +243,10 @@ class SchedulerService:
             from sqlalchemy import select
 
             from cryo.db.models import Source
-            from cryo.telemetry.ingestion import TrinoQueryIngester, ingest_trino_query_log
-            from cryo.telemetry.patterns import aggregate_query_patterns
-
-            ingester = TrinoQueryIngester(settings.telemetry_trino_url)
+            from cryo.telemetry.iceberg_source import (
+                aggregate_from_iceberg_query_log,
+                parse_iceberg_query_log_config,
+            )
 
             async def _run() -> tuple[int, int]:
                 total_ingested = 0
@@ -256,6 +254,26 @@ class SchedulerService:
                 with SessionLocal() as session:
                     sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
                     for source in sources:
+                        iceberg_config = parse_iceberg_query_log_config(source.config or {})
+                        if iceberg_config is not None:
+                            # This source already has a durable, Iceberg-native query log
+                            # (e.g. a Trino event listener writing every completed query into
+                            # its own Iceberg table) -- read that directly instead of polling a
+                            # live Trino coordinator, and don't duplicate rows into query_logs.
+                            total_patterns_updated += aggregate_from_iceberg_query_log(
+                                session, source, now=current
+                            )
+                            continue
+
+                        if not settings.telemetry_trino_url:
+                            continue
+                        from cryo.telemetry.ingestion import (
+                            TrinoQueryIngester,
+                            ingest_trino_query_log,
+                        )
+                        from cryo.telemetry.patterns import aggregate_query_patterns
+
+                        ingester = TrinoQueryIngester(settings.telemetry_trino_url)
                         count = await ingest_trino_query_log(
                             session,
                             source,

@@ -55,6 +55,10 @@ class SourceTestRequest(BaseModel):
 
     type: str
     config: JsonDict = Field(default_factory=dict)
+    # Set when testing an *edit* of an existing source -- the client only ever sees a redacted
+    # config (see cryo/api/redact.py), so any field still holding the "***REDACTED***" placeholder
+    # gets swapped back in for the real stored value before testing.
+    source_id: uuid.UUID | None = None
 
 
 class SourceTestResponse(BaseModel):
@@ -128,6 +132,24 @@ class DestinationCreate(BaseModel):
     offpeak_start: int | None = None
     offpeak_end: int | None = None
     enabled: bool = True
+
+
+class DestinationTestRequest(BaseModel):
+    """A not-yet-saved engine config, so the UI can verify it before creating/updating it."""
+
+    engine: EngineType
+    config: JsonDict = Field(default_factory=dict)
+    # Same purpose as SourceTestRequest.source_id -- swap "***REDACTED***" placeholders back to
+    # the real stored value when testing an edit.
+    destination_id: uuid.UUID | None = None
+
+
+class DestinationTestResponse(BaseModel):
+    ok: bool
+    capacity: int | None = None
+    used: int | None = None
+    available: int | None = None
+    message: str | None = None
 
 
 class DestinationRead(OrmModel):

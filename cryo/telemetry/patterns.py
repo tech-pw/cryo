@@ -122,7 +122,19 @@ def aggregate_query_patterns(
 
             stats_by_col[col_name].projection_count += 1
 
-    # Upsert patterns into database
+    updated = _upsert_query_patterns(session, table_stats)
+    logger.info(f"Updated {updated} query patterns")
+    return updated
+
+
+def _upsert_query_patterns(
+    session: Session,
+    table_stats: dict[uuid.UUID, dict[str, ColumnPatternStats]],
+) -> int:
+    """Shared upsert step for both `aggregate_query_patterns` (reads from query_logs) and
+    `cryo.telemetry.iceberg_source.aggregate_from_iceberg_query_log` (reads straight from an
+    existing Iceberg query-log table) -- both build the same per-(table, column) stats shape,
+    only the source of the raw query text differs."""
     updated = 0
     for tid, columns in table_stats.items():
         for col_name, stats in columns.items():
@@ -153,7 +165,6 @@ def aggregate_query_patterns(
             updated += 1
 
     session.commit()
-    logger.info(f"Updated {updated} query patterns")
     return updated
 
 

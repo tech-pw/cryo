@@ -426,15 +426,16 @@ def _realized_savings_by_day(
     settings: Settings,
     limit: int,
 ) -> dict[Any, float]:
+    day_bucket = func.date_trunc("day", AuditLog.ts).label("day_bucket")
     rows = list(
         session.execute(
             select(
-                func.date_trunc("day", AuditLog.ts),
+                day_bucket,
                 func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
             )
             .where(AuditLog.actual_bytes_freed.isnot(None))
-            .group_by(func.date_trunc("day", AuditLog.ts))
-            .order_by(desc(func.date_trunc("day", AuditLog.ts)))
+            .group_by(day_bucket)
+            .order_by(desc(day_bucket))
             .limit(limit)
         )
     )

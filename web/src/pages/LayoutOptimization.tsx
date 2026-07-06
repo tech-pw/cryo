@@ -135,8 +135,8 @@ const LayoutOptimization = () => {
       dataIndex: "recommended_columns",
       render: (cols: Array<{ column: string }>) => (
         <Space size={4} wrap>
-          {cols.slice(0, 3).map((c) => (
-            <Tag key={c.column}>{c.column}</Tag>
+          {cols.slice(0, 3).map((c, index) => (
+            <Tag key={c.column ?? `column-${index}`}>{c.column ?? "—"}</Tag>
           ))}
           {cols.length > 3 && <Tag>+{cols.length - 3} more</Tag>}
         </Space>
@@ -514,8 +514,8 @@ const ClusteringPlanDrawer = ({
                 </Text>
                 <Text>
                   Columns:{" "}
-                  {recommendation.data.recommended_columns.map((c) => (
-                    <Tag key={c.column}>{c.column}</Tag>
+                  {recommendation.data.recommended_columns.map((c, index) => (
+                    <Tag key={c.column ?? `column-${index}`}>{c.column ?? "—"}</Tag>
                   ))}
                 </Text>
                 <Text>

@@ -279,8 +279,8 @@ export const TableAiInsights = ({ tableId, lastSnapshotCommittedAt }: TableAiIns
                 <Col xs={24} md={12}>
                   <Typography.Text strong>Static partition order</Typography.Text>
                   <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-                    {autocomp.data.static_order.map((p) => (
-                      <li key={`s-${p}`}>
+                    {autocomp.data.static_order.map((p, index) => (
+                      <li key={`s-${p ?? index}`}>
                         <Typography.Text code>{p}</Typography.Text>
                       </li>
                     ))}
@@ -289,8 +289,8 @@ export const TableAiInsights = ({ tableId, lastSnapshotCommittedAt }: TableAiIns
                 <Col xs={24} md={12}>
                   <Typography.Text strong>Benefit-score order</Typography.Text>
                   <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-                    {autocomp.data.autocomp_order.map((p) => (
-                      <li key={`a-${p}`}>
+                    {autocomp.data.autocomp_order.map((p, index) => (
+                      <li key={`a-${p ?? index}`}>
                         <Typography.Text code>{p}</Typography.Text>
                       </li>
                     ))}

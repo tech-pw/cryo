@@ -120,8 +120,8 @@ export const CostSavingsWaterfall = ({
           />
           <Bar dataKey="base" stackId="w" fill="transparent" isAnimationActive={false} />
           <Bar dataKey="value" stackId="w" radius={[4, 4, 0, 0]}>
-            {rows.map((row) => (
-              <Cell key={row.name} fill={colorFor(row)} />
+            {rows.map((row, index) => (
+              <Cell key={row.name || `row-${index}`} fill={colorFor(row)} />
             ))}
           </Bar>
         </BarChart>

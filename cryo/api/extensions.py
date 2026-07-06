@@ -158,6 +158,19 @@ class AIProviderTestResponse(BaseModel):
     tokens_used: int | None = None
 
 
+class AIProviderTestConfigRequest(BaseModel):
+    """A not-yet-saved provider config, so the create/edit drawer can verify it before saving."""
+
+    provider_type: str
+    api_key: str = ""
+    model: str
+    config: JsonDict = Field(default_factory=dict)
+    prompt: str = "Say hello in one sentence."
+    # Set when testing an *edit* where the API key field was left blank ("keep existing key") --
+    # falls back to the real stored (encrypted) key instead of testing an empty string.
+    provider_id: uuid.UUID | None = None
+
+
 class AIChatRequest(BaseModel):
     prompt: str
     context: JsonDict = Field(default_factory=dict)
@@ -989,6 +1002,46 @@ async def test_ai_provider(
 
 
 @router.post(
+    "/ai/providers/test",
+    response_model=AIProviderTestResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["ai"],
+)
+async def test_ai_provider_config(
+    payload: AIProviderTestConfigRequest,
+    session: SessionDep,
+) -> AIProviderTestResponse:
+    """Test a not-yet-saved AI provider config with the form's current values, so a user can
+    verify the API key/model actually work before creating or updating the provider."""
+    api_key = payload.api_key
+    if not api_key and payload.provider_id is not None:
+        provider = session.get(AIProvider, payload.provider_id)
+        if provider is None:
+            raise HTTPException(status_code=404, detail="AI provider not found")
+        api_key = _provider_api_key(provider.api_key_encrypted) or ""
+
+    try:
+        client = create_llm_client(
+            payload.provider_type,
+            api_key,
+            payload.model,
+            config=payload.config,
+        )
+        response = await client.complete(payload.prompt, max_tokens=100)
+        return AIProviderTestResponse(
+            success=True,
+            response=response.content,
+            model=response.model,
+            tokens_used=response.input_tokens + response.output_tokens,
+        )
+    except Exception as e:
+        return AIProviderTestResponse(
+            success=False,
+            error=str(e),
+        )
+
+
+@router.post(
     "/ai/chat",
     response_model=AIChatResponse,
     dependencies=[Depends(require_viewer)],
@@ -1287,6 +1340,52 @@ async def test_slack_config(config_id: uuid.UUID, session: SessionDep) -> JsonDi
         return {"status": "ok", "message": "Test message sent successfully"}
     else:
         raise HTTPException(status_code=500, detail="Failed to send test message to Slack")
+
+
+class SlackTestConfigRequest(BaseModel):
+    """A not-yet-saved webhook URL, so the create/edit drawer can verify it before saving."""
+
+    webhook_url: str = ""
+    channel: str | None = None
+    # Set when testing an *edit* where the webhook field was left blank ("keep existing webhook")
+    # -- falls back to the real stored (encrypted) webhook instead of testing an empty string.
+    config_id: uuid.UUID | None = None
+
+
+@router.post(
+    "/slack/test",
+    dependencies=[Depends(require_operator)],
+    tags=["slack"],
+)
+async def test_slack_config_values(
+    payload: SlackTestConfigRequest, session: SessionDep
+) -> JsonDict:
+    """Test a not-yet-saved Slack webhook by sending a test message with the form's current
+    values, so a user can verify it actually works before creating or updating the connection."""
+    from cryo.reporting import SlackClient
+    from cryo.reporting.slack import header_block, section_block
+
+    webhook_url = payload.webhook_url
+    if not webhook_url and payload.config_id is not None:
+        config = session.get(SlackConfig, payload.config_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail="Slack config not found")
+        webhook_url = _slack_webhook_url(config.webhook_url_encrypted) or ""
+
+    client = SlackClient(webhook_url, payload.channel)
+    blocks = [
+        header_block("🧊 Cryo Test Message"),
+        section_block(
+            "This is a test message from Cryo to verify your Slack integration "
+            "is working correctly."
+        ),
+    ]
+
+    success = await client.send_blocks(blocks, fallback_text="Cryo Test Message")
+
+    if success:
+        return {"status": "ok", "message": "Test message sent successfully"}
+    raise HTTPException(status_code=500, detail="Failed to send test message to Slack")
 
 
 # ============ Reporting endpoints ============

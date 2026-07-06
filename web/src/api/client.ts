@@ -182,8 +182,10 @@ export const createSource = (api: ApiOptions, body: SourceWrite) =>
   apiFetch<SourceRead>("/sources", api, { method: "POST", body });
 export const patchSource = (api: ApiOptions, id: UUID, body: Partial<SourceWrite>) =>
   apiFetch<SourceRead>(`/sources/${id}`, api, { method: "PATCH", body });
-export const testSource = (api: ApiOptions, body: { type: string; config: Record<string, unknown> }) =>
-  apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
+export const testSource = (
+  api: ApiOptions,
+  body: { type: string; config: Record<string, unknown>; source_id?: UUID }
+) => apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
 
 export const listDestinations = (api: ApiOptions) => apiFetch<DestinationRead[]>("/destinations", api);
 export const createDestination = (api: ApiOptions, body: DestinationWrite) =>
@@ -192,6 +194,19 @@ export const patchDestination = (api: ApiOptions, id: UUID, body: Partial<Destin
   apiFetch<DestinationRead>(`/destinations/${id}`, api, { method: "PATCH", body });
 export const testDestination = (api: ApiOptions, id: UUID) =>
   apiFetch<Record<string, unknown>>(`/destinations/${id}/test`, api, { method: "POST" });
+
+export interface DestinationTestResult {
+  ok: boolean;
+  capacity?: number | null;
+  used?: number | null;
+  available?: number | null;
+  message?: string | null;
+}
+
+export const testDestinationConfig = (
+  api: ApiOptions,
+  body: { engine: string; config: Record<string, unknown>; destination_id?: UUID }
+) => apiFetch<DestinationTestResult>("/destinations/test", api, { method: "POST", body });
 
 export const listPresets = (api: ApiOptions) => apiFetch<PresetRead[]>("/presets", api);
 export const createPreset = (api: ApiOptions, body: PresetWrite) =>
@@ -459,6 +474,18 @@ export const testAIProvider = (api: ApiOptions, id: UUID, prompt?: string) =>
     body: { prompt: prompt ?? "Say hello in one sentence." }
   });
 
+export const testAIProviderConfig = (
+  api: ApiOptions,
+  body: {
+    provider_type: string;
+    api_key: string;
+    model: string;
+    config?: Record<string, unknown>;
+    prompt?: string;
+    provider_id?: UUID;
+  }
+) => apiFetch<AIProviderTestResult>("/ai/providers/test", api, { method: "POST", body });
+
 // Slack Configs
 export interface SlackConfigRead {
   id: UUID;
@@ -504,6 +531,11 @@ export const deleteSlackConfig = (api: ApiOptions, id: UUID) =>
 
 export const testSlackConfig = (api: ApiOptions, id: UUID) =>
   apiFetch<SlackTestResult>(`/slack/configs/${id}/test`, api, { method: "POST" });
+
+export const testSlackConfigValues = (
+  api: ApiOptions,
+  body: { webhook_url: string; channel?: string | null; config_id?: UUID }
+) => apiFetch<SlackTestResult>("/slack/test", api, { method: "POST", body });
 
 export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
   const bySchema = new Map<string, { current_usd: number; projected_usd: number; savings_usd: number }>();
