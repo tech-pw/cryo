@@ -36,7 +36,14 @@
       "Bash(npm install *)",
       "Bash(.venv/bin/python -m pytest tests/)",
       "Bash(.venv/bin/python -m ruff check cryo/ tests/)",
-      "Bash(.venv/bin/python -m mypy cryo)"
+      "Bash(.venv/bin/python -m mypy cryo)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(git fetch *)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(git commit -m ' *)",
+      "Bash(.venv/bin/python -m pytest tests/test_scanner.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_serializers.py -q)"
     ]
   }
 }
