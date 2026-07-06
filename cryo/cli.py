@@ -238,6 +238,7 @@ class WorkerRunner(DaemonRunner):
                 store=wiring.job_store,
                 lock_store=wiring.lock_store,
                 on_job_finished=finalize_finished_runs,
+                run_events=wiring.run_events,
             )
             return self._worker
         except Exception as exc:
@@ -390,7 +391,10 @@ class ScannerRunner(DaemonRunner):
             from cryo.scanner.worker import ScanWorker
 
             wiring = self._get_wiring()
-            self._worker = ScanWorker(RedisScanQueue(wiring.redis_client))
+            self._worker = ScanWorker(
+                RedisScanQueue(wiring.redis_client),
+                run_events=wiring.run_events,
+            )
             return self._worker
         except Exception as exc:
             self._logger.debug("Cannot initialize scanner worker: %s", exc)

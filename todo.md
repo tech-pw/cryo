@@ -124,7 +124,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       full cost scan trigger, precision badge. Health page keeps KPI summary + link to `/cost`.
       Explorer columns/filters; Table Detail cost card + mini waterfall; PlanPreview savings summary.
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
-- [ ] **Table Detail scan UX**: pressing Scan should not redirect immediately — show in-progress
+- [x] **Table Detail scan UX**: pressing Scan should not redirect immediately — show in-progress
       animation on the scan/run button; navigate to the scan run only after the user follows through
       on the animated button (not on the initial click).
 - [x] **Scanner** page (`/scans`): schedule form, scan status, scan-only run list, progress console;
@@ -132,9 +132,9 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] **Sources & Destinations** management + health checks.
 - [x] **UI/UX polish** per `docs/UI_UX_DESIGN.md`: dark theme toggle, always-dark sidebar,
       IBM Plex typography, focus rings, reduced-motion, log-line animation.
-- [~] WebSocket endpoint `/ws/runs/{id}` streams DB snapshots (polling); Redis live-state fanout pending.
-- [ ] **Log streaming** for scan runs and maintenance runs — live log tail (not just DB snapshot
-      polling); wire UI consoles/drawers for both `/scans` and `/runs`.
+- [x] WebSocket endpoint `/ws/runs/{id}` streams run snapshots plus Redis-backed live log events.
+- [x] **Log streaming** for scan runs and maintenance runs — live log tail with replay and polling
+      fallback; wired into `/scans` and `/runs` consoles/drawers.
 - [~] Run console realized-savings line — worker records `actual_bytes_freed`; UI subtitle notes pending
       full realized-vs-projected display.
 
@@ -248,7 +248,7 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       specced in `lld.md` §16, `docs/cost-savings.md`; Tier 1+2 accounting done.
       (Remaining: multi-region price tables, non-storage AWS cost lines like data transfer.)
 - [ ] Saved filters / scheduled saved views in the Explorer.
-- [ ] Redis WebSocket fanout for live run console (replace DB polling).
+- [x] Redis WebSocket fanout for live run console (run events via Redis Streams + `/ws/runs/{id}`).
 - [ ] Self-host IBM Plex fonts (woff2) instead of Google Fonts CDN (`docs/UI_UX_DESIGN.md` §8).
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.

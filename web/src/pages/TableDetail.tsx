@@ -7,7 +7,7 @@ import {
   Area, CartesianGrid, Line, LineChart, ResponsiveContainer,
   Tooltip as RechartsTooltip, XAxis, YAxis
 } from "recharts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assignTables, getComplianceStatus, getEffectivePreset, getTable,
@@ -60,6 +60,13 @@ export const TableDetail = () => {
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [queuedScanRunId, setQueuedScanRunId] = useState<string | null>(null);
+  const [queuedMaintenanceRunId, setQueuedMaintenanceRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setQueuedScanRunId(null);
+    setQueuedMaintenanceRunId(null);
+  }, [tableId]);
 
   const table = useQuery({ queryKey: ["table", tableId, token], queryFn: () => getTable(api, tableId) });
   const partitions = useQuery({
@@ -132,6 +139,7 @@ export const TableDetail = () => {
   });
   const run = useMutation({
     mutationFn: () => {
+      setQueuedMaintenanceRunId(null);
       const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id) ?? presets.data?.[0];
       const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
       if (!destinationId) throw new Error("No engine configured. Add one under Connections or run make seed-config.");
@@ -139,25 +147,50 @@ export const TableDetail = () => {
     },
     onSuccess: (result) => {
       message.success(`Run queued: ${result.run_id}`);
+      setQueuedMaintenanceRunId(result.run_id);
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => {
+      setQueuedMaintenanceRunId(null);
+      message.error((error as Error).message);
+    }
   });
   const scan = useMutation({
-    mutationFn: () => triggerScan(api, { scope: "tables", table_ids: [tableId], full_scan: true, trigger: "web-table-detail" }),
+    mutationFn: () => {
+      setQueuedScanRunId(null);
+      return triggerScan(api, { scope: "tables", table_ids: [tableId], full_scan: true, trigger: "web-table-detail" });
+    },
     onSuccess: (result) => {
       message.success(result.message || `Scan queued: ${result.run_id}`);
+      setQueuedScanRunId(result.run_id);
       void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
       void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
-      navigate(`/scans/${result.run_id}`);
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => {
+      setQueuedScanRunId(null);
+      message.error((error as Error).message);
+    }
   });
+
+  const handleRunAction = () => {
+    if (queuedMaintenanceRunId) {
+      navigate(`/runs/${queuedMaintenanceRunId}`);
+    }
+  };
+
+  const handleScanAction = () => {
+    if (queuedScanRunId) {
+      navigate(`/scans/${queuedScanRunId}`);
+      return;
+    }
+    scan.mutate();
+  };
 
   const row = table.data;
   const stats = row?.stats;
@@ -255,10 +288,48 @@ export const TableDetail = () => {
               <Button size="small" loading={unassign.isPending} disabled={!row}>Unassign</Button>
             </ConfirmAction>
           ) : null}
-          <Button size="small" loading={scan.isPending} onClick={() => scan.mutate()} disabled={!row}>Scan</Button>
-          <ConfirmAction title="Run maintenance?" description="Queues a real maintenance job using the assigned preset and destination." onConfirm={() => run.mutate()}>
-            <Button type="primary" size="small" loading={run.isPending} disabled={!row}>Run</Button>
-          </ConfirmAction>
+          <Button
+            size="small"
+            type={queuedScanRunId ? "primary" : "default"}
+            className={scan.isPending ? "scan-action-pending" : undefined}
+            loading={scan.isPending}
+            onClick={handleScanAction}
+            disabled={!row || scan.isPending}
+            aria-label={
+              scan.isPending
+                ? "Queueing scan"
+                : queuedScanRunId
+                  ? "Open scan run"
+                  : "Scan table"
+            }
+          >
+            {scan.isPending ? "Queueing scan…" : queuedScanRunId ? "Open scan run" : "Scan"}
+          </Button>
+          {queuedMaintenanceRunId || run.isPending ? (
+            <Button
+              type="primary"
+              size="small"
+              className={run.isPending ? "scan-action-pending" : undefined}
+              loading={run.isPending}
+              onClick={handleRunAction}
+              disabled={!row || run.isPending || !queuedMaintenanceRunId}
+              aria-label={
+                run.isPending
+                  ? "Queueing maintenance run"
+                  : queuedMaintenanceRunId
+                    ? "Open maintenance run"
+                    : "Run maintenance"
+              }
+            >
+              {run.isPending ? "Queueing run…" : "Open run"}
+            </Button>
+          ) : (
+            <ConfirmAction title="Run maintenance?" description="Queues a real maintenance job using the assigned preset and destination." onConfirm={() => run.mutate()}>
+              <Button type="primary" size="small" disabled={!row} aria-label="Run maintenance">
+                Run
+              </Button>
+            </ConfirmAction>
+          )}
         </div>
       </div>
 

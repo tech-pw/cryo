@@ -11,6 +11,7 @@ from cryo.db.repositories.scheduler_store import SQLSchedulerStore
 from cryo.db.session import SessionLocal
 from cryo.queue.locks import RedisLockStore
 from cryo.queue.redis_queue import RedisMaintenanceQueue
+from cryo.queue.run_events import NullRunEventSink, RedisRunEventBus, RunEventBus
 
 
 @dataclass
@@ -22,6 +23,7 @@ class RuntimeWiring:
     scheduler_store: SQLSchedulerStore
     holder_id: str
     redis_client: Any
+    run_events: RunEventBus | NullRunEventSink
 
     def is_scheduler_leader(self, ttl_seconds: int = 30) -> bool:
         return self.lock_store.acquire_leader("scheduler", self.holder_id, ttl_seconds)
@@ -45,6 +47,7 @@ def build_runtime_wiring(settings: Settings | None = None) -> RuntimeWiring:
         scheduler_store=SQLSchedulerStore(session_factory, redis_client),
         holder_id=holder_id,
         redis_client=redis_client,
+        run_events=RedisRunEventBus(redis_client),
     )
 
 
