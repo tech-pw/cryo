@@ -100,9 +100,14 @@ class RedisLockStore:
 
     def release_table_lock(self, table_id: str, job_id: str) -> None:
         key = self._table_key(table_id)
-        current = self._redis.get(key)
-        if _decode(current) == job_id:
-            self._redis.delete(key)
+        lua = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        else
+            return 0
+        end
+        """
+        self._redis.eval(lua, 1, key, job_id)
 
     def is_table_locked(self, table_id: str) -> bool:
         return bool(self._redis.exists(self._table_key(table_id)))

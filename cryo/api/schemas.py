@@ -64,9 +64,15 @@ class SourceTestRequest(BaseModel):
 class SourceTestResponse(BaseModel):
     ok: bool
     namespaces: list[str] = Field(default_factory=list)
+    # No longer populated by test_source: enumerating every table in every namespace is an
+    # O(namespaces) round-trip and can take minutes against a real Hive Metastore -- unsuitable
+    # for a "Test connection" click. Table discovery happens via the async Scanner instead.
+    # Kept (always empty) rather than removed, so older frontend builds don't break on the
+    # response shape.
     table_count: int = 0
     sample_tables: list[str] = Field(default_factory=list)
     error: str | None = None
+    note: str | None = None
 
 
 class AWSIntegrationCreate(BaseModel):

@@ -302,34 +302,36 @@ def _run_with_timeout(
     dependencies=[Depends(require_operator)],
 )
 def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestResponse:
-    """Verify a not-yet-saved catalog config and show what's actually in it.
+    """Verify a not-yet-saved catalog config connects -- deliberately does NOT enumerate tables.
 
-    Used by the "Test connection" action while creating/editing a lakehouse, so a user can see
-    real discovered namespaces and tables before committing to a Warehouse/URI guess.
+    Used by the "Test connection" action while creating/editing a lakehouse. This only proves
+    auth + reachability (one list_namespaces() call); it used to also call list_tables(), which
+    is O(namespaces) round-trips and could take minutes against a real Hive Metastore with many
+    databases -- exactly the kind of thing a human shouldn't be stuck waiting on a button click
+    for. Real table/schema discovery is the async Scanner's job (cryo/scanner/run.py, triggered
+    via POST /scan/trigger with scope="source"), which already has its own progress tracking.
     """
     config = payload.config
     if payload.source_id is not None:
-        existing = get_scoped_resource(
-            session, Source, payload.source_id, resource_type="Source"
-        )
+        existing = get_scoped_resource(session, Source, payload.source_id, resource_type="Source")
         config = unredact_merge(config, dict(existing.config or {}))
 
-    def _connect_and_list() -> list[tuple[str, str]]:
+    def _connect_and_list_namespaces() -> list[str]:
         catalog = catalog_from_config("__test__", payload.type, config)
-        return catalog.list_tables()
+        return catalog.list_namespaces()
 
     try:
-        tables = _run_with_timeout(_connect_and_list)
+        namespaces = _run_with_timeout(_connect_and_list_namespaces)
     except Exception as exc:
         return SourceTestResponse(ok=False, error=str(exc))
 
-    namespaces = sorted({schema for schema, _ in tables})
-    sample = [f"{schema}.{table}" for schema, table in tables[:10]]
     return SourceTestResponse(
         ok=True,
         namespaces=namespaces,
-        table_count=len(tables),
-        sample_tables=sample,
+        note=(
+            "Connection verified. Table/schema discovery runs as a background scan after "
+            "saving -- it isn't part of this quick check."
+        ),
     )
 
 

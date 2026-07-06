@@ -28,32 +28,45 @@ def prefetch_table_stats(
 def prefetch_approved_operation_keys(
     session: Session,
     table_ids: set[uuid.UUID],
-) -> set[tuple[uuid.UUID, str]]:
+) -> dict[tuple[uuid.UUID, str], list[dict[str, Any]]]:
     """Approved-but-not-yet-executed operations per table."""
     if not table_ids:
-        return set()
+        return {}
     stmt = select(ApprovalRequestModel).where(
         ApprovalRequestModel.table_id.in_(table_ids),
         ApprovalRequestModel.status == ApprovalStatus.APPROVED,
         ApprovalRequestModel.executed_at.is_(None),
     )
-    return {(row.table_id, row.operation_type) for row in session.scalars(stmt)}
+    result: dict[tuple[uuid.UUID, str], list[dict[str, Any]]] = {}
+    for row in session.scalars(stmt):
+        key = (row.table_id, row.operation_type)
+        if key not in result:
+            result[key] = []
+        result[key].append(row.operation_params or {})
+    return result
 
 
 def batch_job_requires_approval(
     table_id: uuid.UUID,
     plan_operations: list[dict[str, Any]] | None,
-    approved_keys: set[tuple[uuid.UUID, str]],
+    approved_keys: dict[tuple[uuid.UUID, str], list[dict[str, Any]]],
 ) -> bool:
     if not plan_operations:
         return False
+    from cryo.workflows.approvals import _is_parameter_safe
+
     for op in plan_operations:
         if not isinstance(op, dict):
             continue
         op_type = _parse_operation_type(str(op.get("type", "")))
         if op_type is None or not requires_approval(op_type):
             continue
-        if (table_id, op_type.value) not in approved_keys:
+        key = (table_id, op_type.value)
+        if key not in approved_keys:
+            return True
+        op_params = op.get("params") or {}
+        approved_param_sets = approved_keys[key]
+        if not any(_is_parameter_safe(op_params, app_params) for app_params in approved_param_sets):
             return True
     return False
 

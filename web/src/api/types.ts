@@ -30,9 +30,12 @@ export type SourceWrite = Pick<SourceRead, "name" | "type" | "config" | "enabled
 export interface SourceTestResult {
   ok: boolean;
   namespaces: string[];
+  // No longer populated by the backend -- table enumeration was what made this slow. Kept for
+  // response-shape compatibility; table/schema discovery happens via the async Scanner instead.
   table_count: number;
   sample_tables: string[];
   error?: string | null;
+  note?: string | null;
 }
 
 export interface DestinationRead {

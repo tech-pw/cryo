@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Form, InputNumber, Row, Space, Switch, Table, Tooltip, Typography, message } from "antd";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Alert, Button, Card, Col, Form, InputNumber, Row, Select, Space, Switch, Table, Tooltip, Typography, message } from "antd";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   getScannerConfig,
   getScannerStatus,
   listRuns,
+  listSources,
+  listTables,
   patchScannerConfig,
   triggerScan
 } from "../api/client";
-import type { RunRead, ScannerConfigUpdate } from "../api/types";
+import type { RunRead, ScannerConfigUpdate, SourceRead } from "../api/types";
+import { leaf } from "../lib/predicate";
 import { CronInput } from "../components/CronInput";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, StatStrip } from "../components/common";
@@ -16,8 +19,15 @@ import { ScanConsole } from "../components/ScanConsole";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
+import {
+  clearAllLakehousePendingScans,
+  readConnectionScanNotice,
+  type ConnectionScanNotice
+} from "../lib/connectionScanPrompt";
 import { formatNumber, formatTime } from "../lib/format";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type ScanScope = "all" | "source" | "schemas" | "tables";
 
 const ACTIVE_STATUSES = new Set(["accepted", "queued", "running"]);
 
@@ -36,10 +46,21 @@ const targetLabel = (run: RunRead): string => {
 export const Scans = () => {
   const { runId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { api, role, token } = useAuth();
   const [form] = Form.useForm<ScannerConfigUpdate>();
   const canOperate = role !== "viewer";
+  const [connectionNotice, setConnectionNotice] = useState<ConnectionScanNotice | null>(() =>
+    readConnectionScanNotice(location.state)
+  );
+
+  useEffect(() => {
+    const notice = readConnectionScanNotice(location.state);
+    if (notice) {
+      setConnectionNotice(notice);
+    }
+  }, [location.state]);
 
   const config = useQuery({
     queryKey: ["scanner-config", token],
@@ -82,9 +103,25 @@ export const Scans = () => {
     mutationFn: () => triggerScan(api, { scope: "all", full_scan: true, trigger: "web-scanner" }),
     onSuccess: (result) => {
       message.success(result.message || `Scan queued: ${result.run_id}`);
+      clearAllLakehousePendingScans();
+      setConnectionNotice(null);
       void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
-      navigate(`/scans/${result.run_id}`);
+      navigate(`/scans/${result.run_id}`, { replace: true, state: {} });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const scanNoticeSource = useMutation({
+    mutationFn: (sourceId: string) =>
+      triggerScan(api, { scope: "source", source_id: sourceId, full_scan: true, trigger: "web-scanner" }),
+    onSuccess: (result) => {
+      message.success(result.message || `Scan queued: ${result.run_id}`);
+      clearAllLakehousePendingScans();
+      setConnectionNotice(null);
+      void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
+      navigate(`/scans/${result.run_id}`, { replace: true, state: {} });
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -115,6 +152,61 @@ export const Scans = () => {
           </Space>
         }
       />
+
+      {connectionNotice ? (
+        <Alert
+          className="page-alert"
+          type="success"
+          showIcon
+          closable
+          title={
+            connectionNotice.kind === "lakehouse"
+              ? `Lakehouse "${connectionNotice.name}" is connected`
+              : `Engine "${connectionNotice.name}" is connected`
+          }
+          description={
+            connectionNotice.kind === "lakehouse" ? (
+              <Space direction="vertical" size={8}>
+                <Typography.Text>
+                  Run a catalog scan to discover tables and populate health grades for this lakehouse.
+                </Typography.Text>
+                <Space>
+                  <ConfirmAction
+                    title={`Scan "${connectionNotice.name}" now?`}
+                    description="Queues a scan of just this lakehouse -- other connected lakehouses aren't touched."
+                    onConfirm={() => scanNoticeSource.mutate(connectionNotice.id)}
+                  >
+                    <Button
+                      type="primary"
+                      loading={scanNoticeSource.isPending}
+                      disabled={!canOperate || Boolean(activeRun)}
+                    >
+                      Scan this lakehouse now
+                    </Button>
+                  </ConfirmAction>
+                  <Button type="link" onClick={() => navigate("/connections")}>
+                    Back to Connections
+                  </Button>
+                </Space>
+              </Space>
+            ) : (
+              <Space direction="vertical" size={8}>
+                <Typography.Text>
+                  Scan your lakehouse catalog first so Cryo knows which tables exist. Then assign a preset to
+                  run maintenance on this engine.
+                </Typography.Text>
+                <Button type="link" onClick={() => navigate("/connections")}>
+                  Back to Connections
+                </Button>
+              </Space>
+            )
+          }
+          onClose={() => {
+            setConnectionNotice(null);
+            navigate(location.pathname, { replace: true, state: {} });
+          }}
+        />
+      ) : null}
 
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={8}>

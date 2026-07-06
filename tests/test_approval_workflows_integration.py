@@ -269,3 +269,126 @@ def test_request_auto_expiration(session):
 
     session.refresh(approval)
     assert approval.status == ApprovalStatus.EXPIRED
+
+
+def test_job_requires_approval_parameter_gated(session):
+    """Test parameter-aware gating for individual jobs."""
+    table = _seed_table(session, schema_name="test", table_name="param_gate_table")
+    session.commit()
+
+    # Create approved request with conservative parameters (e.g. retention_days = 14)
+    approval = create_approval_request(
+        session,
+        _approval_request_data(
+            session,
+            table,
+            OperationType.EXPIRE_SNAPSHOTS,
+            operation_params={"retention_days": 14, "retain_last": 5},
+        ),
+    )
+    approve_request(session, approval.id, approved_by="approver@example.com")
+    session.commit()
+
+    # 1. Safe run: retention_days = 30 (greater than 14), retain_last = 10 (greater than 5)
+    plan_safe = [
+        {
+            "type": OperationType.EXPIRE_SNAPSHOTS.value,
+            "params": {"retention_days": 30, "retain_last": 10},
+        }
+    ]
+    assert job_requires_approval(session, table.id, plan_safe) is False
+
+    # 2. Unsafe retention: retention_days = 5 (less than 14)
+    plan_unsafe_retention = [
+        {
+            "type": OperationType.EXPIRE_SNAPSHOTS.value,
+            "params": {"retention_days": 5, "retain_last": 5},
+        }
+    ]
+    assert job_requires_approval(session, table.id, plan_unsafe_retention) is True
+
+    # 3. Unsafe retain_last: retain_last = 2 (less than 5)
+    plan_unsafe_retain = [
+        {
+            "type": OperationType.EXPIRE_SNAPSHOTS.value,
+            "params": {"retention_days": 14, "retain_last": 2},
+        }
+    ]
+    assert job_requires_approval(session, table.id, plan_unsafe_retain) is True
+
+
+def test_batch_job_requires_approval_parameter_gated(session):
+    """Test parameter-aware gating for batch governor checks."""
+    from cryo.governor.prefetch import batch_job_requires_approval, prefetch_approved_operation_keys
+
+    table = _seed_table(session, schema_name="test", table_name="param_batch_table")
+    session.commit()
+
+    approval = create_approval_request(
+        session,
+        _approval_request_data(
+            session,
+            table,
+            OperationType.EXPIRE_SNAPSHOTS,
+            operation_params={"retention_days": 7},
+        ),
+    )
+    approve_request(session, approval.id, approved_by="approver@example.com")
+    session.commit()
+
+    approved_keys = prefetch_approved_operation_keys(session, {table.id})
+
+    # 1. Safe batch: requested retention_days = 7
+    plan_safe = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {"retention_days": 7}}]
+    assert batch_job_requires_approval(table.id, plan_safe, approved_keys) is False
+
+    # 2. Unsafe batch: requested retention_days = 3
+    plan_unsafe = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {"retention_days": 3}}]
+    assert batch_job_requires_approval(table.id, plan_unsafe, approved_keys) is True
+
+
+def test_single_use_approval_retirement(session):
+    """Test that a successful destructive operation retires its approved request."""
+    from cryo.db.repositories.job_store import SQLJobStore
+    from cryo.worker.worker import AuditRecord
+    from cryo.workflows.approvals import ApprovalRequest
+
+    table = _seed_table(session, schema_name="test", table_name="single_use_table")
+    session.commit()
+
+    # Create approved request
+    approval = create_approval_request(
+        session,
+        _approval_request_data(
+            session,
+            table,
+            OperationType.EXPIRE_SNAPSHOTS,
+            operation_params={"retention_days": 7},
+        ),
+    )
+    approve_request(session, approval.id, approved_by="approver@example.com")
+    session.commit()
+
+    # Verify initially approved and not executed
+    assert approval.status == ApprovalStatus.APPROVED
+    assert approval.executed_at is None
+
+    # Record a successful audit log for EXPIRE_SNAPSHOTS
+    job_id = uuid4()
+    record = AuditRecord(
+        job_id=str(job_id),
+        table_id=str(table.id),
+        action=OperationType.EXPIRE_SNAPSHOTS,
+        status="OK",
+        engine="trino",
+    )
+
+    job_store = SQLJobStore(lambda: session)
+    job_store.record_audit(record)
+
+    # Expire session state and reload approval request to check it's marked executed
+    session.expire_all()
+    updated_approval = session.get(ApprovalRequest, approval.id)
+    assert updated_approval is not None
+    assert updated_approval.executed_at is not None
+    assert updated_approval.execution_job_id == job_id

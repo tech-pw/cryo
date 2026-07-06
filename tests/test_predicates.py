@@ -10,6 +10,7 @@ from cryo.api.predicates import compile_predicate, evaluate_predicate
 from cryo.scheduler.rules import evaluate_predicate as scheduler_evaluate_predicate
 
 BASE_ROW: dict[str, Any] = {
+    "source_id": "11111111-1111-1111-1111-111111111111",
     "schema_name": "mview",
     "table_name": "orders_daily",
     "is_active": True,
@@ -46,6 +47,10 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
 @pytest.mark.parametrize(
     ("predicate", "miss"),
     [
+        (
+            {"field": "source_id", "op": "=", "value": "11111111-1111-1111-1111-111111111111"},
+            {"source_id": "22222222-2222-2222-2222-222222222222"},
+        ),
         ({"field": "schema_name", "op": "=", "value": "mview"}, {"schema_name": "raw"}),
         ({"field": "table_name", "op": "!=", "value": "tmp"}, {"table_name": "tmp"}),
         ({"field": "overall_score", "op": "<", "value": 60}, {"overall_score": 60}),

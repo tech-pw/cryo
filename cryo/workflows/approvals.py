@@ -280,10 +280,38 @@ def _parse_operation_type(value: str) -> OperationType | None:
         return None
 
 
+def _is_parameter_safe(
+    requested_params: dict[str, Any] | None,
+    approved_params: dict[str, Any] | None,
+) -> bool:
+    """
+    Check if the requested operation parameters are equal to or safer than approved ones.
+    For EXPIRE_SNAPSHOTS and REMOVE_ORPHAN_FILES, retention_days defaults to 7.
+    A larger retention_days is safer (retains more data).
+    A larger retain_last is safer (retains more snapshots).
+    """
+    req = requested_params or {}
+    app = approved_params or {}
+
+    req_retention = int(req.get("retention_days", 7))
+    app_retention = int(app.get("retention_days", 7))
+    if req_retention < app_retention:
+        return False
+
+    app_retain_last = app.get("retain_last")
+    if app_retain_last is not None:
+        req_retain_last = req.get("retain_last")
+        if req_retain_last is None or int(req_retain_last) < int(app_retain_last):
+            return False
+
+    return True
+
+
 def _has_approved_request(
     session: Session,
     table_id: UUID,
     operation_type: OperationType,
+    params: dict[str, Any] | None = None,
 ) -> bool:
     stmt = select(ApprovalRequest).where(
         ApprovalRequest.table_id == table_id,
@@ -291,7 +319,11 @@ def _has_approved_request(
         ApprovalRequest.status == ApprovalStatus.APPROVED,
         ApprovalRequest.executed_at.is_(None),
     )
-    return session.execute(stmt).scalars().first() is not None
+    requests = list(session.execute(stmt).scalars().all())
+    for req in requests:
+        if _is_parameter_safe(params, req.operation_params):
+            return True
+    return False
 
 
 def job_requires_approval(
@@ -309,7 +341,8 @@ def job_requires_approval(
         op_type = _parse_operation_type(str(op.get("type", "")))
         if op_type is None or not requires_approval(op_type):
             continue
-        if not _has_approved_request(session, table_id, op_type):
+        op_params = op.get("params") or {}
+        if not _has_approved_request(session, table_id, op_type, op_params):
             return True
 
     return False

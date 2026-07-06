@@ -157,47 +157,47 @@ def fetch_bucket_storage_metrics(
             )
             if datapoints:
                 size_by_class[storage_type] = int(_latest(datapoints)["Average"])
+
+        object_count: int | None = None
+        object_datapoints = _get_metric_statistics(
+            cloudwatch,
+            metric_name="NumberOfObjects",
+            dimensions=[
+                {"Name": "BucketName", "Value": bucket},
+                {"Name": "StorageType", "Value": "AllStorageTypes"},
+            ],
+            start=start,
+            end=now,
+        )
+        measured_at = None
+        if object_datapoints:
+            latest = _latest(object_datapoints)
+            object_count = int(latest["Average"])
+            measured_at = latest["Timestamp"]
+        elif size_by_class:
+            # Fall back to the most recent storage-metric timestamp if NumberOfObjects had no data.
+            measured_at = max(
+                (
+                    _latest(
+                        _get_metric_statistics(
+                            cloudwatch,
+                            metric_name="BucketSizeBytes",
+                            dimensions=[
+                                {"Name": "BucketName", "Value": bucket},
+                                {"Name": "StorageType", "Value": st},
+                            ],
+                            start=start,
+                            end=now,
+                        )
+                    )["Timestamp"]
+                    for st in size_by_class
+                ),
+                default=None,
+            )
     except Exception as exc:
         raise RuntimeError(
             f"Failed to fetch S3 storage metrics for bucket {bucket}: {exc}"
         ) from exc
-
-    object_count: int | None = None
-    object_datapoints = _get_metric_statistics(
-        cloudwatch,
-        metric_name="NumberOfObjects",
-        dimensions=[
-            {"Name": "BucketName", "Value": bucket},
-            {"Name": "StorageType", "Value": "AllStorageTypes"},
-        ],
-        start=start,
-        end=now,
-    )
-    measured_at = None
-    if object_datapoints:
-        latest = _latest(object_datapoints)
-        object_count = int(latest["Average"])
-        measured_at = latest["Timestamp"]
-    elif size_by_class:
-        # Fall back to the most recent storage-metric timestamp if NumberOfObjects had no data.
-        measured_at = max(
-            (
-                _latest(
-                    _get_metric_statistics(
-                        cloudwatch,
-                        metric_name="BucketSizeBytes",
-                        dimensions=[
-                            {"Name": "BucketName", "Value": bucket},
-                            {"Name": "StorageType", "Value": st},
-                        ],
-                        start=start,
-                        end=now,
-                    )
-                )["Timestamp"]
-                for st in size_by_class
-            ),
-            default=None,
-        )
 
     return BucketStorageMetrics(
         bucket=bucket,
