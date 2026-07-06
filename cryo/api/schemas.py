@@ -709,3 +709,39 @@ class RunJobsResponse(BaseModel):
 
 class RunSnapshotPayload(RunJobsResponse):
     type: Literal["run_snapshot"] = "run_snapshot"
+
+
+class RunLogEventPayload(BaseModel):
+    type: Literal["log_line"] = "log_line"
+    ts: datetime | str
+    run_id: uuid.UUID
+    level: str = "info"
+    message: str
+    job_id: uuid.UUID | None = None
+    table_id: uuid.UUID | None = None
+    table_ref: str | None = None
+    chunk_id: int | None = None
+    operation: str | None = None
+    engine: str | None = None
+
+
+class RunJobStatusEventPayload(BaseModel):
+    type: Literal["job_status"] = "job_status"
+    ts: datetime | str
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    status: str
+    table_id: uuid.UUID | None = None
+    table_ref: str | None = None
+    message: str | None = None
+
+
+class RunScanProgressEventPayload(BaseModel):
+    type: Literal["scan_progress"] = "scan_progress"
+    ts: datetime | str
+    run_id: uuid.UUID
+    event: str
+    level: str = "info"
+    message: str
+    chunk_id: int | None = None
+    table_ref: str | None = None

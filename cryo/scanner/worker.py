@@ -12,6 +12,13 @@ from sqlalchemy.orm import Session
 from cryo.db.models import MaintenanceRun
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.session import SessionLocal
+from cryo.queue.run_events import (
+    RunEventSink,
+    build_log_line,
+    build_scan_progress,
+    safe_publish,
+    scan_progress_message,
+)
 from cryo.queue.scan_queue import ScanQueue
 from cryo.scanner.run import ScanSummary, run_scan
 
@@ -33,9 +40,11 @@ class ScanWorker:
         queue: ScanQueue,
         *,
         session_factory: Callable[[], Session] = SessionLocal,
+        run_events: RunEventSink | None = None,
     ) -> None:
         self._queue = queue
         self._session_factory = session_factory
+        self._run_events = run_events
 
     def process_next(self) -> ScanWorkResult | None:
         payload = self._queue.claim() or self._claim_accepted_run()
@@ -68,6 +77,15 @@ class ScanWorker:
                 chunk_id=chunk_id,
                 num_chunks=num_chunks,
             )
+            safe_publish(
+                self._run_events,
+                parsed_run_id,
+                build_log_line(
+                    run_id=parsed_run_id,
+                    chunk_id=chunk_id,
+                    message=f"Started scan chunk {chunk_id + 1}/{num_chunks}",
+                ),
+            )
 
             def progress(event: dict[str, Any]) -> None:
                 scanner_repo.record_scan_progress(
@@ -76,6 +94,32 @@ class ScanWorker:
                     chunk_id=chunk_id,
                     num_chunks=num_chunks,
                     event=event,
+                )
+                message = scan_progress_message(event, chunk_id=chunk_id, num_chunks=num_chunks)
+                level = "error" if str(event.get("outcome") or "") == "failed" else "info"
+                table_ref = event.get("table_ref")
+                safe_publish(
+                    self._run_events,
+                    parsed_run_id,
+                    build_scan_progress(
+                        run_id=parsed_run_id,
+                        event=str(event.get("event") or ""),
+                        message=message,
+                        chunk_id=chunk_id,
+                        table_ref=str(table_ref) if table_ref else None,
+                        level=level,
+                    ),
+                )
+                safe_publish(
+                    self._run_events,
+                    parsed_run_id,
+                    build_log_line(
+                        run_id=parsed_run_id,
+                        chunk_id=chunk_id,
+                        table_ref=str(table_ref) if table_ref else None,
+                        level=level,
+                        message=message,
+                    ),
                 )
 
             def cancel_requested() -> bool:
@@ -112,6 +156,16 @@ class ScanWorker:
                     },
                     error=str(exc),
                 )
+                safe_publish(
+                    self._run_events,
+                    parsed_run_id,
+                    build_log_line(
+                        run_id=parsed_run_id,
+                        chunk_id=chunk_id,
+                        level="error",
+                        message=f"Scan chunk {chunk_id + 1}/{num_chunks} failed: {exc}",
+                    ),
+                )
                 logger.exception("Scan run %s failed", run_id)
                 return ScanWorkResult(run_id=run_id, status="failed")
 
@@ -134,6 +188,18 @@ class ScanWorker:
                     "skipped": scan_summary.skipped,
                     "failed": scan_summary.failed,
                 },
+            )
+            safe_publish(
+                self._run_events,
+                parsed_run_id,
+                build_log_line(
+                    run_id=parsed_run_id,
+                    chunk_id=chunk_id,
+                    level="warning" if status in {"partial_failed", "failed"} else "info",
+                    message=(
+                        f"Finished scan chunk {chunk_id + 1}/{num_chunks} with status {status}"
+                    ),
+                ),
             )
             return ScanWorkResult(run_id=run_id, status=status, summary=scan_summary)
 
