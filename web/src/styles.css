@@ -634,6 +634,20 @@ textarea.mono-input {
   }
 }
 
+/* Scanner idle status — neutral info, not a warning callout */
+.scanner-status-note.ant-alert-info {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.scanner-status-note .ant-alert-icon {
+  color: var(--ink-faint);
+}
+
+.scanner-status-note .ant-alert-message {
+  color: var(--ink-soft);
+}
+
 /* Pulsing Live Indicators */
 .pulse-dot {
   display: inline-block;
