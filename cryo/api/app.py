@@ -80,6 +80,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(metrics_router)
     instrument_fastapi(app)
 
+    # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup
+    # so the Redis/InMemory event bus instances pick it up via the process-wide handle.
+    from cryo.observability.observation_lakehouse import ObservationLakehouse
+    from cryo.queue.run_events import attach_observation_lakehouse
+
+    attach_observation_lakehouse(
+        ObservationLakehouse(storage_path=settings.observation_lakehouse_path)
+    )
+
     @app.on_event("shutdown")
     def _shutdown_tracing() -> None:
         shutdown_tracing()

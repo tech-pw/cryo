@@ -16,12 +16,12 @@ export const Login = () => {
     return (
       <div className="login-screen">
         <Card className="login-card" title="Sign in to Cryo">
-          <Space direction="vertical" size={16} className="full-width">
+          <Space orientation="vertical" size={16} className="full-width">
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
               Production sign-in uses your organization identity provider. Dev token issuance is
               disabled.
             </Typography.Paragraph>
-            {error ? <Alert type="error" showIcon message="Sign-in failed" description={error} /> : null}
+            {error ? <Alert type="error" showIcon title="Sign-in failed" description={error} /> : null}
             <Button type="primary" icon={<LockOutlined />} loading={loading} block onClick={startOidcSignIn}>
               Sign in with SSO
             </Button>
@@ -34,7 +34,7 @@ export const Login = () => {
   return (
     <div className="login-screen">
       <Card className="login-card" title="Sign in to Cryo">
-        <Space direction="vertical" size={16} className="full-width">
+        <Space orientation="vertical" size={16} className="full-width">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Cryo uses signed JWTs from the API. In dev, choose a role and sign in; production
             deployments disable the token endpoint and integrate your identity provider.
@@ -43,11 +43,11 @@ export const Login = () => {
             <Alert
               type="warning"
               showIcon
-              message="Dev token endpoint disabled"
+              title="Dev token endpoint disabled"
               description="Configure OIDC (CRYO_OIDC_ISSUER_URL, CRYO_OIDC_CLIENT_ID) for production sign-in."
             />
           ) : null}
-          {error ? <Alert type="error" showIcon message="Sign-in failed" description={error} /> : null}
+          {error ? <Alert type="error" showIcon title="Sign-in failed" description={error} /> : null}
           <Form<LoginForm>
             form={form}
             layout="vertical"

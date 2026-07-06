@@ -64,7 +64,7 @@ export const DatalakeHealth = () => {
           className="page-alert"
           type="info"
           showIcon
-          message="Dashboard endpoint is not available yet; showing a fallback view from /tables."
+          title="Dashboard endpoint is not available yet; showing a fallback view from /tables."
         />
       ) : null}
       <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />
@@ -168,7 +168,7 @@ export const DatalakeHealth = () => {
               <Card title="Top offenders">
                 <Table<TableRead>
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
                   dataSource={topOffenders}
                   pagination={false}
                   columns={[

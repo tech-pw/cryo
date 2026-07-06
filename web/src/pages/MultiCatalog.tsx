@@ -70,7 +70,7 @@ export const MultiCatalog = () => {
           ) : (
             <Badge status="default" />
           )}
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             <Text strong>{record.catalog_name}</Text>
             <Tag color="blue" style={{ fontSize: "10px" }}>
               {record.catalog_type.toUpperCase()}
@@ -125,7 +125,7 @@ export const MultiCatalog = () => {
       key: "health",
       width: "14%",
       render: (score: number) => (
-        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={2} style={{ width: "100%" }}>
           <Text style={{ color: healthScoreColor(score) }}>{score.toFixed(1)}</Text>
           <Progress
             percent={score}
@@ -210,7 +210,7 @@ export const MultiCatalog = () => {
                   value={data?.total_cost_usd || 0}
                   prefix="$"
                   precision={2}
-                  valueStyle={{ color: "#ff4d4f" }}
+                  styles={{ content: { color: "#ff4d4f" }}}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Monthly storage costs
@@ -226,7 +226,7 @@ export const MultiCatalog = () => {
                   }
                   prefix="$"
                   precision={2}
-                  valueStyle={{ color: "#52c41a" }}
+                  styles={{ content: { color: "#52c41a" } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Through maintenance
@@ -297,21 +297,21 @@ export const MultiCatalog = () => {
                   onClick={() => navigate(`/tables?source=${catalog.catalog_id}`)}
                   style={{ cursor: "pointer" }}
                 >
-                  <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                  <Space orientation="vertical" style={{ width: "100%" }} size={8}>
                     <Row>
                       <Col span={12}>
                         <Statistic
                           title="Tables"
                           value={catalog.table_count}
                           prefix={<FileTextOutlined />}
-                          valueStyle={{ fontSize: "18px" }}
+                          styles={{ content: { fontSize: "18px" } }}
                         />
                       </Col>
                       <Col span={12}>
                         <Statistic
                           title="Size"
                           value={formatGb(catalog.total_size_gb)}
-                          valueStyle={{ fontSize: "18px" }}
+                          styles={{ content: { fontSize: "18px" }}}
                         />
                       </Col>
                     </Row>
@@ -321,10 +321,9 @@ export const MultiCatalog = () => {
                           title="Health"
                           value={catalog.avg_health_score.toFixed(0)}
                           suffix="/100"
-                          valueStyle={{
+                          styles={{ content: {
                             fontSize: "18px",
-                            color: healthScoreColor(catalog.avg_health_score),
-                          }}
+                            color: healthScoreColor(catalog.avg_health_score), }}}
                         />
                       </Col>
                       <Col span={12}>
@@ -332,7 +331,7 @@ export const MultiCatalog = () => {
                           title="Cost/mo"
                           value={formatCurrency(catalog.monthly_cost_usd)}
                           prefix={<DollarOutlined />}
-                          valueStyle={{ fontSize: "18px" }}
+                          styles={{ content: { fontSize: "18px" } }}
                         />
                       </Col>
                     </Row>

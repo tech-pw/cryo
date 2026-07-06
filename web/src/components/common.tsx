@@ -1,6 +1,6 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Space, Statistic, Tooltip, Typography } from "antd";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ResponsiveContainer } from "recharts";
 import { ApiError } from "../api/client";
@@ -20,14 +20,35 @@ export const ChartFrame = ({
   /** "xs" is for small fixed-radius charts (e.g. a donut) that don't need a full-size frame. */
   size?: "md" | "xs";
   children: React.ReactNode;
-}) =>
-  empty ? (
-    <EmptyState title={emptyTitle} description={emptyDescription} />
-  ) : (
-    <div className={size === "xs" ? "chart-frame xs" : "chart-frame"} role="img" aria-label={ariaLabel}>
-      <ResponsiveContainer>{children}</ResponsiveContainer>
+}) => {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const measure = () => setReady(el.clientWidth > 0 && el.clientHeight > 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [empty]);
+
+  if (empty) {
+    return <EmptyState title={emptyTitle} description={emptyDescription} />;
+  }
+
+  return (
+    <div
+      ref={hostRef}
+      className={size === "xs" ? "chart-frame xs" : "chart-frame"}
+      role="img"
+      aria-label={ariaLabel}
+    >
+      {ready ? <ResponsiveContainer>{children}</ResponsiveContainer> : null}
     </div>
   );
+};
 
 export const PageHeader = ({
   title,
@@ -60,7 +81,7 @@ export const EmptyState = ({
     className="empty-state"
     image={Empty.PRESENTED_IMAGE_SIMPLE}
     description={
-      <Space direction="vertical" size={4}>
+      <Space orientation="vertical" size={4}>
         <Typography.Text strong>{title}</Typography.Text>
         {description ? <Typography.Text type="secondary">{description}</Typography.Text> : null}
         {action}
@@ -150,9 +171,9 @@ export const QueryErrorAlert = ({
       className={className}
       type="error"
       showIcon
-      message={isAuth ? "Authentication or permission error" : title}
+      title={isAuth ? "Authentication or permission error" : title}
       description={
-        <Space direction="vertical" size={4}>
+        <Space orientation="vertical" size={4}>
           <Typography.Text>{detail}</Typography.Text>
           {isAuth ? (
             <Typography.Text type="secondary">
@@ -179,7 +200,7 @@ export const TruncatedResultsBanner = ({
       className="page-alert"
       type="warning"
       showIcon
-      message={`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${noun}`}
+      title={`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${noun}`}
       description="Refine filters or use search to narrow the list — the view is capped for performance."
     />
   ) : null;

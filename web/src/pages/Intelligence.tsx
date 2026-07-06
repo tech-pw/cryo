@@ -168,7 +168,7 @@ export const Intelligence = () => {
         className="page-alert"
         type="info"
         showIcon
-        message="Operator quick starts: investigate anomalies, estimate savings impact, and pick tables to run next."
+        title="Operator quick starts: investigate anomalies, estimate savings impact, and pick tables to run next."
       />
 
       <QueryErrorAlert error={questions.error} title="Failed to load copilot questions" />
@@ -178,7 +178,7 @@ export const Intelligence = () => {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
           <Card title="Cryo copilot">
-            <Space direction="vertical" className="full-width" size={12}>
+            <Space orientation="vertical" className="full-width" size={12}>
               <TextArea
                 rows={3}
                 value={question}
@@ -252,7 +252,7 @@ export const Intelligence = () => {
         </Col>
 
         <Col xs={24} lg={10}>
-          <Space direction="vertical" className="full-width" size={16}>
+          <Space orientation="vertical" className="full-width" size={16}>
             <Card title="Governor bandit" loading={bandit.isLoading}>
               {bandit.data ? (
                 <>
@@ -264,7 +264,7 @@ export const Intelligence = () => {
                       <Statistic
                         title="Confident"
                         value={bandit.data.confident ? "Yes" : "No"}
-                        valueStyle={{ color: bandit.data.confident ? "#52c41a" : undefined }}
+                        styles={{ content: { color: bandit.data.confident ? "#52c41a" : undefined }}}
                       />
                     </Col>
                   </Row>
@@ -284,7 +284,7 @@ export const Intelligence = () => {
                       style={{ marginTop: 12 }}
                       type="info"
                       showIcon
-                      message="Still learning — using heuristic admission until enough outcomes are recorded."
+                      title="Still learning — using heuristic admission until enough outcomes are recorded."
                     />
                   ) : null}
                   {role === "admin" ? (
@@ -353,7 +353,7 @@ export const Intelligence = () => {
                       style={{ marginTop: 12 }}
                       type="warning"
                       showIcon
-                      message="Few labeled maintenance outcomes — projections still mostly heuristic."
+                      title="Few labeled maintenance outcomes — projections still mostly heuristic."
                     />
                   ) : null}
                 </>
@@ -369,7 +369,7 @@ export const Intelligence = () => {
         <Col xs={24} lg={12}>
           <Card title="MCP tools" extra={<ToolOutlined />}>
             <QueryErrorAlert error={mcpTools.error} title="Failed to load MCP tools" />
-            <Space direction="vertical" className="full-width" size={12}>
+            <Space orientation="vertical" className="full-width" size={12}>
               <Select
                 placeholder="Select tool"
                 value={mcpTool}
@@ -414,7 +414,7 @@ export const Intelligence = () => {
         </Col>
         <Col xs={24} lg={12}>
           <Card title="Direct AI chat" extra={<RobotOutlined />}>
-            <Space direction="vertical" className="full-width" size={12}>
+            <Space orientation="vertical" className="full-width" size={12}>
               <Typography.Text type="secondary">
                 Uses the default AI provider via <Typography.Text code>/ai/chat</Typography.Text> with optional JSON context.
               </Typography.Text>

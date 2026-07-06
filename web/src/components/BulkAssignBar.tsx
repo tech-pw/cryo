@@ -61,7 +61,7 @@ export const BulkAssignBar = ({
 
   return (
     <div className="bulk-bar" data-testid="bulk-assign-bar">
-      <Space direction="vertical" size={6}>
+      <Space orientation="vertical" size={6}>
         <Space wrap size={8}>
           {isFilterSelection ? <Tag color="processing">Filter selection</Tag> : null}
           <Typography.Text strong>

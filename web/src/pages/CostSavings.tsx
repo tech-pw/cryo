@@ -228,7 +228,7 @@ export const CostSavings = () => {
           className="page-alert"
           type="info"
           showIcon
-          message="Cost dashboard endpoint is not available yet; showing a fallback view from /tables."
+          title="Cost dashboard endpoint is not available yet; showing a fallback view from /tables."
         />
       ) : null}
       {cost.isLoading || tables.isLoading ? (
@@ -381,7 +381,7 @@ export const CostSavings = () => {
               <Card title="Top opportunities">
                 <Table<TableRead>
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
                   dataSource={data.top_opportunities}
                   pagination={false}
                   rowSelection={{

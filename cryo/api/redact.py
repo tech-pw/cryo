@@ -32,11 +32,12 @@ SENSITIVE_KEYS = {
 }
 
 
-def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
+def redact_sensitive_dict(data: dict[str, Any], _depth: int = 0) -> dict[str, Any]:
     """Redact sensitive fields in a dictionary recursively.
 
     Args:
         data: Dictionary that may contain sensitive keys
+        _depth: Internal recursion guard (max 16 levels -- deeper structures are kept as-is).
 
     Returns:
         Copy of dictionary with sensitive values redacted
@@ -44,7 +45,11 @@ def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
 
+    if _depth > 16:
+        return data
+
     result: dict[str, Any] = {}
+    seen: set[int] = set()
     for key, value in data.items():
         key_lower = key.lower()
 
@@ -58,12 +63,16 @@ def redact_sensitive_dict(data: dict[str, Any]) -> dict[str, Any]:
             else:
                 result[key] = "***REDACTED***"
         elif isinstance(value, dict):
-            # Recursively redact nested dicts
-            result[key] = redact_sensitive_dict(value)
+            ident = id(value)
+            if ident in seen:
+                result[key] = value
+                continue
+            seen.add(ident)
+            result[key] = redact_sensitive_dict(value, _depth + 1)
         elif isinstance(value, list):
-            # Recursively redact lists of dicts
             result[key] = [
-                redact_sensitive_dict(item) if isinstance(item, dict) else item for item in value
+                redact_sensitive_dict(item, _depth + 1) if isinstance(item, dict) else item
+                for item in value
             ]
         else:
             result[key] = value

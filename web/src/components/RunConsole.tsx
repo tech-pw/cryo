@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Drawer, List, Space, Table, Typography } from "antd";
+import { Alert, Button, Drawer, Space, Table, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getRun, getRunJobs } from "../api/client";
@@ -64,12 +64,12 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
   }, [logJob, messages]);
 
   return (
-    <Space direction="vertical" size={12} className="full-width">
+    <Space orientation="vertical" size={12} className="full-width">
       {!wsOpen ? (
         <Alert
           type={wsExhausted ? "warning" : "info"}
           showIcon
-          message={
+          title={
             wsExhausted
               ? "Live socket disconnected after multiple retries; polling run state every 5 seconds."
               : reconnectAttempt > 0
@@ -150,21 +150,23 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         ]}
         scroll={{ x: 920 }}
       />
-      <List
-        className="log-list"
-        size="small"
-        header="Live log"
-        dataSource={messages}
-        locale={{ emptyText: "No live events yet." }}
-        renderItem={(item) => (
-          <List.Item>
-            <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-            <Typography.Text type={item.level === "error" ? "danger" : undefined}>
-              {item.message ?? item.status ?? item.event}
-            </Typography.Text>
-          </List.Item>
+      <div className="log-list">
+        <div className="log-list-header">Live log</div>
+        {messages.length === 0 ? (
+          <div className="log-list-empty">No live events yet.</div>
+        ) : (
+          <ul className="log-list-ul">
+            {messages.map((item, idx) => (
+              <li key={idx} className="log-list-item">
+                <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
+                <Typography.Text type={item.level === "error" ? "danger" : undefined}>
+                  {item.message ?? item.status ?? item.event}
+                </Typography.Text>
+              </li>
+            ))}
+          </ul>
         )}
-      />
+      </div>
       <Drawer
         title={logJob ? `Job ${shortId(logJob.id)}` : "Job logs"}
         open={Boolean(logJob)}
@@ -179,7 +181,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         }
       >
         {logJob ? (
-          <Space direction="vertical" size={12} className="full-width">
+          <Space orientation="vertical" size={12} className="full-width">
             <Space wrap>
               <StatusTag status={logJob.status} />
               {logJob.error ? (
@@ -190,19 +192,20 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
               Engine {logJob.destination_name ?? logJob.destination_engine ?? "—"} · started{" "}
               {formatTime(logJob.started_at)}
             </Typography.Text>
-            <List
-              size="small"
-              locale={{ emptyText: "No live events for this job yet." }}
-              dataSource={jobLogMessages}
-              renderItem={(item) => (
-                <List.Item>
-                  <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-                  <Typography.Text type={item.level === "error" ? "danger" : undefined}>
-                    {item.message ?? item.status ?? item.event}
-                  </Typography.Text>
-                </List.Item>
-              )}
-            />
+            {jobLogMessages.length === 0 ? (
+              <Typography.Text type="secondary">No live events for this job yet.</Typography.Text>
+            ) : (
+              <ul className="log-list-ul">
+                {jobLogMessages.map((item, idx) => (
+                  <li key={idx} className="log-list-item">
+                    <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
+                    <Typography.Text type={item.level === "error" ? "danger" : undefined}>
+                      {item.message ?? item.status ?? item.event}
+                    </Typography.Text>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Space>
         ) : null}
       </Drawer>

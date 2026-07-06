@@ -71,3 +71,16 @@ export const formatPercent = (value?: number | null, digits = 0): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   return `${value.toFixed(digits)}%`;
 };
+
+export const formatSlaHours = (hours?: number | null): string => {
+  if (hours === null || hours === undefined || Number.isNaN(hours)) return "—";
+  if (hours < 1) return `${(hours * 60).toFixed(0)}m`;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+};
+
+export const formatSlaDays = (days?: number | null): string => {
+  if (days === null || days === undefined || Number.isNaN(days)) return "—";
+  if (days < 1) return `${(days * 24).toFixed(1)}h`;
+  return `${days.toFixed(1)}d`;
+};

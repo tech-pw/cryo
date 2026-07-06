@@ -250,6 +250,7 @@ export interface ColumnQualityMetricRead {
   max_value?: string | number | null;
   value_range_changed?: boolean;
   value_range_explanation?: string | null;
+  column_type?: string | null;
 }
 
 export interface DataQualityProfileRead {
@@ -540,6 +541,89 @@ export interface CostDashboard {
   trend?: CostTrendPoint[];
 }
 
+export interface CompactionCandidateRead {
+  partition_path: string;
+  partition_size_gb: number;
+  small_files: number;
+  query_freq_per_day: number;
+  p95_latency_ms: number;
+  score: number;
+  priority: "HIGH" | "MED" | "LOW" | string;
+  savings_estimate_usd: number;
+  reasons: string[];
+}
+
+export interface CompactionCandidatesResponse {
+  table_id: UUID;
+  candidates: CompactionCandidateRead[];
+  generated_at: string;
+}
+
+export interface UnionScoreRead {
+  target_table_id: string;
+  candidate_table_id: string;
+  score: number;
+  overlap_columns: string[];
+  union_sql: string;
+  rationale: string;
+  candidate_schema: string;
+  candidate_table_name: string;
+  candidate_schema_name: string;
+}
+
+export interface UnionableResponse {
+  target_table_id: UUID;
+  results: UnionScoreRead[];
+  generated_at: string;
+}
+
+export interface SkillsetRead {
+  id: string;
+  name: string;
+  version: string;
+  prompts: Record<string, string>;
+  tools: JsonObject[];
+  created_at: string;
+  is_active: boolean;
+  metrics: Record<string, number>;
+}
+
+export interface SkillsetListResponse {
+  skillsets: SkillsetRead[];
+  generated_at: string;
+}
+
+export interface SkillsetWrite {
+  name: string;
+  version: string;
+  prompts: Record<string, string>;
+  tools: JsonObject[];
+  activate: boolean;
+}
+
+export interface SkillsetRollbackRequest {
+  version: string;
+}
+
+export interface SkillsetOutcomeWrite {
+  prompt_name: string;
+  recommendation: string;
+  decision: "accepted" | "rejected" | "pending";
+  score?: number | null;
+  table_id?: UUID | null;
+}
+
+export interface SkillsetOutcomeRead {
+  id: UUID;
+  skillset_id: UUID;
+  recorded_at: string;
+  table_id?: UUID | null;
+  prompt_name: string;
+  recommendation: string;
+  decision: string;
+  score?: number | null;
+}
+
 export interface TableCostRead {
   table_id: UUID;
   precision: CostPrecision;
@@ -557,4 +641,94 @@ export interface TableCostRead {
   by_operation: CostByOperation[];
   last_full_cost_scan_at?: string | null;
   scan_at?: string | null;
+}
+
+// ============================================================================
+// Plan Verifier (arXiv:2510.09567, proof-carrying plans)
+// ============================================================================
+
+export type PlanViolationSeverity = "critical" | "warning";
+
+export interface PartitionPredicateTerm {
+  base_column: string;
+  transform: string;
+  value?: unknown;
+  col_type?: string;
+  transform_param?: number | null;
+  partition_field?: string | null;
+  unsupported_reason?: string | null;
+}
+
+export interface PartitionPredicate {
+  terms: PartitionPredicateTerm[];
+  unsupported_reason?: string | null;
+}
+
+export interface PlanOperation {
+  type: OperationType | "compute_statistics";
+  params: Record<string, unknown>;
+  predicates?: PartitionPredicate[] | null;
+}
+
+export interface MaintenancePlan {
+  table_ref: string;
+  mode: Mode;
+  operations: PlanOperation[];
+  notes?: string[];
+}
+
+export interface PlanViolation {
+  invariant: string;
+  severity: PlanViolationSeverity;
+  message: string;
+  location: string;
+}
+
+export interface PlanVerdict {
+  verified: boolean;
+  plan_hash: string;
+  verifier_version: string;
+  invariants_checked: string[];
+  violations: PlanViolation[];
+}
+
+export interface PlanVerifyRequest {
+  plan: MaintenancePlan;
+  signature?: string | null;
+}
+
+// ============================================================================
+// Observation Lakehouse (SANER 2026, arXiv:2512.02795)
+// ============================================================================
+
+export interface ObservationEvent {
+  id: string;
+  recorded_at: string;
+  run_id?: string | null;
+  event_type: string;
+  level: string;
+  table_id?: string | null;
+  subject: string;
+  payload: Record<string, unknown>;
+  correlation_id?: string | null;
+  actor?: string | null;
+}
+
+export interface ObservationSearchResponse {
+  items: ObservationEvent[];
+  total: number;
+}
+
+export interface ObservationStatsResponse {
+  total_files: number;
+  total_bytes: number;
+  oldest_event: string | null;
+  newest_event: string | null;
+}
+
+export interface ObservationCompactResponse {
+  files_merged: number;
+  rows: number;
+  bytes_in: number;
+  bytes_out: number;
 }

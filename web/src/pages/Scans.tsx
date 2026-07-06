@@ -204,7 +204,7 @@ const ScanScopeCard = ({
 
   return (
     <Card title="Trigger a scan">
-      <Space direction="vertical" size={12} className="full-width">
+      <Space orientation="vertical" size={12} className="full-width">
         <Form layout="vertical">
           <Form.Item label="Scope">
             <Segmented<ScanScope>
@@ -316,9 +316,9 @@ const ScanScopeCard = ({
                 <Alert
                   type="info"
                   showIcon
-                  message="No tables known yet"
+                  title="No tables known yet"
                   description={
-                    <Space direction="vertical" size={8}>
+                    <Space orientation="vertical" size={8}>
                       <Typography.Text>
                         Cryo only knows individual table ids once they've been scanned at least
                         once. Narrow by a schema above to see what's actually in the catalog, or
@@ -347,7 +347,7 @@ const ScanScopeCard = ({
             <Alert
               type="warning"
               showIcon
-              message={`Only showing the first ${sourceTables.data?.items.length} of ${sourceTables.data?.total} tables in this lakehouse -- narrow by schema to see the rest.`}
+              title={`Only showing the first ${sourceTables.data?.items.length} of ${sourceTables.data?.total} tables in this lakehouse -- narrow by schema to see the rest.`}
               style={{ marginBottom: 16, width: "100%" }}
             />
           ) : null}
@@ -576,14 +576,14 @@ export const Scans = () => {
           type="success"
           showIcon
           closable
-          message={
+          title={
             connectionNotice.kind === "lakehouse"
               ? `Lakehouse "${connectionNotice.name}" is connected`
               : `Engine "${connectionNotice.name}" is connected`
           }
           description={
             connectionNotice.kind === "lakehouse" ? (
-              <Space direction="vertical" size={8}>
+              <Space orientation="vertical" size={8}>
                 <Typography.Text>
                   Run a catalog scan to discover tables and populate health grades for this lakehouse.
                 </Typography.Text>
@@ -607,7 +607,7 @@ export const Scans = () => {
                 </Space>
               </Space>
             ) : (
-              <Space direction="vertical" size={8}>
+              <Space orientation="vertical" size={8}>
                 <Typography.Text>
                   Scan your lakehouse catalog first so Cryo knows which tables exist. Then assign a preset to
                   run maintenance on this engine.
@@ -628,9 +628,9 @@ export const Scans = () => {
       <Row gutter={[12, 12]} align="stretch">
         {/* Left Column: Operational Hub */}
         <Col xs={24} xl={16} style={{ display: "flex" }}>
-          <Space direction="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
+          <Space orientation="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
             <Card title="Scanner status" loading={status.isLoading}>
-              <Space direction="vertical" size={12} className="full-width">
+              <Space orientation="vertical" size={12} className="full-width">
                 <StatStrip
                   items={[
                     { label: "Tables with stats", value: `${formatNumber(status.data?.tables_with_stats)} / ${formatNumber(status.data?.total_tables)}` },
@@ -699,7 +699,7 @@ export const Scans = () => {
             <Card title="Recent scans" style={{ flex: 1 }}>
               <Table<RunRead>
                 size="small"
-                rowKey="id"
+                rowKey={(row) => row.id ?? `${row.kind}-${row.status}-${row.created_at ?? "scan"}`}
                 loading={runs.isLoading}
                 dataSource={runs.data ?? []}
                 pagination={{ pageSize: 12 }}
@@ -720,7 +720,7 @@ export const Scans = () => {
 
         {/* Right Column: Controls & Configuration */}
         <Col xs={24} xl={8} style={{ display: "flex" }}>
-          <Space direction="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
+          <Space orientation="vertical" size={12} className="full-width" style={{ display: "flex", flex: 1 }}>
             <ScanScopeCard
               canOperate={canOperate}
               hasActiveRun={Boolean(activeRun)}

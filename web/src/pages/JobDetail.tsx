@@ -95,7 +95,7 @@ export const JobDetail = () => {
 
       {data.error_message && (
         <Alert
-          message="Job Failed"
+          title="Job Failed"
           description={data.error_message}
           type="error"
           showIcon
@@ -119,7 +119,7 @@ export const JobDetail = () => {
             <Statistic
               title="Input Files"
               value={data.input_files_count || 0}
-              valueStyle={{ color: "#1890ff" }}
+              styles={{ content: { color: "#1890ff" }}}
             />
           </Card>
         </Col>
@@ -128,7 +128,7 @@ export const JobDetail = () => {
             <Statistic
               title="Output Files"
               value={data.output_files_count || 0}
-              valueStyle={{ color: "#52c41a" }}
+              styles={{ content: { color: "#52c41a" }}}
             />
           </Card>
         </Col>
@@ -138,8 +138,10 @@ export const JobDetail = () => {
               title="Effectiveness Ratio"
               value={data.effectiveness_ratio?.toFixed(1) || "—"}
               suffix=":1"
-              valueStyle={{
-                color: (data.effectiveness_ratio || 0) >= 10 ? "#52c41a" : "#faad14",
+              styles={{
+                content: {
+                  color: (data.effectiveness_ratio || 0) >= 10 ? "#52c41a" : "#faad14",
+                },
               }}
             />
           </Card>
@@ -189,11 +191,11 @@ export const JobDetail = () => {
           }
           style={{ marginBottom: 16 }}
         >
-          <Space direction="vertical" style={{ width: "100%" }}>
+          <Space orientation="vertical" style={{ width: "100%" }}>
             {data.partition_predicates.map((pred, idx) => (
               <Alert
                 key={idx}
-                message={<Text code>{pred}</Text>}
+                title={<Text code>{pred}</Text>}
                 type="info"
                 showIcon={false}
               />
@@ -248,7 +250,7 @@ export const JobDetail = () => {
             ) : rawJob.isLoading ? (
               <Spin />
             ) : (
-              <Alert type="warning" message={(rawJob.error as Error)?.message ?? "Unavailable"} />
+              <Alert type="warning" title={(rawJob.error as Error)?.message ?? "Unavailable"} />
             )
           }
         ]}

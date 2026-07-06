@@ -59,9 +59,16 @@ def get_or_compute_embedding(session: Session, row: dict[str, Any]) -> tuple[flo
 
 
 def _sync_embedding_vec(session: Session, cached: TableEmbedding, vec: tuple[float, ...]) -> None:
-    """Best-effort sync to pgvector column when available."""
-    from sqlalchemy import text
+    """Best-effort sync to pgvector column when available.
 
+    Wrapped in a SAVEPOINT so a missing ``embedding_vec`` column or absent
+    ``vector`` extension can't poison the surrounding transaction: we abort only
+    this nested unit and the caller keeps going with the JSONB-only fallback.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sp = session.begin_nested()
     try:
         vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
         session.execute(
@@ -71,8 +78,11 @@ def _sync_embedding_vec(session: Session, cached: TableEmbedding, vec: tuple[flo
             ),
             {"vec": vec_literal, "tid": cached.table_id},
         )
+        sp.commit()
+    except SQLAlchemyError:
+        sp.rollback()
     except Exception:
-        pass
+        sp.rollback()
 
 
 def find_similar_tables_cached(
@@ -124,9 +134,11 @@ def _find_similar_ann(
 ) -> list[SimilarTable] | None:
     """Use pgvector ANN when embedding_vec column is populated."""
     from sqlalchemy import select, text
+    from sqlalchemy.exc import SQLAlchemyError
 
     from cryo.db.models import Table
 
+    sp = session.begin_nested()
     try:
         vec_literal = "[" + ",".join(str(v) for v in target_vec) + "]"
         rows = session.execute(
@@ -144,7 +156,12 @@ def _find_similar_ann(
             ),
             {"vec": vec_literal, "target_id": target_id, "min_sim": min_similarity, "lim": limit},
         ).all()
+        sp.commit()
+    except SQLAlchemyError:
+        sp.rollback()
+        return None
     except Exception:
+        sp.rollback()
         return None
 
     if not rows:

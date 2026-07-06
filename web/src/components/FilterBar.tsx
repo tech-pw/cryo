@@ -92,7 +92,7 @@ export const FilterBar = ({
           trigger="click"
           placement="bottomLeft"
           content={
-            <Space direction="vertical" size={10}>
+            <Space orientation="vertical" size={10}>
               <InputNumber
                 min={0}
                 addonBefore="Min GB"

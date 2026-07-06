@@ -68,6 +68,7 @@ import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
+import { AwsStatusBadge, useAwsSourceStatuses } from "../components/AwsStatusBadge";
 import { cronFormValidator } from "../lib/cron";
 import { formatTime } from "../lib/format";
 import {
@@ -104,6 +105,7 @@ export const Connections = () => {
   };
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
+  const awsStatuses = useAwsSourceStatuses((sources.data ?? []).map((s) => s.id));
   const catalogLatency = useQuery({
     queryKey: ["catalog-latency", token, latencySource?.id],
     queryFn: () => getCatalogLatency(api, latencySource!.id),
@@ -278,14 +280,14 @@ export const Connections = () => {
         className="page-alert"
         type="info"
         showIcon
-        message="Recommended setup flow: Connect lakehouse -> Test connection -> Run first scan -> Add engine -> Assign preset."
+        title="Recommended setup flow: Connect lakehouse -> Test connection -> Run first scan -> Add engine -> Assign preset."
       />
       {testResult ? (
         <Alert
           className="page-alert"
           type={testResult.ok ? "success" : "warning"}
           showIcon
-          message={testResult.ok ? "Engine capacity check passed" : "Engine capacity check returned warnings"}
+          title={testResult.ok ? "Engine capacity check passed" : "Engine capacity check returned warnings"}
           description={<pre className="inline-json">{JSON.stringify(testResult, null, 2)}</pre>}
           closable
           onClose={() => setTestResult(null)}
@@ -297,7 +299,7 @@ export const Connections = () => {
             key: "sources",
             label: "Lakehouses",
             children: (
-              <Space direction="vertical" size={12} className="full-width">
+              <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
                   The Iceberg catalogs your data lakehouse lives in — REST catalog, Hive Metastore, or
                   Glue. Cryo reads these to discover tables and scan health. Read-only: nothing here
@@ -309,7 +311,7 @@ export const Connections = () => {
                 <Table<SourceRead>
                   key={`lakehouses-${pendingScanVersion}`}
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `source-${row.type}-${row.name}`}
                   loading={sources.isLoading}
                   dataSource={sources.data ?? []}
                   columns={[
@@ -326,6 +328,7 @@ export const Connections = () => {
                       )
                     },
                     { title: "Type", dataIndex: "type" },
+                    { title: "AWS", key: "aws", render: (_, row) => <AwsStatusBadge status={awsStatuses[row.id]} /> },
                     { title: "Enabled", dataIndex: "enabled", render: (value) => <StatusTag status={value ? "succeeded" : "skipped"} /> },
                     {
                       title: "Config",
@@ -365,7 +368,7 @@ export const Connections = () => {
             key: "destinations",
             label: "Engines",
             children: (
-              <Space direction="vertical" size={12} className="full-width">
+              <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
                   The processing engines that actually run maintenance — a Trino coordinator or a
                   Spark/EMR cluster. Presets and manual runs target one of these to do the real work
@@ -377,7 +380,7 @@ export const Connections = () => {
                 <Table<DestinationRead>
                   key={`engines-${pendingScanVersion}`}
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `destination-${row.engine}-${row.name}`}
                   loading={destinations.isLoading}
                   dataSource={destinations.data ?? []}
                   columns={[
@@ -434,7 +437,7 @@ export const Connections = () => {
               </Space>
             ),
             children: (
-              <Space direction="vertical" size={12} className="full-width">
+              <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
                   Connect an AI provider (Anthropic Claude or OpenAI GPT) to enable natural language
                   queries, intelligent health explanations, and AI-powered recommendations. API keys
@@ -445,7 +448,7 @@ export const Connections = () => {
                 </Button>
                 <Table<AIProviderRead>
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `ai-${row.provider_type}-${row.name}`}
                   loading={aiProviders.isLoading}
                   dataSource={aiProviders.data ?? []}
                   columns={[
@@ -537,14 +540,14 @@ export const Connections = () => {
               </Space>
             ),
             children: (
-              <Space direction="vertical" size={12} className="full-width">
+              <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
                   Connect Slack to receive daily anomaly reports with AI-generated summaries.
                   Configure your webhook URL, reporting schedule, and channel.
                 </Typography.Paragraph>
                 {role !== "viewer" ? (
                   <Card size="small" title="Manual daily report">
-                    <Space direction="vertical" size={12} className="full-width">
+                    <Space orientation="vertical" size={12} className="full-width">
                       <Space wrap>
                         <Space>
                           <Switch checked={sendReportToSlack} onChange={setSendReportToSlack} />
@@ -562,7 +565,7 @@ export const Connections = () => {
                         <Alert
                           type="success"
                           showIcon
-                          message={`Report for ${dailyReportResult.report_date}${dailyReportResult.slack_sent ? " · posted to Slack" : ""}`}
+                          title={`Report for ${dailyReportResult.report_date}${dailyReportResult.slack_sent ? " · posted to Slack" : ""}`}
                           description={
                             dailyReportResult.ai_summary ? (
                               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
@@ -582,7 +585,7 @@ export const Connections = () => {
                 </Button>
                 <Table<SlackConfigRead>
                   size="small"
-                  rowKey="id"
+                  rowKey={(row) => row.id ?? `slack-${row.name}-${row.channel}`}
                   loading={slackConfigs.isLoading}
                   dataSource={slackConfigs.data ?? []}
                   columns={[
@@ -620,7 +623,7 @@ export const Connections = () => {
                     {
                       title: "Daily Report",
                       render: (_, row) => (
-                        <Space direction="vertical" size={0}>
+                        <Space orientation="vertical" size={0}>
                           <StatusTag status={row.daily_report_enabled ? "succeeded" : "skipped"} />
                           {row.daily_report_enabled && (
                             <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -700,9 +703,9 @@ export const Connections = () => {
         {catalogLatency.isLoading ? (
           <Typography.Text type="secondary">Loading latency samples…</Typography.Text>
         ) : catalogLatency.error ? (
-          <Alert type="error" showIcon message={(catalogLatency.error as Error).message} />
+          <Alert type="error" showIcon title={(catalogLatency.error as Error).message} />
         ) : catalogLatency.data ? (
-          <Space direction="vertical" size={12} className="full-width">
+          <Space orientation="vertical" size={12} className="full-width">
             <Typography.Text type="secondary">
               Rolling latency summaries for catalog operations on this lakehouse.
             </Typography.Text>
@@ -941,7 +944,7 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
         className="page-alert"
         type="error"
         showIcon
-        message="Couldn't connect"
+        title="Couldn't connect"
         description={result.error}
       />
     );
@@ -951,7 +954,7 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
       className="page-alert"
       type="success"
       showIcon
-      message={formatSourceTestSuccessMessage(result.namespaces.length)}
+      title={formatSourceTestSuccessMessage(result.namespaces.length)}
       description={
         result.note ? (
           <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
@@ -994,7 +997,7 @@ const SourceScansPanel = ({ sourceId }: { sourceId: string }) => {
   const activeRun = (runs.data ?? []).find((run) => SCAN_ACTIVE_STATUSES.has(run.status));
 
   return (
-    <Space direction="vertical" size={10} className="full-width">
+    <Space orientation="vertical" size={10} className="full-width">
       <ConfirmAction
         title="Scan this lakehouse now?"
         description="Queues a scan of just this lakehouse -- other connected lakehouses aren't touched."
@@ -1005,9 +1008,13 @@ const SourceScansPanel = ({ sourceId }: { sourceId: string }) => {
         </Button>
       </ConfirmAction>
       {runs.isLoading ? null : (runs.data ?? []).length ? (
-        <Space direction="vertical" size={6} className="full-width">
+        <Space orientation="vertical" size={6} className="full-width">
           {(runs.data as RunRead[]).map((run) => (
-            <Space key={run.id} size={8} style={{ width: "100%", justifyContent: "space-between" }}>
+            <Space
+              key={run.id ?? `${run.status}-${run.kind}-${run.created_at ?? "unknown"}`}
+              size={8}
+              style={{ width: "100%", justifyContent: "space-between" }}
+            >
               <Space size={8}>
                 <StatusTag status={run.status} />
                 <Link to={`/scans/${run.id}`}>
@@ -1043,21 +1050,22 @@ const SourceDrawer = ({
   const { api } = useAuth();
   const [form] = Form.useForm<SourceFormValues>();
   const isEditing = value && value !== "new";
-  const existingConfig = isEditing ? decomposeSourceConfig(value.config as Record<string, unknown>) : {};
-  const [catalogType, setCatalogType] = useState<string>(isEditing ? value.type : "rest");
+  const editingSource = isEditing ? value : null;
+  const existingConfig = editingSource ? decomposeSourceConfig(editingSource.config as Record<string, unknown>) : {};
+  const [catalogType, setCatalogType] = useState<string>(editingSource ? editingSource.type : "rest");
   const [s3AuthMethod, setS3AuthMethod] = useState<"default" | "access_key" | "assume_role">(
     (existingConfig as { s3_auth_method?: "default" | "access_key" | "assume_role" }).s3_auth_method ?? "default"
   );
 
   const [testPassed, setTestPassed] = useState(false);
   const [schemaOptions, setSchemaOptions] = useState<string[]>(
-    isEditing ? value.maintenance_schema_names ?? [] : []
+    editingSource ? editingSource.maintenance_schema_names ?? [] : []
   );
 
   const savedNamespaces = useQuery({
-    queryKey: ["source-namespaces", isEditing ? value.id : null],
-    queryFn: () => getSourceNamespaces(api, value.id),
-    enabled: Boolean(isEditing)
+    queryKey: ["source-namespaces", editingSource?.id ?? null],
+    queryFn: () => getSourceNamespaces(api, editingSource!.id),
+    enabled: Boolean(editingSource)
   });
 
   useEffect(() => {
@@ -1101,7 +1109,13 @@ const SourceDrawer = ({
     (Boolean(isEditing) && (savedNamespaces.data?.ok || schemaSelectOptions.length > 0));
 
   return (
-    <Drawer title={isEditing ? "Edit lakehouse" : "New lakehouse"} open={Boolean(value)} onClose={onClose} size={620} destroyOnHidden>
+      <Drawer
+        title={isEditing ? "Edit lakehouse" : "New lakehouse"}
+        open={Boolean(value)}
+        onClose={onClose}
+        size={620}
+        destroyOnHidden
+      >
       <Form<SourceFormValues>
         form={form}
         layout="vertical"
@@ -1244,7 +1258,7 @@ const SourceDrawer = ({
           <Alert
             type="info"
             showIcon
-            message="Using default AWS credentials"
+            title="Using default AWS credentials"
             description="Cryo will use the AWS SDK default credential chain: environment variables, IAM role (IRSA/instance profile), or ~/.aws/credentials."
             style={{ marginBottom: 16 }}
           />
@@ -1337,7 +1351,7 @@ const SourceDrawer = ({
           <Alert
             type="warning"
             showIcon
-            message="Test the connection before saving"
+            title="Test the connection before saving"
             description={'Click "Test connection" above with a passing result to enable Save.'}
             style={{ marginBottom: 16 }}
           />
@@ -1563,7 +1577,7 @@ const DestinationDrawer = ({
                     />
                   }
                 >
-                  <Space direction="vertical" size={8} className="full-width">
+                  <Space orientation="vertical" size={8} className="full-width">
                     {fields.map((field) => {
                       const { key: fieldKey, name: fieldName, ...fieldRest } = field;
                       return (
@@ -1699,7 +1713,7 @@ const DestinationDrawer = ({
           <Alert
             type={testConnection.data.ok ? "success" : "error"}
             showIcon
-            message={testConnection.data.ok ? "Connection succeeded" : "Connection failed"}
+            title={testConnection.data.ok ? "Connection succeeded" : "Connection failed"}
             description={
               testConnection.data.ok
                 ? testConnection.data.message ??
@@ -1735,7 +1749,7 @@ const DestinationDrawer = ({
           <Alert
             type="warning"
             showIcon
-            message="Test the connection before saving"
+            title="Test the connection before saving"
             description={'Click "Test connection" above with a passing result to enable Save.'}
             style={{ marginBottom: 16 }}
           />
@@ -1991,7 +2005,7 @@ const AIProviderDrawer = ({
         <Alert
           type="info"
           showIcon
-          message="API keys are stored encrypted"
+          title="API keys are stored encrypted"
           description="Keys are encrypted at rest and never logged. They're only used server-side to call the AI provider's API."
           style={{ marginBottom: 16 }}
         />
@@ -2000,7 +2014,7 @@ const AIProviderDrawer = ({
           <Alert
             type="warning"
             showIcon
-            message="Test the connection before saving"
+            title="Test the connection before saving"
             description={'Click "Test connection" above with a passing result to enable Save.'}
             style={{ marginBottom: 16 }}
           />
@@ -2201,7 +2215,7 @@ const SlackDrawer = ({
         <Alert
           type="info"
           showIcon
-          message="How to create a Slack webhook"
+          title="How to create a Slack webhook"
           description={
             <ol style={{ margin: 0, paddingLeft: 16 }}>
               <li>Go to your Slack workspace settings</li>
@@ -2217,7 +2231,7 @@ const SlackDrawer = ({
           <Alert
             type="warning"
             showIcon
-            message="Send a test message before saving"
+            title="Send a test message before saving"
             description={'Click "Send test message" above with a passing result to enable Save.'}
             style={{ marginBottom: 16 }}
           />

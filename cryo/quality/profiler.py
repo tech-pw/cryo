@@ -29,6 +29,7 @@ class ColumnQualityMetrics:
     max_value: Any
     value_range_changed: bool
     value_range_explanation: str
+    column_type: str | None = None
 
 
 @dataclass
@@ -185,6 +186,7 @@ def profile_table_quality(
                 max_value=max_value,
                 value_range_changed=value_range_changed,
                 value_range_explanation=value_range_explanation,
+                column_type=col_stats.get("column_type"),
             )
         )
 

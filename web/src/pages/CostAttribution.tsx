@@ -116,7 +116,7 @@ export const CostAttribution = () => {
       render: (cost: number, record: CostAttributionRow) => {
         const percent = data ? (cost / data.total_cost_usd) * 100 : 0;
         return (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={2} style={{ width: "100%" }}>
             <Text strong>{formatCurrency(cost)}</Text>
             <Progress percent={percent} strokeColor="#3d6fd4" showInfo={false} size="small" />
           </Space>
@@ -174,7 +174,7 @@ export const CostAttribution = () => {
         </div>
       ) : !data || data.attributions.length === 0 ? (
         <Alert
-          message="Cost Attribution Not Available"
+          title="Cost Attribution Not Available"
           description={
             <>
               <p>
@@ -210,7 +210,7 @@ export const CostAttribution = () => {
                   value={data.total_cost_usd}
                   prefix="$"
                   precision={2}
-                  valueStyle={{ color: "#3d6fd4" }}
+                  styles={{ content: { color: "#3d6fd4" }}}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {data.month}
@@ -224,8 +224,10 @@ export const CostAttribution = () => {
                   value={attributionRate}
                   suffix="%"
                   precision={1}
-                  valueStyle={{
-                    color: attributionRate >= 90 ? "#52c41a" : attributionRate >= 70 ? "#faad14" : "#ff4d4f",
+                  styles={{
+                    content: {
+                      color: attributionRate >= 90 ? "#52c41a" : attributionRate >= 70 ? "#faad14" : "#ff4d4f",
+                    },
                   }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -240,8 +242,10 @@ export const CostAttribution = () => {
                   value={data.unattributed_cost_usd}
                   prefix="$"
                   precision={2}
-                  valueStyle={{
-                    color: data.unattributed_cost_usd > 0 ? "#faad14" : "#52c41a",
+                  styles={{
+                    content: {
+                      color: data.unattributed_cost_usd > 0 ? "#faad14" : "#52c41a",
+                    },
                   }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -340,7 +344,7 @@ export const CostAttribution = () => {
                   prefix={<DatabaseOutlined />}
                   suffix="USD"
                   precision={2}
-                  valueStyle={{ fontSize: "20px" }}
+                  styles={{ content: { fontSize: "20px" } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   S3 storage at $0.023/GB/month
@@ -355,7 +359,7 @@ export const CostAttribution = () => {
                   prefix={<CloudServerOutlined />}
                   suffix="USD"
                   precision={2}
-                  valueStyle={{ fontSize: "20px" }}
+                  styles={{ content: { fontSize: "20px" } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Query execution costs (Trino/Spark)
@@ -370,7 +374,7 @@ export const CostAttribution = () => {
                   prefix={<ToolOutlined />}
                   suffix="USD"
                   precision={2}
-                  valueStyle={{ fontSize: "20px" }}
+                  styles={{ content: { fontSize: "20px" } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Compaction and optimization jobs

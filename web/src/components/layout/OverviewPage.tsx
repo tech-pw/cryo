@@ -31,7 +31,7 @@ export const OverviewPage = ({
     {loading ? (
       <Skeleton active />
     ) : (
-      <Space direction="vertical" className="full-width" size={12}>
+      <Space orientation="vertical" className="full-width" size={12}>
         {preContent}
         {kpis}
         {children}

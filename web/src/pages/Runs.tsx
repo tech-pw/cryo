@@ -57,7 +57,7 @@ export const Runs = () => {
             <Table<RunRead>
               className="runs-table"
               size="small"
-              rowKey="id"
+              rowKey={(row) => row.id ?? `${row.kind}-${row.status}-${row.created_at ?? "run"}`}
               loading={runs.isLoading}
               dataSource={pageRows}
               pagination={{
@@ -110,7 +110,7 @@ export const Runs = () => {
                   dataIndex: "status",
                   width: 112,
                   render: (status, row) => (
-                    <Space direction="vertical" size={2}>
+                    <Space orientation="vertical" size={2}>
                       <StatusTag status={status} />
                       {status === "failed" && targetTableId(row) ? (
                         <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
@@ -128,7 +128,7 @@ export const Runs = () => {
                     const firstJobId =
                       typeof row.summary?.first_job_id === "string" ? row.summary.first_job_id : undefined;
                     return (
-                      <Space direction="vertical" size={0} onClick={(event) => event.stopPropagation()}>
+                      <Space orientation="vertical" size={0} onClick={(event) => event.stopPropagation()}>
                         <Typography.Text>{count}</Typography.Text>
                         {runId === row.id && selectedRunJobs.data?.length ? (
                           <Link to={`/jobs/${selectedRunJobs.data[0].id}`}>Open job detail</Link>

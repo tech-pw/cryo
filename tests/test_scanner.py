@@ -41,10 +41,16 @@ def test_health_score_uses_warn_and_critical_deductions() -> None:
         "file_formats": ["PARQUET"],
     }
 
-    score, grade = compute_health_score(stats, health_small_file_count=25, now=now)
+    score, grade, deductions = compute_health_score(stats, health_small_file_count=25, now=now)
 
     assert score == 76
     assert grade == "B"
+    assert sum(d["deduction"] for d in deductions) == 100 - score
+    assert {d["label"] for d in deductions} == {
+        "Small-file fragmentation",
+        "Snapshot retention buildup",
+        "Stale table commits",
+    }
 
 
 def test_storage_cost_includes_snapshot_overhead() -> None:

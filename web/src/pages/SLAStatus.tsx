@@ -26,24 +26,12 @@ import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
 import { OverviewPage } from "../components/layout/OverviewPage";
 import { StatStrip } from "../components/common";
 import { useAuth } from "../lib/auth";
+import { formatSlaDays as formatDays, formatSlaHours as formatHours } from "../lib/format";
 import { cryoColors } from "../lib/theme";
 
 const { Text } = Typography;
 
 type SLAStatusRow = SLAResponse["slas"][number];
-
-const formatHours = (hours: number | null) => {
-  if (hours === null) return "—";
-  if (hours < 1) return `${(hours * 60).toFixed(0)}m`;
-  if (hours < 24) return `${hours.toFixed(1)}h`;
-  return `${(hours / 24).toFixed(1)}d`;
-};
-
-const formatDays = (days: number | null) => {
-  if (days === null) return "—";
-  if (days < 1) return `${(days * 24).toFixed(1)}h`;
-  return `${days.toFixed(1)}d`;
-};
 
 const formatLatency = (ms: number | null) => {
   if (ms === null) return "—";
@@ -88,7 +76,7 @@ export const SLAStatus = () => {
         const percent = getCompliancePercent(record.freshness_hours, record.freshness_sla_hours);
         const scanLag = record.scan_staleness_hours;
         return (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
                 <WarningOutlined style={{ color: cryoColors.gradeF }} />
@@ -127,7 +115,7 @@ export const SLAStatus = () => {
         const breached = record.maintenance_breached;
         const percent = getCompliancePercent(record.maintenance_days, record.maintenance_sla_days);
         return (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
                 <WarningOutlined style={{ color: cryoColors.gradeF }} />
@@ -157,7 +145,7 @@ export const SLAStatus = () => {
         const breached = record.p95_latency_breached;
         const percent = getCompliancePercent(record.p95_latency_ms, record.p95_latency_sla_ms);
         return (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
                 <WarningOutlined style={{ color: cryoColors.gradeF }} />
@@ -236,7 +224,7 @@ export const SLAStatus = () => {
     >
       {(data?.total_breached || 0) > 0 && !breachedOnly ? (
         <Alert
-          message="SLA breaches detected"
+          title="SLA breaches detected"
           description={`${data?.total_breached} table(s) currently breach SLA thresholds. Use breached-only mode for focused triage.`}
           type="warning"
           showIcon

@@ -17,7 +17,7 @@ from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 
 try:
-    from pyiceberg.catalog import load_catalog
+    import pyiceberg  # noqa: F401
 
     PYICEBERG_AVAILABLE = True
 except ImportError:
@@ -178,7 +178,15 @@ class NativeEngine:
         return []
 
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
-        """Execute a native compaction operation."""
+        """Execute a native compaction operation.
+
+        EXPERIMENTAL: exercises the cryo-native Rust binpack path end to end (discover small
+        files -> compact -> commit an OVERWRITE snapshot), gated behind
+        settings.native_engine_enabled (see cryo/engines/factory.py). Not yet covered by the
+        production-hardening checklist in docs/RUST_ENGINE_PRODUCTION_HARDENING.md (no retry/
+        checkpoint logic, no correctness validation suite) -- validate against a disposable
+        table before pointing this at anything that matters.
+        """
         start = time.monotonic()
 
         if not stmt.sql.startswith("NATIVE_COMPACTION:"):
@@ -189,16 +197,88 @@ class NativeEngine:
                 duration_ms=_elapsed_ms(start),
             )
 
-        try:
-            # OPTIMIZE via native engine is not production-ready — use Trino or Spark.
+        if ctx is None or ctx.table_id is None:
             return ExecResult(
                 ok=False,
                 detail=stmt.sql,
-                error=(
-                    "Native engine OPTIMIZE is experimental and not implemented. "
-                    "Use Trino or Spark for compaction."
-                ),
+                error="Native engine execute() requires a table_id in ExecCtx",
                 duration_ms=_elapsed_ms(start),
+            )
+
+        try:
+            from cryo.db.models import Table as TableRow
+            from cryo.db.session import SessionLocal
+            from cryo.scanner.analyze import iter_data_files
+            from cryo.sources.factory import source_catalog_for
+
+            with SessionLocal() as session:
+                table_row = session.get(TableRow, ctx.table_id)
+                if table_row is None:
+                    return ExecResult(
+                        ok=False,
+                        detail=stmt.sql,
+                        error=f"Table {ctx.table_id} not found",
+                        duration_ms=_elapsed_ms(start),
+                    )
+                schema_name, table_name = table_row.schema_name, table_row.table_name
+                source = table_row.source
+
+            catalog = source_catalog_for(source)
+            iceberg_table = catalog.load_table(schema_name, table_name)
+
+            settings = self.settings or get_settings()
+            small_threshold_bytes = int(settings.scan_small_file_mb * 1024 * 1024)
+            data_files = list(iter_data_files(iceberg_table))
+            small_files = [
+                df
+                for df in data_files
+                if int(getattr(df, "file_size_in_bytes", 0) or 0) < small_threshold_bytes
+            ]
+
+            if len(small_files) < 2:
+                return ExecResult(
+                    ok=True,
+                    detail=stmt.sql,
+                    duration_ms=_elapsed_ms(start),
+                    input_files_count=len(small_files),
+                    output_files_count=len(small_files),
+                )
+
+            max_files = int(self.config.get("max_files_per_run", 1000))
+            small_files = small_files[:max_files]
+
+            location = str(iceberg_table.location()).rstrip("/")
+            output_dir = f"{location}/data"
+            native_config = NativeCompactionConfig(
+                target_file_size_bytes=small_threshold_bytes * 4,
+                min_file_size_bytes=small_threshold_bytes,
+                max_files_per_run=max_files,
+            )
+
+            result = self.compact_and_commit(
+                iceberg_table=iceberg_table,
+                input_data_files=small_files,
+                output_dir=output_dir,
+                config=native_config,
+            )
+
+            if not result.ok:
+                return ExecResult(
+                    ok=False,
+                    detail=stmt.sql,
+                    error=result.error,
+                    duration_ms=_elapsed_ms(start),
+                    input_files_count=result.input_files,
+                    output_files_count=result.output_files,
+                )
+
+            return ExecResult(
+                ok=True,
+                detail=stmt.sql,
+                duration_ms=_elapsed_ms(start),
+                input_files_count=result.input_files,
+                output_files_count=result.output_files,
+                actual_bytes_freed=max(0, result.bytes_read - result.bytes_written),
             )
 
         except Exception as exc:
@@ -280,9 +360,8 @@ class NativeEngine:
 
     def compact_and_commit(
         self,
-        table_identifier: str,
-        catalog_config: dict[str, Any],
-        input_paths: list[str],
+        iceberg_table: Any,
+        input_data_files: list[Any],
         output_dir: str,
         config: NativeCompactionConfig | None = None,
     ) -> NativeCompactionResult:
@@ -292,15 +371,18 @@ class NativeEngine:
         as it ensures compacted files are immediately visible to queries.
 
         Args:
-            table_identifier: Full table identifier (e.g., "catalog.schema.table")
-            catalog_config: PyIceberg catalog configuration dict
-            input_paths: List of input Parquet file paths
+            iceberg_table: An already-loaded pyiceberg.table.Table (e.g. via
+                cryo.sources.factory.source_catalog_for(source).load_table(schema, name)).
+            input_data_files: The table's own current DataFile entries being replaced (e.g.
+                from cryo.scanner.analyze.iter_data_files) -- real manifest entries, not paths.
             output_dir: Directory for output files
             config: Compaction configuration
 
         Returns:
             NativeCompactionResult with operation details
         """
+        input_paths = [str(df.file_path) for df in input_data_files]
+
         # Step 1: Compact files
         result = self.compact_files(input_paths, output_dir, config)
 
@@ -310,9 +392,8 @@ class NativeEngine:
         # Step 2: Commit to Iceberg
         try:
             self.commit_to_iceberg(
-                table_identifier=table_identifier,
-                catalog_config=catalog_config,
-                old_file_paths=input_paths,
+                iceberg_table=iceberg_table,
+                old_data_files=input_data_files,
                 new_file_paths=result.output_paths,
             )
         except Exception as e:
@@ -334,20 +415,24 @@ class NativeEngine:
 
     def commit_to_iceberg(
         self,
-        table_identifier: str,
-        catalog_config: dict[str, Any],
-        old_file_paths: list[str],
+        iceberg_table: Any,
+        old_data_files: list[Any],
         new_file_paths: list[str],
     ) -> None:
-        """Commit compaction results to Iceberg metadata.
+        """Commit compaction results to Iceberg metadata as one atomic overwrite snapshot.
 
-        This updates the Iceberg table to replace old files with new compacted files.
+        Removes old_data_files and adds new_file_paths in a single commit, using PyIceberg's
+        own snapshot-producer machinery (Transaction.update_snapshot().overwrite(), the same
+        producer PyIceberg's public overwrite()/add_files() build on) rather than the
+        higher-level row-predicate overwrite() API -- a row filter can't precisely express
+        "replace exactly these files," and there's no public path-based "delete this data
+        file" method on this PyIceberg version's Transaction.
 
         Args:
-            table_identifier: Full table identifier (e.g., "catalog.schema.table")
-            catalog_config: PyIceberg catalog configuration
-            old_file_paths: Paths to old files being replaced
-            new_file_paths: Paths to new compacted files
+            iceberg_table: An already-loaded pyiceberg.table.Table.
+            old_data_files: Real DataFile entries (from the table's own current manifests,
+                e.g. via cryo.scanner.analyze.iter_data_files) being replaced.
+            new_file_paths: Paths to the new compacted Parquet files.
         """
         if not PYICEBERG_AVAILABLE:
             raise RuntimeError(
@@ -355,34 +440,26 @@ class NativeEngine:
                 "Install with: pip install pyiceberg"
             )
 
-        # Load the catalog and table
-        catalog = load_catalog("native_catalog", **catalog_config)
+        from pyiceberg.table import _parquet_files_to_data_files
 
-        # Parse table identifier
-        parts = table_identifier.split(".")
-        if len(parts) == 3:
-            namespace, table_name = parts[1], parts[2]
-        elif len(parts) == 2:
-            namespace, table_name = parts[0], parts[1]
-        else:
-            raise ValueError(f"Invalid table identifier: {table_identifier}")
+        new_data_files = list(
+            _parquet_files_to_data_files(
+                table_metadata=iceberg_table.metadata,
+                file_paths=new_file_paths,
+                io=iceberg_table.io,
+            )
+        )
 
-        table = catalog.load_table((namespace, table_name))
-
-        # Create a transaction to delete old files and add new ones
-        with table.transaction() as txn:
-            transaction: Any = txn
-            # Delete old data files
-            for old_path in old_file_paths:
-                transaction.delete_data_file(old_path)
-
-            # Add new data files
-            for new_path in new_file_paths:
-                transaction.add_data_file(new_path)
+        with iceberg_table.transaction() as txn:
+            with txn.update_snapshot().overwrite() as overwrite_files:
+                for old_df in old_data_files:
+                    overwrite_files.delete_data_file(old_df)
+                for new_df in new_data_files:
+                    overwrite_files.append_data_file(new_df)
 
         logger.info(
-            f"Committed Iceberg metadata: removed {len(old_file_paths)} files, "
-            f"added {len(new_file_paths)} files to {table_identifier}"
+            f"Committed Iceberg metadata: removed {len(old_data_files)} files, "
+            f"added {len(new_data_files)} files to {iceberg_table.name()}"
         )
 
     def analyze_files(self, input_paths: list[str]) -> list[NativeFileAnalysis]:

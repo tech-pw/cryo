@@ -78,7 +78,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   return (
     <Drawer
       title="Plan preview"
-      width={820}
+      size={820}
       open={open}
       onClose={onClose}
       extra={
@@ -108,7 +108,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
       {!requestTables.length ? (
         <Empty description="Select at least one table to preview." />
       ) : (
-        <Space direction="vertical" size={12} className="full-width">
+        <Space orientation="vertical" size={12} className="full-width">
           <Space wrap>
             <CostPrecisionBadge precision={estimate.precision} />
             {estimate.totalSavings > 0 ? (
@@ -133,7 +133,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
               key: item.table_ref ?? `table-${tableIndex}`,
               label: item.table_ref,
               children: (
-                <Space direction="vertical" size={12} className="full-width">
+                <Space orientation="vertical" size={12} className="full-width">
                   {item.savings ? (
                     <Descriptions size="small" column={2} bordered>
                       <Descriptions.Item label="Now">

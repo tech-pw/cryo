@@ -28,7 +28,7 @@ from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_t
 from cryo.domain.enums import JobStatus
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
-router = APIRouter(prefix="/api", tags=["dashboard"])
+router = APIRouter(prefix="/api/v1", tags=["dashboard"])
 
 
 def _raw_dict(value: object) -> dict[str, object]:
@@ -498,11 +498,13 @@ def get_job_detail(
     partition_predicates = None
     if job.plan and "operations" in job.plan:
         operations = job.plan["operations"]
-        predicates = []
-        for op in operations:
-            if "predicates" in op:
-                for pred in op["predicates"]:
-                    predicates.append(str(pred))
+        predicates: list[str] = []
+        if isinstance(operations, list):
+            for op in operations:
+                if isinstance(op, dict):
+                    raw_predicates = op.get("predicates")
+                    if isinstance(raw_predicates, list):
+                        predicates.extend(str(pred) for pred in raw_predicates)
         partition_predicates = predicates if predicates else None
 
     operation_type = "unknown"
@@ -542,12 +544,15 @@ def get_sla_status(
     session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     breached_only: Annotated[bool, Query(description="Show only breached SLAs")] = False,
+    table_id: Annotated[UUID | None, Query(description="Filter to a single table")] = None,
 ) -> SLAResponse:
-    """Get SLA status for all monitored tables."""
+    """Get SLA status for all monitored tables, or a single table when table_id is given."""
     now = datetime.now(UTC)
     tenant_id = require_tenant(session)
 
     base_stmt = select(Table, TableStats).join(TableStats).where(Table.first_seen_at.isnot(None))
+    if table_id is not None:
+        base_stmt = base_stmt.where(Table.id == table_id)
     stmt: Any = (
         scope_by_tenant(cast(Any, base_stmt), Table, tenant_id)
         if tenant_id is not None

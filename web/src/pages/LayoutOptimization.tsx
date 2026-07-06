@@ -265,7 +265,7 @@ const LayoutOptimization = () => {
               title="Pending Recommendations"
               value={pendingCount}
               prefix={<ClockCircleOutlined />}
-              valueStyle={{ color: pendingCount > 0 ? "#faad14" : "#52c41a" }}
+              styles={{ content: { color: pendingCount > 0 ? "#faad14" : "#52c41a" } }}
             />
           </Card>
         </Col>
@@ -276,7 +276,7 @@ const LayoutOptimization = () => {
               value={highConfidenceCount}
               prefix={<ThunderboltOutlined />}
               suffix={`/ ${recommendations.data?.length ?? 0}`}
-              valueStyle={{ color: "#1890ff" }}
+              styles={{ content: { color: "#1890ff" } }}
             />
           </Card>
         </Col>
@@ -288,7 +288,7 @@ const LayoutOptimization = () => {
               precision={0}
               suffix="% pruning"
               prefix={<BarChartOutlined />}
-              valueStyle={{ color: "#52c41a" }}
+              styles={{ content: { color: "#52c41a" } }}
             />
           </Card>
         </Col>
@@ -391,7 +391,7 @@ const QueryPatternsTab = ({
   ];
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }}>
+    <Space orientation="vertical" style={{ width: "100%" }}>
       <Select
         showSearch
         placeholder="Select a table to view query patterns"
@@ -411,7 +411,7 @@ const QueryPatternsTab = ({
           <Alert
             type="info"
             showIcon
-            message={
+            title={
               <Space>
                 <span>
                   <strong>{patterns.data.total_queries}</strong> queries analyzed
@@ -489,15 +489,10 @@ const ClusteringPlanDrawer = ({
 
   return (
     <Drawer
-      title={`Clustering Plan: ${tableName}`}
-      open={open}
-      onClose={() => {
-        onClose();
-        setPlan(null);
-      }}
-      width={700}
+      title="Clustering plan"
+      size={700}
     >
-      <Space direction="vertical" style={{ width: "100%" }} size="large">
+      <Space orientation="vertical" style={{ width: "100%" }} size="large">
         {recommendation.data && (
           <Alert
             type="info"
@@ -505,7 +500,7 @@ const ClusteringPlanDrawer = ({
             icon={<ExperimentOutlined />}
             message="Recommendation"
             description={
-              <Space direction="vertical">
+              <Space orientation="vertical">
                 <Text>
                   Strategy:{" "}
                   <Tag color={recommendation.data.recommended_strategy === "zorder" ? "purple" : "blue"}>
@@ -540,7 +535,7 @@ const ClusteringPlanDrawer = ({
             icon={<FilterOutlined />}
             message="Partition Evolution Recommendation"
             description={
-              <Space direction="vertical" style={{ width: "100%" }}>
+              <Space orientation="vertical" style={{ width: "100%" }}>
                 <Text>
                   Current: <Tag>{partitionRecommendation.data.current_partition_spec}</Tag>
                 </Text>
@@ -568,8 +563,8 @@ const ClusteringPlanDrawer = ({
                     {partitionRecommendation.data.cardinality_estimate} cardinality
                   </Tag>
                 </Space>
-                {partitionRecommendation.data.warnings.map((w) => (
-                  <Alert key={w} type="warning" message={w} showIcon banner />
+                {partitionRecommendation.data.warnings.map((w, idx) => (
+                  <Alert key={`warn-${idx}-${w}`} type="warning" title={w} showIcon banner />
                 ))}
               </Space>
             }
@@ -655,7 +650,7 @@ const ClusteringPlanDrawer = ({
                 ) : (
                   <Alert
                     type="warning"
-                    message="Trino doesn't support sort/z-order rewrite directly"
+                    title="Trino doesn't support sort/z-order rewrite directly"
                     description="Use Spark to apply sort order, then Trino will benefit from the improved layout."
                   />
                 )

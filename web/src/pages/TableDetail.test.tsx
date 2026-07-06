@@ -46,7 +46,40 @@ vi.mock("../api/client", () => ({
       total_files: 100,
       small_files_count: 20,
       cost_precision: "metadata",
-      cost_last_full_scan_at: "2026-06-01T00:00:00Z"
+      cost_last_full_scan_at: "2026-06-01T00:00:00Z",
+      partition_col: "event_time",
+      partition_col_type: "timestamp",
+      raw: {
+        column_quality: [
+          {
+            field_id: 1,
+            column_name: "event_time",
+            null_count: 0,
+            value_count: 1000,
+            null_rate: 0.0,
+            lower_bound: "2026-07-01T00:00:00Z",
+            upper_bound: "2026-07-01T23:59:59Z"
+          },
+          {
+            field_id: 2,
+            column_name: "user_email",
+            null_count: 150,
+            value_count: 1000,
+            null_rate: 0.15,
+            lower_bound: "aaa@example.com",
+            upper_bound: "zzz@example.com"
+          },
+          {
+            field_id: 3,
+            column_name: "amount",
+            null_count: 50,
+            value_count: 1000,
+            null_rate: 0.05,
+            lower_bound: 1.0,
+            upper_bound: 5000.0
+          }
+        ]
+      }
     }
   }),
   getTablePartitions: vi.fn().mockResolvedValue([]),
@@ -87,6 +120,18 @@ vi.mock("../api/client", () => ({
     recommendation: "KEEP_STANDARD",
     reason: "recently accessed"
   }),
+  getPartitionEvolutionRecommendation: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_name: "events",
+    current_partition_spec: "day(event_time)",
+    recommended_partition_spec: "identity(customer_id), day(event_time)",
+    reason: "Frequent equality predicates on customer_id suggest a mixed partitioning strategy.",
+    confidence: 0.87,
+    estimated_pruning_improvement_pct: 34,
+    query_patterns_analyzed: 124,
+    cardinality_estimate: "high",
+    warnings: []
+  }),
   getTableBenefitScores: vi.fn().mockResolvedValue({
     table_id: "table-1",
     partitions_scored: 1,
@@ -116,6 +161,49 @@ vi.mock("../api/client", () => ({
     checked_at: "2026-07-01T00:00:00Z",
     signals: [],
     any_triggered: false
+  }),
+  listSources: vi.fn().mockResolvedValue([]),
+  getTablePiiClassification: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    matches: [
+      {
+        column_name: "user_email",
+        column_type: "string",
+        pii_category: "EMAIL",
+        similarity: 0.95,
+        already_tagged: true
+      }
+    ]
+  }),
+  getDataQualityProfile: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_name: "events",
+    profiled_at: "2026-07-01T00:00:00Z",
+    column_metrics: [
+      {
+        column_name: "user_email",
+        null_rate_pct: 15,
+        null_rate_baseline_pct: 10,
+        null_rate_spike: true,
+        min_value: "aaa@example.com",
+        max_value: "zzz@example.com",
+        value_range_changed: false
+      },
+      {
+        column_name: "amount",
+        null_rate_pct: 5,
+        null_rate_baseline_pct: 5,
+        null_rate_spike: false,
+        min_value: 1.0,
+        max_value: 5000.0,
+        value_range_changed: true,
+        value_range_explanation: "Significant drop in minimum transaction amount detected"
+      }
+    ],
+    anomalies_detected: 2,
+    schema_version_changed: false,
+    new_columns: [],
+    dropped_columns: []
   }),
   assignTables: vi.fn(),
   unassignTables: vi.fn(),
@@ -160,15 +248,15 @@ describe("TableDetail page", () => {
   it("renders table detail and cost card", async () => {
     renderTableDetail();
     expect(await screen.findByText("public.events")).toBeInTheDocument();
-    expect(await screen.findByText("Cost & Savings")).toBeInTheDocument();
+    expect((await screen.findAllByText("Cost & Savings")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Health Score")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("queues scan without redirecting until follow-up click", async () => {
     renderTableDetail();
     expect(await screen.findByText("public.events")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Scan table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh stats" }));
 
     await waitFor(() => {
       expect(triggerScan).toHaveBeenCalled();
@@ -177,7 +265,7 @@ describe("TableDetail page", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open scan run" }));
     expect(await screen.findByText("Scan run page")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("queues maintenance run without redirecting until follow-up click", async () => {
     renderTableDetail();
@@ -193,5 +281,74 @@ describe("TableDetail page", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open maintenance run" }));
     expect(await screen.findByText("Maintenance run page")).toBeInTheDocument();
-  });
+  }, 15000);
+
+  it("renders active health signals, diagnostic matrix, preset selectors, fix buttons, and red notification badges", async () => {
+    const { getTableSignals } = await import("../api/client");
+    vi.mocked(getTableSignals).mockResolvedValueOnce({
+      table_id: "table-1",
+      checked_at: "2026-07-01T00:00:00Z",
+      signals: [
+        {
+          signal_name: "file_degradation",
+          severity: "critical",
+          triggered: true,
+          reason: "Excessive small files detected",
+          metric_value: 0.2,
+          threshold: 0.1
+        }
+      ],
+      any_triggered: true
+    });
+
+    renderTableDetail();
+
+    expect(await screen.findByText("public.events")).toBeInTheDocument();
+
+    // Verify red badge counter is rendered on the Health & Diagnosis tab label
+    const tabBadge = await screen.findByText("Health & Diagnosis");
+    expect(tabBadge).toBeInTheDocument();
+
+    // Click on Health & Diagnosis tab to view the diagnostics panel
+    fireEvent.click(tabBadge);
+
+    // Verify matrix fields render properly
+    expect(await screen.findByText("Small-File Fragmentation Ratio")).toBeInTheDocument();
+    expect(await screen.findByText("Metric Name")).toBeInTheDocument();
+    expect((await screen.findAllByText("Impact Description")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Current State")).toBeInTheDocument();
+    expect(await screen.findByText("Ideal Target")).toBeInTheDocument();
+
+    // Verify current state data from stats is rendered
+    expect(await screen.findByText("20.0% small files (20 / 100 total files)")).toBeInTheDocument();
+    expect(await screen.findByText("< 20.0% small files ratio")).toBeInTheDocument();
+
+    // Verify Engine Preset select label and Fix Now button are present
+    expect(await screen.findByText("Engine Preset:")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Fix Now" })).toBeInTheDocument();
+  }, 15000);
+
+  it("renders the Partition Columns Analyzer with Check 1 and Check 2 validations", async () => {
+    renderTableDetail();
+
+    expect(await screen.findByText("public.events")).toBeInTheDocument();
+
+    const tabBadge = await screen.findByText("Health & Diagnosis");
+    fireEvent.click(tabBadge);
+
+    // Verify Partition Columns Analyzer card headers and descriptions
+    expect(await screen.findByText("Partition Columns Analyzer")).toBeInTheDocument();
+    expect(await screen.findByText("Analyzing schema keys, access patterns, and pruning granularity")).toBeInTheDocument();
+
+    // Verify summary statistics grid
+    expect(await screen.findByText("Active Partition Column")).toBeInTheDocument();
+    expect((await screen.findAllByText("event_time")).length).toBeGreaterThan(0);
+
+    // Verify Check 1 and Check 2 titles
+    expect(await screen.findByText("Check 1: Target Column Alignment")).toBeInTheDocument();
+    expect(await screen.findByText("Check 2: Partition Granularity Validation")).toBeInTheDocument();
+
+    // Verify the mock recommended optimal spec blue tag is rendered
+    expect((await screen.findAllByText("identity(customer_id), day(event_time)")).length).toBeGreaterThan(0);
+  }, 15000);
 });

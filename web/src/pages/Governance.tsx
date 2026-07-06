@@ -207,7 +207,7 @@ export const Governance = () => {
         className="page-alert"
         type="warning"
         showIcon
-        message="Start with urgent signals first: pending approvals, broken tables, and active anomalies."
+        title="Start with urgent signals first: pending approvals, broken tables, and active anomalies."
       />
 
       <Row gutter={[12, 12]}>
@@ -228,7 +228,7 @@ export const Governance = () => {
             <QueryErrorAlert error={approvals.error} title="Failed to load approvals" />
             <Table
               size="small"
-              rowKey="id"
+              rowKey={(row) => row.id ?? `${row.table_id}-${row.operation_type}-${row.created_at}`}
               loading={approvals.isLoading}
               dataSource={approvals.data ?? []}
               pagination={{ pageSize: 8, hideOnSinglePage: true }}
@@ -321,7 +321,7 @@ export const Governance = () => {
             <QueryErrorAlert error={brokenTables.error} title="Failed to load broken tables" />
             <Table<TableRead>
               size="small"
-              rowKey="id"
+              rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
               loading={brokenTables.isLoading}
               dataSource={brokenTables.data?.items ?? []}
               pagination={{ pageSize: 8, hideOnSinglePage: true }}
@@ -420,7 +420,7 @@ export const Governance = () => {
           <Card title="FinOps forecast">
             <QueryErrorAlert error={forecast.error} title="Failed to load cost forecast" />
             {forecast.data ? (
-              <Space direction="vertical" size={8} className="full-width">
+              <Space orientation="vertical" size={8} className="full-width">
                 <Typography.Text type="secondary">Forecast month: {forecast.data.forecast_month}</Typography.Text>
                 <Typography.Title level={3} style={{ margin: 0 }}>
                   {formatCurrency(forecast.data.total_forecast_usd)}
@@ -454,7 +454,7 @@ export const Governance = () => {
             <QueryErrorAlert error={tierPolicies.error} title="Failed to load tier policies" />
             <Table
               size="small"
-              rowKey="id"
+              rowKey={(row) => row.id ?? `${row.name}-${row.source_id}-${row.storage_class}`}
               loading={tierPolicies.isLoading}
               dataSource={tierPolicies.data ?? []}
               pagination={{ pageSize: 8, hideOnSinglePage: true }}
@@ -569,7 +569,7 @@ export const Governance = () => {
 
         <Col xs={24}>
           <Card title="Tier candidates by policy">
-            <Space direction="vertical" size={12} className="full-width">
+            <Space orientation="vertical" size={12} className="full-width">
               <Select
                 showSearch
                 allowClear
@@ -597,7 +597,9 @@ export const Governance = () => {
                   </Space>
                   <Table
                     size="small"
-                    rowKey={(row, index) => `${row.partition_value ?? "all"}-${index}`}
+                    rowKey={(row) =>
+                      `${row.partition_value ?? "all"}-${row.age_days ?? "na"}-${row.target_storage_class ?? "na"}`
+                    }
                     pagination={{ pageSize: 8, hideOnSinglePage: true }}
                     dataSource={tierCandidates.data.candidates}
                     columns={[
@@ -619,7 +621,7 @@ export const Governance = () => {
 
         <Col xs={24}>
           <Card title="Table lineage">
-            <Space direction="vertical" size={12} className="full-width">
+            <Space orientation="vertical" size={12} className="full-width">
               <Select
                 showSearch
                 allowClear

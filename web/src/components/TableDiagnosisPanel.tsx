@@ -82,7 +82,7 @@ export const TableDiagnosisPanel = ({ tableId, stats, factors }: TableDiagnosisP
         <Alert
           type={ALERT_TYPE[verdict.level]}
           showIcon
-          message={<strong>{verdict.message}</strong>}
+          title={<strong>{verdict.message}</strong>}
           style={{ marginBottom: 12 }}
         />
 
@@ -97,9 +97,9 @@ export const TableDiagnosisPanel = ({ tableId, stats, factors }: TableDiagnosisP
           <Typography.Text type="secondary">Checking maintenance signals…</Typography.Text>
         ) : triggered.length ? (
           <div className="td-diagnosis-signals">
-            {triggered.map((signal) => (
+            {triggered.map((signal, idx) => (
               <div
-                key={signal.signal_name}
+                key={signal.signal_name ?? `signal-${idx}`}
                 className={`td-diagnosis-signal-row td-diagnosis-signal-${signal.severity}`}
               >
                 <Tag color={signal.severity === "critical" ? "red" : signal.severity === "warning" ? "gold" : "default"}>

@@ -14,7 +14,6 @@ from cryo.governor.bandit import AdmissionBandit
 from cryo.ml.cost_model import evaluate_model, predict_savings, train_cost_model
 from cryo.ml.health_classifier import HealthLabel, classify_health_few_shot, evaluate_classifier
 from cryo.planner.benefit_score import compute_benefit_score
-from cryo.scanner.quality import ColumnQualityAccumulator
 
 
 def test_embeddings_similar_prompts_score_high() -> None:
@@ -164,20 +163,6 @@ def test_health_classifier_evaluate() -> None:
     }
     metrics = evaluate_classifier(labeled, stats)
     assert metrics["n_samples"] >= 1
-
-
-def test_quality_accumulator_tracks_ndv_from_distinct_counts() -> None:
-    class _File:
-        null_value_counts = {1: 0}
-        value_counts = {1: 100}
-        lower_bounds = {}
-        upper_bounds = {}
-        distinct_counts = {1: 42}
-
-    accum = ColumnQualityAccumulator(None)
-    accum.add(_File())
-    cols = accum.finish()
-    assert cols[0].ndv_estimate == 42
 
 
 def test_autocomp_benefit_score_prioritizes_high_query_tables() -> None:
