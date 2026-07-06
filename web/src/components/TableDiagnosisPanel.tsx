@@ -87,7 +87,9 @@ export const TableDiagnosisPanel = ({ tableId, stats, factors }: TableDiagnosisP
         />
 
         <div className="td-diagnosis-section-title">Score factors</div>
-        <HealthScoreBreakdown factors={factors} />
+        <div className="td-diagnosis-score-bars">
+          <HealthScoreBreakdown factors={factors} />
+        </div>
 
         <div className="td-diagnosis-section-title">Active signals</div>
         <QueryErrorAlert error={signals.error} title="Failed to load table signals" />

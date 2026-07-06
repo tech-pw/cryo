@@ -164,6 +164,12 @@ export const Intelligence = () => {
           </Link>
         }
       />
+      <Alert
+        className="page-alert"
+        type="info"
+        showIcon
+        message="Operator quick starts: investigate anomalies, estimate savings impact, and pick tables to run next."
+      />
 
       <QueryErrorAlert error={questions.error} title="Failed to load copilot questions" />
       <QueryErrorAlert error={bandit.error} title="Failed to load governor bandit status" />

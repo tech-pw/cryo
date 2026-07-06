@@ -1,6 +1,7 @@
 import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { Badge, Tag, type TagProps } from "antd";
 import type { ReactNode } from "react";
+import { cryoColors } from "../lib/theme";
 
 const gradeColor: Record<string, string> = {
   A: "success",
@@ -48,9 +49,9 @@ export const StatusTag = ({ status }: { status?: string | null }) => (
 
 /** Map a 0–100 health score to a chart/progress color (shared across dashboard pages). */
 export const healthScoreColor = (score: number): string => {
-  if (score >= 80) return "#52c41a";
-  if (score >= 60) return "#faad14";
-  return "#ff4d4f";
+  if (score >= 80) return cryoColors.gradeA;
+  if (score >= 60) return cryoColors.gradeC;
+  return cryoColors.gradeF;
 };
 
 export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (

@@ -13,8 +13,10 @@ import {
   listPresets,
   listTables,
   runMaintenance,
+  runManifestRewrite,
   savingsOpportunityFilter,
-  triggerCostScan
+  triggerCostScan,
+  triggerScan
 } from "../api/client";
 import type { CostDashboard, Mode, TableRead, UUID } from "../api/types";
 import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
@@ -152,6 +154,48 @@ export const CostSavings = () => {
 
   const fullCostScan = useMutation({
     mutationFn: () => triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" }),
+    onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
+    onError: (error) => message.error((error as Error).message)
+  });
+  const bulkManifestRewrite = useMutation({
+    mutationFn: (args: { destinationId: UUID; presetId?: UUID }) => {
+      if (!selection) throw new Error("No tables selected");
+      if (selection.mode === "filter") {
+        return runManifestRewrite(api, {
+          selection: { mode: "filter", filter: selection.filter },
+          destination_id: args.destinationId,
+          preset_id: args.presetId,
+          trigger: "web-cost-manifest"
+        });
+      }
+      return runManifestRewrite(api, {
+        table_ids: selectedRowKeys,
+        destination_id: args.destinationId,
+        preset_id: args.presetId,
+        trigger: "web-cost-manifest"
+      });
+    },
+    onSuccess: (result) => message.success(`Manifest rewrite queued: ${result.run_id}`),
+    onError: (error) => message.error((error as Error).message)
+  });
+  const bulkScan = useMutation({
+    mutationFn: () => {
+      if (!selection) throw new Error("No tables selected");
+      if (selection.mode === "filter") {
+        return triggerScan(api, {
+          scope: "tables",
+          selection: { mode: "filter", filter: selection.filter ?? null },
+          full_scan: true,
+          trigger: "web-cost-selection"
+        });
+      }
+      return triggerScan(api, {
+        scope: "tables",
+        table_ids: selectedRowKeys,
+        full_scan: true,
+        trigger: "web-cost-selection"
+      });
+    },
     onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
     onError: (error) => message.error((error as Error).message)
   });
@@ -423,7 +467,8 @@ export const CostSavings = () => {
             presets={presets.data ?? []}
             destinations={destinations.data ?? []}
             assigning={assign.isPending}
-            running={bulkRun.isPending}
+            running={bulkRun.isPending || bulkManifestRewrite.isPending}
+            scanning={bulkScan.isPending}
             onClear={clearSelection}
             onAssign={(presetId) => assign.mutate(presetId)}
             onPreview={() => {
@@ -437,6 +482,8 @@ export const CostSavings = () => {
               setPreviewOpen(true);
             }}
             onRun={(args) => bulkRun.mutate(args)}
+            onManifestRewrite={(args) => bulkManifestRewrite.mutate(args)}
+            onScan={() => bulkScan.mutate()}
           />
           <PlanPreview open={previewOpen} tables={previewTables} onClose={() => setPreviewOpen(false)} />
         </>

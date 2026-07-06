@@ -28,10 +28,9 @@ import { getCostAttributionDashboard, type CostAttributionResponse } from "../ap
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { formatCurrency } from "../lib/format";
+import { sharedPieColors } from "../lib/theme";
 
 const { Text } = Typography;
-
-const COLORS = ["#3d6fd4", "#52c41a", "#faad14", "#ff4d4f", "#722ed1", "#13c2c2", "#eb2f96"];
 
 type CostAttributionRow = CostAttributionResponse["attributions"][number];
 
@@ -62,6 +61,11 @@ export const CostAttribution = () => {
         <Space>
           <TeamOutlined />
           <Text strong>{record.cost_center || record.department || "Unattributed"}</Text>
+          {(record.cost_center || record.department) ? (
+            <Link to="/tables?view=savings">
+              <Button size="small" type="link">View tables</Button>
+            </Link>
+          ) : null}
         </Space>
       ),
     },
@@ -183,6 +187,14 @@ export const CostAttribution = () => {
               <p style={{ marginBottom: 0 }}>
                 Once tags are configured, cost data will be aggregated by team/department automatically.
               </p>
+              <Space style={{ marginTop: 8 }}>
+                <Link to="/connections">
+                  <Button size="small" type="primary">Open connections</Button>
+                </Link>
+                <Link to="/cost">
+                  <Button size="small">Open savings dashboard</Button>
+                </Link>
+              </Space>
             </>
           }
           type="info"
@@ -308,7 +320,7 @@ export const CostAttribution = () => {
                       label={(entry) => `${entry.name}: $${entry.value.toFixed(0)}`}
                     >
                       {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        <Cell key={`cell-${index}`} fill={sharedPieColors[index % sharedPieColors.length]} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />

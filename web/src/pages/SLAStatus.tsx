@@ -1,15 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Button,
   Card,
-  Row,
-  Col,
   Table,
   Tag,
   Typography,
-  Statistic,
   Switch,
   Space,
-  Spin,
   Alert,
   Progress,
   Tooltip,
@@ -24,12 +21,14 @@ import {
   ExclamationCircleOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
-import { QueryErrorAlert } from "../components/common";
+import { OverviewPage } from "../components/layout/OverviewPage";
+import { StatStrip } from "../components/common";
 import { useAuth } from "../lib/auth";
+import { cryoColors } from "../lib/theme";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type SLAStatusRow = SLAResponse["slas"][number];
 
@@ -59,7 +58,6 @@ const getCompliancePercent = (actual: number | null, sla: number | null): number
 
 export const SLAStatus = () => {
   const { api } = useAuth();
-  const navigate = useNavigate();
   const [breachedOnly, setBreachedOnly] = useState(false);
 
   const { data, isLoading, error } = useQuery<SLAResponse>({
@@ -77,7 +75,7 @@ export const SLAStatus = () => {
       ellipsis: true,
       fixed: "left" as const,
       render: (name: string, record: SLAStatusRow) => (
-        <a onClick={() => navigate(`/tables/${record.table_id}`)}>{name}</a>
+        <Link to={`/tables/${record.table_id}`}>{name}</Link>
       ),
     },
     {
@@ -93,9 +91,9 @@ export const SLAStatus = () => {
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
-                <WarningOutlined style={{ color: "#ff4d4f" }} />
+                <WarningOutlined style={{ color: cryoColors.gradeF }} />
               ) : (
-                <CheckCircleOutlined style={{ color: "#52c41a" }} />
+                <CheckCircleOutlined style={{ color: cryoColors.gradeA }} />
               )}
               <Tooltip title="Hours since last Iceberg snapshot commit">
                 <Text type={breached ? "danger" : "secondary"}>
@@ -112,7 +110,7 @@ export const SLAStatus = () => {
             ) : null}
             <Progress
               percent={percent}
-              strokeColor={breached ? "#ff4d4f" : "#52c41a"}
+              strokeColor={breached ? cryoColors.gradeF : cryoColors.gradeA}
               showInfo={false}
               size="small"
             />
@@ -132,9 +130,9 @@ export const SLAStatus = () => {
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
-                <WarningOutlined style={{ color: "#ff4d4f" }} />
+                <WarningOutlined style={{ color: cryoColors.gradeF }} />
               ) : (
-                <CheckCircleOutlined style={{ color: "#52c41a" }} />
+                <CheckCircleOutlined style={{ color: cryoColors.gradeA }} />
               )}
               <Text type={breached ? "danger" : "secondary"}>
                 {formatDays(record.maintenance_days)} / {formatDays(record.maintenance_sla_days)}
@@ -142,7 +140,7 @@ export const SLAStatus = () => {
             </Space>
             <Progress
               percent={percent}
-              strokeColor={breached ? "#ff4d4f" : "#52c41a"}
+              strokeColor={breached ? cryoColors.gradeF : cryoColors.gradeA}
               showInfo={false}
               size="small"
             />
@@ -162,9 +160,9 @@ export const SLAStatus = () => {
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
             <Space>
               {breached ? (
-                <WarningOutlined style={{ color: "#ff4d4f" }} />
+                <WarningOutlined style={{ color: cryoColors.gradeF }} />
               ) : (
-                <CheckCircleOutlined style={{ color: "#52c41a" }} />
+                <CheckCircleOutlined style={{ color: cryoColors.gradeA }} />
               )}
               <Text type={breached ? "danger" : "secondary"}>
                 {formatLatency(record.p95_latency_ms)} / {formatLatency(record.p95_latency_sla_ms)}
@@ -172,7 +170,7 @@ export const SLAStatus = () => {
             </Space>
             <Progress
               percent={percent}
-              strokeColor={breached ? "#ff4d4f" : "#52c41a"}
+              strokeColor={breached ? cryoColors.gradeF : cryoColors.gradeA}
               showInfo={false}
               size="small"
             />
@@ -207,139 +205,92 @@ export const SLAStatus = () => {
     : 0;
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <Title level={2}>
-            <ClockCircleOutlined /> SLA Monitoring
-          </Title>
-          <Text type="secondary">
-            Freshness uses last Iceberg snapshot commit time; scan staleness shows Cryo scan lag
-          </Text>
-        </div>
+    <OverviewPage
+      title="SLA monitoring"
+      subtitle="Freshness uses last Iceberg snapshot commit time; scan staleness shows Cryo scan lag."
+      actions={
         <Space>
           <Text>Show breached only:</Text>
           <Switch checked={breachedOnly} onChange={setBreachedOnly} />
+          <Link to="/tables">
+            <Button>Open table explorer</Button>
+          </Link>
         </Space>
-      </div>
-
-      <QueryErrorAlert error={error} title="Failed to load SLA status" />
-
-      {isLoading ? (
-        <div style={{ textAlign: "center", padding: "60px" }}>
-          <Spin size="large" />
-        </div>
-      ) : (
-        <>
-          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Total Monitored"
-                  value={data?.total_monitored || 0}
-                  suffix="tables"
-                  prefix={<ClockCircleOutlined />}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="SLA Compliance"
-                  value={complianceRate.toFixed(1)}
-                  suffix="%"
-                  valueStyle={{
-                    color: complianceRate >= 95 ? "#52c41a" : complianceRate >= 80 ? "#faad14" : "#ff4d4f",
-                  }}
-                  prefix={<CheckCircleOutlined />}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Breached"
-                  value={data?.total_breached || 0}
-                  suffix={`/ ${data?.total_monitored || 0}`}
-                  valueStyle={{
-                    color: (data?.total_breached || 0) > 0 ? "#ff4d4f" : "#52c41a",
-                  }}
-                  prefix={<WarningOutlined />}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Healthy"
-                  value={(data?.total_monitored || 0) - (data?.total_breached || 0)}
-                  suffix={`/ ${data?.total_monitored || 0}`}
-                  valueStyle={{ color: "#52c41a" }}
-                  prefix={<CheckCircleOutlined />}
-                />
-              </Card>
-            </Col>
-          </Row>
-
-          {(data?.total_breached || 0) > 0 && !breachedOnly && (
-            <Alert
-              message="SLA Breaches Detected"
-              description={`${data?.total_breached} table(s) currently breaching SLA thresholds. Enable "Show breached only" to filter.`}
-              type="warning"
-              showIcon
-              icon={<ExclamationCircleOutlined />}
-              style={{ marginBottom: 24 }}
-            />
-          )}
-
-          <Card
-            title="SLA Status by Table"
-            extra={
-              <Space>
-                <Tooltip title="Last Iceberg snapshot commit vs SLA threshold">
-                  <ClockCircleOutlined />
-                  <Text type="secondary" style={{ marginLeft: 4 }}>
-                    Data freshness SLA
-                  </Text>
-                </Tooltip>
-                <Tooltip title="Days since last maintenance">
-                  <ToolOutlined />
-                  <Text type="secondary" style={{ marginLeft: 4 }}>
-                    Maintenance SLA
-                  </Text>
-                </Tooltip>
-                <Tooltip title="P95 query latency in last 24h">
-                  <ThunderboltOutlined />
-                  <Text type="secondary" style={{ marginLeft: 4 }}>
-                    Query SLA
-                  </Text>
-                </Tooltip>
-              </Space>
+      }
+      loading={isLoading}
+      error={error}
+      errorTitle="Failed to load SLA status"
+      kpis={
+        <StatStrip
+          items={[
+            { label: "Total monitored", value: data?.total_monitored ?? 0, suffix: "tables" },
+            { label: "SLA compliance", value: `${complianceRate.toFixed(1)}%` },
+            { label: "Breached", value: `${data?.total_breached ?? 0} / ${data?.total_monitored ?? 0}` },
+            {
+              label: "Healthy",
+              value: `${(data?.total_monitored ?? 0) - (data?.total_breached ?? 0)} / ${data?.total_monitored ?? 0}`
             }
-          >
-            <Table
-              scroll={{ x: 960 }}
-              columns={columns}
-              dataSource={data?.slas || []}
-              rowKey="table_id"
-              pagination={{
-                pageSize: 20,
-                showSizeChanger: true,
-                showTotal: (total) => `${total} tables`,
-              }}
-              size="small"
-              rowClassName={(record: SLAStatusRow) => {
-                const breachedCount = [
-                  record.freshness_breached,
-                  record.maintenance_breached,
-                  record.p95_latency_breached,
-                ].filter(Boolean).length;
-                return breachedCount >= 2 ? "row-critical" : breachedCount === 1 ? "row-warning" : "";
-              }}
-            />
-          </Card>
-        </>
-      )}
-    </div>
+          ]}
+        />
+      }
+    >
+      {(data?.total_breached || 0) > 0 && !breachedOnly ? (
+        <Alert
+          message="SLA breaches detected"
+          description={`${data?.total_breached} table(s) currently breach SLA thresholds. Use breached-only mode for focused triage.`}
+          type="warning"
+          showIcon
+          icon={<ExclamationCircleOutlined />}
+          style={{ marginBottom: 8 }}
+        />
+      ) : null}
+
+      <Card
+        title="SLA status by table"
+        extra={
+          <Space>
+            <Tooltip title="Last Iceberg snapshot commit vs SLA threshold">
+              <ClockCircleOutlined />
+              <Text type="secondary" style={{ marginLeft: 4 }}>
+                Freshness
+              </Text>
+            </Tooltip>
+            <Tooltip title="Days since last maintenance">
+              <ToolOutlined />
+              <Text type="secondary" style={{ marginLeft: 4 }}>
+                Maintenance
+              </Text>
+            </Tooltip>
+            <Tooltip title="P95 query latency in last 24h">
+              <ThunderboltOutlined />
+              <Text type="secondary" style={{ marginLeft: 4 }}>
+                Query
+              </Text>
+            </Tooltip>
+          </Space>
+        }
+      >
+        <Table
+          scroll={{ x: 960 }}
+          columns={columns}
+          dataSource={data?.slas || []}
+          rowKey="table_id"
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (total) => `${total} tables`,
+          }}
+          size="small"
+          rowClassName={(record: SLAStatusRow) => {
+            const breachedCount = [
+              record.freshness_breached,
+              record.maintenance_breached,
+              record.p95_latency_breached,
+            ].filter(Boolean).length;
+            return breachedCount >= 2 ? "row-critical" : breachedCount === 1 ? "row-warning" : "";
+          }}
+        />
+      </Card>
+    </OverviewPage>
   );
 };

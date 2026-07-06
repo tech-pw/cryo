@@ -1,6 +1,7 @@
 import { PlusOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -201,6 +202,12 @@ export const Governance = () => {
       <PageHeader
         title="Governance"
         subtitle="Approvals, anomalies, FinOps forecast, tier policies, and table lineage surfaced from the advanced API."
+      />
+      <Alert
+        className="page-alert"
+        type="warning"
+        showIcon
+        message="Start with urgent signals first: pending approvals, broken tables, and active anomalies."
       />
 
       <Row gutter={[12, 12]}>

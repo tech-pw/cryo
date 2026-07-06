@@ -274,6 +274,12 @@ export const Connections = () => {
         title="Connections"
         subtitle="Lakehouses are where your Iceberg data lives. Engines are what actually runs maintenance on it."
       />
+      <Alert
+        className="page-alert"
+        type="info"
+        showIcon
+        message="Recommended setup flow: Connect lakehouse -> Test connection -> Run first scan -> Add engine -> Assign preset."
+      />
       {testResult ? (
         <Alert
           className="page-alert"

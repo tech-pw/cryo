@@ -47,6 +47,9 @@ export const DatalakeHealth = () => {
         subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
           <Space>
+            <Link to="/tables?view=savings">
+              <Button type="primary">Fix top offenders</Button>
+            </Link>
             <Link to="/ai">
               <Button>Intelligence hub</Button>
             </Link>
@@ -172,7 +175,9 @@ export const DatalakeHealth = () => {
                     {
                       title: "Table",
                       render: (_, row) => (
-                        <Typography.Text strong>{row.schema_name}.{row.table_name}</Typography.Text>
+                        <Link to={`/tables/${row.id}`}>
+                          <Typography.Text strong>{row.schema_name}.{row.table_name}</Typography.Text>
+                        </Link>
                       )
                     },
                     { title: "Grade", render: (_, row) => <GradePill grade={row.stats?.grade} /> },

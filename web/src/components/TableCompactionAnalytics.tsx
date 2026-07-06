@@ -15,9 +15,10 @@ import { formatGb, formatNumber, formatTime } from "../lib/format";
 
 interface Props {
   tableId: UUID;
+  embedded?: boolean;
 }
 
-export const TableCompactionAnalytics = ({ tableId }: Props) => {
+export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) => {
   const { api, role } = useAuth();
   const queryClient = useQueryClient();
   const canUpdate = role === "admin" || role === "operator";
@@ -79,19 +80,8 @@ export const TableCompactionAnalytics = ({ tableId }: Props) => {
     }
   ];
 
-  return (
-    <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
-      <div className="td-chart-card-header">
-        <span className="td-chart-card-title">Compaction analytics & signals</span>
-        {canUpdate ? (
-          <div className="td-chart-card-actions">
-            <Button size="small" loading={refreshScores.isPending} onClick={() => refreshScores.mutate()}>
-              Refresh benefit scores
-            </Button>
-          </div>
-        ) : null}
-      </div>
-      <div className="td-chart-card-content">
+  const content = (
+    <>
       <Row gutter={[12, 12]}>
         <Col xs={24} lg={12}>
           <Typography.Title level={5}>Top compaction candidates</Typography.Title>
@@ -194,6 +184,38 @@ export const TableCompactionAnalytics = ({ tableId }: Props) => {
           ) : null}
         </Col>
       </Row>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="td-embedded-content">
+        {canUpdate ? (
+          <div className="td-embedded-toolbar">
+            <Button size="small" loading={refreshScores.isPending} onClick={() => refreshScores.mutate()}>
+              Refresh benefit scores
+            </Button>
+          </div>
+        ) : null}
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
+      <div className="td-chart-card-header">
+        <span className="td-chart-card-title">Compaction analytics & signals</span>
+        {canUpdate ? (
+          <div className="td-chart-card-actions">
+            <Button size="small" loading={refreshScores.isPending} onClick={() => refreshScores.mutate()}>
+              Refresh benefit scores
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <div className="td-chart-card-content">
+        {content}
       </div>
     </Card>
   );

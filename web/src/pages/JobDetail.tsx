@@ -23,7 +23,7 @@ import {
   CodeOutlined,
   FilterOutlined,
 } from "@ant-design/icons";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { getJob, getJobDetailDashboard, type JobDetailDashboard } from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
@@ -80,7 +80,17 @@ export const JobDetail = () => {
       <PageHeader
         title="Maintenance job detail"
         subtitle={`Job ID: ${data.job_id}`}
-        actions={<StatusTag status={data.status} />}
+        actions={
+          <Space>
+            <StatusTag status={data.status} />
+            <Link to={`/tables/${data.table_id}`}>
+              <Button size="small">Open table</Button>
+            </Link>
+            <Link to={`/tables/${data.table_id}?view=savings`}>
+              <Button size="small" type="primary">Re-run from table</Button>
+            </Link>
+          </Space>
+        }
       />
 
       {data.error_message && (
