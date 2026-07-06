@@ -270,6 +270,7 @@ body {
 .chart-frame {
   height: 260px;
   color: var(--ink);
+  overflow: hidden;
 }
 
 .chart-frame .recharts-cartesian-axis-tick-value {
