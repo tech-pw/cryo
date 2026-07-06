@@ -21,7 +21,7 @@ import {
   Typography,
   message
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   createAIProvider,
@@ -31,6 +31,7 @@ import {
   deleteAIProvider,
   deleteSlackConfig,
   getCatalogLatency,
+  getSourceNamespaces,
   listAIProviders,
   listAIProviderTypes,
   listDestinations,
@@ -855,6 +856,7 @@ interface SourceFormValues {
   advanced_json?: string;
   secret_ref?: string | null;
   enabled: boolean;
+  maintenance_schema_names?: string[];
 }
 
 const decomposeSourceConfig = (config: Record<string, unknown> | undefined) => {
@@ -915,6 +917,11 @@ const buildSourceConfig = (values: SourceFormValues): Record<string, unknown> =>
   return config;
 };
 
+export const formatSourceTestSuccessMessage = (namespaceCount: number) => {
+  const noun = namespaceCount === 1 ? "schema" : "schemas";
+  return `Connected — found ${namespaceCount} ${noun} in catalog`;
+};
+
 /**
  * A single "Warehouse" field is only ever a default — individual namespaces or tables in a real
  * lakehouse can (and often do) point at different S3 buckets/prefixes. Rather than pretend one
@@ -938,24 +945,13 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
       className="page-alert"
       type="success"
       showIcon
-      message={`Connected — found ${result.namespaces.length} namespace${result.namespaces.length === 1 ? "" : "s"}`}
+      message={formatSourceTestSuccessMessage(result.namespaces.length)}
       description={
-        <Space direction="vertical" size={6} className="full-width">
-          {result.namespaces.length ? (
-            <Space size={[4, 4]} wrap>
-              {result.namespaces.map((namespace, index) => (
-                <Typography.Text key={namespace || `namespace-${index}`} code>
-                  {namespace || "(unnamed)"}
-                </Typography.Text>
-              ))}
-            </Space>
-          ) : null}
-          {result.note ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
-              {result.note}
-            </Typography.Text>
-          ) : null}
-        </Space>
+        result.note ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+            {result.note}
+          </Typography.Text>
+        ) : undefined
       }
     />
   );
@@ -1048,6 +1044,21 @@ const SourceDrawer = ({
   );
 
   const [testPassed, setTestPassed] = useState(false);
+  const [schemaOptions, setSchemaOptions] = useState<string[]>(
+    isEditing ? value.maintenance_schema_names ?? [] : []
+  );
+
+  const savedNamespaces = useQuery({
+    queryKey: ["source-namespaces", isEditing ? value.id : null],
+    queryFn: () => getSourceNamespaces(api, value.id),
+    enabled: Boolean(isEditing)
+  });
+
+  useEffect(() => {
+    if (savedNamespaces.data?.ok) {
+      setSchemaOptions(savedNamespaces.data.namespaces);
+    }
+  }, [savedNamespaces.data]);
 
   const testConnection = useMutation({
     mutationFn: () => {
@@ -1060,12 +1071,28 @@ const SourceDrawer = ({
         source_id: isEditing ? value.id : undefined
       });
     },
-    onSuccess: (data) => setTestPassed(Boolean(data.ok)),
+    onSuccess: (data) => {
+      setTestPassed(Boolean(data.ok));
+      if (data.ok) {
+        setSchemaOptions(data.namespaces);
+      }
+    },
     onError: () => {
       setTestPassed(false);
       message.error("Advanced properties must be valid JSON before testing.");
     }
   });
+
+  const schemaSelectOptions = Array.from(
+    new Set([
+      ...schemaOptions,
+      ...(isEditing ? value.maintenance_schema_names ?? [] : []),
+      ...(form.getFieldValue("maintenance_schema_names") ?? [])
+    ])
+  );
+  const showSchemaFilter =
+    Boolean(testConnection.data?.ok) ||
+    (Boolean(isEditing) && (savedNamespaces.data?.ok || schemaSelectOptions.length > 0));
 
   return (
     <Drawer title={isEditing ? "Edit lakehouse" : "New lakehouse"} open={Boolean(value)} onClose={onClose} size={620} destroyOnHidden>
@@ -1077,12 +1104,16 @@ const SourceDrawer = ({
           type: isEditing ? value.type : "rest",
           secret_ref: isEditing ? value.secret_ref : null,
           enabled: isEditing ? value.enabled : true,
+          maintenance_schema_names: isEditing ? value.maintenance_schema_names ?? [] : [],
           s3_auth_method: "default",
           ...existingConfig
         }}
         onValuesChange={(changed) => {
           if (changed.type) setCatalogType(changed.type);
           if (changed.s3_auth_method) setS3AuthMethod(changed.s3_auth_method);
+          if (changed.maintenance_schema_names !== undefined) {
+            return;
+          }
           setTestPassed(false);
           testConnection.reset();
         }}
@@ -1093,7 +1124,8 @@ const SourceDrawer = ({
               type: values.type,
               config: buildSourceConfig(values),
               secret_ref: values.secret_ref || null,
-              enabled: values.enabled
+              enabled: values.enabled,
+              maintenance_schema_names: values.maintenance_schema_names ?? []
             });
           } catch {
             message.error("Advanced properties must be valid JSON.");
@@ -1137,6 +1169,30 @@ const SourceDrawer = ({
           )}
         </Form.Item>
         {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
+
+        {showSchemaFilter ? (
+          <Form.Item
+            name="maintenance_schema_names"
+            label={
+              <HintLabel
+                label="Schemas for maintenance"
+                tooltip="Only tables in the selected schemas are scanned and eligible for maintenance. Leave empty to include every schema discovered in this catalog."
+              />
+            }
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              placeholder="All schemas (no filter)"
+              options={schemaSelectOptions.map((schema) => ({
+                value: schema,
+                label: schema || "(unnamed)"
+              }))}
+              optionFilterProp="label"
+            />
+          </Form.Item>
+        ) : null}
 
         {isEditing ? (
           <>

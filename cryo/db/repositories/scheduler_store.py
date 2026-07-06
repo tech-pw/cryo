@@ -23,6 +23,7 @@ from cryo.db.repositories.presets import (
     rule_to_config,
     table_to_candidate,
 )
+from cryo.db.repositories.sources import table_in_source_scope
 from cryo.scheduler.rules import (
     PresetConfig,
     TableCandidate,
@@ -58,9 +59,19 @@ class SQLSchedulerStore:
     def list_tables(self) -> list[TableCandidate]:
         with self._session_factory() as session:
             tables = session.scalars(
-                select(Table).options(selectinload(Table.stats), selectinload(Table.cost))
+                select(Table)
+                .options(
+                    selectinload(Table.stats),
+                    selectinload(Table.cost),
+                    selectinload(Table.source),
+                )
+                .where(Table.is_active.is_(True))
             )
-            return [table_to_candidate(table) for table in tables if table.is_active]
+            return [
+                table_to_candidate(table)
+                for table in tables
+                if table.source is not None and table_in_source_scope(table, table.source)
+            ]
 
     def list_presets(self) -> list[PresetConfig]:
         with self._session_factory() as session:

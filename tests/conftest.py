@@ -31,6 +31,8 @@ from cryo.lineage.tracker import LineageEdge  # noqa: F401 — register table me
 from cryo.security.abac import ABACPolicy  # noqa: F401 — register table metadata
 from cryo.workflows.approvals import ApprovalRequest  # noqa: F401 — register table metadata
 
+from tests.test_presets_api_db import api_db  # noqa: F401 — shared API+DB test client fixture
+
 UUID_ID_MODELS = (
     Source,
     Destination,

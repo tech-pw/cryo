@@ -48,6 +48,10 @@ DELETE /api/v1/sources/{source_id}
 
 `DELETE` currently disables the source by setting `enabled=false`.
 
+`maintenance_schema_names` is an optional allowlist of Iceberg namespaces (schemas) Cryo may scan
+and schedule for maintenance. An empty list means every namespace in the catalog is in scope. The
+Connections UI populates this from the `POST /sources/test` namespace list.
+
 Example source payload:
 
 ```json
@@ -60,6 +64,7 @@ Example source payload:
     "uri": "http://localhost:8181",
     "warehouse": "s3://warehouse/"
   },
+  "maintenance_schema_names": ["analytics", "cdp"],
   "enabled": true
 }
 ```

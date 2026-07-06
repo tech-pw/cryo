@@ -14,10 +14,12 @@ from cryo.db.models import (
     MaintenanceRun,
     Preset,
     PresetRule,
+    Source,
     Table,
     TableAssignment,
     TableStats,
 )
+from cryo.db.repositories.sources import table_in_source_scope
 from cryo.scheduler.rules import (
     EffectivePreset,
     PresetConfig,
@@ -151,7 +153,7 @@ def resolve_selection(
         if missing:
             missing_ids = sorted(str(item) for item in missing)
             raise ValueError(f"Unknown table ids: {missing_ids}")
-        return SelectionResult(existing)
+        return SelectionResult(_filter_ids_in_maintenance_scope(session, existing))
 
     if mode != "filter":
         raise ValueError(f"Unsupported selection mode: {mode}")
@@ -162,7 +164,24 @@ def resolve_selection(
     stmt = select(Table.id).outerjoin(TableStats)
     if predicate is not None:
         stmt = stmt.where(predicate)
-    return SelectionResult(list(session.scalars(stmt)))
+    return SelectionResult(_filter_ids_in_maintenance_scope(session, list(session.scalars(stmt))))
+
+
+def _filter_ids_in_maintenance_scope(
+    session: Session, table_ids: Sequence[uuid.UUID]
+) -> list[uuid.UUID]:
+    if not table_ids:
+        return []
+    rows = session.execute(
+        select(Table, Source)
+        .join(Source, Table.source_id == Source.id)
+        .where(Table.id.in_(table_ids), Table.is_active.is_(True))
+    )
+    return [
+        table.id
+        for table, source in rows
+        if table_in_source_scope(table, source)
+    ]
 
 
 def assign_tables(

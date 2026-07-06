@@ -22,6 +22,8 @@ class SourceCreate(BaseModel):
     config: JsonDict = Field(default_factory=dict)
     secret_ref: str | None = None
     enabled: bool = True
+    # Empty = all namespaces in the catalog are eligible for scan + maintenance.
+    maintenance_schema_names: list[str] = Field(default_factory=list)
 
 
 class SourceRead(OrmModel):
@@ -33,6 +35,7 @@ class SourceRead(OrmModel):
     config: JsonDict = Field(default_factory=dict)
     # NEVER return secret_ref in API responses
     enabled: bool
+    maintenance_schema_names: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -48,6 +51,7 @@ class SourcePatch(BaseModel):
     config: JsonDict | None = None
     secret_ref: str | None = None
     enabled: bool | None = None
+    maintenance_schema_names: list[str] | None = None
 
 
 class SourceTestRequest(BaseModel):
