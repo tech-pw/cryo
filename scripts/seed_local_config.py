@@ -28,9 +28,39 @@ LOCAL_TRINO_DESTINATION = {
     "engine": "trino",
     "config": {
         "host": "localhost",
-        "port": 8090,
+        "port": 8080,
         "user": "cryo",
         "catalog": "iceberg",
+        "per_replica_cap": 5,
+        "offpeak_start_ist": 0,
+        "offpeak_end_ist": 0,
+        "adaptive_budget": False,
+    },
+}
+
+LOCAL_HMS_SOURCE = {
+    "name": "local-hms",
+    "type": "hive",
+    "config": {
+        "catalog_name": "hms",
+        "type": "hive",
+        "uri": "thrift://localhost:9083",
+        "warehouse": "s3://warehouse/",
+        "s3.endpoint": "http://localhost:9000",
+        "s3.access-key-id": "minioadmin",
+        "s3.secret-access-key": "minioadmin",
+        "s3.path-style-access": "true",
+    },
+}
+
+LOCAL_TRINO_HMS_DESTINATION = {
+    "name": "local-trino-hms",
+    "engine": "trino",
+    "config": {
+        "host": "localhost",
+        "port": 8080,
+        "user": "cryo",
+        "catalog": "iceberg_hms",
         "per_replica_cap": 5,
         "offpeak_start_ist": 0,
         "offpeak_end_ist": 0,
@@ -150,13 +180,16 @@ def upsert_preset(session, payload: dict, *, destination_id) -> Preset:
 def main() -> None:
     with SessionLocal() as session:
         source = upsert_source(session, LOCAL_SOURCE)
+        hms_source = upsert_source(session, LOCAL_HMS_SOURCE)
         trino = upsert_destination(session, LOCAL_TRINO_DESTINATION)
+        trino_hms = upsert_destination(session, LOCAL_TRINO_HMS_DESTINATION)
         spark = upsert_destination(session, LOCAL_SPARK_DESTINATION)
         standard = upsert_preset(session, LOCAL_STANDARD_PRESET, destination_id=trino.id)
         large = upsert_preset(session, LOCAL_LARGE_PRESET, destination_id=trino.id)
         session.commit()
         print(
-            f"source={source.id} trino={trino.id} spark={spark.id} "
+            f"source={source.id} hms_source={hms_source.id} trino={trino.id} "
+            f"trino_hms={trino_hms.id} spark={spark.id} "
             f"preset_standard={standard.id} preset_large={large.id}"
         )
 

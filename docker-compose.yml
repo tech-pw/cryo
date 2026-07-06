@@ -1,25 +1,28 @@
-version: '3.8'
+# Cryo platform services — production-shaped local stack.
+# For full local dev (datalake + observability), use ./start-local.sh or `make up`.
+
+name: cryo
 
 services:
-  # ==================== Infrastructure ====================
-  
   postgres:
     image: pgvector/pgvector:pg16
     container_name: cryo-postgres
     environment:
       POSTGRES_USER: cryo
-      POSTGRES_PASSWORD: cryo-dev-password
+      POSTGRES_PASSWORD: cryo
       POSTGRES_DB: cryo
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cryo-dev
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryo"]
       interval: 5s
       timeout: 5s
       retries: 5
-  
+
   redis:
     image: redis:7-alpine
     container_name: cryo-redis
@@ -27,71 +30,14 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - cryo-dev
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
-  
-  minio:
-    image: minio/minio:latest
-    container_name: cryo-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-  
-  # ==================== Iceberg Catalog ====================
-  
-  iceberg-rest:
-    image: tabulario/iceberg-rest:latest
-    container_name: cryo-iceberg-rest
-    environment:
-      CATALOG_WAREHOUSE: s3://warehouse
-      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
-      CATALOG_S3_ACCESS__KEY__ID: minioadmin
-      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
-      CATALOG_S3_PATH__STYLE__ACCESS: "true"
-    ports:
-      - "8181:8181"
-    depends_on:
-      minio:
-        condition: service_healthy
-  
-  # ==================== Trino ====================
-  
-  trino:
-    image: trinodb/trino:480
-    container_name: cryo-trino
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./deploy/trino/catalog:/etc/trino/catalog
-      - ./deploy/trino/config.properties:/etc/trino/config.properties
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-  
-  # ==================== Cryo Services ====================
-  
+
   cryo-api:
     build:
       context: .
@@ -99,12 +45,14 @@ services:
     container_name: cryo-api
     command: uvicorn cryo.api.app:app --host 0.0.0.0 --port 8000
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       CRYO_JWT_SECRET: dev-secret-change-in-prod
       ENVIRONMENT: development
     ports:
       - "8000:8000"
+    networks:
+      - cryo-dev
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,7 +66,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  
+
   cryo-scanner:
     build:
       context: .
@@ -126,9 +74,11 @@ services:
     container_name: cryo-scanner
     command: python -m cryo.scanner.run
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+    networks:
+      - cryo-dev
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,7 +89,7 @@ services:
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-  
+
   cryo-scheduler:
     build:
       context: .
@@ -147,9 +97,11 @@ services:
     container_name: cryo-scheduler
     command: python -m cryo.scheduler
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+    networks:
+      - cryo-dev
     depends_on:
       postgres:
         condition: service_healthy
@@ -158,7 +110,7 @@ services:
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-  
+
   cryo-governor:
     build:
       context: .
@@ -166,9 +118,11 @@ services:
     container_name: cryo-governor
     command: python -m cryo.governor
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+    networks:
+      - cryo-dev
     depends_on:
       postgres:
         condition: service_healthy
@@ -177,7 +131,7 @@ services:
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-  
+
   cryo-worker:
     build:
       context: .
@@ -185,84 +139,20 @@ services:
     container_name: cryo-worker
     command: python -m cryo.worker
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo-dev-password@postgres:5432/cryo
+      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+    networks:
+      - cryo-dev
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      trino:
-        condition: service_healthy
     volumes:
       - ./cryo:/app/cryo
     restart: unless-stopped
-  
-  # ==================== Observability ====================
-  
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: cryo-prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    depends_on:
-      - cryo-api
-  
-  grafana:
-    image: grafana/grafana:latest
-    container_name: cryo-grafana
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_INSTALL_PLUGINS: grafana-piechart-panel
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources
-      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - grafana_data:/var/lib/grafana
-    depends_on:
-      - prometheus
-      - loki
 
-  loki:
-    image: grafana/loki:3.0.0
-    container_name: cryo-loki
-    command: -config.file=/etc/loki/loki-config.yml
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./deploy/loki/loki-config.yml:/etc/loki/loki-config.yml
-      - loki_data:/loki
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: cryo-promtail
-    command: -config.file=/etc/promtail/promtail-config.yml
-    volumes:
-      - ./deploy/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      loki:
-        condition: service_healthy
-    restart: unless-stopped
-  
-  # ==================== Frontend ====================
-  
   cryo-web:
     build:
       context: ./web
@@ -272,6 +162,8 @@ services:
       VITE_API_BASE_URL: http://localhost:8000
     ports:
       - "5173:5173"
+    networks:
+      - cryo-dev
     volumes:
       - ./web/src:/app/src
       - ./web/public:/app/public
@@ -281,7 +173,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
-  prometheus_data:
-  grafana_data:
-  loki_data:
+
+networks:
+  cryo-dev:
+    name: cryo-dev

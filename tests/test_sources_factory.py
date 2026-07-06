@@ -24,6 +24,34 @@ def test_factory_supports_hive_aliases() -> None:
     assert isinstance(catalog, HiveSourceCatalog)
 
 
+def test_factory_passes_hms_config_to_pyiceberg() -> None:
+    config = {
+        "catalog_name": "hms",
+        "type": "hive",
+        "uri": "thrift://localhost:9083",
+        "warehouse": "s3://warehouse/",
+        "s3.endpoint": "http://localhost:9000",
+        "s3.access-key-id": "minioadmin",
+        "s3.secret-access-key": "minioadmin",
+        "s3.path-style-access": "true",
+    }
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
+        load_catalog.return_value = MagicMock()
+        catalog_from_config("local-hms", "hive", config)
+    load_catalog.assert_called_once_with(
+        "hms",
+        uri="thrift://localhost:9083",
+        warehouse="s3://warehouse/",
+        **{
+            "s3.endpoint": "http://localhost:9000",
+            "s3.access-key-id": "minioadmin",
+            "s3.secret-access-key": "minioadmin",
+            "s3.path-style-access": "true",
+            "type": "hive",
+        },
+    )
+
+
 def test_factory_supports_glue_aliases() -> None:
     with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
         load_catalog.return_value = MagicMock()

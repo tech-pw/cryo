@@ -18,6 +18,18 @@ from cryo.db.models import (
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def upsert_table(
     session: Session,
     *,
@@ -247,7 +259,7 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
             analysis.cost.projected_savings_usd_month if analysis.cost else None
         ),
         "reclaimable_bytes": analysis.cost.reclaimable_bytes if analysis.cost else None,
-        "raw": analysis.raw,
+        "raw": _json_safe(analysis.raw),
     }
 
 
@@ -272,7 +284,7 @@ def _cost_values(table_id: uuid.UUID, cost: Any) -> dict[str, Any]:
         "projected_monthly_cost_usd": cost.projected_monthly_cost_usd,
         "projected_savings_usd_month": cost.projected_savings_usd_month,
         "query_request_savings_usd_month": cost.query_request_savings_usd_month,
-        "raw": cost.raw,
+        "raw": _json_safe(cost.raw),
     }
 
 
@@ -294,7 +306,7 @@ def _partition_rows(table_id: uuid.UUID, analysis: TableAnalysis) -> list[TableP
             small_files_in_partition_count=partition.small_files_in_partition_count,
             partition_size_gb=partition.partition_size_gb,
             compaction_status=partition.compaction_status,
-            raw=partition.raw,
+            raw=_json_safe(partition.raw),
         )
         for partition in analysis.partitions
     ]
