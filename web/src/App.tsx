@@ -13,12 +13,13 @@ import {
   SunOutlined,
   SyncOutlined,
   TeamOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  MenuOutlined
 } from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Button, ConfigProvider, Layout, Menu, Space, Spin, Tooltip, Typography, theme } from "antd";
+import { Button, ConfigProvider, Layout, Menu, Space, Spin, Tooltip, Typography, theme, Drawer } from "antd";
 import type { MenuProps } from "antd";
-import { Suspense, lazy, useMemo } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
@@ -122,6 +123,7 @@ const ThemeToggle = () => {
 const Shell = () => {
   const location = useLocation();
   const { subject, role, loading: authLoading, error: authError, isAuthenticated, signOut } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const selectedKey = useMemo(() => {
     const alias = [...routeSelectionAliases.entries()].find(([route]) => location.pathname.startsWith(route))?.[1];
     return alias ?? navItems.find((item) => location.pathname.startsWith(item.key))?.key ?? "/health";
@@ -163,7 +165,16 @@ const Shell = () => {
       </Layout.Sider>
       <Layout>
         <Layout.Header className="topbar">
-          <Typography.Text type="secondary">Apache Iceberg maintenance and health</Typography.Text>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileMenuOpen(true)}
+              className="mobile-menu-btn"
+              aria-label="Open navigation menu"
+            />
+            <Typography.Text type="secondary">Apache Iceberg maintenance and health</Typography.Text>
+          </div>
           <Space>
             <ThemeToggle />
             {authError ? (
@@ -205,6 +216,30 @@ const Shell = () => {
           </Suspense>
         </Layout.Content>
       </Layout>
+      <Drawer
+        title={
+          <div className="brand" style={{ padding: 0, height: "auto" }}>
+            <SettingOutlined />
+            <span>Cryo</span>
+          </div>
+        }
+        placement="left"
+        onClose={() => setMobileMenuOpen(false)}
+        open={mobileMenuOpen}
+        width={220}
+        styles={{
+          body: { padding: 0, background: "var(--sidebar-bg)" },
+          header: { background: "var(--sidebar-bg)", borderBottom: "1px solid #202a38" }
+        }}
+        closeIcon={<MenuOutlined style={{ color: "var(--sidebar-text-active)" }} />}
+      >
+        <Menu
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={navGroups}
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      </Drawer>
     </Layout>
   );
 };

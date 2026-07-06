@@ -18,7 +18,8 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -78,6 +79,8 @@ from cryo.api.schemas import (
     ScanTriggerResponse,
     SchemaCostDashboardResponse,
     SourceCreate,
+    SourceNamespacesResponse,
+    SourceNamespaceTablesResponse,
     SourcePatch,
     SourceRead,
     SourceTestRequest,
@@ -100,6 +103,7 @@ from cryo.db.models import (
     MaintenanceRun,
     Preset,
     PresetRule,
+    QueryLog,
     Source,
     Table,
     TableCost,
@@ -132,7 +136,7 @@ from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_co
 from cryo.planner.guardrails import validate_guardrails, validate_operation_order
 from cryo.planner.planner import build_plan
 from cryo.security.crypto import encrypt_secret
-from cryo.sources.factory import catalog_from_config
+from cryo.sources.factory import catalog_from_config, source_catalog_for
 
 router = APIRouter(prefix="/api/v1")
 
@@ -227,6 +231,52 @@ def list_sources(session: SessionDep) -> list[Source]:
 )
 def get_source(source_id: uuid.UUID, session: SessionDep) -> Source:
     return get_scoped_resource(session, Source, source_id, resource_type="Source")
+
+
+@router.get(
+    "/sources/{source_id}/namespaces",
+    response_model=SourceNamespacesResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_source_namespaces(source_id: uuid.UUID, session: SessionDep) -> SourceNamespacesResponse:
+    """Live namespace list for an already-saved source, so the scan-scope picker can offer real
+    schema names to target even before this lakehouse has ever been scanned -- the same cheap
+    list_namespaces() call test_source uses, not a full table listing."""
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
+
+    def _connect_and_list_namespaces() -> list[str]:
+        catalog = source_catalog_for(source)
+        return catalog.list_namespaces()
+
+    try:
+        namespaces = _run_with_timeout(_connect_and_list_namespaces)
+    except Exception as exc:
+        return SourceNamespacesResponse(ok=False, error=str(exc))
+    return SourceNamespacesResponse(ok=True, namespaces=namespaces)
+
+
+@router.get(
+    "/sources/{source_id}/namespaces/{namespace}/tables",
+    response_model=SourceNamespaceTablesResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_source_namespace_tables(
+    source_id: uuid.UUID, namespace: str, session: SessionDep
+) -> SourceNamespaceTablesResponse:
+    """Live table names within one namespace of an already-saved source -- one cheap call, so
+    the scan-scope "Specific tables" picker can offer real tables to target once a schema is
+    chosen, even before this lakehouse has ever been scanned."""
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
+
+    def _connect_and_list_tables() -> list[str]:
+        catalog = source_catalog_for(source)
+        return catalog.list_tables_in_namespace(namespace)
+
+    try:
+        tables = _run_with_timeout(_connect_and_list_tables)
+    except Exception as exc:
+        return SourceNamespaceTablesResponse(ok=False, error=str(exc))
+    return SourceNamespaceTablesResponse(ok=True, tables=tables)
 
 
 @router.post(
@@ -365,6 +415,33 @@ def delete_source(source_id: uuid.UUID, session: SessionDep) -> None:
     source = get_scoped_resource(session, Source, source_id, resource_type="Source")
     source.enabled = False
     session.commit()
+
+
+@router.delete(
+    "/sources/{source_id}/purge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
+)
+def purge_source(source_id: uuid.UUID, session: SessionDep) -> None:
+    """Permanently delete a source and everything Cryo scanned from it (tables, stats, tier
+    policies, AWS integration). Unlike DELETE /sources/{id} above (which just disables it and is
+    reversible via PATCH), this cannot be undone -- there is no soft-delete/restore path."""
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
+    # QueryLog isn't covered by an ORM cascade relationship on Source (it's a raw ingestion log,
+    # not scanned/managed state), so it needs explicit cleanup or the FK would block the delete.
+    session.execute(delete(QueryLog).where(QueryLog.source_id == source_id))
+    session.delete(source)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Could not delete this lakehouse -- something still references it that this "
+                "endpoint doesn't know how to clean up automatically."
+            ),
+        ) from exc
 
 
 @router.get(
@@ -575,6 +652,33 @@ def delete_destination(destination_id: uuid.UUID, session: SessionDep) -> None:
     )
     destination.enabled = False
     session.commit()
+
+
+@router.delete(
+    "/destinations/{destination_id}/purge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
+)
+def purge_destination(destination_id: uuid.UUID, session: SessionDep) -> None:
+    """Permanently delete an engine. Unlike DELETE /destinations/{id} above (soft-disable,
+    reversible via PATCH), this cannot be undone. Presets/maintenance runs that reference this
+    engine are NOT cascade-deleted -- reassign or remove those first, or this fails with a clear
+    409 rather than silently destroying preset configs or run history."""
+    destination = get_scoped_resource(
+        session, Destination, destination_id, resource_type="Destination"
+    )
+    session.delete(destination)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Could not delete this engine -- one or more presets or maintenance runs still "
+                "reference it. Reassign or delete those first."
+            ),
+        ) from exc
 
 
 @router.post(

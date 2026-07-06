@@ -30,7 +30,13 @@
       "Bash(python -m pytest tests/test_partition_analyzer.py -v)",
       "Bash(.venv/bin/python -m pytest tests/test_partition_analyzer.py -v)",
       "Bash(.venv/bin/python -c ' *)",
-      "Bash(.venv/bin/pip install *)"
+      "Bash(.venv/bin/pip install *)",
+      "Bash(npx vitest *)",
+      "Bash(.venv/bin/python -m ruff check --fix cryo/api/routes.py cryo/api/schemas.py cryo/sources/)",
+      "Bash(npm install *)",
+      "Bash(.venv/bin/python -m pytest tests/)",
+      "Bash(.venv/bin/python -m ruff check cryo/ tests/)",
+      "Bash(.venv/bin/python -m mypy cryo)"
     ]
   }
 }

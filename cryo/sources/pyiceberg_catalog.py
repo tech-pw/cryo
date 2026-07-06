@@ -48,6 +48,18 @@ class PyIcebergSourceCatalog:
         """
         return sorted({_namespace_name(namespace) for namespace in self._catalog.list_namespaces()})
 
+    def list_tables_in_namespace(self, namespace: str) -> list[str]:
+        """Table names within a single, already-known namespace -- one call, same cost as
+        list_namespaces() above, not the O(all namespaces) walk list_tables() does.
+
+        Lets the scan-scope "Specific tables" picker offer real table names once a user has
+        narrowed to one schema, even before a full scan of the whole lakehouse has ever run.
+        """
+        return sorted(
+            _schema_table(identifier, default_schema=namespace)[1]
+            for identifier in self._catalog.list_tables(namespace)
+        )
+
     def load_table(self, schema: str, table: str) -> Any:
         return self._catalog.load_table((schema, table))
 

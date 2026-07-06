@@ -75,6 +75,27 @@ class SourceTestResponse(BaseModel):
     note: str | None = None
 
 
+class SourceNamespacesResponse(BaseModel):
+    """Live namespace list for an already-saved source -- same cheap list_namespaces() call
+    test_source uses, so the scan-scope picker can offer real schema names to target even before
+    a first full scan has ever run."""
+
+    ok: bool
+    namespaces: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class SourceNamespaceTablesResponse(BaseModel):
+    """Live table names within one already-known namespace -- one cheap call
+    (list_tables_in_namespace), not the O(all namespaces) walk a full scan does. Lets the
+    scan-scope "Specific tables" picker offer real table names once a schema is chosen, even
+    before this lakehouse has ever been scanned."""
+
+    ok: bool
+    tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class AWSIntegrationCreate(BaseModel):
     """Free-tier-only AWS S3 cost/usage integration for a lakehouse's bucket.
 
