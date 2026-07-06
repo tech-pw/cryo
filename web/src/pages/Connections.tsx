@@ -31,6 +31,7 @@ import {
   listAIProviders,
   listAIProviderTypes,
   listDestinations,
+  listRuns,
   listSlackConfigs,
   listSources,
   patchAIProvider,
@@ -46,6 +47,7 @@ import {
   testSlackConfig,
   testSlackConfigValues,
   testSource,
+  triggerScan,
   ApiError,
   type AIProviderRead,
   type AIProviderType,
@@ -53,7 +55,7 @@ import {
   type SlackConfigRead,
   type SlackConfigWrite
 } from "../api/client";
-import type { DestinationRead, DestinationWrite, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
+import type { DestinationRead, DestinationWrite, RunRead, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
@@ -61,6 +63,7 @@ import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
+import { formatTime } from "../lib/format";
 import {
   markConnectionNeedsScan,
   isConnectionPendingScan,
@@ -841,6 +844,72 @@ const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
   );
 };
 
+const SCAN_ACTIVE_STATUSES = new Set(["accepted", "queued", "running"]);
+
+/** Per-lakehouse scan trigger + recent history, surfaced right on the connection itself --
+ * mirrors how OpenMetadata attaches ingestion runs to a service instead of a separate page. */
+const SourceScansPanel = ({ sourceId }: { sourceId: string }) => {
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
+  const runsQueryKey = ["source-scan-runs", sourceId];
+
+  const runs = useQuery({
+    queryKey: runsQueryKey,
+    queryFn: () => listRuns(api, { kind: "scan", source_id: sourceId, limit: 5 }),
+    refetchInterval: (query) => {
+      const active = (query.state.data ?? []).some((run) => SCAN_ACTIVE_STATUSES.has(run.status));
+      return active ? 5000 : 15000;
+    }
+  });
+
+  const scan = useMutation({
+    mutationFn: () =>
+      triggerScan(api, { scope: "source", source_id: sourceId, full_scan: true, trigger: "web-connections" }),
+    onSuccess: (result) => {
+      message.success(result.message || `Scan queued: ${result.run_id}`);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const activeRun = (runs.data ?? []).find((run) => SCAN_ACTIVE_STATUSES.has(run.status));
+
+  return (
+    <Space direction="vertical" size={10} className="full-width">
+      <ConfirmAction
+        title="Scan this lakehouse now?"
+        description="Queues a scan of just this lakehouse -- other connected lakehouses aren't touched."
+        onConfirm={() => scan.mutate()}
+      >
+        <Button loading={scan.isPending} disabled={Boolean(activeRun)}>
+          {activeRun ? "Scan in progress..." : "Scan this lakehouse now"}
+        </Button>
+      </ConfirmAction>
+      {runs.isLoading ? null : (runs.data ?? []).length ? (
+        <Space direction="vertical" size={6} className="full-width">
+          {(runs.data as RunRead[]).map((run) => (
+            <Space key={run.id} size={8} style={{ width: "100%", justifyContent: "space-between" }}>
+              <Space size={8}>
+                <StatusTag status={run.status} />
+                <Link to={`/scans/${run.id}`}>
+                  <Typography.Text code className="mono-id">
+                    {run.id.slice(0, 8)}
+                  </Typography.Text>
+                </Link>
+              </Space>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {formatTime(run.created_at)}
+              </Typography.Text>
+            </Space>
+          ))}
+        </Space>
+      ) : (
+        <Typography.Text type="secondary">No scans yet for this lakehouse.</Typography.Text>
+      )}
+    </Space>
+  );
+};
+
 const SourceDrawer = ({
   value,
   saving,
@@ -951,6 +1020,17 @@ const SourceDrawer = ({
           )}
         </Form.Item>
         {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
+
+        {isEditing ? (
+          <>
+            <Divider titlePlacement="left" plain style={{ fontSize: 12, color: "var(--ink-faint, rgba(0,0,0,0.45))" }}>
+              Scans
+            </Divider>
+            <div style={{ marginBottom: 16 }}>
+              <SourceScansPanel sourceId={value.id} />
+            </div>
+          </>
+        ) : null}
 
         <Divider titlePlacement="left" plain style={{ fontSize: 12, color: "var(--ink-faint, rgba(0,0,0,0.45))" }}>
           Storage connection

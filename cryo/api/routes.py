@@ -1407,6 +1407,7 @@ def get_scanner_status(session: SessionDep) -> ScannerStatusRead:
 def list_runs(
     session: SessionDep,
     kind: str | None = Query(default=None),
+    source_id: uuid.UUID | None = Query(default=None),  # noqa: B008 - uuid.UUID isn't in ruff's immutable-type allowlist; default is always None
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -1420,6 +1421,10 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
+    if source_id is not None:
+        # Only scan runs record source_id in their summary (source/schemas/tables scope) --
+        # fleet-wide "all" scans aren't tied to one lakehouse, so they're excluded here by design.
+        stmt = stmt.where(MaintenanceRun.summary["source_id"].astext == str(source_id))
     runs = session.scalars(stmt)
     return [RunRead.model_validate(presets.run_summary(run)) for run in runs]
 
