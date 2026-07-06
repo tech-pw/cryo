@@ -1,44 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Card,
-  Row,
-  Col,
   Table,
   Tag,
   Typography,
-  Statistic,
   Select,
   Space,
-  Spin,
   Tooltip,
 } from "antd";
 import {
   ClockCircleOutlined,
   DatabaseOutlined,
   WarningOutlined,
-  CheckCircleOutlined,
-  ThunderboltOutlined,
+  CheckCircleOutlined
 } from "@ant-design/icons";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { getQueryPerformanceDashboard, type QueryPerformanceData } from "../api/client";
-import { PageHeader, QueryErrorAlert } from "../components/common";
+import { StatStrip } from "../components/common";
+import { OverviewPage } from "../components/layout/OverviewPage";
 import { useAuth } from "../lib/auth";
+import { formatBytesGb, formatDuration } from "../lib/format";
 
 const { Text } = Typography;
-
-const formatBytes = (bytes: number | null) => {
-  if (!bytes) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-};
-
-const formatDuration = (ms: number) => {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
-};
 
 export const QueryPerformance = () => {
   const { api } = useAuth();
@@ -82,7 +66,7 @@ export const QueryPerformance = () => {
       width: "10%",
       sorter: (a: any, b: any) => a.duration_ms - b.duration_ms,
       render: (ms: number) => {
-        const color = ms > 10000 ? "red" : ms > 5000 ? "orange" : "green";
+        const color = ms > 10000 ? "red" : ms > 5000 ? "orange" : "success";
         return (
           <Tag color={color} icon={<ClockCircleOutlined />}>
             {formatDuration(ms)}
@@ -95,7 +79,7 @@ export const QueryPerformance = () => {
       dataIndex: "bytes_scanned",
       key: "bytes_scanned",
       width: "12%",
-      render: (bytes: number | null) => formatBytes(bytes),
+      render: (bytes: number | null) => formatBytesGb(bytes),
     },
     {
       title: "Rows",
@@ -126,133 +110,76 @@ export const QueryPerformance = () => {
       key: "table_name",
       width: "13%",
       ellipsis: true,
-      render: (name: string | null) => name || "—",
+      render: (name: string | null) =>
+        name ? (
+          <Link to={`/tables?q=${encodeURIComponent(name)}`}>{name}</Link>
+        ) : (
+          "—"
+        ),
     },
   ];
 
   return (
-    <div>
-      <PageHeader
-        title="Query performance"
-        subtitle="Monitor query latency, throughput, and failure rates."
-        actions={
-          <Space>
-            <Select
-              style={{ width: 120 }}
-              placeholder="All Engines"
-              allowClear
-              value={engine}
-              onChange={setEngine}
-              options={[
-                { label: "Trino", value: "trino" },
-                { label: "Spark", value: "spark" },
-                { label: "Athena", value: "athena" },
-                { label: "DuckDB", value: "duckdb" }
-              ]}
-            />
-            <Select
-              style={{ width: 120 }}
-              value={hours}
-              onChange={setHours}
-              options={[
-                { label: "Last 1 hour", value: 1 },
-                { label: "Last 6 hours", value: 6 },
-                { label: "Last 24 hours", value: 24 },
-                { label: "Last 7 days", value: 168 }
-              ]}
-            />
-          </Space>
-        }
-      />
-
-      <QueryErrorAlert error={error} title="Failed to load query performance" />
-
-      {isLoading ? (
-        <div style={{ textAlign: "center", padding: "60px" }}>
-          <Spin size="large" />
-        </div>
-      ) : (
-        <>
-          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="Total Queries"
-                  value={data?.total || 0}
-                  suffix="queries"
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="P50 Latency"
-                  value={data?.p50_latency_ms || 0}
-                  suffix="ms"
-                  precision={0}
-                  valueStyle={{ color: "#3f8600" }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="P95 Latency"
-                  value={data?.p95_latency_ms || 0}
-                  suffix="ms"
-                  precision={0}
-                  valueStyle={{ color: "#cf1322" }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="P99 Latency"
-                  value={data?.p99_latency_ms || 0}
-                  suffix="ms"
-                  precision={0}
-                  valueStyle={{ color: "#cf1322" }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="Avg Data Scanned"
-                  value={formatBytes(data?.avg_bytes_scanned || null)}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={4}>
-              <Card>
-                <Statistic
-                  title="Failed Queries"
-                  value={data?.failed_count || 0}
-                  suffix={`/ ${data?.total || 0}`}
-                  valueStyle={{
-                    color: (data?.failed_count || 0) > 0 ? "#cf1322" : "#3f8600",
-                  }}
-                />
-              </Card>
-            </Col>
-          </Row>
-
-          <Card title="Top Slowest Queries" extra={<DatabaseOutlined />}>
-            <Table
-              columns={columns}
-              dataSource={data?.queries || []}
-              rowKey="query_id"
-              pagination={{
-                pageSize: 20,
-                showSizeChanger: true,
-                showTotal: (total) => `${total} queries`,
-              }}
-              size="small"
-            />
-          </Card>
-        </>
-      )}
-    </div>
+    <OverviewPage
+      title="Query performance"
+      subtitle="Monitor query latency, throughput, and failure rates."
+      actions={
+        <Space>
+          <Select
+            style={{ width: 120 }}
+            placeholder="All Engines"
+            allowClear
+            value={engine}
+            onChange={setEngine}
+            options={[
+              { label: "Trino", value: "trino" },
+              { label: "Spark", value: "spark" },
+              { label: "Athena", value: "athena" },
+              { label: "DuckDB", value: "duckdb" }
+            ]}
+          />
+          <Select
+            style={{ width: 120 }}
+            value={hours}
+            onChange={setHours}
+            options={[
+              { label: "Last 1 hour", value: 1 },
+              { label: "Last 6 hours", value: 6 },
+              { label: "Last 24 hours", value: 24 },
+              { label: "Last 7 days", value: 168 }
+            ]}
+          />
+        </Space>
+      }
+      loading={isLoading}
+      error={error}
+      errorTitle="Failed to load query performance"
+      kpis={
+        <StatStrip
+          items={[
+            { label: "Total queries", value: data?.total ?? 0, suffix: "queries" },
+            { label: "P50 latency", value: `${data?.p50_latency_ms ?? 0} ms` },
+            { label: "P95 latency", value: `${data?.p95_latency_ms ?? 0} ms` },
+            { label: "P99 latency", value: `${data?.p99_latency_ms ?? 0} ms` },
+            { label: "Avg data scanned", value: formatBytesGb(data?.avg_bytes_scanned ?? null) },
+            { label: "Failed", value: `${data?.failed_count ?? 0} / ${data?.total ?? 0}` }
+          ]}
+        />
+      }
+    >
+      <Card title="Top slowest queries" extra={<DatabaseOutlined />}>
+        <Table
+          columns={columns}
+          dataSource={data?.queries || []}
+          rowKey="query_id"
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (total) => `${total} queries`,
+          }}
+          size="small"
+        />
+      </Card>
+    </OverviewPage>
   );
 };

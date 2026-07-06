@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Row, Space, Table, Typography, message } from "antd";
+import { Button, Card, Space, Table, Typography, message } from "antd";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { cancelRun, getRunJobs, listRuns } from "../api/client";
 import type { JobRead, RunRead } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
-import { EmptyState, PageHeader } from "../components/common";
+import { EmptyState } from "../components/common";
+import { OperationsConsolePage } from "../components/layout/OperationsConsolePage";
 import { RunConsole } from "../components/RunConsole";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -51,15 +52,8 @@ export const Runs = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
-  return (
-    <div>
-      <PageHeader
-        title="Runs"
-        subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings will surface here once workers record audit_log.actual_bytes_freed."
-      />
-      <Row gutter={[12, 12]}>
-        <Col xs={24} xl={runId ? 11 : 24}>
-          <Card title="Recent runs">
+  const listPane = (
+    <Card title="Recent runs">
             <Table<RunRead>
               className="runs-table"
               size="small"
@@ -115,7 +109,14 @@ export const Runs = () => {
                   title: "Status",
                   dataIndex: "status",
                   width: 112,
-                  render: (status) => <StatusTag status={status} />
+                  render: (status, row) => (
+                    <Space direction="vertical" size={2}>
+                      <StatusTag status={status} />
+                      {status === "failed" && targetTableId(row) ? (
+                        <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
+                      ) : null}
+                    </Space>
+                  )
                 },
                 { title: "Kind", dataIndex: "kind", width: 96 },
                 { title: "Trigger", dataIndex: "trigger", width: 104, render: (value) => value ?? "-" },
@@ -167,38 +168,42 @@ export const Runs = () => {
               locale={{ emptyText: <EmptyState title="No runs yet" description="Ad-hoc and scheduled runs appear here." /> }}
             />
           </Card>
-        </Col>
-        {runId ? (
-          <Col xs={24} xl={13}>
-            <Card
-              title={
-                <Space>
-                  <span>Live console</span>
-                  <Typography.Text type="secondary">{runId.slice(0, 8)}</Typography.Text>
-                </Space>
-              }
-              extra={
-                selectedRunJobs.data?.length ? (
-                  <Space wrap size={4}>
-                    {selectedRunJobs.data.slice(0, 4).map((job: JobRead) => (
-                      <Link key={job.id} to={`/jobs/${job.id}`}>
-                        Job {shortId(job.id)}
-                      </Link>
-                    ))}
-                    {selectedRunJobs.data.length > 4 ? (
-                      <Typography.Text type="secondary">
-                        +{selectedRunJobs.data.length - 4} more in table
-                      </Typography.Text>
-                    ) : null}
-                  </Space>
-                ) : null
-              }
-            >
-              <RunConsole runId={runId} />
-            </Card>
-          </Col>
-        ) : null}
-      </Row>
-    </div>
+  );
+  const detailPane = runId ? (
+    <Card
+      title={
+        <Space>
+          <span>Live console</span>
+          <Typography.Text type="secondary">{runId.slice(0, 8)}</Typography.Text>
+        </Space>
+      }
+      extra={
+        selectedRunJobs.data?.length ? (
+          <Space wrap size={4}>
+            {selectedRunJobs.data.slice(0, 4).map((job: JobRead) => (
+              <Link key={job.id} to={`/jobs/${job.id}`}>
+                Job {shortId(job.id)}
+              </Link>
+            ))}
+            {selectedRunJobs.data.length > 4 ? (
+              <Typography.Text type="secondary">
+                +{selectedRunJobs.data.length - 4} more in table
+              </Typography.Text>
+            ) : null}
+          </Space>
+        ) : null
+      }
+    >
+      <RunConsole runId={runId} />
+    </Card>
+  ) : null;
+
+  return (
+    <OperationsConsolePage
+      title="Runs"
+      subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings will surface here once workers record audit_log.actual_bytes_freed."
+      listPane={listPane}
+      detailPane={detailPane}
+    />
   );
 };

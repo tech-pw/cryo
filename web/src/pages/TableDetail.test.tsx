@@ -75,6 +75,23 @@ vi.mock("../api/client", () => ({
     by_operation: [],
     last_full_cost_scan_at: "2026-06-01T00:00:00Z"
   }),
+  getTableS3Tiering: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_name: "public.events",
+    current_size_gb: 12,
+    avg_file_size_kb: 2560,
+    days_since_last_access: 7,
+    current_monthly_cost_usd: 10,
+    intelligent_tiering_monthly_cost_usd: 8,
+    estimated_annual_savings_usd: 24,
+    recommendation: "KEEP_STANDARD",
+    reason: "recently accessed"
+  }),
+  getTableBenefitScores: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    partitions_scored: 1,
+    top_candidates: []
+  }),
   listPresets: vi.fn().mockResolvedValue([]),
   listDestinations: vi.fn().mockResolvedValue([
     {

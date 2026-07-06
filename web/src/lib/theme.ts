@@ -116,6 +116,33 @@ export const operationLabels: Record<string, string> = {
   optimize_manifests: "Manifest rewrite"
 };
 
+export const semanticStatusColor = (
+  status: "good" | "warn" | "bad" | "neutral",
+  palette: CryoColors = cryoColors
+): string => {
+  if (status === "good") return palette.gradeA;
+  if (status === "warn") return palette.gradeC;
+  if (status === "bad") return palette.gradeF;
+  return palette.muted;
+};
+
+export const statusFromThreshold = (
+  value: number,
+  thresholds: { good: number; warn: number }
+): "good" | "warn" | "bad" => {
+  if (value >= thresholds.good) return "good";
+  if (value >= thresholds.warn) return "warn";
+  return "bad";
+};
+
+export const sharedPieColors = [
+  cryoColors.gradeA,
+  cryoColors.gradeB,
+  cryoColors.gradeC,
+  cryoColors.gradeD,
+  cryoColors.gradeF
+] as const;
+
 export const chartAxisTick = { fill: cryoColors.muted, fontSize: 11 };
 
 export const chartTooltipProps = {

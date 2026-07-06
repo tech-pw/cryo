@@ -535,6 +535,12 @@ export const Scans = () => {
         subtitle="Schedule catalog scans, trigger ad-hoc refreshes, and inspect scan progress."
         actions={
           <Space>
+            <Link to="/tables">
+              <Button>Open table explorer</Button>
+            </Link>
+            <Link to="/runs">
+              <Button>Open runs</Button>
+            </Link>
             <ConfirmAction
               title="Scan all tables now?"
               description="Queues a full fleet scan across every registered table. This can be expensive on large catalogs."

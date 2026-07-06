@@ -9,6 +9,7 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::prelude::*;
+use datafusion::logical_expr::SortExpr;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl};
 use datafusion::execution::context::SessionContext;
@@ -166,7 +167,7 @@ pub async fn sort_files(
     let df = ctx.read_batch(combined)?;
     
     // Build sort expressions
-    let sort_exprs: Vec<Expr> = config.sort_columns
+    let sort_exprs: Vec<SortExpr> = config.sort_columns
         .iter()
         .map(|col| col_name(col).sort(true, false))  // ASC, NULLS LAST
         .collect();
@@ -455,7 +456,7 @@ fn compute_zorder_key(batch: &RecordBatch, columns: &[String]) -> Result<RecordB
 
 /// Normalize a column's values to u64 range for z-ordering
 fn normalize_column(array: &ArrayRef) -> Result<Vec<u64>, CryoError> {
-    use arrow::array::{AsArray, Int32Array, Int64Array, Float32Array, Float64Array, StringArray};
+    use arrow::array::{Array, AsArray, Int32Array, Int64Array, Float32Array, Float64Array, StringArray};
     use arrow::datatypes::DataType;
     
     let len = array.len();

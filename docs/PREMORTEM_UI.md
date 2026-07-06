@@ -45,6 +45,7 @@ finding cites a real file/line. Actionables are appended to `docs/PREMORTEM_ACTI
 | Catalog latency, daily report trigger | **Fixed** | Connections lakehouse + Slack tab |
 | Metrics, deep/shallow health, GitOps webhook | **Fixed** | Connections → Ops (admin) |
 | Raw `/jobs/{id}` API | **Fixed** | Job detail collapsible |
+| Table detail information architecture and visual hierarchy | **Fixed (2026-07-06 redesign)** | Hero + health gauge, ranked recommended actions, sticky section nav, icon KPI stripe, storage donut, partition histogram, merged AI/analytics tabs on table detail page |
 
 **Remaining intentionally external:** Prometheus scrapes `/metrics` in prod; GitLab/GitHub posts to GitOps webhook; OIDC SSO in prod.
 
