@@ -144,7 +144,7 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
           <Input placeholder="my-iceberg-bucket" />
         </Form.Item>
         <Form.Item name="region" label="Region" rules={[{ required: true }]}>
-          <Select showSearch options={AWS_REGIONS} placeholder="ap-south-1" />
+          <Select showSearch options={AWS_REGIONS} placeholder="ap-south-1" popupMatchSelectWidth={220} />
         </Form.Item>
         <Form.Item name="access_key_id" label="Access key ID (optional)">
           <Input placeholder="Uses IRSA / default chain if blank" autoComplete="off" />

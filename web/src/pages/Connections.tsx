@@ -860,6 +860,11 @@ const SourceDrawer = ({
           <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
             Test connection
           </Button>
+          {testConnection.isPending && (
+            <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+              This can take up to 2 minutes on slow or VPN-gated networks — sit back and relax.
+            </Typography.Text>
+          )}
         </Form.Item>
         {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
 
@@ -884,6 +889,7 @@ const SourceDrawer = ({
               options={AWS_REGIONS}
               filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
               placeholder="us-east-1"
+              popupMatchSelectWidth={220}
             />
           </Form.Item>
           <Form.Item name="s3_endpoint" label="S3 endpoint (optional)" style={{ flex: 1 }}>
@@ -1284,6 +1290,7 @@ const DestinationDrawer = ({
                   options={AWS_REGIONS}
                   filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
                   placeholder="us-east-1"
+                  popupMatchSelectWidth={220}
                 />
               </Form.Item>
               <Form.Item name="s3_logs_bucket" label="S3 logs bucket (optional)" style={{ flex: 1 }}>
@@ -1338,6 +1345,11 @@ const DestinationDrawer = ({
           <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
             Test connection
           </Button>
+          {testConnection.isPending && (
+            <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+              This can take up to 2 minutes on slow or VPN-gated networks — sit back and relax.
+            </Typography.Text>
+          )}
         </Form.Item>
         {testConnection.data ? (
           <Alert
@@ -1605,6 +1617,11 @@ const AIProviderDrawer = ({
           <Button loading={testConnection.isPending} onClick={() => testConnection.mutate()}>
             Test connection
           </Button>
+          {testConnection.isPending && (
+            <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+              This can take up to 2 minutes on slow or VPN-gated networks — sit back and relax.
+            </Typography.Text>
+          )}
         </Form.Item>
 
         <Divider />
