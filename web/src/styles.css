@@ -286,6 +286,7 @@ body {
 .content .ant-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(19, 27, 36, 0.04);
+  border-color: var(--line) !important;
 }
 
 [data-theme="dark"] .content .ant-card:hover {
@@ -688,14 +689,6 @@ textarea.mono-input {
   100% {
     box-shadow: 0 0 0 0 rgba(250, 173, 20, 0);
   }
-}
-
-.content .ant-card {
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-.content .ant-card:hover {
-  border-color: var(--primary) !important;
 }
 
 .login-screen {

@@ -437,19 +437,6 @@ export const Scans = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
-  const scanAll = useMutation({
-    mutationFn: () => triggerScan(api, { scope: "all", full_scan: true, trigger: "web-scanner" }),
-    onSuccess: (result) => {
-      message.success(result.message || `Scan queued: ${result.run_id}`);
-      clearAllLakehousePendingScans();
-      setConnectionNotice(null);
-      void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
-      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
-      navigate(`/scans/${result.run_id}`, { replace: true, state: {} });
-    },
-    onError: (error) => message.error((error as Error).message)
-  });
-
   const cancelActiveRun = useMutation({
     mutationFn: (id: string) => cancelRun(api, id),
     onSuccess: () => {
@@ -542,31 +529,6 @@ export const Scans = () => {
             <Link to="/runs">
               <Button>Open runs</Button>
             </Link>
-            <ConfirmAction
-              title="Scan all tables now?"
-              description="Queues a full fleet scan across every registered table. This can be expensive on large catalogs."
-              onConfirm={() => scanAll.mutate()}
-            >
-              <Tooltip
-                title={
-                  !canOperate
-                    ? "You don't have permission to trigger scans (viewer role)."
-                    : activeRun
-                      ? "A scan is already running -- cancel it below or wait for it to finish before starting another."
-                      : undefined
-                }
-              >
-                <span>
-                  <Button
-                    type="primary"
-                    loading={scanAll.isPending}
-                    disabled={!canOperate || Boolean(activeRun)}
-                  >
-                    Scan all tables now
-                  </Button>
-                </span>
-              </Tooltip>
-            </ConfirmAction>
           </Space>
         }
       />
