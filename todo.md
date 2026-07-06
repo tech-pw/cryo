@@ -124,12 +124,17 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       full cost scan trigger, precision badge. Health page keeps KPI summary + link to `/cost`.
       Explorer columns/filters; Table Detail cost card + mini waterfall; PlanPreview savings summary.
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
+- [ ] **Table Detail scan UX**: pressing Scan should not redirect immediately — show in-progress
+      animation on the scan/run button; navigate to the scan run only after the user follows through
+      on the animated button (not on the initial click).
 - [x] **Scanner** page (`/scans`): schedule form, scan status, scan-only run list, progress console;
       ad-hoc scans from scanner page, table selection, and table detail.
 - [x] **Sources & Destinations** management + health checks.
 - [x] **UI/UX polish** per `docs/UI_UX_DESIGN.md`: dark theme toggle, always-dark sidebar,
       IBM Plex typography, focus rings, reduced-motion, log-line animation.
 - [~] WebSocket endpoint `/ws/runs/{id}` streams DB snapshots (polling); Redis live-state fanout pending.
+- [ ] **Log streaming** for scan runs and maintenance runs — live log tail (not just DB snapshot
+      polling); wire UI consoles/drawers for both `/scans` and `/runs`.
 - [~] Run console realized-savings line — worker records `actual_bytes_freed`; UI subtitle notes pending
       full realized-vs-projected display.
 
