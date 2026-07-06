@@ -13,8 +13,9 @@ Endpoints for:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Annotated, Any
+from datetime import datetime
+from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -23,28 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from cryo.api.deps import SessionDep, require_editor, require_viewer
-from cryo.api.schemas import (
-    CompactionCandidateRead,
-    CompactionCandidatesResponse,
-    ObservationCompactResponse,
-    ObservationEventRead,
-    ObservationSearchResponse,
-    ObservationStatsResponse,
-    PlanVerdictRead,
-    PlanVerifyRequest,
-    PlanViolationRead,
-    SkillsetListResponse,
-    SkillsetOutcomeRead,
-    SkillsetOutcomeWrite,
-    SkillsetRead,
-    SkillsetRollbackRequest,
-    SkillsetWrite,
-    UnionableResponse,
-    UnionScoreRead,
-)
 from cryo.api.security import Principal
-from cryo.config import get_settings
-from cryo.observability.observation_lakehouse import ObservationLakehouse
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
@@ -966,4 +946,263 @@ def compact_observations(
         rows=int(result["rows"]),
         bytes_in=int(result["bytes_in"]),
         bytes_out=int(result["bytes_out"]),
+    )
+
+
+# ==================== Puffin-backed column sketches (FORMATS '26, arXiv:2605.30308) =====
+
+
+class ColumnSketchBlob(BaseModel):
+    path: str
+    size: int
+    offset: int
+    sketch_type: str
+
+
+class ColumnSketchRead(BaseModel):
+    field_type: str | None
+    ndv_estimate: int
+    quantiles: dict[str, float]
+    sketch_count: int
+    puffin_blobs: list[ColumnSketchBlob]
+
+
+class ColumnStatsResponse(BaseModel):
+    table_id: UUID
+    columns: dict[str, ColumnSketchRead]
+
+
+@router.get(
+    "/column-stats/{table_id}",
+    response_model=ColumnStatsResponse,
+)
+def get_column_stats(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+    columns: str | None = Query(
+        None,
+        description=(
+            "Optional comma-separated column whitelist; "
+            "defaults to all columns with sketches."
+        ),
+    ),
+) -> ColumnStatsResponse:
+    """Return per-column sketches (Theta NDV + KLL quantiles) from the latest Puffin blobs.
+
+    Walks the ``column_stats_sketch`` table for the requested table, decodes each Puffin
+    blob, and merges the per-scan sketches into a global per-column summary. Returns
+    ``p50/p95/p99`` quantiles plus an ``ndv_estimate``.
+    """
+    from cryo.db.models import ColumnStatsSketch, Table
+    from cryo.scanner.puffin_writer import decode_puffin_blob
+    from cryo.scanner.sketches import KLLSketch, ThetaSketch
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+
+    requested: set[str] | None = None
+    if columns:
+        requested = {c.strip() for c in columns.split(",") if c.strip()}
+
+    rows = session.scalars(
+        select(ColumnStatsSketch)
+        .where(ColumnStatsSketch.table_id == table_id)
+        .order_by(ColumnStatsSketch.created_at.desc())
+        .limit(2000)
+    ).all()
+
+    if not rows:
+        return ColumnStatsResponse(table_id=table_id, columns={})
+
+    # Group rows by blob path so we read each Puffin file at most once.
+    by_path: dict[str, list[ColumnStatsSketch]] = {}
+    for row in rows:
+        by_path.setdefault(row.puffin_path, []).append(row)
+
+    decoded_per_blob: dict[str, dict[str, dict[str, Any]]] = {}
+    for path in by_path:
+        local_path = _resolve_local_puffin_path(path)
+        if local_path is None or not local_path.exists():
+            continue
+        try:
+            payload = local_path.read_bytes()
+        except OSError:
+            continue
+        try:
+            decoded_per_blob[path] = decode_puffin_blob(payload)
+        except ValueError:
+            continue
+
+    # Merge across all decoded blobs.
+    merged: dict[str, dict[str, Any]] = {}
+    blob_metadata: dict[str, list[ColumnSketchBlob]] = {}
+    for row in rows:
+        path = row.puffin_path
+        decoded = decoded_per_blob.get(path)
+        if decoded is None:
+            continue
+        column_sketches = decoded.get(row.column_name, {})
+        target = merged.setdefault(
+            row.column_name,
+            {"theta": ThetaSketch(), "kll": KLLSketch(), "field_type": row.field_type},
+        )
+        if "theta" in column_sketches:
+            target["theta"] = target["theta"].merge(column_sketches["theta"])
+        if "kll" in column_sketches:
+            target["kll"] = target["kll"].merge(column_sketches["kll"])
+        if target.get("field_type") is None and row.field_type:
+            target["field_type"] = row.field_type
+        blob_metadata.setdefault(row.column_name, []).append(
+            ColumnSketchBlob(
+                path=path,
+                size=int(row.puffin_size),
+                offset=int(row.puffin_offset),
+                sketch_type=str(row.sketch_type),
+            )
+        )
+
+    response_columns: dict[str, ColumnSketchRead] = {}
+    for column_name, sketches in merged.items():
+        if requested is not None and column_name not in requested:
+            continue
+        theta: ThetaSketch = sketches["theta"]
+        kll: KLLSketch = sketches["kll"]
+        response_columns[column_name] = ColumnSketchRead(
+            field_type=sketches.get("field_type"),
+            ndv_estimate=int(theta.estimate),
+            quantiles={
+                "p50": float(kll.quantile(0.5)),
+                "p95": float(kll.quantile(0.95)),
+                "p99": float(kll.quantile(0.99)),
+            },
+            sketch_count=int(theta.n),
+            puffin_blobs=blob_metadata.get(column_name, []),
+        )
+
+    return ColumnStatsResponse(table_id=table_id, columns=response_columns)
+
+
+def _resolve_local_puffin_path(path: str) -> Path | None:
+    """Resolve a Puffin blob path to a local file.
+
+    Production paths start with ``s3://`` -- we don't fetch them in this endpoint (the
+    Puffin blob bytes would need an S3 client and would dominate API latency). Local
+    paths that already exist on disk are served directly.
+    """
+    if path.startswith("s3://"):
+        return None
+    p = Path(path)
+    if p.exists():
+        return p
+    # The writer sometimes returns an s3:// path even in local dev; fall back to the
+    # local mirror under .local/puffin so the endpoint still works.
+    base = Path(".local/puffin")
+    candidate = base / Path(path).name
+    return candidate if candidate.exists() else None
+
+
+# ==================== Silent-data-loss detector (arXiv:2604.20081) =====================
+
+
+class SilentDataLossReportRead(BaseModel):
+    table_id: UUID
+    snapshot_id: int | None
+    orphan_data_files: list[str]
+    orphan_size_bytes: int
+    missing_files: list[str]
+    detected_at: str
+    root_cause: str
+    is_clean: bool
+
+
+class SilentDataLossRepairResponse(BaseModel):
+    table_id: UUID
+    audit_log_id: int | None
+    status: str
+    message: str
+
+
+@router.get(
+    "/silent-data-loss/{table_id}",
+    response_model=SilentDataLossReportRead | None,
+)
+def get_silent_data_loss(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> SilentDataLossReportRead | None:
+    """Return the latest silent-data-loss report for a table.
+
+    Runs the detector on demand; the scheduler sweeps every ``silent_loss_check_interval_min``
+    minutes for fleet-wide coverage, but this endpoint lets an operator force a fresh
+    check from the UI.
+    """
+    from cryo.db.models import Table
+    from cryo.scheduler.health import check_silent_data_loss
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+    report = check_silent_data_loss(session, table_id)
+    if report is None:
+        return None
+    return SilentDataLossReportRead(
+        table_id=table_id,
+        snapshot_id=report.snapshot_id,
+        orphan_data_files=list(report.orphan_data_files),
+        orphan_size_bytes=int(report.orphan_size_bytes),
+        missing_files=list(report.missing_files),
+        detected_at=report.detected_at,
+        root_cause=report.root_cause,
+        is_clean=report.is_clean(),
+    )
+
+
+@router.post(
+    "/silent-data-loss/{table_id}/repair",
+    response_model=SilentDataLossRepairResponse,
+    dependencies=[Depends(require_editor)],
+)
+def repair_silent_data_loss(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> SilentDataLossRepairResponse:
+    """Trigger ``iceberg.rewrite_manifests`` to repair silent-data-loss drift.
+
+    Local dev: this is a noop that records an AuditLog entry so the UI can confirm the
+    repair intent was captured. Production: enqueue a maintenance job that runs
+    ``rewrite_manifests`` against the destination engine.
+    """
+    from cryo.db.models import AuditLog, Table
+    from cryo.scheduler.health import check_silent_data_loss
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+    report = check_silent_data_loss(session, table_id)
+    audit = AuditLog(
+        table_id=table_id,
+        action="silent_data_loss_repair",
+        status="OK",
+        engine="noop",
+        detail=(
+            f"orphan_count={len(report.orphan_data_files) if report else 0} "
+            f"missing_count={len(report.missing_files) if report else 0} "
+            f"root_cause={report.root_cause if report else 'unknown'}"
+        ),
+    )
+    session.add(audit)
+    session.commit()
+    session.refresh(audit)
+    return SilentDataLossRepairResponse(
+        table_id=table_id,
+        audit_log_id=int(audit.id),
+        status="noop",
+        message=(
+            "Local dev: audit recorded. In production this would enqueue "
+            "iceberg.rewrite_manifests against the destination engine."
+        ),
     )

@@ -12,8 +12,11 @@ import { StatusTag } from "./status";
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
 
-const tableRef = (job: JobRead) =>
-  job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
+const tableRef = (job: JobRead) => {
+  const planRef = job.plan?.table_ref;
+  if (typeof planRef === "string" && planRef) return planRef;
+  return job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
+};
 
 export const RunConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();

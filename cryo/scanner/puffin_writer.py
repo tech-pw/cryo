@@ -31,10 +31,11 @@ import os
 import struct
 import tempfile
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from cryo.config import get_settings
 from cryo.scanner.sketches import (
@@ -106,8 +107,14 @@ def select_hot_columns(
     for col in column_quality:
         field_id = col.get("field_id")
         value_count = int(col.get("value_count") or 0)
-        query_freq = partition_cols_by_field.get(int(field_id), 0.0) if field_id is not None else 0.0
-        hot_score = query_freq * 1_000_000 + (1.0 if value_count > _HOT_COLUMN_VALUE_COUNT_THRESHOLD else 0.0)
+        query_freq = (
+            partition_cols_by_field.get(int(field_id), 0.0)
+            if field_id is not None
+            else 0.0
+        )
+        hot_score = query_freq * 1_000_000 + (
+            1.0 if value_count > _HOT_COLUMN_VALUE_COUNT_THRESHOLD else 0.0
+        )
         if hot_score > 0:
             scored.append((hot_score, col))
 
@@ -205,9 +212,11 @@ def write_puffin_blob(
     columns = sorted(payload.keys())
     blob_metadata: list[dict[str, Any]] = []
     offset = len(PUFFIN_HEADER)
-    body = serialized[len(PUFFIN_HEADER):]
     for column_name in columns:
-        for sketch_type, _label in (("theta", _PUFFIN_RECORD_THETA), ("kll", _PUFFIN_RECORD_KLL)):
+        for sketch_type, _label in (
+            ("theta", _PUFFIN_RECORD_THETA),
+            ("kll", _PUFFIN_RECORD_KLL),
+        ):
             if sketch_type not in payload[column_name]:
                 continue
             chunk = payload[column_name][sketch_type]

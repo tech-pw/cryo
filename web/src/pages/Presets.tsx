@@ -39,6 +39,7 @@ import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { cronFormValidator } from "../lib/cron";
 import { formatGb, formatNumber } from "../lib/format";
+import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
 
 const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
@@ -357,7 +358,7 @@ const SimulatorDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClo
           loading={simulation.isLoading}
           dataSource={simulation.data?.sample ?? []}
           columns={[
-            { title: "Table", render: (_, row) => `${row.schema_name}.${row.table_name}` },
+            { title: "Table", render: (_, row) => schemaTableName(row) },
             { title: "Grade", dataIndex: "grade" },
             { title: "Size", dataIndex: "total_size_gb", align: "right", render: (value) => formatGb(value) },
             { title: "Small files", dataIndex: "small_files_count", align: "right", render: (value) => formatNumber(value) }
@@ -410,7 +411,7 @@ const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose
           loading={tables.isLoading}
           options={(tables.data?.items ?? []).map((table) => ({
             value: table.id,
-            label: `${table.schema_name}.${table.table_name}`
+            label: qualifiedTableName(table)
           }))}
           value={tableId}
           onChange={setTableId}

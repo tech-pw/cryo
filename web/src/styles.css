@@ -193,14 +193,56 @@ body {
 
 .filter-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
   margin-bottom: 10px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.filter-bar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-bar__footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in oklch, var(--line) 70%, transparent);
+}
+
+.filter-bar__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.filter-bar__scope {
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.filter-bar__chips {
+  min-width: 0;
+}
+
+.filter-bar__match-count {
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .filter-summary {
@@ -244,6 +286,7 @@ body {
 .content .ant-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(19, 27, 36, 0.04);
+  border-color: var(--line) !important;
 }
 
 [data-theme="dark"] .content .ant-card:hover {
@@ -576,10 +619,34 @@ textarea.mono-input {
     flex-direction: column;
   }
 
+  .filter-bar__footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .filter-bar__match-count {
+    align-self: flex-start;
+  }
+
   .bulk-bar {
     width: 100%;
     max-width: none;
   }
+}
+
+/* Scanner idle status — neutral info, not a warning callout */
+.scanner-status-note.ant-alert-info {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.scanner-status-note .ant-alert-icon {
+  color: var(--ink-faint);
+}
+
+.scanner-status-note .ant-alert-message {
+  color: var(--ink-soft);
 }
 
 /* Pulsing Live Indicators */
@@ -622,14 +689,6 @@ textarea.mono-input {
   100% {
     box-shadow: 0 0 0 0 rgba(250, 173, 20, 0);
   }
-}
-
-.content .ant-card {
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-.content .ant-card:hover {
-  border-color: var(--primary) !important;
 }
 
 .login-screen {

@@ -45,7 +45,7 @@ import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatTime } from "../lib/format";
-import { leaf } from "../lib/predicate";
+import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
 
 type TierPolicyFormValues = TierPolicyWrite;
 
@@ -337,7 +337,7 @@ export const Governance = () => {
                 {
                   title: "Table",
                   render: (_, row) => (
-                    <Link to={`/tables/${row.id}`}>{row.schema_name}.{row.table_name}</Link>
+                    <Link to={`/tables/${row.id}`}>{qualifiedTableName(row)}</Link>
                   )
                 },
                 {
@@ -579,7 +579,7 @@ export const Governance = () => {
                 loading={tableOptions.isLoading}
                 options={(tableOptions.data?.items ?? []).map((table) => ({
                   value: table.id,
-                  label: `${table.schema_name}.${table.table_name}`
+                  label: qualifiedTableName(table)
                 }))}
                 value={tierTableId || undefined}
                 onChange={(value) => setTierTableId(value ?? "")}
@@ -631,7 +631,7 @@ export const Governance = () => {
                 loading={tableOptions.isLoading}
                 options={(tableOptions.data?.items ?? []).map((table) => ({
                   value: table.id,
-                  label: `${table.schema_name}.${table.table_name}`
+                  label: qualifiedTableName(table)
                 }))}
                 value={lineageTableId || undefined}
                 onChange={(value) => setLineageTableId(value ?? "")}
@@ -697,7 +697,7 @@ export const Governance = () => {
               loading={tableOptions.isLoading}
               options={(tableOptions.data?.items ?? []).map((table) => ({
                 value: table.id,
-                label: `${table.schema_name}.${table.table_name}`
+                label: qualifiedTableName(table)
               }))}
             />
           </Form.Item>

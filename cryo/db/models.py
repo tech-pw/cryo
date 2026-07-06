@@ -7,10 +7,12 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     Text,
     UniqueConstraint,
     func,
@@ -75,6 +77,9 @@ class Source(TimestampMixin, Base):
         back_populates="source", cascade="all, delete-orphan"
     )
     aws_integration: Mapped[AWSIntegration | None] = relationship(
+        back_populates="source", cascade="all, delete-orphan", uselist=False
+    )
+    aws_cost_insight_config: Mapped["AWSCostInsightConfig" | None] = relationship(
         back_populates="source", cascade="all, delete-orphan", uselist=False
     )
 
@@ -859,6 +864,129 @@ class SilentDataLossEvent(Base):
     )
 
 
+class AWSCostInsightConfig(TimestampMixin, Base):
+    """Per-source configuration for real (CUR / Inventory-based) AWS cost attribution.
+
+    Deliberately separate from ``AWSIntegration`` (which is the free-tier CloudWatch + Pricing
+    List metrics integration) so the policy guarantee on that table is preserved. CUR is free
+    delivery to a bucket you own; S3 Inventory is a free daily report; both differ in access
+    pattern (delivered files vs. live API calls) and require one-time billing-admin setup.
+    See ``cryo/integrations/aws_cost_insights.py``.
+    """
+
+    __tablename__ = "aws_cost_insight_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    # CUR delivery location — the bucket AWS writes CUR reports to. Reads happen via
+    # s3:GetObject on the user's own CUR bucket; CUR itself is a free delivery (the user pays
+    # only S3 storage for the delivered files).
+    cur_bucket: Mapped[str | None] = mapped_column(Text)
+    cur_prefix: Mapped[str | None] = mapped_column(Text)
+    cur_report_name: Mapped[str | None] = mapped_column(Text)
+    # Optional CUR path override for testing against parquet/CSV fixtures without real AWS.
+    # When set, the ingestor reads this file instead of listing the bucket — invaluable for
+    # dev/CI. Stored as a plain path; not a secret.
+    fixture_path: Mapped[str | None] = mapped_column(Text)
+    # S3 Inventory configuration — optional second signal for per-prefix (per-table) sizing.
+    inventory_bucket: Mapped[str | None] = mapped_column(Text)
+    inventory_prefix: Mapped[str | None] = mapped_column(Text)
+    inventory_format: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'CSV'")
+    )
+    access_key_id: Mapped[str | None] = mapped_column(Text)
+    secret_ref: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    last_ingested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_ingested_through: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    last_ingest_ok: Mapped[bool | None] = mapped_column(Boolean)
+    last_ingest_error: Mapped[str | None] = mapped_column(Text)
+
+    source: Mapped[Source] = relationship(back_populates="aws_cost_insight_config")
+
+
+class AWSCurLineItem(Base):
+    """One normalized AWS CUR line item — partitioned by usage_date for efficient range scans.
+
+    Storing one row per ``lineItem/lineItemId`` means a full month of CUR can be tens of millions
+    of rows; the ``(source_id, usage_date)`` composite index makes daily/bucket aggregations a
+    single index seek + range scan. Cost values are stored as ``NUMERIC(18,8)`` because AWS
+    bills to 8 decimal places.
+    """
+
+    __tablename__ = "aws_cur_line_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    usage_date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    service: Mapped[str] = mapped_column(Text, nullable=False)
+    usage_type: Mapped[str] = mapped_column(Text, nullable=False)
+    bucket: Mapped[str | None] = mapped_column(Text)
+    resource_id: Mapped[str | None] = mapped_column(Text)
+    operation: Mapped[str | None] = mapped_column(Text)
+    region: Mapped[str | None] = mapped_column(Text)
+    unblended_cost: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    usage_quantity: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    usage_unit: Mapped[str | None] = mapped_column(Text)
+    ingested_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_cur_source_date", "source_id", "usage_date"),
+        Index("idx_cur_bucket_date", "bucket", "usage_date"),
+    )
+
+
+class AWSInventoryObject(Base):
+    """A normalized S3 Inventory row — one per object — joined with table prefix on read.
+
+    Inventory reports deliver ``Bucket``, ``Key``, ``Size``, ``LastModifiedDate`` and
+    ``StorageClass`` per object; we keep the raw row plus a denormalized ``table_prefix``
+    (extracted from ``Key`` at ingest time) so per-table cost attribution is a simple
+    ``GROUP BY table_prefix``.
+    """
+
+    __tablename__ = "aws_inventory_objects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inventory_date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_class: Mapped[str | None] = mapped_column(Text)
+    last_modified: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    table_prefix: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("idx_inv_source_date", "source_id", "inventory_date"),
+        Index("idx_inv_bucket_key", "bucket", "key"),
+        Index("idx_inv_prefix", "source_id", "table_prefix"),
+    )
+
+
 class QPPObservation(Base):
     """Variance-aware QPP observation row (CLOUD 2026, arXiv:2606.03464).
 
@@ -893,6 +1021,9 @@ class QPPObservation(Base):
 
 __all__ = [
     "AIProvider",
+    "AWSCostInsightConfig",
+    "AWSCurLineItem",
+    "AWSInventoryObject",
     "AuditLog",
     "ColumnStatsSketch",
     "Destination",

@@ -26,9 +26,10 @@ import hashlib
 import logging
 import math
 import uuid
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,13 @@ def _fit_linear_regression(
 
 
 def _solve_4x4(a: list[list[float]], b: list[float]) -> list[float]:
-    """Gauss-Jordan elimination for a 4x4 linear system. Raises ``ValueError`` if singular."""
+    """Gauss-Jordan elimination for a 4x4 linear system. Raises ``ValueError`` if singular.
+
+    The threshold ``1e-9`` is a deliberate choice -- a numerically singular normal
+    equation (very large condition number, common when a feature column is highly
+    correlated with the intercept) produces garbage coefficients; we'd rather fail loudly
+    and let the caller fall back to the heuristic than return wildly wrong weights.
+    """
     n = 4
     m = [row[:] + [b[i]] for i, row in enumerate(a)]
     for i in range(n):
@@ -317,7 +324,12 @@ class QPPStore:
             session.refresh(row)
             return row.id
 
-    def load_recent(self, table_id: uuid.UUID | None = None, *, limit: int = 200) -> list[tuple[QPPFeatures, float]]:
+    def load_recent(
+        self,
+        table_id: uuid.UUID | None = None,
+        *,
+        limit: int = 200,
+    ) -> list[tuple[QPPFeatures, float]]:
         """Load the most recent observations as ``(features, actual_p95_ms)`` pairs."""
         from sqlalchemy import select
 

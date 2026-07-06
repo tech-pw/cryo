@@ -954,7 +954,11 @@ def list_tables(
         select(Table)
         .outerjoin(TableStats)
         .outerjoin(TableCost)
-        .options(selectinload(Table.stats), selectinload(Table.cost))
+        .options(
+            selectinload(Table.source),
+            selectinload(Table.stats),
+            selectinload(Table.cost),
+        )
     )
     count_stmt = select(func.count()).select_from(Table).outerjoin(TableStats).outerjoin(TableCost)
     stmt = scope_by_tenant(stmt, Table, tenant_id)
@@ -984,6 +988,7 @@ def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
         select(Table)
         .where(Table.id == table_id)
         .options(
+            selectinload(Table.source),
             selectinload(Table.stats),
             selectinload(Table.partitions),
             selectinload(Table.cost),

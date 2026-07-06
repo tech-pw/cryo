@@ -325,6 +325,9 @@ class TableRead(OrmModel):
     source_id: uuid.UUID
     schema_name: str
     table_name: str
+    catalog_name: str | None = None
+    source_name: str | None = None
+    qualified_table_name: str | None = None
     first_seen_at: datetime
     is_active: bool
     consecutive_scan_failures: int = 0
