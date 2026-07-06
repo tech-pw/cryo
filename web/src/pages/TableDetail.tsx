@@ -460,7 +460,7 @@ export const TableDetail = () => {
             )}
           </Card>
         </Col>
-        <Col xs={24} xl={8}>
+        <Col xs={24}>
           <Card
             title="Health Trends (30 days)"
             extra={
