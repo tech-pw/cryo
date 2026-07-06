@@ -2,6 +2,7 @@ import {
   ApiOutlined,
   BarChartOutlined,
   ClockCircleOutlined,
+  CloudOutlined,
   ControlOutlined,
   DatabaseOutlined,
   DollarOutlined,
@@ -26,6 +27,9 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
 
+const AwsIntegrations = lazy(() =>
+  import("./pages/AwsIntegrations").then((m) => ({ default: m.AwsIntegrations }))
+);
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
 const CostAttribution = lazy(() =>
   import("./pages/CostAttribution").then((m) => ({ default: m.CostAttribution }))
@@ -78,6 +82,7 @@ const navItems = [
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
+  { key: "/aws", icon: <CloudOutlined />, label: <Link to="/aws">AWS</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
@@ -105,7 +110,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Settings",
-    children: [navItems[13]]
+    children: [navItems[13], navItems[14]]
   }
 ];
 
@@ -217,6 +222,7 @@ const Shell = () => {
               <Route path="/runs/:runId" element={<Runs />} />
               <Route path="/jobs/:jobId" element={<JobDetail />} />
               <Route path="/connections" element={<Connections />} />
+              <Route path="/aws" element={<AwsIntegrations />} />
             </Routes>
           </Suspense>
         </Layout.Content>
@@ -231,7 +237,7 @@ const Shell = () => {
         placement="left"
         onClose={() => setMobileMenuOpen(false)}
         open={mobileMenuOpen}
-        width={220}
+        size={220}
         styles={{
           body: { padding: 0, background: "var(--sidebar-bg)" },
           header: { background: "var(--sidebar-bg)", borderBottom: "1px solid #202a38" }

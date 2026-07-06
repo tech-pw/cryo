@@ -7,6 +7,7 @@ from typing import Any
 from trino.auth import BasicAuthentication
 
 import trino
+from cryo.config import get_settings
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,14 @@ class TrinoCoordinator:
         return f"{self.http_scheme}://{self.host}:{self.port}"
 
 
+def _connect_timeout() -> float:
+    """Read the configured connect timeout, lazily."""
+    try:
+        return float(get_settings().engine_connect_timeout_sec)
+    except Exception:
+        return 5.0
+
+
 def coordinators_from_config(config: Mapping[str, Any]) -> tuple[TrinoCoordinator, ...]:
     raw_coordinators = config.get("coordinators") or config.get("hosts") or config.get("host")
     if raw_coordinators is None:
@@ -35,6 +44,16 @@ def coordinators_from_config(config: Mapping[str, Any]) -> tuple[TrinoCoordinato
 
 
 def connect(coordinator: TrinoCoordinator) -> Any:
+    """Connect to a Trino coordinator with a fail-fast connect timeout.
+
+    ``trino.dbapi.connect`` forwards ``request_timeout`` to the underlying
+    HTTP client as ``(connect_timeout, read_timeout)``. Without it the urllib3
+    default of 60s hangs the worker while waiting on unreachable hosts.
+    ``max_attempts`` defaults to 3, which makes initial probe failures take
+    3x the connect timeout; we cap at 1 so the caller surfaces the failure
+    immediately and the governor can route around the dead coordinator.
+    """
+    timeout = _connect_timeout()
     return trino.dbapi.connect(
         host=coordinator.host,
         port=coordinator.port,
@@ -43,6 +62,8 @@ def connect(coordinator: TrinoCoordinator) -> Any:
         schema=coordinator.schema,
         http_scheme=coordinator.http_scheme,
         auth=coordinator.auth,
+        request_timeout=timeout,
+        max_attempts=1,
     )
 
 

@@ -142,7 +142,7 @@ export const TableAiInsights = ({
       key: "risk",
       label: "Compaction risk",
       children: health.data ? (
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <Tag color={health.data.needs_emergency_compaction ? "error" : "success"}>
             {health.data.needs_emergency_compaction ? "Elevated emergency risk" : "Normal"}
           </Tag>
@@ -200,14 +200,14 @@ export const TableAiInsights = ({
       key: "dq",
       label: "Data quality",
       children: dataQuality.data ? (
-        <Space direction="vertical" className="full-width" size={12}>
+        <Space orientation="vertical" className="full-width" size={12}>
           {(dataQuality.data.new_columns.length > 0 || dataQuality.data.dropped_columns.length > 0) && (
             <Alert
               type="warning"
               showIcon
-              message="Schema drift detected"
+              title="Schema drift detected"
               description={
-                <Space direction="vertical" size={0}>
+                <Space orientation="vertical" size={0}>
                   {dataQuality.data.new_columns.length ? (
                     <span>New: {dataQuality.data.new_columns.join(", ")}</span>
                   ) : null}
@@ -272,7 +272,7 @@ export const TableAiInsights = ({
             <Typography.Text strong>Static partition order</Typography.Text>
             <ul style={{ marginTop: 8, paddingLeft: 18 }}>
               {autocomp.data.static_order.map((p, index) => (
-                <li key={`s-${p ?? index}`}>
+                <li key={`static-${index}-${p ?? "none"}`}>
                   <Typography.Text code>{p}</Typography.Text>
                 </li>
               ))}
@@ -282,7 +282,7 @@ export const TableAiInsights = ({
             <Typography.Text strong>Benefit-score order</Typography.Text>
             <ul style={{ marginTop: 8, paddingLeft: 18 }}>
               {autocomp.data.autocomp_order.map((p, index) => (
-                <li key={`a-${p ?? index}`}>
+                <li key={`auto-${index}-${p ?? "none"}`}>
                   <Typography.Text code>{p}</Typography.Text>
                 </li>
               ))}

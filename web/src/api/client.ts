@@ -45,6 +45,16 @@ import type {
   HealthClassifierResponse,
   PiiClassificationResponse,
   SimilarTablesResponse,
+  CompactionCandidatesResponse,
+  CompactionCandidateRead,
+  UnionableResponse,
+  UnionScoreRead,
+  SkillsetListResponse,
+  SkillsetRead,
+  SkillsetWrite,
+  SkillsetRollbackRequest,
+  SkillsetOutcomeWrite,
+  SkillsetOutcomeRead,
   TableCostRead,
   TableRead,
   UUID
@@ -838,8 +848,8 @@ export const testAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
 export const getAwsUsage = (api: ApiOptions, sourceId: UUID) =>
   apiFetch<AWSUsageResponse>(`/sources/${sourceId}/aws-usage`, api);
 
-/** Dashboard routes live under `/api` (not `/api/v1`). */
-const DASHBOARD_PREFIX = "/api";
+/** Dashboard routes live under the same `/api/v1` prefix as everything else. */
+const DASHBOARD_PREFIX = "/api/v1";
 
 async function dashboardFetch<T>(path: string, api: ApiOptions): Promise<T> {
   const response = await fetch(`${DASHBOARD_PREFIX}${path}`, {
@@ -876,9 +886,15 @@ export interface MultiCatalogDashboard {
 export const getMultiCatalogDashboard = (api: ApiOptions) =>
   dashboardFetch<MultiCatalogDashboard>("/multi-catalog", api);
 
-export const getQueryPerformanceDashboard = (api: ApiOptions, hours = 24, engine?: string) => {
+export const getQueryPerformanceDashboard = (
+  api: ApiOptions,
+  hours = 24,
+  engine?: string,
+  tableId?: UUID
+) => {
   const params = new URLSearchParams({ hours: String(hours), limit: "100" });
   if (engine) params.set("engine", engine);
+  if (tableId) params.set("table_id", tableId);
   return dashboardFetch<QueryPerformanceData>(`/query-performance?${params}`, api);
 };
 
@@ -963,11 +979,13 @@ export const getCostAttributionDashboard = (api: ApiOptions, month?: string) =>
     api
   );
 
-export const getSlaStatusDashboard = (api: ApiOptions, breachedOnly = false) =>
-  dashboardFetch<SLAResponse>(
-    breachedOnly ? "/sla-status?breached_only=true" : "/sla-status",
-    api
-  );
+export const getSlaStatusDashboard = (api: ApiOptions, breachedOnly = false, tableId?: UUID) => {
+  const params = new URLSearchParams();
+  if (breachedOnly) params.set("breached_only", "true");
+  if (tableId) params.set("table_id", tableId);
+  const qs = params.toString();
+  return dashboardFetch<SLAResponse>(qs ? `/sla-status?${qs}` : "/sla-status", api);
+};
 
 export const getJobDetailDashboard = (api: ApiOptions, jobId: UUID) =>
   dashboardFetch<JobDetailDashboard>(`/jobs/${jobId}/detail`, api);
@@ -1379,3 +1397,127 @@ export const approvalAction = (
     method: "POST",
     body
   });
+
+// ==================== Workload-Aware Compaction Candidates (AutoComp) ====================
+
+export interface GetCompactionCandidatesOptions {
+  horizonDays?: number;
+  k?: number;
+}
+
+export const getCompactionCandidates = (
+  api: ApiOptions,
+  tableId: UUID,
+  options: GetCompactionCandidatesOptions = {}
+): Promise<CompactionCandidatesResponse> =>
+  apiFetch<CompactionCandidatesResponse>(
+    `/advanced/compaction-candidates/${tableId}`,
+    api,
+    {
+      query: {
+        horizon_days: options.horizonDays ?? 30,
+        k: options.k ?? 10
+      }
+    }
+  );
+
+// ==================== Unionable Tables Search (EasyTUS) ====================
+
+export interface GetUnionableOptions {
+  k?: number;
+  useLlm?: boolean;
+}
+
+export const getUnionable = (
+  api: ApiOptions,
+  tableId: UUID,
+  options: GetUnionableOptions = {}
+): Promise<UnionableResponse> =>
+  apiFetch<UnionableResponse>(`/advanced/unionable/${tableId}`, api, {
+    query: { k: options.k ?? 10, use_llm: options.useLlm ?? true }
+  });
+
+// ==================== AI Skillset Versioning ====================
+
+export const listSkillsets = (api: ApiOptions): Promise<SkillsetListResponse> =>
+  apiFetch<SkillsetListResponse>("/advanced/skillsets", api);
+
+export const getActiveSkillset = (
+  api: ApiOptions,
+  name: string
+): Promise<SkillsetRead | null> =>
+  apiFetch<SkillsetRead | null>(`/advanced/skillsets/${name}/active`, api);
+
+export const createSkillset = (
+  api: ApiOptions,
+  body: SkillsetWrite
+): Promise<SkillsetRead> =>
+  apiFetch<SkillsetRead>("/advanced/skillsets", api, { method: "POST", body });
+
+export const rollbackSkillset = (
+  api: ApiOptions,
+  name: string,
+  body: SkillsetRollbackRequest
+): Promise<SkillsetRead> =>
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/rollback`, api, {
+    method: "POST",
+    body
+  });
+
+export const recordSkillsetOutcome = (
+  api: ApiOptions,
+  name: string,
+  body: SkillsetOutcomeWrite
+): Promise<SkillsetOutcomeRead> =>
+  apiFetch<SkillsetOutcomeRead>(`/advanced/skillsets/${name}/outcome`, api, {
+    method: "POST",
+    body
+  });
+
+// ============================================================================
+// Plan Verifier (arXiv:2510.09567)
+// ============================================================================
+
+export const verifyPlan = (
+  api: ApiOptions,
+  body: PlanVerifyRequest
+): Promise<PlanVerdict> =>
+  apiFetch<PlanVerdict>("/advanced/plan-verify", api, { method: "POST", body });
+
+// ============================================================================
+// Observation Lakehouse (SANER 2026)
+// ============================================================================
+
+export const searchObservations = (
+  api: ApiOptions,
+  args: {
+    table_id?: string;
+    event_type?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+  } = {}
+): Promise<ObservationSearchResponse> =>
+  apiFetch<ObservationSearchResponse>("/advanced/observability/search", api, {
+    query: {
+      table_id: args.table_id,
+      event_type: args.event_type,
+      since: args.since,
+      until: args.until,
+      limit: args.limit ?? 100
+    }
+  });
+
+export const getObservationStats = (
+  api: ApiOptions
+): Promise<ObservationStatsResponse> =>
+  apiFetch<ObservationStatsResponse>("/advanced/observability/stats", api);
+
+export const compactObservations = (
+  api: ApiOptions
+): Promise<ObservationCompactResponse> =>
+  apiFetch<ObservationCompactResponse>(
+    "/advanced/observability/compact",
+    api,
+    { method: "POST" }
+  );

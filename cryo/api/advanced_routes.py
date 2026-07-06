@@ -13,8 +13,8 @@ Endpoints for:
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -23,7 +23,28 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from cryo.api.deps import SessionDep, require_editor, require_viewer
+from cryo.api.schemas import (
+    CompactionCandidateRead,
+    CompactionCandidatesResponse,
+    ObservationCompactResponse,
+    ObservationEventRead,
+    ObservationSearchResponse,
+    ObservationStatsResponse,
+    PlanVerdictRead,
+    PlanVerifyRequest,
+    PlanViolationRead,
+    SkillsetListResponse,
+    SkillsetOutcomeRead,
+    SkillsetOutcomeWrite,
+    SkillsetRead,
+    SkillsetRollbackRequest,
+    SkillsetWrite,
+    UnionableResponse,
+    UnionScoreRead,
+)
 from cryo.api.security import Principal
+from cryo.config import get_settings
+from cryo.observability.observation_lakehouse import ObservationLakehouse
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
@@ -326,6 +347,7 @@ class ColumnQualityMetricRead(BaseModel):
     max_value: object | None = None
     value_range_changed: bool = False
     value_range_explanation: str = ""
+    column_type: str | None = None
 
 
 class DataQualityProfileRead(BaseModel):
@@ -365,6 +387,7 @@ def get_data_quality_profile(
                 max_value=m.max_value,
                 value_range_changed=m.value_range_changed,
                 value_range_explanation=m.value_range_explanation,
+                column_type=m.column_type,
             )
             for m in profile.column_metrics
         ],
@@ -507,6 +530,238 @@ def get_cost_forecast(
     )
 
 
+# ==================== Workload-Aware Compaction Candidates (AutoComp, SIGMOD 2025) ====
+
+
+@router.get(
+    "/compaction-candidates/{table_id}",
+    response_model=CompactionCandidatesResponse,
+)
+def get_compaction_candidates(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+    horizon_days: int = Query(30, ge=1, le=365),
+    k: int = Query(10, ge=1, le=100),
+) -> CompactionCandidatesResponse:
+    """Return AutoComp-style workload-aware compaction candidates for a table."""
+    from cryo.db.models import Table
+    from cryo.scanner.compaction_candidates import find_candidates
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+
+    candidates = find_candidates(session, table_id, horizon_days=horizon_days, k=k)
+    return CompactionCandidatesResponse(
+        table_id=table_id,
+        candidates=[
+            CompactionCandidateRead(
+                partition_path=c.partition_path,
+                partition_size_gb=c.partition_size_gb,
+                small_files=c.small_files,
+                query_freq_per_day=c.query_freq_per_day,
+                p95_latency_ms=c.p95_latency_ms,
+                score=c.score,
+                priority=c.priority,
+                savings_estimate_usd=c.savings_estimate_usd,
+                reasons=list(c.reasons),
+            )
+            for c in candidates
+        ],
+        generated_at=datetime.now(UTC),
+    )
+
+
+# ==================== Unionable Tables Search (EasyTUS, arXiv:2511.02674) ====================
+
+
+@router.get(
+    "/unionable/{table_id}",
+    response_model=UnionableResponse,
+)
+def get_unionable_tables(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+    k: int = Query(10, ge=1, le=100),
+    use_llm: bool = Query(True, description="Enrich rationale via configured LLM."),
+) -> UnionableResponse:
+    """Return tables whose schema is compatible with the target for UNION ALL."""
+    from cryo.ai.union_search import find_unionable
+    from cryo.db.models import Table
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+
+    results = find_unionable(session, table_id, k=k, use_llm=use_llm)
+    return UnionableResponse(
+        target_table_id=table_id,
+        results=[
+            UnionScoreRead(
+                target_table_id=r.target_table_id,
+                candidate_table_id=r.candidate_table_id,
+                score=r.score,
+                overlap_columns=list(r.overlap_columns),
+                union_sql=r.union_sql,
+                rationale=r.rationale,
+                candidate_schema=r.candidate_schema,
+                candidate_table_name=r.candidate_table_name,
+                candidate_schema_name=r.candidate_schema_name,
+            )
+            for r in results
+        ],
+        generated_at=datetime.now(UTC),
+    )
+
+
+# ==================== AI Skillset Versioning (Skill issues, arXiv:2606.01185) ====================
+
+
+@router.get("/skillsets", response_model=SkillsetListResponse)
+def list_skillsets(
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> SkillsetListResponse:
+    """List every skillset version, newest first."""
+    from cryo.ai.skillset import list_skillsets
+
+    rows = list_skillsets(session)
+    return SkillsetListResponse(
+        skillsets=[
+            SkillsetRead(
+                id=row.id,
+                name=row.name,
+                version=row.version,
+                prompts=row.prompts,
+                tools=row.tools,
+                created_at=row.created_at,
+                is_active=row.is_active,
+                metrics=row.metrics,
+            )
+            for row in rows
+        ],
+        generated_at=datetime.now(UTC),
+    )
+
+
+@router.get("/skillsets/{name}/active", response_model=SkillsetRead | None)
+def get_active_skillset(
+    name: str,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> SkillsetRead | None:
+    """Return the currently active version of a skillset, or None."""
+    from cryo.ai.skillset import load_skillset
+
+    row = load_skillset(session, name)
+    if not row.id:
+        return None
+    return SkillsetRead(
+        id=row.id,
+        name=row.name,
+        version=row.version,
+        prompts=row.prompts,
+        tools=row.tools,
+        created_at=row.created_at,
+        is_active=row.is_active,
+        metrics=row.metrics,
+    )
+
+
+@router.post("/skillsets", response_model=SkillsetRead)
+def create_skillset(
+    payload: SkillsetWrite,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> SkillsetRead:
+    """Create a new skillset version (and optionally activate it)."""
+    from cryo.ai.skillset import Skillset as SkillsetDC
+    from cryo.ai.skillset import register_skillset
+
+    skillset = SkillsetDC(
+        id="",
+        name=payload.name,
+        version=payload.version,
+        prompts=payload.prompts,
+        tools=payload.tools,
+        is_active=payload.activate,
+    )
+    row = register_skillset(session, skillset)
+    return SkillsetRead(
+        id=row.id,
+        name=row.name,
+        version=row.version,
+        prompts=row.prompts,
+        tools=row.tools,
+        created_at=row.created_at,
+        is_active=row.is_active,
+        metrics=row.metrics,
+    )
+
+
+@router.post("/skillsets/{name}/rollback", response_model=SkillsetRead)
+def rollback_skillset(
+    name: str,
+    payload: SkillsetRollbackRequest,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> SkillsetRead:
+    """Re-activate a prior skillset version."""
+    from cryo.ai.skillset import set_active_skillset
+
+    try:
+        row = set_active_skillset(session, name, payload.version)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return SkillsetRead(
+        id=row.id,
+        name=row.name,
+        version=row.version,
+        prompts=row.prompts,
+        tools=row.tools,
+        created_at=row.created_at,
+        is_active=row.is_active,
+        metrics=row.metrics,
+    )
+
+
+@router.post("/skillsets/{name}/outcome", response_model=SkillsetOutcomeRead)
+def record_skillset_outcome(
+    name: str,
+    payload: SkillsetOutcomeWrite,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> SkillsetOutcomeRead:
+    """Record the decision on a skillset recommendation and roll up metrics."""
+    from cryo.ai.skillset import load_skillset, record_outcome
+
+    row = load_skillset(session, name)
+    if not row.id:
+        raise HTTPException(404, f"Skillset {name!r} not found")
+
+    outcome = record_outcome(
+        session,
+        row.id,
+        prompt_name=payload.prompt_name,
+        recommendation=payload.recommendation,
+        decision=payload.decision,
+        score=payload.score,
+        table_id=payload.table_id,
+    )
+    return SkillsetOutcomeRead(
+        id=outcome.id,
+        skillset_id=outcome.skillset_id,
+        recorded_at=outcome.recorded_at,
+        table_id=outcome.table_id,
+        prompt_name=outcome.prompt_name,
+        recommendation=outcome.recommendation,
+        decision=outcome.decision,
+        score=outcome.score,
+    )
+
+
 @router.post("/gitops/webhook", tags=["gitops"])
 def gitops_webhook(
     payload: dict,
@@ -538,3 +793,177 @@ def gitops_webhook(
     )
     session.commit()
     return result
+
+
+# ==================== Plan Verifier (proof-carrying plans) ====================
+
+
+def _build_domain_plan(payload: PlanVerifyRequest) -> Any:
+    from cryo.domain.enums import Mode, OperationType, PartitionTransform
+    from cryo.domain.models import (
+        MaintenancePlan,
+        Operation,
+        PartitionPredicate,
+        PartitionPredicateTerm,
+    )
+
+    ops: list[Operation] = []
+    for op_read in payload.plan.operations:
+        predicates: list[PartitionPredicate] = []
+        for pred_read in op_read.predicates or []:
+            terms: list[PartitionPredicateTerm] = []
+            for term_read in pred_read.terms:
+                terms.append(
+                    PartitionPredicateTerm(
+                        base_column=term_read.base_column,
+                        transform=PartitionTransform(term_read.transform),
+                        value=term_read.value,
+                        col_type=term_read.col_type,
+                        transform_param=term_read.transform_param,
+                        partition_field=term_read.partition_field,
+                        unsupported_reason=term_read.unsupported_reason,
+                    )
+                )
+            predicates.append(
+                PartitionPredicate(
+                    terms=tuple(terms),
+                    unsupported_reason=pred_read.unsupported_reason,
+                )
+            )
+        ops.append(
+            Operation(
+                type=OperationType(op_read.type),
+                params=dict(op_read.params),
+                predicates=tuple(predicates) if predicates else None,
+            )
+        )
+    return MaintenancePlan(
+        table_ref=payload.plan.table_ref,
+        mode=Mode(payload.plan.mode),
+        operations=tuple(ops),
+        notes=tuple(payload.plan.notes),
+    )
+
+
+@router.post(
+    "/plan-verify",
+    response_model=PlanVerdictRead,
+    dependencies=[Depends(require_viewer)],
+)
+def verify_plan(
+    payload: PlanVerifyRequest,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> PlanVerdictRead:
+    """Statically verify a ``MaintenancePlan`` against the live catalog + engine capabilities.
+    Returns a ``PlanVerdictRead`` with the plan's SHA-256 hash, the invariants that ran, and any
+    violations (critical ones flip ``verified`` to False)."""
+    from cryo.planner.verifier import PlanVerifier
+
+    settings = get_settings()
+    if not settings.plan_verifier_enabled:
+        raise HTTPException(status_code=503, detail="Plan verifier is disabled by configuration")
+    plan = _build_domain_plan(payload)
+    verdict = PlanVerifier(session=session, settings=settings).verify(plan)
+    return PlanVerdictRead(
+        verified=verdict.verified,
+        plan_hash=verdict.plan_hash,
+        verifier_version=verdict.verifier_version,
+        invariants_checked=list(verdict.invariants_checked),
+        violations=[
+            PlanViolationRead(
+                invariant=v.invariant,
+                severity=v.severity,
+                message=v.message,
+                location=v.location,
+            )
+            for v in verdict.violations
+        ],
+    )
+
+
+# ==================== Observation Lakehouse ====================
+
+
+def _get_observation_lakehouse() -> ObservationLakehouse:
+    settings = get_settings()
+    return ObservationLakehouse(storage_path=settings.observation_lakehouse_path)
+
+
+@router.get(
+    "/observability/search",
+    response_model=ObservationSearchResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def search_observations(
+    _principal: Annotated[Principal, Depends(require_viewer)],
+    table_id: Annotated[str | None, Query()] = None,
+    event_type: Annotated[str | None, Query()] = None,
+    since: Annotated[datetime | None, Query()] = None,
+    until: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> ObservationSearchResponse:
+    """Search the local observation archive (SANER 2026 observation lakehouse)."""
+    lakehouse = _get_observation_lakehouse()
+    events = lakehouse.query(
+        table_id=table_id,
+        event_type=event_type,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+    items = [
+        ObservationEventRead(
+            id=event.id,
+            recorded_at=event.recorded_at,
+            run_id=event.run_id,
+            event_type=event.event_type,
+            level=event.level,
+            table_id=event.table_id,
+            subject=event.subject,
+            payload=dict(event.payload),
+            correlation_id=event.correlation_id,
+            actor=event.actor,
+        )
+        for event in events
+    ]
+    return ObservationSearchResponse(items=items, total=len(items))
+
+
+@router.get(
+    "/observability/stats",
+    response_model=ObservationStatsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def observation_stats(
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> ObservationStatsResponse:
+    """Return archive-level stats (file count, byte total, oldest/newest event)."""
+    lakehouse = _get_observation_lakehouse()
+    stats = lakehouse.archive_stats()
+    return ObservationStatsResponse(
+        total_files=int(stats["total_files"]),
+        total_bytes=int(stats["total_bytes"]),
+        oldest_event=stats["oldest_event"],
+        newest_event=stats["newest_event"],
+    )
+
+
+@router.post(
+    "/observability/compact",
+    response_model=ObservationCompactResponse,
+    dependencies=[Depends(require_editor)],
+)
+def compact_observations(
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> ObservationCompactResponse:
+    """Deduplicate by id inside each hour file. The lakehouse is append-only; this is the only
+    destructive op and it's idempotent."""
+    lakehouse = _get_observation_lakehouse()
+    result = lakehouse.compact()
+    return ObservationCompactResponse(
+        files_merged=int(result["files_merged"]),
+        rows=int(result["rows"]),
+        bytes_in=int(result["bytes_in"]),
+        bytes_out=int(result["bytes_out"]),
+    )

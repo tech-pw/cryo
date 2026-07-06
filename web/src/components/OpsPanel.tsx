@@ -52,7 +52,7 @@ export const OpsPanel = () => {
   });
 
   return (
-    <Space direction="vertical" size={16} className="full-width">
+    <Space orientation="vertical" size={16} className="full-width">
       <Typography.Paragraph type="secondary" className="tab-intro">
         Platform observability and GitOps hooks for admins. These endpoints are intended for operators
         and monitoring — not day-to-day maintenance workflows.
@@ -63,7 +63,7 @@ export const OpsPanel = () => {
           <Card title="Liveness">
             <QueryErrorAlert error={shallowHealth.error} title="Liveness check failed" />
             {shallowHealth.data ? (
-              <Space direction="vertical" size={8}>
+              <Space orientation="vertical" size={8}>
                 <Tag color="success">{shallowHealth.data.status}</Tag>
                 <Button type="link" href="/healthz" target="_blank" rel="noreferrer" icon={<LinkOutlined />}>
                   Open /healthz
@@ -90,7 +90,7 @@ export const OpsPanel = () => {
           >
             <QueryErrorAlert error={deepHealth.error} title="Deep health check failed" />
             {deepHealth.data ? (
-              <Space direction="vertical" size={8} className="full-width">
+              <Space orientation="vertical" size={8} className="full-width">
                 <Tag color={deepHealth.data.status === "ok" ? "success" : "warning"}>
                   {deepHealth.data.status}
                 </Tag>
@@ -149,7 +149,7 @@ export const OpsPanel = () => {
 
         <Col xs={24}>
           <Card title="GitOps policy webhook">
-            <Space direction="vertical" size={12} className="full-width">
+            <Space orientation="vertical" size={12} className="full-width">
               <Typography.Paragraph type="secondary">
                 Simulates a Git push webhook to reload YAML policies from{" "}
                 <Typography.Text code>CRYO_GITOPS_REPO_PATH</Typography.Text>. Requires GitOps repo
@@ -186,7 +186,7 @@ export const OpsPanel = () => {
                 <Alert
                   type="success"
                   showIcon
-                  message="Webhook response"
+                  title="Webhook response"
                   description={<pre className="inline-json">{gitopsResult}</pre>}
                 />
               ) : null}

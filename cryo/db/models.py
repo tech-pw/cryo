@@ -582,6 +582,12 @@ class MaintenanceJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    # Plan Verifier (arXiv:2510.09567) -- persisted verdict so the worker + audit trail can see
+    # whether the plan was proof-checked at enqueue time, and reproduce the verdict hash.
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    plan_hash: Mapped[str | None] = mapped_column(Text)
+    verifier_version: Mapped[str | None] = mapped_column(Text)
+    verifier_violations: Mapped[JsonList | None] = mapped_column(JSONB)
 
     run: Mapped[MaintenanceRun] = relationship(back_populates="jobs")
     table: Mapped[Table] = relationship(back_populates="jobs")
@@ -737,6 +743,26 @@ class GovernorBanditState(TimestampMixin, Base):
     payload: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
 
 
+class ObservationArchiveMeta(TimestampMixin, Base):
+    """Singleton-ish row tracking the local observation lakehouse (SANER 2026, arXiv:2512.02795).
+    Records when the archive was last compacted so /observability/stats + the cron compactor can
+    surface that without re-walking every file."""
+
+    __tablename__ = "observation_archive_meta"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    archive_path: Mapped[str] = mapped_column(Text, nullable=False)
+    last_compact_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_compact_files_merged: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    last_compact_rows: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+
+
 class TableEmbedding(TimestampMixin, Base):
     __tablename__ = "table_embeddings"
 
@@ -749,9 +775,126 @@ class TableEmbedding(TimestampMixin, Base):
     embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
 
 
+class ColumnStatsSketch(Base):
+    """Per-column Puffin-sidecar sketch record (FORMATS '26 / arXiv:2605.30308).
+
+    Each row is one ``(column, sketch_type, blob)`` triple emitted by the scanner. The
+    Puffin blob itself lives on object storage; we keep only the locator + size on disk so
+    the API endpoint can pull bytes back on demand.
+    """
+
+    __tablename__ = "column_stats_sketch"
+    __table_args__ = (Index("idx_css_table_column", "table_id", "column_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    sketch_type: Mapped[str] = mapped_column(Text, nullable=False)
+    puffin_path: Mapped[str] = mapped_column(Text, nullable=False)
+    puffin_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    puffin_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    field_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    merged_from: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    scan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SilentDataLossEvent(Base):
+    """A detected silent-data-loss condition for a table (arXiv:2604.20081).
+
+    The scheduler writes one row per detection event. ``orphan_data_files`` lists files
+    that exist on S3 but are not referenced by any committed snapshot; ``missing_files``
+    lists files referenced by committed snapshots that no longer exist on S3. The
+    ``repaired_at`` + ``audit_log_id`` columns are populated by the manual repair endpoint.
+    """
+
+    __tablename__ = "silent_data_loss_events"
+    __table_args__ = (
+        Index("idx_silent_data_loss_table_time", "table_id", "detected_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    detected_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    orphan_data_files: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    orphan_size_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    missing_files: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    root_cause: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'unknown'")
+    )
+    repaired_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    audit_log_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.audit_log.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class QPPObservation(Base):
+    """Variance-aware QPP observation row (CLOUD 2026, arXiv:2606.03464).
+
+    Holds the (features, runtime) pairs that the :class:`QPPModel` linear regression
+    trainer consumes. ``features`` is a JSON blob of the :class:`QPPFeatures` fields; the
+    dedicated float columns are the most-frequently-queried ones so we can index and
+    aggregate them without re-parsing JSONB.
+    """
+
+    __tablename__ = "qpp_observations"
+    __table_args__ = (Index("idx_qpp_table_time", "table_id", "observed_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    features: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    p50_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p95_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_p95_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cotenant_load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_cached: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+
 __all__ = [
     "AIProvider",
     "AuditLog",
+    "ColumnStatsSketch",
     "Destination",
     "GovernorBanditState",
     "LayoutRecommendation",
@@ -760,8 +903,10 @@ __all__ = [
     "Preset",
     "PresetRule",
     "ProtectedSnapshot",
+    "QPPObservation",
     "QueryLog",
     "QueryPattern",
+    "SilentDataLossEvent",
     "SlackConfig",
     "Source",
     "Table",

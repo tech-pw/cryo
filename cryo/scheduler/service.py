@@ -58,6 +58,7 @@ class SchedulerService:
         self._last_ml_drift_check: datetime | None = None
         self._last_telemetry_ingest: datetime | None = None
         self._last_query_log_purge: datetime | None = None
+        self._last_silent_loss_sweep: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -72,6 +73,7 @@ class SchedulerService:
         self._maybe_check_ml_drift(current)
         self._maybe_ingest_telemetry(current)
         self._maybe_purge_query_logs(current)
+        self._maybe_silent_data_loss_sweep(current)
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
             return SchedulerTickResult()
@@ -327,6 +329,40 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Query log purge tick failed: %s", exc)
+
+    def _maybe_silent_data_loss_sweep(self, current: datetime) -> None:
+        """Periodically run the silent-data-loss detector for every active table.
+
+        Throttled by ``CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN`` (default 5). Failures on one
+        table are isolated -- the sweep must not abort just because one path is unreadable.
+        """
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        interval_minutes = get_settings().silent_loss_check_interval_min
+        if self._last_silent_loss_sweep is not None:
+            elapsed = current - self._last_silent_loss_sweep
+            if elapsed < timedelta(minutes=interval_minutes):
+                return
+        try:
+            from cryo.scheduler.health import run_silent_data_loss_sweep
+
+            with SessionLocal() as session:
+                results = run_silent_data_loss_sweep(session)
+            dirty = [r for r in results if not r.report.is_clean()]
+            if dirty:
+                import logging
+
+                logging.getLogger(__name__).info(
+                    "silent_data_loss sweep: %d tables flagged",
+                    len(dirty),
+                )
+            self._last_silent_loss_sweep = current
+        except Exception as exc:  # pragma: no cover - defensive: don't break the scheduler.
+            import logging
+
+            logging.getLogger(__name__).warning("silent_data_loss sweep failed: %s", exc)
 
 
 def _apply_routing(

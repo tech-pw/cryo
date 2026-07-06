@@ -26,7 +26,7 @@ export const ExplorerPage = ({
   <div>
     <PageHeader title={title} subtitle={subtitle} actions={actions} />
     <QueryErrorAlert error={error} title={errorTitle ?? "Failed to load explorer data"} />
-    <Space direction="vertical" className="full-width" size={12}>
+    <Space orientation="vertical" className="full-width" size={12}>
       {filters}
       {bulkBar}
       {children}

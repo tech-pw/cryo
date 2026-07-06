@@ -8,10 +8,13 @@ already does.
 
 Reference: "Zero-Scan Data Quality: Leveraging Table Format Metadata for Continuous Observability
 at Scale" (FORMATS '26, arXiv:2605.30308). That paper's fuller scope also covers NDV via Puffin
-sketches, which stays out of scope here — Puffin sketch reading needs a separate feasibility check
-against PyIceberg's current API. Bounds decoding (this file) uses
-``pyiceberg.conversions.from_bytes`` with the schema's own field type, verified against PyIceberg
-directly (round-tripped ``to_bytes``/``from_bytes`` for a typed field) rather than assumed.
+sketches; this was attempted but dropped after verifying against PyIceberg 0.11.1 that ``DataFile``
+manifest entries carry no ``distinct_counts`` or Puffin blob reference — that data lives in
+``TableMetadata.statistics`` (table/snapshot-level Puffin files), not per manifest entry, and
+PyIceberg's own Puffin reader only decodes deletion-vector blobs, not NDV sketches. Bounds decoding
+(this file) uses ``pyiceberg.conversions.from_bytes`` with the schema's own field type, verified
+against PyIceberg directly (round-tripped ``to_bytes``/``from_bytes`` for a typed field) rather than
+assumed.
 """
 
 from __future__ import annotations
@@ -23,11 +26,11 @@ from typing import Any
 @dataclass
 class _ColumnAccum:
     column_name: str
+    column_type: str | None = None
     null_count: int = 0
     value_count: int = 0
     min_value: Any = None
     max_value: Any = None
-    ndv_estimate: int = 0
 
 
 @dataclass(frozen=True)
@@ -37,9 +40,9 @@ class ColumnQualityStats:
     null_count: int
     value_count: int
     null_rate: float
+    column_type: str | None = None
     min_value: Any = None
     max_value: Any = None
-    ndv_estimate: int | None = None
 
 
 class ColumnQualityAccumulator:
@@ -49,35 +52,29 @@ class ColumnQualityAccumulator:
         self._schema = schema
         self._accum: dict[int, _ColumnAccum] = {}
         self._name_cache: dict[int, str] = {}
+        # Holds the raw Iceberg PrimitiveType per field id (used by from_bytes in _decode_bound).
         self._type_cache: dict[int, Any] = {}
+        # Holds the rendered type label per field id (used for column_type persistence).
+        self._type_label_cache: dict[int, str | None] = {}
 
     def add(self, data_file: object) -> None:
         null_counts = _int_mapping(getattr(data_file, "null_value_counts", None))
         value_counts = _int_mapping(getattr(data_file, "value_counts", None))
         lower_bounds = _raw_mapping(getattr(data_file, "lower_bounds", None))
         upper_bounds = _raw_mapping(getattr(data_file, "upper_bounds", None))
-        distinct_counts = _int_mapping(getattr(data_file, "distinct_counts", None))
-        puffin_ndv = _puffin_ndv_counts(data_file)
 
-        field_ids = (
-            set(null_counts)
-            | set(value_counts)
-            | set(lower_bounds)
-            | set(upper_bounds)
-            | set(distinct_counts)
-            | set(puffin_ndv)
-        )
+        field_ids = set(null_counts) | set(value_counts) | set(lower_bounds) | set(upper_bounds)
         for field_id in field_ids:
             accum = self._accum.setdefault(
                 field_id, _ColumnAccum(column_name=self._resolve_name(field_id))
             )
+            # Capture the Iceberg schema type once per field id, so it isn't only
+            # resolved when bounds need decoding (which can miss columns that have
+            # nulls but no lower/upper bounds).
+            if accum.column_type is None:
+                accum.column_type = self._resolve_type(field_id)
             accum.null_count += null_counts.get(field_id, 0)
             accum.value_count += value_counts.get(field_id, 0)
-            accum.ndv_estimate = max(
-                accum.ndv_estimate,
-                distinct_counts.get(field_id, 0),
-                puffin_ndv.get(field_id, 0),
-            )
 
             low = self._decode_bound(field_id, lower_bounds.get(field_id))
             if low is not None and (accum.min_value is None or low < accum.min_value):
@@ -85,10 +82,6 @@ class ColumnQualityAccumulator:
             high = self._decode_bound(field_id, upper_bounds.get(field_id))
             if high is not None and (accum.max_value is None or high > accum.max_value):
                 accum.max_value = high
-
-            ndv = distinct_counts.get(field_id) or puffin_ndv.get(field_id)
-            if ndv is not None:
-                accum.ndv_estimate = max(accum.ndv_estimate, ndv)
 
     def _resolve_name(self, field_id: int) -> str:
         if field_id in self._name_cache:
@@ -146,12 +139,35 @@ class ColumnQualityAccumulator:
                     null_count=accum.null_count,
                     value_count=accum.value_count,
                     null_rate=null_rate,
+                    column_type=accum.column_type,
                     min_value=_jsonable(accum.min_value),
                     max_value=_jsonable(accum.max_value),
-                    ndv_estimate=accum.ndv_estimate or None,
                 )
             )
         return results
+
+    def _resolve_type(self, field_id: int) -> str | None:
+        """Resolve the Iceberg field type for ``field_id`` to a short label.
+
+        We cache per field id because the type lookup goes through PyIceberg's schema
+        walker and runs once per field. Nested types render in PyIceberg's default
+        ``__str__`` form (e.g. ``list<string>``, ``map<string,bigint>``) which is the
+        same form used for partition ``col_type`` upstream.
+        """
+        if field_id in self._type_label_cache:
+            return self._type_label_cache[field_id]
+        field_obj = self._find_field(field_id)
+        if field_obj is None:
+            return None
+        raw_type = getattr(field_obj, "field_type", None)
+        if raw_type is None:
+            return None
+        try:
+            rendered: str | None = str(raw_type) or None
+        except Exception:
+            return None
+        self._type_label_cache[field_id] = rendered
+        return rendered
 
 
 def summarize_column_quality(columns: list[ColumnQualityStats]) -> dict[str, Any]:
@@ -211,33 +227,3 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, bytes | bytearray):
         return value.decode("utf-8", errors="replace")
     return str(value)
-
-
-def _puffin_ndv_counts(data_file: object) -> dict[int, int]:
-    """Extract NDV estimates from Puffin blob metadata when present on the data file."""
-    result: dict[int, int] = {}
-    puffin = getattr(data_file, "puffin_metadata", None) or getattr(data_file, "puffin", None)
-    if puffin is None:
-        return result
-    blobs = puffin if isinstance(puffin, list) else getattr(puffin, "blobs", None)
-    if not blobs:
-        return result
-    for blob in blobs:
-        blob_type = str(getattr(blob, "type", "") or getattr(blob, "blob_type", "")).lower()
-        if "ndv" not in blob_type and "theta" not in blob_type and "sketch" not in blob_type:
-            continue
-        field_id = getattr(blob, "fields", None) or getattr(blob, "field_ids", None)
-        ndv = getattr(blob, "ndv", None) or getattr(blob, "distinct_count", None)
-        if ndv is None:
-            continue
-        ids: list[int] = []
-        if isinstance(field_id, int):
-            ids = [field_id]
-        elif isinstance(field_id, (list, tuple)):
-            ids = [int(i) for i in field_id]
-        for fid in ids:
-            try:
-                result[fid] = max(result.get(fid, 0), int(ndv))
-            except (TypeError, ValueError):
-                continue
-    return result

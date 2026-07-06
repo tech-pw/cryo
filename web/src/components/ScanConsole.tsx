@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Descriptions, List, Progress, Space, Typography } from "antd";
+import { Alert, Descriptions, Progress, Space, Typography } from "antd";
 import { useMemo } from "react";
 import { getRun } from "../api/client";
 import type { JsonObject, RunRead, UUID } from "../api/types";
@@ -59,17 +59,17 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
   );
 
   return (
-    <Space direction="vertical" size={12} className="full-width">
+    <Space orientation="vertical" size={12} className="full-width">
       {runData?.status === "accepted" || runData?.status === "queued" ? (
         <Alert
           type="info"
           showIcon
-          message="Waiting for a scanner worker"
+          title="Waiting for a scanner worker"
           description="The scan run exists, but a scanner worker has not started this run yet."
         />
       ) : null}
-      {queueError ? <Alert type="error" showIcon message="Queue error" description={queueError} /> : null}
-      {lastError ? <Alert type="warning" showIcon message="Latest table error" description={lastError} /> : null}
+      {queueError ? <Alert type="error" showIcon title="Queue error" description={queueError} /> : null}
+      {lastError ? <Alert type="warning" showIcon title="Latest table error" description={lastError} /> : null}
 
       <div className="console-summary">
         <Typography.Text strong>{summary?.target_label?.toString() ?? "Scan run"}</Typography.Text>
@@ -98,37 +98,42 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
         <Descriptions.Item label="Finished">{formatTime(runData?.finished_at)}</Descriptions.Item>
       </Descriptions>
 
-      <List
-        className="log-list"
-        size="small"
-        header="Live scan log"
-        dataSource={liveMessages}
-        locale={{ emptyText: "No live scan events yet." }}
-        renderItem={(item) => (
-          <List.Item>
-            <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-            <Typography.Text type={item.level === "error" ? "danger" : undefined}>
-              {item.message ?? item.event}
-            </Typography.Text>
-          </List.Item>
+      <div className="log-list">
+        <div className="log-list-header">Live scan log</div>
+        {liveMessages.length === 0 ? (
+          <div className="log-list-empty">No live scan events yet.</div>
+        ) : (
+          <ul className="log-list-ul">
+            {liveMessages.map((item, idx) => (
+              <li key={idx} className="log-list-item">
+                <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
+                <Typography.Text type={item.level === "error" ? "danger" : undefined}>
+                  {item.message ?? item.event}
+                </Typography.Text>
+              </li>
+            ))}
+          </ul>
         )}
-      />
+      </div>
 
-      <List
-        size="small"
-        header="Failed tables"
-        dataSource={failures}
-        locale={{ emptyText: "No table errors recorded." }}
-        renderItem={(item) => (
-          <List.Item>
-            <Space direction="vertical" size={2}>
-              <Typography.Text strong>{item.table ?? "unknown table"}</Typography.Text>
-              <Typography.Text type="secondary">{item.error ?? "scan failed"}</Typography.Text>
-              {item.ts ? <Typography.Text type="secondary">{formatTime(item.ts)}</Typography.Text> : null}
-            </Space>
-          </List.Item>
+      <div className="log-list">
+        <div className="log-list-header">Failed tables</div>
+        {failures.length === 0 ? (
+          <div className="log-list-empty">No table errors recorded.</div>
+        ) : (
+          <ul className="log-list-ul">
+            {failures.map((item, idx) => (
+              <li key={idx} className="log-list-item">
+                <Space orientation="vertical" size={2}>
+                  <Typography.Text strong>{item.table ?? "unknown table"}</Typography.Text>
+                  <Typography.Text type="secondary">{item.error ?? "scan failed"}</Typography.Text>
+                  {item.ts ? <Typography.Text type="secondary">{formatTime(item.ts)}</Typography.Text> : null}
+                </Space>
+              </li>
+            ))}
+          </ul>
         )}
-      />
+      </div>
 
       {summary ? <JsonHelpButton value={summary} /> : null}
     </Space>

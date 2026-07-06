@@ -14,6 +14,13 @@ JsonDict = dict[str, Any]
 MAX_STREAM_LEN = 500
 DEFAULT_REPLAY_COUNT = 200
 
+# Module-level handle to the observation lakehouse. Filled in by
+# ``attach_observation_lakehouse`` at process startup; the Redis/InMemory bus instances read it on
+# each publish so we can keep the bus immutable for tests while still enabling the feature in the
+# FastAPI process.
+_OBSERVATION_LAKEHOUSE: Any | None = None
+_OBSERVATION_LOCK = Lock()
+
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -141,6 +148,7 @@ class InMemoryRunEventBus:
             self._sequence += 1
             message_id = f"{self._sequence}-0"
             self._events[str(run_id)].append((message_id, dict(event)))
+        _publish_to_lakehouse(run_id, event)
 
     def replay(
         self, run_id: str | uuid.UUID, *, count: int = DEFAULT_REPLAY_COUNT
@@ -202,6 +210,7 @@ class RedisRunEventBus:
             )
         except Exception:
             logger.exception("Failed to publish run event for run_id=%s", run_id)
+        _publish_to_lakehouse(run_id, event)
 
     def replay(
         self, run_id: str | uuid.UUID, *, count: int = DEFAULT_REPLAY_COUNT
@@ -284,6 +293,57 @@ def safe_publish(
         sink.publish(run_id, event)
     except Exception:
         logger.exception("Failed to publish run event for run_id=%s", run_id)
+    _publish_to_lakehouse(run_id, event)
+
+
+def attach_observation_lakehouse(lakehouse: Any) -> None:
+    """Wire the process-wide observation lakehouse used as a long-term archive for every run
+    event. Safe to call once at app startup; replaces any previous sink. The 30-row Redis stream
+    cap does not apply here -- this is the long-term store."""
+    global _OBSERVATION_LAKEHOUSE
+    with _OBSERVATION_LOCK:
+        _OBSERVATION_LAKEHOUSE = lakehouse
+
+
+def detach_observation_lakehouse() -> None:
+    """Drop any attached lakehouse. Mostly useful for tests."""
+    global _OBSERVATION_LAKEHOUSE
+    with _OBSERVATION_LOCK:
+        _OBSERVATION_LAKEHOUSE = None
+
+
+def _publish_to_lakehouse(run_id: str | uuid.UUID, event: JsonDict) -> None:
+    with _OBSERVATION_LOCK:
+        lakehouse = _OBSERVATION_LAKEHOUSE
+    if lakehouse is None:
+        return
+    try:
+        from cryo.observability.observation_lakehouse import ObservationEvent
+
+        recorded_at_raw = event.get("ts")
+        if isinstance(recorded_at_raw, str):
+            recorded_at = datetime.fromisoformat(recorded_at_raw.replace("Z", "+00:00"))
+        else:
+            recorded_at = datetime.now(UTC)
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=UTC)
+        message = str(event.get("message") or event.get("subject") or "")
+        lakehouse.append(
+            ObservationEvent(
+                id=uuid.uuid4(),
+                recorded_at=recorded_at,
+                run_id=str(run_id),
+                event_type=str(event.get("type") or event.get("event") or "log_line"),
+                level=str(event.get("level") or "info"),
+                table_id=str(event["table_id"]) if event.get("table_id") is not None else None,
+                subject=message,
+                payload=event,
+                correlation_id=event.get("correlation_id"),
+                actor=event.get("actor"),
+            )
+        )
+    except Exception:
+        logger.exception("Failed to archive run event to observation lakehouse")
 
 
 def scan_progress_message(event: JsonDict, *, chunk_id: int, num_chunks: int) -> str:

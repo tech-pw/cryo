@@ -27,11 +27,12 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
   const top = [...partitions]
     .sort((a, b) => (b.partition_size_gb ?? 0) - (a.partition_size_gb ?? 0))
     .slice(0, 15)
-    .map((item) => {
+    .map((item, idx) => {
       const files = Math.max(item.files_per_partition ?? 1, 1);
       const small = item.small_files_in_partition_count ?? 0;
       const rate = small / files;
       return {
+        key: `${item.partition_value ?? "table"}-${idx}`,
         label: item.partition_value ?? "(table)",
         sizeGb: item.partition_size_gb ?? 0,
         smallFiles: small,
@@ -46,7 +47,7 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
 
   return (
     <div className="td-partition-histogram">
-      <ResponsiveContainer>
+      <ResponsiveContainer width="100%" height={220}>
         <BarChart data={top}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
           <XAxis dataKey="label" hide />
@@ -62,7 +63,7 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
           />
           <Bar dataKey="sizeGb" radius={[6, 6, 0, 0]}>
             {top.map((entry) => (
-              <Cell key={entry.label} fill={entry.fill} />
+              <Cell key={entry.key} fill={entry.fill} />
             ))}
           </Bar>
         </BarChart>

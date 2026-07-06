@@ -88,7 +88,9 @@ export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) =
           <QueryErrorAlert error={benefitScores.error} title="Failed to load benefit scores" />
           <Table<BenefitScoreCandidate>
             size="small"
-            rowKey={(row, index) => `${row.partition_value ?? "all"}-${index}`}
+            rowKey={(row) =>
+              `${row.partition_value ?? "all"}-${row.benefit_score ?? "na"}-${row.small_files ?? "na"}`
+            }
             loading={benefitScores.isLoading}
             dataSource={benefitScores.data?.top_candidates ?? []}
             columns={benefitColumns}
@@ -112,7 +114,7 @@ export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) =
           <Typography.Title level={5}>Compaction effectiveness</Typography.Title>
           <QueryErrorAlert error={effectiveness.error} title="Failed to load effectiveness stats" />
           {effectiveness.data ? (
-            <Space direction="vertical" size={8} className="full-width">
+            <Space orientation="vertical" size={8} className="full-width">
               <Space wrap>
                 <Tag color={effectiveness.data.effectiveness_ratio >= 10 ? "success" : "gold"}>
                   Ratio {effectiveness.data.effectiveness_ratio.toFixed(1)}×
@@ -139,7 +141,7 @@ export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) =
             <Alert
               type="warning"
               showIcon
-              message="One or more maintenance signals are active"
+              title="One or more maintenance signals are active"
               style={{ marginBottom: 8 }}
             />
           ) : null}

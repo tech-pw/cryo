@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -276,24 +277,60 @@ def analyze_table(
             format_version=format_version,
             history=stats_history,
         )
-    score, grade = compute_health_score(stats_for_health, health_small_files, now=scan_time)
+    score, grade, health_deductions = compute_health_score(
+        stats_for_health, health_small_files, now=scan_time
+    )
     column_quality = quality_accum.finish()
     quality_summary = summarize_column_quality(column_quality)
+    puffin_blobs: list[dict[str, Any]] = []
+    try:
+        from cryo.scanner.puffin_writer import build_sketch_payload, write_puffin_blob
+
+        # The Puffin writer only sees the per-column stats we already aggregated -- this is
+        # a zero-scan enrichment, not a separate data pass.
+        column_quality_dicts = [
+            {
+                "field_id": stat.field_id,
+                "column_name": stat.column_name,
+                "column_type": stat.column_type,
+                "null_count": stat.null_count,
+                "value_count": stat.value_count,
+                "lower_bound": stat.min_value,
+                "upper_bound": stat.max_value,
+            }
+            for stat in column_quality
+        ]
+        partition_dicts = [partition.__dict__ for partition in partition_rows]
+        payload = build_sketch_payload(
+            column_quality_dicts,
+            partitions=partition_dicts,
+        )
+        if payload:
+            table_uuid = _table_uuid(table_obj)
+            blob = write_puffin_blob(
+                payload,
+                table_id=table_uuid or uuid.uuid4(),
+                snapshot_id=snapshot_info.get("current_snapshot_id"),
+            )
+            puffin_blobs.append(blob.to_dict())
+    except Exception as exc:  # pragma: no cover - defensive: never break a scan on sketch failures.
+        logger.warning("Puffin sketch write failed: %s", exc)
     raw = {
         "partition_fields": fields,
         "partitions_to_rewrite": [partition.__dict__ for partition in partition_rows],
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
+        "health_deductions": health_deductions,
         "column_quality": [
             {
                 "field_id": stat.field_id,
                 "column_name": stat.column_name,
+                "column_type": stat.column_type,
                 "null_count": stat.null_count,
                 "value_count": stat.value_count,
                 "null_rate": stat.null_rate,
                 "lower_bound": stat.min_value,
                 "upper_bound": stat.max_value,
-                "ndv_estimate": stat.ndv_estimate,
             }
             for stat in column_quality
         ],
@@ -303,6 +340,8 @@ def analyze_table(
     }
     if manifest_read_errors:
         raw["manifest_read_errors"] = manifest_read_errors
+    if puffin_blobs:
+        raw["puffin_blobs"] = puffin_blobs
     raw["manifest_stats"] = {
         "manifest_count": len(manifests),
         "avg_files_per_manifest": round(total_files / max(len(manifests), 1), 2),
@@ -543,10 +582,17 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
     ]
     first_snapshot_at = min(committed_at) if committed_at else None
     last_snapshot_committed_at = max(committed_at) if committed_at else None
+    current_snapshot_id = _attr(metadata, "current_snapshot_id", None)
+    if current_snapshot_id is not None:
+        try:
+            current_snapshot_id = int(current_snapshot_id)
+        except (TypeError, ValueError):
+            current_snapshot_id = None
     return {
         "total_snapshots": len(snapshots),
         "first_snapshot_at": first_snapshot_at,
         "last_snapshot_committed_at": last_snapshot_committed_at,
+        "current_snapshot_id": current_snapshot_id,
     }
 
 
@@ -628,6 +674,25 @@ def _jsonable(value: Any) -> Any:
 def _attr(obj: object, name: str, default: Any = None) -> Any:
     value = getattr(obj, name, default)
     return value() if callable(value) and name in {"content", "partition"} else value
+
+
+def _table_uuid(table_obj: object) -> uuid.UUID | None:
+    """Best-effort extraction of a table's Iceberg UUID for the Puffin writer.
+
+    PyIceberg tables expose ``metadata.table_uuid``; for catalogs that don't we fall back
+    to a fresh UUID so the Puffin blob path is still unique. This is only used to namespace
+    on-disk Puffin files, so a generated UUID is fine for the local-dev case.
+    """
+    raw = _attr(table_obj, "metadata", None)
+    candidate = _attr(raw, "table_uuid", None) if raw is not None else None
+    if candidate is None:
+        candidate = _attr(table_obj, "table_uuid", None)
+    if candidate is None:
+        return None
+    try:
+        return uuid.UUID(str(candidate))
+    except (ValueError, TypeError):
+        return None
 
 
 def _call_or_attr(obj: object, name: str, *args: Any, default: Any = None, **kwargs: Any) -> Any:

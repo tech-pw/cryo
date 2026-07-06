@@ -1,5 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Descriptions, Form, Input, Select, Space, Switch, Typography, message } from "antd";
+import {
+  Alert,
+  Button,
+  Form,
+  Input,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+  message
+} from "antd";
+import { CopyOutlined } from "@ant-design/icons";
 import {
   createAwsIntegration,
   deleteAwsIntegration,
@@ -8,13 +21,15 @@ import {
   patchAwsIntegration,
   testAwsIntegration
 } from "../api/client";
-import type { AWSIntegrationWrite, UUID } from "../api/types";
+import type { AWSIntegrationRead, AWSIntegrationWrite, UUID } from "../api/types";
 import { ConfirmAction } from "./confirm";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatTime } from "../lib/format";
 
 interface AwsIntegrationPanelProps {
   sourceId: UUID;
+  /** When true, render in a denser card layout (used inside a grid of integrations). */
+  compact?: boolean;
 }
 
 // Real AWS regions only -- this integration calls CloudWatch/Pricing directly, so unlike the
@@ -51,7 +66,21 @@ const AWS_REGIONS = [
   "sa-east-1"
 ].map((region) => ({ value: region, label: region }));
 
-export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
+const formatRelative = (value?: string | null): string => {
+  if (!value) return "Never";
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return "Never";
+  const deltaSec = Math.round((Date.now() - ts) / 1000);
+  if (deltaSec < 60) return `${deltaSec}s ago`;
+  const min = Math.round(deltaSec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
+};
+
+export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegrationPanelProps) => {
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<AWSIntegrationWrite & { secret_access_key?: string }>();
@@ -66,7 +95,8 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
     queryKey: ["aws-usage", sourceId],
     queryFn: () => getAwsUsage(api, sourceId),
     enabled: Boolean(integration.data?.enabled),
-    retry: false
+    retry: false,
+    refetchInterval: 60_000
   });
 
   const save = useMutation({
@@ -77,8 +107,9 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
       return createAwsIntegration(api, sourceId, values);
     },
     onSuccess: () => {
-      message.success("AWS integration saved");
+      message.success(integration.data ? "AWS integration updated" : "AWS integration connected");
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -89,6 +120,7 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
       message.success("AWS integration removed");
       form.resetFields();
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
     onError: (error) => message.error((error as Error).message)
   });
@@ -97,25 +129,42 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
     mutationFn: () => testAwsIntegration(api, sourceId),
     onSuccess: (result) => {
       if (result.ok) {
-        message.success(`Connected · account ${result.account_id ?? "?"}`);
+        message.success(`Connected to AWS account ${result.account_id ?? "?"}`);
       } else {
         message.error(result.error ?? "Connection failed");
       }
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
     onError: (error) => message.error((error as Error).message)
   });
 
-  const existing = integration.data;
+  const existing: AWSIntegrationRead | undefined = integration.data;
+
+  if (integration.isError && !integration.isLoading) {
+    const status = (integration.error as { status?: number } | null)?.status;
+    if (status === 404) {
+      return (
+        <Space orientation="vertical" size={10} className="full-width">
+          <Typography.Text type="secondary">
+            Connect this lakehouse's S3 bucket to Cryo so we can pull free CloudWatch storage metrics
+            and real regional pricing — no extra AWS charges.
+          </Typography.Text>
+        </Space>
+      );
+    }
+  }
 
   return (
-    <Space direction="vertical" className="full-width" size={12}>
-      <Alert
-        type="info"
-        showIcon
-        message="Free-tier AWS metrics only"
-        description="Uses S3 CloudWatch daily storage metrics and the Price List API — no LIST, no charges."
-      />
+    <Space orientation="vertical" className="full-width" size={12}>
+      {!compact ? (
+        <Alert
+          type="info"
+          showIcon
+          title="Free-tier AWS metrics only"
+          description="Uses S3 CloudWatch daily storage metrics and the Price List API — no LIST, no charges."
+        />
+      ) : null}
 
       <Form
         form={form}
@@ -140,34 +189,62 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
           save.mutate(body);
         }}
       >
-        <Form.Item name="bucket" label="S3 bucket" rules={[{ required: true }]}>
-          <Input placeholder="my-iceberg-bucket" />
+        <Form.Item
+          name="bucket"
+          label="S3 bucket"
+          rules={[{ required: true, message: "Bucket name is required" }]}
+        >
+          <Input placeholder="my-iceberg-bucket" autoComplete="off" />
         </Form.Item>
         <Form.Item name="region" label="Region" rules={[{ required: true }]}>
           <Select showSearch options={AWS_REGIONS} placeholder="ap-south-1" popupMatchSelectWidth={220} />
         </Form.Item>
-        <Form.Item name="access_key_id" label="Access key ID (optional)">
-          <Input placeholder="Uses IRSA / default chain if blank" autoComplete="off" />
+        <Form.Item
+          name="access_key_id"
+          label={
+            <Tooltip title="Leave blank to use IRSA, instance profile, or ~/.aws/credentials.">
+              Access key ID (optional) <Typography.Text type="secondary">ⓘ</Typography.Text>
+            </Tooltip>
+          }
+        >
+          <Input placeholder="AKIA..." autoComplete="off" />
         </Form.Item>
-        <Form.Item name="secret_access_key" label="Secret access key (optional)">
-          <Input.Password placeholder={existing ? "Leave blank to keep existing" : ""} autoComplete="off" />
+        <Form.Item
+          name="secret_access_key"
+          label={
+            <Tooltip
+              title={
+                existing
+                  ? "Stored encrypted at rest. Leave blank to keep the existing secret."
+                  : "Stored encrypted at rest. Leave blank to use the default AWS credential chain."
+              }
+            >
+              Secret access key <Typography.Text type="secondary">ⓘ</Typography.Text>
+            </Tooltip>
+          }
+        >
+          <Input.Password
+            placeholder={existing ? "Leave blank to keep existing" : "Optional with IRSA"}
+            autoComplete="off"
+          />
         </Form.Item>
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
         <Space wrap>
           <Button type="primary" htmlType="submit" loading={save.isPending}>
-            {existing ? "Update" : "Connect"}
+            {existing ? "Save changes" : "Connect"}
           </Button>
           {existing ? (
             <>
               <Button loading={test.isPending} onClick={() => test.mutate()}>
-                Test STS
+                Test connection
               </Button>
               <ConfirmAction
                 title="Remove AWS integration?"
-                description="CloudWatch cost metrics for this source will stop updating."
+                description="CloudWatch cost metrics for this source will stop updating. You can reconnect any time."
                 onConfirm={() => remove.mutate()}
+                okText="Remove"
               >
                 <Button danger loading={remove.isPending}>
                   Remove
@@ -179,31 +256,96 @@ export const AwsIntegrationPanel = ({ sourceId }: AwsIntegrationPanelProps) => {
       </Form>
 
       {existing ? (
-        <Descriptions size="small" column={1} bordered>
-          <Descriptions.Item label="Last tested">
-            {existing.last_tested_at ? formatTime(existing.last_tested_at) : "Never"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Last test OK">
-            {existing.last_test_ok == null ? "—" : existing.last_test_ok ? "Yes" : "No"}
-          </Descriptions.Item>
-        </Descriptions>
+        <Space size={16} wrap>
+          <Tag color={existing.enabled ? "green" : "default"}>
+            {existing.enabled ? "Enabled" : "Disabled"}
+          </Tag>
+          <Typography.Text type="secondary">
+            Last tested: {formatRelative(existing.last_tested_at)}
+            {existing.last_tested_at ? ` (${formatTime(existing.last_tested_at)})` : ""}
+          </Typography.Text>
+          {existing.last_test_ok === true ? <Tag color="green">OK</Tag> : null}
+          {existing.last_test_ok === false ? <Tag color="red">Failed</Tag> : null}
+        </Space>
       ) : null}
 
-      {usage.data ? (
-        <Descriptions size="small" column={1} title="Live bucket metrics" bordered>
-          <Descriptions.Item label="Measured">
-            {usage.data.measured_at ? formatTime(usage.data.measured_at) : "—"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Total size">{formatBytesGb(usage.data.total_size_bytes)}</Descriptions.Item>
-          <Descriptions.Item label="Objects">{usage.data.object_count?.toLocaleString() ?? "—"}</Descriptions.Item>
-          <Descriptions.Item label="Price">
-            {usage.data.price_per_gb_month != null
-              ? `${formatCurrency(usage.data.price_per_gb_month)}/GB-mo (${usage.data.price_source ?? "AWS"})`
-              : "—"}
-          </Descriptions.Item>
-        </Descriptions>
-      ) : integration.data?.enabled && usage.isError ? (
-        <Typography.Text type="secondary">Usage metrics unavailable — check credentials and bucket.</Typography.Text>
+      {test.data?.ok && test.data.arn ? (
+        <Space size={6} align="center">
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {test.data.arn}
+          </Typography.Text>
+          <Tooltip title="Copy ARN">
+            <Button
+              size="small"
+              type="text"
+              icon={<CopyOutlined />}
+              onClick={() => {
+                void navigator.clipboard.writeText(test.data?.arn ?? "").then(
+                  () => message.success("ARN copied"),
+                  () => message.error("Could not copy to clipboard")
+                );
+              }}
+            />
+          </Tooltip>
+        </Space>
+      ) : null}
+
+      {existing?.enabled ? (
+        usage.isLoading ? (
+          <Typography.Text type="secondary">Loading bucket metrics…</Typography.Text>
+        ) : usage.data ? (
+          <Space size={24} wrap>
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Bucket size
+              </Typography.Text>
+              <div>
+                <Typography.Text strong style={{ fontSize: 16 }}>
+                  {formatBytesGb(usage.data.total_size_bytes)}
+                </Typography.Text>
+              </div>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Objects
+              </Typography.Text>
+              <div>
+                <Typography.Text strong style={{ fontSize: 16 }}>
+                  {usage.data.object_count?.toLocaleString() ?? "—"}
+                </Typography.Text>
+              </div>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                $/GB-month
+              </Typography.Text>
+              <div>
+                <Typography.Text strong style={{ fontSize: 16 }}>
+                  {usage.data.price_per_gb_month != null
+                    ? formatCurrency(usage.data.price_per_gb_month)
+                    : "—"}
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+                  {usage.data.price_source ?? "AWS"}
+                </Typography.Text>
+              </div>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Measured
+              </Typography.Text>
+              <div>
+                <Typography.Text strong style={{ fontSize: 16 }}>
+                  {usage.data.measured_at ? formatTime(usage.data.measured_at) : "—"}
+                </Typography.Text>
+              </div>
+            </div>
+          </Space>
+        ) : usage.isError ? (
+          <Typography.Text type="secondary">
+            Usage metrics unavailable — check credentials and bucket access.
+          </Typography.Text>
+        ) : null
       ) : null}
     </Space>
   );

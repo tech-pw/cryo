@@ -315,6 +315,68 @@ class MockLLMClient(LLMClient):
         )
 
 
+def _decrypt_api_key(stored: str | None) -> str | None:
+    if not stored:
+        return None
+    try:
+        from cryo.security.crypto import decrypt_secret
+    except Exception:
+        return None
+    try:
+        return decrypt_secret(stored)
+    except Exception:
+        return None
+
+
+def get_llm_client(session: object | None = None) -> LLMClient | None:
+    """Return the active LLM client, or ``None`` when no provider is configured.
+
+    Prefers the default ``AIProvider`` row (a real, network-backed LLM); if none
+    is enabled we deliberately return ``None`` rather than falling back to
+    ``MockLLMClient`` so callers can detect "no LLM available" and choose a
+    deterministic fallback instead of silently mocking.
+    """
+    from sqlalchemy import select
+
+    from cryo.db.models import AIProvider
+
+    if session is None:
+        return None
+
+    provider = None
+    try:
+        provider = session.execute(  # type: ignore[attr-defined]
+            select(AIProvider).where(
+                AIProvider.is_default.is_(True),
+                AIProvider.enabled.is_(True),
+            )
+        ).scalar_one_or_none()
+    except Exception:
+        provider = None
+
+    if provider is None:
+        try:
+            provider = session.execute(  # type: ignore[attr-defined]
+                select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1)
+            ).scalar_one_or_none()
+        except Exception:
+            provider = None
+
+    if provider is None:
+        return None
+
+    api_key = _decrypt_api_key(getattr(provider, "api_key_encrypted", None)) or ""
+    provider_type = getattr(provider, "provider_type", "mock")
+    model = getattr(provider, "model", None)
+    config = getattr(provider, "config", None) or {}
+    if provider_type == "mock":
+        return None
+    try:
+        return create_llm_client(provider_type, api_key, model, config=config)
+    except Exception:
+        return None
+
+
 def create_llm_client(
     provider_type: str,
     api_key: str | None,

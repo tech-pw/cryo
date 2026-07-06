@@ -126,7 +126,7 @@ from cryo.db.tenant_scope import (
     tenant_id_for_create,
 )
 from cryo.domain.enums import EngineType, JobStatus, Mode
-from cryo.domain.models import MaintenancePlan
+from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.base import RenderedStatement
 from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
@@ -1228,6 +1228,11 @@ def create_maintenance_run(
     session.add(run)
     session.flush()
 
+    # Plan Verifier (arXiv:2510.09567) -- when the preset exposes a parsed MaintenancePlan via
+    # params.operations (Planner-emitted), run the verifier once per table before enqueue and
+    # persist the verdict onto the job. If the verifier reports a critical violation, refuse
+    # to enqueue.
+    verifier_enabled = get_settings().plan_verifier_enabled
     jobs: list[MaintenanceJob] = []
     for table_id in selection.table_ids:
         if preset is not None and requested_ops:
@@ -1244,12 +1249,48 @@ def create_maintenance_run(
                 )
                 if not allowed:
                     raise HTTPException(status_code=403, detail=reason)
+        plan_for_verifier = _build_plan_for_table(session, table_id, preset, payload.mode)
+        verified_flag = True
+        plan_hash_value: str | None = None
+        verifier_version_value: str | None = None
+        violations_value: list[dict[str, object]] = []
+        if verifier_enabled and plan_for_verifier is not None:
+            from cryo.planner.verifier import PlanVerifier
+
+            verdict = PlanVerifier(session=session, settings=get_settings()).verify(
+                plan_for_verifier
+            )
+            verified_flag = verdict.verified
+            plan_hash_value = verdict.plan_hash
+            verifier_version_value = verdict.verifier_version
+            violations_value = [
+                {
+                    "invariant": v.invariant,
+                    "severity": v.severity,
+                    "message": v.message,
+                    "location": v.location,
+                }
+                for v in verdict.violations
+            ]
+            if not verdict.verified:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "plan_verifier_rejected",
+                        "plan_hash": verdict.plan_hash,
+                        "violations": violations_value,
+                    },
+                )
         job = MaintenanceJob(
             run_id=run.id,
             table_id=table_id,
             destination_id=payload.destination_id,
             mode=payload.mode.value,
             status="queued",
+            verified=verified_flag,
+            plan_hash=plan_hash_value,
+            verifier_version=verifier_version_value,
+            verifier_violations=violations_value or None,
         )
         session.add(job)
         jobs.append(job)
@@ -1788,3 +1829,50 @@ def _renderer_for(
     if engine is EngineType.SPARK_EMR:
         return render_spark
     raise HTTPException(status_code=400, detail=f"Unsupported engine: {engine}")
+
+
+def _build_plan_for_table(
+    session: Session,
+    table_id: uuid.UUID,
+    preset: Preset | None,
+    mode: Mode,
+) -> MaintenancePlan | None:
+    """Reconstruct the MaintenancePlan the worker would execute for one table. Used to run the
+    Plan Verifier at enqueue time. Returns None when there's not enough information (no preset
+    or no parsed ops), which is treated as 'verifier skipped' rather than 'verifier rejected'."""
+    if preset is None:
+        return None
+    raw_ops = preset.operations or []
+    parsed_ops: list[object] = []
+    for op in raw_ops:
+        if isinstance(op, str):
+            from cryo.domain.enums import OperationType
+
+            try:
+                parsed_ops.append(Operation(type=OperationType(op)))
+            except ValueError:
+                continue
+        elif isinstance(op, dict):
+            from cryo.domain.enums import OperationType
+
+            try:
+                parsed_ops.append(
+                    Operation(
+                        type=OperationType(str(op.get("type"))),
+                        params=dict(op.get("params") or {}),
+                    )
+                )
+            except ValueError:
+                continue
+    if not parsed_ops:
+        return None
+    table = session.get(Table, table_id)
+    if table is None:
+        return None
+    table_ref = f"{table.schema_name}.{table.table_name}"
+    return MaintenancePlan(
+        table_ref=table_ref,
+        mode=mode,
+        operations=tuple(parsed_ops),  # type: ignore[arg-type]
+        notes=("verifier-checked",),
+    )

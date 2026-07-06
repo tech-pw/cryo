@@ -36,7 +36,7 @@ export const StorageDonut = ({
   return (
     <div className="td-storage-donut-wrap">
       <div className="td-storage-donut-chart">
-        <ResponsiveContainer>
+        <ResponsiveContainer width="100%" height={168}>
           <PieChart>
             <Pie
               data={parts}

@@ -48,7 +48,7 @@ export const HealthGauge = ({
 
       <div className="td-health-gauge-center">
         <Typography.Text className="td-health-gauge-score">{safeScore.toFixed(0)}</Typography.Text>
-        <Typography.Text className="td-health-gauge-label">Health Score</Typography.Text>
+        <Typography.Text className="td-health-gauge-label">Overall Health</Typography.Text>
       </div>
 
       <div className="td-health-gauge-meta">

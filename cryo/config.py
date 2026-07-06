@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     default_emr_slot_cap: int = Field(default=10, gt=0)
     default_native_slot_cap: int = Field(default=5, gt=0)
     wave_wait_sec: int = Field(default=300, gt=0)
+    engine_connect_timeout_sec: float = Field(
+        default=5.0,
+        gt=0,
+        le=60.0,
+        description=(
+            "Per-request connect timeout (seconds) for Trino coordinator probes "
+            "and statement execution. The trino client doesn't expose a connect "
+            "timeout directly, so we patch the requests Session it uses."
+        ),
+    )
     native_engine_enabled: bool = Field(
         default=False,
         description="Enable experimental cryo-native engine (disabled by default).",
@@ -250,10 +260,49 @@ class Settings(BaseSettings):
         gt=5,
         description="Max history rows loaded per table during anomaly detection.",
     )
-    anomaly_max_results: int = Field(
+anomaly_max_results: int = Field(
         default=500,
         gt=0,
         description="Maximum anomaly alerts retained from a fleet-wide scan.",
+    )
+
+    # Puffin-sidecar column sketches (FORMATS '26 / arXiv:2605.30308)
+
+    puffin_local_dir: str = Field(
+        default=".local/puffin",
+        description="On-disk directory for Puffin blobs in local dev (CRYO_PUFFIN_LOCAL_DIR).",
+    )
+
+    # Silent-data-loss detector (arXiv:2604.20081)
+
+    silent_loss_check_interval_min: int = Field(
+        default=5,
+        gt=0,
+        description="Minutes between silent-data-loss scans per table (CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN).",
+    )
+    silent_loss_local_root: str = Field(
+        default=".local/tables",
+        description="Local filesystem root for table data in dev (CRYO_SILENT_LOSS_LOCAL_ROOT).",
+    )
+
+    # Variance-aware QPP (CLOUD 2026 / arXiv:2606.03464)
+
+    qpp_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, the Governor calls QPPModel.predict() before admitting a maintenance "
+            "job and refuses jobs whose predicted p95 exceeds the per-destination target."
+        ),
+    )
+    qpp_target_p95_ms: int = Field(
+        default=10 * 60 * 1000,  # 10 minutes
+        gt=0,
+        description="Default per-destination QPP p95 target in milliseconds.",
+    )
+    qpp_min_observations: int = Field(
+        default=20,
+        gt=0,
+        description="Minimum observations before QPPModel trusts the learned regression.",
     )
 
 

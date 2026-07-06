@@ -35,7 +35,7 @@ export const SettingsPage = ({
         key: tab.key,
         label: tab.label,
         children: (
-          <Space direction="vertical" className="full-width" size={12}>
+          <Space orientation="vertical" className="full-width" size={12}>
             {tab.intro ? (
               <Typography.Text type="secondary" className="tab-intro">
                 {tab.intro}

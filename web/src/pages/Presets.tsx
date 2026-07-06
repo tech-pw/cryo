@@ -96,7 +96,7 @@ export const Presets = () => {
           {
             title: "Preset",
             render: (_, row) => (
-              <Space direction="vertical" size={0}>
+              <Space orientation="vertical" size={0}>
                 <Typography.Text strong>{row.name}</Typography.Text>
                 <Typography.Text type="secondary">{row.description ?? "No description"}</Typography.Text>
               </Space>
@@ -176,7 +176,7 @@ const PresetDrawer = ({
   const [form] = Form.useForm();
 
   return (
-    <Drawer title={preset ? "Edit preset" : "New preset"} width={620} open={open} onClose={onClose} destroyOnHidden>
+    <Drawer title={preset ? "Edit preset" : "New preset"} size="large" open={open} onClose={onClose} destroyOnHidden>
       <Form
         form={form}
         layout="vertical"
@@ -290,8 +290,8 @@ const RulesDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose: 
   });
 
   return (
-    <Drawer title={`Rules: ${preset?.name ?? ""}`} open={Boolean(preset)} onClose={onClose} width={700} destroyOnHidden>
-      <Space direction="vertical" size={12} className="full-width">
+    <Drawer title={`Rules: ${preset?.name ?? ""}`} open={Boolean(preset)} onClose={onClose} size="large" destroyOnHidden>
+      <Space orientation="vertical" size={12} className="full-width">
         <Card title="New rule from filters" size="small">
           <FilterBar value={filters} onChange={setFilters} />
           <Button type="primary" loading={addRule.isPending} onClick={() => addRule.mutate()}>
@@ -344,8 +344,8 @@ const SimulatorDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClo
   });
 
   return (
-    <Drawer title={`Simulator: ${preset?.name ?? ""}`} open={Boolean(preset)} onClose={onClose} width={720} destroyOnHidden>
-      <Space direction="vertical" size={12} className="full-width">
+    <Drawer title={`Simulator: ${preset?.name ?? ""}`} open={Boolean(preset)} onClose={onClose} size="large" destroyOnHidden>
+      <Space orientation="vertical" size={12} className="full-width">
         <StatSummary
           matched={simulation.data?.matched_count}
           size={simulation.data?.total_size_gb}
@@ -394,10 +394,10 @@ const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose
       title={`Adaptive routing: ${preset?.name ?? ""}`}
       open={Boolean(preset)}
       onClose={onClose}
-      width={720}
+      size={720}
       destroyOnHidden
     >
-      <Space direction="vertical" size={12} className="full-width">
+      <Space orientation="vertical" size={12} className="full-width">
         <Typography.Text type="secondary">
           Preview how the governor would rank engines for this preset on a specific table.
         </Typography.Text>
@@ -428,7 +428,7 @@ const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose
             <Alert
               type="info"
               showIcon
-              message={`Selected: ${routing.data.selected_destination_id}`}
+              title={`Selected: ${routing.data.selected_destination_id}`}
               description={routing.data.selected_reason}
             />
             <Table

@@ -42,7 +42,12 @@ class SourceRead(OrmModel):
     @field_serializer("config")
     def redact_config(self, config: JsonDict) -> JsonDict:
         """Redact sensitive keys in config before serialization."""
-        return redact_sensitive_dict(config)
+        if config is None:
+            return {}
+        try:
+            return redact_sensitive_dict(config)
+        except Exception:
+            return {}
 
 
 class SourcePatch(BaseModel):
@@ -749,3 +754,185 @@ class RunScanProgressEventPayload(BaseModel):
     message: str
     chunk_id: int | None = None
     table_ref: str | None = None
+
+
+# ==================== Advanced: Workload-aware compaction candidates ====================
+
+
+class CompactionCandidateRead(BaseModel):
+    partition_path: str
+    partition_size_gb: float
+    small_files: int
+    query_freq_per_day: float
+    p95_latency_ms: float
+    score: float
+    priority: str
+    savings_estimate_usd: float
+    reasons: list[str] = Field(default_factory=list)
+
+
+class CompactionCandidatesResponse(BaseModel):
+    table_id: uuid.UUID
+    candidates: list[CompactionCandidateRead]
+    generated_at: datetime
+
+
+# ==================== Advanced: Unionable tables (EasyTUS) ====================
+
+
+class UnionScoreRead(BaseModel):
+    target_table_id: str
+    candidate_table_id: str
+    score: float
+    overlap_columns: list[str] = Field(default_factory=list)
+    union_sql: str
+    rationale: str
+    candidate_schema: str
+    candidate_table_name: str = ""
+    candidate_schema_name: str = ""
+
+
+class UnionableResponse(BaseModel):
+    target_table_id: uuid.UUID
+    results: list[UnionScoreRead]
+    generated_at: datetime
+
+
+# ==================== Advanced: AI skillset versioning ====================
+
+
+class SkillsetRead(BaseModel):
+    id: str
+    name: str
+    version: str
+    prompts: JsonDict = Field(default_factory=dict)
+    tools: list[JsonDict] = Field(default_factory=list)
+    created_at: datetime
+    is_active: bool
+    metrics: JsonDict = Field(default_factory=dict)
+
+
+class SkillsetListResponse(BaseModel):
+    skillsets: list[SkillsetRead]
+    generated_at: datetime
+
+
+class SkillsetWrite(BaseModel):
+    name: str
+    version: str
+    prompts: JsonDict = Field(default_factory=dict)
+    tools: list[JsonDict] = Field(default_factory=list)
+    activate: bool = False
+
+
+class SkillsetRollbackRequest(BaseModel):
+    version: str
+
+
+class SkillsetOutcomeWrite(BaseModel):
+    prompt_name: str
+    recommendation: str
+    decision: Literal["accepted", "rejected", "pending"]
+    score: float | None = None
+    table_id: uuid.UUID | None = None
+
+
+class SkillsetOutcomeRead(BaseModel):
+    id: uuid.UUID
+    skillset_id: uuid.UUID
+    recorded_at: datetime
+    table_id: uuid.UUID | None
+    prompt_name: str
+    recommendation: str
+    decision: str
+    score: float | None
+
+
+# ============================================================================
+# Plan Verifier (arXiv:2510.09567, proof-carrying plans)
+# ============================================================================
+
+
+class PartitionPredicateTermRead(BaseModel):
+    base_column: str
+    transform: str
+    value: object | None = None
+    col_type: str = ""
+    transform_param: int | None = None
+    partition_field: str | None = None
+    unsupported_reason: str | None = None
+
+
+class PartitionPredicateRead(BaseModel):
+    terms: list[PartitionPredicateTermRead]
+    unsupported_reason: str | None = None
+
+
+class OperationRead(BaseModel):
+    type: OperationType
+    params: dict[str, Any] = Field(default_factory=dict)
+    predicates: list[PartitionPredicateRead] | None = None
+
+
+class MaintenancePlanRead(BaseModel):
+    table_ref: str
+    mode: Mode
+    operations: list[OperationRead]
+    notes: list[str] = Field(default_factory=list)
+
+
+class PlanVerifyRequest(BaseModel):
+    plan: MaintenancePlanRead
+    signature: str | None = None
+
+
+class PlanViolationRead(BaseModel):
+    invariant: str
+    severity: Literal["critical", "warning"]
+    message: str
+    location: str
+
+
+class PlanVerdictRead(BaseModel):
+    verified: bool
+    plan_hash: str
+    verifier_version: str
+    invariants_checked: list[str] = Field(default_factory=list)
+    violations: list[PlanViolationRead] = Field(default_factory=list)
+
+
+# ============================================================================
+# Observation Lakehouse (SANER 2026, arXiv:2512.02795)
+# ============================================================================
+
+
+class ObservationEventRead(BaseModel):
+    id: uuid.UUID
+    recorded_at: datetime
+    run_id: str | None = None
+    event_type: str
+    level: str
+    table_id: str | None = None
+    subject: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: str | None = None
+    actor: str | None = None
+
+
+class ObservationSearchResponse(BaseModel):
+    items: list[ObservationEventRead]
+    total: int
+
+
+class ObservationStatsResponse(BaseModel):
+    total_files: int
+    total_bytes: int
+    oldest_event: datetime | None = None
+    newest_event: datetime | None = None
+
+
+class ObservationCompactResponse(BaseModel):
+    files_merged: int
+    rows: int
+    bytes_in: int
+    bytes_out: int
