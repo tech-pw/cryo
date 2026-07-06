@@ -66,6 +66,10 @@ const LEVEL_COLOR: Record<ScoreFactorLevel, string> = {
   bad: "var(--gradeF, #b23a2e)"
 };
 
+/** Shared color lookup so any other mini-bar visualization on this page (e.g. the Table
+ * Metadata card's Partition skew tile) stays visually consistent with this breakdown. */
+export const scoreFactorColor = (level: ScoreFactorLevel): string => LEVEL_COLOR[level];
+
 /** Renders each factor reusing the page's existing .td-part-bar-wrap/.td-part-bar mini-bar
  * visual (already established by the Partitions table on this same page). */
 export const HealthScoreBreakdown = ({ factors }: { factors: ScoreFactor[] }) => (

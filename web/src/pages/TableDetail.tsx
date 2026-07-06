@@ -16,7 +16,7 @@ import {
   protectSnapshot, runMaintenance, runManifestRewrite, triggerScan, unassignTables
 } from "../api/client";
 import type { AuditEntry, HistoryPoint, PartitionRead } from "../api/types";
-import { EmptyState, HintLabel } from "../components/common";
+import { EmptyState } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
@@ -26,8 +26,9 @@ import { PlanPreview } from "../components/PlanPreview";
 import { TableAiInsights } from "../components/TableAiInsights";
 import { TableCompactionAnalytics } from "../components/TableCompactionAnalytics";
 import { TableDiagnosisPanel } from "../components/TableDiagnosisPanel";
+import { TableMetadataGrid } from "../components/TableMetadataGrid";
 import {
-  CompactionTag, GradePill, PriorityTag, healthScoreColor
+  CompactionTag, GradePill, PendingDeletionTag, PriorityTag, healthScoreColor
 } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { isOrphanScanStale } from "../lib/costStaleness";
@@ -49,10 +50,6 @@ const smallFileRate = (stats: { small_files_count?: number; total_files?: number
   if (!stats?.total_files || !stats?.small_files_count) return 0;
   return stats.small_files_count / stats.total_files;
 };
-
-// Max/avg files-per-partition ratio above which we flag a partition as a rebalance candidate --
-// a common rule-of-thumb threshold, not a backend-computed signal.
-const SKEW_HINT_THRESHOLD = 2;
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
@@ -570,31 +567,7 @@ export const TableDetail = () => {
             <div className="td-chart-card-header">
               <span className="td-chart-card-title">Table Metadata</span>
             </div>
-            {row ? (
-              <Descriptions size="small" column={1} className="td-meta-desc">
-                <Descriptions.Item label="Partition col">{stats?.partition_col ?? "-"}</Descriptions.Item>
-                <Descriptions.Item label="Type">{stats?.partition_col_type ?? "-"}</Descriptions.Item>
-                <Descriptions.Item label="Snapshots">{formatNumber(stats?.total_snapshots)}</Descriptions.Item>
-                <Descriptions.Item label="Manifests">{formatNumber(stats?.manifest_count)}</Descriptions.Item>
-                <Descriptions.Item
-                  label={<HintLabel label="Delete files" tooltip="Position delete files used for row-level deletes." />}
-                >
-                  {formatNumber(stats?.total_delete_files)}
-                </Descriptions.Item>
-                <Descriptions.Item label="Records">{formatNumber(stats?.total_records, true)}</Descriptions.Item>
-                <Descriptions.Item label="Avg file size">{stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}</Descriptions.Item>
-                <Descriptions.Item label="Partition skew">
-                  {stats?.partition_skew_ratio != null ? (
-                    <>
-                      {stats.partition_skew_ratio.toFixed(2)}x
-                      {stats.partition_skew_ratio > SKEW_HINT_THRESHOLD ? (
-                        <Tag color="gold" className="td-metric-hint-tag">rebalance candidate</Tag>
-                      ) : null}
-                    </>
-                  ) : "-"}
-                </Descriptions.Item>
-              </Descriptions>
-            ) : null}
+            {row ? <TableMetadataGrid stats={stats} factors={scoreFactors} /> : null}
           </Card>
         </Col>
 
@@ -610,7 +583,7 @@ export const TableDetail = () => {
                   <Descriptions.Item label="Table ref" span={2}>{compliance.data.table_ref}</Descriptions.Item>
                   <Descriptions.Item label="ABAC policies">{compliance.data.abac_policy_count}</Descriptions.Item>
                   <Descriptions.Item label="Pending deletion">
-                    {compliance.data.pending_deletion ? "Yes" : "None"}
+                    <PendingDeletionTag pending={Boolean(compliance.data.pending_deletion)} />
                   </Descriptions.Item>
                   {compliance.data.abac_enforcement_note ? (
                     <Descriptions.Item label="ABAC note" span={2}>{compliance.data.abac_enforcement_note}</Descriptions.Item>
