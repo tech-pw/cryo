@@ -46,6 +46,7 @@ import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatTime } from "../lib/format";
 import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
+import { leaf } from "../lib/predicate";
 
 type TierPolicyFormValues = TierPolicyWrite;
 

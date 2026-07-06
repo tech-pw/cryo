@@ -57,7 +57,12 @@ import type {
   SkillsetOutcomeRead,
   TableCostRead,
   TableRead,
-  UUID
+  UUID,
+  PlanVerdict,
+  PlanVerifyRequest,
+  ObservationSearchResponse,
+  ObservationStatsResponse,
+  ObservationCompactResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
