@@ -83,6 +83,12 @@ vi.mock("../api/client", () => ({
     abac_policy_count: 0,
     abac_enforcement_note: null
   }),
+  getTableSignals: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    checked_at: "2026-07-01T00:00:00Z",
+    signals: [],
+    any_triggered: false
+  }),
   assignTables: vi.fn(),
   unassignTables: vi.fn(),
   runMaintenance: vi.fn(),
@@ -104,7 +110,7 @@ describe("TableDetail page", () => {
       </QueryClientProvider>
     );
     expect(await screen.findByText("public.events")).toBeInTheDocument();
-    expect(await screen.findByText("Cost & savings")).toBeInTheDocument();
-    expect(await screen.findByText("Iceberg metadata")).toBeInTheDocument();
+    expect(await screen.findByText("Cost & Savings")).toBeInTheDocument();
+    expect(await screen.findByText("Health Score")).toBeInTheDocument();
   });
 });

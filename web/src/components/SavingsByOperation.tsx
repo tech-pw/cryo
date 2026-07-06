@@ -18,33 +18,40 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
     );
   }
 
+  // A donut only earns its keep as a part-to-whole comparison across several categories --
+  // at 1-2 items it's just a redundant ring duplicating what the list below already says.
+  const showChart = active.length >= 3;
+
   return (
     <div className="savings-by-operation">
-      <ChartFrame
-        empty={false}
-        ariaLabel={`Savings by operation totaling ${formatCurrency(total)} per month`}
-      >
-        <PieChart>
-          <Pie data={active} dataKey="savings_usd_month" nameKey="operation" innerRadius={42} outerRadius={72}>
-            {active.map((item, index) => (
-              <Cell
-                key={item.operation ?? `operation-${index}`}
-                fill={operationColors[item.operation] ?? "#8b95a8"}
-              />
-            ))}
-          </Pie>
-          <Tooltip
-            {...chartTooltipProps}
-            formatter={(value, _name, entry) => {
-              const row = entry?.payload as CostByOperation | undefined;
-              return [
-                `${formatCurrency(Number(value))}/mo · ${formatBytesGb(row?.reclaimable_bytes)}`,
-                operationLabels[row?.operation ?? ""] ?? row?.operation
-              ];
-            }}
-          />
-        </PieChart>
-      </ChartFrame>
+      {showChart ? (
+        <ChartFrame
+          empty={false}
+          size="xs"
+          ariaLabel={`Savings by operation totaling ${formatCurrency(total)} per month`}
+        >
+          <PieChart>
+            <Pie data={active} dataKey="savings_usd_month" nameKey="operation" innerRadius={36} outerRadius={64}>
+              {active.map((item, index) => (
+                <Cell
+                  key={item.operation ?? `operation-${index}`}
+                  fill={operationColors[item.operation] ?? "#8b95a8"}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              {...chartTooltipProps}
+              formatter={(value, _name, entry) => {
+                const row = entry?.payload as CostByOperation | undefined;
+                return [
+                  `${formatCurrency(Number(value))}/mo · ${formatBytesGb(row?.reclaimable_bytes)}`,
+                  operationLabels[row?.operation ?? ""] ?? row?.operation
+                ];
+              }}
+            />
+          </PieChart>
+        </ChartFrame>
+      ) : null}
       <div className="operation-list">
         {active.map((item, index) => (
           <div key={item.operation ?? `operation-${index}`} className="operation-list-row">

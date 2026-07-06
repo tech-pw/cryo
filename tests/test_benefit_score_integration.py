@@ -193,6 +193,46 @@ def test_get_top_compaction_candidates(session):
     assert candidates[1].compaction_benefit_score == 50.0
 
 
+def test_get_top_compaction_candidates_ignores_stale_scans(session):
+    """table_partitions is append-only (one row per partition per scan). A partition that scored
+    high in an older scan must not show up as a duplicate "different" candidate alongside its
+    current-scan row -- only the latest scan's rows should ever be ranked."""
+    table = _seed_table(session, schema_name="test", table_name="stale_scan_table")
+    older_scan = datetime.now(UTC) - timedelta(days=1)
+    latest_scan = datetime.now(UTC)
+
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                compaction_benefit_score=90.0,
+                scan_at=older_scan,
+            ),
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                compaction_benefit_score=95.0,
+                scan_at=latest_scan,
+            ),
+        ]
+    )
+    session.commit()
+
+    candidates = get_top_compaction_candidates(session, table.id, min_score=10.0, limit=10)
+
+    assert len(candidates) == 1
+    assert candidates[0].compaction_benefit_score == 95.0
+
+
 def test_compaction_effectiveness_stats(session):
     """Test compaction effectiveness ratio calculation."""
     table = _seed_table(session, schema_name="test", table_name="effectiveness_table")
