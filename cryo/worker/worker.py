@@ -15,6 +15,12 @@ from cryo.observability.metrics import worker_job_duration_seconds, worker_job_e
 from cryo.planner.planner import build_plan
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.queue.run_events import (
+    RunEventSink,
+    build_job_status,
+    build_log_line,
+    safe_publish,
+)
 
 
 @dataclass(frozen=True)
@@ -259,6 +265,7 @@ class Worker:
         *,
         on_job_finished: Callable[[], None] | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
+        run_events: RunEventSink | None = None,
     ) -> None:
         self._queue = queue
         self._store = store
@@ -266,6 +273,7 @@ class Worker:
         self._lock_store = lock_store
         self._on_job_finished = on_job_finished
         self._lock_ttl_seconds = lock_ttl_seconds
+        self._run_events = run_events
 
     def process_next(self) -> MaintenanceJobRecord | None:
         job_id = self._queue.claim_admitted()
@@ -294,12 +302,37 @@ class Worker:
         self._ensure_table_lock(job)
         self._queue.mark_running(job.id)
         self._store.mark_status(job.id, JobStatus.RUNNING)
+        table_ref: str | None = None
 
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
         engine_ref: str | None = None
         try:
             table_data = self._store.get_table_data(job.table_id)
+            table_ref = _table_ref_from_stats(table_data.stats)
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_job_status(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    status=JobStatus.RUNNING.value,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    message="Job started",
+                ),
+            )
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    message=f"Started maintenance job for {table_ref or job.table_id}",
+                ),
+            )
             plan = build_plan(
                 table_data.stats,
                 table_data.partitions,
@@ -310,6 +343,21 @@ class Worker:
 
             engine = self._engine_factory(destination)
             statements = engine.render(plan)
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    engine=str(engine.type),
+                    message=(
+                        f"Built plan with {len(plan.operations)} operations "
+                        f"and {len(statements)} statements"
+                    ),
+                ),
+            )
             if not statements:
                 final_status = JobStatus.SKIPPED
             for index, statement in enumerate(statements):
@@ -332,6 +380,19 @@ class Worker:
                     if not allowed:
                         final_status = JobStatus.FAILED
                         error = reason or "abac_denied"
+                        safe_publish(
+                            self._run_events,
+                            job.run_id,
+                            build_log_line(
+                                run_id=job.run_id,
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                table_ref=table_ref,
+                                operation=statement.action.value,
+                                level="error",
+                                message=error,
+                            ),
+                        )
                         break
                 started = perf_counter()
                 exec_ctx = ExecContext(
@@ -340,6 +401,21 @@ class Worker:
                     destination_id=job.destination_id,
                     statement_index=index,
                     replica=job.replica,
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=statement.action.value,
+                        engine=str(engine.type),
+                        message=(
+                            f"Executing {statement.action.value} ({index + 1}/{len(statements)})"
+                        ),
+                    ),
                 )
                 try:
                     result = engine.execute(statement, _to_exec_ctx(exec_ctx))
@@ -358,6 +434,20 @@ class Worker:
                             output_files_count=None,
                             actor=job.actor,
                         )
+                    )
+                    safe_publish(
+                        self._run_events,
+                        job.run_id,
+                        build_log_line(
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            table_ref=table_ref,
+                            operation=statement.action.value,
+                            engine=str(engine.type),
+                            level="error",
+                            message=f"{statement.action.value} failed: {exc}",
+                        ),
                     )
                     final_status = JobStatus.FAILED
                     error = str(exc)
@@ -383,6 +473,20 @@ class Worker:
                             actor=job.actor,
                         )
                     )
+                    safe_publish(
+                        self._run_events,
+                        job.run_id,
+                        build_log_line(
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            table_ref=table_ref,
+                            operation=statement.action.value,
+                            engine=str(engine.type),
+                            level="error",
+                            message=f"{statement.action.value} failed: {detail}",
+                        ),
+                    )
                     final_status = JobStatus.FAILED
                     error = detail
                     break
@@ -401,11 +505,54 @@ class Worker:
                         actor=job.actor,
                     )
                 )
+                success_message = f"Completed {statement.action.value} in {result_duration_ms}ms"
+                if result.engine_ref:
+                    success_message += f" (ref {result.engine_ref})"
+                bytes_freed = getattr(result, "actual_bytes_freed", None)
+                if bytes_freed:
+                    success_message += f"; freed {bytes_freed} bytes"
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=statement.action.value,
+                        engine=str(engine.type),
+                        message=success_message,
+                    ),
+                )
         except Exception as exc:
             final_status = JobStatus.FAILED
             error = str(exc)
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    level="error",
+                    message=f"Job failed: {exc}",
+                ),
+            )
 
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
+        safe_publish(
+            self._run_events,
+            job.run_id,
+            build_job_status(
+                run_id=job.run_id,
+                job_id=job.id,
+                status=final_status.value,
+                table_id=job.table_id,
+                table_ref=table_ref,
+                message=error,
+            ),
+        )
         self._queue.complete(job.id, final_status)
         self._release_table_lock(job)
         from cryo.governor.bandit_feedback import finalize_admission
@@ -475,6 +622,17 @@ def _metric_status(status: JobStatus) -> str:
     if status is JobStatus.SKIPPED:
         return "ok"
     return "error"
+
+
+def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
+    table_ref = stats.get("table_ref")
+    if isinstance(table_ref, str) and table_ref:
+        return table_ref
+    schema_name = stats.get("schema_name")
+    table_name = stats.get("table_name")
+    if schema_name and table_name:
+        return f"{schema_name}.{table_name}"
+    return None
 
 
 def _execution_plan_params(

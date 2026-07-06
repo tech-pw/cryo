@@ -432,11 +432,133 @@ def test_run_jobs_endpoint_and_websocket_snapshot(monkeypatch: Any) -> None:
     assert payload["jobs"][0]["destination_name"] == "trino"
 
 
+def test_websocket_replays_log_line_events(monkeypatch: Any) -> None:
+    run_id = uuid.uuid4()
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    snapshot = {
+        "run": {
+            "id": run_id,
+            "kind": "scan",
+            "status": "running",
+            "preset_id": None,
+            "trigger": "api",
+            "deadline_at": None,
+            "created_at": created_at,
+            "finished_at": None,
+            "summary": {"assigned": 1},
+        },
+        "jobs": [],
+    }
+    calls = {"count": 0}
+
+    def fake_snapshot(*args: Any, **kwargs: Any) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] > 1:
+            snapshot["run"]["status"] = "succeeded"
+        return snapshot
+
+    class FakeRunEvents:
+        def replay_with_ids(
+            self, requested_run_id: uuid.UUID, *, count: int = 200
+        ) -> list[tuple[str, dict[str, object]]]:
+            assert requested_run_id == run_id
+            return [
+                (
+                    "1-0",
+                    {
+                        "type": "log_line",
+                        "ts": created_at.isoformat(),
+                        "run_id": str(run_id),
+                        "level": "info",
+                        "message": "Scanning demo.events",
+                    },
+                )
+            ]
+
+        def read_blocking(
+            self,
+            requested_run_id: uuid.UUID,
+            *,
+            last_id: str = "0-0",
+            block_ms: int = 1000,
+            count: int = 50,
+        ) -> list[tuple[str, dict[str, object]]]:
+            assert requested_run_id == run_id
+            return []
+
+    class FakeWiring:
+        run_events = FakeRunEvents()
+
+    monkeypatch.setattr(routes.datalake, "run_jobs_snapshot", fake_snapshot)
+    monkeypatch.setattr(routes, "build_runtime_wiring", lambda: FakeWiring())
+
+    with _client().websocket_connect(
+        f"/api/v1/ws/runs/{run_id}?poll_interval_sec=0.2",
+        headers=VIEWER_HEADERS,
+    ) as ws:
+        first = ws.receive_json()
+        second = ws.receive_json()
+        third = ws.receive_json()
+
+    assert first["type"] == "run_snapshot"
+    assert second["type"] == "log_line"
+    assert second["message"] == "Scanning demo.events"
+    assert third["type"] == "run_snapshot"
+
+
+def test_websocket_polling_fallback_when_event_bus_unavailable(monkeypatch: Any) -> None:
+    run_id = uuid.uuid4()
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    snapshot = {
+        "run": {
+            "id": run_id,
+            "kind": "adhoc",
+            "status": "running",
+            "preset_id": None,
+            "trigger": "api",
+            "deadline_at": None,
+            "created_at": created_at,
+            "finished_at": None,
+            "summary": {},
+        },
+        "jobs": [],
+    }
+
+    monkeypatch.setattr(routes.datalake, "run_jobs_snapshot", lambda *args, **kwargs: snapshot)
+
+    def _raise_no_redis() -> object:
+        raise RuntimeError("no redis")
+
+    monkeypatch.setattr(routes, "build_runtime_wiring", _raise_no_redis)
+
+    with _client().websocket_connect(
+        f"/api/v1/ws/runs/{run_id}?once=true",
+        headers=VIEWER_HEADERS,
+    ) as ws:
+        payload = ws.receive_json()
+    assert payload["type"] == "run_snapshot"
+
+
 def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
     destination_id = uuid.uuid4()
     table_id = uuid.uuid4()
     run_id = uuid.uuid4()
     job_id = uuid.uuid4()
+    published_events: list[dict[str, object]] = []
+    enqueued_jobs: list[tuple[str, str]] = []
+
+    class FakeRunEvents:
+        def publish(self, requested_run_id: uuid.UUID, event: dict[str, object]) -> None:
+            assert requested_run_id == run_id
+            published_events.append(event)
+
+    class FakeQueue:
+        def enqueue(self, queued_job_id: str, queued_destination_id: str) -> None:
+            enqueued_jobs.append((queued_job_id, queued_destination_id))
+
+    class FakeWiring:
+        queue = FakeQueue()
+        run_events = FakeRunEvents()
 
     class RunSession:
         def __init__(self) -> None:
@@ -472,6 +594,7 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
         "MaintenanceRun",
         lambda **kwargs: MaintenanceRun(id=run_id, **kwargs),
     )
+    monkeypatch.setattr(routes, "build_runtime_wiring", lambda: FakeWiring())
 
     from cryo.api.security import Principal, Role
 
@@ -492,3 +615,11 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
     assert response.run_id == run_id
     assert response.job_ids == [job_id]
     assert response.status == "queued"
+    assert enqueued_jobs == [(str(job_id), str(destination_id))]
+    assert any(
+        event["type"] == "log_line" and "Submitted maintenance run" in str(event["message"])
+        for event in published_events
+    )
+    assert any(
+        event["type"] == "job_status" and event["status"] == "queued" for event in published_events
+    )

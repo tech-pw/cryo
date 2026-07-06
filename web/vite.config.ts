@@ -17,9 +17,19 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8000",
-      "/healthz": "http://localhost:8000",
-      "/metrics": "http://localhost:8000"
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+        ws: true
+      },
+      "/healthz": {
+        target: "http://localhost:8000",
+        changeOrigin: true
+      },
+      "/metrics": {
+        target: "http://localhost:8000",
+        changeOrigin: true
+      }
     }
   },
   test: {
