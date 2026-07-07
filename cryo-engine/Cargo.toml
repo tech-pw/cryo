@@ -22,8 +22,10 @@ iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "6144e10bfdc93
 iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "6144e10bfdc93e4c4efd4f81147b612dc2b98678" }
 iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust", rev = "6144e10bfdc93e4c4efd4f81147b612dc2b98678", features = ["opendal-s3"] }
 
-# Arrow/Parquet - rely on iceberg's versions via re-exports where possible
-# We don't include direct arrow/parquet deps to avoid version conflicts
+# Arrow/Parquet — align with iceberg's parquet 58.x for staged compaction writes
+arrow = { version = "58", default-features = false, features = ["ipc", "compute"] }
+parquet = { version = "58", default-features = false, features = ["arrow"] }
+bytes = "1"
 
 # Object storage
 object_store = { version = "0.11", features = ["aws"] }

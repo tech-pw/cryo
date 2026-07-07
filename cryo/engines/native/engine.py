@@ -40,6 +40,21 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Worker-routed native maintenance: expire + orphan only. Compaction/manifests Rust code
+# remains for direct cryo-engine calls and future re-enable once upstream commit lands.
+NATIVE_SUPPORTED_OPERATIONS = (
+    OperationType.EXPIRE_SNAPSHOTS,
+    OperationType.REMOVE_ORPHAN_FILES,
+)
+NATIVE_DISCONNECTED_OPERATIONS = (
+    OperationType.OPTIMIZE,
+    OperationType.OPTIMIZE_MANIFESTS,
+)
+NATIVE_DISCONNECTED_DETAIL = (
+    "native compaction/manifests disconnected; blocked upstream — "
+    "Phase 3 task 7 / EPIC #2269, issue #2556"
+)
+
 # Flag to track if optional cryo_native PyO3 helpers are available
 _PYO3_AVAILABLE: bool | None = None
 
@@ -173,12 +188,7 @@ class NativeEngine:
         return CapacitySnapshot(capacity=min(cpu_count, self._slot_cap), used=0)
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]:
-        supported = (
-            OperationType.EXPIRE_SNAPSHOTS,
-            OperationType.REMOVE_ORPHAN_FILES,
-            OperationType.OPTIMIZE,
-            OperationType.OPTIMIZE_MANIFESTS,
-        )
+        supported = NATIVE_SUPPORTED_OPERATIONS
         operations = tuple(op for op in plan.operations if op.type in supported)
         for operation in plan.operations:
             if operation.type not in supported:
@@ -621,12 +631,7 @@ def _is_unsupported_native_error(error: str | None) -> bool:
 
 
 def _supported_operations(plan: MaintenancePlan) -> tuple[Operation, ...]:
-    supported = {
-        OperationType.EXPIRE_SNAPSHOTS,
-        OperationType.REMOVE_ORPHAN_FILES,
-        OperationType.OPTIMIZE,
-        OperationType.OPTIMIZE_MANIFESTS,
-    }
+    supported = set(NATIVE_SUPPORTED_OPERATIONS)
     return tuple(operation for operation in plan.operations if operation.type in supported)
 
 

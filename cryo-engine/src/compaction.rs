@@ -4,8 +4,15 @@ use crate::predicates::{matches_any_predicate, operation_has_predicates};
 use crate::OperationRequest;
 use anyhow::{Context, Result};
 use iceberg::spec::DataContentType;
+use iceberg::spec::DataFile;
 use iceberg::table::Table;
 use tracing::info;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionCandidate {
+    pub path: String,
+    pub size_bytes: u64,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompactionScanSummary {
@@ -23,6 +30,62 @@ pub fn estimate_output_files(candidate_bytes: u64, target_file_size_bytes: u64, 
     }
     let target = target_file_size_bytes.max(1);
     ((candidate_bytes + target - 1) / target).max(1)
+}
+
+pub async fn collect_candidates(
+    table: &Table,
+    op: &OperationRequest,
+    min_file_size_bytes: u64,
+) -> Result<Vec<CompactionCandidate>> {
+    let metadata = table.metadata();
+    let current_snapshot = match metadata.current_snapshot() {
+        Some(snapshot) => snapshot,
+        None => return Ok(Vec::new()),
+    };
+
+    let file_io = table.file_io().clone();
+    let manifest_list = table
+        .manifest_list_reader(current_snapshot)
+        .load()
+        .await
+        .context("failed to load manifest list for compaction scan")?;
+
+    let filter_predicates = operation_has_predicates(op);
+    let mut candidates = Vec::new();
+
+    for manifest_file in manifest_list.entries() {
+        let manifest = manifest_file
+            .load_manifest(&file_io)
+            .await
+            .with_context(|| format!("failed to load manifest {}", manifest_file.manifest_path))?;
+
+        for entry in manifest.entries() {
+            if !entry.is_alive() {
+                continue;
+            }
+            let data_file = entry.data_file();
+            if data_file.content_type() != DataContentType::Data {
+                continue;
+            }
+            if filter_predicates && !matches_any_predicate(data_file, table, &op.predicates)? {
+                continue;
+            }
+
+            let file_size = data_file.file_size_in_bytes().max(0) as u64;
+            if file_size < min_file_size_bytes {
+                candidates.push(compaction_candidate_from_data_file(data_file));
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn compaction_candidate_from_data_file(data_file: &DataFile) -> CompactionCandidate {
+    CompactionCandidate {
+        path: data_file.file_path().to_string(),
+        size_bytes: data_file.file_size_in_bytes().max(0) as u64,
+    }
 }
 
 pub async fn scan_candidates(

@@ -600,19 +600,28 @@ atomically, and reduces small-file count with accurate before/after metrics; fai
 | 3 | Real analyze-mode metrics | **Done** | `rewrite_data_files` analyze returns candidate input files/bytes + estimated output file count |
 | 4 | Planner param normalization | **Done** | `file_size_mb` → `target_file_size_bytes` in `payload.py`; `partition_field` forwarded in predicates |
 | 5 | Protocol: `bytes_written` field | **Done** | `OperationResult.bytes_written` + Python runner parsing |
-| 6 | DataFusion read/write pipeline (no commit) | **Pending** | Port/adapt `cryo-native` compaction to read via table `FileIO` + write staged Parquet |
-| 7 | Atomic commit via `RewriteFilesAction` | **Blocked** | Pinned `iceberg-rust@6144e10` has no replace-files action (EPIC #2269); execute returns SKIPPED |
-| 8 | Capability flag for compaction execute | **Pending** | Gate `CRYO_NATIVE_COMPACTION_EXECUTE` once #7 lands |
-| 9 | Compaction e2e (analyze + execute) | **Pending** | Extend `tests/integration/native/` after #6–#7 |
+| 6 | DataFusion read/write pipeline (no commit) | **Done** | `compaction_write.rs`: binpack via FileIO + arrow/parquet; staged under `data/.cryo-compaction-staging/` |
+| 7 | Atomic commit via `RewriteFilesAction` | **Blocked** | Pinned `iceberg-rust@6144e10` has no replace-files action (EPIC #2269) |
+| 8 | Capability flag for compaction execute | **Done** | `CRYO_NATIVE_COMPACTION_EXECUTE` env + `destination.config.compaction_execute` → request `params` |
+| 9 | Compaction e2e (analyze + execute) | **Done** | `tests/integration/native/test_native_compaction_e2e.py` |
 
-**Tests added:** `predicates.rs` unit tests; `compaction.rs` `estimate_output_files`; `test_normalize_optimize_params_maps_file_size_mb`.
+**Tests added:** `predicates.rs` unit tests; `compaction.rs` `estimate_output_files`; `test_normalize_optimize_params_maps_file_size_mb`; `test_build_execute_request_forwards_compaction_execute_flag`; `test_native_compaction_*_e2e`.
 
 **Decision:** execute-mode OPTIMIZE remains **SKIPPED** (non-fatal) until upstream `RewriteFilesAction` is
-pinned; analyze mode now reports honest scoped candidate counts so operators can preview native compaction
-scope before commit support lands.
+pinned. With `CRYO_NATIVE_COMPACTION_EXECUTE=1` or `compaction_execute: true`, cryo-engine performs a
+real binpack write to a staging prefix and reports `bytes_written` / output file counts, but still does
+not commit a table snapshot.
 
-**Phase 3 status:** **In progress** — foundation (predicate scope + analyze metrics) landed; commit path
-blocked on upstream.
+**Routing disconnect (2026-07-07):** Worker→native routing now advertises and executes only
+`expire_snapshots` + `remove_orphan_files` (`NATIVE_SUPPORTED_OPERATIONS` in
+`cryo/engines/native/engine.py`). `OPTIMIZE` (`rewrite_data_files`) and `OPTIMIZE_MANIFESTS`
+(`rewrite_manifests`) are dropped non-fatally at the worker with a SKIPPED audit row; the Rust
+implementation (`compaction.rs`, `compaction_write.rs`, `predicates.rs`, `operations.rs`) and Python
+payload helpers remain intact for direct cryo-engine calls and e2e tests. Re-enable routing once
+upstream `RewriteFilesAction` is pinned (task #7).
+
+**Phase 3 status:** **In progress** — staged compaction write + analyze e2e complete; atomic commit (#7)
+still blocked on upstream; worker routing disconnected until commit lands.
 
 ### Phase 4 — Ops integration, capacity, and docs
 

@@ -707,21 +707,53 @@ class Worker:
         table_ref: str | None,
     ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
         from cryo.db.session import SessionLocal
+        from cryo.engines.native.engine import (
+            NATIVE_DISCONNECTED_DETAIL,
+            NATIVE_DISCONNECTED_OPERATIONS,
+            NATIVE_SUPPORTED_OPERATIONS,
+        )
         from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
+        disconnected_types = set(NATIVE_DISCONNECTED_OPERATIONS)
+        disconnected_operations = tuple(
+            operation for operation in plan.operations if operation.type in disconnected_types
+        )
         supported_operations = tuple(
             operation
             for operation in plan.operations
-            if operation.type
-            in {
-                OperationType.EXPIRE_SNAPSHOTS,
-                OperationType.REMOVE_ORPHAN_FILES,
-                OperationType.OPTIMIZE,
-                OperationType.OPTIMIZE_MANIFESTS,
-            }
+            if operation.type in NATIVE_SUPPORTED_OPERATIONS
         )
+        had_skip = False
+        for operation in disconnected_operations:
+            had_skip = True
+            self._store.record_audit(
+                AuditRecord(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    action=operation.type,
+                    status="SKIPPED",
+                    engine=engine.type,
+                    detail=NATIVE_DISCONNECTED_DETAIL,
+                    duration_ms=0,
+                    actor=job.actor,
+                )
+            )
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    operation=operation.type.value,
+                    engine=str(engine.type),
+                    level="warning",
+                    message=f"Skipped {operation.type.value}: {NATIVE_DISCONNECTED_DETAIL}",
+                ),
+            )
         if not supported_operations:
-            return JobStatus.SKIPPED, None, None, False, False
+            return JobStatus.SKIPPED, None, None, False, had_skip
 
         self._renew_table_lock(job)
         try:
@@ -826,7 +858,6 @@ class Worker:
         error: str | None = None
         engine_ref: str | None = None
         had_success = False
-        had_skip = False
         for operation, result in zip(supported_operations, results, strict=False):
             result_duration_ms = result.duration_ms
             if result_duration_ms is None:
