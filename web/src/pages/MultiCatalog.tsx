@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import {
   Card,
   Row,
@@ -17,16 +18,15 @@ import {
   CloudServerOutlined,
   CheckCircleOutlined,
   WarningOutlined,
-  DollarOutlined,
-  FileTextOutlined,
 } from "@ant-design/icons";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { getMultiCatalogDashboard, type MultiCatalogDashboard } from "../api/client";
-import { PageHeader, QueryErrorAlert } from "../components/common";
+import { ChartFrame, PageHeader, QueryErrorAlert } from "../components/common";
 import { healthScoreColor } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatGb } from "../lib/format";
+import { useTheme } from "../lib/themeContext";
 
 const { Text } = Typography;
 
@@ -46,11 +46,29 @@ interface CatalogStats {
 
 type MultiCatalogResponse = MultiCatalogDashboard;
 
-const COLORS = ["#3d6fd4", "#52c41a", "#faad14", "#ff4d4f", "#722ed1", "#13c2c2", "#eb2f96"];
+const rightAlign = () => ({ style: { textAlign: "right" as const } });
+
+const NumericCell = ({ children }: { children: ReactNode }) => (
+  <div className="catalogs-table-numeric">{children}</div>
+);
+
+const TagCell = ({ children }: { children: ReactNode }) => (
+  <div className="catalogs-table-tag-cell">{children}</div>
+);
 
 export const MultiCatalog = () => {
   const { api } = useAuth();
+  const { colors, chartTooltipProps } = useTheme();
   const navigate = useNavigate();
+
+  const costPalette = [
+    colors.costCurrent,
+    colors.costProjected,
+    colors.gradeB,
+    colors.gradeC,
+    colors.gradeD,
+    colors.savings
+  ];
 
   const { data, isLoading, error } = useQuery<MultiCatalogResponse>({
     queryKey: ["multi-catalog", api.token],
@@ -62,8 +80,9 @@ export const MultiCatalog = () => {
     {
       title: "Catalog",
       key: "catalog",
-      width: "20%",
-      render: (_: any, record: CatalogStats) => (
+      width: 180,
+      fixed: "left" as const,
+      render: (_: unknown, record: CatalogStats) => (
         <Space>
           {record.enabled ? (
             <Badge status="success" />
@@ -83,49 +102,68 @@ export const MultiCatalog = () => {
       title: "Tables",
       dataIndex: "table_count",
       key: "tables",
-      width: "10%",
+      width: 88,
       align: "right" as const,
-      render: (count: number) => <Text strong>{count.toLocaleString()}</Text>,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
+      render: (count: number) => (
+        <NumericCell>
+          <Text strong>{count.toLocaleString()}</Text>
+        </NumericCell>
+      ),
     },
     {
       title: "Total Size",
       dataIndex: "total_size_gb",
       key: "size",
-      width: "12%",
+      width: 104,
       align: "right" as const,
-      render: (gb: number) => formatGb(gb),
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
+      render: (gb: number) => <NumericCell>{formatGb(gb)}</NumericCell>,
     },
     {
       title: "Small Files",
       dataIndex: "small_files_count",
       key: "small_files",
-      width: "12%",
+      width: 112,
       align: "right" as const,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
       render: (count: number) => (
-        <Tag color={count > 10000 ? "red" : count > 5000 ? "orange" : "default"}>
-          {count.toLocaleString()}
-        </Tag>
+        <TagCell>
+          <Tag color={count > 10000 ? "red" : count > 5000 ? "orange" : "default"}>
+            {count.toLocaleString()}
+          </Tag>
+        </TagCell>
       ),
     },
     {
       title: "Needs Compaction",
       dataIndex: "needs_compaction_count",
       key: "compaction",
-      width: "12%",
+      width: 148,
       align: "right" as const,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
       render: (count: number) => (
-        <Tag icon={count > 0 ? <WarningOutlined /> : <CheckCircleOutlined />} color={count > 0 ? "warning" : "success"}>
-          {count} tables
-        </Tag>
+        <TagCell>
+          <Tag icon={count > 0 ? <WarningOutlined /> : <CheckCircleOutlined />} color={count > 0 ? "warning" : "success"}>
+            {count} tables
+          </Tag>
+        </TagCell>
       ),
     },
     {
       title: "Health Score",
       dataIndex: "avg_health_score",
       key: "health",
-      width: "14%",
+      width: 120,
+      align: "right" as const,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
       render: (score: number) => (
-        <Space orientation="vertical" size={2} style={{ width: "100%" }}>
+        <div className="catalogs-table-health">
           <Text style={{ color: healthScoreColor(score) }}>{score.toFixed(1)}</Text>
           <Progress
             percent={score}
@@ -133,35 +171,49 @@ export const MultiCatalog = () => {
             showInfo={false}
             size="small"
           />
-        </Space>
+        </div>
       ),
     },
     {
       title: "Monthly Cost",
       dataIndex: "monthly_cost_usd",
       key: "cost",
-      width: "12%",
+      width: 116,
       align: "right" as const,
-      render: (cost: number) => <Text>{formatCurrency(cost)}</Text>,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
+      render: (cost: number) => (
+        <NumericCell>
+          <Text style={{ color: colors.costCurrent }}>{formatCurrency(cost)}</Text>
+        </NumericCell>
+      ),
     },
     {
       title: "Est. Savings",
       dataIndex: "projected_savings_usd_month",
       key: "savings",
-      width: "12%",
+      width: 116,
       align: "right" as const,
+      onHeaderCell: rightAlign,
+      onCell: rightAlign,
       render: (savings: number | null) => (
-        <Text type={savings && savings > 0 ? "success" : "secondary"}>
-          {savings ? formatCurrency(savings) : "—"}
-        </Text>
+        <NumericCell>
+          <Text style={{ color: savings && savings > 0 ? colors.savings : colors.mutedSubtle }}>
+            {savings ? formatCurrency(savings) : "—"}
+          </Text>
+        </NumericCell>
       ),
     },
   ];
 
-  const pieData = (data?.catalogs || []).map((catalog) => ({
+  const catalogs = data?.catalogs || [];
+  const pieData = catalogs.map((catalog) => ({
     name: catalog.catalog_name,
     value: catalog.monthly_cost_usd,
   }));
+  const totalCost = pieData.reduce((sum, entry) => sum + entry.value, 0);
+  const potentialSavings =
+    catalogs.reduce((sum, catalog) => sum + (catalog.projected_savings_usd_month || 0), 0) || 0;
 
   return (
     <div>
@@ -208,9 +260,9 @@ export const MultiCatalog = () => {
                 <Statistic
                   title="Combined Cost"
                   value={data?.total_cost_usd || 0}
-                  prefix="$"
+                  prefix={<span style={{ color: colors.mutedSubtle }}>$</span>}
                   precision={2}
-                  styles={{ content: { color: "#ff4d4f" }}}
+                  styles={{ content: { color: colors.costCurrent } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Monthly storage costs
@@ -221,12 +273,10 @@ export const MultiCatalog = () => {
               <Card>
                 <Statistic
                   title="Potential Savings"
-                  value={
-                    data?.catalogs.reduce((sum, c) => sum + (c.projected_savings_usd_month || 0), 0) || 0
-                  }
-                  prefix="$"
+                  value={potentialSavings}
+                  prefix={<span style={{ color: colors.mutedSubtle }}>$</span>}
                   precision={2}
-                  styles={{ content: { color: "#52c41a" } }}
+                  styles={{ content: { color: colors.savings } }}
                 />
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Through maintenance
@@ -239,11 +289,14 @@ export const MultiCatalog = () => {
             <Col xs={24} lg={16}>
               <Card title="Catalogs" extra={<DatabaseOutlined />}>
                 <Table
+                  className="catalogs-table"
+                  tableLayout="fixed"
                   columns={columns}
-                  dataSource={data?.catalogs || []}
+                  dataSource={catalogs}
                   rowKey="catalog_id"
                   pagination={false}
                   size="small"
+                  scroll={{ x: 980 }}
                   onRow={(record) => ({
                     onClick: () => {
                       // Navigate to tables filtered by catalog
@@ -256,89 +309,74 @@ export const MultiCatalog = () => {
             </Col>
             <Col xs={24} lg={8}>
               <Card title="Cost Distribution">
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      label={(entry) => `${entry.name}`}
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="catalog-cost-chart">
+                  <ChartFrame
+                    empty={!pieData.length}
+                    emptyDescription="Cost breakdown appears once catalogs report monthly storage spend."
+                    ariaLabel={`Monthly storage cost distribution totaling ${formatCurrency(totalCost)}`}
+                  >
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={72}
+                        outerRadius={104}
+                        paddingAngle={pieData.length > 1 ? 3 : 0}
+                        stroke={colors.bg}
+                        strokeWidth={2}
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={entry.name} fill={costPalette[index % costPalette.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        {...chartTooltipProps}
+                        formatter={(value, _name, item) => {
+                          const amount = Number(value ?? 0);
+                          const share = totalCost > 0 ? ((amount / totalCost) * 100).toFixed(1) : "0.0";
+                          return [`${formatCurrency(amount)} · ${share}%`, String(item?.payload?.name ?? "")];
+                        }}
+                      />
+                    </PieChart>
+                  </ChartFrame>
+                  {pieData.length ? (
+                    <div className="catalog-cost-chart-center">
+                      <div className="catalog-cost-chart-total" style={{ color: colors.ink }}>
+                        {formatCurrency(totalCost)}
+                      </div>
+                      <div className="catalog-cost-chart-label" style={{ color: colors.mutedSubtle }}>
+                        per month
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                {pieData.length ? (
+                  <div className="catalog-cost-legend">
+                    {pieData.map((entry, index) => {
+                      const share = totalCost > 0 ? (entry.value / totalCost) * 100 : 0;
+                      return (
+                        <div key={entry.name} className="catalog-cost-legend-row">
+                          <span
+                            className="catalog-cost-swatch"
+                            style={{ background: costPalette[index % costPalette.length] }}
+                          />
+                          <span className="catalog-cost-legend-name">{entry.name}</span>
+                          <span className="catalog-cost-legend-value" style={{ color: colors.ink }}>
+                            {formatCurrency(entry.value)}
+                          </span>
+                          <span className="catalog-cost-legend-pct" style={{ color: colors.mutedSubtle }}>
+                            {share.toFixed(share >= 10 ? 0 : 1)}%
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </Card>
             </Col>
-          </Row>
-
-          <Row gutter={[16, 16]}>
-            {data?.catalogs.map((catalog) => (
-              <Col xs={24} md={12} lg={8} key={catalog.catalog_id}>
-                <Card
-                  title={catalog.catalog_name}
-                  extra={
-                    catalog.enabled ? (
-                      <Tag color="success" icon={<CheckCircleOutlined />}>
-                        ACTIVE
-                      </Tag>
-                    ) : (
-                      <Tag color="default">DISABLED</Tag>
-                    )
-                  }
-                  hoverable
-                  onClick={() => navigate(`/tables?source=${catalog.catalog_id}`)}
-                  style={{ cursor: "pointer" }}
-                >
-                  <Space orientation="vertical" style={{ width: "100%" }} size={8}>
-                    <Row>
-                      <Col span={12}>
-                        <Statistic
-                          title="Tables"
-                          value={catalog.table_count}
-                          prefix={<FileTextOutlined />}
-                          styles={{ content: { fontSize: "18px" } }}
-                        />
-                      </Col>
-                      <Col span={12}>
-                        <Statistic
-                          title="Size"
-                          value={formatGb(catalog.total_size_gb)}
-                          styles={{ content: { fontSize: "18px" }}}
-                        />
-                      </Col>
-                    </Row>
-                    <Row>
-                      <Col span={12}>
-                        <Statistic
-                          title="Health"
-                          value={catalog.avg_health_score.toFixed(0)}
-                          suffix="/100"
-                          styles={{ content: {
-                            fontSize: "18px",
-                            color: healthScoreColor(catalog.avg_health_score), }}}
-                        />
-                      </Col>
-                      <Col span={12}>
-                        <Statistic
-                          title="Cost/mo"
-                          value={formatCurrency(catalog.monthly_cost_usd)}
-                          prefix={<DollarOutlined />}
-                          styles={{ content: { fontSize: "18px" } }}
-                        />
-                      </Col>
-                    </Row>
-                  </Space>
-                </Card>
-              </Col>
-            ))}
           </Row>
         </>
       )}
