@@ -809,6 +809,11 @@ export interface TableCostRead {
   by_operation: CostByOperation[];
   last_full_cost_scan_at?: string | null;
   scan_at?: string | null;
+  get_requests_30d?: number | null;
+  put_requests_30d?: number | null;
+  list_requests_30d?: number | null;
+  request_cost_usd_month?: number | null;
+  request_cost_pricing_source?: string | null;
 }
 
 // ============================================================================
