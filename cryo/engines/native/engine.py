@@ -1,5 +1,10 @@
 """Native Rust engine for Cryo.
 
+**EXPERIMENTAL** — opt-in only (gated by ``Settings.native_engine_enabled``, which
+defaults to ``False``). Not part of the v1 launch surface; see
+``docs/OSS_READINESS.md`` §2.2. The ``cryo-native`` Rust crate is shipped as a
+separate workspace (``cryo-native/``) and is not exercised by CI today.
+
 This module provides a Python wrapper around the cryo-native Rust library
 for high-performance Iceberg table compaction using DataFusion and Arrow.
 """

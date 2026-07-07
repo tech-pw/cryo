@@ -102,8 +102,9 @@ reclaim_expire_bytes = Σ size(f)  # data + delete + manifest + manifest-list
   Scanner; the LIST (paid) lives in `scanner/orphans.py` — never in the model.
 - Keep `0.023/GB-month` + snapshot-overhead heuristic as Tier 0 (parity with the ported stats batch);
   `7d` retention default matches `retention_threshold => '7d'` in the reference dbt macro.
-- Read the reference stats batch for cost parity:
-  `/Users/pw/PycharmProjects/pw-data-connectors/airflow/dags/data_team/iceberg_compaction_utils/iceberg_table_stats_batch.py`.
+- Read the reference stats batch for cost parity. The upstream file lives outside this repo;
+  see `agents.md` §2 for the file path (intentionally not committed, references a private
+  developer checkout).
 
 ## Tests (`lld.md` §14)
 

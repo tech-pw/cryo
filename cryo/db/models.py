@@ -103,6 +103,21 @@ class Destination(TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    # Per-destination query-log ingestion config. Optional block -- if absent/disabled, the curator
+    # never writes raw query rows for this destination, so the metadata DB never sees the
+    # per-query row churn that 1M-queries/day engines would otherwise produce. The same config
+    # also drives retention on the destination's Iceberg query-log table (snapshot expiry).
+    query_log_config: Mapped[JsonDict | None] = mapped_column(JSONB)
+    # Days to keep raw query rows in the Iceberg archive. NULL = no expiry (used for the
+    # read-through mode that points at the user's own external Iceberg table -- retention then
+    # belongs to them, not us). Defaults to 30 on first write so a freshly-enabled destination
+    # can't accidentally grow the archive without bound.
+    query_log_retention_days: Mapped[int | None] = mapped_column(Integer)
+    # Monotonically-advancing high-water mark of executed_at we've successfully archived, per
+    # destination. Lets the curator recover from crashes without re-archiving rows it already
+    # wrote to Iceberg, and avoids the duplicate-row problem if a fetch retried after a transient
+    # Trino error.
+    query_log_watermark: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     presets: Mapped[list[Preset]] = relationship(back_populates="destination")
     jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="destination")

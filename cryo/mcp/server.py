@@ -17,7 +17,19 @@ class McpTool:
 
 
 class CryoMcpServer:
-    """Read-only MCP-style tool surface over Cryo metadata."""
+    """MCP-style tool surface over Cryo metadata.
+
+    **EXPERIMENTAL** — this module is shipped as a thin in-process API, not as a standalone
+    MCP server. It is not on the v1 launch surface (see ``docs/OSS_READINESS.md`` §2.2) and is
+    not exercised by the production deployment. Do not point an LLM agent at the tool
+    registry assuming it is read-only: ``run_preset`` is a **write path** that triggers a
+    real maintenance job and must only be invoked with an operator-scoped credential after
+    explicit confirmation. All other registered tools are read-only.
+
+    The tool descriptions in ``_TOOL_DESCRIPTIONS`` are the canonical source of truth for
+    what each tool does; this module-level note exists so any future code reader sees the
+    warning alongside the class definition.
+    """
 
     def __init__(self) -> None:
         self._tools: dict[str, McpTool] = {}

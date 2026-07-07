@@ -245,6 +245,29 @@ class RedisMaintenanceQueue:
         return f"{self._namespace}:inflight:{destination_id}"
 
 
+_cached_redis_client: Any = None
+
+
+def get_redis_client(*, force: bool = False) -> Any:
+    """Return a process-wide Redis client built from ``Settings.redis_url``.
+
+    Lazy + cached; cheap to call repeatedly. Returns ``None`` if Redis isn't configured
+    so callers can fail open rather than crash on a missing dependency.
+    """
+    global _cached_redis_client
+    if force or _cached_redis_client is None:
+        try:
+            from cryo.config import get_settings
+            from cryo.infra.wiring import _redis_client as _build
+        except Exception:  # noqa: BLE001 - allow import-time partials
+            return None
+        try:
+            _cached_redis_client = _build(get_settings().redis_url)
+        except Exception:  # noqa: BLE001
+            return None
+    return _cached_redis_client
+
+
 def _decode(value: Any) -> str:
     if value is None:
         return ""

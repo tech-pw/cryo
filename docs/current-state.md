@@ -64,10 +64,8 @@ Last updated: 2026-07-03 (Phase 1-8 implementation complete).
 - `cryo/engines/base.py` — `payload: dict[str, object]` field on `RenderedStatement`
 - `cryo/engines/native/engine.py` — Python adapter implementing `MaintenanceEngine`
 - `cryo/engines/native/payload.py` — JSON payload serialization
-- `cryo-engine/src/main.rs` — JSON stdin/stdout protocol with full error reporting
-- `cryo-engine/src/operations.rs` — Iceberg operations using iceberg-rust 0.10.x (git main)
-- `cryo-engine/src/progress.rs` — JSONL progress reporting to stderr
-- `cryo-engine/Cargo.toml` — Rust crate with iceberg-rust, tokio, tracing
+- `cryo-native/` — Rust crate + PyO3 bindings (datafusion + arrow); the previously
+  shipped `cryo-engine/` sibling tree was removed per `docs/OSS_READINESS.md` §2.2.
 
 **Status:** The Rust engine builds successfully and connects to Iceberg REST catalogs.
 Operations currently perform read-only metadata analysis; full write operations
@@ -182,24 +180,25 @@ Implemented per `RECOMMENDATIONS.md` Part 1.2:
 - **Configuration:** `cryo/config.py` Settings now include `scan_parallel_tables` and
   `scan_parallel_manifests`.
 
-### Native Rust Engine (`cryo-engine`) ⚠️ Scaffold
+### Native Rust Engine (`cryo-native`) — ⚠️ Experimental, opt-in only
 
-Located in `cryo-engine/`:
+Located in `cryo-native/`. The earlier `cryo-engine/` sibling tree was removed per
+`docs/OSS_READINESS.md` §2.2 (the codebase shipped two competing unfinished Rust
+trees; only the one wired into `cryo/engines/native/engine.py` was kept).
 
-- **`Cargo.toml`** — Dependencies: iceberg 0.4, iceberg-catalog-rest, datafusion 45,
-  parquet/arrow 55, object_store, tokio, tracing
-- **`src/main.rs`** — Entry point with JSON stdin/stdout protocol
-- **`src/operations.rs`** — Four operation implementations using iceberg-rust:
-  - `rewrite_data_files` — Compaction/binpacking
-  - `expire_snapshots` — Snapshot expiration
-  - `remove_orphan_files` — Orphan file cleanup
-  - `rewrite_manifests` — Manifest consolidation
-- **`src/progress.rs`** — JSONL progress events to stderr
-- **`README.md`** — Build instructions and usage
+- **`Cargo.toml` / `pyproject.toml`** — Rust crate with PyO3 bindings (maturin).
+- **`python/cryo_native.pyi`** — Python type stubs.
+- **`src/`** — DataFusion + Arrow-backed binpack / sort / z-order compaction.
+- **`README.md`** — Build instructions; install via `pip install ./cryo-native` or
+  `maturin develop`.
 
-**Status:** Code structure complete, but iceberg-rust's table modification APIs are still
-evolving. The implementation demonstrates the integration pattern and will be fully
-functional once iceberg-rust stabilizes write operations.
+**Status:** experimental, off by default (`Settings.native_engine_enabled = False`,
+see `cryo/config.py`). Not exercised by CI today. Treat as a performance preview, not
+as the v1 launch surface — see `docs/OSS_READINESS.md` §2.2.
+
+For production maintenance today, use the Trino engine (`cryo/engines/trino/`) or the
+Spark engine (`cryo/engines/spark/`). Both have parity tests against the
+reference Airflow + dbt workflow that this codebase is replacing.
 
 ## Partial / In Progress
 

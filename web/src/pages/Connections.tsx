@@ -64,6 +64,7 @@ import type { DestinationRead, DestinationWrite, RunRead, SourceRead, SourceTest
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
 import { OpsPanel } from "../components/OpsPanel";
+import { QueryLogIngestionFields } from "../components/QueryLogIngestionFields";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { HealthBadge, StatusTag } from "../components/status";
@@ -1404,6 +1405,15 @@ interface DestinationFormValues {
   poll_interval_seconds?: number;
   timeout_seconds?: number;
   spark_submit_params_json?: string;
+  // Query-log ingestion (Trino only; ignored for Spark until spark_history path lands)
+  query_log_enabled?: boolean;
+  query_log_mode?: "trino_system_runtime" | "read_through";
+  query_log_external_table?: string;
+  query_log_sample_rate?: number;
+  query_log_pull_interval_seconds?: number;
+  query_log_watermark_overlap_seconds?: number;
+  query_log_telemetry_coordinators?: string;
+  query_log_retention_days?: number;
 }
 
 const decomposeDestinationConfig = (engine: string, config: Record<string, unknown> | undefined) => {
@@ -1437,6 +1447,13 @@ const decomposeDestinationConfig = (engine: string, config: Record<string, unkno
     };
   });
   const auth = cfg.auth as Record<string, unknown> | undefined;
+  // query_log block lives on its own top-level column in the backend; surface the fields as
+  // flat form values so the Drawer stays simple. ``decompose`` -> form values; the onFinish
+  // handler below merges them back into a JSONB block for the API.
+  const ql = (cfg as Record<string, unknown>).query_log as Record<string, unknown> | undefined;
+  const qlCoordinators = Array.isArray(ql?.telemetry_coordinators)
+    ? (ql!.telemetry_coordinators as string[]).join("\n")
+    : "";
   return {
     coordinators,
     user: typeof cfg.user === "string" ? cfg.user : "cryo",
@@ -1444,7 +1461,22 @@ const decomposeDestinationConfig = (engine: string, config: Record<string, unkno
     schema: typeof cfg.schema === "string" ? cfg.schema : undefined,
     use_basic_auth: Boolean(auth && auth.type === "basic"),
     auth_username: typeof auth?.username === "string" ? auth.username : "",
-    auth_password: typeof auth?.password === "string" ? auth.password : ""
+    auth_password: typeof auth?.password === "string" ? auth.password : "",
+    query_log_enabled: Boolean(ql && ql.enabled),
+    query_log_mode:
+      ql?.mode === "read_through" ? "read_through" : "trino_system_runtime",
+    query_log_external_table:
+      typeof ql?.external_table === "string" ? ql.external_table : "",
+    query_log_sample_rate: typeof ql?.sample_rate === "number" ? ql.sample_rate : 1.0,
+    query_log_pull_interval_seconds:
+      typeof ql?.pull_interval_seconds === "number" ? ql.pull_interval_seconds : 300,
+    query_log_watermark_overlap_seconds:
+      typeof ql?.watermark_overlap_seconds === "number"
+        ? ql.watermark_overlap_seconds
+        : 900,
+    query_log_telemetry_coordinators: qlCoordinators,
+    query_log_retention_days:
+      typeof ql?.retention_days === "number" ? ql.retention_days : 30
   };
 };
 
@@ -1480,6 +1512,33 @@ const buildDestinationConfig = (values: DestinationFormValues): Record<string, u
     config.auth = { type: "basic", username: values.auth_username, password: values.auth_password };
   }
   return config;
+};
+
+const buildQueryLogConfig = (values: DestinationFormValues): Record<string, unknown> | null => {
+  if (!values.query_log_enabled) return null;
+  const block: Record<string, unknown> = {
+    enabled: true,
+    mode: values.query_log_mode || "trino_system_runtime"
+  };
+  if (values.query_log_external_table) {
+    block.external_table = values.query_log_external_table;
+  }
+  if (typeof values.query_log_sample_rate === "number") {
+    block.sample_rate = values.query_log_sample_rate;
+  }
+  if (typeof values.query_log_pull_interval_seconds === "number") {
+    block.pull_interval_seconds = values.query_log_pull_interval_seconds;
+  }
+  if (typeof values.query_log_watermark_overlap_seconds === "number") {
+    block.watermark_overlap_seconds = values.query_log_watermark_overlap_seconds;
+  }
+  if (values.query_log_telemetry_coordinators?.trim()) {
+    block.telemetry_coordinators = values.query_log_telemetry_coordinators
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return block;
 };
 
 const DestinationDrawer = ({
@@ -1544,14 +1603,20 @@ const DestinationDrawer = ({
         }}
         onFinish={(values) => {
           try {
+            const config = buildDestinationConfig(values);
+            const query_log_config = buildQueryLogConfig(values);
             onSave({
               name: values.name,
               engine: values.engine,
-              config: buildDestinationConfig(values),
+              config,
               secret_ref: values.secret_ref || null,
               enabled: values.enabled,
               offpeak_start: values.offpeak_start ?? null,
-              offpeak_end: values.offpeak_end ?? null
+              offpeak_end: values.offpeak_end ?? null,
+              query_log_config,
+              query_log_retention_days: values.query_log_enabled
+                ? values.query_log_retention_days ?? 30
+                : null
             });
           } catch {
             message.error("Spark submit params must be valid JSON.");
@@ -1745,6 +1810,9 @@ const DestinationDrawer = ({
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
+
+        <QueryLogIngestionFields engine={engine} />
+
         {!testPassed && (
           <Alert
             type="warning"
