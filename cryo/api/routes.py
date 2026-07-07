@@ -1355,6 +1355,14 @@ def create_maintenance_run(
         if warnings:
             raise HTTPException(status_code=400, detail={"warnings": warnings, "blocking": True})
 
+    if payload.scheduled_at is not None:
+        now = datetime.now(UTC)
+        scheduled_at = payload.scheduled_at
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=UTC)
+        if scheduled_at <= now:
+            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
     selection = (
         _resolve_selection(session, payload.selection)
         if payload.selection is not None
@@ -1368,7 +1376,8 @@ def create_maintenance_run(
         kind="adhoc",
         preset_id=payload.preset_id,
         trigger=payload.trigger,
-        status="queued",
+        status="scheduled" if payload.scheduled_at is not None else "queued",
+        scheduled_at=payload.scheduled_at,
         summary={"actor": principal.subject},
     )
     session.add(run)
@@ -1442,6 +1451,25 @@ def create_maintenance_run(
         jobs.append(job)
     session.commit()
     wiring = build_runtime_wiring()
+    if payload.scheduled_at is not None:
+        # Scheduled runs are not enqueued now -- the jobs exist (status="queued" at the row
+        # level, same as any other job) but wiring.queue.enqueue() is what actually makes a
+        # job eligible for Governor admission, and that call is deliberately skipped here.
+        # cryo/scheduler/service.py's dispatch tick enqueues these once scheduled_at passes.
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_log_line(
+                run_id=run.id,
+                message=(
+                    f"Scheduled maintenance run with {len(jobs)} job(s) for "
+                    f"{payload.scheduled_at.isoformat()}"
+                ),
+            ),
+        )
+        return MaintenanceRunResponse(
+            run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
+        )
     safe_publish(
         wiring.run_events,
         run.id,

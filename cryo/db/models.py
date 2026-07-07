@@ -650,6 +650,13 @@ class MaintenanceRun(Base):
     trigger: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'running'"))
     deadline_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # A one-off future-scheduled run (distinct from a Preset's recurring schedule_cron).
+    # NULL means "not scheduled -- either an immediate run, or already dispatched". When set,
+    # status is "scheduled" and the jobs exist but are not yet enqueued; the scheduler's
+    # _maybe_dispatch_scheduled_runs tick flips status to "queued" and enqueues once
+    # scheduled_at has passed. See docs/ux-improvement-loop.md for the originating design
+    # conversation and cryo/scheduler/service.py for the dispatch step.
+    scheduled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
