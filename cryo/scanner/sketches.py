@@ -141,9 +141,7 @@ class ThetaSketch:
     def __post_init__(self) -> None:
         if self.p != _THETA_REG_BITS:
             # p is currently fixed for byte-format compatibility.
-            raise ValueError(
-                f"ThetaSketch only supports p={_THETA_REG_BITS} (got p={self.p})"
-            )
+            raise ValueError(f"ThetaSketch only supports p={_THETA_REG_BITS} (got p={self.p})")
         if not self.registers:
             self.registers = bytearray(_THETA_REG_COUNT // 2)
 

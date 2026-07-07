@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from cryo.db.models import Source, Table
@@ -54,7 +56,7 @@ def deactivate_out_of_scope_tables(
     """Mark tables outside the new allowlist inactive; empty allowlist re-enables all."""
     allowed = normalize_maintenance_schema_names(maintenance_schema_names)
     if not allowed:
-        result = session.execute(
+        result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
             update(Table)
             .where(Table.source_id == source_id, Table.is_active.is_(False))
             .values(is_active=True)
@@ -62,7 +64,7 @@ def deactivate_out_of_scope_tables(
         return int(result.rowcount or 0)
 
     allowed_set = set(allowed)
-    deactivated = session.execute(
+    deactivated: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(Table)
         .where(
             Table.source_id == source_id,
@@ -71,7 +73,7 @@ def deactivate_out_of_scope_tables(
         )
         .values(is_active=False)
     )
-    reactivated = session.execute(
+    reactivated: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(Table)
         .where(
             Table.source_id == source_id,

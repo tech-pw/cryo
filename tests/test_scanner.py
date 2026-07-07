@@ -188,9 +188,7 @@ def test_record_table_scan_outcome_tracks_and_resets_consecutive_failures() -> N
     flagged as broken, only a run of repeated failures -- and any later success must clear the
     streak entirely, not just decrement it."""
     _patch_sqlite_incompatible_defaults()
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}
-    )
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
     with engine.begin() as connection:
         connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
         Base.metadata.create_all(connection, tables=[Source.__table__, Table.__table__])

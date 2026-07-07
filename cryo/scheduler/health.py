@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -66,9 +66,13 @@ def check_silent_data_loss(
     if stats is None:
         return None
 
-    committed = list(committed_entries) if committed_entries is not None else _committed_from_stats(stats)
+    committed = (
+        list(committed_entries) if committed_entries is not None else _committed_from_stats(stats)
+    )
     storage = (
-        list(storage_files) if storage_files is not None else list_local_storage_files(str(table_id))
+        list(storage_files)
+        if storage_files is not None
+        else list_local_storage_files(str(table_id))
     )
 
     report = detect_silent_data_loss(
@@ -105,7 +109,8 @@ def run_silent_data_loss_sweep(session: Session) -> list[SilentLossHealthResult]
     for tid in table_ids:
         try:
             report = check_silent_data_loss(session, tid)
-        except Exception as exc:  # pragma: no cover - defensive: one bad table must not abort sweep.
+        except Exception as exc:  # pragma: no cover
+            # defensive: one bad table must not abort sweep.
             logger.warning("silent_data_loss: table=%s failed: %s", tid, exc)
             continue
         if report is None:
@@ -145,9 +150,7 @@ def _committed_from_stats(stats: TableStats) -> list[CommittedManifestEntry]:
                 size = int(item.get("size_bytes") or 0)
             except (TypeError, ValueError):
                 size = 0
-            entries.append(
-                CommittedManifestEntry(path=str(item["path"]), size_bytes=size)
-            )
+            entries.append(CommittedManifestEntry(path=str(item["path"]), size_bytes=size))
     return entries
 
 

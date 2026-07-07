@@ -75,9 +75,14 @@ import {
   getTablePiiClassification,
   getDataQualityProfile,
   getSlaStatusDashboard,
-  getQueryPerformanceDashboard
+  getQueryPerformanceDashboard,
+  getCompactionCandidates,
+  getUnionable,
+  getColumnStats,
+  getSilentDataLoss,
+  repairSilentDataLoss
 } from "../api/client";
-import type { AuditEntry } from "../api/types";
+import type { AuditEntry, CompactionCandidateRead, UnionScoreRead, ColumnStatsResponse, SilentDataLossReportRead } from "../api/types";
 import { EmptyState, QueryErrorAlert } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
@@ -92,6 +97,9 @@ import { HealthGauge } from "../components/table-detail/HealthGauge";
 import { KpiStripe } from "../components/table-detail/KpiStripe";
 import { RecommendedActions } from "../components/table-detail/RecommendedActions";
 import { StorageDonut } from "../components/table-detail/StorageDonut";
+import { CompactionCandidatesTab } from "../components/table-detail/CompactionCandidatesTab";
+import { UnionableTab } from "../components/table-detail/UnionableTab";
+import { ColumnStatsTab } from "../components/table-detail/ColumnStatsTab";
 import {
   CompactionTag,
   GradePill,
@@ -421,6 +429,23 @@ export const TableDetail = () => {
       setQueuedScanRunId(null);
       message.error((error as Error).message);
     }
+  });
+
+  const silentLoss = useQuery({
+    queryKey: ["silent-data-loss", tableId],
+    queryFn: () => getSilentDataLoss(api, tableId),
+    enabled: Boolean(tableId),
+    refetchInterval: 60_000,
+    retry: false
+  });
+
+  const repairSilentLoss = useMutation({
+    mutationFn: () => repairSilentDataLoss(api, tableId),
+    onSuccess: (result) => {
+      message.success(result.message || "Repair queued");
+      void queryClient.invalidateQueries({ queryKey: ["silent-data-loss", tableId] });
+    },
+    onError: (error) => message.error((error as Error).message)
   });
 
   const handleRunAction = () => {
@@ -1983,6 +2008,39 @@ export const TableDetail = () => {
         </div>
       ),
       forceRender: true
+    },
+    {
+      key: "candidates",
+      label: (
+        <Space size={6}>
+          <BranchesOutlined />
+          <span>Compaction Candidates</span>
+        </Space>
+      ),
+      children: <CompactionCandidatesTab api={api} tableId={tableId} />,
+      forceRender: true
+    },
+    {
+      key: "unionable",
+      label: (
+        <Space size={6}>
+          <AppstoreOutlined />
+          <span>Union With</span>
+        </Space>
+      ),
+      children: <UnionableTab api={api} tableId={tableId} />,
+      forceRender: true
+    },
+    {
+      key: "column-stats",
+      label: (
+        <Space size={6}>
+          <DatabaseOutlined />
+          <span>Column Stats</span>
+        </Space>
+      ),
+      children: <ColumnStatsTab api={api} tableId={tableId} />,
+      forceRender: true
     }
   ];
 
@@ -2223,6 +2281,32 @@ export const TableDetail = () => {
             onPreview={() => setPreviewOpen(true)}
             onRun={() => run.mutate()}
           />
+
+          {silentLoss.data && !silentLoss.data.is_clean ? (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="Silent data loss detected"
+              description={
+                <Space orientation="vertical" size={4}>
+                  <span>
+                    {silentLoss.data.orphan_data_files.length} orphan data file(s) totaling
+                    {" "}{(silentLoss.data.orphan_size_bytes / 1024 / 1024).toFixed(1)} MB outside any committed snapshot.
+                    Root cause: {silentLoss.data.root_cause}.
+                  </span>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={repairSilentLoss.isPending}
+                    onClick={() => repairSilentLoss.mutate()}
+                  >
+                    Repair (rewrite manifests)
+                  </Button>
+                </Space>
+              }
+            />
+          ) : null}
 
           <Tabs defaultActiveKey="schema" items={tabItems} className="td-main-tabs" />
         </Col>

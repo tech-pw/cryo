@@ -278,7 +278,10 @@ class Settings(BaseSettings):
     silent_loss_check_interval_min: int = Field(
         default=5,
         gt=0,
-        description="Minutes between silent-data-loss scans per table (CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN).",
+        description=(
+            "Minutes between silent-data-loss scans per table "
+            "(CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN)."
+        ),
     )
     silent_loss_local_root: str = Field(
         default=".local/tables",
@@ -303,6 +306,20 @@ class Settings(BaseSettings):
         default=20,
         gt=0,
         description="Minimum observations before QPPModel trusts the learned regression.",
+    )
+
+    observation_lakehouse_path: str = Field(
+        default=".local/observations",
+        description="On-disk path where the observation lakehouse stores long-term actuations.",
+    )
+
+    # Plan Verifier (arXiv:2510.09567)
+    plan_verifier_enabled: bool = Field(
+        default=True,
+        description=(
+            "When false, /plans/verify and the enqueue-time verifier pass-through return 503. "
+            "Lets ops kill the feature without redeploying."
+        ),
     )
 
 

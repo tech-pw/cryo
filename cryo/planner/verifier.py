@@ -393,8 +393,9 @@ def _invariant_no_predicate_on_partition_col_in_optimize(ctx: InvariantContext) 
             continue
         for pred_index, predicate in enumerate(op.predicates):
             non_partition = [
-                term for term in predicate.terms if term.transform is PartitionTransform.IDENTITY
-                and term.partition_field is None
+                term
+                for term in predicate.terms
+                if term.transform is PartitionTransform.IDENTITY and term.partition_field is None
             ]
             if non_partition:
                 continue

@@ -7,6 +7,7 @@ from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.auth_routes import router as auth_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
+from cryo.api.cost_insights_routes import router as cost_insights_router
 from cryo.api.dashboard_routes import router as dashboard_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.metrics_routes import router as metrics_router
@@ -47,6 +48,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "Advanced features: lineage, anomalies, approvals, quality, signals, FinOps."
                 ),
             },
+            {
+                "name": "cost-insights",
+                "description": (
+                    "Real per-bucket / per-table AWS cost attribution from CUR and S3 "
+                    "Inventory (CE-grade insight, free — delivered report files only)."
+                ),
+            },
             {"name": "observability", "description": "Prometheus metrics and health checks."},
         ],
     )
@@ -78,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(advanced_router)
     app.include_router(metrics_router)
+    app.include_router(cost_insights_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup

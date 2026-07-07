@@ -212,9 +212,7 @@ def _fetch_table_columns(
     try:
         table_obj = cached.load_table(table.schema_name, table.table_name)
     except Exception as exc:
-        logger.debug(
-            "Could not load table %s.%s: %s", table.schema_name, table.table_name, exc
-        )
+        logger.debug("Could not load table %s.%s: %s", table.schema_name, table.table_name, exc)
         return []
 
     return _extract_columns_from_table_obj(table_obj)

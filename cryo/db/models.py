@@ -79,7 +79,7 @@ class Source(TimestampMixin, Base):
     aws_integration: Mapped[AWSIntegration | None] = relationship(
         back_populates="source", cascade="all, delete-orphan", uselist=False
     )
-    aws_cost_insight_config: Mapped["AWSCostInsightConfig" | None] = relationship(
+    aws_cost_insight_config: Mapped[AWSCostInsightConfig | None] = relationship(
         back_populates="source", cascade="all, delete-orphan", uselist=False
     )
 
@@ -805,9 +805,7 @@ class ColumnStatsSketch(Base):
     puffin_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
     puffin_size: Mapped[int] = mapped_column(Integer, nullable=False)
     field_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    merged_from: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
+    merged_from: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     scan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
@@ -824,9 +822,7 @@ class SilentDataLossEvent(Base):
     """
 
     __tablename__ = "silent_data_loss_events"
-    __table_args__ = (
-        Index("idx_silent_data_loss_table_time", "table_id", "detected_at"),
-    )
+    __table_args__ = (Index("idx_silent_data_loss_table_time", "table_id", "detected_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
@@ -848,14 +844,10 @@ class SilentDataLossEvent(Base):
     missing_files: Mapped[list[Any]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
-    root_cause: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'unknown'")
-    )
-    repaired_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    audit_log_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+    root_cause: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'unknown'"))
+    repaired_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    audit_log_id: Mapped[int | None] = mapped_column(
+        BigInteger,
         ForeignKey("cryo.audit_log.id"),
         nullable=True,
     )
@@ -926,7 +918,10 @@ class AWSCurLineItem(Base):
     __tablename__ = "aws_cur_line_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
     )
     source_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -965,7 +960,10 @@ class AWSInventoryObject(Base):
     __tablename__ = "aws_inventory_objects"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
     )
     source_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -1005,18 +1003,75 @@ class QPPObservation(Base):
     observed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
-    table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    table_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     features: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
     p50_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     p95_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     actual_p95_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     cotenant_load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    is_cached: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
+    is_cached: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+
+class Skillset(TimestampMixin, Base):
+    """Versioned AI skillset row (paper arXiv:2606.01185).
+
+    A *skillset* is a named bundle of prompt templates plus an ordered list of
+    tool definitions. ``metrics`` is a JSONB blob carrying rolling outcome
+    stats (acceptance rate, mean score, sample count) updated whenever a
+    :class:`SkillsetOutcome` is recorded.
+    """
+
+    __tablename__ = "skillsets"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_skillsets_name_version"),
+        UniqueConstraint("name", name="uq_skillsets_name"),
+        Index("ix_skillsets_name", "name", unique=True),
     )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[str] = mapped_column(Text, nullable=False)
+    prompts: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    tools: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    metrics: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+
+
+class SkillsetOutcome(Base):
+    """One observed outcome of a skillset recommendation."""
+
+    __tablename__ = "skillset_outcomes"
+    __table_args__ = (
+        Index("ix_skillset_outcomes_skillset_recorded", "skillset_id", "recorded_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    skillset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.skillsets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+    )
+    prompt_name: Mapped[str] = mapped_column(Text, nullable=False)
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[float | None] = mapped_column(Float)
 
 
 __all__ = [
@@ -1038,6 +1093,8 @@ __all__ = [
     "QueryLog",
     "QueryPattern",
     "SilentDataLossEvent",
+    "Skillset",
+    "SkillsetOutcome",
     "SlackConfig",
     "Source",
     "Table",
