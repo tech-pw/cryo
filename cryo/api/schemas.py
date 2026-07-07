@@ -729,6 +729,10 @@ class MaintenanceRunRequest(BaseModel):
     preset_id: uuid.UUID
     mode: Mode = Mode.STANDARD
     trigger: str | None = "api"
+    # One-off future run time, distinct from a Preset's recurring schedule_cron. When set, the
+    # run is created with status="scheduled" and its jobs are not enqueued until this time
+    # passes (see cryo/scheduler/service.py's dispatch tick). Must be in the future.
+    scheduled_at: datetime | None = None
 
 
 class MaintenanceRunResponse(BaseModel):
@@ -804,6 +808,7 @@ class RunRead(BaseModel):
     preset_id: uuid.UUID | None = None
     trigger: str | None = None
     deadline_at: datetime | None = None
+    scheduled_at: datetime | None = None
     created_at: datetime
     finished_at: datetime | None = None
     summary: JsonDict | None = None

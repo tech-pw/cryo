@@ -76,7 +76,7 @@ export const CostTab = ({
                       <span className="td-cost-value">{formatCurrency(projectedCostUsd)}</span>
                     </span>
                     <span className="td-cost-save">
-                      Save <strong>{formatCurrency(savingsUsd)}</strong>/mo
+                      Save <strong>{formatCurrency(savingsUsd)}</strong>/month
                     </span>
                   </div>
                 </div>
@@ -112,7 +112,7 @@ export const CostTab = ({
           ) : (
             <EmptyState
               title="No cost breakdown yet"
-              description="Cost breakdown appears after the scanner writes table_cost."
+              description="Cost breakdown appears after the scanner writes table cost details."
             />
           )}
         </div>
