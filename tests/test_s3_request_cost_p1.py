@@ -582,3 +582,94 @@ def test_recompute_table_cost_rollup_labels_fallback_pricing(session) -> None:
     cost = session.get(TableCost, table.id)
     assert cost.put_requests_30d == 10
     assert cost.request_cost_pricing_source == "fallback_default"
+
+
+# ---------------------------------------------------------------------------
+# §10 scheduling tick + §6.3 retention
+# ---------------------------------------------------------------------------
+
+
+def test_run_s3_ingest_tick_skips_disabled_buckets(session, monkeypatch) -> None:
+    source = _seed_source(session)
+    enabled = S3BucketLogConfig(source_id=source.id, bucket="enabled-bucket", enabled=True)
+    disabled = S3BucketLogConfig(source_id=source.id, bucket="disabled-bucket", enabled=False)
+    session.add_all([enabled, disabled])
+    session.commit()
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ingest_mod,
+        "ingest_bucket",
+        lambda session, config, **kwargs: (
+            calls.append(config.bucket) or ingest_mod.IngestResult(0, 0, 0)
+        ),
+    )
+
+    succeeded = ingest_mod.run_s3_ingest_tick(session)
+
+    assert calls == ["enabled-bucket"]
+    assert succeeded == 1
+
+
+def test_run_s3_ingest_tick_records_error_without_stopping_other_buckets(
+    session, monkeypatch
+) -> None:
+    source = _seed_source(session)
+    failing = S3BucketLogConfig(source_id=source.id, bucket="failing-bucket", enabled=True)
+    ok = S3BucketLogConfig(source_id=source.id, bucket="ok-bucket", enabled=True)
+    session.add_all([failing, ok])
+    session.commit()
+
+    def fake_ingest(session, config, **kwargs):
+        if config.bucket == "failing-bucket":
+            return ingest_mod.IngestResult(0, 0, 0, error="boom")
+        return ingest_mod.IngestResult(1, 1, 0)
+
+    monkeypatch.setattr(ingest_mod, "ingest_bucket", fake_ingest)
+
+    succeeded = ingest_mod.run_s3_ingest_tick(session)
+
+    assert succeeded == 1
+    session.refresh(failing)
+    assert failing.last_error == "boom"
+    session.refresh(ok)
+    assert ok.last_error is None
+
+
+def test_prune_s3_request_cost_daily_deletes_only_stale_rows(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add_all(
+        [
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date() - timedelta(days=40),
+                operation_tier="get",
+                request_count=1,
+                cost_usd=0.0,
+                pricing_source="aws_price_list_api",
+            ),
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date() - timedelta(days=10),
+                operation_tier="get",
+                request_count=1,
+                cost_usd=0.0,
+                pricing_source="aws_price_list_api",
+            ),
+        ]
+    )
+    session.commit()
+
+    deleted = ingest_mod.prune_s3_request_cost_daily(session, retention_days=35, now=now)
+    session.commit()
+
+    assert deleted == 1
+    remaining = session.query(S3RequestCostDaily).all()
+    assert len(remaining) == 1
+    assert remaining[0].day == now.date() - timedelta(days=10)
