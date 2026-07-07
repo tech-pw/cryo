@@ -19,6 +19,7 @@ const priorityColor: Record<string, TagProps["color"]> = {
 
 const statusColor: Record<string, TagProps["color"]> = {
   accepted: "default",
+  scheduled: "purple",
   queued: "default",
   admitted: "blue",
   running: "processing",

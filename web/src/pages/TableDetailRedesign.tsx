@@ -347,6 +347,29 @@ export const TableDetail = () => {
     }
   });
 
+  const schedule = useMutation({
+    mutationFn: (scheduledAtIso: string) => {
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+      const destinationId = preset?.destination_id;
+      if (!preset || !destinationId) {
+        throw new Error("No preset assigned to this table. Assign a preset before scheduling maintenance.");
+      }
+      return runMaintenance(api, {
+        table_ids: [tableId],
+        destination_id: destinationId,
+        preset_id: preset.id,
+        mode: preset.mode ?? "standard",
+        trigger: "web-detail",
+        scheduled_at: scheduledAtIso
+      });
+    },
+    onSuccess: (result) => {
+      message.success(`Run scheduled: ${result.run_id}`);
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
   const scan = useMutation({
     mutationFn: () => {
       setQueuedScanRunId(null);
@@ -616,6 +639,8 @@ export const TableDetail = () => {
             queuedMaintenanceRunId={queuedMaintenanceRunId}
             onOpenRun={handleRunAction}
             onPreview={() => setPreviewOpen(true)}
+            onSchedule={(scheduledAtIso) => schedule.mutate(scheduledAtIso)}
+            schedulePending={schedule.isPending}
             tableLabel={row ? `${row.schema_name}.${row.table_name}` : "this table"}
           />
 

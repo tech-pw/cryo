@@ -560,6 +560,7 @@ export interface RunRead {
   preset_id?: UUID | null;
   trigger?: string | null;
   deadline_at?: string | null;
+  scheduled_at?: string | null;
   created_at: string;
   finished_at?: string | null;
   summary?: JsonObject | null;
