@@ -23,7 +23,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from cryo.config import Settings, get_settings
@@ -513,3 +514,42 @@ def recompute_table_cost_rollup(
     cost.list_requests_30d = list_requests
     cost.request_cost_usd_month = round(cost_total, 4)
     cost.request_cost_pricing_source = "fallback_default" if any_fallback else "live"
+
+
+def run_s3_ingest_tick(session: Session, *, settings: Settings | None = None) -> int:
+    """§10 -- one scheduled pass: ingest every enabled bucket, one Trino query per bucket.
+
+    ``ingest_bucket`` never raises (every failure path returns an ``IngestResult`` with
+    ``.error`` set) so a single bucket's Trino/AWS trouble doesn't block the rest of the fleet's
+    buckets from ingesting in the same tick. Returns the count of buckets successfully ingested.
+    """
+    configs = session.scalars(
+        select(S3BucketLogConfig).where(S3BucketLogConfig.enabled.is_(True))
+    ).all()
+    succeeded = 0
+    for config in configs:
+        result = ingest_bucket(session, config, settings=settings)
+        if result.error is not None:
+            config.last_error = result.error
+            config.last_error_at = datetime.now(UTC)
+            logger.warning(
+                "S3 request-cost ingestion failed for bucket %s: %s", config.bucket, result.error
+            )
+        else:
+            succeeded += 1
+        session.commit()
+    return succeeded
+
+
+def prune_s3_request_cost_daily(
+    session: Session, *, retention_days: int = 35, now: datetime | None = None
+) -> int:
+    """§6.3 -- bound ``S3RequestCostDaily``'s footprint. Default 35 days: a few days past the
+    30-day rollup window, so a delayed ingestion run never reads a just-pruned day out from
+    under it. Returns the number of rows deleted. Caller is responsible for committing."""
+    now = now or datetime.now(UTC)
+    cutoff = now.date() - timedelta(days=retention_days)
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
+        delete(S3RequestCostDaily).where(S3RequestCostDaily.day < cutoff)
+    )
+    return int(result.rowcount or 0)
