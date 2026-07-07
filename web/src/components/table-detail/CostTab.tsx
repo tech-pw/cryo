@@ -6,6 +6,7 @@ import { CostPrecisionBadge } from "../CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../CostSavingsWaterfall";
 import { SavingsByOperation } from "../SavingsByOperation";
 import { EmptyState } from "../common";
+import { RequestCostShare } from "./RequestCostShare";
 import { StorageDonut } from "./StorageDonut";
 import { isOrphanScanStale } from "../../lib/costStaleness";
 import { formatCurrency } from "../../lib/format";
@@ -87,6 +88,16 @@ export const CostTab = ({
                     metadataBytes={costView.metadata_bytes}
                     orphanBytes={costView.orphan_bytes}
                     pricePerGbMonth={costView.price_per_gb_month}
+                  />
+                ) : null}
+                {costView ? (
+                  <RequestCostShare
+                    storageCostUsd={currentCostUsd}
+                    requestCostUsd={costView.request_cost_usd_month}
+                    getRequests30d={costView.get_requests_30d}
+                    putRequests30d={costView.put_requests_30d}
+                    listRequests30d={costView.list_requests_30d}
+                    pricingSource={costView.request_cost_pricing_source}
                   />
                 ) : null}
               </Col>

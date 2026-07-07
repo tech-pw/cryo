@@ -708,6 +708,11 @@ class TableCostRead(BaseModel):
     by_operation: list[CostByOperationRead]
     last_full_cost_scan_at: datetime | None = None
     scan_at: datetime | None = None
+    get_requests_30d: int | None = None
+    put_requests_30d: int | None = None
+    list_requests_30d: int | None = None
+    request_cost_usd_month: float | None = None
+    request_cost_pricing_source: str | None = None
 
 
 class AssignmentSelection(BaseModel):
