@@ -87,7 +87,14 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
 
   const integration = useQuery({
     queryKey: ["aws-integration", sourceId],
-    queryFn: () => getAwsIntegration(api, sourceId),
+    queryFn: async () => {
+      try {
+        return await getAwsIntegration(api, sourceId);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("404")) return null;
+        throw error;
+      }
+    },
     retry: false
   });
 
@@ -139,7 +146,7 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
     onError: (error) => message.error((error as Error).message)
   });
 
-  const existing: AWSIntegrationRead | undefined = integration.data;
+  const existing: AWSIntegrationRead | undefined = integration.data ?? undefined;
 
   if (integration.isError && !integration.isLoading) {
     const status = (integration.error as { status?: number } | null)?.status;

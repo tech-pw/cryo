@@ -62,6 +62,18 @@ class SparkEMREngine:
         """No session setup needed for EMR Serverless - config is in spark-submit."""
         return []
 
+    def execute_plan(
+        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
+    ) -> list[ExecResult]:
+        """Execute each rendered statement in order, short-circuiting on failure."""
+        results: list[ExecResult] = []
+        for stmt in self.render(plan):
+            result = self.execute(stmt, ctx)
+            results.append(result)
+            if not result.ok:
+                break
+        return results
+
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
         """Submit SQL to EMR Serverless and wait for completion."""
         job_name = _build_job_name(stmt, ctx)

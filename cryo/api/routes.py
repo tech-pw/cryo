@@ -228,6 +228,7 @@ def get_table_cost(table_id: uuid.UUID, session: SessionDep) -> dict[str, object
     return payload
 
 
+
 @router.get(
     "/sources",
     response_model=list[SourceRead],

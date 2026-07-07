@@ -106,6 +106,9 @@ import { StorageDonut } from "../components/table-detail/StorageDonut";
 import { CompactionCandidatesTab } from "../components/table-detail/CompactionCandidatesTab";
 import { UnionableTab } from "../components/table-detail/UnionableTab";
 import { ColumnStatsTab } from "../components/table-detail/ColumnStatsTab";
+import { ActivityTab } from "../components/table-detail/ActivityTab";
+import { CostTab, CostTabLabel } from "../components/table-detail/CostTab";
+import { SchemaTab, SchemaTabLabel, type SchemaColumn } from "../components/table-detail/SchemaTab";
 import {
   CompactionTag,
   GradePill,
@@ -128,121 +131,14 @@ import {
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatEngineLabel } from "../lib/engines";
-
-const provenanceLabel = (provenance?: string | null): string => {
-  switch (provenance) {
-    case "assignment":
-      return "manually assigned";
-    case "rule":
-      return "matched a rule";
-    case "default":
-      return "platform default";
-    case "none":
-      return "no preset assigned";
-    default:
-      return "unknown";
-  }
-};
-
-const actionIcon = (action: string, failed: boolean): React.ReactNode => {
-  if (failed) return <WarningOutlined />;
-  const normalized = action.toLowerCase();
-  if (normalized.includes("orphan")) return <ClearOutlined />;
-  if (normalized.includes("expire")) return <HistoryOutlined />;
-  if (normalized.includes("manifest")) return <AppstoreOutlined />;
-  return <ThunderboltOutlined />;
-};
-
-interface SignalPointerDetail {
-  title: string;
-  recommendation: string;
-  impactText: string;
-}
-
-const getSignalPointerDetail = (signalName: string, severity: string): SignalPointerDetail => {
-  const normName = (signalName || "").toLowerCase();
-  if (normName.includes("degradation") || normName.includes("file")) {
-    return {
-      title: "Small-File Fragmentation Pressure",
-      recommendation: "Execute table compaction (OPTIMIZE) to merge fragmented small files and rewrite manifests.",
-      impactText: severity === "critical" ? "-20 pts" : "-8 pts"
-    };
-  }
-  if (normName.includes("latency") || normName.includes("query")) {
-    return {
-      title: "Query Scanning Performance Degradation",
-      recommendation: "Run layout optimization or tune partition filters to avoid scanning overhead.",
-      impactText: severity === "critical" ? "-20 pts" : "-8 pts"
-    };
-  }
-  if (normName.includes("cost") || normName.includes("anomaly")) {
-    return {
-      title: "Storage Cost & Resource Overhead Anomaly",
-      recommendation: "Expire historical snapshots and purge orphaned storage files to recover dead bytes.",
-      impactText: severity === "critical" ? "-20 pts" : "-8 pts"
-    };
-  }
-  return {
-    title: "Unhealthy Maintenance Alarm",
-    recommendation: "Inspect background logs and schedule a full optimization sweep.",
-    impactText: severity === "critical" ? "-20 pts" : "-8 pts"
-  };
-};
-
-interface SignalMatrixDetail {
-  what: string;
-  why: string;
-  current: string;
-  ideal: string;
-}
-
-const getSignalMatrix = (
-  signalName: string,
-  stats: any,
-  statsRaw: any,
-  reclaimableBytes: number,
-  savingsUsd: number,
-  small_pct: number
-): SignalMatrixDetail => {
-  const normName = (signalName || "").toLowerCase();
-  
-  if (normName.includes("degradation") || normName.includes("file")) {
-    return {
-      what: "Small-File Fragmentation Ratio",
-      why: "A high volume of small files forces query engines (Trino/Spark) to execute sequential S3 list & GET calls during split planning, which compounds query latency and inflates network overhead.",
-      current: `${small_pct.toFixed(1)}% small files (${(stats?.small_files_count ?? 0).toLocaleString()} / ${(stats?.total_files ?? 0).toLocaleString()} total files)`,
-      ideal: "< 20.0% small files ratio"
-    };
-  }
-  
-  if (normName.includes("latency") || normName.includes("query")) {
-    return {
-      what: "Query Planning & Scan Latency Overheads",
-      why: "Too many partitioned files or excessive manifest metadata directories require compilers to parse complex filter expressions and build large FilterNode planning trees, which causes engine planning timeouts.",
-      current: `${(stats?.manifest_count ?? 0).toLocaleString()} manifest files (avg files/partition: ${(stats?.avg_files_per_partition ?? 0).toFixed(1)})`,
-      ideal: "< 100 manifest files & < 50 files per partition"
-    };
-  }
-  
-  if (normName.includes("cost") || normName.includes("anomaly")) {
-    const reclaimGb = (reclaimableBytes / (1024 * 1024 * 1024)).toFixed(1);
-    return {
-      what: "Storage Footprint & Orphan File Buildup",
-      why: "Deleted transactional records are retained in older snapshots for point-in-time snapshot recovery. Without automated expiry and orphan removal, cold S3 storage files accumulate indefinitely.",
-      current: `${reclaimGb} GB reclaimable storage (approx. $${savingsUsd.toFixed(2)}/month potential savings across ${(stats?.total_snapshots ?? 0)} snapshots)`,
-      ideal: "< 50 snapshots & near-zero orphaned storage"
-    };
-  }
-  
-  // Fallback
-  const ratio = statsRaw?.metadata_to_data_ratio ?? 0;
-  return {
-    what: "Iceberg Metadata Overhead & Layout Balance",
-    why: "Imbalanced metadata-to-data sizes indicate rapid committing patterns or suboptimal transaction volumes, which slows down snapshot reads and partition listing speed.",
-    current: `Metadata ratio: ${(ratio * 100).toFixed(1)}% (Skew ratio: ${(stats?.partition_skew_ratio ?? 0).toFixed(1)}x)`,
-    ideal: "< 5.0% metadata ratio & < 10x partition skew"
-  };
-};
+import {
+  actionIcon,
+  getSignalMatrix,
+  getSignalPointerDetail,
+  provenanceLabel,
+  type SignalMatrixDetail,
+  type SignalPointerDetail
+} from "../components/table-detail/helpers";
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
@@ -670,148 +566,12 @@ export const TableDetail = () => {
   const tabItems = [
     {
       key: "schema",
-      label: (
-        <span>
-          <TableOutlined />
-          Schema
-        </span>
-      ),
+      label: <SchemaTabLabel />,
       children: (
-        <div className="td-tab-content">
-          <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
-            <div className="td-chart-card-header">
-              <span className="td-chart-card-title">Columns & Schema Metrics</span>
-              <span className="td-chart-card-subtitle">
-                {mergedColumns.length} columns detected
-              </span>
-            </div>
-            <div className="td-chart-card-content">
-              <Table
-                size="small"
-                rowKey="name"
-                dataSource={mergedColumns}
-                loading={table.isLoading || pii.isLoading || dataQuality.isLoading}
-                pagination={{ pageSize: 12, size: "small" }}
-                className="td-schema-table"
-                columns={[
-                  {
-                    title: "Name",
-                    dataIndex: "name",
-                    width: 220,
-                    sorter: (a, b) => a.name.localeCompare(b.name),
-                    render: (name, item) => (
-                      <div className="td-schema-col-name-wrap">
-                        <span className="td-schema-col-name">{name}</span>
-                        {item.isPartition ? (
-                          <Tag color="blue" className="td-schema-badge td-schema-badge-partition">
-                            Partition Key
-                          </Tag>
-                        ) : null}
-                        {item.piiCategory && item.piiCategory !== "NONE" ? (
-                          <Tag color="warning" className="td-schema-badge td-schema-badge-pii">
-                            <LockOutlined style={{ marginRight: 3 }} />
-                            PII: {item.piiCategory}
-                          </Tag>
-                        ) : null}
-                      </div>
-                    )
-                  },
-                  {
-                    title: "Type",
-                    dataIndex: "type",
-                    width: 140,
-                    render: (type) => {
-                      const lower = String(type || "unknown").toLowerCase();
-                      let colorClass = "td-type-other";
-                      if (["int", "integer", "bigint", "double", "float", "decimal", "long", "short"].some(t => lower.includes(t))) {
-                        colorClass = "td-type-numeric";
-                      } else if (["string", "varchar", "char", "text"].some(t => lower.includes(t))) {
-                        colorClass = "td-type-textual";
-                      } else if (["timestamp", "date", "time", "datetime"].some(t => lower.includes(t))) {
-                        colorClass = "td-type-temporal";
-                      } else if (lower.includes("bool")) {
-                        colorClass = "td-type-boolean";
-                      }
-                      return <span className={`td-type-badge ${colorClass}`}>{type || "unknown"}</span>;
-                    }
-                  },
-                  {
-                    title: "Nullability",
-                    dataIndex: "nullRate",
-                    align: "left",
-                    width: 200,
-                    sorter: (a, b) => (a.nullRate ?? 0) - (b.nullRate ?? 0),
-                    render: (nullRate, item) => {
-                      const rate = nullRate != null ? nullRate * 100 : 0;
-                      const popRate = 100 - rate;
-                      return (
-                        <div className="td-schema-null-wrap">
-                          <div className="td-schema-null-bar-container">
-                            <div className="td-schema-null-bar-pop" style={{ width: `${popRate}%` }} />
-                            <div className="td-schema-null-bar-null" style={{ width: `${rate}%` }} />
-                          </div>
-                          <span className="td-schema-null-text">
-                            {(rate).toFixed(1)}% null
-                          </span>
-                          {item.dqNullSpike ? (
-                            <Tag color="error" className="td-schema-badge-spike animate-pulse">
-                              <WarningOutlined style={{ marginRight: 3 }} />
-                              Spike
-                            </Tag>
-                          ) : null}
-                        </div>
-                      );
-                    }
-                  },
-                  {
-                    title: "Value Range / Bounds",
-                    dataIndex: "lowerBound",
-                    align: "left",
-                    width: 220,
-                    render: (_, item) => {
-                      const hasBounds = item.lowerBound !== undefined && item.upperBound !== undefined && item.lowerBound !== null && item.upperBound !== null;
-                      if (!hasBounds) return <span className="td-bounds-empty">—</span>;
-                      return (
-                        <div className="td-schema-bounds">
-                          <span className="td-bounds-text" title={`${item.lowerBound} to ${item.upperBound}`}>
-                            {String(item.lowerBound)} <span className="td-bounds-sep">to</span> {String(item.upperBound)}
-                          </span>
-                          {item.dqValueRangeChanged ? (
-                            <span className="td-bounds-warning" title={item.dqValueRangeExplanation || "Value range shifted"}>
-                              <WarningOutlined style={{ color: "var(--warning, #f0a020)", marginLeft: 6 }} />
-                            </span>
-                          ) : null}
-                        </div>
-                      );
-                    }
-                  },
-                  {
-                    title: "Status",
-                    key: "status",
-                    align: "center",
-                    width: 110,
-                    render: (_, item) => {
-                      const hasIssues = item.dqNullSpike || item.dqValueRangeChanged;
-                      return (
-                        <Tag color={hasIssues ? "warning" : "success"} className="td-schema-status-tag">
-                          {hasIssues ? "Warning" : "Healthy"}
-                        </Tag>
-                      );
-                    }
-                  }
-                ]}
-                locale={{
-                  emptyText: (
-                    <EmptyState
-                      title="No column metadata yet"
-                      description="Ensure this table has successfully run its initial metadata scan."
-                    />
-                  )
-                }}
-              />
-            </div>
-          </Card>
-        </div>
+        <SchemaTab
+          columns={mergedColumns as SchemaColumn[]}
+          loading={table.isLoading || pii.isLoading || dataQuality.isLoading}
+        />
       ),
       forceRender: true
     },
@@ -1550,81 +1310,19 @@ export const TableDetail = () => {
     },
     {
       key: "cost",
-      label: (
-        <span>
-          <DollarOutlined />
-          Cost & Savings
-        </span>
-      ),
+      label: <CostTabLabel />,
       children: (
-        <div className="td-tab-content">
-          <Card className={`td-chart-card${costView || hasStatsCostFallback ? "" : " td-chart-card-quiet"}`} classNames={{ body: "td-chart-card-body" }}>
-            <div className="td-chart-card-header">
-              <span className="td-chart-card-title">Cost & Savings</span>
-              <CostPrecisionBadge
-                precision={costView?.precision ?? stats?.cost_precision}
-                lastFullCostScanAt={costView?.last_full_cost_scan_at ?? stats?.cost_last_full_scan_at}
-                orphanScanStale={isOrphanScanStale(
-                  costView?.precision ?? stats?.cost_precision,
-                  costView?.last_full_cost_scan_at ?? stats?.cost_last_full_scan_at
-                )}
-              />
-            </div>
-            <div className="td-chart-card-content">
-              {costView || hasStatsCostFallback ? (
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} xl={12}>
-                    <div className="td-cost-summary" style={{ paddingLeft: 0, paddingRight: 0, marginBottom: 12 }}>
-                      <div className="td-cost-row">
-                        <span className="td-cost-delta">
-                          <span className="td-cost-label">Current</span>
-                          <span className="td-cost-value">{formatCurrency(currentCostUsd)}</span>
-                        </span>
-                        <span className="td-cost-arrow">→</span>
-                        <span className="td-cost-delta td-cost-projected">
-                          <span className="td-cost-label">Projected</span>
-                          <span className="td-cost-value">{formatCurrency(projectedCostUsd)}</span>
-                        </span>
-                        <span className="td-cost-save">
-                          Save <strong>{formatCurrency(savingsUsd)}</strong>/mo
-                        </span>
-                      </div>
-                    </div>
-                    {costView ? (
-                      <StorageDonut
-                        liveBytes={costView.live_bytes}
-                        deadBytes={costView.dead_bytes}
-                        metadataBytes={costView.metadata_bytes}
-                        orphanBytes={costView.orphan_bytes}
-                        pricePerGbMonth={costView.price_per_gb_month}
-                      />
-                    ) : null}
-                  </Col>
-                  <Col xs={24} xl={12}>
-                    {costByOperation.length ? (
-                      <CostSavingsWaterfall
-                        currentCostUsd={currentCostUsd}
-                        currentStorageBytes={storageBytes || (stats?.total_size_gb ?? 0) * 1024 ** 3}
-                        byOperation={costByOperation}
-                      />
-                    ) : null}
-                    {costByOperation.length ? <SavingsByOperation items={costByOperation} /> : null}
-                  </Col>
-                  {s3Tiering.data ? (
-                    <Col span={24}>
-                      <Tag color="processing">{s3Tiering.data.recommendation}</Tag>
-                      <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                        {s3Tiering.data.reason}
-                      </Typography.Text>
-                    </Col>
-                  ) : null}
-                </Row>
-              ) : (
-                <EmptyState title="No cost breakdown yet" description="Cost breakdown appears after the scanner writes table_cost." />
-              )}
-            </div>
-          </Card>
-        </div>
+        <CostTab
+          costView={costView}
+          stats={stats}
+          storageBytes={storageBytes}
+          hasStatsCostFallback={hasStatsCostFallback}
+          currentCostUsd={currentCostUsd}
+          projectedCostUsd={projectedCostUsd}
+          savingsUsd={savingsUsd}
+          costByOperation={costByOperation}
+          s3Tiering={s3Tiering.data ?? null}
+        />
       ),
       forceRender: true
     },
@@ -1905,16 +1603,16 @@ export const TableDetail = () => {
                             {dataQuality.data.new_columns.length ? (
                               <div>
                                 <strong className="td-quality-alert-added">New columns:</strong>{" "}
-                                {dataQuality.data.new_columns.map((c) => (
-                                  <Tag color="green" key={c}>{c}</Tag>
+                                {dataQuality.data.new_columns.map((c, idx) => (
+                                  <Tag color="green" key={`new-${idx}-${c ?? ""}`}>{c}</Tag>
                                 ))}
                               </div>
                             ) : null}
                             {dataQuality.data.dropped_columns.length ? (
                               <div>
                                 <strong className="td-quality-alert-removed">Dropped columns:</strong>{" "}
-                                {dataQuality.data.dropped_columns.map((c) => (
-                                  <Tag color="red" key={c}>{c}</Tag>
+                                {dataQuality.data.dropped_columns.map((c, idx) => (
+                                  <Tag color="red" key={`dropped-${idx}-${c ?? ""}`}>{c}</Tag>
                                 ))}
                               </div>
                             ) : null}
@@ -2009,58 +1707,7 @@ export const TableDetail = () => {
           Activity Feed
         </span>
       ),
-      children: (
-        <div className="td-tab-content">
-          <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
-            <div className="td-chart-card-header">
-              <span className="td-chart-card-title">Recent activity</span>
-              <span className="td-chart-card-subtitle">
-                {audit.data?.length ? `Last ${Math.min(audit.data.length, 12)} events` : null}
-              </span>
-            </div>
-            <div className="td-chart-card-content">
-              {(audit.data ?? []).length ? (
-                <div className="td-timeline td-timeline-wide">
-                  {(audit.data ?? []).slice(0, 12).map((item: AuditEntry, index) => {
-                    const failed = item.status === "failed";
-                    return (
-                      <div key={item.id ?? index} className={`td-timeline-item ${failed ? "td-timeline-failed" : ""}`}>
-                        <div className="td-timeline-dot-wrap">
-                          <span className={`td-timeline-dot ${failed ? "td-timeline-dot-fail" : "td-timeline-dot-ok"}`} />
-                          {index < Math.min(audit.data?.length ?? 0, 12) - 1 ? (
-                            <span className="td-timeline-line" />
-                          ) : null}
-                        </div>
-                        <div className="td-timeline-content">
-                          <div className="td-timeline-head">
-                            <span className="td-timeline-icon">{actionIcon(item.action ?? "maintenance", failed)}</span>
-                            <span className="td-timeline-action">{item.action ?? "maintenance"}</span>
-                            {failed ? (
-                              <Tag
-                                color="error"
-                                style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px", margin: 0 }}
-                              >
-                                failed
-                              </Tag>
-                            ) : null}
-                          </div>
-                          <div className="td-timeline-detail">
-                            {formatTime(item.ts ?? item.created_at)}
-                            {item.engine ? <> · {item.engine}</> : null}
-                            {item.duration_ms ? <> · {formatDuration(item.duration_ms)}</> : null}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <EmptyState title="No audit entries" description="Completed maintenance actions will appear here." />
-              )}
-            </div>
-          </Card>
-        </div>
-      ),
+      children: <ActivityTab entries={audit.data} />,
       forceRender: true
     },
     {

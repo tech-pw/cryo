@@ -1,6 +1,16 @@
 import { CheckCircleOutlined, CloseCircleOutlined, PlusOutlined, RobotOutlined, SettingOutlined, SlackOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AWS_REGIONS,
+  CATALOG_TYPES,
+  CATALOG_URI_HINT,
+  KNOWN_SOURCE_KEYS,
+  REDACTED_PLACEHOLDER,
+  S3_AUTH_METHODS,
+  SCAN_ACTIVE_STATUSES,
+  type SourceFormValues
+} from "./connections/constants";
+import {
   Alert,
   AutoComplete,
   Button,
@@ -78,12 +88,15 @@ import {
   type ConnectionScanNotice
 } from "../lib/connectionScanPrompt";
 import { ENGINE_TYPE_OPTIONS, engineTagColor, formatEngineLabel } from "../lib/engines";
+import { SourceTestResultPanel } from "./connections/SourceTestResultPanel";
+import { SourceScansPanel } from "./connections/SourceScansPanel";
+
+export { formatSourceTestSuccessMessage } from "./connections/helpers";
 
 // Matches cryo/api/redact.py's REDACTED_PLACEHOLDER -- a saved secret field is never sent back
 // to the browser as its real value, only this sentinel. Used to decide when a "Test connection"
 // click should ask the backend to test against the real stored secret (via source_id/
 // destination_id/provider_id/config_id) instead of this literal placeholder string.
-const REDACTED_PLACEHOLDER = "***REDACTED***";
 
 export const Connections = () => {
   const { api, token, role } = useAuth();
@@ -707,7 +720,6 @@ export const Connections = () => {
         onCancel={() => setLatencySource(null)}
         footer={null}
         width={640}
-        destroyOnHidden
       >
         {catalogLatency.isLoading ? (
           <Typography.Text type="secondary">Loading latency samples…</Typography.Text>
@@ -786,96 +798,6 @@ export const Connections = () => {
 // common case either.
 // ---------------------------------------------------------------------------
 
-const CATALOG_TYPES = [
-  { value: "rest", label: "REST catalog" },
-  { value: "hive", label: "Hive Metastore" },
-  { value: "glue", label: "AWS Glue" },
-  { value: "polaris", label: "Apache Polaris" },
-  { value: "nessie", label: "Project Nessie" }
-];
-
-const CATALOG_URI_HINT: Record<string, string> = {
-  rest: "http://localhost:8181",
-  hive: "thrift://localhost:9083",
-  glue: "",
-  polaris: "http://localhost:8181/api/catalog",
-  nessie: "http://localhost:19120/api/v1"
-};
-
-const KNOWN_SOURCE_KEYS = [
-  "uri",
-  "warehouse",
-  "catalog_name",
-  "type",
-  "s3.endpoint",
-  "s3.access-key-id",
-  "s3.secret-access-key",
-  "s3.path-style-access",
-  "s3.region",
-  "s3.role-arn",
-  "s3.external-id",
-  "s3.role-session-name"
-];
-
-const S3_AUTH_METHODS = [
-  { value: "default", label: "Default credentials (IAM Role / Instance Profile / Environment)" },
-  { value: "access_key", label: "Access Key + Secret Key" },
-  { value: "assume_role", label: "Assume IAM Role (cross-account)" }
-];
-
-// AutoComplete, not a strict Select: S3-compatible endpoints (MinIO, etc.) can use arbitrary
-// region strings, so the field must still accept free text -- this just prevents typos like
-// "ap-south21" for the common case of real AWS regions.
-const AWS_REGIONS = [
-  "us-east-1",
-  "us-east-2",
-  "us-west-1",
-  "us-west-2",
-  "af-south-1",
-  "ap-east-1",
-  "ap-south-1",
-  "ap-south-2",
-  "ap-southeast-1",
-  "ap-southeast-2",
-  "ap-southeast-3",
-  "ap-southeast-4",
-  "ap-northeast-1",
-  "ap-northeast-2",
-  "ap-northeast-3",
-  "ca-central-1",
-  "eu-central-1",
-  "eu-central-2",
-  "eu-west-1",
-  "eu-west-2",
-  "eu-west-3",
-  "eu-north-1",
-  "eu-south-1",
-  "eu-south-2",
-  "me-central-1",
-  "me-south-1",
-  "sa-east-1"
-].map((region) => ({ value: region }));
-
-interface SourceFormValues {
-  name: string;
-  type: string;
-  uri?: string;
-  warehouse?: string;
-  catalog_name?: string;
-  s3_auth_method: "default" | "access_key" | "assume_role";
-  s3_endpoint?: string;
-  s3_region?: string;
-  s3_access_key_id?: string;
-  s3_secret_access_key?: string;
-  s3_role_arn?: string;
-  s3_external_id?: string;
-  s3_role_session_name?: string;
-  s3_path_style_access?: boolean;
-  advanced_json?: string;
-  secret_ref?: string | null;
-  enabled: boolean;
-  maintenance_schema_names?: string[];
-}
 
 const decomposeSourceConfig = (config: Record<string, unknown> | undefined) => {
   const cfg = config ?? {};
@@ -935,115 +857,10 @@ const buildSourceConfig = (values: SourceFormValues): Record<string, unknown> =>
   return config;
 };
 
-export const formatSourceTestSuccessMessage = (namespaceCount: number) => {
-  const noun = namespaceCount === 1 ? "schema" : "schemas";
-  return `Connected — found ${namespaceCount} ${noun} in catalog`;
-};
 
-/**
- * A single "Warehouse" field is only ever a default — individual namespaces or tables in a real
- * lakehouse can (and often do) point at different S3 buckets/prefixes. Rather than pretend one
- * field settles that, this shows what's actually reachable so the user can see the real shape of
- * the catalog before saving.
- */
-const SourceTestResultPanel = ({ result }: { result: SourceTestResult }) => {
-  if (!result.ok) {
-    return (
-      <Alert
-        className="page-alert"
-        type="error"
-        showIcon
-        title="Couldn't connect"
-        description={result.error}
-      />
-    );
-  }
-  return (
-    <Alert
-      className="page-alert"
-      type="success"
-      showIcon
-      title={formatSourceTestSuccessMessage(result.namespaces.length)}
-      description={
-        result.note ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
-            {result.note}
-          </Typography.Text>
-        ) : undefined
-      }
-    />
-  );
-};
-
-const SCAN_ACTIVE_STATUSES = new Set(["accepted", "queued", "running"]);
 
 /** Per-lakehouse scan trigger + recent history, surfaced right on the connection itself --
  * mirrors how OpenMetadata attaches ingestion runs to a service instead of a separate page. */
-const SourceScansPanel = ({ sourceId }: { sourceId: string }) => {
-  const { api } = useAuth();
-  const queryClient = useQueryClient();
-  const runsQueryKey = ["source-scan-runs", sourceId];
-
-  const runs = useQuery({
-    queryKey: runsQueryKey,
-    queryFn: () => listRuns(api, { kind: "scan", source_id: sourceId, limit: 5 }),
-    refetchInterval: (query) => {
-      const active = (query.state.data ?? []).some((run) => SCAN_ACTIVE_STATUSES.has(run.status));
-      return active ? 5000 : 15000;
-    }
-  });
-
-  const scan = useMutation({
-    mutationFn: () =>
-      triggerScan(api, { scope: "source", source_id: sourceId, full_scan: true, trigger: "web-connections" }),
-    onSuccess: (result) => {
-      message.success(result.message || `Scan queued: ${result.run_id}`);
-      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    },
-    onError: (error) => message.error((error as Error).message)
-  });
-
-  const activeRun = (runs.data ?? []).find((run) => SCAN_ACTIVE_STATUSES.has(run.status));
-
-  return (
-    <Space orientation="vertical" size={10} className="full-width">
-      <ConfirmAction
-        title="Scan this lakehouse now?"
-        description="Queues a scan of just this lakehouse -- other connected lakehouses aren't touched."
-        onConfirm={() => scan.mutate()}
-      >
-        <Button loading={scan.isPending} disabled={Boolean(activeRun)}>
-          {activeRun ? "Scan in progress..." : "Scan this lakehouse now"}
-        </Button>
-      </ConfirmAction>
-      {runs.isLoading ? null : (runs.data ?? []).length ? (
-        <Space orientation="vertical" size={6} className="full-width">
-          {(runs.data as RunRead[]).map((run) => (
-            <Space
-              key={run.id ?? `${run.status}-${run.kind}-${run.created_at ?? "unknown"}`}
-              size={8}
-              style={{ width: "100%", justifyContent: "space-between" }}
-            >
-              <Space size={8}>
-                <StatusTag status={run.status} />
-                <Link to={`/scans/${run.id}`}>
-                  <Typography.Text code className="mono-id">
-                    {run.id.slice(0, 8)}
-                  </Typography.Text>
-                </Link>
-              </Space>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {formatTime(run.created_at)}
-              </Typography.Text>
-            </Space>
-          ))}
-        </Space>
-      ) : (
-        <Typography.Text type="secondary">No scans yet for this lakehouse.</Typography.Text>
-      )}
-    </Space>
-  );
-};
 
 const SourceDrawer = ({
   value,
@@ -1123,7 +940,6 @@ const SourceDrawer = ({
         open={Boolean(value)}
         onClose={onClose}
         size={620}
-        destroyOnHidden
       >
       <Form<SourceFormValues>
         form={form}
@@ -2003,7 +1819,6 @@ const AIProviderDrawer = ({
       open={Boolean(value)}
       onClose={onClose}
       size={520}
-      destroyOnHidden
     >
       <Form<AIProviderFormValues>
         form={form}
@@ -2221,7 +2036,6 @@ const SlackDrawer = ({
       open={Boolean(value)}
       onClose={onClose}
       size={520}
-      destroyOnHidden
     >
       <Form<SlackFormValues>
         form={form}

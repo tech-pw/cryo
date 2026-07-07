@@ -52,6 +52,8 @@ The authoritative architecture / contract docs live at the repo root:
 ### Cost / FinOps
 
 - [`cost-savings.md`](./cost-savings.md) — cost model and savings math.
+- [`s3-request-cost-tracking.md`](./s3-request-cost-tracking.md) — design for per-table S3
+  GET/PUT request-cost attribution via server access logs + Trino (not yet implemented).
 
 ### Local development
 
