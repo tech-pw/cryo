@@ -315,6 +315,28 @@ class S3LogIngestResponse(BaseModel):
     error: str | None = None
 
 
+class S3LogProvisionRequest(BaseModel):
+    target_bucket: str | None = None
+
+
+class S3LogProvisionResponse(BaseModel):
+    ok: bool
+    log_target_bucket: str | None = None
+    log_target_prefix: str | None = None
+    error: str | None = None
+
+
+class S3LogTeardownRequest(BaseModel):
+    revert_policy: bool = True
+
+
+class S3LogTeardownResponse(BaseModel):
+    ok: bool
+    policy_reverted: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class DestinationCreate(BaseModel):
     name: str
     engine: EngineType
