@@ -1,14 +1,14 @@
 # Cryo — Open-Source Readiness Plan
 
 > Written 2026-07-07. Answers one question: **what has to be true before `shelf-project/Cryo`
-> goes public, and in what order?** This is not a rehash of `PREMORTEM.md` /
-> `PREMORTEM_ACTIONABLES.md` / `6_MONTH_PREMORTEM_ANALYSIS.md` — those cover production
+> goes public, and in what order?** This is not a rehash of `premortem.md` /
+> `premortem.md` / `premortem.md` — those cover production
 > hardening. This doc covers the OSS-specific surface: licensing, repo hygiene, launch scope,
 > positioning, and community process. Where an item overlaps a premortem finding, it's cited
 > instead of duplicated.
 >
 > **Verdict up front:** the core (scan → plan → govern → execute → audit) is real and
-> defensible against the competitive landscape in `COMPETITIVE_ANALYSIS_2026.md`. The blockers
+> defensible against the competitive landscape in `research-and-roadmap.md`. The blockers
 > below are not "is the code good enough" — they're "does this repo tell the truth about
 > itself yet." It doesn't, in at least one load-bearing place (§1.1). Fix that class of gap
 > before anything else matters.
@@ -41,7 +41,7 @@ neither is backed by an actual file. Right now, legally, nobody can use, fork, o
 this code — "all rights reserved" is the default in the absence of a license, regardless of
 what any `.md` file claims.
 
-This is the single most on-brand example of the exact failure mode `PREMORTEM.md` Scenario J
+This is the single most on-brand example of the exact failure mode `premortem.md` Scenario J
 already names — docs asserting something the repo doesn't back up — so it's the first thing an
 external reviewer with any OSS experience will notice.
 
@@ -62,7 +62,7 @@ assume it, but that assumption itself needs a real yes/no before the file goes i
 
 ### 1.2 Confirm the premortem P0 fixes are still true at HEAD, not just as of 2026-07-05
 
-`PREMORTEM_ACTIONABLES.md` claims all 🔴 P0 items are implemented (JWT signature verification,
+`premortem.md` claims all 🔴 P0 items are implemented (JWT signature verification,
 AWS secret encryption, tenant isolation documented, Helm templates, native-engine fake-success
 disabled, bandit key fix, PII fail-closed). I independently spot-checked three of these against
 current code on 2026-07-06 and they held up (`cryo/security/jwt_tokens.py` does real
@@ -74,7 +74,7 @@ two days before this doc.
 the doc say fixed," but "grep the current code and confirm it." Specifically re-check, since
 these are the ones a curious security-minded reader will check first:
 - `cryo/engines/native/engine.py` — confirm `NativeEngine.execute()`'s OPTIMIZE path still
-  can't fabricate `ok=True` success (per `PREMORTEM_ACTIONABLES.md` feature-level P0).
+  can't fabricate `ok=True` success (per `premortem.md` feature-level P0).
 - `cryo/governor/bandit.py` — confirm the confidence-gate key-mismatch fix actually landed.
 - `deploy/helm/cryo/templates/` — confirm real Deployment/Service/CronJob manifests exist, not
   just `Chart.yaml`/`values.yaml`, and that `helm install --dry-run` succeeds.
@@ -120,7 +120,7 @@ is far more disruptive than checking now). Verify:
 ## 2. P0/P1 — Scope narrowing for the v1 public surface
 
 This is the highest-leverage thing in this whole plan and the one most likely to be skipped
-under time pressure. `6_MONTH_PREMORTEM_ANALYSIS.md` already recommends *"target 10 features
+under time pressure. `premortem.md` already recommends *"target 10 features
 done right... before expanding the surface again"* — this section makes that concrete for a
 public launch specifically, where the audience is a stranger evaluating trust signals in one
 sitting, not an internal team who already trusts the roadmap.
@@ -129,12 +129,12 @@ sitting, not an internal team who already trusts the roadmap.
 
 Scanner · health grading (A–F) · planner (partition-aware chunking) · governor (load-aware
 Trino admission) · Trino engine · presets + assignment · bulk run · ad-hoc run/preview · audit
-log · run console · auth (JWT/OIDC) · cost estimate. This is the `6_MONTH_PREMORTEM_ANALYSIS.md`
+log · run console · auth (JWT/OIDC) · cost estimate. This is the `premortem.md`
 feature matrix's "Good" column, nearly verbatim.
 
 ### 2.2 Gate or clearly label "Experimental" (don't hide entirely — but don't present as done)
 
-- **Native Rust engine** (`cryo-native`/`cryo-engine`) — per `PREMORTEM_ACTIONABLES.md`, neither
+- **Native Rust engine** (`cryo-native`/`cryo-engine`) — per `premortem.md`, neither
   builds in CI today. Pick one of the two trees, delete the other (maintaining two competing
   unfinished Rust engines in a public repo reads as unfocused, not ambitious), and label
   whichever survives "experimental, not production-ready" in the README and in-app, until it has
@@ -142,7 +142,7 @@ feature matrix's "Good" column, nearly verbatim.
 - **Flink engine** — currently generates config only, doesn't submit to a cluster. Label as
   "config generation only" wherever it's exposed, don't imply execution.
 - **ABAC** (`cryo/security/abac.py` / `abac_enforcement.py`) — confirm current wiring status
-  (per `6_MONTH_PREMORTEM_ANALYSIS.md` C4 this was reportedly wired on maintenance-path in the
+  (per `premortem.md` C4 this was reportedly wired on maintenance-path in the
   2026-07 pass; re-verify per §1.2 above) and document exactly which paths it covers vs. doesn't.
 - **MCP server** — same auth model as the API, can trigger real runs; document this loudly in
   its own section so nobody points an LLM agent at it assuming it's read-only.
@@ -176,10 +176,10 @@ the first 15 minutes.
 
 | Signal | Current state | Target before launch |
 |---|---|---|
-| Migration history | 28 revisions in 5 days (per `git log` / `migrations/versions/`) | Squash to a single baseline migration for new installs, per `PREMORTEM_ACTIONABLES.md` P2 item already on file. A 28-file migration history for a 5-day-old repo is a specific, visible tell that this was AI-velocity-built, which invites extra scrutiny on everything else. |
+| Migration history | 28 revisions in 5 days (per `git log` / `migrations/versions/`) | Squash to a single baseline migration for new installs, per `premortem.md` P2 item already on file. A 28-file migration history for a 5-day-old repo is a specific, visible tell that this was AI-velocity-built, which invites extra scrutiny on everything else. |
 | `helm install` | Templates added per `6_MONTH...` N2, "ops runbook thin" | Actually run `helm install --dry-run` and, ideally, a real install against a kind/minikube cluster, before claiming "deployable to Kubernetes" in `README.md:1`. |
-| Dependency pinning | `pyiceberg>=0.11.0,<0.11.99`, `boto3>=1.34.0,<2` — already has ceilings (verified in `pyproject.toml`, better than `PREMORTEM_ACTIONABLES.md`'s "open-ended" claim from 2026-07-05) | Good — just confirm this holds and add the canary CI job against next-minor pyiceberg per the existing P1 recommendation. |
-| CI honesty | `ci.yml` runs gitleaks, ruff, mypy, pytest against real Postgres/Redis (per `PREMORTEM.md`'s own "what's not on this list" section — a genuine asset) | Keep as-is; this is one of the strongest existing credibility signals. Make sure the README's test-count claim (`~360 tests`) matches reality (`find tests -name "test_*.py"` currently shows 70 files / ~336 `def test_` — close enough, but re-verify at launch time, don't let it drift). |
+| Dependency pinning | `pyiceberg>=0.11.0,<0.11.99`, `boto3>=1.34.0,<2` — already has ceilings (verified in `pyproject.toml`, better than `premortem.md`'s "open-ended" claim from 2026-07-05) | Good — just confirm this holds and add the canary CI job against next-minor pyiceberg per the existing P1 recommendation. |
+| CI honesty | `ci.yml` runs gitleaks, ruff, mypy, pytest against real Postgres/Redis (per `premortem.md`'s own "what's not on this list" section — a genuine asset) | Keep as-is; this is one of the strongest existing credibility signals. Make sure the README's test-count claim (`~360 tests`) matches reality (`find tests -name "test_*.py"` currently shows 70 files / ~336 `def test_` — close enough, but re-verify at launch time, don't let it drift). |
 | Docs-vs-code drift | Found twice in one review pass (LICENSE claim, plus the premortems' own documented history of this exact pattern) | Do one honest pass through every doc in `docs/`, `README.md`, `PRODUCT.md` before launch, checking each "done"/"fixed" claim against a grep, not against another doc. |
 
 ---
@@ -188,7 +188,7 @@ the first 15 minutes.
 
 The current `README.md` reads as a feature inventory (accurate, but undifferentiated — a
 stranger can't tell in 30 seconds why this beats Amoro or a cron job). Per
-`COMPETITIVE_ANALYSIS_2026.md`, Cryo's actual wedge is narrow and real: **open-source,
+`research-and-roadmap.md`, Cryo's actual wedge is narrow and real: **open-source,
 self-hosted, Trino-first, load-aware admission, audit-grade.** The README should lead with that,
 not with the full feature list.
 
@@ -204,7 +204,7 @@ not with the full feature list.
   is opt-in, not default), Flink-primary streaming shops (engine is config-gen only), teams
   wanting a zero-config managed product (this is a thing you operate, not a SaaS).
 - Consider a comparison table in the README — a public-safe, simplified version of the internal
-  `COMPETITIVE_ANALYSIS_2026.md` §4 matrix. Keep it honest about gaps (Puffin stats, cost-benefit
+  `research-and-roadmap.md` §4 matrix. Keep it honest about gaps (Puffin stats, cost-benefit
   gating) rather than only showing favorable rows — a visibly honest gap list is itself a trust
   signal for this audience.
 
@@ -217,7 +217,7 @@ not with the full feature list.
   root; a contributor's first experience being a broken quick-start command is an easy way to
   lose a first-time contributor.
 - Add "good first issue" labels to a handful of real, scoped, low-risk backlog items from
-  `todo.md` / `PREMORTEM_ACTIONABLES.md` §🟢 P2 (e.g., the `aria-label` fix, the orphaned
+  `todo.md` / `premortem.md` §🟢 P2 (e.g., the `aria-label` fix, the orphaned
   `/jobs/:jobId` route link) — gives new contributors a real, low-stakes entry point.
 - Decide (per `docs/GOVERNANCE.md`, which already scopes this deliberately light — no PMC/CLA
   yet) whether that's still the right call for a public launch, or whether a lightweight CLA is
@@ -232,7 +232,7 @@ not with the full feature list.
 
 - Tag an actual `v0.1.0` (or similar pre-1.0 signal) rather than launching off a bare `main` —
   pre-1.0 versioning sets correct expectations given the acknowledged "~65% dependable" honest
-  self-score in `6_MONTH_PREMORTEM_ANALYSIS.md`.
+  self-score in `premortem.md`.
 - Turn on GitHub's Dependabot (or Renovate) for the open-ended-version dependencies flagged in
   §3, so drift is caught automatically going forward, not just at launch.
 - Turn on branch protection on `main` (required CI checks, no direct pushes) before making the
@@ -256,13 +256,13 @@ Status reflects the work in commits through `160d328` on `main`. Re-verify anyth
 - [x] `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue templates, PR template, `CHANGELOG.md` exist
       — see `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/ISSUE_TEMPLATE/{bug,feature,security,question}.md`,
       `.github/PULL_REQUEST_TEMPLATE.md`, `CHANGELOG.md`.
-- [x] Re-verified (not just re-read) all `PREMORTEM_ACTIONABLES.md` 🔴 P0 items against current
+- [x] Re-verified (not just re-read) all `premortem.md` 🔴 P0 items against current
       HEAD — see `docs/OSS_P0_REVERIFY_2026_07_07.md`. 6 of 7 GREEN by code + test evidence,
       1 requires a host with `helm` installed (see next item).
 - [ ] `helm install --dry-run` (ideally a real install) succeeds against the current chart
       **[DEFERRED — needs a host with `helm` CLI]**; the chart files exist (`deploy/helm/cryo/templates/`).
 - [x] Migrations squashed to a single baseline for new installs, or explicitly documented why
-      not — see `docs/MIGRATIONS_DECISION.md` (decision: don't squash; preserve option for v1.0.0).
+      not — see `docs/architecture.md` (decision: don't squash; preserve option for v1.0.0).
 - [x] Experimental features (native Rust engine, Flink engine, MCP, cost attribution) are
       labeled as such in-app and in docs, not presented as done — see
       `cryo/engines/native/engine.py` and `cryo/engines/flink/engine.py` module docstrings;
@@ -307,8 +307,8 @@ worth open-sourcing; it needs four weeks of the repo telling the truth about wha
 
 | Topic | Deeper detail already lives in |
 |---|---|
-| Security/auth/tenancy hardening detail | `docs/PREMORTEM.md`, `docs/PREMORTEM_ACTIONABLES.md` |
-| Full feature-by-feature production-readiness matrix | `docs/6_MONTH_PREMORTEM_ANALYSIS.md` |
-| Competitive landscape, feature backlog vs. LakeOps/Amoro/Databricks | `docs/COMPETITIVE_ANALYSIS_2026.md` |
-| Deployment/DR/backup operational detail | `docs/DEPLOYMENT.md` |
+| Security/auth/tenancy hardening detail | `premortem.md`, `docs/premortem.md` |
+| Full feature-by-feature production-readiness matrix | `docs/premortem.md` |
+| Competitive landscape, feature backlog vs. LakeOps/Amoro/Databricks | `docs/research-and-roadmap.md` |
+| Deployment/DR/backup operational detail | `docs/deployment.md` |
 | Current governance model | `docs/GOVERNANCE.md` (needs its `LICENSE` link fixed per §1.1) |

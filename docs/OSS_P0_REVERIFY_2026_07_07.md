@@ -1,13 +1,13 @@
 # OSS-Readiness — Premortem P0 Re-verification (2026-07-07)
 
-Independent re-check of the seven `PREMORTEM_ACTIONABLES.md` 🔴 P0 items that
+Independent re-check of the seven `premortem.md` 🔴 P0 items that
 `docs/OSS_READINESS.md` §1.2 flagged for re-verification the week of launch. Not a re-audit
 — a 30-minute grep pass against current `main` (HEAD = commit `160d328`, working tree clean
 at time of writing). Cross-reference table at the bottom.
 
 ## 1. JWT signature verification uses explicit algorithms
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "JWT signature verification (no `verify_signature=False`
+`docs/premortem.md` claim: "JWT signature verification (no `verify_signature=False`
 escape hatch)."
 
 ```
@@ -24,7 +24,7 @@ the OIDC RS256 path exercises `jwks.json` cache invalidation. All pass.
 
 ## 2. AWS secret encryption at rest uses Fernet
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "AWS integration `secret_access_key` encrypted via
+`docs/premortem.md` claim: "AWS integration `secret_access_key` encrypted via
 `cryo.security.crypto`."
 
 ```
@@ -42,7 +42,7 @@ exposes the field. Tests: `tests/test_security.py` and `tests/test_aws_integrati
 
 ## 3. Tenant isolation is wired through the request context
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "Tenant scoping enforced on every query path
+`docs/premortem.md` claim: "Tenant scoping enforced on every query path
 (scoped_select, get_scoped_resource)."
 
 ```
@@ -57,7 +57,7 @@ evaluator doesn't take this as a default-on guarantee that isn't there.
 
 ## 4. Helm chart has real Deployment/Service/CronJob manifests
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "Helm templates exist (Deployment, Service, etc.)."
+`docs/premortem.md` claim: "Helm templates exist (Deployment, Service, etc.)."
 
 ```
 $ ls deploy/helm/cryo/templates/
@@ -79,7 +79,7 @@ item is **NOT GREEN**; the rest of the chart is, but the dry-run needs a real ru
 
 ## 5. Native Rust engine cannot fabricate `ok=True` success
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "`NativeEngine.execute()`'s OPTIMIZE path can't
+`docs/premortem.md` claim: "`NativeEngine.execute()`'s OPTIMIZE path can't
 fabricate a success result."
 
 ```
@@ -102,7 +102,7 @@ Tests: `tests/test_native_engine.py` (parity tests against the Spark renderer) a
 
 ## 6. Governor bandit confidence-gate key-mismatch fix
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "Bandit key-mismatch falls back to the static
+`docs/premortem.md` claim: "Bandit key-mismatch falls back to the static
 config (does not pretend to have explored an arm it didn't)."
 
 ```
@@ -119,7 +119,7 @@ Tests: `tests/test_governor_bandit_state.py` + the integration suite under
 
 ## 7. PII fail-closed semantics
 
-`docs/PREMORTEM_ACTIONABLES.md` claim: "PII gate requires a role check and fails closed on
+`docs/premortem.md` claim: "PII gate requires a role check and fails closed on
 classifier error."
 
 ```
@@ -158,5 +158,5 @@ pass.
 
 Cross-refs:
 - [`docs/OSS_READINESS.md` §1.2](./OSS_READINESS.md#12-confirm-the-premortem-p0-fixes-are-still-true-at-head-not-just-as-of-2026-07-05)
-- [`docs/PREMORTEM_ACTIONABLES.md`](./PREMORTEM_ACTIONABLES.md) — original audit
-- [`docs/PREMORTEM.md`](./PREMORTEM.md) — scenario-level reasoning
+- [`docs/premortem.md`](./premortem.md) — original audit
+- [`premortem.md`](./premortem.md) — scenario-level reasoning

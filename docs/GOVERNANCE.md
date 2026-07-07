@@ -5,7 +5,7 @@ Cryo is open source under the [Apache License 2.0](../LICENSE) at
 
 This document describes **current** governance. It intentionally does **not** establish a
 full Apache-style PMC, CLA, or foundation structure — that overhead is deferred until external
-contributor volume justifies it (see `docs/PERFORMANCE_AND_OPENNESS.md` Part 4).
+contributor volume justifies it (see [`research-and-roadmap.md`](./research-and-roadmap.md) Part 5).
 
 ## How decisions are made today
 

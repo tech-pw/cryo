@@ -78,8 +78,8 @@ aren't consolidating onto a single vendor's compute.
 - **Teams wanting a zero-config managed product.** This is a thing you operate — Kubernetes,
   Postgres, Redis, an Iceberg catalog — not a SaaS you sign up for.
 - **Anyone needing the native Rust engine for production.** It's experimental, off by default,
-  and not exercised by CI (see `docs/RUST_ENGINE_PRODUCTION_HARDENING.md` and
-  `cryo/engines/native/engine.py`). Use Trino or Spark.
+   and not exercised by CI (see [`architecture.md` §1.5](./docs/architecture.md) and
+   `cryo/engines/native/engine.py`). Use Trino or Spark.
 - **Heavy "advanced" / AI / FinOps / tiering / anomaly dashboards out of the box.** These are
   partially implemented and become useful only once query-log ingestion is enabled (`Settings`
   → `telemetry_*`). Until then, expect empty charts, not broken ones.
@@ -137,7 +137,7 @@ which surfaces are launch-tier versus behind-flags.
 
 For an honest accounting of what's solid, what's partial, and what isn't shipped yet, see
 [`docs/current-state.md`](./docs/current-state.md). For the production-readiness reasoning
-backing this `v0.x` floor, see [`docs/PREMORTEM.md`](./docs/PREMORTEM.md).
+backing this `v0.x` floor, see [`docs/premortem.md`](./docs/premortem.md).
 
 ## Quick start
 
@@ -199,8 +199,9 @@ not just inspired-by, but citable:
 | [`lld.md`](./lld.md) | Low-level design: schema, interfaces, planner algorithm, API surface |
 | [`agents.md`](./agents.md) / [`AGENTS.md`](./AGENTS.md) | Guardrails for contributors and AI agents, including the parity checklist |
 | [`todo.md`](./todo.md) | Phased, checkbox task breakdown (P0–P7) |
-| [`docs/`](./docs/) | Execution plan, recommendations, competitive analysis — start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md) |
+| [`docs/`](./docs/) | Execution plan, recommendations, competitive analysis — start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md). Full index in [`docs/README.md`](./docs/README.md) |
 | [`docs/local-docker-compose.md`](./docs/local-docker-compose.md) | Three-file Compose layout (Cryo / dev datalake / observability) |
+| [`docs/RATING_2026.md`](./docs/RATING_2026.md) | 2026-07-07 deep rating of the codebase across 25 attributes (UI / a11y / usability / engineering / experience) |
 
 ## Tech stack
 
