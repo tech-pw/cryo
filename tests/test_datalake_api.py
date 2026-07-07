@@ -13,7 +13,7 @@ from cryo.api.app import create_app
 from cryo.api.deps import get_tenant_session
 from cryo.api.schemas import AssignmentSelection, MaintenanceRunRequest
 from cryo.config import Settings
-from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun
+from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Preset
 from cryo.db.repositories.presets import SelectionResult
 from tests.auth_helpers import OPERATOR_HEADERS as AUTH_HEADERS
 from tests.auth_helpers import VIEWER_HEADERS, ensure_test_jwt_secret
@@ -541,6 +541,7 @@ def test_websocket_polling_fallback_when_event_bus_unavailable(monkeypatch: Any)
 
 def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
     destination_id = uuid.uuid4()
+    preset_id = uuid.uuid4()
     table_id = uuid.uuid4()
     run_id = uuid.uuid4()
     job_id = uuid.uuid4()
@@ -567,6 +568,17 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
         def get(self, model: object, item_id: uuid.UUID) -> object | None:
             if model is Destination and item_id == destination_id:
                 return Destination(id=destination_id, name="trino", engine="trino", config={})
+            if model is Preset and item_id == preset_id:
+                return Preset(
+                    id=preset_id,
+                    name="standard",
+                    destination_id=destination_id,
+                    mode="standard",
+                    operations=[],
+                    params={},
+                    guardrails={},
+                    enabled=True,
+                )
             return None
 
         def add(self, model: object) -> None:
@@ -605,6 +617,7 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
                 filter={"field": "grade", "op": "in", "value": ["C", "D", "F"]},
             ),
             destination_id=destination_id,
+            preset_id=preset_id,
             mode="standard",
             trigger="web",
         ),

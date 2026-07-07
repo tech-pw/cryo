@@ -29,8 +29,9 @@ const destination: DestinationRead = {
 };
 
 describe("BulkAssignBar", () => {
-  it("runs with the filter selection when all matching is active", async () => {
+  it("disables Run until a preset is explicitly selected, then runs with the chosen preset", async () => {
     const onRun = vi.fn();
+    const onAssign = vi.fn();
     const filter = leaf("grade", "in", ["D", "F"]);
     render(
       <BulkAssignBar
@@ -38,7 +39,7 @@ describe("BulkAssignBar", () => {
         presets={[preset]}
         destinations={[destination]}
         onClear={vi.fn()}
-        onAssign={vi.fn()}
+        onAssign={onAssign}
         onPreview={vi.fn()}
         onRun={onRun}
       />
@@ -49,13 +50,26 @@ describe("BulkAssignBar", () => {
     expect(
       screen.getByText("Actions now apply to every table matching the current filters, across all pages.")
     ).toBeInTheDocument();
+
+    const runButton = screen.getByText("Run now").closest("button")!;
+    expect(runButton.disabled).toBe(true);
+
+    // Simulate explicit preset selection via the antd Select.
+    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
+    fireEvent.mouseDown(presetSelect);
+    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
+
+    expect(onAssign).toHaveBeenCalledWith("preset-1");
+
+    const enabledRunButton = screen.getByText("Run now").closest("button")!;
+    expect(enabledRunButton.disabled).toBe(false);
     fireEvent.click(screen.getByText("Run now"));
     expect(onRun).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
   });
 
-  it("labels preset and engine options with useful context", () => {
+  it("labels preset and engine options with useful context", async () => {
     render(
       <BulkAssignBar
         selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
@@ -68,11 +82,14 @@ describe("BulkAssignBar", () => {
       />
     );
 
-    expect(screen.getByText("trino-standard · Default local Trino maintenance profile")).toBeInTheDocument();
+    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
+    fireEvent.mouseDown(presetSelect);
+    fireEvent.click(await screen.findByText("trino-standard · Default local Trino maintenance profile"));
+    expect(screen.getAllByText("trino-standard · Default local Trino maintenance profile").length).toBeGreaterThan(0);
     expect(screen.getByText("trino-main · Trino")).toBeInTheDocument();
   });
 
-  it("labels native engine destinations clearly", () => {
+  it("labels native engine destinations clearly", async () => {
     const nativeDestination: DestinationRead = {
       ...destination,
       id: "dest-native",
@@ -90,6 +107,10 @@ describe("BulkAssignBar", () => {
         onRun={vi.fn()}
       />
     );
+
+    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
+    fireEvent.mouseDown(presetSelect);
+    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
 
     expect(screen.getByText("native-datafusion · Native (iceberg-rust)")).toBeInTheDocument();
   });

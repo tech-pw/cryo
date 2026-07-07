@@ -193,7 +193,7 @@ Per `architecture.md` §1.5 and `architecture.md` §1.5.
 - [x] `EngineType.NATIVE`; `RenderedStatement.payload` field; `cryo/engines/native/engine.py` adapter.
   - [x] `cryo-engine/` Rust crate — JSON stdin/stdout protocol, progress JSONL on stderr.
 - [x] Worker subprocess adapter (`cryo/engines/native/runner.py`) + source catalog config at execution time.
-- [x] Default platform preset `default-native-deep` (deep, no cron) seeded on fresh migrate.
+- [x] Native preset `default-native-deep` (deep, no cron) seeded on fresh migrate; **not** a platform default (`is_default = false` as of migration `20260707_0020`).
 - [~] Full write operations via iceberg-rust — `expire_snapshots` commits; compaction/orphans/manifests
      still partial upstream. See `architecture.md` §1.5 checklist.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.

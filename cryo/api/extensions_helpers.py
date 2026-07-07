@@ -235,11 +235,13 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             raise ValueError("run_preset requires confirm=true")
         table_id = uuid.UUID(str(args["table_id"]))
         destination_id = uuid.UUID(str(args["destination_id"]))
-        preset_id = uuid.UUID(str(args["preset_id"])) if args.get("preset_id") else None
+        if not args.get("preset_id"):
+            raise ValueError("run_preset requires an explicit preset_id")
+        preset_id = uuid.UUID(str(args["preset_id"]))
 
         if session.get(Destination, destination_id) is None:
             raise KeyError("destination not found")
-        if preset_id and session.get(Preset, preset_id) is None:
+        if session.get(Preset, preset_id) is None:
             raise KeyError("preset not found")
         table = session.get(Table, table_id)
         if table is None:
