@@ -56,10 +56,16 @@ def _session(creds: AWSCredentials | None) -> Any:
     return boto3.Session(**kwargs)
 
 
+def boto_session_for_config(config: S3BucketLogConfig) -> Any | None:
+    """Build a boto3 Session from a bucket's own credentials, or ``None`` if it has none."""
+    creds = credentials_for_config(config)
+    return _session(creds) if creds is not None else None
+
+
 def s3_client_for_config(config: S3BucketLogConfig) -> Any | None:
     """Build a boto3 S3 client from a bucket's own credentials, or ``None`` if it has none."""
-    creds = credentials_for_config(config)
-    return _session(creds).client("s3") if creds is not None else None
+    session = boto_session_for_config(config)
+    return session.client("s3") if session is not None else None
 
 
 def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[S3BucketLogConfig]:
