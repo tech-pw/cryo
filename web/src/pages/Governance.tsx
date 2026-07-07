@@ -684,7 +684,7 @@ export const Governance = () => {
         onCancel={() => setApprovalModalOpen(false)}
         onOk={() => approvalForm.submit()}
         confirmLoading={requestApproval.isPending}
-        destroyOnHidden
+
       >
         <Form
           form={approvalForm}
@@ -724,7 +724,7 @@ export const Governance = () => {
         onCancel={() => setPolicyModal(null)}
         onOk={() => policyForm.submit()}
         confirmLoading={saveTierPolicy.isPending}
-        destroyOnHidden
+
       >
         <Form<TierPolicyFormValues>
           form={policyForm}

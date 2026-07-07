@@ -415,7 +415,7 @@ const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose
       open={Boolean(preset)}
       onClose={onClose}
       size={720}
-      destroyOnHidden
+
     >
       <Space orientation="vertical" size={12} className="full-width">
         <Typography.Text type="secondary">

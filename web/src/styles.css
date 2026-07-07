@@ -247,6 +247,31 @@ body {
   .mobile-only { display: none !important; }
 }
 
+/* Virtualized table styling */
+.virtualized-table {
+  width: 100%;
+}
+.virtualized-table-header {
+  display: grid;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--table-header);
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 12px;
+}
+.virtualized-table-row {
+  display: grid;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  background: var(--bg);
+}
+.virtualized-table-row:hover {
+  background: var(--surface-sunken);
+}
+
 .page-header {
   min-height: 48px;
   display: flex;

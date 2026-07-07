@@ -113,6 +113,16 @@ class FlinkEngine:
             duration_ms=int((time.monotonic() - start) * 1000),
         )
 
+    def execute_plan(
+        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
+    ) -> list[ExecResult]:
+        """Execute a plan by running each rendered statement.
+
+        Flink generates config rather than executing, so this delegates to
+        :meth:`execute` for each statement and returns the collected results.
+        """
+        return [self.execute(stmt, ctx) for stmt in self.render(plan)]
+
     def get_config(self, plan: MaintenancePlan) -> FlinkMaintenanceConfig:
         """Get the FlinkMaintenanceConfig for a plan (for direct inspection)."""
         return FlinkMaintenanceConfig.from_cryo_params(

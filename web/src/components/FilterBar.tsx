@@ -179,8 +179,8 @@ export const FilterBar = ({
           </Typography.Text>
           {chips.length ? (
             <Space size={[6, 6]} wrap className="filter-bar__chips">
-              {chips.map((chip) => (
-                <Tag key={chip.key} closable onClose={chip.onRemove}>
+              {chips.map((chip, idx) => (
+                <Tag key={`${chip.key ?? "chip"}-${idx}`} closable onClose={chip.onRemove}>
                   {chip.label}
                 </Tag>
               ))}
