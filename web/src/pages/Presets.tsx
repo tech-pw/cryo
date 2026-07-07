@@ -34,7 +34,14 @@ import {
 import type { DestinationRead, PresetRead, PresetWrite, UUID } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
 import { CronInput } from "../components/CronInput";
+import { PresetConfigFields } from "../components/presets/PresetConfigFields";
 import { EmptyState, PageHeader } from "../components/common";
+import {
+  formValuesToPresetWrite,
+  formatPresetSummary,
+  presetToFormValues,
+  type PresetFormValues
+} from "../lib/presetForm";
 import { FilterBar } from "../components/FilterBar";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -110,6 +117,14 @@ export const Presets = () => {
           },
           { title: "Mode", dataIndex: "mode" },
           {
+            title: "Configuration",
+            render: (_, row) => (
+              <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+                {formatPresetSummary(row)}
+              </Typography.Text>
+            )
+          },
+          {
             title: "Engine",
             render: (_, row) => {
               const destination = destinations.data?.find((item) => item.id === row.destination_id);
@@ -183,44 +198,16 @@ const PresetDrawer = ({
   onClose: () => void;
   onSave: (body: PresetWrite) => void;
 }) => {
-  const [form] = Form.useForm();
+  const [form] = Form.useForm<PresetFormValues>();
 
   return (
     <Drawer title={preset ? "Edit preset" : "New preset"} size="large" open={open} onClose={onClose} destroyOnHidden>
       <Form
         form={form}
         layout="vertical"
-        initialValues={{
-          name: preset?.name,
-          description: preset?.description,
-          destination_id: preset?.destination_id ?? destinations[0]?.id,
-          mode: preset?.mode ?? "standard",
-          operations: preset?.operations?.length ? preset.operations : operations,
-          schedule_cron: preset?.schedule_cron,
-          priority: preset?.priority ?? 100,
-          enabled: preset?.enabled ?? true,
-          is_default: preset?.is_default ?? false,
-          params: JSON.stringify(preset?.params ?? { min_small_files: 128, chunk_size_gb: 100 }, null, 2),
-          guardrails: JSON.stringify(preset?.guardrails ?? { cooldown_hours: 24 }, null, 2)
-        }}
+        initialValues={presetToFormValues(preset, destinations)}
         onFinish={(values) => {
-          try {
-            onSave({
-              name: values.name,
-              description: values.description || null,
-              destination_id: values.destination_id,
-              mode: values.mode,
-              operations: values.operations,
-              schedule_cron: values.schedule_cron || null,
-              priority: values.priority,
-              enabled: values.enabled,
-              is_default: values.is_default,
-              params: JSON.parse(values.params || "{}"),
-              guardrails: JSON.parse(values.guardrails || "{}")
-            });
-          } catch {
-            message.error("Params and guardrails must be valid JSON.");
-          }
+          onSave(formValuesToPresetWrite(values, preset));
         }}
       >
         <Form.Item name="name" label="Name" rules={[{ required: true }]}>
@@ -270,12 +257,7 @@ const PresetDrawer = ({
         <Form.Item name="schedule_cron" label="Schedule cron" rules={[{ validator: cronFormValidator({ allowEmpty: true }) }]}>
           <CronInput allowEmpty />
         </Form.Item>
-        <Form.Item name="params" label="Params JSON">
-          <Input.TextArea rows={6} className="mono-input" />
-        </Form.Item>
-        <Form.Item name="guardrails" label="Guardrails JSON">
-          <Input.TextArea rows={5} className="mono-input" />
-        </Form.Item>
+        <PresetConfigFields destinations={destinations} />
         <Button type="primary" htmlType="submit" loading={saving}>
           Save preset
         </Button>

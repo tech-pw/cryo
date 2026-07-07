@@ -119,6 +119,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       qualified `catalog.schema.table` identifiers on API/UI; `/tables?source=` deep link from Catalogs.
 - [x] **PlanPreview** modal (per-table Trino/Spark SQL + chunk/partition/load estimate).
 - [x] **Presets** editor (operations/params/schedule/rules/guardrails) + **Simulator**.
+- [x] Preset drawer uses described fields for params/guardrails instead of raw JSON text areas.
 - [x] **Runs / Live Console**: WebSocket; per-engine concurrency gauges; job rows; log drawer.
 - [x] **Datalake Health** dashboard (grade dist, cost by schema, drift, top offenders, totals).
 - [x] **Cost & Savings** page at `/cost` (canonical full experience): waterfall, savings by op, schema
