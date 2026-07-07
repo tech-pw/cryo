@@ -306,6 +306,98 @@ export interface AWSUsageResponse {
   price_source?: string | null;
 }
 
+export interface AWSCostInsightConfigRead {
+  id: UUID;
+  source_id: UUID;
+  cur_bucket?: string | null;
+  cur_prefix?: string | null;
+  cur_report_name?: string | null;
+  fixture_path?: string | null;
+  inventory_bucket?: string | null;
+  inventory_prefix?: string | null;
+  inventory_format: string;
+  access_key_id?: string | null;
+  enabled: boolean;
+  last_ingested_at?: string | null;
+  last_ingested_through?: string | null;
+  last_ingest_ok?: boolean | null;
+  last_ingest_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AWSCostInsightConfigWrite {
+  cur_bucket?: string | null;
+  cur_prefix?: string | null;
+  cur_report_name?: string | null;
+  fixture_path?: string | null;
+  inventory_bucket?: string | null;
+  inventory_prefix?: string | null;
+  inventory_format?: string;
+  access_key_id?: string | null;
+  secret_access_key?: string | null;
+  enabled?: boolean;
+}
+
+export interface AWSCostInsightConfigPatch {
+  cur_bucket?: string | null;
+  cur_prefix?: string | null;
+  cur_report_name?: string | null;
+  fixture_path?: string | null;
+  inventory_bucket?: string | null;
+  inventory_prefix?: string | null;
+  inventory_format?: string;
+  access_key_id?: string | null;
+  secret_access_key?: string | null;
+  enabled?: boolean;
+}
+
+export interface AWSCostIngestResponse {
+  rows_ingested: number;
+  files_processed: number;
+  through_date?: string | null;
+  inventory_date?: string | null;
+  error?: string | null;
+}
+
+export interface CostByBucketItem {
+  bucket: string;
+  total_cost_usd: number;
+  line_count: number;
+  last_usage_date?: string | null;
+}
+
+export interface CostByBucketResponse {
+  source_id: UUID;
+  start?: string | null;
+  end?: string | null;
+  total_cost_usd: number;
+  items: CostByBucketItem[];
+}
+
+export interface CostDailySeriesItem {
+  usage_date: string;
+  total_cost_usd: number;
+}
+
+export interface CostDailySeriesResponse {
+  source_id: UUID;
+  items: CostDailySeriesItem[];
+}
+
+export interface SizeByPrefixItem {
+  table_prefix: string;
+  size_bytes: number;
+  object_count: number;
+  last_modified?: string | null;
+}
+
+export interface SizeByPrefixResponse {
+  source_id: UUID;
+  inventory_date?: string | null;
+  items: SizeByPrefixItem[];
+}
+
 export interface PaginatedTables {
   items: TableRead[];
   total: number;
@@ -734,4 +826,94 @@ export interface ObservationCompactResponse {
   rows: number;
   bytes_in: number;
   bytes_out: number;
+}
+
+// ============================================================================
+// Puffin-backed column sketches (FORMATS '26, arXiv:2605.30308)
+// ============================================================================
+
+export interface ColumnSketchBlob {
+  path: string;
+  size: number;
+  offset: number;
+  sketch_type: string;
+}
+
+export interface ColumnSketchRead {
+  field_type?: string | null;
+  ndv_estimate: number;
+  quantiles: Record<string, number>;
+  sketch_count: number;
+  puffin_blobs: ColumnSketchBlob[];
+}
+
+export interface ColumnStatsResponse {
+  table_id: UUID;
+  columns: Record<string, ColumnSketchRead>;
+}
+
+// ============================================================================
+// Silent-data-loss detector (arXiv:2604.20081)
+// ============================================================================
+
+export interface SilentDataLossReportRead {
+  table_id: UUID;
+  snapshot_id: number | null;
+  orphan_data_files: string[];
+  orphan_size_bytes: number;
+  missing_files: string[];
+  detected_at: string;
+  root_cause: string;
+  is_clean: boolean;
+}
+
+export interface SilentDataLossRepairResponse {
+  table_id: UUID;
+  audit_log_id: number | null;
+  status: string;
+  message: string;
+}
+
+// ============================================================================
+// Variance-aware QPP (CLOUD 2026, arXiv:2606.03464)
+// ============================================================================
+
+export interface QPPFeaturesPayload {
+  partition_count: number;
+  files_scanned: number;
+  is_cached: boolean;
+  cotenant_load_pct: number;
+  hour_of_day: number;
+  day_of_week: number;
+}
+
+export interface QPPPredictRequest {
+  table_id: UUID;
+  query_text?: string | null;
+  features: QPPFeaturesPayload;
+}
+
+export interface QPPPredictResponse {
+  table_id: UUID;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  confidence: number;
+  admit: boolean;
+  target_p95_ms: number;
+  exceeded_tolerance: boolean;
+}
+
+export interface QPPObservationPayload {
+  table_id: UUID;
+  actual_p95_ms: number;
+  features: QPPFeaturesPayload;
+}
+
+export interface QPPConfidenceResponse {
+  observations: number;
+  confidence: number;
+  min_observations: number;
+  using_trained_model: boolean;
+  qpp_enabled: boolean;
 }

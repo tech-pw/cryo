@@ -144,9 +144,9 @@ def load_skillset(session: Session, name: str) -> Skillset:
         return seeded
 
     row = session.scalar(
-        select(SkillsetRow).where(
-            SkillsetRow.name == name, SkillsetRow.is_active.is_(True)
-        ).limit(1)
+        select(SkillsetRow)
+        .where(SkillsetRow.name == name, SkillsetRow.is_active.is_(True))
+        .limit(1)
     )
     if row is not None:
         return Skillset.from_row(row)
@@ -187,9 +187,7 @@ def register_skillset(session: Session, skillset: Skillset) -> Skillset:
 
     if skillset.is_active:
         session.execute(
-            update(SkillsetRow)
-            .where(SkillsetRow.name == skillset.name)
-            .values(is_active=False)
+            update(SkillsetRow).where(SkillsetRow.name == skillset.name).values(is_active=False)
         )
 
     if existing is not None:
@@ -218,18 +216,12 @@ def register_skillset(session: Session, skillset: Skillset) -> Skillset:
 def set_active_skillset(session: Session, name: str, version: str) -> Skillset:
     """Activate a specific (name, version). Deactivates all others under name."""
     target = session.scalar(
-        select(SkillsetRow).where(
-            SkillsetRow.name == name, SkillsetRow.version == version
-        )
+        select(SkillsetRow).where(SkillsetRow.name == name, SkillsetRow.version == version)
     )
     if target is None:
         raise LookupError(f"Skillset {name}@{version} not found")
 
-    session.execute(
-        update(SkillsetRow)
-        .where(SkillsetRow.name == name)
-        .values(is_active=False)
-    )
+    session.execute(update(SkillsetRow).where(SkillsetRow.name == name).values(is_active=False))
     target.is_active = True
     session.flush()
     session.commit()
@@ -240,9 +232,7 @@ def list_skillsets(session: Session) -> list[Skillset]:
     """Return every skillset version, newest first."""
     _ensure_builtin_default(session)
     session.commit()
-    rows = session.scalars(
-        select(SkillsetRow).order_by(SkillsetRow.created_at.desc())
-    ).all()
+    rows = session.scalars(select(SkillsetRow).order_by(SkillsetRow.created_at.desc())).all()
     return [Skillset.from_row(row) for row in rows]
 
 

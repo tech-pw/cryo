@@ -2500,3 +2500,18 @@ textarea.mono-input {
   color: var(--ink-faint);
 }
 
+.cost-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.cost-insights-source-card .ant-statistic-content {
+  font-size: 14px;
+}
+
+.cost-insights-source-card .ant-statistic-title {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+

@@ -31,9 +31,7 @@ def test_table_in_source_scope() -> None:
         config={},
         maintenance_schema_names=["analytics"],
     )
-    in_scope = Table(
-        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events"
-    )
+    in_scope = Table(id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events")
     out_scope = Table(id=uuid4(), source_id=source.id, schema_name="staging", table_name="raw")
     assert table_in_source_scope(in_scope, source)
     assert not table_in_source_scope(out_scope, source)

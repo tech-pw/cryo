@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -158,6 +158,108 @@ class AWSUsageResponse(BaseModel):
     object_count: int | None = None
     price_per_gb_month: float | None = None
     price_source: str | None = None
+
+
+class AWSCostInsightConfigCreate(BaseModel):
+    """Opt-in config for real CUR + S3 Inventory-based cost attribution.
+
+    Separated from ``AWSIntegration`` because CUR and Inventory require billing-admin setup on
+    the AWS side and the data comes from delivered report files, not live API calls. The
+    existing ``AWSIntegration`` is the free-tier CloudWatch + Pricing List path; this is the
+    CE-grade upgrade for organizations willing to pay one-time setup cost.
+    """
+
+    cur_bucket: str | None = None
+    cur_prefix: str | None = None
+    cur_report_name: str | None = None
+    fixture_path: str | None = None
+    inventory_bucket: str | None = None
+    inventory_prefix: str | None = None
+    inventory_format: str = "CSV"
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    enabled: bool = True
+
+
+class AWSCostInsightConfigPatch(BaseModel):
+    cur_bucket: str | None = None
+    cur_prefix: str | None = None
+    cur_report_name: str | None = None
+    fixture_path: str | None = None
+    inventory_bucket: str | None = None
+    inventory_prefix: str | None = None
+    inventory_format: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    enabled: bool | None = None
+
+
+class AWSCostInsightConfigRead(OrmModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    cur_bucket: str | None = None
+    cur_prefix: str | None = None
+    cur_report_name: str | None = None
+    fixture_path: str | None = None
+    inventory_bucket: str | None = None
+    inventory_prefix: str | None = None
+    inventory_format: str = "CSV"
+    access_key_id: str | None = None
+    enabled: bool
+    last_ingested_at: datetime | None = None
+    last_ingested_through: datetime | None = None
+    last_ingest_ok: bool | None = None
+    last_ingest_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AWSCostIngestResponse(BaseModel):
+    """Result of a CUR / Inventory ingest run."""
+
+    rows_ingested: int
+    files_processed: int
+    through_date: date | None = None
+    inventory_date: date | None = None
+    error: str | None = None
+
+
+class CostByBucketItem(BaseModel):
+    bucket: str
+    total_cost_usd: float
+    line_count: int
+    last_usage_date: str | None = None
+
+
+class CostByBucketResponse(BaseModel):
+    source_id: uuid.UUID
+    start: date | None = None
+    end: date | None = None
+    total_cost_usd: float = 0
+    items: list[CostByBucketItem] = Field(default_factory=list)
+
+
+class CostDailySeriesItem(BaseModel):
+    usage_date: date
+    total_cost_usd: float
+
+
+class CostDailySeriesResponse(BaseModel):
+    source_id: uuid.UUID
+    items: list[CostDailySeriesItem] = Field(default_factory=list)
+
+
+class SizeByPrefixItem(BaseModel):
+    table_prefix: str
+    size_bytes: int
+    object_count: int
+    last_modified: str | None = None
+
+
+class SizeByPrefixResponse(BaseModel):
+    source_id: uuid.UUID
+    inventory_date: date | None = None
+    items: list[SizeByPrefixItem] = Field(default_factory=list)
 
 
 class DestinationCreate(BaseModel):

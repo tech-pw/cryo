@@ -178,11 +178,7 @@ def _filter_ids_in_maintenance_scope(
         .join(Source, Table.source_id == Source.id)
         .where(Table.id.in_(table_ids), Table.is_active.is_(True))
     )
-    return [
-        table.id
-        for table, source in rows
-        if table_in_source_scope(table, source)
-    ]
+    return [table.id for table, source in rows if table_in_source_scope(table, source)]
 
 
 def assign_tables(

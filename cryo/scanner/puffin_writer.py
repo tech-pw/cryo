@@ -35,7 +35,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cryo.config import get_settings
 from cryo.scanner.sketches import (
@@ -108,9 +108,7 @@ def select_hot_columns(
         field_id = col.get("field_id")
         value_count = int(col.get("value_count") or 0)
         query_freq = (
-            partition_cols_by_field.get(int(field_id), 0.0)
-            if field_id is not None
-            else 0.0
+            partition_cols_by_field.get(int(field_id), 0.0) if field_id is not None else 0.0
         )
         hot_score = query_freq * 1_000_000 + (
             1.0 if value_count > _HOT_COLUMN_VALUE_COUNT_THRESHOLD else 0.0
@@ -278,11 +276,11 @@ def decode_puffin_blob(payload: bytes) -> dict[str, dict[str, Any]]:
             raise ValueError("truncated Puffin payload")
         column_name = name_table.get(col_id, f"field_{col_id}")
         if type_u8 == _PUFFIN_RECORD_THETA:
-            sketch = deserialize_theta(sketch_bytes)
-            out.setdefault(column_name, {})["theta"] = sketch
+            theta_sketch = deserialize_theta(sketch_bytes)
+            cast(dict[str, Any], out.setdefault(column_name, {}))["theta"] = theta_sketch
         elif type_u8 == _PUFFIN_RECORD_KLL:
-            sketch = deserialize_kll(sketch_bytes)
-            out.setdefault(column_name, {})["kll"] = sketch
+            kll_sketch = deserialize_kll(sketch_bytes)
+            cast(dict[str, Any], out.setdefault(column_name, {}))["kll"] = kll_sketch
         else:
             raise ValueError(f"unknown sketch type byte {type_u8}")
     return out
@@ -346,20 +344,16 @@ def _synthesize_distinct_values(col: dict[str, Any], n: int) -> Iterable[object]
     yield from range(n)
 
 
-def _interpolate_range(
-    lo: Any, hi: Any, *, samples: int
-) -> Iterable[float]:
+def _interpolate_range(lo: Any, hi: Any, *, samples: int) -> list[float]:
     """Return a small list of float samples between ``lo`` and ``hi`` for KLL seeding."""
     if samples <= 0:
-        return ()
+        return []
     if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi >= lo:
         span = float(hi) - float(lo)
         if span <= 0:
-            return (float(lo),)
-        for i in range(samples):
-            yield float(lo) + (span * i) / max(1, samples - 1)
-        return
-    return (0.0,)
+            return [float(lo)]
+        return [float(lo) + (span * i) / max(1, samples - 1) for i in range(samples)]
+    return [0.0]
 
 
 def _encode_payload(

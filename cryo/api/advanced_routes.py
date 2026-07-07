@@ -13,9 +13,9 @@ Endpoints for:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -24,7 +24,28 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from cryo.api.deps import SessionDep, require_editor, require_viewer
+from cryo.api.schemas import (
+    CompactionCandidateRead,
+    CompactionCandidatesResponse,
+    ObservationCompactResponse,
+    ObservationEventRead,
+    ObservationSearchResponse,
+    ObservationStatsResponse,
+    PlanVerdictRead,
+    PlanVerifyRequest,
+    PlanViolationRead,
+    SkillsetListResponse,
+    SkillsetOutcomeRead,
+    SkillsetOutcomeWrite,
+    SkillsetRead,
+    SkillsetRollbackRequest,
+    SkillsetWrite,
+    UnionableResponse,
+    UnionScoreRead,
+)
 from cryo.api.security import Principal
+from cryo.config import get_settings
+from cryo.observability.observation_lakehouse import ObservationLakehouse
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
@@ -983,8 +1004,7 @@ def get_column_stats(
     columns: str | None = Query(
         None,
         description=(
-            "Optional comma-separated column whitelist; "
-            "defaults to all columns with sketches."
+            "Optional comma-separated column whitelist; defaults to all columns with sketches."
         ),
     ),
 ) -> ColumnStatsResponse:

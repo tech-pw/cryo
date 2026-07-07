@@ -31,9 +31,19 @@ import type {
   AnomalyResponse,
   AutoCompCompareResponse,
   AWSConnectionTestResponse,
+  AWSCostIngestResponse,
+  AWSCostInsightConfigPatch,
+  AWSCostInsightConfigRead,
+  AWSCostInsightConfigWrite,
   AWSIntegrationRead,
   AWSIntegrationWrite,
   AWSUsageResponse,
+  CostByBucketItem,
+  CostByBucketResponse,
+  CostDailySeriesItem,
+  CostDailySeriesResponse,
+  SizeByPrefixItem,
+  SizeByPrefixResponse,
   BanditStatusResponse,
   CopilotAskResponse,
   CopilotNaturalResponse,
@@ -62,7 +72,17 @@ import type {
   PlanVerifyRequest,
   ObservationSearchResponse,
   ObservationStatsResponse,
-  ObservationCompactResponse
+  ObservationCompactResponse,
+  ColumnStatsResponse,
+  ColumnSketchRead,
+  ColumnSketchBlob,
+  SilentDataLossReportRead,
+  SilentDataLossRepairResponse,
+  QPPPredictRequest,
+  QPPPredictResponse,
+  QPPFeaturesPayload,
+  QPPObservationPayload,
+  QPPConfidenceResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -853,6 +873,63 @@ export const testAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
 export const getAwsUsage = (api: ApiOptions, sourceId: UUID) =>
   apiFetch<AWSUsageResponse>(`/sources/${sourceId}/aws-usage`, api);
 
+export const getAwsCostInsightConfig = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSCostInsightConfigRead>(`/sources/${sourceId}/cost-insight-config`, api);
+
+export const createAwsCostInsightConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  body: AWSCostInsightConfigWrite
+) =>
+  apiFetch<AWSCostInsightConfigRead>(`/sources/${sourceId}/cost-insight-config`, api, {
+    method: "POST",
+    body
+  });
+
+export const patchAwsCostInsightConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  body: AWSCostInsightConfigPatch
+) =>
+  apiFetch<AWSCostInsightConfigRead>(`/sources/${sourceId}/cost-insight-config`, api, {
+    method: "PATCH",
+    body
+  });
+
+export const deleteAwsCostInsightConfig = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<void>(`/sources/${sourceId}/cost-insight-config`, api, { method: "DELETE" });
+
+export const ingestAwsCostInsightCur = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSCostIngestResponse>(`/sources/${sourceId}/cost-insight/ingest-cur`, api, {
+    method: "POST"
+  });
+
+export const ingestAwsCostInsightInventory = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<AWSCostIngestResponse>(`/sources/${sourceId}/cost-insight/ingest-inventory`, api, {
+    method: "POST"
+  });
+
+export const getCostByBucket = (
+  api: ApiOptions,
+  sourceId: UUID,
+  query?: { start?: string; end?: string; limit?: number }
+) =>
+  apiFetch<CostByBucketResponse>(`/sources/${sourceId}/cost-insight/by-bucket`, api, {
+    query
+  });
+
+export const getCostDailySeries = (
+  api: ApiOptions,
+  sourceId: UUID,
+  query?: { start?: string; end?: string }
+) => apiFetch<CostDailySeriesResponse>(`/sources/${sourceId}/cost-insight/daily`, api, { query });
+
+export const getSizeByPrefix = (
+  api: ApiOptions,
+  sourceId: UUID,
+  query?: { inventory_date?: string; limit?: number }
+) => apiFetch<SizeByPrefixResponse>(`/sources/${sourceId}/cost-insight/by-prefix`, api, { query });
+
 /** Dashboard routes live under the same `/api/v1` prefix as everything else. */
 const DASHBOARD_PREFIX = "/api/v1";
 
@@ -1525,4 +1602,74 @@ export const compactObservations = (
     "/advanced/observability/compact",
     api,
     { method: "POST" }
+  );
+
+// ============================================================================
+// Puffin-backed column sketches (FORMATS '26, arXiv:2605.30308)
+// ============================================================================
+
+export const getColumnStats = (
+  api: ApiOptions,
+  tableId: UUID,
+  columns?: string
+): Promise<ColumnStatsResponse> =>
+  apiFetch<ColumnStatsResponse>(
+    `/advanced/column-stats/${tableId}`,
+    api,
+    { query: columns ? { columns } : undefined }
+  );
+
+// ============================================================================
+// Silent-data-loss detector (arXiv:2604.20081)
+// ============================================================================
+
+export const getSilentDataLoss = (
+  api: ApiOptions,
+  tableId: UUID
+): Promise<SilentDataLossReportRead | null> =>
+  apiFetch<SilentDataLossReportRead | null>(
+    `/advanced/silent-data-loss/${tableId}`,
+    api
+  );
+
+export const repairSilentDataLoss = (
+  api: ApiOptions,
+  tableId: UUID
+): Promise<SilentDataLossRepairResponse> =>
+  apiFetch<SilentDataLossRepairResponse>(
+    `/advanced/silent-data-loss/${tableId}/repair`,
+    api,
+    { method: "POST" }
+  );
+
+// ============================================================================
+// Variance-aware QPP (CLOUD 2026, arXiv:2606.03464)
+// ============================================================================
+
+export const predictQPP = (
+  api: ApiOptions,
+  body: QPPPredictRequest
+): Promise<QPPPredictResponse> =>
+  apiFetch<QPPPredictResponse>("/governor/qpp/predict", api, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+
+export const recordQPPObservation = (
+  api: ApiOptions,
+  body: QPPObservationPayload
+): Promise<{ id: UUID }> =>
+  apiFetch<{ id: UUID }>("/governor/qpp/record", api, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+
+export const getQPPConfidence = (
+  api: ApiOptions,
+  tableId?: UUID
+): Promise<QPPConfidenceResponse> =>
+  apiFetch<QPPConfidenceResponse>(
+    "/governor/qpp/confidence",
+    api,
+    { query: tableId ? { table_id: tableId } : undefined }
   );

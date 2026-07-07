@@ -31,8 +31,12 @@ const AwsIntegrations = lazy(() =>
   import("./pages/AwsIntegrations").then((m) => ({ default: m.AwsIntegrations }))
 );
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
+const Skillsets = lazy(() => import("./pages/Skillsets").then((m) => ({ default: m.Skillsets })));
 const CostAttribution = lazy(() =>
   import("./pages/CostAttribution").then((m) => ({ default: m.CostAttribution }))
+);
+const CostInsights = lazy(() =>
+  import("./pages/CostInsights").then((m) => ({ default: m.CostInsights }))
 );
 const CostSavings = lazy(() => import("./pages/CostSavings").then((m) => ({ default: m.CostSavings })));
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
@@ -83,6 +87,7 @@ const navItems = [
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
   { key: "/aws", icon: <CloudOutlined />, label: <Link to="/aws">AWS</Link> },
+  { key: "/cost-insights", icon: <DollarOutlined />, label: <Link to="/cost-insights">Cost insights</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
@@ -222,7 +227,9 @@ const Shell = () => {
               <Route path="/runs/:runId" element={<Runs />} />
               <Route path="/jobs/:jobId" element={<JobDetail />} />
               <Route path="/connections" element={<Connections />} />
+              <Route path="/skillsets" element={<Skillsets />} />
               <Route path="/aws" element={<AwsIntegrations />} />
+              <Route path="/cost-insights" element={<CostInsights />} />
             </Routes>
           </Suspense>
         </Layout.Content>

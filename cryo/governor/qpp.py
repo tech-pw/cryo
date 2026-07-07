@@ -128,7 +128,9 @@ class QPPModel:
         if len(self._weights) >= 4 and self._last_train_size >= self.min_observations:
             return linear_regression_predict(features, self._weights)
         return heuristic_predict(
-            features, per_file_ms=self.per_file_ms, cotenant=self.cotenant_coefficient,
+            features,
+            per_file_ms=self.per_file_ms,
+            cotenant=self.cotenant_coefficient,
             cache_speedup=self.cache_speedup,
         )
 
@@ -229,8 +231,12 @@ def _fit_linear_regression(
     xtx = [[0.0] * 4 for _ in range(4)]
     xty = [0.0] * 4
     for features, y in rows:
-        x = [1.0, float(features.files_scanned), float(features.partition_count),
-             float(features.cotenant_load_pct)]
+        x = [
+            1.0,
+            float(features.files_scanned),
+            float(features.partition_count),
+            float(features.cotenant_load_pct),
+        ]
         for i in range(4):
             xty[i] += x[i] * y
             for j in range(4):

@@ -145,7 +145,7 @@ class OpenAIClient(LLMClient):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        
+
         base_payload = {
             "model": self.model,
             "messages": [
@@ -160,7 +160,7 @@ class OpenAIClient(LLMClient):
                 headers=headers,
                 json={**base_payload, "max_tokens": max_tokens},
             )
-            
+
             if response.status_code == 400:
                 try:
                     error_data = response.json()
@@ -246,7 +246,7 @@ class AzureOpenAIClient(LLMClient):
             "api-key": self.api_key,
             "Content-Type": "application/json",
         }
-        
+
         base_payload = {
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -261,8 +261,8 @@ class AzureOpenAIClient(LLMClient):
                 headers=headers,
                 json={**base_payload, "max_tokens": max_tokens},
             )
-            
-            # If we get a 400 about max_tokens, retry with max_completion_tokens (for o1, nano, etc.)
+
+            # 400 on max_tokens → retry with max_completion_tokens (o1, nano, etc.)
             if response.status_code == 400:
                 try:
                     error_data = response.json()

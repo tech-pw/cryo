@@ -112,7 +112,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "audit_log_id",
-            UUID(as_uuid=True),
+            sa.BigInteger(),
             sa.ForeignKey("cryo.audit_log.id"),
             nullable=True,
         ),

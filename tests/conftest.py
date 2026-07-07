@@ -14,7 +14,10 @@ from sqlalchemy.pool import StaticPool
 from cryo.db.base import Base
 from cryo.db.models import (
     AuditLog,
+    AWSCostInsightConfig,
+    AWSCurLineItem,
     AWSIntegration,
+    AWSInventoryObject,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -30,7 +33,6 @@ from cryo.db.models import (
 from cryo.lineage.tracker import LineageEdge  # noqa: F401 — register table metadata
 from cryo.security.abac import ABACPolicy  # noqa: F401 — register table metadata
 from cryo.workflows.approvals import ApprovalRequest  # noqa: F401 — register table metadata
-
 from tests.test_presets_api_db import api_db  # noqa: F401 — shared API+DB test client fixture
 
 UUID_ID_MODELS = (
@@ -42,6 +44,9 @@ UUID_ID_MODELS = (
     MaintenanceRun,
     MaintenanceJob,
     AWSIntegration,
+    AWSCostInsightConfig,
+    AWSCurLineItem,
+    AWSInventoryObject,
 )
 _AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog, QueryPattern)
 _next_autoincrement_id = itertools.count(1)
