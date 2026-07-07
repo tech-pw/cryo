@@ -302,9 +302,17 @@ cron-only):
     inline validation feedback ("found 1,204 log files at this path" / "nothing found yet").
   - No source added yet → this whole panel doesn't apply; it only appears once a source with
     scanned tables exists, since bucket discovery depends on §4.1.
-- Table Detail → Cost tab: extend the existing cost breakdown with a "Requests (30d)" line —
-  GET/PUT/LIST counts and their $ cost, next to the existing storage cost — once
-  `request_cost_usd_month` is non-null for that table.
+- Table Detail → Cost tab: **the actual UI win here isn't a new line item, it's a ratio.** Just
+  adding "Requests (30d): $X" next to storage cost is correct but understates the value — an
+  operator can already infer storage cost roughly from table size, and doesn't need Cryo to tell
+  them that number. What they can't already infer is *how a table's request pattern skews its
+  bill*: "GET/PUT is 23% of this table's S3 cost, storage is only 60%" tells them "this is a
+  high-churn table, small-file compaction matters more here than raw size suggests" — that's the
+  insight, not the raw dollar figure. Surface it as a storage/request cost-share breakdown (a
+  simple stacked bar or two labeled numbers is enough, doesn't need a new chart type), and once
+  it exists, the Data Quality / Table Explorer "top offenders" sort should be able to sort by
+  request-cost-share too, not just total cost — that's likely where operators will actually find
+  the tables this feature was built to surface.
 - No step in this flow requires the user to already know AWS S3 access-logging concepts going in
   — the copy on each state should explain what's happening in plain terms ("Cryo can see request
   activity for this bucket" / "turn this on to see request costs, not just storage costs"), since
