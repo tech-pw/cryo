@@ -31,17 +31,17 @@ export const UnionableTab = ({ api, tableId }: Props) => {
   if (results.length === 0) {
     return (
       <Card
-        title="Tables that can union with this one"
+        title="Unionable Tables"
         extra={<Tooltip title="LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)"><Tag>EasyTUS</Tag></Tooltip>}
       >
-        <Empty description="No union-compatible tables found." />
+        <Empty description="No Union-Compatible Tables Found." />
       </Card>
     );
   }
 
   return (
     <Card
-      title="Tables that can union with this one"
+      title="Unionable Tables"
       extra={<Tooltip title="LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)"><Tag color="purple">EasyTUS</Tag></Tooltip>}
     >
       <Table
@@ -68,7 +68,7 @@ export const UnionableTab = ({ api, tableId }: Props) => {
             }
           },
           {
-            title: "Overlap columns",
+            title: "Overlap Columns",
             dataIndex: "overlap_columns",
             key: "overlap",
             render: (cols: string[]) => (
@@ -76,12 +76,12 @@ export const UnionableTab = ({ api, tableId }: Props) => {
                 {cols.slice(0, 5).map((c) => (
                   <Tag key={c}>{c}</Tag>
                 ))}
-                {cols.length > 5 ? <Typography.Text type="secondary">+{cols.length - 5} more</Typography.Text> : null}
+                {cols.length > 5 ? <Typography.Text type="secondary">+{cols.length - 5} More</Typography.Text> : null}
               </Space>
             )
           },
           {
-            title: "Suggested UNION",
+            title: "Suggested Union",
             dataIndex: "union_sql",
             key: "sql",
             render: (v: string) => (
