@@ -15,7 +15,7 @@ export const ActivityTab = ({ entries }: ActivityTabProps) => {
     <div className="td-tab-content">
       <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
         <div className="td-chart-card-header">
-          <span className="td-chart-card-title">Recent activity</span>
+          <span className="td-chart-card-title">Recent Activity</span>
           <span className="td-chart-card-subtitle">
             {entries?.length ? `Last ${Math.min(entries.length, 12)} events` : null}
           </span>
@@ -47,7 +47,7 @@ export const ActivityTab = ({ entries }: ActivityTabProps) => {
                             color="error"
                             style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px", margin: 0 }}
                           >
-                            failed
+                            Failed
                           </Tag>
                         ) : null}
                       </div>
