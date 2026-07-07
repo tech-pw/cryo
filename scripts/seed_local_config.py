@@ -153,10 +153,13 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
         "orphan_retention_days": 7,
     },
     "description": (
-        "Default native maintenance (expire_snapshots + remove_orphan_files; optimize deferred)"
+        "Native maintenance (expire_snapshots + remove_orphan_files; optimize deferred). "
+        "Selectable preset; not a platform default."
     ),
     "guardrails": {"cooldown_hours": 24},
-    "is_default": True,
+    # No preset is seeded as the platform default by design; users must explicitly
+    # assign/select a preset before maintenance can run (see migration 20260707_0020).
+    "is_default": False,
 }
 
 

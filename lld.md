@@ -332,11 +332,13 @@ CREATE TABLE cryo.table_assignments (
 ```
 
 **Effective preset** for a table = `pinned assignment` if present, else the **highest-priority
-enabled rule** that matches its latest stats, else the **enabled platform default preset**
-(`presets.is_default = true`, provenance `default`), else none.
+enabled rule** that matches its latest stats, else none (`provenance = "none"`). There is no
+platform-default fallback; users must explicitly assign a preset (or match a rule) before
+maintenance can run.
 
-Default bootstrap (migration `20260706_0011`): destination `native-datafusion` (`engine = native`)
-and preset `default-native-deep` (`mode = deep`, `schedule_cron = null`, manual/default runs only).
+Bootstrap (migration `20260706_0011`, updated `20260707_0020`): destination `native-datafusion`
+(`engine = native`) and preset `default-native-deep` (`mode = deep`, `is_default = false`,
+manual runs only when explicitly selected).
 
 ### 3.4 Runs, jobs, audit (write side)
 

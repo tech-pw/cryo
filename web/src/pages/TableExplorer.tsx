@@ -105,7 +105,7 @@ export const TableExplorer = () => {
   });
 
   const run = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => {
+    mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => {
       if (selection?.mode === "filter") {
         return runMaintenance(api, {
           selection: { mode: "filter", filter: selection.filter },
@@ -128,7 +128,7 @@ export const TableExplorer = () => {
   });
 
   const manifestRewrite = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID }) => {
+    mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
       if (selection?.mode === "filter") {
         return runManifestRewrite(api, {
           selection: { mode: "filter", filter: selection.filter },

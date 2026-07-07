@@ -63,13 +63,6 @@ class EffectivePreset:
     rule_id: str | None = None
 
 
-def _default_preset(presets: Iterable[PresetConfig]) -> PresetConfig | None:
-    candidates = [preset for preset in presets if preset.enabled and preset.is_default]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda preset: (preset.priority, preset.name))
-
-
 def effective_preset(
     table: TableCandidate,
     presets: Iterable[PresetConfig],
@@ -101,10 +94,9 @@ def effective_preset(
             rule_id=winning_rule.id,
         )
 
-    default_preset = _default_preset(presets)
-    if default_preset is not None:
-        return EffectivePreset(preset=default_preset, provenance="default")
-
+    # No platform-default fallback by design. Tables without an explicit assignment or
+    # matching rule resolve to None (provenance="none"); the UI/API must require an
+    # explicit preset selection before maintenance can run.
     return None
 
 

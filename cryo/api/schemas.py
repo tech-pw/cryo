@@ -726,7 +726,7 @@ class MaintenanceRunRequest(BaseModel):
     table_ids: list[uuid.UUID] = Field(default_factory=list)
     selection: AssignmentSelection | None = None
     destination_id: uuid.UUID
-    preset_id: uuid.UUID | None = None
+    preset_id: uuid.UUID
     mode: Mode = Mode.STANDARD
     trigger: str | None = "api"
 
