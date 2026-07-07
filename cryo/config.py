@@ -281,6 +281,22 @@ class Settings(BaseSettings):
         ge=1,
         description="Minimum hours between repeat breach alerts for the same table.",
     )
+    s3_log_ingest_interval_hours: int = Field(
+        default=24,
+        ge=1,
+        description=(
+            "Hours between S3 request-cost ingestion runs (docs/s3-request-cost-tracking.md "
+            "§10) -- one query per enabled bucket per run."
+        ),
+    )
+    s3_request_cost_retention_days: int = Field(
+        default=35,
+        ge=1,
+        description=(
+            "Days of S3RequestCostDaily rows kept before the retention job prunes them -- a "
+            "few days past the 30-day TableCost rollup window."
+        ),
+    )
 
     anomaly_detection_batch_size: int = Field(
         default=100,

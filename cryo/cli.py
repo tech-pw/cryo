@@ -163,6 +163,41 @@ class AlertDispatcherRunner(DaemonRunner):
             self._logger.info("Dispatched %s table breach alert(s)", sent)
 
 
+class S3LogIngestRunner(DaemonRunner):
+    """Runs S3 request-cost ingestion for every enabled bucket, then prunes old daily rows.
+
+    Opt-in per bucket (S3BucketLogConfig.enabled) -- a bucket with no config row, or one that's
+    disabled, is simply skipped. See docs/s3-request-cost-tracking.md §10 for the capacity math
+    this interval is meant to hold to (one query per enabled bucket per run, low tens of
+    seconds each per §5's back-of-envelope estimate).
+    """
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().s3_log_ingest_interval_hours * 3600
+        super().__init__("s3-log-ingest", interval or settings_interval)
+
+    def _tick(self) -> None:
+        from cryo.db.session import SessionLocal
+        from cryo.scanner.s3_request_cost_ingest import (
+            prune_s3_request_cost_daily,
+            run_s3_ingest_tick,
+        )
+
+        settings = get_settings()
+        with SessionLocal() as session:
+            ingested = run_s3_ingest_tick(session)
+            pruned = prune_s3_request_cost_daily(
+                session, retention_days=settings.s3_request_cost_retention_days
+            )
+            session.commit()
+            if ingested or pruned:
+                self._logger.info(
+                    "S3 request-cost tick: ingested %s bucket(s), pruned %s stale row(s)",
+                    ingested,
+                    pruned,
+                )
+
+
 class GovernorRunner(DaemonRunner):
     """Runs the admission governor wave loop."""
 
@@ -459,6 +494,10 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     alert_dispatcher = AlertDispatcherRunner()
     alert_thread = Thread(target=alert_dispatcher.run, name="table-alert-dispatcher", daemon=True)
     alert_thread.start()
+
+    s3_log_ingest = S3LogIngestRunner()
+    s3_log_ingest_thread = Thread(target=s3_log_ingest.run, name="s3-log-ingest", daemon=True)
+    s3_log_ingest_thread.start()
     try:
         runner = SchedulerRunner(interval=args.check_interval)
         _run_with_signal(runner, service_name="scheduler")
@@ -467,6 +506,8 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         updater_thread.join(timeout=5)
         alert_dispatcher.stop()
         alert_thread.join(timeout=5)
+        s3_log_ingest.stop()
+        s3_log_ingest_thread.join(timeout=5)
 
 
 def run_events(args: argparse.Namespace) -> NoReturn:
@@ -500,6 +541,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         ScannerRunner(interval=args.poll_interval, wiring=wiring),
         BenefitScoreUpdaterRunner(),
         AlertDispatcherRunner(),
+        S3LogIngestRunner(),
     ]
     for runner, (service_name, port) in zip(runners[:4], health_services, strict=True):
 
