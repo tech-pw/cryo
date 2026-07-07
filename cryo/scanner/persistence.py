@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import uuid
 from datetime import UTC, datetime, time
 from typing import Any
@@ -32,6 +33,12 @@ def _json_safe(value: Any) -> Any:
         # profiled here (e.g. a dirty VARCHAR min/max bound), which can legally contain one. A
         # single such value would otherwise fail the whole row's INSERT, not just that one field.
         return value.replace("\x00", "")
+    if isinstance(value, float) and not math.isfinite(value):
+        # A decoded manifest min/max bound for a float/double column can legally be +-Infinity
+        # or NaN, but Postgres's JSON/JSONB parser rejects those literal tokens outright (they
+        # aren't valid per RFC 8259) -- same failure mode as the NUL-byte case above, just for
+        # numeric values instead of strings. Store as null rather than fail the whole row.
+        return None
     return value
 
 

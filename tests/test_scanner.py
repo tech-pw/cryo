@@ -216,6 +216,23 @@ def test_json_safe_strips_nul_bytes_postgres_cannot_store() -> None:
     assert _json_safe(["a\x00b", ("c\x00d",)]) == ["ab", ["cd"]]
 
 
+def test_json_safe_nulls_out_non_finite_floats_postgres_json_rejects() -> None:
+    """A decoded manifest min/max bound for a float/double column can legally be +-Infinity or
+    NaN, but Postgres's JSON/JSONB parser rejects those literal tokens outright (see the psycopg
+    InvalidTextRepresentation "Token 'Infinity' is invalid" error this guards against)."""
+    from cryo.scanner.persistence import _json_safe
+
+    assert _json_safe(1.5) == 1.5
+    assert _json_safe(float("inf")) is None
+    assert _json_safe(float("-inf")) is None
+    assert _json_safe(float("nan")) is None
+    assert _json_safe({"lower_bound": 0.999, "upper_bound": float("inf")}) == {
+        "lower_bound": 0.999,
+        "upper_bound": None,
+    }
+    assert _json_safe([float("inf"), 2.0]) == [None, 2.0]
+
+
 def test_record_table_scan_outcome_tracks_and_resets_consecutive_failures() -> None:
     """The whole point of tracking this: a table failing once (a network blip) shouldn't be
     flagged as broken, only a run of repeated failures -- and any later success must clear the
