@@ -95,6 +95,14 @@ class ExecResult:
 
 
 class ExecutableMaintenanceEngine(Protocol):
+    """Protocol for engines the worker can drive end-to-end.
+
+    Today this is identical to ``cryo.engines.base.MaintenanceEngine``; the
+    alias is kept so worker code does not import from ``cryo.engines.base``
+    directly and so future divergence (e.g. engines without probe_capacity) is
+    easy to express here.
+    """
+
     type: EngineType
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]: ...

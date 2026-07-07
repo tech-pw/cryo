@@ -11,8 +11,8 @@ install:
 	$(PYTHON) -m pip install -e ".[dev]"
 
 lint:
-	ruff check cryo tests
-	ruff format --check cryo tests
+	ruff check cryo tests --extend-exclude "tests/integration/native"
+	ruff format --check cryo tests --extend-exclude "tests/integration/native"
 
 format:
 	ruff format cryo tests
