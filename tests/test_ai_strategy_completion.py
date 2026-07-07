@@ -1,4 +1,4 @@
-"""Integration tests closing ARCHITECTURE_AND_AI_STRATEGY.md gaps."""
+"""Integration tests closing architecture.md §2 (AI layer) gaps."""
 
 from __future__ import annotations
 

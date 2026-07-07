@@ -58,9 +58,8 @@ describe("Runs page", () => {
         </MemoryRouter>
       </QueryClientProvider>
     );
-    expect(await screen.findByText("Runs")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Runs" })).toBeInTheDocument();
     expect(await screen.findByText("Recent runs")).toBeInTheDocument();
     expect(await screen.findByText("Mock run console")).toBeInTheDocument();
-    expect(await screen.findByText("Open job detail")).toBeInTheDocument();
   });
 });

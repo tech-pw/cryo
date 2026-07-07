@@ -10,7 +10,7 @@
   --panel-strong: #eef1f6;
   --ink: #131b24;
   --ink-soft: #545f6d;
-  --ink-faint: #8791a0;
+  --ink-faint: #6b7686;
   --muted: #5c667a;
   --line: #e1e6ed;
   --line-strong: #c7d0dc;
@@ -35,7 +35,7 @@
   --panel-strong: #141c28;
   --ink: #e7ecf3;
   --ink-soft: #a6b2c0;
-  --ink-faint: #6e7a8a;
+  --ink-faint: #8d99a8;
   --muted: #a6b2c0;
   --line: #202a38;
   --line-strong: #2e3b4c;
@@ -60,7 +60,6 @@ html {
 
 body {
   margin: 0;
-  min-width: 1100px;
   background: var(--layout-bg);
   color: var(--ink);
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -73,8 +72,50 @@ body {
   outline-offset: 2px;
 }
 
+/* Skip-to-main link — keyboard accessibility */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 9999;
+  padding: 10px 16px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.skip-link:focus {
+  left: 8px;
+}
+
+/* Screen-reader-only utility */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Responsive layout primitives */
 .app-shell {
   min-height: 100vh;
+  display: flex;
+  flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+  .content {
+    padding: 12px !important;
+  }
+  .app-shell {
+    flex-direction: column;
+  }
 }
 
 /* Always-dark sidebar */
@@ -164,6 +205,46 @@ body {
 
 .content {
   padding: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Responsive grid utilities — replaces bespoke media queries in pages */
+.cryo-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+.cryo-grid > .col-12 { grid-column: span 12; }
+.cryo-grid > .col-9  { grid-column: span 12; }
+.cryo-grid > .col-8  { grid-column: span 12; }
+.cryo-grid > .col-6  { grid-column: span 12; }
+.cryo-grid > .col-4  { grid-column: span 12; }
+.cryo-grid > .col-3  { grid-column: span 12; }
+
+@media (min-width: 768px) {
+  .cryo-grid > .col-6 { grid-column: span 6; }
+  .cryo-grid > .col-4 { grid-column: span 6; }
+  .cryo-grid > .col-3 { grid-column: span 6; }
+}
+@media (min-width: 1024px) {
+  .cryo-grid > .col-9 { grid-column: span 9; }
+  .cryo-grid > .col-8 { grid-column: span 8; }
+  .cryo-grid > .col-4 { grid-column: span 4; }
+  .cryo-grid > .col-3 { grid-column: span 3; }
+}
+@media (min-width: 1280px) {
+  .cryo-grid > .col-9 { grid-column: span 9; }
+  .cryo-grid > .col-8 { grid-column: span 8; }
+}
+
+@media (max-width: 900px) {
+  .desktop-only { display: none !important; }
+  .ant-table { font-size: 12px; }
+  .ant-table .ant-table-cell { padding: 6px 8px !important; }
+}
+@media (min-width: 901px) {
+  .mobile-only { display: none !important; }
 }
 
 .page-header {
@@ -175,11 +256,14 @@ body {
   margin-bottom: 14px;
 }
 
-.page-header h2 {
+.page-header h1,
+.page-header h2,
+.page-title {
   margin: 0 0 2px;
   font-size: 20px;
   line-height: 1.2;
   letter-spacing: -0.02em;
+  font-weight: 600;
 }
 
 .tab-intro {

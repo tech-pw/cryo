@@ -1,5 +1,6 @@
 import {
   ApiOutlined,
+  AppstoreOutlined,
   BarChartOutlined,
   ClockCircleOutlined,
   CloudOutlined,
@@ -25,6 +26,8 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { NotificationProvider } from "./components/NotificationRegion";
 
 const AwsIntegrations = lazy(() =>
   import("./pages/AwsIntegrations").then((m) => ({ default: m.AwsIntegrations }))
@@ -41,7 +44,6 @@ const CostSavings = lazy(() => import("./pages/CostSavings").then((m) => ({ defa
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
 const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
 const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
-const JobDetail = lazy(() => import("./pages/JobDetail").then((m) => ({ default: m.JobDetail })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
 const LayoutOptimization = lazy(() => import("./pages/LayoutOptimization"));
@@ -78,7 +80,7 @@ const queryClient = new QueryClient({
 // re-introduction, but no entry point exists in the navigation.
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
-  { key: "/catalogs", icon: <DatabaseOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
+  { key: "/catalogs", icon: <AppstoreOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
@@ -131,7 +133,7 @@ const navGroups: MenuProps["items"] = [
   }
 ];
 
-const routeSelectionAliases = new Map([["/jobs", "/runs"]]);
+const routeSelectionAliases = new Map<string, string>();
 
 const ThemeToggle = () => {
   const { theme, toggleTheme } = useTheme();
@@ -183,7 +185,10 @@ const Shell = () => {
 
   return (
     <Layout className="app-shell">
-      <Layout.Sider width={212} className="side-nav">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+      <Layout.Sider width={212} className="side-nav" breakpoint="lg" collapsedWidth={0}>
         <div className="brand">
           <SettingOutlined />
           <span>Cryo</span>
@@ -217,8 +222,9 @@ const Shell = () => {
             </Button>
           </Space>
         </Layout.Header>
-        <Layout.Content className="content">
+        <Layout.Content className="content" id="main-content" tabIndex={-1}>
           <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary>
             <Routes>
               <Route path="/" element={<Navigate to="/health" replace />} />
               <Route path="/health" element={<DatalakeHealth />} />
@@ -237,12 +243,13 @@ const Shell = () => {
               <Route path="/presets" element={<Presets />} />
               <Route path="/runs" element={<Runs />} />
               <Route path="/runs/:runId" element={<Runs />} />
-              <Route path="/jobs/:jobId" element={<JobDetail />} />
+              <Route path="/jobs/:jobId" element={<Navigate to="/runs/:jobId" replace />} />
               <Route path="/connections" element={<Connections />} />
               <Route path="/skillsets" element={<Skillsets />} />
               <Route path="/aws" element={<AwsIntegrations />} />
               <Route path="/cost-insights" element={<CostInsights />} />
             </Routes>
+            </ErrorBoundary>
           </Suspense>
         </Layout.Content>
       </Layout>
@@ -340,7 +347,9 @@ const ThemedApp = () => {
       }}
     >
       <AuthProvider>
-        <Shell />
+        <NotificationProvider>
+          <Shell />
+        </NotificationProvider>
       </AuthProvider>
     </ConfigProvider>
   );
