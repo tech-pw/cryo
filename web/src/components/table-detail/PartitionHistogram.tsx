@@ -42,7 +42,7 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
     });
 
   if (!top.length) {
-    return <Typography.Text type="secondary">No partition histogram yet.</Typography.Text>;
+    return <Typography.Text type="secondary">No Partition Histogram Yet.</Typography.Text>;
   }
 
   return (
@@ -56,7 +56,7 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
             {...chartTooltipProps}
             formatter={(value, name, item) => {
               if (name === "sizeGb") return [formatGb(Number(value ?? 0)), "Size"];
-              if (name === "smallFiles") return [formatNumber(Number(value ?? 0), true), "Small files"];
+              if (name === "smallFiles") return [formatNumber(Number(value ?? 0), true), "Small Files"];
               return [String(value ?? ""), (item as { payload?: { label?: string } })?.payload?.label ?? "Partition"];
             }}
             labelFormatter={(value) => String(value)}
