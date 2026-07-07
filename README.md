@@ -1,16 +1,52 @@
 # Cryo — Apache Iceberg Maintenance & Health Platform
 
-**Cryo** is a self-hosted platform that consolidates **Apache Iceberg table maintenance**,
-**datalake health**, and **ad-hoc operations** into one product — driven from a UI and a
-Python API, deployable to Kubernetes. It replaces the usual sprawl of Airflow DAGs, dbt
-macros and ad-hoc Spark jobs with a single system that knows your catalogs, your partitions,
+Before Cryo, "maintaining the datalake" meant four different things living in four different
+places. A nightly Airflow DAG scanned every table and wrote a health grade nobody fully trusted.
+A second DAG decided what to optimize next and shelled out to per-table dbt subprocesses. The
+actual maintenance logic — the partition-aware chunking, the load-aware throttling, the thing that
+kept our Trino clusters from falling over — lived buried inside dbt macros. And if you needed to
+run maintenance on one table *right now*, your only option was to hand-edit a dbt macro's
+arguments and hope you got the flags right, because there was no UI, no dry run, and no one place
+that could tell you what was actually broken across the fleet.
+
+That split-brain setup is why a single mis-scanned table could sit silently unhealthy for weeks —
+nobody was looking at the DAG logs unless something else broke first. We only recently traced two
+such cases to their root cause in production: a table whose column stats contained a stray NUL
+byte, and another whose float bounds decoded to `Infinity`. Both are perfectly legal values inside
+an Iceberg manifest. Neither is a value Postgres's JSON column will accept. Both silently failed
+the insert and discarded a scan's worth of otherwise-good stats — for tables sitting in a fleet of
+**11,000+**, that kind of failure doesn't page anyone. It just makes the dashboard quietly wrong.
+
+*A datalake doesn't fail loudly — it gets slower, then more expensive, then wrong, roughly in
+that order, until someone finally notices the health grade has been stale for a month.*
+
+**Cryo** is a self-hosted platform that ends the split brain: **Apache Iceberg table
+maintenance**, **datalake health**, and **ad-hoc operations**, consolidated into one product,
+driven from a UI and a Python API, deployable to Kubernetes. It replaces the Airflow DAGs, the dbt
+macros, and the ad-hoc Spark jobs with a single system that knows your catalogs, your partitions,
 your engines, and your S3 bill.
 
-It is inspired by [Floe](https://github.com/nssalian/floe) and
-[Apache Amoro](https://github.com/apache/amoro), but built around our constraints: it
-preserves the **load-aware, partition-aware** behaviour that keeps our Trino clusters healthy
-today, adds a **Spark-on-EMR** engine for large tables, and removes the Airflow + dbt sprawl
-by moving scheduling and orchestration into the platform itself.
+---
+
+## Why not just keep bolting onto Airflow — or adopt Floe / Apache Amoro as-is?
+
+Cryo is inspired by [Floe](https://github.com/nssalian/floe) and
+[Apache Amoro](https://github.com/apache/amoro) — both good answers to "how do you maintain an
+Iceberg lake" — but neither fits our constraints without surgery:
+
+- **We can't lose the load-aware, partition-aware behaviour we already depend on.** Our planner
+  has to keep reading live Trino load (`system.runtime.queries`) before admitting work, and keep
+  GB-budgeting/partition-capping chunks the exact way the dbt macros do today, or Trino falls
+  over the same way it used to before that logic existed.
+- **We need Spark-on-EMR for the tables Trino shouldn't touch.** Neither Floe nor a Trino-only
+  setup gives us a second, pluggable execution engine for the large-table path.
+- **"Just keep improving the Airflow DAGs" doesn't remove the actual problem**, which was never
+  Airflow itself — it was that maintenance logic, scheduling, concurrency governance, and health
+  visibility were split across three codebases with no shared state and no UI. More DAGs make
+  that worse, not better.
+
+Floe and Amoro both deserve credit for proving the shape of this problem is tractable — Cryo is
+closer to "Floe, but built for our engines and our failure modes" than a from-scratch idea.
 
 ---
 
@@ -30,6 +66,10 @@ by moving scheduling and orchestration into the platform itself.
   `system.runtime.queries` to bound real concurrency against live engine load, applies
   per-replica caps with round-robin, and uses a contextual-bandit policy to tune thresholds
   per destination.
+
+  *Think of the Governor as a bouncer, not a doorman — it doesn't care who's next in line, only
+  how packed the room already is.*
+
 - **Presets** are named maintenance profiles binding *operations + params + target engine +
   schedule + selection rules*. Example: `spark-large = "tables > 100 GB → Spark/EMR, deep
   maintenance weekly"`.
@@ -48,13 +88,19 @@ by moving scheduling and orchestration into the platform itself.
   drift, persisted with history for baseline comparison.
 - **AWS cost & inventory** — opt-in S3 size / object-count from CloudWatch storage metrics and
   free-tier CUR / inventory feeds, so the platform can quote real storage spend per source.
+- **Owner & consumer alerting** — tables can carry an owner and a list of subscribed consumers;
+  when a table's SLA or data-quality signal breaches its guardrail, the alert dispatcher emails
+  (and optionally Slacks) the people who'd actually notice the table went bad, instead of
+  leaving it for someone to stumble on later.
 
 ### Operations
 - **Scheduler / Governor / Worker** are leader-elected and run as separate Kubernetes
   deployments. The **Governor** bounds real concurrency against live engine load — scaling
   workers does **not** automatically scale parallel OPTIMIZEs.
 - **Per-table locks** prevent double maintenance. **Failure isolation**: a bad table doesn't
-  fail the run; it shows up in the audit log and the failed-tables panel.
+  fail the run; it shows up in the audit log and the failed-tables panel, with the
+  `consecutive_scan_failures` streak and last error tracked per table so a chronically broken
+  table doesn't just vanish back into the noise of "discovered but not assigned."
 - **Audit log** captures every action (table, action, status, detail, engine, duration,
   input/output file counts, actor).
 - **Auth** is JWT-based with optional RS256 OIDC, ABAC enforcement, and per-tenant
@@ -63,11 +109,16 @@ by moving scheduling and orchestration into the platform itself.
 
 ### What's built today (vs. still on the roadmap)
 
-The `cryo/` backend package, `web/` frontend, `migrations/`, and Helm chart are now
-implemented against the design in [`plan.md`](./plan.md). Run `pytest` and you'll see
-~360 tests covering planner, renderers (both engines), parity with the legacy Airflow
-behaviour, governance, observability, and the AI features. Status of every feature is
-tracked in [`todo.md`](./todo.md).
+The `cryo/` backend package, `web/` frontend, `migrations/`, and Helm chart are now implemented
+against the design in [`plan.md`](./plan.md). Run `pytest` and you'll see **~360 tests** covering
+planner, renderers (both engines), parity with the legacy Airflow behaviour, governance,
+observability, and the AI features. Status of every feature is tracked in [`todo.md`](./todo.md).
+
+None of that means the edges are all found. The NUL-byte and `Infinity` bugs mentioned above
+were both real, both in production, and both invisible until someone went looking — which is
+the honest state of a platform that scans a manifest format never designed with "every possible
+decoded value must also be valid JSON" in mind. We fix these as they surface and add a regression
+test each time; we don't claim the list is closed.
 
 ---
 
@@ -104,6 +155,8 @@ Hive / Glue   ─┼─ read ─► Scheduler ─► Governor ─► Workers ─
 Full diagrams and component responsibilities in [`hld.md`](./hld.md).
 
 ## Key principles (do not violate)
+
+These aren't style preferences — each one exists because dropping it broke something before:
 
 - **No Airflow.** Scheduling and orchestration live in the platform (`scheduler/` + `governor/`).
 - **Sources ≠ Destinations.** Separate DB tables, separate configs, separate code paths.
@@ -144,6 +197,10 @@ Full diagrams and component responsibilities in [`hld.md`](./hld.md).
 ---
 
 ## Local development
+
+The full stack — datalake, Cryo's own dependencies, and observability — comes up with one
+command; each Make target below exists because someone got tired of typing the underlying
+`docker compose` / `alembic` / `uvicorn` invocation by hand often enough to name it.
 
 ```bash
 # Full local stack (datalake + Cryo deps + observability)
@@ -206,6 +263,9 @@ Read [`AGENTS.md`](./AGENTS.md) and [`agents.md`](./agents.md) before opening a 
 non-negotiables are: the parity checklist (§5), the sources/destinations separation,
 separate Trino/Spark SQL renderers with golden tests, and an Alembic migration for every
 schema change.
+
+*This is a living platform, not a finished one. If a doc doesn't explain what you hit, that's
+a gap in the doc, not a rule you broke — open an issue or a PR either way.*
 
 ## License
 
