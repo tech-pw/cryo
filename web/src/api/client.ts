@@ -88,7 +88,11 @@ import type {
   S3LogConfigPatch,
   S3LogConfigCheckResponse,
   S3LogConfigProbeResponse,
-  S3LogIngestResponse
+  S3LogIngestResponse,
+  S3LogProvisionRequest,
+  S3LogProvisionResponse,
+  S3LogTeardownRequest,
+  S3LogTeardownResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -928,6 +932,30 @@ export const ingestS3LogConfig = (api: ApiOptions, sourceId: UUID, bucket: strin
     `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/ingest`,
     api,
     { method: "POST" }
+  );
+
+export const provisionS3LogConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  bucket: string,
+  body: S3LogProvisionRequest = {}
+) =>
+  apiFetch<S3LogProvisionResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/provision`,
+    api,
+    { method: "POST", body }
+  );
+
+export const teardownS3LogConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  bucket: string,
+  body: S3LogTeardownRequest = {}
+) =>
+  apiFetch<S3LogTeardownResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/teardown`,
+    api,
+    { method: "POST", body }
   );
 
 export const getAwsCostInsightConfig = (api: ApiOptions, sourceId: UUID) =>

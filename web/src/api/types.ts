@@ -423,6 +423,28 @@ export interface S3LogIngestResponse {
   error?: string | null;
 }
 
+export interface S3LogProvisionRequest {
+  target_bucket?: string | null;
+}
+
+export interface S3LogProvisionResponse {
+  ok: boolean;
+  log_target_bucket?: string | null;
+  log_target_prefix?: string | null;
+  error?: string | null;
+}
+
+export interface S3LogTeardownRequest {
+  revert_policy?: boolean;
+}
+
+export interface S3LogTeardownResponse {
+  ok: boolean;
+  policy_reverted: boolean;
+  warnings: string[];
+  error?: string | null;
+}
+
 export interface AWSCostIngestResponse {
   rows_ingested: number;
   files_processed: number;
