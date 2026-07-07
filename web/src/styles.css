@@ -1447,12 +1447,11 @@ textarea.mono-input {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: var(--sidebar-text, #c7d2de);
-  opacity: 0.85;
+  color: var(--muted, #5c667a);
 }
 
 .td-hero-meta strong {
-  color: var(--sidebar-text-active, #ffffff);
+  color: var(--ink, #131b24);
 }
 
 .td-hero-actions {
@@ -1594,6 +1593,110 @@ textarea.mono-input {
 
 .td-confidence-low {
   color: var(--muted, #5c667a);
+}
+
+.td-act-now-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.td-act-now-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.td-act-now-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.td-act-now-card {
+  border-radius: 10px;
+  border-left-width: 4px;
+  border-left-style: solid;
+}
+
+.td-act-now-card :where(.ant-card-body) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.td-act-now-critical {
+  border-left-color: var(--error, #dc3545);
+}
+
+.td-act-now-warning {
+  border-left-color: var(--warning, #f0a020);
+}
+
+.td-act-now-info {
+  border-left-color: var(--line, #e1e6ed);
+}
+
+.td-act-now-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.td-act-now-why {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.td-act-now-transition {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Long current/ideal strings must wrap, never overflow their card -- this is what caused the
+   "50 snapshots & near-zero orphaned storage" text to visually cut off in the old layout. */
+.td-act-now-transition :where(.ant-tag) {
+  white-space: normal;
+  word-break: break-word;
+  max-width: 260px;
+}
+
+.td-act-now-arrow {
+  color: var(--muted, #5c667a);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.td-act-now-recommendation {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.td-act-now-banner {
+  border-left: 4px solid var(--primary, #3d6fd4);
+}
+
+.td-act-now-healthy {
+  border-left: 4px solid var(--gradeA, #1e8e5a);
+}
+
+.td-diagnostics-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 4px;
+  user-select: none;
+}
+
+.td-diagnostics-toggle:focus-visible {
+  outline: 2px solid var(--primary, #3d6fd4);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .td-kpi-stripe {
@@ -2640,5 +2743,13 @@ textarea.mono-input {
 .cost-insights-source-card .ant-statistic-title {
   font-size: 11px;
   color: var(--ink-faint);
+}
+
+.td-refresh-btn {
+  transition: color 150ms ease-out, background 150ms ease-out;
+}
+.td-refresh-btn:hover:not(:disabled) {
+  color: var(--primary, #3d6fd4) !important;
+  background: var(--primary-soft, #e8effc) !important;
 }
 

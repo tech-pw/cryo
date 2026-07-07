@@ -6,7 +6,7 @@ resolve to `provenance = "none"`, and the maintenance run API rejects requests w
 an explicit `preset_id`. Users must select a preset per table before queueing a run.
 
 Revision ID: 20260707_0020
-Revises: 20260707_0019
+Revises: 20260707_0019b_preset_default
 Create Date: 2026-07-07 17:30:00.000000
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "20260707_0020"
-down_revision = "20260707_0019"
+down_revision = "20260707_0019b_preset_default"
 branch_labels = None
 depends_on = None
 

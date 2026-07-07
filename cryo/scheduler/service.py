@@ -74,6 +74,7 @@ class SchedulerService:
         self._maybe_ingest_telemetry(current)
         self._maybe_purge_query_logs(current)
         self._maybe_silent_data_loss_sweep(current)
+        self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
             return SchedulerTickResult()
@@ -404,6 +405,52 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("silent_data_loss sweep failed: %s", exc)
+
+    def _dispatch_scheduled_runs(self, current: datetime) -> None:
+        """Enqueue one-off runs whose `scheduled_at` has passed.
+
+        Unlike the `_maybe_*` housekeeping tasks above, this runs every tick with no extra
+        throttle -- the check itself is cheap (one indexed query), and a scheduled run should
+        fire close to its target time, not be delayed by an internal interval on top of it.
+        Both this path and the immediate-API path funnel into the same `queue.enqueue()` ->
+        Governor.run_wave() admission flow, so a scheduled run gets the exact same capacity/
+        cooldown checks at dispatch time as any other run -- scheduling changes *when* a job
+        enters the pending queue, not whether the Governor still gets a say.
+        """
+        from sqlalchemy import select
+
+        from cryo.db.models import MaintenanceJob, MaintenanceRun
+
+        try:
+            with SessionLocal() as session:
+                due = session.scalars(
+                    select(MaintenanceRun).where(
+                        MaintenanceRun.status == "scheduled",
+                        MaintenanceRun.scheduled_at.is_not(None),
+                        MaintenanceRun.scheduled_at <= current,
+                    )
+                ).all()
+                if not due:
+                    return
+                for run in due:
+                    jobs = session.scalars(
+                        select(MaintenanceJob).where(MaintenanceJob.run_id == run.id)
+                    ).all()
+                    run.status = "queued"
+                    session.flush()
+                    for job in jobs:
+                        self._queue.enqueue(str(job.id), str(job.destination_id))
+                session.commit()
+
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Dispatched %d scheduled run(s) whose scheduled_at has passed", len(due)
+            )
+        except Exception as exc:  # pragma: no cover - defensive: don't break the scheduler.
+            import logging
+
+            logging.getLogger(__name__).warning("Scheduled-run dispatch failed: %s", exc)
 
 
 def _apply_routing(

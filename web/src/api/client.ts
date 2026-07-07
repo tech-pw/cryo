@@ -330,13 +330,23 @@ export const previewMaintenance = (
 export const runMaintenance = (
   api: ApiOptions,
   body:
-    | { table_ids: UUID[]; destination_id: UUID; preset_id: UUID; mode: Mode; trigger?: string }
+    | {
+        table_ids: UUID[];
+        destination_id: UUID;
+        preset_id: UUID;
+        mode: Mode;
+        trigger?: string;
+        /** One-off future run time, distinct from a Preset's recurring schedule_cron. Must be
+         * in the future -- the API rejects a past timestamp with 400. */
+        scheduled_at?: string;
+      }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
         destination_id: UUID;
         preset_id: UUID;
         mode: Mode;
         trigger?: string;
+        scheduled_at?: string;
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
 

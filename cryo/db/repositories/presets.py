@@ -239,6 +239,7 @@ def run_summary(run: MaintenanceRun) -> dict[str, object]:
         "preset_id": run.preset_id,
         "trigger": run.trigger,
         "deadline_at": run.deadline_at,
+        "scheduled_at": run.scheduled_at,
         "created_at": run.created_at,
         "finished_at": run.finished_at,
         "summary": summary,

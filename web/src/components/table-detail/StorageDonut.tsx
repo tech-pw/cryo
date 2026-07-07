@@ -56,14 +56,14 @@ export const StorageDonut = ({
               formatter={(value, name) => {
                 const bytes = Number(value ?? 0);
                 const usd = ((bytes / (1024 ** 3)) * pricePerGbMonth) || 0;
-                return [`${formatBytesGb(bytes)} · ${formatCurrency(usd)}/mo`, String(name)];
+                return [`${formatBytesGb(bytes)} · ${formatCurrency(usd)}/month`, String(name)];
               }}
             />
           </PieChart>
         </ResponsiveContainer>
         <div className="td-storage-donut-center">
           <div className="td-storage-donut-total">{formatBytesGb(total)}</div>
-          <div className="td-storage-donut-label">Total storage</div>
+          <div className="td-storage-donut-label">Total Storage</div>
         </div>
       </div>
       <div className="td-storage-donut-legend">
@@ -77,7 +77,7 @@ export const StorageDonut = ({
               />
               <span>{part.key}</span>
               <span>{formatBytesGb(part.bytes)}</span>
-              <span>{formatCurrency(usd)}/mo</span>
+              <span>{formatCurrency(usd)}/month</span>
             </div>
           );
         })}

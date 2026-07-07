@@ -60,7 +60,7 @@ export const RecommendedActions = ({
     actionItems.push({
       key: `op-${op.operation}`,
       title: operationLabels[op.operation] ?? op.operation,
-      description: `Save ${formatCurrency(op.savings_usd_month)}/mo · reclaim ${formatBytesGb(op.reclaimable_bytes)}`,
+      description: `Save ${formatCurrency(op.savings_usd_month)}/month · reclaim ${formatBytesGb(op.reclaimable_bytes)}`,
       savingsUsd: op.savings_usd_month,
       confidence,
       icon: iconForOperation(op.operation)
@@ -83,7 +83,7 @@ export const RecommendedActions = ({
   if (topPartition?.benefit_score && topPartition.benefit_score > 0.05) {
     actionItems.push({
       key: "hot-partition",
-      title: "Compact hottest partition first",
+      title: "Compact Hottest Partition",
       description: `${topPartition.partition_value ?? "(table)"} · score ${topPartition.benefit_score.toFixed(3)} · ${formatNumber(topPartition.small_files)} small files`,
       savingsUsd: 0,
       confidence: "MED",
@@ -113,7 +113,7 @@ export const RecommendedActions = ({
             <Button size="small" onClick={onPreview}>Preview</Button>
             {index === 0 ? (
               <Button size="small" type="primary" onClick={onRun}>
-                Run now
+                Run Now
               </Button>
             ) : null}
           </Space>

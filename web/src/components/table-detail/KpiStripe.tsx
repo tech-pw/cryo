@@ -39,7 +39,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       >
         <HeartOutlined className="td-kpi-icon" />
         <div className="td-kpi-content">
-          <span className="td-kpi-label">Health score</span>
+          <span className="td-kpi-label">Health Score</span>
           <span className="td-kpi-value">{formatNumber(score)}</span>
         </div>
       </div>
@@ -47,7 +47,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       <div className="td-kpi-tile td-kpi-impact-cool">
         <DatabaseOutlined className="td-kpi-icon" />
         <div className="td-kpi-content">
-          <span className="td-kpi-label">Total size</span>
+          <span className="td-kpi-label">Total Size</span>
           <span className="td-kpi-value">{formatGb(stats?.total_size_gb)}</span>
         </div>
       </div>
@@ -66,7 +66,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       <div className={`td-kpi-tile ${impactClassForSmallFiles(smallRate)}`}>
         <WarningOutlined className="td-kpi-icon" />
         <div className="td-kpi-content">
-          <span className="td-kpi-label">Small files</span>
+          <span className="td-kpi-label">Small Files</span>
           <span className="td-kpi-value">{formatNumber(stats?.small_files_count, true)}</span>
           <span className="td-kpi-subtle">{(smallRate * 100).toFixed(0)}% of total</span>
         </div>
@@ -83,7 +83,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       <div className={`td-kpi-tile ${savingsUsd > 0 ? "td-kpi-impact-cool" : "td-kpi-impact-muted"}`}>
         <DollarOutlined className="td-kpi-icon" />
         <div className="td-kpi-content">
-          <span className="td-kpi-label">Savings / mo</span>
+          <span className="td-kpi-label">Monthly Savings</span>
           <span className="td-kpi-value">{formatCurrency(savingsUsd)}</span>
           <span className="td-kpi-subtle">{formatBytesGb(reclaimableBytes)} reclaimable</span>
         </div>

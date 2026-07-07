@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/readyz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Readyz */
+        get: operations["readyz_readyz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboards/datalake": {
         parameters: {
             query?: never;
@@ -126,6 +143,54 @@ export interface paths {
         patch: operations["patch_source_api_v1_sources__source_id__patch"];
         trace?: never;
     };
+    "/api/v1/sources/{source_id}/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Source Namespaces
+         * @description Live namespace list for an already-saved source, so the scan-scope picker can offer real
+         *     schema names to target even before this lakehouse has ever been scanned.
+         *
+         *     Uses ``list_all_namespaces()`` (BFS, depth-bounded) instead of ``list_namespaces()`` so the
+         *     picker shows nested namespaces too -- the Iceberg spec's top-level-only call hides every
+         *     schema under an account/tenant prefix (e.g. ``prod_data.bronze.events``) and makes the picker
+         *     effectively useless against REST catalogs.
+         */
+        get: operations["get_source_namespaces_api_v1_sources__source_id__namespaces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/namespaces/{namespace}/tables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Source Namespace Tables
+         * @description Live table names within one namespace of an already-saved source -- one cheap call, so
+         *     the scan-scope "Specific tables" picker can offer real tables to target once a schema is
+         *     chosen, even before this lakehouse has ever been scanned.
+         */
+        get: operations["get_source_namespace_tables_api_v1_sources__source_id__namespaces__namespace__tables_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sources/test": {
         parameters: {
             query?: never;
@@ -137,12 +202,99 @@ export interface paths {
         put?: never;
         /**
          * Test Source
-         * @description Verify a not-yet-saved catalog config and show what's actually in it.
+         * @description Verify a not-yet-saved catalog config connects -- deliberately does NOT enumerate tables.
          *
-         *     Used by the "Test connection" action while creating/editing a lakehouse, so a user can see
-         *     real discovered namespaces and tables before committing to a Warehouse/URI guess.
+         *     Used by the "Test connection" action while creating/editing a lakehouse. This only proves
+         *     auth + reachability (one list_namespaces() call); it used to also call list_tables(), which
+         *     is O(namespaces) round-trips and could take minutes against a real Hive Metastore with many
+         *     databases -- exactly the kind of thing a human shouldn't be stuck waiting on a button click
+         *     for. Real table/schema discovery is the async Scanner's job (cryo/scanner/run.py, triggered
+         *     via POST /scan/trigger with scope="source"), which already has its own progress tracking.
          */
         post: operations["test_source_api_v1_sources_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Purge Source
+         * @description Permanently delete a source and everything Cryo scanned from it (tables, stats, tier
+         *     policies, AWS integration). Unlike DELETE /sources/{id} above (which just disables it and is
+         *     reversible via PATCH), this cannot be undone -- there is no soft-delete/restore path.
+         */
+        delete: operations["purge_source_api_v1_sources__source_id__purge_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/aws-integration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Aws Integration */
+        get: operations["get_aws_integration_api_v1_sources__source_id__aws_integration_get"];
+        put?: never;
+        /** Create Aws Integration */
+        post: operations["create_aws_integration_api_v1_sources__source_id__aws_integration_post"];
+        /** Delete Aws Integration */
+        delete: operations["delete_aws_integration_api_v1_sources__source_id__aws_integration_delete"];
+        options?: never;
+        head?: never;
+        /** Patch Aws Integration */
+        patch: operations["patch_aws_integration_api_v1_sources__source_id__aws_integration_patch"];
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/aws-integration/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Aws Integration
+         * @description Verify AWS credentials work via sts:GetCallerIdentity — free, no AWS charges.
+         */
+        post: operations["test_aws_integration_api_v1_sources__source_id__aws_integration_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/aws-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Aws Usage
+         * @description Real S3 bucket size/object count (free daily CloudWatch metrics) and the real regional
+         *     $/GB-month rate (free Price List API) — no data scan, no AWS charges.
+         */
+        get: operations["get_aws_usage_api_v1_sources__source_id__aws_usage_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -184,6 +336,51 @@ export interface paths {
         head?: never;
         /** Patch Destination */
         patch: operations["patch_destination_api_v1_destinations__destination_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/destinations/{destination_id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Purge Destination
+         * @description Permanently delete an engine. Unlike DELETE /destinations/{id} above (soft-disable,
+         *     reversible via PATCH), this cannot be undone. Presets/maintenance runs that reference this
+         *     engine are NOT cascade-deleted -- reassign or remove those first, or this fails with a clear
+         *     409 rather than silently destroying preset configs or run history.
+         */
+        delete: operations["purge_destination_api_v1_destinations__destination_id__purge_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/destinations/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Destination Config
+         * @description Verify a not-yet-saved engine config, so a user can see it actually connects before
+         *     committing to it. Mirrors /sources/test for lakehouses -- both let the create/edit drawer
+         *     test with the form's current values instead of requiring a save first.
+         */
+        post: operations["test_destination_config_api_v1_destinations_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/destinations/{destination_id}/test": {
@@ -321,6 +518,52 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Table
+         * @description Set table-level fields not owned by the scanner -- currently just the alert owner.
+         */
+        patch: operations["patch_table_api_v1_tables__table_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/alert-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Table Alert Subscriptions */
+        get: operations["list_table_alert_subscriptions_api_v1_tables__table_id__alert_subscriptions_get"];
+        put?: never;
+        /**
+         * Create Table Alert Subscription
+         * @description Subscribe an email to SLA/data-quality breach alerts for this table.
+         *
+         *     Any authenticated viewer can subscribe themselves (or a distro list) -- this is the
+         *     "consumer wants to know" list, distinct from the single accountable owner set via
+         *     PATCH /tables/{id}. Re-subscribing the same email is a no-op, not an error.
+         */
+        post: operations["create_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/alert-subscriptions/{subscription_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Table Alert Subscription */
+        delete: operations["delete_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions__subscription_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -480,6 +723,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scanner/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scanner Config */
+        get: operations["get_scanner_config_api_v1_scanner_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Scanner Config */
+        patch: operations["patch_scanner_config_api_v1_scanner_config_patch"];
+        trace?: never;
+    };
+    "/api/v1/scanner/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scanner Status */
+        get: operations["get_scanner_status_api_v1_scanner_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -565,6 +843,313 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Config
+         * @description Expose auth mode for the UI (dev JWT vs production OIDC).
+         */
+        get: operations["auth_config_api_v1_auth_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Oidc Token
+         * @description Exchange an authorization code for an IdP access token.
+         */
+        post: operations["exchange_oidc_token_api_v1_auth_oidc_exchange_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Oidc Access Token
+         * @description Refresh an OIDC access token using a refresh token.
+         */
+        post: operations["refresh_oidc_access_token_api_v1_auth_oidc_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue Dev Token
+         * @description Issue a signed JWT for dev/test UI and integration tests.
+         *
+         *     Disabled in production — use your identity provider instead.
+         */
+        post: operations["issue_dev_token_api_v1_auth_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/governor/bandit/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Admission Bandit
+         * @description Clear learned admission-bandit state and revert to static heuristics.
+         */
+        post: operations["reset_admission_bandit_api_v1_auth_governor_bandit_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/mcp/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mcp List Tools */
+        get: operations["mcp_list_tools_api_v1_api_v1_mcp_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/mcp/tools/call": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mcp Call Tool */
+        post: operations["mcp_call_tool_api_v1_api_v1_mcp_tools_call_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/tables/{table_id}/compliance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Compliance Status */
+        get: operations["get_compliance_status_api_v1_api_v1_tables__table_id__compliance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/tables/{table_id}/protected-snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Protect Snapshot */
+        post: operations["protect_snapshot_api_v1_api_v1_tables__table_id__protected_snapshots_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/sources/{source_id}/catalog-latency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Catalog Latency */
+        get: operations["get_catalog_latency_api_v1_api_v1_sources__source_id__catalog_latency_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/tables/{table_id}/benefit-scores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Benefit Scores
+         * @description Get AutoComp benefit scores for table partitions.
+         */
+        get: operations["get_table_benefit_scores_api_v1_api_v1_tables__table_id__benefit_scores_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/tables/{table_id}/benefit-scores/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update Table Benefit Scores
+         * @description Trigger immediate benefit score update for a table.
+         */
+        post: operations["update_table_benefit_scores_api_v1_api_v1_tables__table_id__benefit_scores_update_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/tables/{table_id}/effectiveness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Effectiveness Stats
+         * @description Get compaction effectiveness ratio for a table.
+         */
+        get: operations["get_effectiveness_stats_api_v1_api_v1_tables__table_id__effectiveness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/governor/qpp/predict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Qpp Predict
+         * @description Predict runtime p50/p95/p99 for a hypothetical maintenance query.
+         */
+        post: operations["qpp_predict_api_v1_api_v1_governor_qpp_predict_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/governor/qpp/record": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Qpp Record
+         * @description Persist a single QPP observation for future trainer use.
+         */
+        post: operations["qpp_record_api_v1_api_v1_governor_qpp_record_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api/v1/governor/qpp/confidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Qpp Confidence
+         * @description Return the current model's confidence interval, optionally scoped to one table.
+         */
+        get: operations["qpp_confidence_api_v1_api_v1_governor_qpp_confidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/anomalies": {
         parameters: {
             query?: never;
@@ -633,6 +1218,128 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/copilot/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copilot Embedding Search
+         * @description Embedding fallback when a question misses the verified library.
+         */
+        post: operations["copilot_embedding_search_api_v1_ai_copilot_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/pii-classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Table Pii Classification */
+        get: operations["get_table_pii_classification_api_v1_tables__table_id__pii_classification_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Similar Tables */
+        get: operations["get_similar_tables_api_v1_tables__table_id__similar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/governor/bandit/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Governor Bandit Status */
+        get: operations["governor_bandit_status_api_v1_governor_bandit_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/cost-model/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluate Learned Cost Model */
+        get: operations["evaluate_learned_cost_model_api_v1_ai_cost_model_evaluate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/health-classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Classify Table Health */
+        get: operations["classify_table_health_api_v1_tables__table_id__health_classification_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/autocomp/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Autocomp Scheduling */
+        get: operations["compare_autocomp_scheduling_api_v1_tables__table_id__autocomp_compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/copilot/natural": {
         parameters: {
             query?: never;
@@ -647,91 +1354,6 @@ export interface paths {
          * @description Answer a natural language question about the datalake using LLM.
          */
         post: operations["copilot_natural_language_api_v1_ai_copilot_natural_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/mcp/tools": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Mcp List Tools */
-        get: operations["mcp_list_tools_api_v1_mcp_tools_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/mcp/tools/call": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mcp Call Tool */
-        post: operations["mcp_call_tool_api_v1_mcp_tools_call_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tables/{table_id}/compliance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Compliance Status */
-        get: operations["get_compliance_status_api_v1_tables__table_id__compliance_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tables/{table_id}/protected-snapshots": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Protect Snapshot */
-        post: operations["protect_snapshot_api_v1_tables__table_id__protected_snapshots_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sources/{source_id}/catalog-latency": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Catalog Latency */
-        get: operations["get_catalog_latency_api_v1_sources__source_id__catalog_latency_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -830,6 +1452,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/providers/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Ai Provider Config
+         * @description Test a not-yet-saved AI provider config with the form's current values, so a user can
+         *     verify the API key/model actually work before creating or updating the provider.
+         */
+        post: operations["test_ai_provider_config_api_v1_ai_providers_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/chat": {
         parameters: {
             query?: never;
@@ -922,6 +1565,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/slack/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Slack Config Values
+         * @description Test a not-yet-saved Slack webhook by sending a test message with the form's current
+         *     values, so a user can verify it actually works before creating or updating the connection.
+         */
+        post: operations["test_slack_config_values_api_v1_slack_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reporting/daily": {
         parameters: {
             query?: never;
@@ -936,6 +1600,26 @@ export interface paths {
          * @description Generate daily anomaly report, optionally send to Slack.
          */
         post: operations["generate_report_api_v1_reporting_daily_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check Table Signals
+         * @description Check all maintenance trigger signals for a table.
+         */
+        get: operations["check_table_signals_api_v1_tables__table_id__signals_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1006,6 +1690,819 @@ export interface paths {
         put?: never;
         /** Preview Routing */
         post: operations["preview_routing_api_v1_routing_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/multi-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Multi Catalog Stats
+         * @description Get aggregated statistics across all catalogs for federation view.
+         */
+        get: operations["get_multi_catalog_stats_api_v1_multi_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/query-performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Query Performance
+         * @description Get query performance metrics for the dashboard.
+         */
+        get: operations["get_query_performance_api_v1_query_performance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/health-trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Health Trends
+         * @description Get health trends for a table over time.
+         */
+        get: operations["get_table_health_trends_api_v1_tables__table_id__health_trends_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job_id}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Detail
+         * @description Get detailed information about a maintenance job.
+         */
+        get: operations["get_job_detail_api_v1_jobs__job_id__detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sla-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sla Status
+         * @description Get SLA status for all monitored tables, or a single table when table_id is given.
+         */
+        get: operations["get_sla_status_api_v1_sla_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cost-attribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cost Attribution
+         * @description Get cost attribution by team/department.
+         */
+        get: operations["get_cost_attribution_api_v1_cost_attribution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/s3-tiering-recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get S3 Tiering Recommendations
+         * @description Get S3 Intelligent-Tiering recommendations for all large tables.
+         *
+         *     Returns tables that would benefit from enabling S3 Intelligent-Tiering,
+         *     sorted by estimated annual savings.
+         */
+        get: operations["get_s3_tiering_recommendations_api_v1_s3_tiering_recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/s3-tiering": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table S3 Tiering
+         * @description Get S3 Intelligent-Tiering recommendation for a specific table.
+         */
+        get: operations["get_table_s3_tiering_api_v1_tables__table_id__s3_tiering_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/approvals/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Approvals
+         * @description List all pending approval requests.
+         */
+        get: operations["list_pending_approvals_api_v1_advanced_approvals_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/approvals/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Approval Request
+         * @description Create a new approval request for a destructive operation.
+         */
+        post: operations["create_approval_request_api_v1_advanced_approvals_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/approvals/{request_id}/action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Or Reject
+         * @description Approve or reject an approval request.
+         */
+        post: operations["approve_or_reject_api_v1_advanced_approvals__request_id__action_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/lineage/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Lineage
+         * @description Get lineage graph for a table.
+         */
+        get: operations["get_table_lineage_api_v1_advanced_lineage__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/anomalies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Detect Anomalies
+         * @description Detect anomalies across all tables.
+         */
+        get: operations["detect_anomalies_api_v1_advanced_anomalies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/anomalies/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Detect Table Anomalies */
+        get: operations["detect_table_anomalies_api_v1_advanced_anomalies__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/data-quality/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Data Quality Profile
+         * @description Get zero-scan data quality profile for a table.
+         */
+        get: operations["get_data_quality_profile_api_v1_advanced_data_quality__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/partition-evolution/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Partition Evolution Recommendation
+         * @description Get partition evolution recommendation for a table.
+         */
+        get: operations["get_partition_evolution_recommendation_api_v1_advanced_partition_evolution__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Detect Maintenance Signals
+         * @description Detect all maintenance signals (file degradation, latency spikes, cost spikes).
+         */
+        get: operations["detect_maintenance_signals_api_v1_advanced_signals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/finops/forecast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cost Forecast
+         * @description Get next month cost forecast.
+         */
+        get: operations["get_cost_forecast_api_v1_advanced_finops_forecast_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/compaction-candidates/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Compaction Candidates
+         * @description Return AutoComp-style workload-aware compaction candidates for a table.
+         */
+        get: operations["get_compaction_candidates_api_v1_advanced_compaction_candidates__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/unionable/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Unionable Tables
+         * @description Return tables whose schema is compatible with the target for UNION ALL.
+         */
+        get: operations["get_unionable_tables_api_v1_advanced_unionable__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/skillsets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Skillsets
+         * @description List every skillset version, newest first.
+         */
+        get: operations["list_skillsets_api_v1_advanced_skillsets_get"];
+        put?: never;
+        /**
+         * Create Skillset
+         * @description Create a new skillset version (and optionally activate it).
+         */
+        post: operations["create_skillset_api_v1_advanced_skillsets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/skillsets/{name}/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Active Skillset
+         * @description Return the currently active version of a skillset, or None.
+         */
+        get: operations["get_active_skillset_api_v1_advanced_skillsets__name__active_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/skillsets/{name}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rollback Skillset
+         * @description Re-activate a prior skillset version.
+         */
+        post: operations["rollback_skillset_api_v1_advanced_skillsets__name__rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/skillsets/{name}/outcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Skillset Outcome
+         * @description Record the decision on a skillset recommendation and roll up metrics.
+         */
+        post: operations["record_skillset_outcome_api_v1_advanced_skillsets__name__outcome_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/gitops/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Gitops Webhook
+         * @description Reload GitOps policies when a git push webhook fires.
+         */
+        post: operations["gitops_webhook_api_v1_advanced_gitops_webhook_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/plan-verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Plan
+         * @description Statically verify a ``MaintenancePlan`` against the live catalog + engine capabilities.
+         *     Returns a ``PlanVerdictRead`` with the plan's SHA-256 hash, the invariants that ran, and any
+         *     violations (critical ones flip ``verified`` to False).
+         */
+        post: operations["verify_plan_api_v1_advanced_plan_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/observability/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Observations
+         * @description Search the local observation archive (SANER 2026 observation lakehouse).
+         */
+        get: operations["search_observations_api_v1_advanced_observability_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/observability/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observation Stats
+         * @description Return archive-level stats (file count, byte total, oldest/newest event).
+         */
+        get: operations["observation_stats_api_v1_advanced_observability_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/observability/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact Observations
+         * @description Deduplicate by id inside each hour file. The lakehouse is append-only; this is the only
+         *     destructive op and it's idempotent.
+         */
+        post: operations["compact_observations_api_v1_advanced_observability_compact_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/column-stats/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Column Stats
+         * @description Return per-column sketches (Theta NDV + KLL quantiles) from the latest Puffin blobs.
+         *
+         *     Walks the ``column_stats_sketch`` table for the requested table, decodes each Puffin
+         *     blob, and merges the per-scan sketches into a global per-column summary. Returns
+         *     ``p50/p95/p99`` quantiles plus an ``ndv_estimate``.
+         */
+        get: operations["get_column_stats_api_v1_advanced_column_stats__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/silent-data-loss/{table_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Silent Data Loss
+         * @description Return the latest silent-data-loss report for a table.
+         *
+         *     Runs the detector on demand; the scheduler sweeps every ``silent_loss_check_interval_min``
+         *     minutes for fleet-wide coverage, but this endpoint lets an operator force a fresh
+         *     check from the UI.
+         */
+        get: operations["get_silent_data_loss_api_v1_advanced_silent_data_loss__table_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/silent-data-loss/{table_id}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Repair Silent Data Loss
+         * @description Trigger ``iceberg.rewrite_manifests`` to repair silent-data-loss drift.
+         *
+         *     Local dev: this is a noop that records an AuditLog entry so the UI can confirm the
+         *     repair intent was captured. Production: enqueue a maintenance job that runs
+         *     ``rewrite_manifests`` against the destination engine.
+         */
+        post: operations["repair_silent_data_loss_api_v1_advanced_silent_data_loss__table_id__repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metrics
+         * @description Expose Prometheus metrics for scraping.
+         *
+         *     This endpoint returns all registered Prometheus metrics in the
+         *     standard exposition format.
+         */
+        get: operations["metrics_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/healthz/deep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Healthz Deep
+         * @description Deep health check covering database and Redis connectivity.
+         */
+        get: operations["healthz_deep_healthz_deep_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cost Insight Config */
+        get: operations["get_cost_insight_config_api_v1_sources__source_id__cost_insight_config_get"];
+        put?: never;
+        /** Create Cost Insight Config */
+        post: operations["create_cost_insight_config_api_v1_sources__source_id__cost_insight_config_post"];
+        /** Delete Cost Insight Config */
+        delete: operations["delete_cost_insight_config_api_v1_sources__source_id__cost_insight_config_delete"];
+        options?: never;
+        head?: never;
+        /** Patch Cost Insight Config */
+        patch: operations["patch_cost_insight_config_api_v1_sources__source_id__cost_insight_config_patch"];
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight/ingest-cur": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Cur
+         * @description Trigger a CUR ingest from S3, or from a local fixture when one is configured.
+         *
+         *     When ``fixture_path`` is set on the config (typical for dev/CI), reads that file instead
+         *     of listing the configured CUR bucket — invaluable for testing without real AWS access.
+         */
+        post: operations["ingest_cur_api_v1_sources__source_id__cost_insight_ingest_cur_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight/ingest-inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest Inventory */
+        post: operations["ingest_inventory_api_v1_sources__source_id__cost_insight_ingest_inventory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight/by-bucket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cost By Bucket */
+        get: operations["cost_by_bucket_api_v1_sources__source_id__cost_insight_by_bucket_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cost Daily */
+        get: operations["cost_daily_api_v1_sources__source_id__cost_insight_daily_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{source_id}/cost-insight/by-prefix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Size By Prefix */
+        get: operations["size_by_prefix_api_v1_sources__source_id__cost_insight_by_prefix_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1095,6 +2592,32 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * AIProviderTestConfigRequest
+         * @description A not-yet-saved provider config, so the create/edit drawer can verify it before saving.
+         */
+        AIProviderTestConfigRequest: {
+            /** Provider Type */
+            provider_type: string;
+            /**
+             * Api Key
+             * @default
+             */
+            api_key: string;
+            /** Model */
+            model: string;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Prompt
+             * @default Say hello in one sentence.
+             */
+            prompt: string;
+            /** Provider Id */
+            provider_id?: string | null;
+        };
         /** AIProviderTestRequest */
         AIProviderTestRequest: {
             /**
@@ -1133,6 +2656,264 @@ export interface components {
             /** Is Default */
             is_default?: boolean | null;
         };
+        /** AWSConnectionTestResponse */
+        AWSConnectionTestResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Account Id */
+            account_id?: string | null;
+            /** Arn */
+            arn?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * AWSCostIngestResponse
+         * @description Result of a CUR / Inventory ingest run.
+         */
+        AWSCostIngestResponse: {
+            /** Rows Ingested */
+            rows_ingested: number;
+            /** Files Processed */
+            files_processed: number;
+            /** Through Date */
+            through_date?: string | null;
+            /** Inventory Date */
+            inventory_date?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * AWSCostInsightConfigCreate
+         * @description Opt-in config for real CUR + S3 Inventory-based cost attribution.
+         *
+         *     Separated from ``AWSIntegration`` because CUR and Inventory require billing-admin setup on
+         *     the AWS side and the data comes from delivered report files, not live API calls. The
+         *     existing ``AWSIntegration`` is the free-tier CloudWatch + Pricing List path; this is the
+         *     CE-grade upgrade for organizations willing to pay one-time setup cost.
+         */
+        AWSCostInsightConfigCreate: {
+            /** Cur Bucket */
+            cur_bucket?: string | null;
+            /** Cur Prefix */
+            cur_prefix?: string | null;
+            /** Cur Report Name */
+            cur_report_name?: string | null;
+            /** Fixture Path */
+            fixture_path?: string | null;
+            /** Inventory Bucket */
+            inventory_bucket?: string | null;
+            /** Inventory Prefix */
+            inventory_prefix?: string | null;
+            /**
+             * Inventory Format
+             * @default CSV
+             */
+            inventory_format: string;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Secret Access Key */
+            secret_access_key?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** AWSCostInsightConfigPatch */
+        AWSCostInsightConfigPatch: {
+            /** Cur Bucket */
+            cur_bucket?: string | null;
+            /** Cur Prefix */
+            cur_prefix?: string | null;
+            /** Cur Report Name */
+            cur_report_name?: string | null;
+            /** Fixture Path */
+            fixture_path?: string | null;
+            /** Inventory Bucket */
+            inventory_bucket?: string | null;
+            /** Inventory Prefix */
+            inventory_prefix?: string | null;
+            /** Inventory Format */
+            inventory_format?: string | null;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Secret Access Key */
+            secret_access_key?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
+        /** AWSCostInsightConfigRead */
+        AWSCostInsightConfigRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Cur Bucket */
+            cur_bucket?: string | null;
+            /** Cur Prefix */
+            cur_prefix?: string | null;
+            /** Cur Report Name */
+            cur_report_name?: string | null;
+            /** Fixture Path */
+            fixture_path?: string | null;
+            /** Inventory Bucket */
+            inventory_bucket?: string | null;
+            /** Inventory Prefix */
+            inventory_prefix?: string | null;
+            /**
+             * Inventory Format
+             * @default CSV
+             */
+            inventory_format: string;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Last Ingested At */
+            last_ingested_at?: string | null;
+            /** Last Ingested Through */
+            last_ingested_through?: string | null;
+            /** Last Ingest Ok */
+            last_ingest_ok?: boolean | null;
+            /** Last Ingest Error */
+            last_ingest_error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * AWSIntegrationCreate
+         * @description Free-tier-only AWS S3 cost/usage integration for a lakehouse's bucket.
+         *
+         *     Only ever calls AWS APIs that cost nothing: S3's default daily CloudWatch storage metrics
+         *     (read via GetMetricStatistics, not the always-billed GetMetricData) and the free Price List
+         *     API. See cryo/integrations/aws_s3_metrics.py.
+         */
+        AWSIntegrationCreate: {
+            /** Bucket */
+            bucket: string;
+            /** Region */
+            region: string;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Secret Access Key */
+            secret_access_key?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** AWSIntegrationPatch */
+        AWSIntegrationPatch: {
+            /** Bucket */
+            bucket?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Secret Access Key */
+            secret_access_key?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
+        /** AWSIntegrationRead */
+        AWSIntegrationRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Bucket */
+            bucket: string;
+            /** Region */
+            region: string;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Last Tested At */
+            last_tested_at?: string | null;
+            /** Last Test Ok */
+            last_test_ok?: boolean | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AWSUsageResponse */
+        AWSUsageResponse: {
+            /** Bucket */
+            bucket: string;
+            /** Region */
+            region: string;
+            /** Measured At */
+            measured_at?: string | null;
+            /** Size Bytes By Storage Class */
+            size_bytes_by_storage_class?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Total Size Bytes
+             * @default 0
+             */
+            total_size_bytes: number;
+            /** Object Count */
+            object_count?: number | null;
+            /** Price Per Gb Month */
+            price_per_gb_month?: number | null;
+            /** Price Source */
+            price_source?: string | null;
+        };
+        /** AnomalyAlertRead */
+        AnomalyAlertRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Metric Name */
+            metric_name: string;
+            /** Current Value */
+            current_value: number;
+            /** Expected Value */
+            expected_value: number;
+            /** Deviation Sigma */
+            deviation_sigma: number;
+            /** Severity */
+            severity: string;
+            /** Description */
+            description: string;
+            /**
+             * Detected At
+             * Format: date-time
+             */
+            detected_at: string;
+        };
         /** AnomalyResponse */
         AnomalyResponse: {
             /**
@@ -1144,6 +2925,47 @@ export interface components {
             anomalies: {
                 [key: string]: unknown;
             }[];
+        };
+        /** ApprovalAction */
+        ApprovalAction: {
+            /** Approved */
+            approved: boolean;
+            /** Approver */
+            approver: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** ApprovalRequestRead */
+        ApprovalRequestRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Operation Type */
+            operation_type: string;
+            /** Status */
+            status: string;
+            /** Requested By */
+            requested_by: string;
+            /** Impact Preview */
+            impact_preview: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
         };
         /** AssignmentDeleteRequest */
         AssignmentDeleteRequest: {
@@ -1204,6 +3026,60 @@ export interface components {
             duration_ms?: number | null;
             /** Actual Bytes Freed */
             actual_bytes_freed?: number | null;
+            /** Actor */
+            actor?: string | null;
+        };
+        /** AuthConfigResponse */
+        AuthConfigResponse: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "dev" | "oidc";
+            /** Dev Token Enabled */
+            dev_token_enabled: boolean;
+            oidc?: components["schemas"]["OidcPublicConfig"] | null;
+        };
+        /** AutoCompCompareResponse */
+        AutoCompCompareResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Static Order */
+            static_order: string[];
+            /** Autocomp Order */
+            autocomp_order: string[];
+            /** Improvement Ratio */
+            improvement_ratio: number;
+            /** Autocomp Wins */
+            autocomp_wins: boolean;
+        };
+        /** BanditStatusResponse */
+        BanditStatusResponse: {
+            /** Observations */
+            observations: number;
+            /** Confident */
+            confident: boolean;
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+        };
+        /** BenefitScoreResponse */
+        BenefitScoreResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Partitions Scored */
+            partitions_scored: number;
+            /** Top Candidates */
+            top_candidates: {
+                [key: string]: unknown;
+            }[];
         };
         /** CatalogLatencyResponse */
         CatalogLatencyResponse: {
@@ -1216,8 +3092,142 @@ export interface components {
             source_name: string;
             /** Operations */
             operations: {
-                [key: string]: unknown;
+                [key: string]: {
+                    [key: string]: number;
+                };
             };
+        };
+        /**
+         * CatalogStatsRead
+         * @description Statistics for a single catalog.
+         */
+        CatalogStatsRead: {
+            /**
+             * Catalog Id
+             * Format: uuid
+             */
+            catalog_id: string;
+            /** Catalog Name */
+            catalog_name: string;
+            /** Catalog Type */
+            catalog_type: string;
+            /** Table Count */
+            table_count: number;
+            /** Total Size Gb */
+            total_size_gb: number;
+            /** Small Files Count */
+            small_files_count: number;
+            /** Needs Compaction Count */
+            needs_compaction_count: number;
+            /** Monthly Cost Usd */
+            monthly_cost_usd: number;
+            /** Projected Savings Usd Month */
+            projected_savings_usd_month: number | null;
+            /** Avg Health Score */
+            avg_health_score: number;
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** ColumnQualityMetricRead */
+        ColumnQualityMetricRead: {
+            /** Column Name */
+            column_name: string;
+            /** Null Rate Pct */
+            null_rate_pct: number;
+            /** Null Rate Baseline Pct */
+            null_rate_baseline_pct: number;
+            /** Null Rate Spike */
+            null_rate_spike: boolean;
+            /** Min Value */
+            min_value?: unknown | null;
+            /** Max Value */
+            max_value?: unknown | null;
+            /**
+             * Value Range Changed
+             * @default false
+             */
+            value_range_changed: boolean;
+            /**
+             * Value Range Explanation
+             * @default
+             */
+            value_range_explanation: string;
+            /** Column Type */
+            column_type?: string | null;
+        };
+        /** ColumnSketchBlob */
+        ColumnSketchBlob: {
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Offset */
+            offset: number;
+            /** Sketch Type */
+            sketch_type: string;
+        };
+        /** ColumnSketchRead */
+        ColumnSketchRead: {
+            /** Field Type */
+            field_type: string | null;
+            /** Ndv Estimate */
+            ndv_estimate: number;
+            /** Quantiles */
+            quantiles: {
+                [key: string]: number;
+            };
+            /** Sketch Count */
+            sketch_count: number;
+            /** Puffin Blobs */
+            puffin_blobs: components["schemas"]["ColumnSketchBlob"][];
+        };
+        /** ColumnStatsResponse */
+        ColumnStatsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Columns */
+            columns: {
+                [key: string]: components["schemas"]["ColumnSketchRead"];
+            };
+        };
+        /** CompactionCandidateRead */
+        CompactionCandidateRead: {
+            /** Partition Path */
+            partition_path: string;
+            /** Partition Size Gb */
+            partition_size_gb: number;
+            /** Small Files */
+            small_files: number;
+            /** Query Freq Per Day */
+            query_freq_per_day: number;
+            /** P95 Latency Ms */
+            p95_latency_ms: number;
+            /** Score */
+            score: number;
+            /** Priority */
+            priority: string;
+            /** Savings Estimate Usd */
+            savings_estimate_usd: number;
+            /** Reasons */
+            reasons?: string[];
+        };
+        /** CompactionCandidatesResponse */
+        CompactionCandidatesResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Candidates */
+            candidates: components["schemas"]["CompactionCandidateRead"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
         };
         /** ComplianceStatusResponse */
         ComplianceStatusResponse: {
@@ -1232,6 +3242,13 @@ export interface components {
             pending_deletion?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Abac Policy Count
+             * @default 0
+             */
+            abac_policy_count: number;
+            /** Abac Enforcement Note */
+            abac_enforcement_note?: string | null;
         };
         /** CopilotQuestionRequest */
         CopilotQuestionRequest: {
@@ -1251,6 +3268,99 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** CopilotSearchRequest */
+        CopilotSearchRequest: {
+            /** Question */
+            question: string;
+            /**
+             * Min Similarity
+             * @default 0.55
+             */
+            min_similarity: number;
+        };
+        /** CopilotSearchResponse */
+        CopilotSearchResponse: {
+            /** Source */
+            source: string;
+            /** Question Id */
+            question_id?: string | null;
+            /** Similarity */
+            similarity?: number | null;
+            /** Matched Text */
+            matched_text?: string | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /** Answer */
+            answer?: string | null;
+        };
+        /**
+         * CostAttributionRead
+         * @description Cost attribution by team/department.
+         */
+        CostAttributionRead: {
+            /** Cost Center */
+            cost_center: string | null;
+            /** Department */
+            department: string | null;
+            /** Storage Cost Usd */
+            storage_cost_usd: number;
+            /** Compute Cost Usd */
+            compute_cost_usd: number;
+            /** Maintenance Cost Usd */
+            maintenance_cost_usd: number;
+            /** Total Cost Usd */
+            total_cost_usd: number;
+            /** Table Count */
+            table_count: number;
+            /** Month */
+            month: string;
+        };
+        /**
+         * CostAttributionResponse
+         * @description Response for cost attribution dashboard.
+         */
+        CostAttributionResponse: {
+            /** Attributions */
+            attributions: components["schemas"]["CostAttributionRead"][];
+            /** Total Cost Usd */
+            total_cost_usd: number;
+            /** Unattributed Cost Usd */
+            unattributed_cost_usd: number;
+            /** Month */
+            month: string;
+        };
+        /** CostByBucketItem */
+        CostByBucketItem: {
+            /** Bucket */
+            bucket: string;
+            /** Total Cost Usd */
+            total_cost_usd: number;
+            /** Line Count */
+            line_count: number;
+            /** Last Usage Date */
+            last_usage_date?: string | null;
+        };
+        /** CostByBucketResponse */
+        CostByBucketResponse: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Start */
+            start?: string | null;
+            /** End */
+            end?: string | null;
+            /**
+             * Total Cost Usd
+             * @default 0
+             */
+            total_cost_usd: number;
+            /** Items */
+            items?: components["schemas"]["CostByBucketItem"][];
+        };
         /** CostByOperationRead */
         CostByOperationRead: {
             operation: components["schemas"]["OperationType"];
@@ -1258,6 +3368,26 @@ export interface components {
             savings_usd_month: number;
             /** Reclaimable Bytes */
             reclaimable_bytes: number;
+        };
+        /** CostDailySeriesItem */
+        CostDailySeriesItem: {
+            /**
+             * Usage Date
+             * Format: date
+             */
+            usage_date: string;
+            /** Total Cost Usd */
+            total_cost_usd: number;
+        };
+        /** CostDailySeriesResponse */
+        CostDailySeriesResponse: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Items */
+            items?: components["schemas"]["CostDailySeriesItem"][];
         };
         /** CostDashboardResponse */
         CostDashboardResponse: {
@@ -1295,6 +3425,42 @@ export interface components {
             /** Last Full Cost Scan At */
             last_full_cost_scan_at?: string | null;
         };
+        /** CostForecastRead */
+        CostForecastRead: {
+            /** Forecast Month */
+            forecast_month: string;
+            /** Current Month Storage Cost Usd */
+            current_month_storage_cost_usd: number;
+            /** Current Month Compute Cost Usd */
+            current_month_compute_cost_usd: number;
+            /** Current Month Maintenance Cost Usd */
+            current_month_maintenance_cost_usd: number;
+            /** Forecast Storage Cost Usd */
+            forecast_storage_cost_usd: number;
+            /** Forecast Compute Cost Usd */
+            forecast_compute_cost_usd: number;
+            /** Forecast Maintenance Cost Usd */
+            forecast_maintenance_cost_usd: number;
+            /** Total Forecast Usd */
+            total_forecast_usd: number;
+            /** Budget Limit Usd */
+            budget_limit_usd: number | null;
+            /** Alert Level */
+            alert_level: string;
+        };
+        /** CostModelEvaluateResponse */
+        CostModelEvaluateResponse: {
+            /** Mae Learned */
+            mae_learned: number;
+            /** Mae Heuristic */
+            mae_heuristic: number;
+            /** Beats Heuristic */
+            beats_heuristic: boolean;
+            /** Band Coverage */
+            band_coverage: number;
+            /** N Samples */
+            n_samples: number;
+        };
         /**
          * CostPrecision
          * @enum {string}
@@ -1324,6 +3490,24 @@ export interface components {
             projected_savings_usd_month?: number | null;
             /** Realized Usd Month */
             realized_usd_month?: number | null;
+        };
+        /** CreateApprovalRequest */
+        CreateApprovalRequest: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Operation Type */
+            operation_type: string;
+            /** Operation Params */
+            operation_params?: {
+                [key: string]: unknown;
+            };
+            /** Requested By */
+            requested_by: string;
+            /** Reason */
+            reason?: string | null;
         };
         /** DailyReportResponse */
         DailyReportResponse: {
@@ -1416,6 +3600,28 @@ export interface components {
              * @default 0
              */
             query_count_30d: number;
+        };
+        /** DataQualityProfileRead */
+        DataQualityProfileRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /**
+             * Profiled At
+             * Format: date-time
+             */
+            profiled_at: string;
+            /** Column Metrics */
+            column_metrics: components["schemas"]["ColumnQualityMetricRead"][];
+            /** Anomalies Detected */
+            anomalies_detected: number;
+            /** Schema Version Changed */
+            schema_version_changed: boolean;
+            /** New Columns */
+            new_columns: string[];
+            /** Dropped Columns */
+            dropped_columns: string[];
         };
         /** DatalakeDashboardResponse */
         DatalakeDashboardResponse: {
@@ -1512,8 +3718,16 @@ export interface components {
             /** Query Log Retention Days */
             query_log_retention_days?: number | null;
         };
-        /** DestinationRead */
+        /**
+         * DestinationRead
+         * @description Destination read schema with sensitive data redacted.
+         */
         DestinationRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Name */
             name: string;
             engine: components["schemas"]["EngineType"];
@@ -1521,32 +3735,12 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
-            /** Secret Ref */
-            secret_ref?: string | null;
             /** Offpeak Start */
             offpeak_start?: number | null;
             /** Offpeak End */
             offpeak_end?: number | null;
-            /**
-             * Enabled
-             * @default true
-             */
+            /** Enabled */
             enabled: boolean;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Query Log Config
-             */
-            query_log_config?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Query Log Retention Days
-             */
-            query_log_retention_days?: number | null;
             /**
              * Created At
              * Format: date-time
@@ -1557,6 +3751,38 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Query Log Config */
+            query_log_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Query Log Retention Days */
+            query_log_retention_days?: number | null;
+        };
+        /**
+         * DestinationTestRequest
+         * @description A not-yet-saved engine config, so the UI can verify it before creating/updating it.
+         */
+        DestinationTestRequest: {
+            engine: components["schemas"]["EngineType"];
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /** Destination Id */
+            destination_id?: string | null;
+        };
+        /** DestinationTestResponse */
+        DestinationTestResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Capacity */
+            capacity?: number | null;
+            /** Used */
+            used?: number | null;
+            /** Available */
+            available?: number | null;
+            /** Message */
+            message?: string | null;
         };
         /** EffectivePresetResponse */
         EffectivePresetResponse: {
@@ -1577,11 +3803,33 @@ export interface components {
             /** Rule Id */
             rule_id?: string | null;
         };
+        /** EffectivenessStatsResponse */
+        EffectivenessStatsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Total Input Files */
+            total_input_files: number;
+            /** Total Output Files */
+            total_output_files: number;
+            /** Run Count */
+            run_count: number;
+            /** Effectiveness Ratio */
+            effectiveness_ratio: number;
+            /** Effectiveness */
+            effectiveness: string;
+            /** Avg Duration Ms */
+            avg_duration_ms: number;
+            /** Recommendation */
+            recommendation: string;
+        };
         /**
          * EngineType
          * @enum {string}
          */
-        EngineType: "trino" | "spark_emr" | "native";
+        EngineType: "trino" | "spark_emr" | "native" | "flink";
         /** ExplainHealthRequest */
         ExplainHealthRequest: {
             /** Before Scan At */
@@ -1612,6 +3860,64 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthClassifierResponse */
+        HealthClassifierResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Needs Emergency Compaction */
+            needs_emergency_compaction: boolean;
+            /** Probability */
+            probability: number;
+            /** Method */
+            method: string;
+        };
+        /**
+         * JobDetailRead
+         * @description Detailed maintenance job information.
+         */
+        JobDetailRead: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Operation Type */
+            operation_type: string;
+            /** Status */
+            status: string;
+            /** Engine */
+            engine: string;
+            /** Replica */
+            replica: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Input Files Count */
+            input_files_count: number | null;
+            /** Output Files Count */
+            output_files_count: number | null;
+            /** Effectiveness Ratio */
+            effectiveness_ratio: number | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Sql Statements */
+            sql_statements: string[] | null;
+            /** Partition Predicates */
+            partition_predicates: string[] | null;
         };
         /** JobRead */
         JobRead: {
@@ -1662,6 +3968,38 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** LineageGraphRead */
+        LineageGraphRead: {
+            /** Root Table Id */
+            root_table_id: string;
+            /** Root Table Name */
+            root_table_name: string;
+            /** Upstream */
+            upstream: components["schemas"]["LineageNodeRead"][];
+            /** Downstream */
+            downstream: components["schemas"]["LineageNodeRead"][];
+        };
+        /** LineageNodeRead */
+        LineageNodeRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Depth */
+            depth: number;
+            /** Node Type */
+            node_type: string;
+        };
+        /** MaintenancePlanRead */
+        MaintenancePlanRead: {
+            /** Table Ref */
+            table_ref: string;
+            mode: components["schemas"]["Mode"];
+            /** Operations */
+            operations: components["schemas"]["OperationRead"][];
+            /** Notes */
+            notes?: string[];
+        };
         /** MaintenancePreviewRequest */
         MaintenancePreviewRequest: {
             /** @default trino */
@@ -1690,8 +4028,11 @@ export interface components {
              * Format: uuid
              */
             destination_id: string;
-            /** Preset Id */
-            preset_id?: string | null;
+            /**
+             * Preset Id
+             * Format: uuid
+             */
+            preset_id: string;
             /** @default standard */
             mode: components["schemas"]["Mode"];
             /**
@@ -1699,6 +4040,8 @@ export interface components {
              * @default api
              */
             trigger: string | null;
+            /** Scheduled At */
+            scheduled_at?: string | null;
         };
         /** MaintenanceRunResponse */
         MaintenanceRunResponse: {
@@ -1712,27 +4055,66 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** MaintenanceSignalRead */
+        MaintenanceSignalRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Signal Type */
+            signal_type: string;
+            /** Severity */
+            severity: string;
+            /** Current Value */
+            current_value: number;
+            /** Baseline Value */
+            baseline_value: number;
+            /** Threshold */
+            threshold: number;
+            /** Description */
+            description: string;
+            /**
+             * Detected At
+             * Format: date-time
+             */
+            detected_at: string;
+        };
         /** McpToolCallRequest */
         McpToolCallRequest: {
             /** Name */
             name: string;
-            /** Arguments */
-            arguments?: {
+            /**
+             * Arguments
+             * @default {}
+             */
+            arguments: {
                 [key: string]: unknown;
             };
         };
         /** McpToolCallResponse */
         McpToolCallResponse: {
             /** Result */
-            result: {
-                [key: string]: unknown;
-            };
+            result: unknown;
         };
         /**
          * Mode
          * @enum {string}
          */
         Mode: "light" | "standard" | "deep" | "manifest_only";
+        /**
+         * MultiCatalogResponse
+         * @description Response for multi-catalog federation dashboard.
+         */
+        MultiCatalogResponse: {
+            /** Catalogs */
+            catalogs: components["schemas"]["CatalogStatsRead"][];
+            /** Total Catalogs */
+            total_catalogs: number;
+            /** Total Tables */
+            total_tables: number;
+            /** Total Cost Usd */
+            total_cost_usd: number;
+        };
         /** NaturalLanguageRequest */
         NaturalLanguageRequest: {
             /** Question */
@@ -1756,11 +4138,104 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** ObservationCompactResponse */
+        ObservationCompactResponse: {
+            /** Files Merged */
+            files_merged: number;
+            /** Rows */
+            rows: number;
+            /** Bytes In */
+            bytes_in: number;
+            /** Bytes Out */
+            bytes_out: number;
+        };
+        /** ObservationEventRead */
+        ObservationEventRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Run Id */
+            run_id?: string | null;
+            /** Event Type */
+            event_type: string;
+            /** Level */
+            level: string;
+            /** Table Id */
+            table_id?: string | null;
+            /** Subject */
+            subject: string;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /** Correlation Id */
+            correlation_id?: string | null;
+            /** Actor */
+            actor?: string | null;
+        };
+        /** ObservationSearchResponse */
+        ObservationSearchResponse: {
+            /** Items */
+            items: components["schemas"]["ObservationEventRead"][];
+            /** Total */
+            total: number;
+        };
+        /** ObservationStatsResponse */
+        ObservationStatsResponse: {
+            /** Total Files */
+            total_files: number;
+            /** Total Bytes */
+            total_bytes: number;
+            /** Oldest Event */
+            oldest_event?: string | null;
+            /** Newest Event */
+            newest_event?: string | null;
+        };
+        /** OidcExchangeRequest */
+        OidcExchangeRequest: {
+            /** Code */
+            code: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+        };
+        /** OidcPublicConfig */
+        OidcPublicConfig: {
+            /** Client Id */
+            client_id: string;
+            /** Authorization Endpoint */
+            authorization_endpoint: string;
+            /** Token Endpoint */
+            token_endpoint: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+        };
+        /** OidcRefreshRequest */
+        OidcRefreshRequest: {
+            /** Refresh Token */
+            refresh_token: string;
+        };
+        /** OperationRead */
+        OperationRead: {
+            type: components["schemas"]["OperationType"];
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** Predicates */
+            predicates?: components["schemas"]["PartitionPredicateRead"][] | null;
+        };
         /**
          * OperationType
          * @enum {string}
          */
-        OperationType: "expire_snapshots" | "remove_orphan_files" | "optimize" | "optimize_manifests";
+        OperationType: "expire_snapshots" | "remove_orphan_files" | "optimize" | "optimize_manifests" | "compute_statistics";
         /** PaginatedTables */
         PaginatedTables: {
             /** Items */
@@ -1771,6 +4246,107 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+        };
+        /** PartitionEvolutionRecommendationRead */
+        PartitionEvolutionRecommendationRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Current Partition Spec */
+            current_partition_spec: string;
+            /** Recommended Partition Spec */
+            recommended_partition_spec: string;
+            /** Reason */
+            reason: string;
+            /** Confidence */
+            confidence: number;
+            /** Estimated Pruning Improvement Pct */
+            estimated_pruning_improvement_pct: number;
+            /** Query Patterns Analyzed */
+            query_patterns_analyzed: number;
+            /**
+             * Cardinality Estimate
+             * @default unknown
+             */
+            cardinality_estimate: string;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
+        };
+        /** PartitionPredicateRead */
+        PartitionPredicateRead: {
+            /** Terms */
+            terms: components["schemas"]["PartitionPredicateTermRead"][];
+            /** Unsupported Reason */
+            unsupported_reason?: string | null;
+        };
+        /** PartitionPredicateTermRead */
+        PartitionPredicateTermRead: {
+            /** Base Column */
+            base_column: string;
+            /** Transform */
+            transform: string;
+            /** Value */
+            value?: unknown | null;
+            /**
+             * Col Type
+             * @default
+             */
+            col_type: string;
+            /** Transform Param */
+            transform_param?: number | null;
+            /** Partition Field */
+            partition_field?: string | null;
+            /** Unsupported Reason */
+            unsupported_reason?: string | null;
+        };
+        /** PiiClassificationResponse */
+        PiiClassificationResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Matches */
+            matches: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** PlanVerdictRead */
+        PlanVerdictRead: {
+            /** Verified */
+            verified: boolean;
+            /** Plan Hash */
+            plan_hash: string;
+            /** Verifier Version */
+            verifier_version: string;
+            /** Invariants Checked */
+            invariants_checked?: string[];
+            /** Violations */
+            violations?: components["schemas"]["PlanViolationRead"][];
+        };
+        /** PlanVerifyRequest */
+        PlanVerifyRequest: {
+            plan: components["schemas"]["MaintenancePlanRead"];
+            /** Signature */
+            signature?: string | null;
+        };
+        /** PlanViolationRead */
+        PlanViolationRead: {
+            /** Invariant */
+            invariant: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "critical" | "warning";
+            /** Message */
+            message: string;
+            /** Location */
+            location: string;
         };
         /** PresetCreate */
         PresetCreate: {
@@ -1807,6 +4383,11 @@ export interface components {
             guardrails?: {
                 [key: string]: unknown;
             };
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
         };
         /** PresetPatch */
         PresetPatch: {
@@ -1833,6 +4414,8 @@ export interface components {
             guardrails?: {
                 [key: string]: unknown;
             } | null;
+            /** Is Default */
+            is_default?: boolean | null;
         };
         /** PresetRead */
         PresetRead: {
@@ -1869,6 +4452,11 @@ export interface components {
             guardrails?: {
                 [key: string]: unknown;
             };
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
             /**
              * Id
              * Format: uuid
@@ -1998,6 +4586,145 @@ export interface components {
             /** Label */
             label?: string | null;
         };
+        /** QPPConfidenceResponse */
+        QPPConfidenceResponse: {
+            /** Observations */
+            observations: number;
+            /** Confidence */
+            confidence: number;
+            /** Min Observations */
+            min_observations: number;
+            /** Using Trained Model */
+            using_trained_model: boolean;
+            /** Qpp Enabled */
+            qpp_enabled: boolean;
+        };
+        /** QPPFeaturesPayload */
+        QPPFeaturesPayload: {
+            /**
+             * Partition Count
+             * @default 0
+             */
+            partition_count: number;
+            /**
+             * Files Scanned
+             * @default 1
+             */
+            files_scanned: number;
+            /**
+             * Is Cached
+             * @default false
+             */
+            is_cached: boolean;
+            /**
+             * Cotenant Load Pct
+             * @default 0
+             */
+            cotenant_load_pct: number;
+            /**
+             * Hour Of Day
+             * @default 0
+             */
+            hour_of_day: number;
+            /**
+             * Day Of Week
+             * @default 0
+             */
+            day_of_week: number;
+        };
+        /** QPPObservationPayload */
+        QPPObservationPayload: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Actual P95 Ms */
+            actual_p95_ms: number;
+            features: components["schemas"]["QPPFeaturesPayload"];
+        };
+        /** QPPPredictRequest */
+        QPPPredictRequest: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Query Text */
+            query_text?: string | null;
+            features: components["schemas"]["QPPFeaturesPayload"];
+        };
+        /** QPPPredictResponse */
+        QPPPredictResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** P50 Ms */
+            p50_ms: number;
+            /** P95 Ms */
+            p95_ms: number;
+            /** P99 Ms */
+            p99_ms: number;
+            /** Confidence */
+            confidence: number;
+            /** Admit */
+            admit: boolean;
+            /** Target P95 Ms */
+            target_p95_ms: number;
+            /** Exceeded Tolerance */
+            exceeded_tolerance: boolean;
+        };
+        /**
+         * QueryPerformanceRead
+         * @description Query performance metrics.
+         */
+        QueryPerformanceRead: {
+            /** Query Id */
+            query_id: string;
+            /** Query Text */
+            query_text: string | null;
+            /** Engine */
+            engine: string;
+            /** User */
+            user: string | null;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Bytes Scanned */
+            bytes_scanned: number | null;
+            /** Rows Produced */
+            rows_produced: number | null;
+            /** Status */
+            status: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Table Name */
+            table_name: string | null;
+        };
+        /**
+         * QueryPerformanceResponse
+         * @description Response for query performance dashboard.
+         */
+        QueryPerformanceResponse: {
+            /** Queries */
+            queries: components["schemas"]["QueryPerformanceRead"][];
+            /** Total */
+            total: number;
+            /** P50 Latency Ms */
+            p50_latency_ms: number | null;
+            /** P95 Latency Ms */
+            p95_latency_ms: number | null;
+            /** P99 Latency Ms */
+            p99_latency_ms: number | null;
+            /** Avg Bytes Scanned */
+            avg_bytes_scanned: number | null;
+            /** Failed Count */
+            failed_count: number;
+        };
         /** RankedDestinationRead */
         RankedDestinationRead: {
             /** Destination Id */
@@ -2076,6 +4803,8 @@ export interface components {
             trigger?: string | null;
             /** Deadline At */
             deadline_at?: string | null;
+            /** Scheduled At */
+            scheduled_at?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2087,6 +4816,90 @@ export interface components {
             summary?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * S3TieringRecommendationRead
+         * @description S3 Intelligent-Tiering recommendation.
+         */
+        S3TieringRecommendationRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Current Size Gb */
+            current_size_gb: number;
+            /** Avg File Size Kb */
+            avg_file_size_kb: number;
+            /** Days Since Last Access */
+            days_since_last_access: number;
+            /** Current Monthly Cost Usd */
+            current_monthly_cost_usd: number;
+            /** Intelligent Tiering Monthly Cost Usd */
+            intelligent_tiering_monthly_cost_usd: number;
+            /** Estimated Annual Savings Usd */
+            estimated_annual_savings_usd: number;
+            /** Recommendation */
+            recommendation: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * S3TieringResponse
+         * @description Response for S3 Intelligent-Tiering recommendations.
+         */
+        S3TieringResponse: {
+            /** Recommendations */
+            recommendations: components["schemas"]["S3TieringRecommendationRead"][];
+            /** Total Potential Savings Usd */
+            total_potential_savings_usd: number;
+        };
+        /**
+         * SLAResponse
+         * @description Response for SLA monitoring.
+         */
+        SLAResponse: {
+            /** Slas */
+            slas: components["schemas"]["SLAStatusRead"][];
+            /** Total Breached */
+            total_breached: number;
+            /** Total Monitored */
+            total_monitored: number;
+        };
+        /**
+         * SLAStatusRead
+         * @description SLA status for a table.
+         */
+        SLAStatusRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Freshness Hours */
+            freshness_hours: number | null;
+            /** Freshness Sla Hours */
+            freshness_sla_hours: number | null;
+            /** Freshness Breached */
+            freshness_breached: boolean;
+            /** Scan Staleness Hours */
+            scan_staleness_hours: number | null;
+            /** Maintenance Days */
+            maintenance_days: number | null;
+            /** Maintenance Sla Days */
+            maintenance_sla_days: number | null;
+            /** Maintenance Breached */
+            maintenance_breached: boolean;
+            /** P95 Latency Ms */
+            p95_latency_ms: number | null;
+            /** P95 Latency Sla Ms */
+            p95_latency_sla_ms: number | null;
+            /** P95 Latency Breached */
+            p95_latency_breached: boolean;
         };
         /** SavingsProjectionRead */
         SavingsProjectionRead: {
@@ -2126,8 +4939,11 @@ export interface components {
             source_id?: string | null;
             /** Table Ids */
             table_ids?: string[];
+            /** Table Names */
+            table_names?: components["schemas"]["TableNameRef"][];
             /** Schema Names */
             schema_names?: string[];
+            selection?: components["schemas"]["AssignmentSelection"] | null;
             /**
              * Trigger
              * @default api
@@ -2136,10 +4952,17 @@ export interface components {
             /** Requested By */
             requested_by?: string | null;
             /**
+             * Full Scan
+             * @default true
+             */
+            full_scan: boolean;
+            /**
              * Cost Full Scan
              * @default false
              */
             cost_full_scan: boolean;
+            /** Num Chunks */
+            num_chunks?: number | null;
         };
         /** ScanTriggerResponse */
         ScanTriggerResponse: {
@@ -2164,12 +4987,86 @@ export interface components {
              * @default false
              */
             cost_full_scan: boolean;
+            /**
+             * Full Scan
+             * @default true
+             */
+            full_scan: boolean;
+            /** Num Chunks */
+            num_chunks?: number | null;
             /** Source Id */
             source_id?: string | null;
             /** Table Ids */
             table_ids?: string[];
             /** Schema Names */
             schema_names?: string[];
+        };
+        /** ScannerConfigRead */
+        ScannerConfigRead: {
+            /** Id */
+            id: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Schedule Cron */
+            schedule_cron: string;
+            /** Timezone */
+            timezone: string;
+            /** Num Chunks */
+            num_chunks: number;
+            /** Full Scan Default */
+            full_scan_default: boolean;
+            /** Cost Full Scan Default */
+            cost_full_scan_default: boolean;
+            /** Max Concurrent Runs */
+            max_concurrent_runs: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ScannerConfigUpdate */
+        ScannerConfigUpdate: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Schedule Cron */
+            schedule_cron?: string | null;
+            /** Num Chunks */
+            num_chunks?: number | null;
+            /** Full Scan Default */
+            full_scan_default?: boolean | null;
+            /** Cost Full Scan Default */
+            cost_full_scan_default?: boolean | null;
+            /** Max Concurrent Runs */
+            max_concurrent_runs?: number | null;
+        };
+        /** ScannerStatusRead */
+        ScannerStatusRead: {
+            config: components["schemas"]["ScannerConfigRead"];
+            /** Queue Depth */
+            queue_depth?: number | null;
+            latest_run?: components["schemas"]["RunRead"] | null;
+            active_run?: components["schemas"]["RunRead"] | null;
+            last_successful_run?: components["schemas"]["RunRead"] | null;
+            /** Next Scan At */
+            next_scan_at?: string | null;
+            /**
+             * Total Tables
+             * @default 0
+             */
+            total_tables: number;
+            /**
+             * Tables With Stats
+             * @default 0
+             */
+            tables_with_stats: number;
+            /** Latest Table Scan At */
+            latest_table_scan_at?: string | null;
         };
         /** SchemaCostDashboardResponse */
         SchemaCostDashboardResponse: {
@@ -2192,6 +5089,199 @@ export interface components {
             small_files_count: number;
             /** Query Count 30D */
             query_count_30d: number;
+        };
+        /** SignalResultResponse */
+        SignalResultResponse: {
+            /** Triggered */
+            triggered: boolean;
+            /** Signal Name */
+            signal_name: string;
+            /** Reason */
+            reason: string;
+            /** Severity */
+            severity: string;
+            /** Metric Value */
+            metric_value: number | null;
+            /** Threshold */
+            threshold: number | null;
+        };
+        /** SilentDataLossRepairResponse */
+        SilentDataLossRepairResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Audit Log Id */
+            audit_log_id: number | null;
+            /** Status */
+            status: string;
+            /** Message */
+            message: string;
+        };
+        /** SilentDataLossReportRead */
+        SilentDataLossReportRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Snapshot Id */
+            snapshot_id: number | null;
+            /** Orphan Data Files */
+            orphan_data_files: string[];
+            /** Orphan Size Bytes */
+            orphan_size_bytes: number;
+            /** Missing Files */
+            missing_files: string[];
+            /** Detected At */
+            detected_at: string;
+            /** Root Cause */
+            root_cause: string;
+            /** Is Clean */
+            is_clean: boolean;
+        };
+        /** SimilarTablesResponse */
+        SimilarTablesResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Similar */
+            similar: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** SizeByPrefixItem */
+        SizeByPrefixItem: {
+            /** Table Prefix */
+            table_prefix: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Object Count */
+            object_count: number;
+            /** Last Modified */
+            last_modified?: string | null;
+        };
+        /** SizeByPrefixResponse */
+        SizeByPrefixResponse: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Inventory Date */
+            inventory_date?: string | null;
+            /** Items */
+            items?: components["schemas"]["SizeByPrefixItem"][];
+        };
+        /** SkillsetListResponse */
+        SkillsetListResponse: {
+            /** Skillsets */
+            skillsets: components["schemas"]["SkillsetRead"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+        };
+        /** SkillsetOutcomeRead */
+        SkillsetOutcomeRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Skillset Id
+             * Format: uuid
+             */
+            skillset_id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Table Id */
+            table_id: string | null;
+            /** Prompt Name */
+            prompt_name: string;
+            /** Recommendation */
+            recommendation: string;
+            /** Decision */
+            decision: string;
+            /** Score */
+            score: number | null;
+        };
+        /** SkillsetOutcomeWrite */
+        SkillsetOutcomeWrite: {
+            /** Prompt Name */
+            prompt_name: string;
+            /** Recommendation */
+            recommendation: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "accepted" | "rejected" | "pending";
+            /** Score */
+            score?: number | null;
+            /** Table Id */
+            table_id?: string | null;
+        };
+        /** SkillsetRead */
+        SkillsetRead: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Prompts */
+            prompts?: {
+                [key: string]: unknown;
+            };
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+        };
+        /** SkillsetRollbackRequest */
+        SkillsetRollbackRequest: {
+            /** Version */
+            version: string;
+        };
+        /** SkillsetWrite */
+        SkillsetWrite: {
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Prompts */
+            prompts?: {
+                [key: string]: unknown;
+            };
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Activate
+             * @default false
+             */
+            activate: boolean;
         };
         /** SlackConfigCreate */
         SlackConfigCreate: {
@@ -2280,6 +5370,21 @@ export interface components {
             /** Is Default */
             is_default?: boolean | null;
         };
+        /**
+         * SlackTestConfigRequest
+         * @description A not-yet-saved webhook URL, so the create/edit drawer can verify it before saving.
+         */
+        SlackTestConfigRequest: {
+            /**
+             * Webhook Url
+             * @default
+             */
+            webhook_url: string;
+            /** Channel */
+            channel?: string | null;
+            /** Config Id */
+            config_id?: string | null;
+        };
         /** SourceCreate */
         SourceCreate: {
             /** Name */
@@ -2297,6 +5402,37 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /** Maintenance Schema Names */
+            maintenance_schema_names?: string[];
+        };
+        /**
+         * SourceNamespaceTablesResponse
+         * @description Live table names within one already-known namespace -- one cheap call
+         *     (list_tables_in_namespace), not the O(all namespaces) walk a full scan does. Lets the
+         *     scan-scope "Specific tables" picker offer real table names once a schema is chosen, even
+         *     before this lakehouse has ever been scanned.
+         */
+        SourceNamespaceTablesResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Tables */
+            tables?: string[];
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * SourceNamespacesResponse
+         * @description Live namespace list for an already-saved source -- same cheap list_namespaces() call
+         *     test_source uses, so the scan-scope picker can offer real schema names to target even before
+         *     a first full scan has ever run.
+         */
+        SourceNamespacesResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Namespaces */
+            namespaces?: string[];
+            /** Error */
+            error?: string | null;
         };
         /** SourcePatch */
         SourcePatch: {
@@ -2312,9 +5448,19 @@ export interface components {
             secret_ref?: string | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Maintenance Schema Names */
+            maintenance_schema_names?: string[] | null;
         };
-        /** SourceRead */
+        /**
+         * SourceRead
+         * @description Source read schema with sensitive data redacted.
+         */
         SourceRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Name */
             name: string;
             /** Type */
@@ -2323,18 +5469,10 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
-            /** Secret Ref */
-            secret_ref?: string | null;
-            /**
-             * Enabled
-             * @default true
-             */
+            /** Enabled */
             enabled: boolean;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
+            /** Maintenance Schema Names */
+            maintenance_schema_names?: string[];
             /**
              * Created At
              * Format: date-time
@@ -2357,6 +5495,8 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
+            /** Source Id */
+            source_id?: string | null;
         };
         /** SourceTestResponse */
         SourceTestResponse: {
@@ -2373,6 +5513,33 @@ export interface components {
             sample_tables?: string[];
             /** Error */
             error?: string | null;
+            /** Note */
+            note?: string | null;
+        };
+        /** TableAlertSubscriptionCreate */
+        TableAlertSubscriptionCreate: {
+            /** Email */
+            email: string;
+        };
+        /** TableAlertSubscriptionRead */
+        TableAlertSubscriptionRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Email */
+            email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** TableAuditResponse */
         TableAuditResponse: {
@@ -2426,6 +5593,65 @@ export interface components {
             last_full_cost_scan_at?: string | null;
             /** Scan At */
             scan_at?: string | null;
+        };
+        /**
+         * TableHealthTrendPoint
+         * @description Single data point in table health trend.
+         */
+        TableHealthTrendPoint: {
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Grade */
+            grade: string;
+            /** Score */
+            score: number;
+            /** Small Files */
+            small_files: number;
+            /** Total Size Gb */
+            total_size_gb: number;
+            /** Snapshot Count */
+            snapshot_count: number | null;
+            /** Projected Savings Usd Month */
+            projected_savings_usd_month: number | null;
+        };
+        /**
+         * TableHealthTrendsResponse
+         * @description Response for table health trends.
+         */
+        TableHealthTrendsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Current Grade */
+            current_grade: string;
+            /** Current Score */
+            current_score: number;
+            /** Trend Points */
+            trend_points: components["schemas"]["TableHealthTrendPoint"][];
+            /** Degradation Rate */
+            degradation_rate: number | null;
+            /** Days To Critical */
+            days_to_critical: number | null;
+        };
+        /**
+         * TableNameRef
+         * @description A table identified by name rather than by Cryo's own id -- lets scope="tables" target a
+         *     table that's never been scanned before (no Table row/id exists for it yet). Requires
+         *     source_id on the request, since the same schema.table name could exist in more than one
+         *     lakehouse.
+         */
+        TableNameRef: {
+            /** Schema Name */
+            schema_name: string;
+            /** Table Name */
+            table_name: string;
         };
         /** TablePartitionRead */
         TablePartitionRead: {
@@ -2494,6 +5720,11 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /** TablePatch */
+        TablePatch: {
+            /** Owner Email */
+            owner_email?: string | null;
+        };
         /** TablePreviewRead */
         TablePreviewRead: {
             /** Table Ref */
@@ -2503,6 +5734,8 @@ export interface components {
             /** Statements */
             statements: components["schemas"]["RenderedStatementRead"][];
             savings?: components["schemas"]["SavingsProjectionRead"] | null;
+            /** Stats As Of */
+            stats_as_of?: string | null;
         };
         /** TableRead */
         TableRead: {
@@ -2520,6 +5753,12 @@ export interface components {
             schema_name: string;
             /** Table Name */
             table_name: string;
+            /** Catalog Name */
+            catalog_name?: string | null;
+            /** Source Name */
+            source_name?: string | null;
+            /** Qualified Table Name */
+            qualified_table_name?: string | null;
             /**
              * First Seen At
              * Format: date-time
@@ -2527,7 +5766,35 @@ export interface components {
             first_seen_at: string;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Consecutive Scan Failures
+             * @default 0
+             */
+            consecutive_scan_failures: number;
+            /** Last Scan Error */
+            last_scan_error?: string | null;
+            /** Last Scan Error At */
+            last_scan_error_at?: string | null;
+            /** Owner Email */
+            owner_email?: string | null;
             stats?: components["schemas"]["TableStatsRead"] | null;
+        };
+        /** TableSignalsResponse */
+        TableSignalsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Signals */
+            signals: components["schemas"]["SignalResultResponse"][];
+            /** Any Triggered */
+            any_triggered: boolean;
         };
         /** TableStatsHistoryRead */
         TableStatsHistoryRead: {
@@ -2725,6 +5992,77 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** TokenRequest */
+        TokenRequest: {
+            /**
+             * Role
+             * @description viewer, operator, or admin
+             */
+            role: string;
+            /**
+             * Subject
+             * @default dev-user
+             */
+            subject: string;
+            /** Tenant Id */
+            tenant_id?: string | null;
+        };
+        /** TokenResponse */
+        TokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             */
+            token_type: string;
+            /** Refresh Token */
+            refresh_token?: string | null;
+            /** Expires In */
+            expires_in?: number | null;
+        };
+        /** UnionScoreRead */
+        UnionScoreRead: {
+            /** Target Table Id */
+            target_table_id: string;
+            /** Candidate Table Id */
+            candidate_table_id: string;
+            /** Score */
+            score: number;
+            /** Overlap Columns */
+            overlap_columns?: string[];
+            /** Union Sql */
+            union_sql: string;
+            /** Rationale */
+            rationale: string;
+            /** Candidate Schema */
+            candidate_schema: string;
+            /**
+             * Candidate Table Name
+             * @default
+             */
+            candidate_table_name: string;
+            /**
+             * Candidate Schema Name
+             * @default
+             */
+            candidate_schema_name: string;
+        };
+        /** UnionableResponse */
+        UnionableResponse: {
+            /**
+             * Target Table Id
+             * Format: uuid
+             */
+            target_table_id: string;
+            /** Results */
+            results: components["schemas"]["UnionScoreRead"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -2748,6 +6086,28 @@ export interface components {
 export type $defs = Record<string, never>;
 export interface operations {
     healthz_healthz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    readyz_readyz_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3043,6 +6403,69 @@ export interface operations {
             };
         };
     };
+    get_source_namespaces_api_v1_sources__source_id__namespaces_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceNamespacesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_source_namespace_tables_api_v1_sources__source_id__namespaces__namespace__tables_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceNamespaceTablesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     test_source_api_v1_sources_test_post: {
         parameters: {
             query?: never;
@@ -3063,6 +6486,227 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_source_api_v1_sources__source_id__purge_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_aws_integration_api_v1_sources__source_id__aws_integration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSIntegrationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_aws_integration_api_v1_sources__source_id__aws_integration_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AWSIntegrationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSIntegrationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_aws_integration_api_v1_sources__source_id__aws_integration_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_aws_integration_api_v1_sources__source_id__aws_integration_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AWSIntegrationPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSIntegrationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_aws_integration_api_v1_sources__source_id__aws_integration_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_aws_usage_api_v1_sources__source_id__aws_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSUsageResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3211,6 +6855,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DestinationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_destination_api_v1_destinations__destination_id__purge_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destination_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_destination_config_api_v1_destinations_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3597,6 +7303,137 @@ export interface operations {
             };
         };
     };
+    patch_table_api_v1_tables__table_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TablePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_table_alert_subscriptions_api_v1_tables__table_id__alert_subscriptions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableAlertSubscriptionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableAlertSubscriptionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableAlertSubscriptionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions__subscription_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_table_partitions_api_v1_tables__table_id__partitions_get: {
         parameters: {
             query?: {
@@ -3928,7 +7765,7 @@ export interface operations {
             };
         };
     };
-    list_runs_api_v1_runs_get: {
+    get_scanner_config_api_v1_scanner_config_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3943,7 +7780,94 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["ScannerConfigRead"];
+                };
+            };
+        };
+    };
+    patch_scanner_config_api_v1_scanner_config_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScannerConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScannerConfigRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scanner_status_api_v1_scanner_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScannerStatusRead"];
+                };
+            };
+        };
+    };
+    list_runs_api_v1_runs_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+                source_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["RunRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4059,6 +7983,495 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_config_api_v1_auth_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthConfigResponse"];
+                };
+            };
+        };
+    };
+    exchange_oidc_token_api_v1_auth_oidc_exchange_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcExchangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_oidc_access_token_api_v1_auth_oidc_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcRefreshRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_dev_token_api_v1_auth_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_admission_bandit_api_v1_auth_governor_bandit_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    mcp_list_tools_api_v1_api_v1_mcp_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    }[];
+                };
+            };
+        };
+    };
+    mcp_call_tool_api_v1_api_v1_mcp_tools_call_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpToolCallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpToolCallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_compliance_status_api_v1_api_v1_tables__table_id__compliance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComplianceStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    protect_snapshot_api_v1_api_v1_tables__table_id__protected_snapshots_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProtectSnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProtectSnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_latency_api_v1_api_v1_sources__source_id__catalog_latency_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogLatencyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_benefit_scores_api_v1_api_v1_tables__table_id__benefit_scores_get: {
+        parameters: {
+            query?: {
+                top_n?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenefitScoreResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_table_benefit_scores_api_v1_api_v1_tables__table_id__benefit_scores_update_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenefitScoreResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_effectiveness_stats_api_v1_api_v1_tables__table_id__effectiveness_get: {
+        parameters: {
+            query?: {
+                lookback_days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectivenessStatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    qpp_predict_api_v1_api_v1_governor_qpp_predict_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QPPPredictRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QPPPredictResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    qpp_record_api_v1_api_v1_governor_qpp_record_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QPPObservationPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    qpp_confidence_api_v1_api_v1_governor_qpp_confidence_get: {
+        parameters: {
+            query?: {
+                table_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QPPConfidenceResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4193,6 +8606,208 @@ export interface operations {
             };
         };
     };
+    copilot_embedding_search_api_v1_ai_copilot_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopilotSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopilotSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_pii_classification_api_v1_tables__table_id__pii_classification_get: {
+        parameters: {
+            query?: {
+                threshold?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiiClassificationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_similar_tables_api_v1_tables__table_id__similar_get: {
+        parameters: {
+            query?: {
+                min_similarity?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarTablesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    governor_bandit_status_api_v1_governor_bandit_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BanditStatusResponse"];
+                };
+            };
+        };
+    };
+    evaluate_learned_cost_model_api_v1_ai_cost_model_evaluate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostModelEvaluateResponse"];
+                };
+            };
+        };
+    };
+    classify_table_health_api_v1_tables__table_id__health_classification_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthClassifierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_autocomp_scheduling_api_v1_tables__table_id__autocomp_compare_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoCompCompareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     copilot_natural_language_api_v1_ai_copilot_natural_post: {
         parameters: {
             query?: never;
@@ -4213,158 +8828,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NaturalLanguageResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    mcp_list_tools_api_v1_mcp_tools_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    }[];
-                };
-            };
-        };
-    };
-    mcp_call_tool_api_v1_mcp_tools_call_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["McpToolCallRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["McpToolCallResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_compliance_status_api_v1_tables__table_id__compliance_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                table_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ComplianceStatusResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    protect_snapshot_api_v1_tables__table_id__protected_snapshots_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                table_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProtectSnapshotRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProtectSnapshotResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_catalog_latency_api_v1_sources__source_id__catalog_latency_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                source_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CatalogLatencyResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4560,6 +9023,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AIProviderTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIProviderTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_ai_provider_config_api_v1_ai_providers_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIProviderTestConfigRequest"];
             };
         };
         responses: {
@@ -4797,6 +9293,41 @@ export interface operations {
             };
         };
     };
+    test_slack_config_values_api_v1_slack_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlackTestConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     generate_report_api_v1_reporting_daily_post: {
         parameters: {
             query?: {
@@ -4816,6 +9347,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DailyReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_table_signals_api_v1_tables__table_id__signals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableSignalsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5008,6 +9570,1370 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RoutingPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_multi_catalog_stats_api_v1_multi_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiCatalogResponse"];
+                };
+            };
+        };
+    };
+    get_query_performance_api_v1_query_performance_get: {
+        parameters: {
+            query?: {
+                /** @description Filter by table ID */
+                table_id?: string | null;
+                /** @description Filter by engine (trino, spark, etc.) */
+                engine?: string | null;
+                /** @description Hours of history to fetch */
+                hours?: number;
+                /** @description Max queries to return */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryPerformanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_health_trends_api_v1_tables__table_id__health_trends_get: {
+        parameters: {
+            query?: {
+                /** @description Days of history to fetch */
+                days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHealthTrendsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_detail_api_v1_jobs__job_id__detail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDetailRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sla_status_api_v1_sla_status_get: {
+        parameters: {
+            query?: {
+                /** @description Show only breached SLAs */
+                breached_only?: boolean;
+                /** @description Filter to a single table */
+                table_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SLAResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cost_attribution_api_v1_cost_attribution_get: {
+        parameters: {
+            query?: {
+                /** @description Month in YYYY-MM format (default: current month) */
+                month?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostAttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_s3_tiering_recommendations_api_v1_s3_tiering_recommendations_get: {
+        parameters: {
+            query?: {
+                /** @description Minimum table size in GB */
+                min_size_gb?: number;
+                /** @description Days to look back for access patterns */
+                lookback_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["S3TieringResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_s3_tiering_api_v1_tables__table_id__s3_tiering_get: {
+        parameters: {
+            query?: {
+                /** @description Days to look back for access patterns */
+                lookback_days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["S3TieringRecommendationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pending_approvals_api_v1_advanced_approvals_pending_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequestRead"][];
+                };
+            };
+        };
+    };
+    create_approval_request_api_v1_advanced_approvals_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalRequestRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_or_reject_api_v1_advanced_approvals__request_id__action_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_lineage_api_v1_advanced_lineage__table_id__get: {
+        parameters: {
+            query?: {
+                depth?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LineageGraphRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detect_anomalies_api_v1_advanced_anomalies_get: {
+        parameters: {
+            query?: {
+                lookback_days?: number;
+                threshold_sigma?: number;
+                /** @description Send alerts to Slack/PagerDuty */
+                dispatch_alerts?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnomalyAlertRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detect_table_anomalies_api_v1_advanced_anomalies__table_id__get: {
+        parameters: {
+            query?: {
+                lookback_days?: number;
+                threshold_sigma?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnomalyAlertRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_data_quality_profile_api_v1_advanced_data_quality__table_id__get: {
+        parameters: {
+            query?: {
+                lookback_days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataQualityProfileRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_partition_evolution_recommendation_api_v1_advanced_partition_evolution__table_id__get: {
+        parameters: {
+            query?: {
+                min_query_threshold?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartitionEvolutionRecommendationRead"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detect_maintenance_signals_api_v1_advanced_signals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceSignalRead"][];
+                };
+            };
+        };
+    };
+    get_cost_forecast_api_v1_advanced_finops_forecast_get: {
+        parameters: {
+            query?: {
+                budget_limit_usd?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostForecastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_compaction_candidates_api_v1_advanced_compaction_candidates__table_id__get: {
+        parameters: {
+            query?: {
+                horizon_days?: number;
+                k?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactionCandidatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_unionable_tables_api_v1_advanced_unionable__table_id__get: {
+        parameters: {
+            query?: {
+                k?: number;
+                /** @description Enrich rationale via configured LLM. */
+                use_llm?: boolean;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnionableResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_skillsets_api_v1_advanced_skillsets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsetListResponse"];
+                };
+            };
+        };
+    };
+    create_skillset_api_v1_advanced_skillsets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillsetWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_active_skillset_api_v1_advanced_skillsets__name__active_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsetRead"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_skillset_api_v1_advanced_skillsets__name__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillsetRollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_skillset_outcome_api_v1_advanced_skillsets__name__outcome_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillsetOutcomeWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsetOutcomeRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    gitops_webhook_api_v1_advanced_gitops_webhook_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_plan_api_v1_advanced_plan_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanVerdictRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_observations_api_v1_advanced_observability_search_get: {
+        parameters: {
+            query?: {
+                table_id?: string | null;
+                event_type?: string | null;
+                since?: string | null;
+                until?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservationSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observation_stats_api_v1_advanced_observability_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservationStatsResponse"];
+                };
+            };
+        };
+    };
+    compact_observations_api_v1_advanced_observability_compact_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservationCompactResponse"];
+                };
+            };
+        };
+    };
+    get_column_stats_api_v1_advanced_column_stats__table_id__get: {
+        parameters: {
+            query?: {
+                /** @description Optional comma-separated column whitelist; defaults to all columns with sketches. */
+                columns?: string | null;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ColumnStatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_silent_data_loss_api_v1_advanced_silent_data_loss__table_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SilentDataLossReportRead"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repair_silent_data_loss_api_v1_advanced_silent_data_loss__table_id__repair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SilentDataLossRepairResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metrics_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    healthz_deep_healthz_deep_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_cost_insight_config_api_v1_sources__source_id__cost_insight_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSCostInsightConfigRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_cost_insight_config_api_v1_sources__source_id__cost_insight_config_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AWSCostInsightConfigCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSCostInsightConfigRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_cost_insight_config_api_v1_sources__source_id__cost_insight_config_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_cost_insight_config_api_v1_sources__source_id__cost_insight_config_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AWSCostInsightConfigPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSCostInsightConfigRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_cur_api_v1_sources__source_id__cost_insight_ingest_cur_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSCostIngestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_inventory_api_v1_sources__source_id__cost_insight_ingest_inventory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AWSCostIngestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cost_by_bucket_api_v1_sources__source_id__cost_insight_by_bucket_get: {
+        parameters: {
+            query?: {
+                start?: string | null;
+                end?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostByBucketResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cost_daily_api_v1_sources__source_id__cost_insight_daily_get: {
+        parameters: {
+            query?: {
+                start?: string | null;
+                end?: string | null;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostDailySeriesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    size_by_prefix_api_v1_sources__source_id__cost_insight_by_prefix_get: {
+        parameters: {
+            query?: {
+                inventory_date?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SizeByPrefixResponse"];
                 };
             };
             /** @description Validation Error */
