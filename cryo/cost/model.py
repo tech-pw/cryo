@@ -85,7 +85,19 @@ def project_savings(
     *,
     precision: CostPrecision = CostPrecision.METADATA,
     assumptions: dict[str, Any] | None = None,
+    live_s3_get_price_per_1k: float | None = None,
 ) -> SavingsProjection:
+    """Compute a savings projection for a table.
+
+    The `live_s3_get_price_per_1k` parameter exists so callers with AWS credentials can pass
+    the live Price-List-API result (`fetch_s3_request_prices().price_per_1k_get`) instead of
+    the hardcoded `settings.s3_get_usd_per_1k` constant. When None, the existing constant
+    fallback is used — the right behavior for callers that don't have an ``AWSIntegration``
+    (e.g. the local MinIO dev stack), but silently wrong-looking-right for any real AWS
+    account if not flagged. The returned projection's ``assumptions["s3_get_price_source"]``
+    is always set to ``"live"`` or ``"fallback_default"`` so callers/UI never have to
+    re-derive "was this approximate" from whether an optional argument happened to be passed.
+    """
     price = settings.cost_price_per_gb_month
     use_gib = settings.cost_use_gib
 
@@ -108,12 +120,26 @@ def project_savings(
     }
     projected_savings = round(sum(by_operation.values()), 4)
     projected_cost = round(max(0.0, current_cost - projected_savings), 4)
+    # Prefer the live price when the caller has AWS credentials; fall back to the settings
+    # constant otherwise. Both paths are correct (P0a keeps the hardcoded constant as the
+    # fallback default — see §6.4) but they must never be visually indistinguishable in the
+    # UI, so the source is always recorded below, not left for the caller to infer.
+    have_live_price = live_s3_get_price_per_1k is not None
+    effective_s3_get_price = (
+        live_s3_get_price_per_1k
+        if live_s3_get_price_per_1k is not None
+        else settings.s3_get_usd_per_1k
+    )
     query_savings = query_request_savings_usd(
         stats,
         query_gets_per_file=settings.query_gets_per_file,
         query_count_30d=stats.query_count_30d,
-        s3_get_usd_per_1k=settings.s3_get_usd_per_1k,
+        s3_get_usd_per_1k=effective_s3_get_price,
     )
+    merged_assumptions = {
+        **(assumptions or {}),
+        "s3_get_price_source": "live" if have_live_price else "fallback_default",
+    }
 
     return SavingsProjection(
         precision=precision,
@@ -123,5 +149,5 @@ def project_savings(
         reclaimable_bytes=reclaimable_bytes(reclaim),
         by_operation=by_operation,
         query_request_savings_usd_month=query_savings,
-        assumptions=assumptions or {},
+        assumptions=merged_assumptions,
     )

@@ -201,6 +201,27 @@ regardless of fleet size or how much log history has piled up in S3.
    fleet's actual table count × a busy bucket's actual daily log-row count) before shipping §5's
    P1 implementation** — this is not something to discover is slow after it's already the thing
    every ingestion run waits on.
+
+   **Back-of-envelope, so this isn't just an abstract "keep it cheap" — a rough working number:**
+   a 10 TB bucket doing ~50M requests/month is roughly 1.7M requests/day; each S3 access log line
+   is ~250–300 bytes, so that's very roughly ~500 MB/day of raw log text for that one bucket. A
+   single Trino query over a 3-day partition-pruned
+   window at that scale should be a low-tens-of-seconds job on a modest cluster, not minutes —
+   if a real benchmark comes back an order of magnitude slower than that, the join strategy above
+   needs fixing before this ships, not after. Treat "single query, single bucket, single day,
+   roughly 30s" as the sanity-check number to hold P1's actual benchmark against.
+   **Cross-table prefix collision — do not simplify this away.** Iceberg tables in the same
+   bucket routinely share a common parent prefix (`warehouse/db1/table_a/...` and
+   `warehouse/db1/table_b/...` both sit under `warehouse/db1/`). A log entry for
+   `warehouse/db1/table_b/2024-12-30/part-00000.parquet` must match `table_b`'s location, not
+   `table_a`'s and not the shared `warehouse/db1/` parent as if it were its own table. The
+   longest-prefix match against `Table.location` handles this correctly by construction — a
+   future "simplification" that swaps it for a bare `STARTS_WITH()`/first-match check would
+   silently misattribute every table's request cost to whichever sibling table happens to sort
+   first, and the bug would be invisible in aggregate (total request count across the bucket
+   stays right, only the per-table split is wrong) — exactly the kind of regression that survives
+   code review. Keep the "longest match wins" requirement explicit in the implementation, not
+   just implied by "prefix match."
 5. **UPSERT the result into a small rolling table** (§6.2) — overwrite each day's row for that
    table rather than appending, so re-aggregating the trailing window never duplicates counts.
 6. **Never pull raw log rows into Cryo's own process, and never store them in Postgres.**
@@ -244,14 +265,29 @@ converging pattern, not have to guess which of three (soon four) tables to exten
 | `last_checked_at` | timestamp | last `GetBucketLogging` check |
 | `last_ingested_date` | date | checkpoint for §5 step 2 |
 
-### 6.3 `TableCost` additions
+### 6.3 `TableCost` additions, and the `S3RequestCostDaily` audit trail behind them
 
-New nullable fields on the existing `TableCost` row (not a new history table — one row per table,
-overwritten daily, matching the "flat Postgres footprint" goal):
+New nullable fields on the existing `TableCost` row (not a per-request or per-day history table
+itself — one row per table, matching the "flat Postgres footprint" goal):
 
 - `get_requests_30d`, `put_requests_30d`, `list_requests_30d` (integers)
 - `request_cost_usd_month` (float) — computed cost, summed with the existing storage cost for a
   true all-in monthly estimate
+- `request_cost_pricing_source` (`"live"` / `"fallback_default"`) — so the UI never shows a
+  fallback-derived number with the same visual confidence as a live-fetched one (§6.4, §9.2)
+- `NULL` across all four (not `0`) means "no ingestion has run for this table yet" — distinct
+  from "measured zero requests." The UI must not render that as `$0`.
+
+These are a **read-optimized rollup**, not the ingestion target itself. §5 step 5's UPSERT
+writes into a separate `S3RequestCostDaily` table — one row per `(source_id, bucket, table_id,
+day, operation_tier)`, unique-constrained on that full key so `ON CONFLICT` actually works, and
+bounded by a retention job (default 35 days — a few days past the 30-day rollup window, so a
+delayed rollup run never reads a just-pruned day) rather than kept forever. `TableCost`'s four
+fields above are recomputed from a `SUM(...) WHERE day >= now() - 30d` over this table after
+each ingestion run. This two-layer split is what keeps the UI-read path cheap (one row) while
+still giving the ingestion job something it can safely upsert into and reconcile against (§5
+step 3's trailing-window re-aggregation needs a per-day row to overwrite, not a single rolling
+number it would otherwise have to read-modify-write against a moving 30-day sum every run).
 
 ### 6.4 Pricing: fetched live, not hardcoded
 
@@ -318,36 +354,88 @@ cron-only):
   check on demand.
 - `POST /sources/{id}/s3-log-configs/{bucket}/ingest` — manually trigger an ingestion run
   (same as what the scheduled job calls).
+- `POST /sources/{id}/s3-log-configs/{bucket}/teardown` — the destructive cleanup path (§9.4),
+  distinct from `PATCH ... {enabled: false}`: removes the config row and, only for policy/bucket
+  state Cryo itself created in §4.3.1, offers to revert it.
 
 ## 9. Frontend changes
 
-- New panel under the Source detail page (near the existing AWS cost/inventory settings):
-  per-bucket cards, one per discovered bucket, each showing logging status and target path.
-  The card's primary action changes based on §4's state machine, so the same simple UI works for
-  any org regardless of what state their AWS account is already in:
-  - Logging already enabled → nothing to do, shows "tracking N tables" and a link into the cost
-    breakdown.
-  - Logging disabled, `PutBucketLogging` available → a single **"Enable logging"** button that
-    runs §4.3, with the proposed target bucket/prefix shown before the user confirms.
-  - Logging disabled or undetectable, no write permission → the manual-entry form (§4.4) with
-    inline validation feedback ("found 1,204 log files at this path" / "nothing found yet").
-  - No source added yet → this whole panel doesn't apply; it only appears once a source with
-    scanned tables exists, since bucket discovery depends on §4.1.
-- Table Detail → Cost tab: **the actual UI win here isn't a new line item, it's a ratio.** Just
-  adding "Requests (30d): $X" next to storage cost is correct but understates the value — an
-  operator can already infer storage cost roughly from table size, and doesn't need Cryo to tell
-  them that number. What they can't already infer is *how a table's request pattern skews its
-  bill*: "GET/PUT is 23% of this table's S3 cost, storage is only 60%" tells them "this is a
-  high-churn table, small-file compaction matters more here than raw size suggests" — that's the
-  insight, not the raw dollar figure. Surface it as a storage/request cost-share breakdown (a
-  simple stacked bar or two labeled numbers is enough, doesn't need a new chart type), and once
-  it exists, the Data Quality / Table Explorer "top offenders" sort should be able to sort by
-  request-cost-share too, not just total cost — that's likely where operators will actually find
-  the tables this feature was built to surface.
-- No step in this flow requires the user to already know AWS S3 access-logging concepts going in
-  — the copy on each state should explain what's happening in plain terms ("Cryo can see request
-  activity for this bucket" / "turn this on to see request costs, not just storage costs"), since
-  this is aimed at any OSS adopter, not just teams that already run FinOps tooling.
+### 9.1 Source detail — per-bucket logging panel
+
+New panel under the Source detail page (near the existing AWS cost/inventory settings): one card
+per discovered bucket. The card's primary action changes based on §4's state machine, so the same
+simple UI works for any org regardless of what state their AWS account is already in — this is
+the concrete UI expression of the "zero org-specific assumptions" goal in §2, not a separate
+concern from it:
+
+| Bucket state (§4) | Card shows | Primary action |
+|---|---|---|
+| Logging enabled (auto-detected, §4.2 step 2) | "Tracking N tables", last-ingested date | Link into the cost breakdown — nothing to configure |
+| Logging disabled, write access available (§4.3) | Proposed target bucket/prefix | **"Enable logging"** — confirm-then-act, per §4.3 step 2 |
+| Logging disabled/undetectable, read-only access (§4.4) | Manual-entry form | Inline validation as the user types: "found 1,204 log files at this path" / "nothing found yet — double check the path" |
+| Awaiting first log delivery (§4.3.1) | "Logging configured, waiting for first delivery (usually within a few hours)" | Nothing to click — this is a transient state, not a dead end |
+| No source added yet | Panel doesn't render | Bucket discovery depends on §4.1, which depends on a completed scan |
+
+### 9.2 Table Detail — cost-share breakdown
+
+**The actual UI win here isn't a new line item, it's a ratio.** Just adding "Requests (30d): $X"
+next to storage cost is correct but understates the value — an operator can already infer storage
+cost roughly from table size, and doesn't need Cryo to tell them that number. What they can't
+already infer is *how a table's request pattern skews its bill*: "GET/PUT is 23% of this table's
+S3 cost, storage is only 60%" tells them "this is a high-churn table, small-file compaction
+matters more here than raw size suggests" — that's the insight, not the raw dollar figure.
+Surface it as a storage/request cost-share breakdown (a simple stacked bar or two labeled numbers
+is enough, doesn't need a new chart type), and once it exists, the Data Quality / Table Explorer
+"top offenders" sort should be able to sort by request-cost-share too, not just total cost —
+that's likely where operators will actually find the tables this feature was built to surface.
+
+### 9.3 States: loading, empty, stale, error
+
+Every async step in §4/§5 needs an honest UI state, not just a happy path:
+
+- **Loading** — the §4.2 `GetBucketLogging` check and the §4.4 manual-entry validation probe are
+  both live AWS calls; show a spinner on that one bucket's card, not a full-page block, since
+  other buckets' checks may already be done.
+- **Empty** — zero buckets discovered (no source, or a source with no completed scan yet): don't
+  show an empty per-bucket panel with no explanation; point back at "run a scan first."
+- **Stale** — an ingestion run (§5) that hasn't completed in longer than its normal cadence
+  (missed its daily run, a Trino query failing repeatedly) should surface as "last successful
+  ingestion: 3 days ago" on the bucket's card, not silently keep showing old numbers as if
+  current. The Table Detail cost-share breakdown (§9.2) should carry the same staleness signal —
+  a number that's quietly a week old and displayed identically to a fresh one is worse than no
+  number, given this whole feature exists to close an accuracy gap.
+- **Error** — a failed `PutBucketPolicy` merge (§4.3.1), a Trino query failure, or a
+  `pricing:GetProducts` empty-response (§6.4) should each surface as a specific, actionable
+  message tied to that bucket/table — never a generic "something went wrong" toast that gives the
+  user no next step.
+
+### 9.4 Rollback / teardown
+
+Turning a bucket **off** needs to be as considered as turning it on — this was missing from the
+original design and shouldn't be an afterthought bolted on after P2 ships:
+
+- Setting `S3BucketLogConfig.enabled = false` (via the existing `PATCH` endpoint, §8) stops new
+  ingestion runs immediately but **leaves everything else in place** — the config row, the S3
+  bucket logging configuration itself, and any target-bucket policy Cryo added. Re-enabling later
+  is then just flipping the flag back, with no need to re-run §4.3 or re-grant anything.
+- A separate, explicit **`POST /sources/{id}/s3-log-configs/{bucket}/teardown`** action (not the
+  same button as "disable") is for someone who wants Cryo to actually clean up after itself: it
+  removes the `S3BucketLogConfig` row, drops the Trino external table registration for that
+  bucket if no other enabled bucket still shares it, and — only if Cryo created the target bucket
+  or added the policy statement itself in §4.3.1 — offers to revert that policy statement
+  specifically (never touch statements Cryo didn't add) or leave logging running on the AWS side
+  if the user would rather keep it for their own purposes outside Cryo.
+- Teardown is a destructive, hard-to-fully-reverse action (a removed bucket-policy statement isn't
+  automatically re-creatable from Cryo's side once gone) — gate it behind an explicit confirm
+  step that names exactly what will and won't be touched, matching how the rest of Cryo treats
+  irreversible actions elsewhere in the app.
+
+### 9.5 Plain-language copy
+
+No step in this flow requires the user to already know AWS S3 access-logging concepts going in —
+the copy on each state should explain what's happening in plain terms ("Cryo can see request
+activity for this bucket" / "turn this on to see request costs, not just storage costs"), since
+this is aimed at any OSS adopter, not just teams that already run FinOps tooling.
 
 ## 10. Scheduling
 
@@ -355,6 +443,13 @@ Opt-in per bucket, matching how CUR/inventory ingestion works today (manually tr
 no cron yet). A `DaemonRunner` subclass (same pattern as `AlertDispatcherRunner` /
 `BenefitScoreUpdaterRunner` in `cryo/cli.py`) is the natural fast-follow once the manual path has
 been validated against a handful of real buckets — not part of the first cut.
+
+Plan capacity around: **one query per enabled source bucket per day**, each expected to land in
+the low tens of seconds per §5's back-of-envelope estimate, against a log target that grows by
+roughly single-digit GB/day per busy bucket. That's the number to hold a real `DaemonRunner`
+rollout's cluster capacity against — if actual measured runs come in meaningfully above that once
+P1 ships, treat it as a signal the §5 join strategy needs revisiting before scheduling more
+buckets onto it, not as a reason to just widen the cron interval.
 
 ## 11. Required IAM permissions
 
@@ -388,18 +483,40 @@ button — never a degraded or partially-broken experience.
 
 ## 12. Rollout phases
 
+- **P0a — extract live pricing, ship it alone, first.** Just `fetch_s3_request_prices()` (or
+  whatever it ends up named): the Price List API call for GET/PUT/LIST rates, the
+  per-(region, storage class) cache, and the empty-response `WARNING` log (§6.4) — nothing else
+  from this doc. Then re-point the *existing* `query_request_savings_usd_month`
+  (`cryo/cost/model.py`, §1) at this live rate instead of the hardcoded `s3_get_usd_per_1k`. This
+  is deliberately not bundled with P0 below: that existing estimate already feeds the Governor
+  and the cost dashboard *today*, for every current user, and is already wrong in the same way
+  this whole doc exists to fix for the new feature. A self-contained, one-day PR here starts
+  closing the estimate/actual gap immediately, independent of whether or when the rest of this
+  design ships. Getting this ordering right matters more than the other phases — it's the one
+  case where shipping the pieces in the wrong order (new feature first, existing-estimate fix as
+  an afterthought) is hard to walk back later, since P0 below would otherwise build its own
+  one-off pricing plumbing that P0a would then have to retrofit everyone else onto.
+  **Implemented**: while wiring this, the actual scan call sites (`cryo/scanner/run.py`'s
+  `_rebuild_cost_analysis`) turned out to hardcode `query_count_30d=0` unconditionally — meaning
+  `query_request_savings_usd_month` computed to exactly `$0` for every table in production
+  regardless of price, a bigger and entirely separate pre-existing bug from the pricing gap this
+  phase set out to fix. Fixed alongside it: the previous scan's `TableStats.query_count_30d` is
+  now threaded through as the input (same staleness tradeoff already accepted for orphan bytes
+  via `carry_forward_orphans`), so P0a's "closes the gap immediately" claim is actually true
+  rather than closing a pricing gap that a separate zeroed-out multiplier was masking entirely.
 - **P0** — `Table.location` migration; `S3BucketLogConfig` model + migration; `GetBucketLogging`
-  discovery + manual-entry UI (§4.1, §4.2, §4.4); extend `fetch_s3_price_per_gb()`'s Price List
-  API call to also cover request pricing (§6.4), with the pricing cache and the fallback-default
-  UI label. This alone is a complete, usable feature for any org with the required (read-only)
-  permission tier.
-- **P1** — Trino external table registration + the partition-pruned, reconciling ingestion query;
-  manual-trigger API endpoints; `TableCost` request-cost fields wired into the existing cost
-  breakdown UI.
-- **P2** — One-click auto-provision (§4.3) — the minimal-config convenience path for orgs that
-  grant the optional write-permission tier; `DaemonRunner`-based scheduling once P1 has been
-  validated against real buckets; Storage Lens as an alternate ingestion path for teams who'd
-  rather not manage the Trino table.
+  discovery + manual-entry UI (§4.1, §4.2, §4.4), consuming `fetch_s3_request_prices()` from P0a
+  rather than building its own pricing call. This alone is a complete, usable feature for any org
+  with the required (read-only) permission tier.
+- **P1** — Trino external table registration + the partition-pruned, reconciling ingestion query
+  (§5, including the longest-prefix-match benchmarking and the cross-table-prefix guard called
+  out there); manual-trigger API endpoints; `TableCost` request-cost fields wired into the
+  existing cost breakdown UI as a cost-share ratio, not just a raw number (§9).
+- **P2** — One-click auto-provision (§4.3/§4.3.1) — the minimal-config convenience path for orgs
+  that grant the optional write-permission tier, including the target-bucket-policy verification
+  step and the teardown flow (§9); `DaemonRunner`-based scheduling once P1 has been validated
+  against real buckets; Storage Lens as an alternate ingestion path for teams who'd rather not
+  manage the Trino table.
 
 ## 13. Open questions
 
@@ -412,3 +529,12 @@ button — never a degraded or partially-broken experience.
   not yet decided.
 - Whether Storage Lens (§3 runner-up) should be built as a parallel ingestion path from day one,
   or only added later if a team specifically asks for it.
+- **Fallback-vs-hard-failure when pricing is grantable but genuinely absent.** §6.4's "granted
+  but empty" case assumed the fix is always "fall back and label approximate" — but there's a
+  documented AWS inconsistency where a region that visibly exists and bills normally in the AWS
+  console (historically true for some edge-case regions) still returns zero Price List results
+  for a given SKU. Is "fall back, label approximate" still the right call in that case, or should
+  a *region that should have real pricing but doesn't* refuse to compute a cost at all — an empty
+  cost section on the affected table rather than a labeled-but-plausible-looking number? Currently
+  this doc says "fall back" uniformly; worth confirming that's actually the right trade-off before
+  P0a ships, not after.

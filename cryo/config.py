@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     default_retain_last: int = Field(default=1, gt=0)
     s3_get_usd_per_1k: float = Field(default=0.0004, ge=0)
     s3_list_usd_per_1k: float = Field(default=0.005, ge=0)
+    # PUT/COPY/POST share AWS's "Tier1" request pricing with LIST (same $/1k as
+    # s3_list_usd_per_1k above, as of this writing) -- kept as a distinct setting rather than
+    # reusing s3_list_usd_per_1k so the two can diverge if AWS ever re-prices them separately,
+    # and so fetch_s3_request_prices() has an explicit, named fallback default to pass rather
+    # than callers reaching for a same-value-but-differently-named constant. This is the
+    # fallback only -- see docs/s3-request-cost-tracking.md §6.4 for the live-fetched path.
+    s3_put_usd_per_1k: float = Field(default=0.005, ge=0)
     query_gets_per_file: float = Field(default=1.0, ge=0)
 
     offpeak_start_ist: int = Field(default=0, ge=0, le=23)

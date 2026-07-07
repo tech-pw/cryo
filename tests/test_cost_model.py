@@ -123,3 +123,60 @@ def test_heuristic_tier0_parity_with_estimate_storage_cost() -> None:
         total_size_bytes + delete_bytes + manifest_bytes,
         price_per_gb_month=settings.cost_price_per_gb_month,
     )
+
+
+def _minimal_breakdown_and_reclaim() -> tuple[StorageBreakdown, ReclaimBytes]:
+    return (
+        StorageBreakdown(live_bytes=10 * GB, dead_bytes=0, metadata_bytes=0, delete_bytes=0),
+        ReclaimBytes(0, 0, 0, 0),
+    )
+
+
+def test_project_savings_tags_fallback_default_when_no_live_price_given() -> None:
+    """docs/s3-request-cost-tracking.md §6.4: a fallback-derived price must never be visually
+    indistinguishable from a live-fetched one -- the caller/UI needs
+    assumptions["s3_get_price_source"] to render the "approximate" label."""
+    breakdown, reclaim = _minimal_breakdown_and_reclaim()
+    projection = project_savings(
+        breakdown,
+        reclaim,
+        CostStatsInput(small_files_count=10, query_count_30d=1000),
+        Settings(),
+    )
+
+    assert projection.assumptions["s3_get_price_source"] == "fallback_default"
+
+
+def test_project_savings_tags_live_and_uses_live_price_when_given() -> None:
+    breakdown, reclaim = _minimal_breakdown_and_reclaim()
+    settings = Settings()
+    stats = CostStatsInput(small_files_count=10, query_count_30d=1000)
+
+    fallback_projection = project_savings(breakdown, reclaim, stats, settings)
+    live_projection = project_savings(
+        breakdown,
+        reclaim,
+        stats,
+        settings,
+        live_s3_get_price_per_1k=settings.s3_get_usd_per_1k * 10,
+    )
+
+    assert live_projection.assumptions["s3_get_price_source"] == "live"
+    # A 10x higher live GET price must actually change the computed savings, not just the label.
+    assert live_projection.query_request_savings_usd_month == round(
+        fallback_projection.query_request_savings_usd_month * 10, 4
+    )
+
+
+def test_project_savings_preserves_caller_assumptions_alongside_pricing_source() -> None:
+    breakdown, reclaim = _minimal_breakdown_and_reclaim()
+    projection = project_savings(
+        breakdown,
+        reclaim,
+        CostStatsInput(),
+        Settings(),
+        assumptions={"format_version": 2},
+    )
+
+    assert projection.assumptions["format_version"] == 2
+    assert projection.assumptions["s3_get_price_source"] == "fallback_default"
