@@ -596,7 +596,7 @@ export const TableDetail = () => {
             <Col xs={24} xl={14}>
               <Card className={`td-chart-card${trendData.length ? "" : " td-chart-card-quiet"}`} classNames={{ body: "td-chart-card-body" }} style={{ marginBottom: 16 }}>
                 <div className="td-chart-card-header">
-                  <span className="td-chart-card-title">Health trends</span>
+                  <span className="td-chart-card-title">Health Trends</span>
                   <span className="td-chart-card-subtitle">30 days</span>
                   {degradationBadge ? <Tag color="error">{degradationBadge}</Tag> : null}
                 </div>
@@ -2073,7 +2073,7 @@ export const TableDetail = () => {
                     <Descriptions.Item label="Table Ref">
                       <span className="td-sidebar-desc-val">{compliance.data.table_ref}</span>
                     </Descriptions.Item>
-                    <Descriptions.Item label="ABAC count">
+                    <Descriptions.Item label="ABAC Count">
                       <Badge count={compliance.data.abac_policy_count} showZero style={{ backgroundColor: 'var(--primary, #3d6fd4)' }} />
                     </Descriptions.Item>
                     <Descriptions.Item label="Deletion delay">
@@ -2103,7 +2103,7 @@ export const TableDetail = () => {
 
                 {(role === "admin" || role === "operator") ? (
                   <div className="td-sidebar-protect-form" style={{ marginTop: 14, paddingTop: 14, borderTop: "1.5px solid var(--line, #e1e6ed)" }}>
-                    <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 6 }}>Protect snap</Typography.Text>
+                    <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 6 }}>Protect Snapshot</Typography.Text>
                     <Form
                       layout="vertical"
                       onFinish={(values: { snapshot_id: number; label?: string }) => protect.mutate(values)}
@@ -2112,7 +2112,7 @@ export const TableDetail = () => {
                         <Col span={10}>
                           <Form.Item
                             name="snapshot_id"
-                            rules={[{ required: true, message: "Req" }]}
+                            rules={[{ required: true, message: "Required" }]}
                             style={{ marginBottom: 6 }}
                           >
                             <InputNumber min={1} placeholder="ID" style={{ width: '100%' }} size="small" />
@@ -2134,7 +2134,7 @@ export const TableDetail = () => {
                 ) : null}
 
                 <div className="td-protected-list" style={{ marginTop: 14 }}>
-                  <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 4 }}>Protected snapshots</Typography.Text>
+                  <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 4 }}>Protected Snapshots</Typography.Text>
                   {protectedItems
                     .filter((item) => item.snapshot_id > 0)
                     .slice(0, 8)
