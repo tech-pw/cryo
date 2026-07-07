@@ -370,6 +370,59 @@ export interface AWSCostInsightConfigPatch {
   enabled?: boolean;
 }
 
+export interface S3LogConfigRead {
+  id: UUID;
+  source_id: UUID;
+  bucket: string;
+  region?: string | null;
+  access_key_id?: string | null;
+  logging_status: "enabled" | "disabled" | "unknown";
+  log_target_bucket?: string | null;
+  log_target_prefix?: string | null;
+  manual_override: boolean;
+  enabled: boolean;
+  last_checked_at?: string | null;
+  last_ingested_at?: string | null;
+  last_ingested_date?: string | null;
+  last_error?: string | null;
+  last_error_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface S3LogConfigPatch {
+  region?: string | null;
+  access_key_id?: string | null;
+  secret_access_key?: string | null;
+  log_target_bucket?: string | null;
+  log_target_prefix?: string | null;
+  manual_override?: boolean;
+  enabled?: boolean;
+}
+
+export interface S3LogConfigCheckResponse {
+  logging_status: "enabled" | "disabled" | "unknown";
+  log_target_bucket?: string | null;
+  log_target_prefix?: string | null;
+  error?: string | null;
+}
+
+export interface S3LogConfigProbeResponse {
+  ok: boolean;
+  files_found: number;
+  truncated: boolean;
+  error?: string | null;
+}
+
+export interface S3LogIngestResponse {
+  bucket: string;
+  rows_ingested: number;
+  tables_matched: number;
+  unmatched_requests: number;
+  through_date?: string | null;
+  error?: string | null;
+}
+
 export interface AWSCostIngestResponse {
   rows_ingested: number;
   files_processed: number;
