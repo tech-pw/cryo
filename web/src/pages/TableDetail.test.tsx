@@ -267,15 +267,55 @@ describe("TableDetail page", () => {
     expect(await screen.findByText("Scan run page")).toBeInTheDocument();
   }, 15000);
 
-  it("queues maintenance run without redirecting until follow-up click", async () => {
+  it("disables Run maintenance when no preset is assigned", async () => {
     renderTableDetail();
     expect(await screen.findByText("public.events")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
+    const runButton = screen.getByRole("button", { name: "Run maintenance" });
+    expect(runButton).toBeDisabled();
+  }, 15000);
+
+  it("queues maintenance run when a preset is assigned", async () => {
+    const { getEffectivePreset, listPresets } = await import("../api/client");
+    vi.mocked(getEffectivePreset).mockResolvedValue({
+      table_id: "table-1",
+      preset_id: "preset-1",
+      preset_name: "local-standard",
+      provenance: "assignment"
+    });
+    vi.mocked(listPresets).mockResolvedValue([
+      {
+        id: "preset-1",
+        name: "local-standard",
+        destination_id: "dest-1",
+        mode: "standard",
+        operations: ["optimize"],
+        params: {},
+        priority: 100,
+        enabled: true,
+        guardrails: {},
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z"
+      }
+    ]);
+
+    renderTableDetail();
+    expect(await screen.findByText("public.events")).toBeInTheDocument();
+
+    const runButton = await screen.findByRole("button", { name: "Run maintenance" });
+    expect(runButton).not.toBeDisabled();
+    fireEvent.click(runButton);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => {
-      expect(runMaintenance).toHaveBeenCalled();
+      expect(runMaintenance).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          table_ids: ["table-1"],
+          destination_id: "dest-1",
+          preset_id: "preset-1"
+        })
+      );
     });
     expect(screen.queryByText("Maintenance run page")).not.toBeInTheDocument();
 

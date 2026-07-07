@@ -113,7 +113,7 @@ export const CostSavings = () => {
   });
 
   const bulkRun = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => {
+    mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => {
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return runMaintenance(api, {
@@ -136,30 +136,13 @@ export const CostSavings = () => {
     onError: (error) => message.error((error as Error).message)
   });
 
-  const run = useMutation({
-    mutationFn: (tableId: UUID) => {
-      const preset = presets.data?.[0];
-      const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
-      if (!destinationId) throw new Error("No engine configured");
-      return runMaintenance(api, {
-        table_ids: [tableId],
-        destination_id: destinationId,
-        preset_id: preset?.id,
-        mode: preset?.mode ?? "standard",
-        trigger: "web-cost"
-      });
-    },
-    onSuccess: (result) => message.success(`Run queued: ${result.run_id}`),
-    onError: (error) => message.error((error as Error).message)
-  });
-
   const fullCostScan = useMutation({
     mutationFn: () => triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" }),
     onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
     onError: (error) => message.error((error as Error).message)
   });
   const bulkManifestRewrite = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId?: UUID }) => {
+    mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return runManifestRewrite(api, {
@@ -444,9 +427,11 @@ export const CostSavings = () => {
                           >
                             Preview
                           </Button>
-                          <Button size="small" type="primary" loading={run.isPending} onClick={() => run.mutate(row.id)}>
-                            Run
-                          </Button>
+                          <Tooltip title="Select tables and choose a preset in the bulk bar to run maintenance.">
+                            <Button size="small" type="primary" disabled>
+                              Run
+                            </Button>
+                          </Tooltip>
                         </SpaceCompact>
                       )
                     }

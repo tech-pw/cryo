@@ -436,15 +436,16 @@ capability flag until the replace-files action is stable.
 
 ### 27. `is_default` uniqueness index vs. runtime enforcement can diverge (multi-tenant)
 
-Severity: Low
+Severity: Low (moot for default seeding as of migration `20260707_0020`)
 
 The migration adds a partial unique index (`uq_presets_one_default_per_tenant`) and the API clears other
-`is_default` flags per tenant, but the seed script (`upsert_preset`) sets `is_default=True` directly
-without the clear step. On a DB seeded by both paths this can trip the unique index or leave stale
-defaults.
+`is_default` flags per tenant. The local seed script no longer sets `is_default=True` on
+`default-native-deep`, so the seed-vs-API divergence described below no longer applies to fresh local
+setups. If an operator later marks a preset as platform default via the API, the API path already
+clears siblings first.
 
-Suggested fix: route all default-preset writes through one helper that clears siblings first, and cover
-with a test.
+Suggested fix (if re-enabling seeded defaults): route all default-preset writes through one helper
+that clears siblings first, and cover with a test.
 
 ## Phased remediation plan
 
@@ -634,8 +635,9 @@ Objective: make native a first-class, correctly-governed default.
 3. **Split naming/tests** (#12): clearly separate `cryo-engine` (subprocess worker path) from
    `cryo_native` (PyO3 compaction helpers); stop citing PyO3 tests as evidence of worker native
    maintenance.
-4. **Default-preset write path** (#27): route all `is_default` writes (seed + API) through one
-   clear-siblings-first helper; add a test.
+4. **Default-preset write path** (#27): if platform defaults are reintroduced, route all `is_default`
+   writes (seed + API) through one clear-siblings-first helper; add a test. Currently no preset is
+   seeded with `is_default=true` (migration `20260707_0020`).
 
 Exit criteria: native is the default deep workflow, governed by live capacity, with docs/tests that match
 the implemented behavior for the pinned `iceberg-rust` version.
