@@ -189,8 +189,10 @@ def _expire_params(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    days = int(params.get("orphan_retention_days", params.get("retention_days", 7)))
     return {
-        "retention_days": int(params.get("orphan_retention_days", params.get("retention_days", 7))),
+        "retention_days": days,
+        "orphan_min_age_hours": days * 24,
     }
 
 

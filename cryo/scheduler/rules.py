@@ -19,6 +19,7 @@ class PresetConfig:
     priority: int = 100
     enabled: bool = True
     schedule_cron: str | None = None
+    is_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,13 @@ class EffectivePreset:
     rule_id: str | None = None
 
 
+def _default_preset(presets: Iterable[PresetConfig]) -> PresetConfig | None:
+    candidates = [preset for preset in presets if preset.enabled and preset.is_default]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda preset: (preset.priority, preset.name))
+
+
 def effective_preset(
     table: TableCandidate,
     presets: Iterable[PresetConfig],
@@ -85,15 +93,19 @@ def effective_preset(
         if preset and evaluate_predicate(rule.predicate, table.row):
             matches.append((preset.priority, preset.name, rule, preset))
 
-    if not matches:
-        return None
+    if matches:
+        _, _, winning_rule, winning_preset = max(matches, key=lambda item: (item[0], item[1]))
+        return EffectivePreset(
+            preset=winning_preset,
+            provenance="rule",
+            rule_id=winning_rule.id,
+        )
 
-    _, _, winning_rule, winning_preset = max(matches, key=lambda item: (item[0], item[1]))
-    return EffectivePreset(
-        preset=winning_preset,
-        provenance="rule",
-        rule_id=winning_rule.id,
-    )
+    default_preset = _default_preset(presets)
+    if default_preset is not None:
+        return EffectivePreset(preset=default_preset, provenance="default")
+
+    return None
 
 
 def tables_for_preset(

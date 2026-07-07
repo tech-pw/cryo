@@ -30,7 +30,11 @@ START_EVENTS="${START_EVENTS:-0}"
 START_DATALAKE="${START_DATALAKE:-1}"
 START_OBSERVABILITY="${START_OBSERVABILITY:-1}"
 START_CRYO_DOCKER="${START_CRYO_DOCKER:-0}"
-DOCKER_CRYO_SERVICES="${DOCKER_CRYO_SERVICES:-postgres redis}"
+if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+  DOCKER_CRYO_SERVICES="${DOCKER_CRYO_SERVICES:-postgres redis cryo-api cryo-scanner cryo-scheduler cryo-governor cryo-worker cryo-web}"
+else
+  DOCKER_CRYO_SERVICES="${DOCKER_CRYO_SERVICES:-postgres redis}"
+fi
 DOCKER_DATALAKE_SERVICES="${DOCKER_DATALAKE_SERVICES:-minio minio-init iceberg-rest hms-postgres hive-metastore trino}"
 DOCKER_OBS_SERVICES="${DOCKER_OBS_SERVICES:-prometheus grafana loki promtail}"
 DOCKER_DOWN_ON_STOP="${DOCKER_DOWN_ON_STOP:-0}"
@@ -103,6 +107,9 @@ Environment:
   START_OBSERVABILITY=1  Start Prometheus, Grafana, Loki, Promtail
   START_CRYO_DOCKER=0    Start cryo-* containers (default: host-run API + cryo serve)
   DOCKER_CRYO_SERVICES=postgres redis
+                          In START_CRYO_DOCKER=1 mode, defaults to postgres redis
+                          cryo-api cryo-scanner cryo-scheduler cryo-governor
+                          cryo-worker cryo-web
   DOCKER_DATALAKE_SERVICES=minio minio-init iceberg-rest hms-postgres hive-metastore trino
   DOCKER_OBS_SERVICES=prometheus grafana loki promtail
   DOCKER_DOWN_ON_STOP=0  Stop Docker stack when running ./start-local.sh stop
@@ -334,7 +341,7 @@ seed_config() {
   fi
 
   log "Seeding local Cryo source, destination, and preset"
-  PYTHONPATH="$ROOT_DIR" python "$ROOT_DIR/scripts/seed_local_config.py"
+  START_CRYO_DOCKER="$START_CRYO_DOCKER" PYTHONPATH="$ROOT_DIR" python "$ROOT_DIR/scripts/seed_local_config.py"
 }
 
 seed_tables() {
@@ -425,6 +432,11 @@ PY
 }
 
 start_app_processes() {
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    log "Skipping host app processes (Cryo app services are running in Docker)"
+    return 0
+  fi
+
   start_process api 1 \
     uvicorn cryo.api.app:create_app --factory --reload \
     --reload-dir cryo --reload-exclude '.local/*' \
@@ -458,6 +470,10 @@ start_app_processes() {
 }
 
 verify_background_processes() {
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    return 0
+  fi
+
   if [[ "$START_SERVE" == "1" ]] && ! is_running "$PID_DIR/serve.pid"; then
     die "cryo serve exited during startup; see $LOG_DIR/serve.log"
   fi
@@ -481,7 +497,12 @@ Application:
   API docs   http://${API_HOST}:${API_PORT}/docs
 EOF
 
-  if [[ "$START_SERVE" == "1" ]]; then
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    cat <<EOF
+  Orchestration Docker services: cryo-governor, cryo-worker, cryo-scheduler, cryo-scanner
+             logs: docker compose -f docker-compose.yml logs -f cryo-worker cryo-governor
+EOF
+  elif [[ "$START_SERVE" == "1" ]]; then
     cat <<EOF
   Orchestration (cryo serve — governor, worker, scheduler, scanner)
              log: $LOG_DIR/serve.log
@@ -520,13 +541,26 @@ EOF
 
 Useful commands:
   ./start-local.sh status
-  ./start-local.sh logs              # tails api, web, serve, ...
   ./start-local.sh stop
   make scan
   SEED_TABLES=1 SEED_FIXTURES=1 ./start-local.sh start
+EOF
+
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    cat <<EOF
+  docker compose -f docker-compose.yml logs -f cryo-api cryo-worker cryo-governor
+
+Orchestration is running in Docker services.
+EOF
+  else
+    cat <<EOF
+  ./start-local.sh logs              # tails api, web, serve, ...
 
 Orchestration is started via cryo serve (same as make serve); no separate terminal needed.
+EOF
+  fi
 
+  cat <<EOF
 Local API auth header:
   Authorization: Bearer admin
 EOF
@@ -602,6 +636,9 @@ cmd_logs() {
 cmd_start() {
   require_docker
   ensure_dirs
+  if [[ "$START_CRYO_DOCKER" == "1" ]]; then
+    stop_app_processes
+  fi
   ensure_venv
   start_docker
   ensure_postgres_auth

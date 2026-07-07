@@ -7,6 +7,7 @@ import type { JobRead, UUID } from "../api/types";
 import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
+import { formatEngineLabel } from "../lib/engines";
 import { formatTime } from "../lib/format";
 import { LogList } from "./LogList";
 import { StatusTag } from "./status";
@@ -95,7 +96,10 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
       <StatStrip
         items={[
           ...(concurrency.engines.length
-            ? concurrency.engines.map(([engine, count]) => ({ label: `Active ${engine}`, value: count }))
+            ? concurrency.engines.map(([engine, count]) => ({
+                label: `Active ${formatEngineLabel(engine)}`,
+                value: count
+              }))
             : [{ label: "Active jobs", value: 0 }]),
           { label: "Queued", value: concurrency.queued },
           { label: "Succeeded", value: concurrency.done },
@@ -137,7 +141,14 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
           {
             title: "Engine",
             width: 120,
-            render: (_, row) => row.destination_name ?? row.destination_engine ?? "-"
+            render: (_, row) => {
+              if (row.destination_name) {
+                return row.destination_engine
+                  ? `${row.destination_name} · ${formatEngineLabel(row.destination_engine)}`
+                  : row.destination_name;
+              }
+              return formatEngineLabel(row.destination_engine) || "-";
+            }
           },
           { title: "Replica", dataIndex: "replica", width: 96, render: (value) => value ?? "-" },
           { title: "Started", dataIndex: "started_at", width: 148, render: formatTime },
@@ -186,8 +197,13 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
               ) : null}
             </Space>
             <Typography.Text type="secondary">
-              Engine {logJob.destination_name ?? logJob.destination_engine ?? "—"} · started{" "}
-              {formatTime(logJob.started_at)}
+              Engine{" "}
+              {logJob.destination_name
+                ? logJob.destination_engine
+                  ? `${logJob.destination_name} · ${formatEngineLabel(logJob.destination_engine)}`
+                  : logJob.destination_name
+                : formatEngineLabel(logJob.destination_engine) || "—"}{" "}
+              · started {formatTime(logJob.started_at)}
             </Typography.Text>
             {jobLogMessages.length === 0 ? (
               <Typography.Text type="secondary">No live events for this job yet.</Typography.Text>

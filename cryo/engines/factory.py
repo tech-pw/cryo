@@ -41,17 +41,21 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
     if engine_type is EngineType.NATIVE:
         from cryo.config import get_settings
         from cryo.engines.native.engine import NativeEngine, is_native_available
+        from cryo.engines.native.runner import verify_cryo_engine_spawnable
 
         settings = get_settings()
         if not settings.native_engine_enabled:
             raise ValueError(
-                "Native engine is experimental and disabled. "
-                "Set CRYO_NATIVE_ENGINE_ENABLED=true after validating cryo-native in CI."
+                "Native engine is disabled. Set CRYO_NATIVE_ENGINE_ENABLED=true to enable."
             )
-        if not is_native_available():
+        if not is_native_available(config):
             raise ValueError(
-                "Native engine package (cryo-native) is not installed. Use Trino or Spark."
+                "cryo-engine binary not found. "
+                "Build cryo-engine or set destination.config.binary_path."
             )
+        spawn_error = verify_cryo_engine_spawnable(config)
+        if spawn_error is not None:
+            raise ValueError(spawn_error)
         return NativeEngine(config=dict(config))
 
     if engine_type is EngineType.FLINK:

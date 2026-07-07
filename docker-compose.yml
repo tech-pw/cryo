@@ -43,12 +43,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cryo-api
-    command: uvicorn cryo.api.app:app --host 0.0.0.0 --port 8000
+    command: uvicorn cryo.api.app:create_app --factory --host 0.0.0.0 --port 8000
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
-      REDIS_URL: redis://redis:6379/0
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
       CRYO_JWT_SECRET: dev-secret-change-in-prod
-      ENVIRONMENT: development
+      CRYO_ENVIRONMENT: dev
     ports:
       - "8000:8000"
     networks:
@@ -72,11 +72,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cryo-scanner
-    command: python -m cryo.scanner.run
+    command: python -m cryo.cli scanner
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
     networks:
       - cryo-dev
     depends_on:
@@ -95,11 +96,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cryo-scheduler
-    command: python -m cryo.scheduler
+    command: python -m cryo.cli scheduler
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
     networks:
       - cryo-dev
     depends_on:
@@ -116,11 +118,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cryo-governor
-    command: python -m cryo.governor
+    command: python -m cryo.cli governor
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
     networks:
       - cryo-dev
     depends_on:
@@ -137,11 +140,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cryo-worker
-    command: python -m cryo.worker
+    command: python -m cryo.cli worker
     environment:
-      DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
     networks:
       - cryo-dev
     depends_on:
@@ -160,6 +164,7 @@ services:
     container_name: cryo-web
     environment:
       VITE_API_BASE_URL: http://localhost:8000
+      VITE_PROXY_TARGET: http://cryo-api:8000
     ports:
       - "5173:5173"
     networks:

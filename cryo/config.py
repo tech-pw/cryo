@@ -98,8 +98,8 @@ class Settings(BaseSettings):
         ),
     )
     native_engine_enabled: bool = Field(
-        default=False,
-        description="Enable experimental cryo-native engine (disabled by default).",
+        default=True,
+        description="Enable native cryo-engine maintenance (default workflow).",
     )
     flink_engine_enabled: bool = Field(
         default=False,

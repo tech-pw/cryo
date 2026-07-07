@@ -3,24 +3,52 @@
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import select
 
 from cryo.db.models import Destination, Preset, Source
 from cryo.db.session import SessionLocal
 
-LOCAL_SOURCE = {
-    "name": "local-rest",
-    "type": "rest",
-    "config": {
+
+def _docker_mode() -> bool:
+    return os.environ.get("START_CRYO_DOCKER", "0") == "1"
+
+
+def _local_rest_source_config() -> dict[str, str]:
+    docker = _docker_mode()
+    return {
         "catalog_name": "rest",
         "type": "rest",
-        "uri": "http://localhost:8181",
+        "uri": "http://iceberg-rest:8181" if docker else "http://localhost:8181",
         "warehouse": "s3://warehouse/",
-        "s3.endpoint": "http://localhost:9000",
+        "s3.endpoint": "http://minio:9000" if docker else "http://localhost:9000",
         "s3.access-key-id": "minioadmin",
         "s3.secret-access-key": "minioadmin",
         "s3.path-style-access": "true",
-    },
+        "s3.region": "us-east-1",
+    }
+
+
+def _local_hms_source_config() -> dict[str, str]:
+    docker = _docker_mode()
+    return {
+        "catalog_name": "hms",
+        "type": "hive",
+        "uri": "thrift://hive-metastore:9083" if docker else "thrift://localhost:9083",
+        "warehouse": "s3://warehouse/",
+        "s3.endpoint": "http://minio:9000" if docker else "http://localhost:9000",
+        "s3.access-key-id": "minioadmin",
+        "s3.secret-access-key": "minioadmin",
+        "s3.path-style-access": "true",
+        "s3.region": "us-east-1",
+    }
+
+
+LOCAL_SOURCE = {
+    "name": "local-rest",
+    "type": "rest",
+    "config": _local_rest_source_config(),
 }
 
 LOCAL_TRINO_DESTINATION = {
@@ -41,16 +69,7 @@ LOCAL_TRINO_DESTINATION = {
 LOCAL_HMS_SOURCE = {
     "name": "local-hms",
     "type": "hive",
-    "config": {
-        "catalog_name": "hms",
-        "type": "hive",
-        "uri": "thrift://localhost:9083",
-        "warehouse": "s3://warehouse/",
-        "s3.endpoint": "http://localhost:9000",
-        "s3.access-key-id": "minioadmin",
-        "s3.secret-access-key": "minioadmin",
-        "s3.path-style-access": "true",
-    },
+    "config": _local_hms_source_config(),
 }
 
 LOCAL_TRINO_HMS_DESTINATION = {
@@ -75,6 +94,16 @@ LOCAL_SPARK_DESTINATION = {
         "local": True,
         "slot_cap": 2,
         "application_id": "local-spark",
+    },
+}
+
+LOCAL_NATIVE_DESTINATION = {
+    "name": "native-datafusion",
+    "engine": "native",
+    "config": {
+        "slot_cap": 5,
+        "operation_mode": "execute",
+        "timeout_seconds": 3600,
     },
 }
 
@@ -110,6 +139,24 @@ LOCAL_LARGE_PRESET = {
         },
     },
     "schedule_cron": "0 2 * * *",
+}
+
+LOCAL_DEFAULT_NATIVE_PRESET = {
+    "name": "default-native-deep",
+    "mode": "deep",
+    # Phase 2: expire_snapshots is paired with remove_orphan_files to avoid file leaks (#20).
+    "operations": ["expire_snapshots", "remove_orphan_files"],
+    "params": {
+        "min_small_files": 10,
+        "retention_days": 7,
+        "retain_last": 1,
+        "orphan_retention_days": 7,
+    },
+    "description": (
+        "Default native maintenance (expire_snapshots + remove_orphan_files; optimize deferred)"
+    ),
+    "guardrails": {"cooldown_hours": 24},
+    "is_default": True,
 }
 
 
@@ -161,6 +208,7 @@ def upsert_preset(session, payload: dict, *, destination_id) -> Preset:
             description=payload.get("description"),
             guardrails=payload.get("guardrails") or {},
             schedule_cron=payload.get("schedule_cron"),
+            is_default=bool(payload.get("is_default", False)),
             enabled=True,
         )
         session.add(preset)
@@ -172,6 +220,7 @@ def upsert_preset(session, payload: dict, *, destination_id) -> Preset:
         preset.description = payload.get("description")
         preset.guardrails = payload.get("guardrails") or {}
         preset.schedule_cron = payload.get("schedule_cron")
+        preset.is_default = bool(payload.get("is_default", False))
         preset.enabled = True
     session.flush()
     return preset
@@ -184,13 +233,18 @@ def main() -> None:
         trino = upsert_destination(session, LOCAL_TRINO_DESTINATION)
         trino_hms = upsert_destination(session, LOCAL_TRINO_HMS_DESTINATION)
         spark = upsert_destination(session, LOCAL_SPARK_DESTINATION)
+        native = upsert_destination(session, LOCAL_NATIVE_DESTINATION)
         standard = upsert_preset(session, LOCAL_STANDARD_PRESET, destination_id=trino.id)
         large = upsert_preset(session, LOCAL_LARGE_PRESET, destination_id=trino.id)
+        default_native = upsert_preset(
+            session, LOCAL_DEFAULT_NATIVE_PRESET, destination_id=native.id
+        )
         session.commit()
         print(
             f"source={source.id} hms_source={hms_source.id} trino={trino.id} "
-            f"trino_hms={trino_hms.id} spark={spark.id} "
-            f"preset_standard={standard.id} preset_large={large.id}"
+            f"trino_hms={trino_hms.id} spark={spark.id} native={native.id} "
+            f"preset_standard={standard.id} preset_large={large.id} "
+            f"preset_default_native={default_native.id}"
         )
 
 

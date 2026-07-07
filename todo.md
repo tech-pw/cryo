@@ -171,6 +171,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [~] Security pass: JWT auth works; secret encryption, RBAC hardening, destructive-op `force` audit
       incomplete.
 - [~] e2e smoke (`make smoke-compact`, `scripts/smoke_cryo_e2e.py`) exists; not yet in CI pipeline.
+- [x] Native expire + orphan e2e (`tests/integration/native/`, `make test-native-e2e-local`, CI `native-e2e` job).
 - [~] Docs: `docs/operator-runbook.md` + `docs/local-development.md` exist; deployment guide +
       README/`hld.md`/`lld.md` polish pending.
 
@@ -191,8 +192,10 @@ Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §1.5 and `docs/RUST_ENGINE_PRODUCTIO
 
 - [x] `EngineType.NATIVE`; `RenderedStatement.payload` field; `cryo/engines/native/engine.py` adapter.
 - [x] `cryo-engine/` Rust crate — JSON stdin/stdout protocol, progress JSONL on stderr.
-- [~] Full write operations via iceberg-rust — scaffold connects to REST catalogs; upstream write APIs
-      still stabilizing. See `docs/RUST_ENGINE_PRODUCTION_HARDENING.md` checklist.
+- [x] Worker subprocess adapter (`cryo/engines/native/runner.py`) + source catalog config at execution time.
+- [x] Default platform preset `default-native-deep` (deep, no cron) seeded on fresh migrate.
+- [~] Full write operations via iceberg-rust — `expire_snapshots` commits; compaction/orphans/manifests
+      still partial upstream. See `docs/RUST_ENGINE_PRODUCTION_HARDENING.md` checklist.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.
 - [ ] Production hardening: retries, Prometheus metrics, distributed mode, benchmark suite.
 

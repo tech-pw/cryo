@@ -1,3 +1,10 @@
+FROM rust:1-bookworm AS cryo-engine-builder
+
+WORKDIR /build
+COPY cryo-engine/Cargo.toml cryo-engine/Cargo.lock* ./
+COPY cryo-engine/src ./src
+RUN cargo build --release
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -16,12 +23,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Native maintenance binary built in the Rust stage above.
+COPY --from=cryo-engine-builder /build/target/release/cryo-engine /app/cryo-engine/target/release/cryo-engine
+ENV PATH="/app/cryo-engine/target/release:${PATH}"
+RUN chmod +x /app/cryo-engine/target/release/cryo-engine
+
 # Install Cryo in development mode
 RUN pip install -e .
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/healthz || exit 1
 
 # Default command (can be overridden in docker-compose)
 CMD ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -8,6 +8,7 @@ import { CostPrecisionBadge } from "./CostPrecisionBadge";
 import { StatStrip } from "./common";
 import { SavingsByOperation } from "./SavingsByOperation";
 import { useAuth } from "../lib/auth";
+import { ENGINE_TYPE_OPTIONS, isNativeStatement } from "../lib/engines";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber } from "../lib/format";
 import type { CostByOperation } from "../api/types";
 
@@ -86,10 +87,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
           <Segmented
             value={engine}
             onChange={(value) => setEngine(value as EngineType)}
-            options={[
-              { label: "Trino", value: "trino" },
-              { label: "Spark", value: "spark_emr" }
-            ]}
+            options={ENGINE_TYPE_OPTIONS}
           />
           <Select
             value={mode}
@@ -172,13 +170,25 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
                             size="small"
                             icon={<CopyOutlined />}
                             onClick={() => {
-                              navigator.clipboard.writeText(statement.sql);
-                              message.success("SQL copied");
+                              const copyText = isNativeStatement(statement.sql) && statement.payload
+                                ? JSON.stringify(statement.payload, null, 2)
+                                : statement.sql;
+                              navigator.clipboard.writeText(copyText);
+                              message.success("Copied");
                             }}
                           >
                             Copy
                           </Button>
-                          <pre>{statement.sql}</pre>
+                          {isNativeStatement(statement.sql) || statement.engine === "native" ? (
+                            <>
+                              <Typography.Text type="secondary" className="mono-input" style={{ display: "block", marginTop: 8 }}>
+                                {statement.sql}
+                              </Typography.Text>
+                              <pre>{JSON.stringify(statement.payload ?? {}, null, 2)}</pre>
+                            </>
+                          ) : (
+                            <pre>{statement.sql}</pre>
+                          )}
                         </div>
                       )
                     }))}

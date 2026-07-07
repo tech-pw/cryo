@@ -46,11 +46,7 @@ class SQLJobStore:
             destination = session.get(Destination, uuid.UUID(destination_id))
             if destination is None:
                 return None
-            return DestinationConfig(
-                id=str(destination.id),
-                engine=destination.engine,
-                config=dict(destination.config),
-            )
+            return _destination_config(destination)
 
     def get_table_data(self, table_id: str) -> TableMaintenanceData:
         with self._session_factory() as session:
@@ -63,7 +59,12 @@ class SQLJobStore:
                 raise KeyError(f"table not found: {table_id}")
             stats = _stats_dict(table)
             partitions = _latest_partitions(session, table.id)
-            return TableMaintenanceData(stats=stats, partitions=partitions)
+            source_config = dict(table.source.config) if table.source is not None else {}
+            return TableMaintenanceData(
+                stats=stats,
+                partitions=partitions,
+                source_config=source_config,
+            )
 
     def save_plan(self, job_id: str, plan: dict[str, Any]) -> None:
         with self._session_factory() as session:
@@ -181,6 +182,19 @@ class SQLJobStore:
         with self._session_factory() as session:
             destination = session.get(Destination, uuid.UUID(destination_id))
             return destination is not None and destination.enabled
+
+
+def _destination_config(destination: Destination) -> DestinationConfig:
+    config = dict(destination.config)
+    if "offpeak_start_ist" not in config and destination.offpeak_start is not None:
+        config["offpeak_start_ist"] = destination.offpeak_start
+    if "offpeak_end_ist" not in config and destination.offpeak_end is not None:
+        config["offpeak_end_ist"] = destination.offpeak_end
+    return DestinationConfig(
+        id=str(destination.id),
+        engine=destination.engine,
+        config=config,
+    )
 
 
 def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:

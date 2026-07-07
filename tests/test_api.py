@@ -122,6 +122,41 @@ def test_preview_skips_bucket_filter_without_unsafe_sql() -> None:
     assert any("bucket_filter" in note for note in item["notes"])
 
 
+def test_preview_renders_native_payload_statements() -> None:
+    response = _client().post(
+        "/api/v1/maintenance/preview",
+        headers=AUTH_HEADERS,
+        json={
+            "engine": "native",
+            "mode": "deep",
+            "params": {
+                "min_small_files": 10,
+                "chunk_size_gb": 10,
+            },
+            "tables": [
+                {
+                    "schema_name": "fixtures",
+                    "table_name": "fixture_small",
+                    "stats": {"small_files_count": 100, "total_size_gb": 5},
+                    "partitions": [],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["table_ref"] == "iceberg.fixtures.fixture_small"
+    batch = next(stmt for stmt in item["statements"] if stmt["sql"].startswith("NATIVE:BATCH:"))
+    assert batch["engine"] == "native"
+    assert batch["payload"]["table_ref"] == "iceberg.fixtures.fixture_small"
+    assert batch["payload"]["mode"] == "deep"
+    optimize = next(
+        op for op in batch["payload"]["operations"] if op["type"] == "optimize"
+    )
+    assert optimize["params"]["min_small_files"] == 10
+
+
 def test_source_test_endpoint_reports_namespaces_without_listing_tables() -> None:
     """test_source must call list_namespaces() only -- list_tables() is O(namespaces)
     round-trips and can take minutes against a real Hive Metastore, unsuitable for a

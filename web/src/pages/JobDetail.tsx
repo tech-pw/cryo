@@ -29,6 +29,7 @@ import { PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatDuration } from "../lib/format";
+import { engineTagColor, formatEngineLabel, isNativeStatement } from "../lib/engines";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -163,7 +164,7 @@ export const JobDetail = () => {
             <Tag color="blue">{data.operation_type}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Engine">
-            <Tag color="green">{data.engine.toUpperCase()}</Tag>
+            <Tag color={engineTagColor(data.engine)}>{formatEngineLabel(data.engine)}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Replica">
             {data.replica || "—"}
@@ -209,7 +210,7 @@ export const JobDetail = () => {
           title={
             <Space>
               <CodeOutlined />
-              SQL Statements
+              {data.sql_statements.some((sql) => isNativeStatement(sql)) ? "Rendered statements" : "SQL Statements"}
             </Space>
           }
         >
@@ -220,20 +221,42 @@ export const JobDetail = () => {
               title={`Statement ${idx + 1}`}
               style={{ marginBottom: idx < data.sql_statements!.length - 1 ? 16 : 0 }}
             >
-              <Paragraph
-                copyable
-                code
-                style={{
-                  fontSize: "11px",
-                  backgroundColor: "#f5f5f5",
-                  padding: "12px",
-                  borderRadius: "4px",
-                  whiteSpace: "pre-wrap",
-                  margin: 0,
-                }}
-              >
-                {sql}
-              </Paragraph>
+              {isNativeStatement(sql) ? (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Text code type="secondary">
+                    {sql}
+                  </Text>
+                  <Paragraph
+                    copyable
+                    code
+                    style={{
+                      fontSize: "11px",
+                      backgroundColor: "#f5f5f5",
+                      padding: "12px",
+                      borderRadius: "4px",
+                      whiteSpace: "pre-wrap",
+                      margin: 0
+                    }}
+                  >
+                    See raw job record for execute payload details.
+                  </Paragraph>
+                </Space>
+              ) : (
+                <Paragraph
+                  copyable
+                  code
+                  style={{
+                    fontSize: "11px",
+                    backgroundColor: "#f5f5f5",
+                    padding: "12px",
+                    borderRadius: "4px",
+                    whiteSpace: "pre-wrap",
+                    margin: 0
+                  }}
+                >
+                  {sql}
+                </Paragraph>
+              )}
             </Card>
           ))}
         </Card>

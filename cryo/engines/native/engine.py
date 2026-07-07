@@ -1,28 +1,38 @@
 """Native Rust engine for Cryo.
 
-**EXPERIMENTAL** — opt-in only (gated by ``Settings.native_engine_enabled``, which
-defaults to ``False``). Not part of the v1 launch surface; see
-``docs/OSS_READINESS.md`` §2.2. The ``cryo-native`` Rust crate is shipped as a
-separate workspace (``cryo-native/``) and is not exercised by CI today.
-
-This module provides a Python wrapper around the cryo-native Rust library
-for high-performance Iceberg table compaction using DataFusion and Arrow.
+Worker maintenance runs invoke the ``cryo-engine`` subprocess (iceberg-rust).
+Optional ``cryo_native`` PyO3 helpers remain available for direct compaction tests.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from cryo.config import Settings, get_settings
-from cryo.domain.enums import EngineType, OperationType
-from cryo.domain.models import CapacitySnapshot, MaintenancePlan
+from cryo.domain.enums import EngineType, Mode, OperationType
+from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.native.payload import (
+    build_execute_request,
+    build_execute_request_for_operations,
+    native_table_ref,
+    operation_from_dict,
+    operation_to_dict,
+)
+from cryo.engines.native.runner import (
+    NativeExecuteResult,
+    NativeOperationResult,
+    execute_request,
+    is_cryo_engine_available,
+    resolve_binary_path,
+)
 
 try:
-    import pyiceberg  # noqa: F401
+    from pyiceberg.catalog import load_catalog
 
     PYICEBERG_AVAILABLE = True
 except ImportError:
@@ -30,26 +40,27 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Flag to track if native engine is available
-_NATIVE_AVAILABLE: bool | None = None
+# Flag to track if optional cryo_native PyO3 helpers are available
+_PYO3_AVAILABLE: bool | None = None
 
 
-def is_native_available() -> bool:
-    """Check if the native Rust engine is available."""
-    global _NATIVE_AVAILABLE
-    if _NATIVE_AVAILABLE is None:
+def is_native_available(config: Mapping[str, Any] | None = None) -> bool:
+    """Return True when cryo-engine binary is available for worker execution."""
+    return is_cryo_engine_available(config or {})
+
+
+def is_pyo3_native_available() -> bool:
+    """Return True when optional cryo_native PyO3 helpers are importable."""
+    global _PYO3_AVAILABLE
+    if _PYO3_AVAILABLE is None:
         try:
             import cryo_native  # noqa: F401
 
-            _NATIVE_AVAILABLE = True
-            logger.info("Native Rust engine (cryo_native) is available")
+            _PYO3_AVAILABLE = True
+            logger.info("Optional cryo_native PyO3 helpers are available")
         except ImportError:
-            _NATIVE_AVAILABLE = False
-            logger.warning(
-                "Native Rust engine (cryo_native) not available. "
-                "Install with: pip install ./cryo-native or maturin develop"
-            )
-    return _NATIVE_AVAILABLE
+            _PYO3_AVAILABLE = False
+    return _PYO3_AVAILABLE
 
 
 @dataclass
@@ -117,29 +128,34 @@ class NativeCompactionResult:
 
 @dataclass
 class NativeEngine:
-    """Native Rust engine for Iceberg table compaction.
-
-    Uses DataFusion and Arrow for high-performance data processing.
-    Falls back to Spark if native engine is not available.
-    """
+    """Native Rust engine for Iceberg maintenance via cryo-engine subprocess."""
 
     config: dict[str, Any]
     settings: Settings | None = None
+    source_config: Mapping[str, Any] = field(default_factory=dict)
 
     type: EngineType = EngineType.NATIVE
 
     def __post_init__(self) -> None:
         self.settings = self.settings or get_settings()
         self._engine = None
-        self._slot_cap = int(self.config.get("slot_cap", 4))
+        self._slot_cap = int(self.config.get("slot_cap", self.settings.default_native_slot_cap))
+
+    def with_source_config(self, source_config: Mapping[str, Any]) -> NativeEngine:
+        return NativeEngine(
+            config=self.config,
+            settings=self.settings,
+            source_config=dict(source_config),
+        )
 
     @property
     def engine(self) -> Any:
-        """Lazy-load the native engine."""
+        """Lazy-load optional cryo_native PyO3 helpers."""
         if self._engine is None:
-            if not is_native_available():
+            if not is_pyo3_native_available():
                 raise RuntimeError(
-                    "Native engine not available. Install cryo-native or use Spark engine."
+                    "cryo_native PyO3 helpers not available. "
+                    "Build cryo-native for direct compaction."
                 )
             import cryo_native
 
@@ -157,142 +173,216 @@ class NativeEngine:
         return CapacitySnapshot(capacity=min(cpu_count, self._slot_cap), used=0)
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]:
-        """Render maintenance plan to native operations.
-
-        For native engine, we don't render SQL - we return markers
-        that will be executed directly via the Python API.
-        """
-        statements = []
+        supported = (
+            OperationType.EXPIRE_SNAPSHOTS,
+            OperationType.REMOVE_ORPHAN_FILES,
+            OperationType.OPTIMIZE,
+            OperationType.OPTIMIZE_MANIFESTS,
+        )
+        operations = tuple(op for op in plan.operations if op.type in supported)
         for operation in plan.operations:
-            if operation.type == OperationType.OPTIMIZE:
-                stmt = RenderedStatement(
+            if operation.type not in supported:
+                logger.warning("Native engine skipping unsupported operation %s", operation.type)
+        if not operations:
+            return []
+        if len(operations) == 1:
+            operation = operations[0]
+            return [
+                RenderedStatement(
                     action=operation.type,
-                    sql=f"NATIVE_COMPACTION:{plan.table_ref}",
+                    sql=f"NATIVE:{operation.type.value}:{native_table_ref(plan.table_ref)}",
                     engine=EngineType.NATIVE,
+                    payload={
+                        "operation": operation_to_dict(operation),
+                        "table_ref": plan.table_ref,
+                        "mode": plan.mode.value,
+                    },
                 )
-                statements.append(stmt)
-            else:
-                logger.warning(
-                    f"Native engine doesn't support {operation.type}. "
-                    "Use Spark or Trino for this operation."
-                )
-        return statements
+            ]
+        return [
+            RenderedStatement(
+                action=operations[0].type,
+                sql=f"NATIVE:BATCH:{native_table_ref(plan.table_ref)}",
+                engine=EngineType.NATIVE,
+                payload={
+                    "batch": True,
+                    "operations": [operation_to_dict(operation) for operation in operations],
+                    "table_ref": plan.table_ref,
+                    "mode": plan.mode.value,
+                },
+            )
+        ]
 
     def session_setup(self) -> list[str]:
         """No session setup needed for native engine."""
         return []
 
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
-        """Execute a native compaction operation.
-
-        EXPERIMENTAL: exercises the cryo-native Rust binpack path end to end (discover small
-        files -> compact -> commit an OVERWRITE snapshot), gated behind
-        settings.native_engine_enabled (see cryo/engines/factory.py). Not yet covered by the
-        production-hardening checklist in docs/RUST_ENGINE_PRODUCTION_HARDENING.md (no retry/
-        checkpoint logic, no correctness validation suite) -- validate against a disposable
-        table before pointing this at anything that matters.
-        """
         start = time.monotonic()
-
-        if not stmt.sql.startswith("NATIVE_COMPACTION:"):
+        if not stmt.sql.startswith("NATIVE:"):
             return ExecResult(
                 ok=False,
                 detail=stmt.sql,
                 error="Invalid native statement",
                 duration_ms=_elapsed_ms(start),
             )
+        if stmt.payload.get("batch"):
+            return self._execute_batch(stmt, ctx, _elapsed_ms(start))
+        return self._execute_single(stmt, ctx, start)
 
-        if ctx is None or ctx.table_id is None:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
+        """Run all plan operations in one cryo-engine subprocess."""
+        start = time.monotonic()
+        if not self.source_config:
+            error = "Native engine requires table source catalog config at execution time"
+            return [
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=_elapsed_ms(start),
+                )
+                for operation in plan.operations
+            ]
+        if resolve_binary_path(self.config) is None:
+            error = "cryo-engine binary not found (set destination.config.binary_path)"
+            return [
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=_elapsed_ms(start),
+                )
+                for operation in plan.operations
+            ]
+
+        operations = _supported_operations(plan)
+        if not operations:
+            return []
+
+        try:
+            request = build_execute_request_for_operations(
+                plan=plan,
+                operations=operations,
+                source_config=self.source_config,
+                destination_config=self.config,
+            )
+            result = execute_request(
+                request,
+                config=self.config,
+                timeout_seconds=int(self.config.get("timeout_seconds", 3600)),
+                on_progress=_progress_callback(ctx),
+            )
+        except Exception as exc:
+            error = f"Native execution failed: {exc}"
+            return [
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=_elapsed_ms(start),
+                )
+                for operation in operations
+            ]
+
+        return _exec_results_from_native_batch(operations, result, _elapsed_ms(start))
+
+    def _execute_single(
+        self,
+        stmt: RenderedStatement,
+        ctx: ExecCtx | None,
+        start: float,
+    ) -> ExecResult:
+        if not self.source_config:
             return ExecResult(
                 ok=False,
                 detail=stmt.sql,
-                error="Native engine execute() requires a table_id in ExecCtx",
+                error="Native engine requires table source catalog config at execution time",
                 duration_ms=_elapsed_ms(start),
             )
-
-        try:
-            from cryo.db.models import Table as TableRow
-            from cryo.db.session import SessionLocal
-            from cryo.scanner.analyze import iter_data_files
-            from cryo.sources.factory import source_catalog_for
-
-            with SessionLocal() as session:
-                table_row = session.get(TableRow, ctx.table_id)
-                if table_row is None:
-                    return ExecResult(
-                        ok=False,
-                        detail=stmt.sql,
-                        error=f"Table {ctx.table_id} not found",
-                        duration_ms=_elapsed_ms(start),
-                    )
-                schema_name, table_name = table_row.schema_name, table_row.table_name
-                source = table_row.source
-
-            catalog = source_catalog_for(source)
-            iceberg_table = catalog.load_table(schema_name, table_name)
-
-            settings = self.settings or get_settings()
-            small_threshold_bytes = int(settings.scan_small_file_mb * 1024 * 1024)
-            data_files = list(iter_data_files(iceberg_table))
-            small_files = [
-                df
-                for df in data_files
-                if int(getattr(df, "file_size_in_bytes", 0) or 0) < small_threshold_bytes
-            ]
-
-            if len(small_files) < 2:
-                return ExecResult(
-                    ok=True,
-                    detail=stmt.sql,
-                    duration_ms=_elapsed_ms(start),
-                    input_files_count=len(small_files),
-                    output_files_count=len(small_files),
-                )
-
-            max_files = int(self.config.get("max_files_per_run", 1000))
-            small_files = small_files[:max_files]
-
-            location = str(iceberg_table.location()).rstrip("/")
-            output_dir = f"{location}/data"
-            native_config = NativeCompactionConfig(
-                target_file_size_bytes=small_threshold_bytes * 4,
-                min_file_size_bytes=small_threshold_bytes,
-                max_files_per_run=max_files,
-            )
-
-            result = self.compact_and_commit(
-                iceberg_table=iceberg_table,
-                input_data_files=small_files,
-                output_dir=output_dir,
-                config=native_config,
-            )
-
-            if not result.ok:
-                return ExecResult(
-                    ok=False,
-                    detail=stmt.sql,
-                    error=result.error,
-                    duration_ms=_elapsed_ms(start),
-                    input_files_count=result.input_files,
-                    output_files_count=result.output_files,
-                )
-
+        if resolve_binary_path(self.config) is None:
             return ExecResult(
-                ok=True,
+                ok=False,
                 detail=stmt.sql,
+                error="cryo-engine binary not found (set destination.config.binary_path)",
                 duration_ms=_elapsed_ms(start),
-                input_files_count=result.input_files,
-                output_files_count=result.output_files,
-                actual_bytes_freed=max(0, result.bytes_read - result.bytes_written),
             )
 
+        operation = _operation_from_payload(stmt.payload)
+        if operation is None:
+            return ExecResult(
+                ok=False,
+                detail=stmt.sql,
+                error="Native statement missing operation payload",
+                duration_ms=_elapsed_ms(start),
+            )
+
+        plan = MaintenancePlan(
+            table_ref=str(stmt.payload.get("table_ref", "")),
+            mode=Mode(str(stmt.payload.get("mode", Mode.DEEP.value))),
+            operations=(operation,),
+        )
+        try:
+            request = build_execute_request(
+                plan=plan,
+                operation=operation,
+                source_config=self.source_config,
+                destination_config=self.config,
+            )
+            result = execute_request(
+                request,
+                config=self.config,
+                timeout_seconds=int(self.config.get("timeout_seconds", 3600)),
+                on_progress=_progress_callback(ctx),
+            )
         except Exception as exc:
             return ExecResult(
                 ok=False,
                 detail=stmt.sql,
-                error=f"Native compaction failed: {exc}",
+                error=f"Native execution failed: {exc}",
                 duration_ms=_elapsed_ms(start),
             )
+
+        return _exec_result_from_native(stmt, result, _elapsed_ms(start))
+
+    def _execute_batch(
+        self,
+        stmt: RenderedStatement,
+        ctx: ExecCtx | None,
+        elapsed_ms: int,
+    ) -> ExecResult:
+        plan = _plan_from_batch_payload(stmt.payload)
+        if plan is None:
+            return ExecResult(
+                ok=False,
+                detail=stmt.sql,
+                error="Native batch statement missing operations payload",
+                duration_ms=elapsed_ms,
+            )
+        results = self.execute_plan(plan, ctx)
+        if not results:
+            return ExecResult(
+                ok=False,
+                detail=stmt.sql,
+                error="Native batch execution produced no results",
+                duration_ms=elapsed_ms,
+            )
+        if len(results) == 1:
+            return results[0]
+        if any(not result.ok and not result.skipped for result in results):
+            failed = next(result for result in results if not result.ok and not result.skipped)
+            return ExecResult(
+                ok=False,
+                detail=failed.detail or failed.error or stmt.sql,
+                error=failed.error or failed.detail,
+                duration_ms=sum(result.duration_ms or 0 for result in results),
+            )
+        return ExecResult(
+            ok=True,
+            detail=stmt.sql,
+            duration_ms=sum(result.duration_ms or 0 for result in results),
+            skipped=all(result.skipped for result in results),
+        )
 
     def compact_files(
         self,
@@ -365,8 +455,9 @@ class NativeEngine:
 
     def compact_and_commit(
         self,
-        iceberg_table: Any,
-        input_data_files: list[Any],
+        table_identifier: str,
+        catalog_config: dict[str, Any],
+        input_paths: list[str],
         output_dir: str,
         config: NativeCompactionConfig | None = None,
     ) -> NativeCompactionResult:
@@ -376,18 +467,15 @@ class NativeEngine:
         as it ensures compacted files are immediately visible to queries.
 
         Args:
-            iceberg_table: An already-loaded pyiceberg.table.Table (e.g. via
-                cryo.sources.factory.source_catalog_for(source).load_table(schema, name)).
-            input_data_files: The table's own current DataFile entries being replaced (e.g.
-                from cryo.scanner.analyze.iter_data_files) -- real manifest entries, not paths.
+            table_identifier: Full table identifier (e.g., "catalog.schema.table")
+            catalog_config: PyIceberg catalog configuration dict
+            input_paths: List of input Parquet file paths
             output_dir: Directory for output files
             config: Compaction configuration
 
         Returns:
             NativeCompactionResult with operation details
         """
-        input_paths = [str(df.file_path) for df in input_data_files]
-
         # Step 1: Compact files
         result = self.compact_files(input_paths, output_dir, config)
 
@@ -397,8 +485,9 @@ class NativeEngine:
         # Step 2: Commit to Iceberg
         try:
             self.commit_to_iceberg(
-                iceberg_table=iceberg_table,
-                old_data_files=input_data_files,
+                table_identifier=table_identifier,
+                catalog_config=catalog_config,
+                old_file_paths=input_paths,
                 new_file_paths=result.output_paths,
             )
         except Exception as e:
@@ -420,24 +509,20 @@ class NativeEngine:
 
     def commit_to_iceberg(
         self,
-        iceberg_table: Any,
-        old_data_files: list[Any],
+        table_identifier: str,
+        catalog_config: dict[str, Any],
+        old_file_paths: list[str],
         new_file_paths: list[str],
     ) -> None:
-        """Commit compaction results to Iceberg metadata as one atomic overwrite snapshot.
+        """Commit compaction results to Iceberg metadata.
 
-        Removes old_data_files and adds new_file_paths in a single commit, using PyIceberg's
-        own snapshot-producer machinery (Transaction.update_snapshot().overwrite(), the same
-        producer PyIceberg's public overwrite()/add_files() build on) rather than the
-        higher-level row-predicate overwrite() API -- a row filter can't precisely express
-        "replace exactly these files," and there's no public path-based "delete this data
-        file" method on this PyIceberg version's Transaction.
+        This updates the Iceberg table to replace old files with new compacted files.
 
         Args:
-            iceberg_table: An already-loaded pyiceberg.table.Table.
-            old_data_files: Real DataFile entries (from the table's own current manifests,
-                e.g. via cryo.scanner.analyze.iter_data_files) being replaced.
-            new_file_paths: Paths to the new compacted Parquet files.
+            table_identifier: Full table identifier (e.g., "catalog.schema.table")
+            catalog_config: PyIceberg catalog configuration
+            old_file_paths: Paths to old files being replaced
+            new_file_paths: Paths to new compacted files
         """
         if not PYICEBERG_AVAILABLE:
             raise RuntimeError(
@@ -445,26 +530,34 @@ class NativeEngine:
                 "Install with: pip install pyiceberg"
             )
 
-        from pyiceberg.table import _parquet_files_to_data_files
+        # Load the catalog and table
+        catalog = load_catalog("native_catalog", **catalog_config)
 
-        new_data_files = list(
-            _parquet_files_to_data_files(
-                table_metadata=iceberg_table.metadata,
-                file_paths=new_file_paths,
-                io=iceberg_table.io,
-            )
-        )
+        # Parse table identifier
+        parts = table_identifier.split(".")
+        if len(parts) == 3:
+            namespace, table_name = parts[1], parts[2]
+        elif len(parts) == 2:
+            namespace, table_name = parts[0], parts[1]
+        else:
+            raise ValueError(f"Invalid table identifier: {table_identifier}")
 
-        with iceberg_table.transaction() as txn:
-            with txn.update_snapshot().overwrite() as overwrite_files:
-                for old_df in old_data_files:
-                    overwrite_files.delete_data_file(old_df)
-                for new_df in new_data_files:
-                    overwrite_files.append_data_file(new_df)
+        table = catalog.load_table((namespace, table_name))
+
+        # Create a transaction to delete old files and add new ones
+        with table.transaction() as txn:
+            transaction: Any = txn
+            # Delete old data files
+            for old_path in old_file_paths:
+                transaction.delete_data_file(old_path)
+
+            # Add new data files
+            for new_path in new_file_paths:
+                transaction.add_data_file(new_path)
 
         logger.info(
-            f"Committed Iceberg metadata: removed {len(old_data_files)} files, "
-            f"added {len(new_data_files)} files to {iceberg_table.name()}"
+            f"Committed Iceberg metadata: removed {len(old_file_paths)} files, "
+            f"added {len(new_file_paths)} files to {table_identifier}"
         )
 
     def analyze_files(self, input_paths: list[str]) -> list[NativeFileAnalysis]:
@@ -507,6 +600,162 @@ class NativeEngine:
 
 def _elapsed_ms(start: float) -> int:
     return int((time.monotonic() - start) * 1000)
+
+
+def _operation_from_payload(payload: Mapping[str, object]) -> Operation | None:
+    raw = payload.get("operation")
+    if not isinstance(raw, dict):
+        return None
+    return operation_from_dict(raw)
+
+
+def _is_unsupported_native_error(error: str | None) -> bool:
+    if not error:
+        return False
+    lowered = error.lower()
+    return (
+        "not yet implemented" in lowered
+        or "not available on pinned iceberg-rust" in lowered
+        or "blocked upstream" in lowered
+    )
+
+
+def _supported_operations(plan: MaintenancePlan) -> tuple[Operation, ...]:
+    supported = {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.OPTIMIZE,
+        OperationType.OPTIMIZE_MANIFESTS,
+    }
+    return tuple(operation for operation in plan.operations if operation.type in supported)
+
+
+def _plan_from_batch_payload(payload: Mapping[str, object]) -> MaintenancePlan | None:
+    raw_operations = payload.get("operations")
+    if not isinstance(raw_operations, list):
+        return None
+    operations: list[Operation] = []
+    for item in raw_operations:
+        if not isinstance(item, dict):
+            continue
+        operation = operation_from_dict(item)
+        if operation is not None:
+            operations.append(operation)
+    if not operations:
+        return None
+    return MaintenancePlan(
+        table_ref=str(payload.get("table_ref", "")),
+        mode=Mode(str(payload.get("mode", Mode.DEEP.value))),
+        operations=tuple(operations),
+    )
+
+
+def _progress_callback(ctx: ExecCtx | None) -> Any:
+    if ctx is None or ctx.on_progress is None:
+        return None
+    return ctx.on_progress
+
+
+def _operation_result_to_exec_result(
+    *,
+    detail: str,
+    op_result: NativeOperationResult | None,
+    result: NativeExecuteResult,
+    duration_ms: int,
+) -> ExecResult:
+    if (
+        op_result is not None
+        and not op_result.success
+        and _is_unsupported_native_error(op_result.error)
+    ):
+        return ExecResult(
+            ok=True,
+            skipped=True,
+            detail=op_result.error or detail,
+            duration_ms=op_result.duration_ms or duration_ms,
+            engine_ref=op_result.operation,
+            input_files_count=op_result.input_files,
+            output_files_count=op_result.output_files,
+            actual_bytes_freed=op_result.bytes_removed,
+        )
+    if not result.ok or op_result is None or not op_result.success:
+        error_detail = result.error or (op_result.error if op_result else None) or detail
+        return ExecResult(
+            ok=False,
+            detail=error_detail,
+            error=error_detail,
+            duration_ms=op_result.duration_ms if op_result else duration_ms,
+            input_files_count=op_result.input_files if op_result else None,
+            output_files_count=op_result.output_files if op_result else None,
+            actual_bytes_freed=op_result.bytes_removed if op_result else None,
+            snapshots_expired=op_result.snapshots_expired if op_result else None,
+            manifests_rewritten=op_result.manifests_rewritten if op_result else None,
+        )
+    return ExecResult(
+        ok=True,
+        detail=result.stdout or detail,
+        duration_ms=op_result.duration_ms,
+        input_files_count=op_result.input_files,
+        output_files_count=op_result.output_files,
+        actual_bytes_freed=op_result.bytes_removed,
+        snapshots_expired=op_result.snapshots_expired,
+        manifests_rewritten=op_result.manifests_rewritten,
+        engine_ref=op_result.operation,
+    )
+
+
+def _exec_results_from_native_batch(
+    operations: tuple[Operation, ...],
+    result: NativeExecuteResult,
+    duration_ms: int,
+) -> list[ExecResult]:
+    if not result.results:
+        error = result.error or "cryo-engine returned no operation results"
+        return [
+            ExecResult(
+                ok=False,
+                detail=operation.type.value,
+                error=error,
+                duration_ms=duration_ms,
+            )
+            for operation in operations
+        ]
+
+    results_by_operation = {item.operation: item for item in result.results}
+    exec_results: list[ExecResult] = []
+    for operation in operations:
+        native_type = {
+            OperationType.EXPIRE_SNAPSHOTS: "expire_snapshots",
+            OperationType.REMOVE_ORPHAN_FILES: "remove_orphan_files",
+            OperationType.OPTIMIZE: "rewrite_data_files",
+            OperationType.OPTIMIZE_MANIFESTS: "rewrite_manifests",
+        }[operation.type]
+        op_result = results_by_operation.get(native_type)
+        if op_result is None and result.results:
+            op_result = result.results[min(len(exec_results), len(result.results) - 1)]
+        exec_results.append(
+            _operation_result_to_exec_result(
+                detail=operation.type.value,
+                op_result=op_result,
+                result=result,
+                duration_ms=duration_ms,
+            )
+        )
+    return exec_results
+
+
+def _exec_result_from_native(
+    stmt: RenderedStatement,
+    result: NativeExecuteResult,
+    duration_ms: int,
+) -> ExecResult:
+    op_result = result.results[0] if result.results else None
+    return _operation_result_to_exec_result(
+        detail=stmt.sql,
+        op_result=op_result,
+        result=result,
+        duration_ms=duration_ms,
+    )
 
 
 # Standalone functions for direct use

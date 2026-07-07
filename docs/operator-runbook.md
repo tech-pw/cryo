@@ -98,7 +98,8 @@ Operators can start ad-hoc scans from three places:
 
 The Scanner page shows queue depth, the active scan, the next scheduled scan, latest table scan time,
 per-run progress counters, and a bounded list of failed table errors. If a run remains `accepted` or
-`queued`, check that `cryo serve` or the scanner worker is running and can reach Redis.
+`queued`, check that `cryo scanner`, `make scanner`, `cryo serve`, or the `cryo-scanner` Docker
+service is running and can reach Redis.
 
 If `failed` is non-zero, check:
 

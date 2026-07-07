@@ -45,6 +45,23 @@ class SelectionResult:
         return len(self.table_ids)
 
 
+def clear_other_default_presets(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID | None,
+    keep_preset_id: uuid.UUID | None = None,
+) -> None:
+    stmt = select(Preset).where(Preset.is_default.is_(True))
+    if tenant_id is None:
+        stmt = stmt.where(Preset.tenant_id.is_(None))
+    else:
+        stmt = stmt.where(Preset.tenant_id == tenant_id)
+    if keep_preset_id is not None:
+        stmt = stmt.where(Preset.id != keep_preset_id)
+    for preset in session.scalars(stmt):
+        preset.is_default = False
+
+
 def preset_to_config(preset: Preset) -> PresetConfig:
     return PresetConfig(
         id=str(preset.id),
@@ -56,6 +73,7 @@ def preset_to_config(preset: Preset) -> PresetConfig:
         priority=preset.priority,
         enabled=preset.enabled,
         schedule_cron=preset.schedule_cron,
+        is_default=bool(preset.is_default),
     )
 
 

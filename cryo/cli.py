@@ -5,7 +5,8 @@ Usage:
     cryo governor [--wave-interval SECS]
     cryo worker [--poll-interval SECS]
     cryo scheduler [--check-interval SECS]
-    cryo serve  # runs all three in a single process
+    cryo scanner [--poll-interval SECS]
+    cryo serve  # runs governor, worker, scheduler, and scanner queue consumer
 """
 
 from __future__ import annotations
@@ -66,8 +67,22 @@ def create_parser() -> argparse.ArgumentParser:
         help="Seconds between schedule checks (default: 60)",
     )
 
+    scanner_parser = subparsers.add_parser(
+        "scanner",
+        help="Run the ad-hoc scan queue consumer",
+    )
+    scanner_parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between scan queue polls (default: 5)",
+    )
+
     # Serve command (all-in-one)
-    serve_parser = subparsers.add_parser("serve", help="Run governor, worker, and scheduler")
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Run governor, worker, scheduler, and scanner queue consumer",
+    )
     serve_parser.add_argument("--wave-interval", type=int, default=30)
     serve_parser.add_argument("--poll-interval", type=int, default=5)
     serve_parser.add_argument("--check-interval", type=int, default=60)
@@ -459,6 +474,11 @@ def run_events(args: argparse.Namespace) -> NoReturn:
     _run_with_signal(runner)
 
 
+def run_scanner(args: argparse.Namespace) -> NoReturn:
+    runner = ScannerRunner(interval=args.poll_interval)
+    _run_with_signal(runner, service_name="scanner")
+
+
 def run_serve(args: argparse.Namespace) -> NoReturn:
     """Run all daemons in separate threads with shared Redis/Postgres wiring."""
     from cryo.infra.wiring import build_runtime_wiring
@@ -554,6 +574,7 @@ def main() -> NoReturn:
         "governor": run_governor,
         "worker": run_worker,
         "scheduler": run_scheduler,
+        "scanner": run_scanner,
         "events": run_events,
         "serve": run_serve,
     }

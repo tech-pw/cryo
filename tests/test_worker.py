@@ -63,6 +63,18 @@ def test_worker_marks_failed_when_engine_statement_fails() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+def test_worker_continues_when_engine_skips_unsupported_operation() -> None:
+    queue, locks, store = _worker_fixture()
+    engine = FakeMaintenanceEngine(skip_actions={OperationType.OPTIMIZE})
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.SUCCEEDED
+    assert [record.status for record in store.audit] == ["OK", "SKIPPED"]
+    assert not locks.is_table_locked("table-1")
+
+
 def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

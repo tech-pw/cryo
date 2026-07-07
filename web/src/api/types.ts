@@ -1,6 +1,6 @@
 export type UUID = string;
 export type RoleToken = "viewer" | "operator" | "admin";
-export type EngineType = "trino" | "spark_emr";
+export type EngineType = "trino" | "spark_emr" | "native";
 export type Mode = "light" | "standard" | "deep" | "manifest_only";
 export type Grade = "A" | "B" | "C" | "D" | "F" | string;
 export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
@@ -81,6 +81,7 @@ export interface PresetRead {
   priority: number;
   enabled: boolean;
   guardrails: JsonObject;
+  is_default?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -456,7 +457,7 @@ export interface EffectivePresetResponse {
   table_id: UUID;
   preset_id?: UUID | null;
   preset_name?: string | null;
-  provenance: "assignment" | "rule" | "none";
+  provenance: "assignment" | "rule" | "default" | "none";
   rule_id?: UUID | null;
 }
 
@@ -464,6 +465,7 @@ export interface RenderedStatementRead {
   action: string;
   engine: EngineType;
   sql: string;
+  payload?: JsonObject;
 }
 
 export interface SavingsProjectionRead {
