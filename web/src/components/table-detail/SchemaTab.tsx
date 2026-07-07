@@ -52,7 +52,7 @@ export const SchemaTab = ({ columns, loading }: SchemaTabProps) => (
     <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
       <div className="td-chart-card-header">
         <span className="td-chart-card-title">Columns &amp; Schema Metrics</span>
-        <span className="td-chart-card-subtitle">{columns.length} columns detected</span>
+        <span className="td-chart-card-subtitle">{columns.length} Columns Detected</span>
       </div>
       <div className="td-chart-card-content">
         <Table
@@ -108,9 +108,9 @@ export const SchemaTab = ({ columns, loading }: SchemaTabProps) => (
                       <div className="td-schema-null-bar-pop" style={{ width: `${popRate}%` }} />
                       <div className="td-schema-null-bar-null" style={{ width: `${rate}%` }} />
                     </div>
-                    <span className="td-schema-null-text">{rate.toFixed(1)}% null</span>
+                    <span className="td-schema-null-text">{rate.toFixed(1)}% Null</span>
                     {item.dqNullSpike ? (
-                      <Tag color="error" className="td-schema-badge-spike animate-pulse">
+                      <Tag color="error" className="td-schema-badge-spike">
                         <WarningOutlined style={{ marginRight: 3 }} />
                         Spike
                       </Tag>
@@ -172,7 +172,7 @@ export const SchemaTab = ({ columns, loading }: SchemaTabProps) => (
           locale={{
             emptyText: (
               <EmptyState
-                title="No column metadata yet"
+                title="No Column Metadata Yet"
                 description="Ensure this table has successfully run its initial metadata scan."
               />
             )
