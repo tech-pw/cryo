@@ -1332,8 +1332,8 @@ def create_maintenance_run(
 ) -> MaintenanceRunResponse:
     if session.get(Destination, payload.destination_id) is None:
         raise HTTPException(status_code=400, detail="Destination does not exist")
-    preset = session.get(Preset, payload.preset_id) if payload.preset_id else None
-    if payload.preset_id and preset is None:
+    preset = session.get(Preset, payload.preset_id)
+    if preset is None:
         raise HTTPException(status_code=400, detail="Preset does not exist")
 
     requested_ops: list[str] = []

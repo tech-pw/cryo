@@ -330,11 +330,11 @@ export const previewMaintenance = (
 export const runMaintenance = (
   api: ApiOptions,
   body:
-    | { table_ids: UUID[]; destination_id: UUID; preset_id?: UUID | null; mode: Mode; trigger?: string }
+    | { table_ids: UUID[]; destination_id: UUID; preset_id: UUID; mode: Mode; trigger?: string }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
         destination_id: UUID;
-        preset_id?: UUID | null;
+        preset_id: UUID;
         mode: Mode;
         trigger?: string;
       }
@@ -343,11 +343,11 @@ export const runMaintenance = (
 export const runManifestRewrite = (
   api: ApiOptions,
   body:
-    | { table_ids: UUID[]; destination_id: UUID; preset_id?: UUID | null; trigger?: string }
+    | { table_ids: UUID[]; destination_id: UUID; preset_id: UUID; trigger?: string }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
         destination_id: UUID;
-        preset_id?: UUID | null;
+        preset_id: UUID;
         trigger?: string;
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/manifest-rewrite", api, { method: "POST", body });

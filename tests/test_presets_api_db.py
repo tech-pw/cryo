@@ -297,11 +297,14 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
     client = api_db.client
 
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+
     run_response = client.post(
         "/api/v1/maintenance/run",
         headers=OPERATOR_HEADERS,
         json={
             "destination_id": str(destination_id),
+            "preset_id": preset_id,
             "mode": "standard",
             "selection": {
                 "mode": "filter",
@@ -333,6 +336,24 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     assert cancelled_job_response.status_code == 200
     assert cancelled_job_response.json()["status"] == "skipped"
     assert cancelled_job_response.json()["error"] == "cancelled"
+
+
+def test_maintenance_run_rejects_request_without_preset_id(api_db: ApiDb) -> None:
+    """An explicit preset selection is required for every maintenance run; the API
+    returns 422 when preset_id is missing."""
+    _, destination_id = _seed_source_destination(api_db.session_factory)
+    client = api_db.client
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "mode": "standard",
+            "table_ids": [],
+        },
+    )
+    assert run_response.status_code == 422
 
 
 def test_list_runs_filters_by_source_id(api_db: ApiDb) -> None:

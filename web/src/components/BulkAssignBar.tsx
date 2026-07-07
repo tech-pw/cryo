@@ -19,8 +19,8 @@ interface Props {
   onClear: () => void;
   onAssign: (presetId: UUID) => void;
   onPreview: () => void;
-  onRun: (args: { destinationId: UUID; presetId?: UUID; mode: Mode }) => void;
-  onManifestRewrite?: (args: { destinationId: UUID; presetId?: UUID }) => void;
+  onRun: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => void;
+  onManifestRewrite?: (args: { destinationId: UUID; presetId: UUID }) => void;
   onUnassign?: () => void;
   onScan?: () => void;
 }
@@ -44,9 +44,9 @@ export const BulkAssignBar = ({
   const [presetId, setPresetId] = useState<UUID | undefined>();
   if (!selection || selection.totalSelected === 0) return null;
 
-  const activePresetId = presetId ?? presets[0]?.id;
+  const activePresetId = presetId;
   const activePreset = presets.find((preset) => preset.id === activePresetId);
-  const activeDestinationId = destinationId ?? activePreset?.destination_id ?? destinations[0]?.id;
+  const activeDestinationId = destinationId ?? activePreset?.destination_id;
   const activeDestination = destinations.find((destination) => destination.id === activeDestinationId);
   const isFilterSelection = selection.mode === "filter";
   const presetOptions = presets.map((preset) => ({
@@ -59,6 +59,7 @@ export const BulkAssignBar = ({
     label: `${destination.name} · ${formatEngineLabel(destination.engine)}`,
     value: destination.id
   }));
+  const runDisabled = !activePresetId || !activeDestinationId;
 
   return (
     <div className="bulk-bar" data-testid="bulk-assign-bar">
@@ -73,19 +74,22 @@ export const BulkAssignBar = ({
           <Tooltip
             title={
               activePreset?.description ??
-              "Choose the maintenance preset to assign to the selected tables."
+              "Choose the maintenance preset to assign to the selected tables. Run is disabled until a preset is selected."
             }
           >
             <Select
               aria-label="Assign preset"
-              placeholder="Assign preset"
+              placeholder="Select preset"
               value={activePresetId}
               options={presetOptions}
               optionFilterProp="label"
               style={{ width: 250 }}
+              allowClear
               onChange={(next) => {
                 setPresetId(next);
-                onAssign(next);
+                if (next) {
+                  onAssign(next);
+                }
               }}
               loading={assigning}
             />
@@ -130,7 +134,7 @@ export const BulkAssignBar = ({
             }
             description="This queues real maintenance jobs. Review the preset and engine before confirming."
             onConfirm={() =>
-              activeDestinationId
+              activePresetId && activeDestinationId
                 ? onRun({
                     destinationId: activeDestinationId,
                     presetId: activePresetId,
@@ -141,7 +145,7 @@ export const BulkAssignBar = ({
           >
             <Tooltip title="Queue maintenance for the current selection using the chosen preset and engine.">
               <span>
-                <Button type="primary" loading={running} disabled={!activeDestinationId}>
+                <Button type="primary" loading={running} disabled={runDisabled}>
                   Run now
                 </Button>
               </span>
@@ -156,7 +160,7 @@ export const BulkAssignBar = ({
               }
               description="Runs manifest-only maintenance (optimize_manifests) without data file compaction."
               onConfirm={() =>
-                activeDestinationId
+                activePresetId && activeDestinationId
                   ? onManifestRewrite({
                       destinationId: activeDestinationId,
                       presetId: activePresetId
@@ -166,7 +170,7 @@ export const BulkAssignBar = ({
             >
               <Tooltip title="Queue manifest rewrite only — no data file compaction.">
                 <span>
-                  <Button loading={running} disabled={!activeDestinationId}>
+                  <Button loading={running} disabled={runDisabled}>
                     Manifest rewrite
                   </Button>
                 </span>

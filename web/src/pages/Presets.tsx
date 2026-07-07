@@ -255,7 +255,12 @@ const PresetDrawer = ({
           <Form.Item name="enabled" label="Enabled" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="is_default" label="Platform default" valuePropName="checked">
+          <Form.Item
+            name="is_default"
+            label="Platform default"
+            valuePropName="checked"
+            tooltip="Marks this preset for future scheduler admission. It does not auto-apply to unassigned tables or enable Run without an explicit assignment."
+          >
             <Switch />
           </Form.Item>
         </Space>

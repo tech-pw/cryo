@@ -295,14 +295,15 @@ export const TableDetail = () => {
 
   const manifestRewrite = useMutation({
     mutationFn: () => {
-      const preset =
-        presets.data?.find((item) => item.id === effectivePreset.data?.preset_id) ?? presets.data?.[0];
-      const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
-      if (!destinationId) throw new Error("No engine configured. Add one under Connections.");
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+      const destinationId = preset?.destination_id;
+      if (!preset || !destinationId) {
+        throw new Error("No preset assigned to this table. Assign a preset before running maintenance.");
+      }
       return runManifestRewrite(api, {
         table_ids: [tableId],
         destination_id: destinationId,
-        preset_id: preset?.id,
+        preset_id: preset.id,
         trigger: "web-detail-manifest"
       });
     },
@@ -322,17 +323,16 @@ export const TableDetail = () => {
   const run = useMutation({
     mutationFn: () => {
       setQueuedMaintenanceRunId(null);
-      const preset =
-        presets.data?.find((item) => item.id === effectivePreset.data?.preset_id) ?? presets.data?.[0];
-      const destinationId = preset?.destination_id ?? destinations.data?.[0]?.id;
-      if (!destinationId) {
-        throw new Error("No engine configured. Add one under Connections or run make seed-config.");
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+      const destinationId = preset?.destination_id;
+      if (!preset || !destinationId) {
+        throw new Error("No preset assigned to this table. Assign a preset before running maintenance.");
       }
       return runMaintenance(api, {
         table_ids: [tableId],
         destination_id: destinationId,
-        preset_id: preset?.id,
-        mode: preset?.mode ?? "standard",
+        preset_id: preset.id,
+        mode: preset.mode ?? "standard",
         trigger: "web-detail"
       });
     },
@@ -1257,7 +1257,7 @@ export const TableDetail = () => {
                                           type="primary"
                                           size="small"
                                           icon={<ThunderboltOutlined />}
-                                          disabled={!row}
+                                          disabled={!row || !effectivePreset.data?.preset_id}
                                           aria-label="Fix Now"
                                           style={{ backgroundColor: "var(--success, #28a745)", borderColor: "var(--success, #28a745)" }}
                                         >
@@ -1870,7 +1870,7 @@ export const TableDetail = () => {
               description="Queues a real maintenance job using the assigned preset and destination."
               onConfirm={() => run.mutate()}
             >
-              <Button type="primary" size="small" disabled={!row} aria-label="Run maintenance" className="td-toolbar-btn td-toolbar-btn-run">
+              <Button type="primary" size="small" disabled={!row || !effectivePreset.data?.preset_id} aria-label="Run maintenance" className="td-toolbar-btn td-toolbar-btn-run">
                 Run
               </Button>
             </ConfirmAction>
@@ -1880,7 +1880,7 @@ export const TableDetail = () => {
             description="Queues manifest-only maintenance without data file compaction."
             onConfirm={() => manifestRewrite.mutate()}
           >
-            <Button size="small" loading={manifestRewrite.isPending} disabled={!row} className="td-toolbar-btn">
+            <Button size="small" loading={manifestRewrite.isPending} disabled={!row || !effectivePreset.data?.preset_id} className="td-toolbar-btn">
               Manifest
             </Button>
           </ConfirmAction>
