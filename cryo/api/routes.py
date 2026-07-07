@@ -27,6 +27,7 @@ from cryo.api.deps import (
     CurrentPrincipal,
     SessionDep,
     require_admin,
+    require_editor,
     require_operator,
     require_viewer,
 )
@@ -85,9 +86,12 @@ from cryo.api.schemas import (
     SourceRead,
     SourceTestRequest,
     SourceTestResponse,
+    TableAlertSubscriptionCreate,
+    TableAlertSubscriptionRead,
     TableAuditResponse,
     TableCostRead,
     TablePartitionsResponse,
+    TablePatch,
     TablePreviewRead,
     TableRead,
     TableStatsHistoryResponse,
@@ -106,6 +110,7 @@ from cryo.db.models import (
     QueryLog,
     Source,
     Table,
+    TableAlertSubscription,
     TableCost,
     TableStats,
 )
@@ -246,16 +251,25 @@ def get_source(source_id: uuid.UUID, session: SessionDep) -> Source:
 )
 def get_source_namespaces(source_id: uuid.UUID, session: SessionDep) -> SourceNamespacesResponse:
     """Live namespace list for an already-saved source, so the scan-scope picker can offer real
-    schema names to target even before this lakehouse has ever been scanned -- the same cheap
-    list_namespaces() call test_source uses, not a full table listing."""
+    schema names to target even before this lakehouse has ever been scanned.
+
+    Uses ``list_all_namespaces()`` (BFS, depth-bounded) instead of ``list_namespaces()`` so the
+    picker shows nested namespaces too -- the Iceberg spec's top-level-only call hides every
+    schema under an account/tenant prefix (e.g. ``prod_data.bronze.events``) and makes the picker
+    effectively useless against REST catalogs.
+    """
     source = get_scoped_resource(session, Source, source_id, resource_type="Source")
 
     def _connect_and_list_namespaces() -> list[str]:
         catalog = source_catalog_for(source)
+        if hasattr(catalog, "list_all_namespaces"):
+            return catalog.list_all_namespaces(max_depth=3)
         return catalog.list_namespaces()
 
     try:
-        namespaces = _run_with_timeout(_connect_and_list_namespaces)
+        namespaces = _run_with_timeout(
+            _connect_and_list_namespaces, seconds=_NAMESPACE_LIST_TIMEOUT_SECONDS
+        )
     except Exception as exc:
         return SourceNamespacesResponse(ok=False, error=str(exc))
     return SourceNamespacesResponse(ok=True, namespaces=namespaces)
@@ -309,6 +323,12 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
 
 
 _CONNECTION_TEST_TIMEOUT_SECONDS = 120.0
+
+# Interactive picker timeout: the scan-scope dropdown opens while a human is waiting, so this
+# has to fail fast (the picker silently falls back to scanned schemas on timeout/error). Keep
+# well below the connection-test timeout above -- that one is for the "Test connection" button
+# where the user has explicitly asked to verify reachability and is willing to wait.
+_NAMESPACE_LIST_TIMEOUT_SECONDS = 10.0
 
 
 def _run_with_timeout(
@@ -996,6 +1016,93 @@ def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
     )
     assert table is not None
     return table_to_read(table)
+
+
+@router.patch(
+    "/tables/{table_id}",
+    response_model=TableRead,
+    dependencies=[Depends(require_editor)],
+    tags=["tables"],
+)
+def patch_table(table_id: uuid.UUID, payload: TablePatch, session: SessionDep) -> TableRead:
+    """Set table-level fields not owned by the scanner -- currently just the alert owner."""
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    values = payload.model_dump(exclude_unset=True)
+    for key, value in values.items():
+        setattr(table, key, value)
+    session.commit()
+    session.refresh(table)
+    return table_to_read(table)
+
+
+@router.get(
+    "/tables/{table_id}/alert-subscriptions",
+    response_model=list[TableAlertSubscriptionRead],
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def list_table_alert_subscriptions(
+    table_id: uuid.UUID, session: SessionDep
+) -> list[TableAlertSubscription]:
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
+    return list(
+        session.scalars(
+            select(TableAlertSubscription)
+            .where(TableAlertSubscription.table_id == table_id)
+            .order_by(TableAlertSubscription.created_at)
+        )
+    )
+
+
+@router.post(
+    "/tables/{table_id}/alert-subscriptions",
+    response_model=TableAlertSubscriptionRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def create_table_alert_subscription(
+    table_id: uuid.UUID,
+    payload: TableAlertSubscriptionCreate,
+    session: SessionDep,
+) -> TableAlertSubscription:
+    """Subscribe an email to SLA/data-quality breach alerts for this table.
+
+    Any authenticated viewer can subscribe themselves (or a distro list) -- this is the
+    "consumer wants to know" list, distinct from the single accountable owner set via
+    PATCH /tables/{id}. Re-subscribing the same email is a no-op, not an error.
+    """
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
+    existing = session.scalar(
+        select(TableAlertSubscription).where(
+            TableAlertSubscription.table_id == table_id,
+            TableAlertSubscription.email == payload.email,
+        )
+    )
+    if existing is not None:
+        return existing
+    subscription = TableAlertSubscription(table_id=table_id, email=payload.email)
+    session.add(subscription)
+    session.commit()
+    session.refresh(subscription)
+    return subscription
+
+
+@router.delete(
+    "/tables/{table_id}/alert-subscriptions/{subscription_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def delete_table_alert_subscription(
+    table_id: uuid.UUID, subscription_id: uuid.UUID, session: SessionDep
+) -> None:
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
+    subscription = session.get(TableAlertSubscription, subscription_id)
+    if subscription is None or subscription.table_id != table_id:
+        raise HTTPException(status_code=404, detail="Alert subscription not found")
+    session.delete(subscription)
+    session.commit()
 
 
 @router.get(

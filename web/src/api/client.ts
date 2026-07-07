@@ -65,6 +65,7 @@ import type {
   SkillsetRollbackRequest,
   SkillsetOutcomeWrite,
   SkillsetOutcomeRead,
+  TableAlertSubscriptionRead,
   TableCostRead,
   TableRead,
   UUID,
@@ -179,6 +180,17 @@ export const fetchAllMatchingTableIds = async (
 };
 
 export const getTable = (api: ApiOptions, id: UUID) => apiFetch<TableRead>(`/tables/${id}`, api);
+export const patchTable = (api: ApiOptions, id: UUID, body: { owner_email?: string | null }) =>
+  apiFetch<TableRead>(`/tables/${id}`, api, { method: "PATCH", body });
+export const listTableAlertSubscriptions = (api: ApiOptions, id: UUID) =>
+  apiFetch<TableAlertSubscriptionRead[]>(`/tables/${id}/alert-subscriptions`, api);
+export const createTableAlertSubscription = (api: ApiOptions, id: UUID, email: string) =>
+  apiFetch<TableAlertSubscriptionRead>(`/tables/${id}/alert-subscriptions`, api, {
+    method: "POST",
+    body: { email }
+  });
+export const deleteTableAlertSubscription = (api: ApiOptions, id: UUID, subscriptionId: UUID) =>
+  apiFetch<void>(`/tables/${id}/alert-subscriptions/${subscriptionId}`, api, { method: "DELETE" });
 export const getTablePartitions = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: PartitionRead[] }>(`/tables/${id}/partitions`, api).then((payload) => payload.items);
 export const getTableAudit = (api: ApiOptions, id: UUID) =>

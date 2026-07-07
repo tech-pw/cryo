@@ -8,6 +8,7 @@ import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
 import { formatTime } from "../lib/format";
+import { LogList } from "./LogList";
 import { StatusTag } from "./status";
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
@@ -153,23 +154,16 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         ]}
         scroll={{ x: 920 }}
       />
-      <div className="log-list">
-        <div className="log-list-header">Live log</div>
-        {messages.length === 0 ? (
-          <div className="log-list-empty">No live events yet.</div>
-        ) : (
-          <ul className="log-list-ul">
-            {messages.map((item, idx) => (
-              <li key={idx} className="log-list-item">
-                <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-                <Typography.Text type={item.level === "error" ? "danger" : undefined}>
-                  {item.message ?? item.status ?? item.event}
-                </Typography.Text>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <LogList
+        title="Live log"
+        items={messages}
+        emptyText="No live events yet."
+        wsOpen={wsOpen}
+        wsExhausted={wsExhausted}
+        reconnectAttempt={reconnectAttempt}
+        onManualReconnect={manualReconnect}
+        formatTime={formatTime}
+      />
       <Drawer
         title={logJob ? `Job ${shortId(logJob.id)}` : "Job logs"}
         open={Boolean(logJob)}

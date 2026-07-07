@@ -249,6 +249,20 @@ class Settings(BaseSettings):
         default=None,
         description="PagerDuty Events API v2 routing key for high-severity anomalies.",
     )
+    web_app_base_url: str | None = Field(
+        default=None,
+        description="Base URL of the Cryo web app, used to build deep links in breach alerts.",
+    )
+    table_alert_dispatch_interval_hours: int = Field(
+        default=1,
+        ge=1,
+        description="Hours between SLA/data-quality breach checks for owned/subscribed tables.",
+    )
+    table_alert_cooldown_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Minimum hours between repeat breach alerts for the same table.",
+    )
 
     anomaly_detection_batch_size: int = Field(
         default=100,

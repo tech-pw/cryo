@@ -18,6 +18,7 @@ import { leaf } from "../lib/predicate";
 import { CronInput } from "../components/CronInput";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, StatStrip } from "../components/common";
+import { NamespaceErrorAlert } from "../components/NamespaceErrorAlert";
 import { ScanConsole } from "../components/ScanConsole";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -241,18 +242,25 @@ const ScanScopeCard = ({
           ) : null}
 
           {scope === "schemas" && sourceId ? (
-            <Form.Item label="Schemas" required>
-              <Select
-                mode="multiple"
-                allowClear
+            <>
+              <Form.Item label="Schemas" required>
+                <Select
+                  mode="multiple"
+                  allowClear
+                  loading={sourceNamespaces.isLoading}
+                  value={schemaNames}
+                  onChange={setSchemaNames}
+                  options={schemaOptions}
+                  placeholder="Select one or more schemas"
+                  style={{ width: "100%" }}
+                />
+              </Form.Item>
+              <NamespaceErrorAlert
+                result={sourceNamespaces.data}
                 loading={sourceNamespaces.isLoading}
-                value={schemaNames}
-                onChange={setSchemaNames}
-                options={schemaOptions}
-                placeholder="Select one or more schemas"
-                style={{ width: "100%" }}
+                fromScannedFallback
               />
-            </Form.Item>
+            </>
           ) : null}
 
           {scope === "tables" && sourceId ? (
@@ -272,6 +280,11 @@ const ScanScopeCard = ({
                   style={{ width: "100%" }}
                 />
               </Form.Item>
+              <NamespaceErrorAlert
+                result={sourceNamespaces.data}
+                loading={sourceNamespaces.isLoading}
+                fromScannedFallback
+              />
 
               {tableOptions.length > 0 ? (
                 <Form.Item label="Tables" required>
@@ -611,7 +624,7 @@ export const Scans = () => {
                       <div className="pulse-dot" style={{ marginInlineEnd: 4 }} />
                     ) : undefined
                   }
-                  message={
+                  title={
                     activeRun ? (
                       <Space>
                         <Typography.Text strong>Active scan in progress</Typography.Text>

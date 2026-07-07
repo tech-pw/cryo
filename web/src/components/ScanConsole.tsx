@@ -7,6 +7,7 @@ import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
 import { useAuth } from "../lib/auth";
 import { formatNumber, formatTime } from "../lib/format";
 import { JsonHelpButton, StatStrip } from "./common";
+import { LogList } from "./LogList";
 import { StatusTag } from "./status";
 
 const ACTIVE_STATUSES = new Set(["accepted", "queued", "running"]);
@@ -28,7 +29,8 @@ const failedTables = (run?: RunRead): Array<{ table?: string; error?: string; ts
 
 export const ScanConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
-  const { messages, snapshot, wsOpen } = useRunLiveEvents(runId, token);
+  const { messages, snapshot, wsOpen, wsExhausted, reconnectAttempt, manualReconnect } =
+    useRunLiveEvents(runId, token);
   const run = useQuery({
     queryKey: ["scan-run", runId, token],
     queryFn: () => getRun(api, runId),
@@ -98,23 +100,16 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
         <Descriptions.Item label="Finished">{formatTime(runData?.finished_at)}</Descriptions.Item>
       </Descriptions>
 
-      <div className="log-list">
-        <div className="log-list-header">Live scan log</div>
-        {liveMessages.length === 0 ? (
-          <div className="log-list-empty">No live scan events yet.</div>
-        ) : (
-          <ul className="log-list-ul">
-            {liveMessages.map((item, idx) => (
-              <li key={idx} className="log-list-item">
-                <Typography.Text code>{formatTime(item.ts)}</Typography.Text>
-                <Typography.Text type={item.level === "error" ? "danger" : undefined}>
-                  {item.message ?? item.event}
-                </Typography.Text>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <LogList
+        title="Live scan log"
+        items={liveMessages}
+        emptyText="No live scan events yet."
+        wsOpen={wsOpen}
+        wsExhausted={wsExhausted}
+        reconnectAttempt={reconnectAttempt}
+        onManualReconnect={manualReconnect}
+        formatTime={formatTime}
+      />
 
       <div className="log-list">
         <div className="log-list-header">Failed tables</div>

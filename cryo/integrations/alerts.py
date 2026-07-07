@@ -177,3 +177,48 @@ def dispatch_anomaly_alerts(
         "slack": send_slack_anomaly_alerts(alerts, webhook_url=slack_webhook_url),
         "pagerduty": send_pagerduty_anomaly_alerts(alerts, routing_key=pagerduty_routing_key),
     }
+
+
+def send_slack_table_breach_alert(
+    table_name: str,
+    reasons: list[str],
+    *,
+    webhook_url: str | None = None,
+) -> bool:
+    """Post a single table's SLA/data-quality breach summary to the ops Slack channel.
+
+    Unlike email, a Slack incoming webhook can't target a specific person -- this is a
+    best-effort heads-up to the shared channel, not the primary owner/subscriber notification.
+    """
+    if not reasons:
+        return False
+
+    settings = get_settings()
+    url = webhook_url or settings.slack_webhook_url
+    if not url:
+        logger.debug("Slack webhook not configured; skipping table breach alert")
+        return False
+
+    payload: dict[str, Any] = {
+        "text": f"Cryo: {table_name} breached SLA/data-quality thresholds",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f":red_circle: *{table_name}*\n" + "\n".join(f"• {r}" for r in reasons[:10])
+                    ),
+                },
+            }
+        ],
+    }
+    if settings.slack_channel:
+        payload["channel"] = settings.slack_channel
+
+    try:
+        _post_json(url, payload)
+        return True
+    except Exception:
+        logger.exception("Failed to send Slack table breach alert for %s", table_name)
+        return False

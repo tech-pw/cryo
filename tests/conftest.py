@@ -27,6 +27,8 @@ from cryo.db.models import (
     QueryPattern,
     Source,
     Table,
+    TableAlertDispatch,
+    TableAlertSubscription,
     TablePartition,
     TableStatsHistory,
 )
@@ -47,6 +49,8 @@ UUID_ID_MODELS = (
     AWSCostInsightConfig,
     AWSCurLineItem,
     AWSInventoryObject,
+    TableAlertDispatch,
+    TableAlertSubscription,
 )
 _AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog, QueryPattern)
 _next_autoincrement_id = itertools.count(1)

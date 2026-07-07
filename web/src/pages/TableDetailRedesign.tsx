@@ -19,7 +19,9 @@ import {
   ArrowRightOutlined,
   FileTextOutlined,
   ToolOutlined,
-  BranchesOutlined
+  BranchesOutlined,
+  CloseOutlined,
+  BellOutlined
 } from "@ant-design/icons";
 import {
   Alert,
@@ -80,7 +82,11 @@ import {
   getUnionable,
   getColumnStats,
   getSilentDataLoss,
-  repairSilentDataLoss
+  repairSilentDataLoss,
+  patchTable,
+  listTableAlertSubscriptions,
+  createTableAlertSubscription,
+  deleteTableAlertSubscription
 } from "../api/client";
 import type { AuditEntry, CompactionCandidateRead, UnionScoreRead, ColumnStatsResponse, SilentDataLossReportRead } from "../api/types";
 import { EmptyState, QueryErrorAlert } from "../components/common";
@@ -244,6 +250,8 @@ export const TableDetail = () => {
   const [queuedScanRunId, setQueuedScanRunId] = useState<string | null>(null);
   const [queuedMaintenanceRunId, setQueuedMaintenanceRunId] = useState<string | null>(null);
   const [protectedLocal, setProtectedLocal] = useState<Array<{ snapshot_id: number; label?: string | null }>>([]);
+  const [ownerEmailInput, setOwnerEmailInput] = useState("");
+  const [newSubscriberEmail, setNewSubscriberEmail] = useState("");
 
   useEffect(() => {
     setQueuedScanRunId(null);
@@ -252,6 +260,11 @@ export const TableDetail = () => {
   }, [tableId]);
 
   const table = useQuery({ queryKey: ["table", tableId, token], queryFn: () => getTable(api, tableId) });
+
+  useEffect(() => {
+    setOwnerEmailInput(table.data?.owner_email ?? "");
+  }, [table.data?.owner_email]);
+
   const audit = useQuery({
     queryKey: ["table-audit", tableId, token],
     queryFn: () => getTableAudit(api, tableId),
@@ -328,6 +341,38 @@ export const TableDetail = () => {
     queryKey: ["table-query-performance", tableId, token],
     queryFn: () => getQueryPerformanceDashboard(api, 168, undefined, tableId),
     retry: false
+  });
+
+  const alertSubscriptions = useQuery({
+    queryKey: ["table-alert-subscriptions", tableId, token],
+    queryFn: () => listTableAlertSubscriptions(api, tableId),
+    retry: false
+  });
+
+  const setOwner = useMutation({
+    mutationFn: (ownerEmail: string) => patchTable(api, tableId, { owner_email: ownerEmail || null }),
+    onSuccess: () => {
+      message.success("Owner updated");
+      void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const addSubscriber = useMutation({
+    mutationFn: (email: string) => createTableAlertSubscription(api, tableId, email),
+    onSuccess: () => {
+      message.success("Subscribed to breach alerts");
+      void queryClient.invalidateQueries({ queryKey: ["table-alert-subscriptions", tableId] });
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const removeSubscriber = useMutation({
+    mutationFn: (subscriptionId: string) => deleteTableAlertSubscription(api, tableId, subscriptionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["table-alert-subscriptions", tableId] });
+    },
+    onError: (error) => message.error((error as Error).message)
   });
 
   const assign = useMutation({
@@ -2287,7 +2332,7 @@ export const TableDetail = () => {
               type="error"
               showIcon
               style={{ marginBottom: 16 }}
-              message="Silent data loss detected"
+              title="Silent data loss detected"
               description={
                 <Space orientation="vertical" size={4}>
                   <span>
@@ -2429,6 +2474,110 @@ export const TableDetail = () => {
                     <Typography.Text type="secondary" style={{ fontSize: 11 }}>No protected snapshots recorded yet.</Typography.Text>
                   ) : null}
                 </div>
+              </div>
+            </Card>
+
+            <Card
+              className="td-sidebar-card"
+              title={
+                <span>
+                  <BellOutlined style={{ marginRight: 6 }} />
+                  Ownership &amp; Alerts
+                </span>
+              }
+              size="small"
+            >
+              <div className="td-sidebar-alerts-wrap">
+                <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 6 }}>
+                  Owner
+                </Typography.Text>
+                {(role === "admin" || role === "operator") ? (
+                  <Space.Compact style={{ width: "100%", marginBottom: 14 }}>
+                    <Input
+                      value={ownerEmailInput}
+                      onChange={(e) => setOwnerEmailInput(e.target.value)}
+                      placeholder="owner@example.com"
+                      size="small"
+                    />
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={setOwner.isPending}
+                      onClick={() => setOwner.mutate(ownerEmailInput.trim())}
+                    >
+                      Save
+                    </Button>
+                  </Space.Compact>
+                ) : (
+                  <Typography.Text
+                    type={row?.owner_email ? undefined : "secondary"}
+                    style={{ fontSize: 12, display: "block", marginBottom: 14 }}
+                  >
+                    {row?.owner_email || "No owner assigned"}
+                  </Typography.Text>
+                )}
+
+                <Typography.Text strong style={{ fontSize: 11, display: "block", marginBottom: 6 }}>
+                  Alert subscribers
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 10.5, display: "block", marginBottom: 8 }}>
+                  Owner and subscribers get an email (and Slack, if configured) when this table
+                  breaches its SLA or data-quality thresholds.
+                </Typography.Text>
+
+                <div style={{ marginBottom: 8 }}>
+                  {(alertSubscriptions.data ?? []).map((sub) => (
+                    <div
+                      key={sub.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        fontSize: 11,
+                        marginBottom: 4
+                      }}
+                    >
+                      <span>{sub.email}</span>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                        loading={removeSubscriber.isPending}
+                        onClick={() => removeSubscriber.mutate(sub.id)}
+                      />
+                    </div>
+                  ))}
+                  {alertSubscriptions.data && alertSubscriptions.data.length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      No subscribers yet.
+                    </Typography.Text>
+                  ) : null}
+                </div>
+
+                <Space.Compact style={{ width: "100%" }}>
+                  <Input
+                    value={newSubscriberEmail}
+                    onChange={(e) => setNewSubscriberEmail(e.target.value)}
+                    placeholder="consumer@example.com"
+                    size="small"
+                    onPressEnter={() => {
+                      if (!newSubscriberEmail.trim()) return;
+                      addSubscriber.mutate(newSubscriberEmail.trim());
+                      setNewSubscriberEmail("");
+                    }}
+                  />
+                  <Button
+                    size="small"
+                    loading={addSubscriber.isPending}
+                    onClick={() => {
+                      if (!newSubscriberEmail.trim()) return;
+                      addSubscriber.mutate(newSubscriberEmail.trim());
+                      setNewSubscriberEmail("");
+                    }}
+                  >
+                    Subscribe
+                  </Button>
+                </Space.Compact>
               </div>
             </Card>
           </div>

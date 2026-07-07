@@ -435,7 +435,12 @@ class TableRead(OrmModel):
     consecutive_scan_failures: int = 0
     last_scan_error: str | None = None
     last_scan_error_at: datetime | None = None
+    owner_email: str | None = None
     stats: TableStatsRead | None = None
+
+
+class TablePatch(BaseModel):
+    owner_email: str | None = None
 
 
 class PaginatedTables(BaseModel):
@@ -443,6 +448,17 @@ class PaginatedTables(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class TableAlertSubscriptionRead(OrmModel):
+    id: uuid.UUID
+    table_id: uuid.UUID
+    email: str
+    created_at: datetime
+
+
+class TableAlertSubscriptionCreate(BaseModel):
+    email: str
 
 
 class TablePartitionRead(OrmModel):

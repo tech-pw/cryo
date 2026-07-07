@@ -1,0 +1,231 @@
+"""Detect SLA and data-quality breaches per table and notify the owner + subscribers.
+
+The SLA thresholds come from ``sla_from_guardrails`` -- the same resolver the
+``/sla-status`` dashboard endpoint uses -- and the data-quality signals come from
+``profile_table_quality`` -- the same function backing the Data Quality tab's
+null-rate spikes, value-range shifts, and schema drift. So an alert can never claim
+something the dashboards themselves don't also show, without this module having to
+call into the HTTP-route layer directly (which assumes a request-scoped principal
+and a Postgres-native tz-aware datetime round-trip neither of which hold here).
+
+Only tables with an owner or at least one subscriber are checked (there's no one to
+tell otherwise), and a table only re-alerts after ``table_alert_cooldown_hours`` have
+passed since its last dispatch, so a sustained breach doesn't spam an inbox every tick.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
+
+from cryo.api.sla import sla_from_guardrails
+from cryo.config import get_settings
+from cryo.db.model_utils import qualified_table_name
+from cryo.db.models import AuditLog, QueryLog, Table, TableAlertDispatch, TableAlertSubscription
+from cryo.db.repositories import presets as preset_repo
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TableBreach:
+    table_id: str
+    table_name: str
+    reasons: list[str] = field(default_factory=list)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Normalize a datetime to tz-aware UTC.
+
+    SQLite (used in tests) round-trips ``TIMESTAMP(timezone=True)`` columns as naive
+    datetimes even when stored aware; Postgres (production) preserves tz-awareness.
+    Comparing against ``datetime.now(UTC)`` needs both sides aware regardless of backend.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _raw_datetime(raw: object, *keys: str) -> datetime | None:
+    data = raw if isinstance(raw, dict) else {}
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, datetime):
+            return _as_utc(value)
+        if isinstance(value, str):
+            try:
+                return _as_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+            except ValueError:
+                continue
+    return None
+
+
+def _sla_breach_reasons(session: Session, table: Table) -> list[str]:
+    stats = table.stats
+    if stats is None:
+        return []
+
+    now = datetime.now(UTC)
+    effective = preset_repo.resolve_effective_preset(session, table)
+    guardrails = dict(effective.preset.guardrails) if effective and effective.preset else {}
+    sla = sla_from_guardrails(guardrails)
+
+    last_commit = _raw_datetime(stats.raw, "last_snapshot_committed_at")
+    freshness_hours = (now - (last_commit or _as_utc(stats.scan_at))).total_seconds() / 3600
+
+    last_maintenance = session.scalar(
+        select(func.max(AuditLog.ts)).where(
+            AuditLog.table_id == table.id, AuditLog.status == "succeeded"
+        )
+    )
+    maintenance_days = (
+        (now - _as_utc(last_maintenance)).total_seconds() / 86400 if last_maintenance else None
+    )
+
+    p95_latency_ms = None
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        # percentile_cont is a Postgres-only ordered-set aggregate (absent under the SQLite
+        # test harness) -- skip the check there rather than let a dialect mismatch sink the
+        # whole breach check.
+        p95_latency_ms = session.scalar(
+            select(func.percentile_cont(0.95).within_group(QueryLog.duration_ms)).where(
+                QueryLog.table_id == table.id, QueryLog.executed_at >= now - timedelta(days=1)
+            )
+        )
+
+    reasons: list[str] = []
+    if freshness_hours > sla.freshness_hours:
+        reasons.append(
+            f"Freshness breached: {freshness_hours:.1f}h since last commit "
+            f"(SLA {sla.freshness_hours}h)"
+        )
+    if maintenance_days is not None and maintenance_days > sla.maintenance_days:
+        reasons.append(
+            f"Maintenance overdue: {maintenance_days:.1f}d since last run "
+            f"(SLA {sla.maintenance_days}d)"
+        )
+    if p95_latency_ms is not None and p95_latency_ms > sla.p95_latency_ms:
+        reasons.append(
+            f"P95 query latency breached: {p95_latency_ms:.0f}ms (SLA {sla.p95_latency_ms}ms)"
+        )
+    return reasons
+
+
+def _quality_breach_reasons(session: Session, table_id: object) -> list[str]:
+    from cryo.quality.profiler import profile_table_quality
+
+    try:
+        # profile_table_quality's `table_id` param is typed `str` but must be passed the actual
+        # UUID object here, not `str(table_id)` -- SQLAlchemy's UUID(as_uuid=True) bind processor
+        # (exercised by the SQLite test harness; Postgres/psycopg tolerates either) needs a real
+        # uuid.UUID to encode, and rejects a plain string.
+        profile = profile_table_quality(session, table_id, lookback_days=30)  # type: ignore[arg-type]
+    except ValueError:
+        # No stats yet for this table -- nothing to check.
+        return []
+
+    reasons: list[str] = []
+    spiking = [m.column_name for m in profile.column_metrics if m.null_rate_spike]
+    if spiking:
+        reasons.append(f"Null-rate spike on {len(spiking)} column(s): {', '.join(spiking[:5])}")
+    shifted = [m.column_name for m in profile.column_metrics if m.value_range_changed]
+    if shifted:
+        reasons.append(f"Value-range shift on {len(shifted)} column(s): {', '.join(shifted[:5])}")
+    if profile.schema_version_changed:
+        parts = []
+        if profile.new_columns:
+            parts.append(f"+{len(profile.new_columns)} new")
+        if profile.dropped_columns:
+            parts.append(f"-{len(profile.dropped_columns)} dropped")
+        reasons.append(f"Schema drift ({', '.join(parts)})")
+    return reasons
+
+
+def check_table_breach(session: Session, table: Table) -> TableBreach:
+    reasons = _sla_breach_reasons(session, table) + _quality_breach_reasons(session, table.id)
+    return TableBreach(
+        table_id=str(table.id), table_name=qualified_table_name(table), reasons=reasons
+    )
+
+
+def _recipients_for(table: Table) -> list[str]:
+    recipients = {sub.email for sub in table.alert_subscriptions}
+    if table.owner_email:
+        recipients.add(table.owner_email)
+    return sorted(recipients)
+
+
+def _recently_dispatched(session: Session, table_id: object, cooldown_hours: int) -> bool:
+    since = datetime.now(UTC) - timedelta(hours=cooldown_hours)
+    stmt = (
+        select(TableAlertDispatch.id)
+        .where(TableAlertDispatch.table_id == table_id, TableAlertDispatch.sent_at >= since)
+        .limit(1)
+    )
+    return session.execute(stmt).first() is not None
+
+
+def _build_email_body(breach: TableBreach) -> str:
+    settings = get_settings()
+    reasons_html = "".join(f"<li>{r}</li>" for r in breach.reasons)
+    link_html = ""
+    if settings.web_app_base_url:
+        url = f"{settings.web_app_base_url.rstrip('/')}/tables/{breach.table_id}"
+        link_html = f'<p><a href="{url}">Open {breach.table_name} in Cryo</a></p>'
+    return (
+        f"<p><strong>{breach.table_name}</strong> has {len(breach.reasons)} active "
+        f"SLA/data-quality breach(es):</p><ul>{reasons_html}</ul>{link_html}"
+    )
+
+
+def _dispatch(session: Session, table: Table, breach: TableBreach, recipients: list[str]) -> None:
+    from cryo.integrations.alerts import send_slack_table_breach_alert
+    from cryo.reporting.email import send_email
+
+    subject = f"[Cryo] {breach.table_name} breached SLA/quality thresholds"
+    send_email(subject, _build_email_body(breach), recipients)
+    send_slack_table_breach_alert(breach.table_name, breach.reasons)
+
+    session.add(
+        TableAlertDispatch(table_id=table.id, reasons=breach.reasons, recipients=recipients)
+    )
+    session.commit()
+
+
+def run_alert_dispatch_tick(session: Session) -> int:
+    """Check all owned/subscribed tables for breaches; return the number of alerts sent."""
+    settings = get_settings()
+    stmt = (
+        select(Table)
+        .outerjoin(TableAlertSubscription)
+        .where(Table.owner_email.isnot(None) | TableAlertSubscription.id.isnot(None))
+        .options(selectinload(Table.alert_subscriptions), selectinload(Table.stats))
+        .distinct()
+    )
+    tables = session.scalars(stmt).all()
+
+    sent = 0
+    for table in tables:
+        recipients = _recipients_for(table)
+        if not recipients:
+            continue
+        if _recently_dispatched(session, table.id, settings.table_alert_cooldown_hours):
+            continue
+        breach = check_table_breach(session, table)
+        if not breach.reasons:
+            continue
+        _dispatch(session, table, breach, recipients)
+        sent += 1
+
+    return sent
+
+
+def run_alert_dispatch() -> int:
+    """Open a session and run one dispatch tick -- the entry point for the scheduler daemon."""
+    from cryo.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        return run_alert_dispatch_tick(session)
