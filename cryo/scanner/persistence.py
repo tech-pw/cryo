@@ -188,25 +188,32 @@ def persist_table_analysis(
             total_size_gb=analysis.total_size_gb,
             grade=analysis.grade,
             overall_score=analysis.overall_score,
-            raw={
-                "total_snapshots": analysis.total_snapshots,
-                "total_delete_files": analysis.total_delete_files,
-                "delete_file_pct": analysis.delete_file_pct,
-                "manifest_count": analysis.manifest_count,
-                "metadata_to_data_ratio": (analysis.raw or {}).get("metadata_to_data_ratio"),
-                "is_streaming": (analysis.raw or {}).get("is_streaming"),
-                "format_version": (analysis.raw or {}).get("format_version"),
-                "projected_savings_usd_month": (
-                    analysis.cost.projected_savings_usd_month if analysis.cost else None
-                ),
-                "avg_null_rate": (analysis.raw or {}).get("avg_null_rate"),
-                "max_null_rate": (analysis.raw or {}).get("max_null_rate"),
-                "worst_null_column": (analysis.raw or {}).get("worst_null_column"),
-                # Full per-column detail, not just the summary scalars above — the quality
-                # profiler (cryo/quality/profiler.py) needs per-column history for baseline
-                # comparison and schema-drift detection, not just the table-level rollup.
-                "column_quality": (analysis.raw or {}).get("column_quality"),
-            },
+            # _json_safe is required here (not just cosmetic, unlike _stats_values/_cost_values
+            # where the same call guards against the same thing): column_quality embeds decoded
+            # manifest min/max bounds, which can legally contain a NUL byte for a dirty source
+            # column -- Postgres text/JSONB can never store one, and without this the INSERT
+            # fails for the whole row, discarding an otherwise-successful scan's real stats.
+            raw=_json_safe(
+                {
+                    "total_snapshots": analysis.total_snapshots,
+                    "total_delete_files": analysis.total_delete_files,
+                    "delete_file_pct": analysis.delete_file_pct,
+                    "manifest_count": analysis.manifest_count,
+                    "metadata_to_data_ratio": (analysis.raw or {}).get("metadata_to_data_ratio"),
+                    "is_streaming": (analysis.raw or {}).get("is_streaming"),
+                    "format_version": (analysis.raw or {}).get("format_version"),
+                    "projected_savings_usd_month": (
+                        analysis.cost.projected_savings_usd_month if analysis.cost else None
+                    ),
+                    "avg_null_rate": (analysis.raw or {}).get("avg_null_rate"),
+                    "max_null_rate": (analysis.raw or {}).get("max_null_rate"),
+                    "worst_null_column": (analysis.raw or {}).get("worst_null_column"),
+                    # Full per-column detail, not just the summary scalars above — the quality
+                    # profiler (cryo/quality/profiler.py) needs per-column history for baseline
+                    # comparison and schema-drift detection, not just the table-level rollup.
+                    "column_quality": (analysis.raw or {}).get("column_quality"),
+                }
+            ),
         )
     )
     if analysis.cost is not None:

@@ -167,6 +167,39 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     assert len(session.executed) == 3
 
 
+def test_persist_table_analysis_strips_nul_bytes_from_history_column_quality() -> None:
+    """Regression test: a dirty manifest-decoded column bound containing a NUL byte must not
+    reach TableStatsHistory.raw un-sanitized -- Postgres text/JSONB can never store one, and an
+    un-guarded INSERT there would fail the whole row (see psycopg UntranslatableCharacter),
+    discarding an otherwise-successful scan's real stats. TableStats.raw already went through
+    _json_safe; this checks TableStatsHistory.raw gets the same treatment."""
+    source_id = uuid.uuid4()
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = Table(id=table_id, source_id=source_id, schema_name="demo", table_name="events")
+    analysis = analyze_table(
+        FakeTable(
+            files=[FakeDataFile(10 * MB, 10, ("2026-06-29",))],
+            snapshots=[FakeSnapshotMeta(scan_at)],
+        ),
+        "demo",
+        "events",
+        scan_at=scan_at,
+    )
+    # Simulate a dirty source value decoded straight from a manifest bound.
+    analysis.raw["column_quality"] = [
+        {"column_name": "notes", "lower_bound": "dirty\x00value", "upper_bound": "clean"}
+    ]
+    session = FakeSession()
+
+    persist_table_analysis(session, source_id=source_id, table=table, analysis=analysis)
+
+    history = next(item for item in session.added if isinstance(item, TableStatsHistory))
+    assert history.raw["column_quality"] == [
+        {"column_name": "notes", "lower_bound": "dirtyvalue", "upper_bound": "clean"}
+    ]
+
+
 def test_json_safe_strips_nul_bytes_postgres_cannot_store() -> None:
     """A dirty VARCHAR min/max bound decoded straight from manifest stats can legally contain a
     NUL byte -- Postgres text/JSONB columns can never store one, and would fail the whole row's
