@@ -69,13 +69,6 @@ export const DatalakeHealth = () => {
         />
       ) : null}
       <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />
-      {!dashboard.isError && (data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
-        <TruncatedResultsBanner
-          shown={topOffenders.length}
-          total={data.totals?.needs_compaction ?? topOffenders.length}
-          noun="tables needing attention"
-        />
-      ) : null}
       {dashboard.isError ? (
         <TruncatedResultsBanner
           shown={tables.data?.items.length ?? 0}
@@ -166,7 +159,18 @@ export const DatalakeHealth = () => {
               </Card>
             </Col>
             <Col xs={24} xl={15}>
-              <Card title="Top offenders">
+              <Card
+                title="Top offenders"
+                extra={
+                  (data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Showing top {topOffenders.length.toLocaleString()} of{" "}
+                      {(data.totals?.needs_compaction ?? topOffenders.length).toLocaleString()} tables needing
+                      attention
+                    </Typography.Text>
+                  ) : null
+                }
+              >
                 <Table<TableRead>
                   size="small"
                   rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
