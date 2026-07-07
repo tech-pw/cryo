@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -336,6 +336,100 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     assert cancelled_job_response.status_code == 200
     assert cancelled_job_response.json()["status"] == "skipped"
     assert cancelled_job_response.json()["error"] == "cancelled"
+
+
+def test_maintenance_run_with_scheduled_at_creates_scheduled_status(api_db: ApiDb) -> None:
+    """A future scheduled_at creates a run in "scheduled" status rather than "queued" --
+    cryo/scheduler/service.py's dispatch tick is what actually enqueues it once the time
+    arrives, not this endpoint."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+    scheduled_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "scheduled_at": scheduled_at,
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    assert run_response.status_code == 201
+    assert run_response.json()["status"] == "scheduled"
+
+    run_id = run_response.json()["run_id"]
+    run_detail = client.get(f"/api/v1/runs/{run_id}", headers=VIEWER_HEADERS).json()
+    assert run_detail["status"] == "scheduled"
+    assert run_detail["scheduled_at"] is not None
+
+
+def test_maintenance_run_rejects_scheduled_at_in_the_past(api_db: ApiDb) -> None:
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+    scheduled_at = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "scheduled_at": scheduled_at,
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    assert run_response.status_code == 400
+
+
+def test_scheduled_run_is_cancellable_before_it_fires(api_db: ApiDb) -> None:
+    """Cancel is purely status-based (see cryo/api/routes.py's cancel_run) -- it must work
+    identically on a not-yet-dispatched scheduled run with zero special-casing."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+    scheduled_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "scheduled_at": scheduled_at,
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    run_id = run_response.json()["run_id"]
+    job_id = run_response.json()["job_ids"][0]
+
+    cancel_response = client.post(f"/api/v1/runs/{run_id}/cancel", headers=OPERATOR_HEADERS)
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    job_response = client.get(f"/api/v1/jobs/{job_id}", headers=VIEWER_HEADERS)
+    assert job_response.json()["status"] == "skipped"
 
 
 def test_maintenance_run_rejects_request_without_preset_id(api_db: ApiDb) -> None:

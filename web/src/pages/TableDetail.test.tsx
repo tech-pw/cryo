@@ -349,23 +349,21 @@ describe("TableDetail page", () => {
     const tabBadge = await screen.findByText("Health & Diagnosis");
     expect(tabBadge).toBeInTheDocument();
 
-    // Click on Health & Diagnosis tab to view the diagnostics panel
+    // Click on Health & Diagnosis tab to view the Act Now section
     fireEvent.click(tabBadge);
 
-    // Verify matrix fields render properly
-    expect(await screen.findByText("Small-File Fragmentation Ratio")).toBeInTheDocument();
-    expect(await screen.findByText("Metric Name")).toBeInTheDocument();
-    expect((await screen.findAllByText("Impact Description")).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Current State")).toBeInTheDocument();
-    expect(await screen.findByText("Ideal Target")).toBeInTheDocument();
+    // The Act Now card is the single deduplicated rendering of this signal -- it used to also
+    // render a second time in a separate "Detected Health Issues" panel; that duplication was
+    // removed, so each triggered signal now appears exactly once.
+    expect(await screen.findByText("Small-File Fragmentation Pressure")).toBeInTheDocument();
 
     // Verify current state data from stats is rendered
     expect(await screen.findByText("20.0% small files (20 / 100 total files)")).toBeInTheDocument();
     expect(await screen.findByText("< 20.0% small files ratio")).toBeInTheDocument();
 
-    // Verify Engine Preset select label and Fix Now button are present
-    expect(await screen.findByText("Engine Preset:")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Fix Now" })).toBeInTheDocument();
+    // Verify the shared Engine preset selector and the Act now button are present
+    expect(await screen.findByText("Engine preset:")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Act now" })).toBeInTheDocument();
   }, 15000);
 
   it("renders the Partition Columns Analyzer with Check 1 and Check 2 validations", async () => {
@@ -375,6 +373,10 @@ describe("TableDetail page", () => {
 
     const tabBadge = await screen.findByText("Health & Diagnosis");
     fireEvent.click(tabBadge);
+
+    // Partition Columns Analyzer lives inside the collapsed-by-default Diagnostics section --
+    // most operators don't need it on every visit, so it has to be expanded first.
+    fireEvent.click(await screen.findByText("Diagnostics"));
 
     // Verify Partition Columns Analyzer card headers and descriptions
     expect(await screen.findByText("Partition Columns Analyzer")).toBeInTheDocument();

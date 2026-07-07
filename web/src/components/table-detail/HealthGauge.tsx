@@ -59,11 +59,11 @@ export const HealthGauge = ({
             {trendLabel}
           </span>
         ) : (
-          <span className="td-health-trend td-health-trend-flat">No trend signal yet</span>
+          <span className="td-health-trend td-health-trend-flat">No Trend Signal Yet</span>
         )}
         {daysToCritical != null && daysToCritical < 30 ? (
           <Tag color="warning" className="td-health-critical-tag">
-            {daysToCritical}d to critical
+            {daysToCritical} Days to Critical
           </Tag>
         ) : null}
       </div>

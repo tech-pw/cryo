@@ -34,7 +34,7 @@ export const ColumnStatsTab = ({ api, tableId }: Props) => {
   if (columns.length === 0) {
     return (
       <Card
-        title="Per-column statistics (Puffin sketches)"
+        title="Per-Column Statistics (Puffin Sketches)"
         extra={<Tooltip title="Theta (NDV) + KLL (quantiles) sketches stored in Puffin sidecar files — FORMATS '26"><Tag color="blue">Puffin</Tag></Tooltip>}
       >
         <Empty description="No column sketches have been written yet. Run a scan to generate them." />
@@ -44,7 +44,7 @@ export const ColumnStatsTab = ({ api, tableId }: Props) => {
 
   return (
     <Card
-      title="Per-column statistics (Puffin sketches)"
+      title="Per-Column Statistics (Puffin Sketches)"
       extra={
         <Space size={4}>
           <Tooltip title="Theta (NDV) + KLL (quantiles) sketches stored in Puffin sidecar files — FORMATS '26">

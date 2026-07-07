@@ -112,6 +112,11 @@ export const Runs = () => {
                   render: (status, row) => (
                     <Space orientation="vertical" size={2}>
                       <StatusTag status={status} />
+                      {status === "scheduled" && row.scheduled_at ? (
+                        <Typography.Text type="secondary" className="secondary-line">
+                          for {formatTime(row.scheduled_at)}
+                        </Typography.Text>
+                      ) : null}
                       {status === "failed" && targetTableId(row) ? (
                         <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
                       ) : null}
@@ -201,7 +206,7 @@ export const Runs = () => {
   return (
     <OperationsConsolePage
       title="Runs"
-      subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings will surface here once workers record audit_log.actual_bytes_freed."
+      subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings appear here once a run finishes."
       listPane={listPane}
       detailPane={detailPane}
     />
