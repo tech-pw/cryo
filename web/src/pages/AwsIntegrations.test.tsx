@@ -20,7 +20,7 @@ vi.mock("../lib/auth", () => ({
 
 const baseSource = {
   id: "src-1",
-  name: "prod-lakehouse",
+  name: "sample-lakehouse",
   type: "glue",
   enabled: true,
   config: {},
@@ -32,7 +32,7 @@ const baseSource = {
 const connectedIntegration = {
   id: "aws-1",
   source_id: "src-1",
-  bucket: "prod-iceberg",
+  bucket: "lake-bucket",
   region: "ap-south-1",
   access_key_id: null,
   enabled: true,
@@ -43,7 +43,7 @@ const connectedIntegration = {
 };
 
 const usagePayload = {
-  bucket: "prod-iceberg",
+  bucket: "lake-bucket",
   region: "ap-south-1",
   measured_at: "2026-07-06T10:00:00Z",
   size_bytes_by_storage_class: { StandardStorage: 50 * 1024 ** 3 },
@@ -99,7 +99,7 @@ describe("AwsIntegrations page", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("prod-lakehouse")).toBeInTheDocument();
+    expect(await screen.findByText("sample-lakehouse")).toBeInTheDocument();
     expect(await screen.findByText("staging-lakehouse")).toBeInTheDocument();
     const connectButtons = await screen.findAllByRole("button", { name: /connect aws/i });
     expect(connectButtons.length).toBeGreaterThanOrEqual(2);
@@ -111,10 +111,10 @@ describe("AwsIntegrations page", () => {
     vi.mocked(getAwsUsage).mockResolvedValue(usagePayload);
     renderPage();
 
-    const card = (await screen.findByText("prod-lakehouse")).closest(".ant-card") as HTMLElement;
+    const card = (await screen.findByText("sample-lakehouse")).closest(".ant-card") as HTMLElement;
     expect(card).not.toBeNull();
     const scoped = within(card);
-    expect(scoped.getByText("prod-iceberg")).toBeInTheDocument();
+    expect(scoped.getByText("lake-bucket")).toBeInTheDocument();
     expect(scoped.getByText("ap-south-1")).toBeInTheDocument();
     // 50 GB rendered via formatBytesGb after the bulk usage fetch resolves
     expect(await scoped.findByText(/50\s*GB/i)).toBeInTheDocument();

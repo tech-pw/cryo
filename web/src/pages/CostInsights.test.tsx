@@ -20,7 +20,7 @@ vi.mock("../lib/auth", () => ({
 
 const baseSource = {
   id: "src-1",
-  name: "prod-lakehouse",
+  name: "sample-lakehouse",
   type: "glue",
   enabled: true,
   config: {},
@@ -55,7 +55,7 @@ const byBucketResponse = {
   end: null,
   total_cost_usd: 25.5,
   items: [
-    { bucket: "prod-iceberg", total_cost_usd: 20.0, line_count: 100, last_usage_date: "2026-07-06" },
+    { bucket: "lake-bucket", total_cost_usd: 20.0, line_count: 100, last_usage_date: "2026-07-06" },
     { bucket: "logs-archive", total_cost_usd: 5.5, line_count: 25, last_usage_date: "2026-07-06" }
   ]
 };
@@ -152,7 +152,7 @@ describe("CostInsights page", () => {
     });
     renderPage();
     expect(
-      (await screen.findAllByText("prod-lakehouse")).length
+      (await screen.findAllByText("sample-lakehouse")).length
     ).toBeGreaterThanOrEqual(1);
     const sourceCard = document.querySelector(".cost-insights-source-card");
     expect(sourceCard).not.toBeNull();
