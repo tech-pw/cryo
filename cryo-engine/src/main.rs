@@ -1,5 +1,6 @@
 mod catalog_preview;
 mod compaction;
+mod compaction_write;
 mod operations;
 mod orphans;
 mod predicates;

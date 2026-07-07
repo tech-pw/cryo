@@ -145,6 +145,11 @@ def build_execute_request_for_operations(
             "operations": operation_payloads,
         }
     )
+    request_params: dict[str, Any] = {}
+    if destination_config.get("compaction_execute") in (True, "true", "1", 1):
+        request_params["compaction_execute"] = True
+    if request_params:
+        request["params"] = request_params
     return request
 
 

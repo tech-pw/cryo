@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures test-hms-integration test-native-e2e smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures test-hms-integration test-native-e2e smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 COMPOSE_CRYO = docker compose -f docker-compose.yml
@@ -26,6 +26,9 @@ test:
 
 migrate:
 	alembic upgrade head
+
+migrate-local:
+	./start-local.sh migrate
 
 api:
 	uvicorn cryo.api.app:create_app --factory --reload

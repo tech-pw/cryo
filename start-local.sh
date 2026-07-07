@@ -16,6 +16,7 @@ API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-5173}"
+CRYO_DATABASE_URL="${CRYO_DATABASE_URL:-postgresql+psycopg://cryo:cryo@127.0.0.1:5432/cryo}"
 
 SEED_CONFIG="${SEED_CONFIG:-1}"
 SEED_TABLES="${SEED_TABLES:-0}"
@@ -91,6 +92,7 @@ Commands:
   stop      Stop Cryo app processes (optionally Docker with DOCKER_DOWN_ON_STOP=1)
   status    Show Docker and Cryo process status
   logs      Tail Cryo app logs (api, web, worker, governor, scheduler)
+  migrate   Run Alembic migrations against local Postgres (postgres must be up)
 
 Environment:
   SEED_CONFIG=1          Upsert local source/destination/preset rows
@@ -260,12 +262,12 @@ start_docker() {
     compose_datalake up -d $DOCKER_DATALAKE_SERVICES
   fi
 
+  log "Starting Cryo dependencies: $DOCKER_CRYO_SERVICES"
   if [[ "$START_CRYO_DOCKER" == "1" ]]; then
-    log "Starting Cryo Docker services: $DOCKER_CRYO_SERVICES"
+    # Postgres + Redis first; cryo-* app containers start after migrations in cmd_start.
     # shellcheck disable=SC2086
-    compose_cryo up -d $DOCKER_CRYO_SERVICES
+    compose_cryo up -d postgres redis
   else
-    log "Starting Cryo dependencies: $DOCKER_CRYO_SERVICES"
     # shellcheck disable=SC2086
     compose_cryo up -d $DOCKER_CRYO_SERVICES
   fi
@@ -290,6 +292,28 @@ start_docker() {
     wait_for_url "Prometheus" "http://localhost:9090/-/ready" 30
     wait_for_url "Grafana" "http://localhost:3000/api/health" 30
   fi
+}
+
+start_cryo_docker_app() {
+  if [[ "$START_CRYO_DOCKER" != "1" ]]; then
+    return 0
+  fi
+
+  local cryo_app_services=""
+  for service in $DOCKER_CRYO_SERVICES; do
+    if [[ "$service" != "postgres" && "$service" != "redis" ]]; then
+      cryo_app_services+="$service "
+    fi
+  done
+  cryo_app_services="${cryo_app_services%" "}"
+  if [[ -z "$cryo_app_services" ]]; then
+    return 0
+  fi
+
+  log "Starting Cryo Docker app services: $cryo_app_services"
+  # shellcheck disable=SC2086
+  compose_cryo up -d $cryo_app_services
+  wait_for_url "Cryo API (Docker)" "http://${API_HOST}:${API_PORT}/healthz" 60
 }
 
 ensure_postgres_auth() {
@@ -330,8 +354,8 @@ PY
 }
 
 migrate_db() {
-  log "Running database migrations"
-  alembic upgrade head
+  log "Running database migrations (alembic upgrade head)"
+  PYTHONPATH="$ROOT_DIR" CRYO_DATABASE_URL="$CRYO_DATABASE_URL" alembic upgrade head
 }
 
 seed_config() {
@@ -633,6 +657,20 @@ cmd_logs() {
   fi
 }
 
+cmd_migrate() {
+  require_docker
+  ensure_dirs
+  ensure_venv
+  setup_compose_env
+  log "Starting Postgres for migrations"
+  compose_cryo up -d postgres
+  wait_for_container_health "postgres" "Postgres"
+  ensure_postgres_auth
+  migrate_db
+  seed_config
+  log "Database is at head; run ./start-local.sh start to bring up the full stack"
+}
+
 cmd_start() {
   require_docker
   ensure_dirs
@@ -644,6 +682,7 @@ cmd_start() {
   ensure_postgres_auth
   migrate_db
   seed_config
+  start_cryo_docker_app
   seed_tables
   seed_hms_fixtures
   start_app_processes
@@ -675,6 +714,9 @@ main() {
       ;;
     status)
       cmd_status
+      ;;
+    migrate)
+      cmd_migrate
       ;;
     logs)
       cmd_logs

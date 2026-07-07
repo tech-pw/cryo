@@ -13,7 +13,7 @@ from cryo.domain.models import (
     PartitionPredicateTerm,
 )
 from cryo.engines.base import RenderedStatement
-from cryo.engines.native.engine import NativeEngine, _exec_result_from_native
+from cryo.engines.native.engine import NativeEngine, _exec_result_from_native, _supported_operations
 from cryo.engines.native.payload import (
     build_execute_request,
     build_execute_request_for_operations,
@@ -185,8 +185,8 @@ def test_rewrite_data_files_upstream_block_maps_to_skipped() -> None:
                 output_files=2,
                 bytes_removed=48_000_000,
                 error=(
-                    "rewrite_data_files execute is blocked upstream on pinned iceberg-rust "
-                    "(RewriteFilesAction / EPIC #2269)"
+                    "rewrite_data_files commit blocked upstream on pinned iceberg-rust "
+                    "(RewriteFilesAction / EPIC #2269); staged 2 output file(s)"
                 ),
                 duration_ms=8,
             ),
@@ -217,6 +217,25 @@ def test_normalize_optimize_params_maps_file_size_mb() -> None:
     )
     params = request["operations"][0]["params"]
     assert params["target_file_size_bytes"] == 512 * 1024 * 1024
+
+
+def test_build_execute_request_forwards_compaction_execute_flag() -> None:
+    from cryo.domain.enums import Mode, OperationType
+    from cryo.domain.models import MaintenancePlan, Operation
+    from cryo.engines.native.payload import build_execute_request_for_operations
+
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),),
+    )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=plan.operations,
+        source_config={"uri": "http://localhost:8181", "warehouse": "s3://warehouse/"},
+        destination_config={"operation_mode": "execute", "compaction_execute": True},
+    )
+    assert request["params"]["compaction_execute"] is True
 
 
 def test_execute_request_parses_successful_stdout(tmp_path: Path) -> None:
@@ -394,3 +413,43 @@ def test_exec_result_maps_snapshots_expired() -> None:
     exec_result = _exec_result_from_native(stmt, result, duration_ms=12)
     assert exec_result.ok
     assert exec_result.snapshots_expired == 4
+
+
+def test_native_render_excludes_compaction_and_manifests() -> None:
+    engine = NativeEngine(config={})
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+            Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
+            Operation(OperationType.OPTIMIZE_MANIFESTS, {}),
+        ),
+    )
+    statements = engine.render(plan)
+    assert len(statements) == 1
+    payload = statements[0].payload
+    assert payload.get("batch") is True
+    operations = payload.get("operations")
+    assert isinstance(operations, list)
+    rendered_types = {item["type"] for item in operations}
+    assert rendered_types == {"expire_snapshots", "remove_orphan_files"}
+
+
+def test_native_supported_operations_excludes_compaction() -> None:
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+            Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
+            Operation(OperationType.OPTIMIZE_MANIFESTS, {}),
+        ),
+    )
+    supported = _supported_operations(plan)
+    assert [operation.type for operation in supported] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+    ]

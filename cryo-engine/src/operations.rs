@@ -1,7 +1,8 @@
 //! Iceberg maintenance operations implemented with iceberg-rust.
 
 use crate::catalog_preview::PreviewCatalog;
-use crate::compaction::{estimate_output_files, scan_candidates};
+use crate::compaction::{collect_candidates, estimate_output_files, scan_candidates};
+use crate::compaction_write::binpack_candidates_to_staging;
 use crate::orphans::{delete_orphans, scan_orphans};
 use crate::predicates::{operation_has_predicates, unsupported_predicate_reason};
 use crate::progress::{emit_completed, emit_progress, emit_started};
@@ -144,6 +145,39 @@ fn resolve_min_file_size_bytes(op: &OperationRequest) -> u64 {
         .unwrap_or(DEFAULT_MIN_FILE_SIZE_BYTES)
 }
 
+fn compaction_execute_enabled(request: &ExecuteRequest, op: &OperationRequest) -> bool {
+    let env_enabled = matches!(
+        std::env::var("CRYO_NATIVE_COMPACTION_EXECUTE")
+            .ok()
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    );
+    if env_enabled {
+        return true;
+    }
+    request
+        .params
+        .get("compaction_execute")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || op
+            .params
+            .get("compaction_execute")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+fn upstream_commit_blocked_message(staging_detail: Option<&str>) -> String {
+    let base = "rewrite_data_files commit blocked upstream on pinned iceberg-rust \
+                  (RewriteFilesAction / EPIC #2269)";
+    match staging_detail {
+        Some(detail) => format!("{base}; {detail}"),
+        None => format!("{base}; analyze mode reports planned scope only"),
+    }
+}
+
 fn rewrite_result(
     success: bool,
     input_files: u64,
@@ -231,6 +265,29 @@ pub async fn rewrite_data_files(
         return Ok(rewrite_result(true, 0, 0, 0, 0, 0, None));
     }
 
+    if compaction_execute_enabled(request, op) {
+        let candidates = collect_candidates(&table, op, min_file_size).await?;
+        let write_result = binpack_candidates_to_staging(&table, &candidates, target_file_size).await?;
+        emit_completed(
+            "rewrite_data_files",
+            write_result.input_files,
+            write_result.bytes_written,
+        );
+        let staging_detail = format!(
+            "staged {} output file(s) ({} bytes) under {}",
+            write_result.output_files, write_result.bytes_written, write_result.staging_prefix
+        );
+        return Ok(rewrite_result(
+            false,
+            write_result.input_files,
+            write_result.output_files,
+            write_result.input_files,
+            write_result.bytes_read,
+            write_result.bytes_written,
+            Some(upstream_commit_blocked_message(Some(&staging_detail))),
+        ));
+    }
+
     emit_completed("rewrite_data_files", scan.candidate_files, scan.candidate_bytes);
     Ok(rewrite_result(
         false,
@@ -239,11 +296,7 @@ pub async fn rewrite_data_files(
         scan.candidate_files,
         scan.candidate_bytes,
         0,
-        Some(
-            "rewrite_data_files execute is blocked upstream on pinned iceberg-rust \
-             (RewriteFilesAction / EPIC #2269); analyze mode reports planned scope only"
-                .to_string(),
-        ),
+        Some(upstream_commit_blocked_message(None)),
     ))
 }
 
@@ -405,7 +458,7 @@ pub async fn rewrite_manifests(
                 input_files: None,
                 output_files: None,
                 bytes_removed: None,
-        bytes_written: None,
+                bytes_written: None,
                 snapshots_expired: None,
                 manifests_rewritten: Some(0),
                 error: None,
@@ -437,7 +490,7 @@ pub async fn rewrite_manifests(
             input_files: None,
             output_files: None,
             bytes_removed: None,
-        bytes_written: None,
+            bytes_written: None,
             snapshots_expired: None,
             manifests_rewritten: Some(0),
             error: Some(
