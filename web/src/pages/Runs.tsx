@@ -201,7 +201,7 @@ export const Runs = () => {
   return (
     <OperationsConsolePage
       title="Runs"
-      subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings will surface here once workers record audit_log.actual_bytes_freed."
+      subtitle="Queued, active, and completed maintenance runs with live job state. Realized savings appear here once a run finishes."
       listPane={listPane}
       detailPane={detailPane}
     />
