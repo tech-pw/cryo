@@ -112,6 +112,11 @@ export const Runs = () => {
                   render: (status, row) => (
                     <Space orientation="vertical" size={2}>
                       <StatusTag status={status} />
+                      {status === "scheduled" && row.scheduled_at ? (
+                        <Typography.Text type="secondary" className="secondary-line">
+                          for {formatTime(row.scheduled_at)}
+                        </Typography.Text>
+                      ) : null}
                       {status === "failed" && targetTableId(row) ? (
                         <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
                       ) : null}

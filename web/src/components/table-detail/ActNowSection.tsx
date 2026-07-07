@@ -13,6 +13,7 @@
  */
 import {
   AppstoreOutlined,
+  CalendarOutlined,
   CheckCircleOutlined,
   ClearOutlined,
   CloseCircleOutlined,
@@ -23,11 +24,12 @@ import {
   ThunderboltOutlined,
   WarningOutlined
 } from "@ant-design/icons";
-import { Button, Card, Select, Space, Tag, Typography } from "antd";
+import { Button, Card, DatePicker, Popover, Select, Space, Tag, Typography } from "antd";
 import { useState, type ReactNode } from "react";
+import dayjs, { type Dayjs } from "dayjs";
 import type { BenefitScoreResponse, TableSignalRead, TableSignalsResponse } from "../../api/client";
 import type { TableCostRead } from "../../api/types";
-import { formatBytesGb, formatCurrency, formatNumber } from "../../lib/format";
+import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
 import { operationLabels } from "../../lib/theme";
 import { ConfirmAction } from "../confirm";
 import { QueryErrorAlert } from "../common";
@@ -151,6 +153,8 @@ interface ActNowSectionProps {
   queuedMaintenanceRunId?: string | null;
   onOpenRun: () => void;
   onPreview: () => void;
+  onSchedule: (scheduledAtIso: string) => void;
+  schedulePending: boolean;
   tableLabel: string;
 }
 
@@ -174,13 +178,27 @@ export const ActNowSection = ({
   queuedMaintenanceRunId,
   onOpenRun,
   onPreview,
+  onSchedule,
+  schedulePending,
   tableLabel
 }: ActNowSectionProps) => {
   const [acting, setActing] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState<string | null>(null);
+  const [pickerOpenFor, setPickerOpenFor] = useState<string | null>(null);
+  const [pickedTime, setPickedTime] = useState<Dayjs | null>(null);
 
   const handleRun = () => {
     setActing(true);
     onRun();
+  };
+
+  const handleSchedule = () => {
+    if (!pickedTime) return;
+    const iso = pickedTime.toISOString();
+    setScheduledFor(iso);
+    setPickerOpenFor(null);
+    setPickedTime(null);
+    onSchedule(iso);
   };
 
   if (signalsError) {
@@ -212,6 +230,21 @@ export const ActNowSection = ({
             Open run
           </Button>
         ) : null}
+      </Card>
+    );
+  }
+
+  if (scheduledFor || schedulePending) {
+    return (
+      <Card className="td-chart-card td-act-now-banner" classNames={{ body: "td-chart-card-body" }}>
+        <Space align="center" size={10}>
+          <CalendarOutlined style={{ color: "var(--primary, #3d6fd4)" }} />
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            {schedulePending
+              ? "Scheduling maintenance run…"
+              : `Maintenance run scheduled for ${formatTime(scheduledFor ?? "")}`}
+          </Typography.Text>
+        </Space>
       </Card>
     );
   }
@@ -293,6 +326,46 @@ export const ActNowSection = ({
                   Act now
                 </Button>
               </ConfirmAction>
+              <Popover
+                trigger="click"
+                open={pickerOpenFor === issue.id}
+                onOpenChange={(open) => {
+                  setPickerOpenFor(open ? issue.id : null);
+                  if (!open) setPickedTime(null);
+                }}
+                title="Schedule for a specific time"
+                content={
+                  <Space orientation="vertical" size={8}>
+                    <DatePicker
+                      showTime
+                      value={pickedTime}
+                      onChange={(value) => setPickedTime(value)}
+                      disabledDate={(current) => Boolean(current && current.isBefore(dayjs(), "minute"))}
+                    />
+                    <Typography.Text type="secondary" style={{ fontSize: 11, display: "block" }}>
+                      Runs through the same engine preset and Governor checks as Act now, just
+                      deferred until this time.
+                    </Typography.Text>
+                    <ConfirmAction
+                      title="Schedule this run?"
+                      description={
+                        pickedTime
+                          ? `Queues maintenance for ${tableLabel} at ${pickedTime.format("MMM D, YYYY h:mm A")}, using the assigned engine preset.`
+                          : "Pick a time first."
+                      }
+                      onConfirm={handleSchedule}
+                    >
+                      <Button size="small" type="primary" disabled={!pickedTime || !effectivePresetId} block>
+                        Schedule
+                      </Button>
+                    </ConfirmAction>
+                  </Space>
+                }
+              >
+                <Button size="small" icon={<CalendarOutlined />} disabled={!effectivePresetId}>
+                  Schedule…
+                </Button>
+              </Popover>
             </Space>
           </Card>
         ))}
