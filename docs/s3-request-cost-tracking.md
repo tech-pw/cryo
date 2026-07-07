@@ -113,18 +113,49 @@ present), the UI can offer to turn logging on for the user directly, with nothin
 1. Cryo proposes a target: an existing bucket the user already owns (picked from
    `s3:ListBuckets`, if granted) or a new bucket Cryo can create for this purpose
    (`<source-bucket>-cryo-access-logs`, only ever named from the *user's own* bucket name — never
-   a fixed/shared name, since two orgs' buckets can't collide on a name that's derived from their
-   own resource).
+   a fixed/shared name). S3 bucket names are unique **globally, across every AWS account in the
+   partition — not just within a region or account** — so a name derived from the user's own
+   already-unique bucket name is *extremely* unlikely to collide, but not literally impossible
+   (someone else could already hold that exact string). Handle `BucketAlreadyExists`/
+   `BucketAlreadyOwnedByYou` on creation by appending a short random suffix and retrying once,
+   rather than failing the whole flow on a one-in-a-million naming collision.
 2. The user reviews and confirms the exact target bucket/prefix before anything is created —
    this is a write action, so it's a confirm-then-act step, not silent.
-3. Cryo calls `s3:PutBucketLogging` (creating the target bucket and its log-delivery bucket
-   policy first, if the user picked "new bucket").
+3. Cryo calls `s3:PutBucketLogging` **and separately ensures the target bucket's policy grants
+   log delivery — see §4.3.1, this is not automatic.**
 4. Result is identical to the "already enabled" case in §4.2 step 2 — logging config is now
-   auto-filled, ingestion (§5) can proceed.
+   auto-filled, ingestion (§5) can proceed once the first log file actually lands (§4.3.1's
+   verification step, not immediately after the API calls return).
 
 This is the step that makes the feature "minimal config" for a brand-new adopter with no prior S3
 logging setup: **detect → confirm → done**, no AWS console visit required, no docs to read, and
 still nothing hardcoded — every name is derived from that user's own bucket at click-time.
+
+### 4.3.1 The part that actually makes logs flow (don't skip this)
+
+`s3:PutBucketLogging` alone is **not sufficient** — this is the riskiest step in the whole design
+and the one most likely to produce "successfully enabled, but no logs ever arrive, and the user
+only finds out a day later when the dashboard is still empty." The API call configures the
+*source* bucket to send logs; it does not automatically grant the *target* bucket's permission to
+receive them.
+
+- Every bucket created since April 2023 defaults to **Object Ownership: Bucket owner enforced**,
+  which disables ACLs entirely. Under that (now-default) setting, log delivery can **only** be
+  granted via a bucket policy statement on the target — `PutBucketLogging`'s legacy
+  ACL-grantee option silently does nothing. So: never attempt an ACL-based grant; always manage
+  this as a bucket-policy statement.
+- The required statement grants `s3:PutObject` to the `logging.s3.amazonaws.com` service
+  principal, scoped to the target prefix, with an `aws:SourceAccount` condition (and ideally
+  `aws:SourceArn`) tying it to the specific source bucket — see [AWS's example policy](https://docs.aws.amazon.com/AmazonS3/latest/userguide/enable-server-access-logging.html).
+  Cryo must **read the target bucket's existing policy first (`s3:GetBucketPolicy`) and merge
+  this statement in**, not overwrite — a target bucket picked from the user's existing buckets
+  may already have unrelated policy statements, and blindly replacing the policy would break
+  whatever those were protecting.
+- **Verify, don't assume.** Because delivery is best-effort and can take hours (§7), a green
+  checkmark right after the API calls return would be a lie. Show an honest intermediate state —
+  "logging configured, waiting for first log delivery (usually within a few hours)" — and flip to
+  "active" only once an ingestion run (§5) actually finds a log file under the target prefix, not
+  the moment `PutBucketLogging`/`PutBucketPolicy` return `200`.
 
 ### 4.4 Manual entry (always available, always the fallback)
 
@@ -345,8 +376,12 @@ access they're comfortable granting:
 **Optional — only needed for the §4.3 one-click auto-provision convenience path; the feature is
 fully usable without these, via manual entry (§4.4) instead:**
 - `s3:PutBucketLogging` on the source bucket.
-- `s3:CreateBucket`, `s3:PutBucketPolicy` — only if the user chooses "create a new bucket for
-  logs" rather than pointing at one they already own.
+- `s3:GetBucketPolicy`, `s3:PutBucketPolicy` on the target bucket — needed **every time**, not
+  only for a newly-created target (§4.3.1): even an existing bucket the user already owns needs
+  its policy read (to merge into) and updated to grant `logging.s3.amazonaws.com` write access,
+  since that grant essentially never already exists on a bucket that wasn't already a log target.
+- `s3:CreateBucket` — only if the user chooses "create a new bucket for logs" rather than
+  pointing at one they already own.
 
 An org that only wants the required tier should see the exact same feature, minus the one-click
 button — never a degraded or partially-broken experience.
