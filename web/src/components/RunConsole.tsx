@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getRun, getRunJobs } from "../api/client";
 import type { JobRead, UUID } from "../api/types";
-import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
+import { useRunLiveEvents, isTerminalRunStatus } from "../hooks/useRunLiveEvents";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
 import { formatEngineLabel } from "../lib/engines";
@@ -23,7 +23,7 @@ const tableRef = (job: JobRead) => {
 export const RunConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
   const [logJob, setLogJob] = useState<JobRead | null>(null);
-  const { messages, snapshot, wsOpen, wsExhausted, reconnectAttempt, manualReconnect } =
+  const { messages, snapshot, wsOpen, wsExhausted, runTerminal, reconnectAttempt, manualReconnect } =
     useRunLiveEvents(runId, token);
 
   const run = useQuery({
@@ -39,6 +39,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
   });
 
   const runData = snapshot?.run ?? run.data;
+  const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
   const jobRows = useMemo(
     () => snapshot?.jobs ?? jobs.data ?? [],
     [snapshot?.jobs, jobs.data]
@@ -70,7 +71,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
 
   return (
     <Space orientation="vertical" size={12} className="full-width">
-      {!wsOpen ? (
+      {!wsOpen && !runFinished ? (
         <Alert
           type={wsExhausted ? "warning" : "info"}
           showIcon
@@ -171,6 +172,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
         emptyText="No live events yet."
         wsOpen={wsOpen}
         wsExhausted={wsExhausted}
+        runTerminal={runFinished}
         reconnectAttempt={reconnectAttempt}
         onManualReconnect={manualReconnect}
         formatTime={formatTime}

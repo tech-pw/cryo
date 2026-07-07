@@ -17,6 +17,7 @@ export interface LogListProps {
   emptyText: string;
   wsOpen: boolean;
   wsExhausted?: boolean;
+  runTerminal?: boolean;
   reconnectAttempt?: number;
   onManualReconnect?: () => void;
   formatTime: (ts?: string) => string;
@@ -28,6 +29,7 @@ export const LogList = ({
   emptyText,
   wsOpen,
   wsExhausted = false,
+  runTerminal = false,
   reconnectAttempt = 0,
   onManualReconnect,
   formatTime
@@ -52,16 +54,20 @@ export const LogList = ({
     if (el) el.scrollTop = el.scrollHeight;
   }, [items]);
 
-  const connectionLabel = wsExhausted
-    ? `Disconnected (retry ${reconnectAttempt})`
-    : wsOpen
-      ? "Live"
-      : `Reconnecting (${reconnectAttempt})`;
-  const connectionStatus: "success" | "processing" | "error" = wsExhausted
-    ? "error"
-    : wsOpen
-      ? "success"
-      : "processing";
+  const connectionLabel = runTerminal
+    ? "Ended"
+    : wsExhausted
+      ? `Disconnected (retry ${reconnectAttempt})`
+      : wsOpen
+        ? "Live"
+        : `Reconnecting (${reconnectAttempt})`;
+  const connectionStatus: "success" | "processing" | "error" | "default" = runTerminal
+    ? "default"
+    : wsExhausted
+      ? "error"
+      : wsOpen
+        ? "success"
+        : "processing";
 
   return (
     <div className="log-list">
@@ -70,11 +76,13 @@ export const LogList = ({
           <Typography.Text strong>{title}</Typography.Text>
           <Tooltip
             title={
-              wsExhausted
-                ? "Lost connection to live log stream. Click to retry."
-                : wsOpen
-                  ? "Connected to live log stream."
-                  : "Connecting to live log stream."
+              runTerminal
+                ? "Run finished; live log stream closed."
+                : wsExhausted
+                  ? "Lost connection to live log stream. Click to retry."
+                  : wsOpen
+                    ? "Connected to live log stream."
+                    : "Connecting to live log stream."
             }
           >
             <Badge
