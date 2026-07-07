@@ -176,17 +176,44 @@ Example preset:
   "mode": "standard",
   "operations": ["expire_snapshots", "optimize"],
   "params": {
-    "min_small_files": 10,
+    "min_small_files": 128,
     "chunk_size_gb": 100,
-    "file_size_mb": 256
+    "max_partitions_per_chunk": 100,
+    "delete_ratio_trigger": 0,
+    "retention_days": 7,
+    "retain_last": 1,
+    "file_size_mb": 256,
+    "compute_statistics": false
   },
   "priority": 100,
   "enabled": true,
   "guardrails": {
-    "cooldown_hours": 24
+    "cooldown_hours": 24,
+    "sla_freshness_hours": 24,
+    "sla_maintenance_days": 7,
+    "sla_p95_latency_ms": 5000,
+    "adaptive_routing": false,
+    "engine_preferences": {
+      "spark_min_gb": 100,
+      "native_min_gb": 50,
+      "latency_p99_ms": 500
+    }
   }
 }
 ```
+
+Supported `params` keys validated by the API include planner tuning (`min_small_files`,
+`chunk_size_gb`, `max_partitions_per_chunk`, `max_chunks`, `delete_ratio_trigger`,
+`partition_write_idle_hours`, retention fields, `file_size_mb`) and statistics options
+(`compute_statistics`, `stats_columns`, `bloom_filter_columns`, `stats_compute_ndv`).
+Extra keys are accepted for forward compatibility.
+
+Supported `guardrails` keys include admission and SLA settings (`cooldown_hours`,
+`deadline_minutes`, `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
+`engine_preferences`), and `routing_rules` predicates. Extra keys are accepted for forward
+compatibility.
+
+The web UI exposes these fields as described form controls instead of raw JSON editors.
 
 Simulation returns matched table count, estimated total size, small-file count, and sample tables.
 
