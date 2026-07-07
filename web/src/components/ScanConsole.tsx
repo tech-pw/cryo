@@ -3,7 +3,7 @@ import { Alert, Descriptions, Progress, Space, Typography } from "antd";
 import { useMemo } from "react";
 import { getRun } from "../api/client";
 import type { JsonObject, RunRead, UUID } from "../api/types";
-import { useRunLiveEvents } from "../hooks/useRunLiveEvents";
+import { useRunLiveEvents, isTerminalRunStatus } from "../hooks/useRunLiveEvents";
 import { useAuth } from "../lib/auth";
 import { formatNumber, formatTime } from "../lib/format";
 import { JsonHelpButton, StatStrip } from "./common";
@@ -29,7 +29,7 @@ const failedTables = (run?: RunRead): Array<{ table?: string; error?: string; ts
 
 export const ScanConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
-  const { messages, snapshot, wsOpen, wsExhausted, reconnectAttempt, manualReconnect } =
+  const { messages, snapshot, wsOpen, wsExhausted, runTerminal, reconnectAttempt, manualReconnect } =
     useRunLiveEvents(runId, token);
   const run = useQuery({
     queryKey: ["scan-run", runId, token],
@@ -44,6 +44,7 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
   });
 
   const runData = snapshot?.run ?? run.data;
+  const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
   const summary = runData?.summary;
   const assigned = numberValue(summary, "assigned");
   const completed =
@@ -106,6 +107,7 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
         emptyText="No live scan events yet."
         wsOpen={wsOpen}
         wsExhausted={wsExhausted}
+        runTerminal={runFinished}
         reconnectAttempt={reconnectAttempt}
         onManualReconnect={manualReconnect}
         formatTime={formatTime}
