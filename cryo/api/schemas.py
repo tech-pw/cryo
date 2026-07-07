@@ -262,6 +262,59 @@ class SizeByPrefixResponse(BaseModel):
     items: list[SizeByPrefixItem] = Field(default_factory=list)
 
 
+class S3LogConfigRead(OrmModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    bucket: str
+    region: str | None = None
+    access_key_id: str | None = None
+    logging_status: str
+    log_target_bucket: str | None = None
+    log_target_prefix: str | None = None
+    manual_override: bool
+    enabled: bool
+    last_checked_at: datetime | None = None
+    last_ingested_at: datetime | None = None
+    last_ingested_date: date | None = None
+    last_error: str | None = None
+    last_error_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class S3LogConfigPatch(BaseModel):
+    region: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    log_target_bucket: str | None = None
+    log_target_prefix: str | None = None
+    manual_override: bool | None = None
+    enabled: bool | None = None
+
+
+class S3LogConfigCheckResponse(BaseModel):
+    logging_status: str
+    log_target_bucket: str | None = None
+    log_target_prefix: str | None = None
+    error: str | None = None
+
+
+class S3LogConfigProbeResponse(BaseModel):
+    ok: bool
+    files_found: int
+    truncated: bool
+    error: str | None = None
+
+
+class S3LogIngestResponse(BaseModel):
+    bucket: str
+    rows_ingested: int
+    tables_matched: int
+    unmatched_requests: int
+    through_date: date | None = None
+    error: str | None = None
+
+
 class DestinationCreate(BaseModel):
     name: str
     engine: EngineType
