@@ -50,8 +50,8 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
 
   if (candidates.length === 0) {
     return (
-      <Card title="Top compaction candidates" extra={<Typography.Text type="secondary">AutoComp-style ranking</Typography.Text>}>
-        <Empty description="No compaction candidates found. Either the table has healthy file distribution, or it has not been scanned." />
+      <Card title="Top Compaction Candidates" extra={<Typography.Text type="secondary">AutoComp-Style Ranking</Typography.Text>}>
+        <Empty description="No Compaction Candidates Found. Either the table has healthy file distribution, or it has not been scanned." />
       </Card>
     );
   }
@@ -61,12 +61,12 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
       <Card>
         <Space size={32}>
           <Statistic title="Candidates" value={candidates.length} />
-          <Statistic title="High priority" value={highPriority} valueStyle={highPriority > 0 ? { color: "#dc3545" } : undefined} />
-          <Statistic title="Projected 12mo savings" value={formatUsd(totalSavings)} valueStyle={{ color: "#1e8e5a" }} />
+          <Statistic title="High Priority" value={highPriority} valueStyle={highPriority > 0 ? { color: "#dc3545" } : undefined} />
+          <Statistic title="Projected 12-Month Savings" value={formatUsd(totalSavings)} valueStyle={{ color: "#1e8e5a" }} />
         </Space>
       </Card>
       <Card
-        title="Top 10 candidates by benefit score"
+        title="Top 10 Candidates by Benefit Score"
         extra={
           <Tooltip title="Score = (small_files × query_freq) / partition_size_gb. Higher = more impact from compacting this partition.">
             <Tag color="blue">AutoComp</Tag>
@@ -92,11 +92,11 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
               key: "priority",
               render: (v) => <Tag color={PRIORITY_COLORS[v] ?? "default"}>{v}</Tag>
             },
-            { title: "Small files", dataIndex: "small_files", key: "small_files", render: formatNumber },
+            { title: "Small Files", dataIndex: "small_files", key: "small_files", render: formatNumber },
             { title: "Size", dataIndex: "partition_size_gb", key: "size", render: formatGb },
-            { title: "QPS (30d)", dataIndex: "query_freq_per_day", key: "qps", render: (v) => v.toFixed(1) },
-            { title: "p95 ms", dataIndex: "p95_latency_ms", key: "p95", render: formatNumber },
-            { title: "Savings (12mo)", dataIndex: "savings_estimate_usd", key: "savings", render: formatUsd },
+            { title: "QPS (30 Days)", dataIndex: "query_freq_per_day", key: "qps", render: (v) => v.toFixed(1) },
+            { title: "p95 Latency (ms)", dataIndex: "p95_latency_ms", key: "p95", render: formatNumber },
+            { title: "Savings (12-Month)", dataIndex: "savings_estimate_usd", key: "savings", render: formatUsd },
             {
               title: "Reasons",
               dataIndex: "reasons",
