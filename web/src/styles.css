@@ -1447,12 +1447,11 @@ textarea.mono-input {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: var(--sidebar-text, #c7d2de);
-  opacity: 0.85;
+  color: var(--muted, #5c667a);
 }
 
 .td-hero-meta strong {
-  color: var(--sidebar-text-active, #ffffff);
+  color: var(--ink, #131b24);
 }
 
 .td-hero-actions {
