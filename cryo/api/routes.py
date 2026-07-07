@@ -145,7 +145,7 @@ from cryo.integrations.aws_s3_metrics import (
     fetch_s3_price_per_gb,
 )
 from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
-from cryo.planner.guardrails import validate_guardrails, validate_operation_order
+from cryo.planner.guardrails import validate_guardrails, validate_operation_order, validate_params
 from cryo.planner.planner import build_plan
 from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
 from cryo.security.crypto import encrypt_secret
@@ -845,6 +845,9 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
     guardrail_errors = validate_guardrails(values.get("guardrails") or {})
     if guardrail_errors:
         raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
+    param_errors = validate_params(values.get("params") or {})
+    if param_errors:
+        raise HTTPException(status_code=400, detail={"params": param_errors})
     if values.get("is_default"):
         presets.clear_other_default_presets(
             session,
@@ -882,6 +885,10 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
         guardrail_errors = validate_guardrails(values.get("guardrails") or {})
         if guardrail_errors:
             raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
+    if "params" in values:
+        param_errors = validate_params(values.get("params") or {})
+        if param_errors:
+            raise HTTPException(status_code=400, detail={"params": param_errors})
     if values.get("is_default"):
         presets.clear_other_default_presets(
             session,
