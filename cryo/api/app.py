@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,6 +22,12 @@ from cryo.observability.logging import configure_logging
 from cryo.observability.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    shutdown_tracing()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(
@@ -30,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
+        lifespan=lifespan,
         openapi_tags=[
             {"name": "health", "description": "Service health checks."},
             {"name": "dashboards", "description": "Aggregated datalake health and cost views."},
@@ -79,6 +89,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok", "environment": settings.environment}
 
+    @app.get("/readyz", tags=["health"])
+    def readyz() -> dict[str, str]:
+        return {"status": "ready", "environment": settings.environment}
+
     app.include_router(api_router)
     app.include_router(auth_router)
     app.include_router(extensions_router)
@@ -97,10 +111,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     attach_observation_lakehouse(
         ObservationLakehouse(storage_path=settings.observation_lakehouse_path)
     )
-
-    @app.on_event("shutdown")
-    def _shutdown_tracing() -> None:
-        shutdown_tracing()
 
     return app
 

@@ -103,6 +103,10 @@ class ExecutableMaintenanceEngine(Protocol):
 
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> BaseExecResult: ...
 
+    def execute_plan(
+        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
+    ) -> list[BaseExecResult]: ...
+
 
 class JobStore(Protocol):
     def get_job(self, job_id: str) -> MaintenanceJobRecord: ...

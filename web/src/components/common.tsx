@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ResponsiveContainer } from "recharts";
 import { ApiError } from "../api/client";
+import { PageBreadcrumbs } from "./PageBreadcrumbs";
+import { PageTitle } from "./PageTitle";
 
 export const ChartFrame = ({
   empty,
@@ -53,20 +55,33 @@ export const ChartFrame = ({
 export const PageHeader = ({
   title,
   subtitle,
-  actions
+  actions,
+  breadcrumbs,
+  rootCrumb
 }: {
   title: string;
   subtitle?: ReactNode;
   actions?: ReactNode;
-}) => (
-  <div className="page-header">
+  breadcrumbs?: ReactNode;
+  rootCrumb?: { label: string; to?: string };
+}) => {
+  const crumbs = breadcrumbs ?? <PageBreadcrumbs root={rootCrumb} />;
+  return (
     <div>
-      <Typography.Title level={2}>{title}</Typography.Title>
-      {subtitle ? <Typography.Text type="secondary">{subtitle}</Typography.Text> : null}
+      {crumbs}
+      <PageTitle title={title} />
+      <div className="page-header">
+        <div>
+          <Typography.Title level={1} className="page-title">
+            {title}
+          </Typography.Title>
+          {subtitle ? <Typography.Text type="secondary">{subtitle}</Typography.Text> : null}
+        </div>
+        {actions ? <Space wrap>{actions}</Space> : null}
+      </div>
     </div>
-    {actions ? <Space wrap>{actions}</Space> : null}
-  </div>
-);
+  );
+};
 
 export const EmptyState = ({
   title,

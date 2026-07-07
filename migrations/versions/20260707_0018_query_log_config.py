@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "20260707_0018"
@@ -36,7 +37,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "destinations",
-        sa.Column("query_log_config", sa.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("query_log_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         schema="cryo",
     )
     op.add_column(
