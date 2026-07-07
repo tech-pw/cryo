@@ -25,6 +25,10 @@ from cryo.api.schemas import (
     S3LogConfigProbeResponse,
     S3LogConfigRead,
     S3LogIngestResponse,
+    S3LogProvisionRequest,
+    S3LogProvisionResponse,
+    S3LogTeardownRequest,
+    S3LogTeardownResponse,
 )
 from cryo.db.models import S3BucketLogConfig, Source
 from cryo.db.tenant_scope import get_scoped_resource
@@ -154,5 +158,57 @@ def ingest_bucket(source_id: UUID, bucket: str, session: SessionDep) -> S3LogIng
         tables_matched=result.tables_matched,
         unmatched_requests=result.unmatched_requests,
         through_date=result.through_date,
+        error=result.error,
+    )
+
+
+@router.post(
+    "/sources/{source_id}/s3-log-configs/{bucket}/provision",
+    response_model=S3LogProvisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+def provision_logging(
+    source_id: UUID, bucket: str, payload: S3LogProvisionRequest, session: SessionDep
+) -> S3LogProvisionResponse:
+    """§4.3 — one-click auto-provision. Writes to the user's AWS account; requires admin and
+    is only ever called from an explicit, confirm-then-act frontend action."""
+    from cryo.integrations import s3_bucket_provisioning
+
+    config = _get_config(session, source_id, bucket)
+    result = s3_bucket_provisioning.provision_logging(
+        session, config, target_bucket=payload.target_bucket
+    )
+    if result.ok:
+        session.commit()
+    return S3LogProvisionResponse(
+        ok=result.ok,
+        log_target_bucket=result.log_target_bucket,
+        log_target_prefix=result.log_target_prefix,
+        error=result.error,
+    )
+
+
+@router.post(
+    "/sources/{source_id}/s3-log-configs/{bucket}/teardown",
+    response_model=S3LogTeardownResponse,
+    dependencies=[Depends(require_admin)],
+)
+def teardown_bucket(
+    source_id: UUID, bucket: str, payload: S3LogTeardownRequest, session: SessionDep
+) -> S3LogTeardownResponse:
+    """§9.4 — destructive cleanup, distinct from PATCH {enabled: false}. Removes the config row
+    and, only for policy Cryo itself added, offers to revert it."""
+    from cryo.integrations import s3_bucket_provisioning
+
+    config = _get_config(session, source_id, bucket)
+    result = s3_bucket_provisioning.teardown_bucket(
+        session, config, revert_policy=payload.revert_policy
+    )
+    session.delete(config)
+    session.commit()
+    return S3LogTeardownResponse(
+        ok=result.ok,
+        policy_reverted=result.policy_reverted,
+        warnings=result.warnings,
         error=result.error,
     )
