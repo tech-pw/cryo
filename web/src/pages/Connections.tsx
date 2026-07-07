@@ -73,6 +73,7 @@ import {
 import type { DestinationRead, DestinationWrite, EngineType, RunRead, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
+import { S3LogConfigPanel } from "../components/S3LogConfigPanel";
 import { OpsPanel } from "../components/OpsPanel";
 import { QueryLogIngestionFields } from "../components/QueryLogIngestionFields";
 import { EmptyState, HintLabel, PageHeader } from "../components/common";
@@ -1161,6 +1162,11 @@ const SourceDrawer = ({
                 key: "aws-integration",
                 label: "AWS S3 cost metrics (free tier)",
                 children: <AwsIntegrationPanel sourceId={value.id} />
+              },
+              {
+                key: "s3-request-cost",
+                label: "S3 request-cost tracking",
+                children: <S3LogConfigPanel sourceId={value.id} />
               }
             ]}
           />
