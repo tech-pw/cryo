@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppstoreOutlined,
-  ClearOutlined,
+  SyncOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   DollarOutlined,
@@ -18,10 +18,14 @@ import {
   InfoCircleOutlined,
   ArrowRightOutlined,
   FileTextOutlined,
-  ToolOutlined,
   BranchesOutlined,
   CloseOutlined,
-  BellOutlined
+  BellOutlined,
+  PartitionOutlined,
+  DeleteOutlined,
+  SlidersOutlined,
+  DownOutlined,
+  RightOutlined
 } from "@ant-design/icons";
 import {
   Alert,
@@ -99,9 +103,9 @@ import { PlanPreview } from "../components/PlanPreview";
 import { TableAiInsights } from "../components/TableAiInsights";
 import { TableCompactionAnalytics } from "../components/TableCompactionAnalytics";
 import { TableDiagnosisPanel, buildDiagnosisVerdict } from "../components/TableDiagnosisPanel";
+import { ActNowSection } from "../components/table-detail/ActNowSection";
 import { HealthGauge } from "../components/table-detail/HealthGauge";
 import { KpiStripe } from "../components/table-detail/KpiStripe";
-import { RecommendedActions } from "../components/table-detail/RecommendedActions";
 import { StorageDonut } from "../components/table-detail/StorageDonut";
 import { CompactionCandidatesTab } from "../components/table-detail/CompactionCandidatesTab";
 import { UnionableTab } from "../components/table-detail/UnionableTab";
@@ -131,14 +135,7 @@ import {
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatEngineLabel } from "../lib/engines";
-import {
-  actionIcon,
-  getSignalMatrix,
-  getSignalPointerDetail,
-  provenanceLabel,
-  type SignalMatrixDetail,
-  type SignalPointerDetail
-} from "../components/table-detail/helpers";
+import { provenanceLabel } from "../components/table-detail/helpers";
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
@@ -146,6 +143,7 @@ export const TableDetail = () => {
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [queuedScanRunId, setQueuedScanRunId] = useState<string | null>(null);
   const [queuedMaintenanceRunId, setQueuedMaintenanceRunId] = useState<string | null>(null);
   const [protectedLocal, setProtectedLocal] = useState<Array<{ snapshot_id: number; label?: string | null }>>([]);
@@ -565,17 +563,6 @@ export const TableDetail = () => {
 
   const tabItems = [
     {
-      key: "schema",
-      label: <SchemaTabLabel />,
-      children: (
-        <SchemaTab
-          columns={mergedColumns as SchemaColumn[]}
-          loading={table.isLoading || pii.isLoading || dataQuality.isLoading}
-        />
-      ),
-      forceRender: true
-    },
-    {
       key: "overview",
       label: (
         <Space size={6}>
@@ -592,7 +579,62 @@ export const TableDetail = () => {
       ),
       children: (
         <div className="td-tab-content">
-          <Row gutter={[16, 16]}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <HealthGauge
+              score={score}
+              trendDirection={trendDirection}
+              trendLabel={trendLabel}
+              daysToCritical={healthTrends.data?.days_to_critical}
+            />
+            {row ? (
+              <Alert
+                type={alertType}
+                showIcon
+                title={<strong>{verdict.message}</strong>}
+                style={{ fontSize: 12, flex: 1 }}
+              />
+            ) : null}
+          </div>
+
+          <ActNowSection
+            signals={tableSignals.data}
+            signalsLoading={tableSignals.isLoading}
+            signalsError={tableSignals.error}
+            costView={costView}
+            benefitScores={benefitScores.data}
+            stats={stats}
+            statsRaw={statsRaw}
+            reclaimableBytes={reclaimableBytes}
+            savingsUsd={savingsUsd}
+            presetOptions={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
+            presetsLoading={presets.isLoading}
+            effectivePresetId={effectivePreset.data?.preset_id ?? undefined}
+            onAssignPreset={(presetId) => assign.mutate(presetId)}
+            assignPending={assign.isPending}
+            onRun={() => run.mutate()}
+            runPending={run.isPending}
+            queuedMaintenanceRunId={queuedMaintenanceRunId}
+            onOpenRun={handleRunAction}
+            onPreview={() => setPreviewOpen(true)}
+            tableLabel={row ? `${row.schema_name}.${row.table_name}` : "this table"}
+          />
+
+          <div style={{ marginBottom: 16 }} />
+
+          <div>
+            <div
+              className="td-diagnostics-toggle"
+              role="button"
+              tabIndex={0}
+              onClick={() => setDiagnosticsOpen((v) => !v)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setDiagnosticsOpen((v) => !v); }}
+            >
+              {diagnosticsOpen ? <DownOutlined /> : <RightOutlined />}
+              <span className="td-chart-card-title">Diagnostics</span>
+              <span className="td-chart-card-subtitle">Health trend, partitioning, query load, score breakdown</span>
+            </div>
+            {!diagnosticsOpen ? null : (
+          <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
             <Col xs={24} xl={14}>
               <Card className={`td-chart-card${trendData.length ? "" : " td-chart-card-quiet"}`} classNames={{ body: "td-chart-card-body" }} style={{ marginBottom: 16 }}>
                 <div className="td-chart-card-header">
@@ -635,7 +677,7 @@ export const TableDetail = () => {
                               <stop offset="100%" stopColor={cryoColors.gradeA} stopOpacity={0} />
                             </linearGradient>
                           </defs>
-                          <Area yAxisId="left" type="monotone" dataKey="score" fill="url(#scoreGrad2)" stroke="none" />
+                          <Area yAxisId="left" type="monotone" dataKey="score" fill="url(#scoreGrad2)" stroke="none" tooltipType="none" />
                           <Line yAxisId="left" type="monotone" dataKey="score" stroke={cryoColors.gradeA} strokeWidth={2.5} dot={false} name="score" />
                           <Line yAxisId="right" type="monotone" dataKey="small_files" stroke={cryoColors.chartPrimary} strokeWidth={2} dot={false} name="small_files" strokeDasharray="4 3" />
                         </LineChart>
@@ -871,96 +913,192 @@ export const TableDetail = () => {
 
                         {/* Checklist row 1: Target Column */}
                         <div style={{
-                          borderTop: "1px solid var(--line, #e1e6ed)",
-                          borderRight: "1px solid var(--line, #e1e6ed)",
-                          borderBottom: "1px solid var(--line, #e1e6ed)",
+                          border: "1px solid var(--line, #e1e6ed)",
                           borderLeft: `4px solid ${colCheck.status === "optimal" ? "var(--success, #28a745)" : "var(--warning, #f0a020)"}`,
-                          backgroundColor: colCheck.status === "optimal" ? "rgba(40, 167, 69, 0.01)" : "rgba(240, 160, 32, 0.01)",
-                          padding: "14px 16px",
-                          borderRadius: "0 8px 8px 0",
+                          backgroundColor: "var(--background, #ffffff)",
+                          padding: "16px 20px",
+                          borderRadius: "8px",
                           display: "flex",
                           flexDirection: "column",
-                          gap: 10
+                          gap: 14,
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+                          transition: "all 0.2s ease-in-out"
                         }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12 }}>
-                              {colCheck.status === "optimal" ? (
-                                <CheckCircleOutlined style={{ color: "var(--success, #28a745)", fontSize: 13 }} />
-                              ) : (
-                                <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 13 }} />
-                              )}
-                              <span style={{ color: "var(--foreground, #1a202c)" }}>Check 1: Target Column Alignment</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <div style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: "50%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                backgroundColor: colCheck.status === "optimal" ? "rgba(40, 167, 69, 0.08)" : "rgba(240, 160, 32, 0.08)"
+                              }}>
+                                {colCheck.status === "optimal" ? (
+                                  <CheckCircleOutlined style={{ color: "var(--success, #28a745)", fontSize: 13 }} />
+                                ) : (
+                                  <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 13 }} />
+                                )}
+                              </div>
+                              <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 600, fontSize: 13 }}>Check 1: Target Column Alignment</span>
                             </div>
-                            <Tag color={colCheck.tagColor} style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4 }}>
+                            <Tag color={colCheck.tagColor} style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "2px 8px" }}>
                               {colCheck.tagText}
                             </Tag>
                           </div>
                           
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", padding: "10px 12px", borderRadius: 6, backgroundColor: "var(--background, #ffffff)", border: "1px dashed var(--line, #e1e6ed)", fontSize: 11 }}>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Metric / Condition</span>
-                              <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 700 }}>{colCheck.what}</span>
+                          <div style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                            padding: "14px 16px",
+                            borderRadius: 6,
+                            backgroundColor: "rgba(92, 102, 122, 0.02)",
+                            border: "1px solid rgba(92, 102, 122, 0.06)",
+                            fontSize: 11
+                          }}>
+                            {/* Metric Name & Impact Row */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Metric Name</span>
+                                <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 600, fontSize: 11.5 }}>{colCheck.what}</span>
+                              </div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Impact Description</span>
+                                <span style={{ color: "var(--muted, #5c667a)", fontSize: 11, lineHeight: "15px" }}>{colCheck.why}</span>
+                              </div>
                             </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Impact Description</span>
-                              <span style={{ color: "var(--muted, #5c667a)", fontSize: 10, lineHeight: "14px" }}>{colCheck.why}</span>
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current Spec</span>
-                              <span><Tag style={{ margin: 0 }}>{colCheck.current}</Tag></span>
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Recommended Optimal Spec</span>
-                              <span><Tag color="blue" style={{ margin: 0 }}>{colCheck.ideal}</Tag></span>
+
+                            {/* State Transition Strip -- only shows an arrow when there's an actual change to make;
+                                an "optimal" check has current === ideal by construction, and an arrow from a
+                                value to itself just says "change nothing", which reads as a pending diff it isn't. */}
+                            <div style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 16,
+                              borderTop: "1px solid var(--line, #e1e6ed)",
+                              paddingTop: 12,
+                              marginTop: 4
+                            }}>
+                              {colCheck.current === colCheck.ideal ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                  <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current (already optimal)</span>
+                                  <div><Tag color="success" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{colCheck.current}</Tag></div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current State</span>
+                                    <div><Tag style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{colCheck.current}</Tag></div>
+                                  </div>
+
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", alignSelf: "flex-end", height: 26, paddingBottom: 2 }}>
+                                    <ArrowRightOutlined style={{ color: "var(--muted, #5c667a)", opacity: 0.5, fontSize: 12 }} />
+                                  </div>
+
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Ideal Target</span>
+                                    <div><Tag color="blue" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{colCheck.ideal}</Tag></div>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
 
                         {/* Checklist row 2: Granularity */}
                         <div style={{
-                          borderTop: "1px solid var(--line, #e1e6ed)",
-                          borderRight: "1px solid var(--line, #e1e6ed)",
-                          borderBottom: "1px solid var(--line, #e1e6ed)",
+                          border: "1px solid var(--line, #e1e6ed)",
                           borderLeft: `4px solid ${granCheck.status === "optimal" ? "var(--success, #28a745)" : granCheck.status === "critical" ? "var(--error, #dc3545)" : "var(--warning, #f0a020)"}`,
-                          backgroundColor: granCheck.status === "optimal" ? "rgba(40, 167, 69, 0.01)" : granCheck.status === "critical" ? "rgba(220, 53, 69, 0.01)" : "rgba(240, 160, 32, 0.01)",
-                          padding: "14px 16px",
-                          borderRadius: "0 8px 8px 0",
+                          backgroundColor: "var(--background, #ffffff)",
+                          padding: "16px 20px",
+                          borderRadius: "8px",
                           display: "flex",
                           flexDirection: "column",
-                          gap: 10
+                          gap: 14,
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+                          transition: "all 0.2s ease-in-out"
                         }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 12 }}>
-                              {granCheck.status === "optimal" ? (
-                                <CheckCircleOutlined style={{ color: "var(--success, #28a745)", fontSize: 13 }} />
-                              ) : granCheck.status === "critical" ? (
-                                <CloseCircleOutlined style={{ color: "var(--error, #dc3545)", fontSize: 13 }} />
-                              ) : (
-                                <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 13 }} />
-                              )}
-                              <span style={{ color: "var(--foreground, #1a202c)" }}>Check 2: Partition Granularity Validation</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <div style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: "50%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                backgroundColor: granCheck.status === "optimal" ? "rgba(40, 167, 69, 0.08)" : granCheck.status === "critical" ? "rgba(220, 53, 69, 0.08)" : "rgba(240, 160, 32, 0.08)"
+                              }}>
+                                {granCheck.status === "optimal" ? (
+                                  <CheckCircleOutlined style={{ color: "var(--success, #28a745)", fontSize: 13 }} />
+                                ) : granCheck.status === "critical" ? (
+                                  <CloseCircleOutlined style={{ color: "var(--error, #dc3545)", fontSize: 13 }} />
+                                ) : (
+                                  <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 13 }} />
+                                )}
+                              </div>
+                              <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 600, fontSize: 13 }}>Check 2: Partition Granularity Validation</span>
                             </div>
-                            <Tag color={granCheck.tagColor} style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4 }}>
+                            <Tag color={granCheck.tagColor} style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "2px 8px" }}>
                               {granCheck.tagText}
                             </Tag>
                           </div>
                           
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", padding: "10px 12px", borderRadius: 6, backgroundColor: "var(--background, #ffffff)", border: "1px dashed var(--line, #e1e6ed)", fontSize: 11 }}>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Metric / Condition</span>
-                              <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 700 }}>{granCheck.what}</span>
+                          <div style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                            padding: "14px 16px",
+                            borderRadius: 6,
+                            backgroundColor: "rgba(92, 102, 122, 0.02)",
+                            border: "1px solid rgba(92, 102, 122, 0.06)",
+                            fontSize: 11
+                          }}>
+                            {/* Metric Name & Impact Row */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Metric Name</span>
+                                <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 600, fontSize: 11.5 }}>{granCheck.what}</span>
+                              </div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Impact Description</span>
+                                <span style={{ color: "var(--muted, #5c667a)", fontSize: 11, lineHeight: "15px" }}>{granCheck.why}</span>
+                              </div>
                             </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Impact Description</span>
-                              <span style={{ color: "var(--muted, #5c667a)", fontSize: 10, lineHeight: "14px" }}>{granCheck.why}</span>
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current Ingestion State</span>
-                              <span><Tag style={{ margin: 0 }}>{granCheck.current}</Tag></span>
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                              <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Target Healthy Bounds</span>
-                              <span><Tag color="blue" style={{ margin: 0 }}>{granCheck.ideal}</Tag></span>
+
+                            {/* State Transition Strip -- only shows an arrow when there's an actual change to make. */}
+                            <div style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 16,
+                              borderTop: "1px solid var(--line, #e1e6ed)",
+                              paddingTop: 12,
+                              marginTop: 4
+                            }}>
+                              {granCheck.current === granCheck.ideal ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                  <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current (already optimal)</span>
+                                  <div><Tag color="success" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{granCheck.current}</Tag></div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current State</span>
+                                    <div><Tag style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{granCheck.current}</Tag></div>
+                                  </div>
+
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", alignSelf: "flex-end", height: 26, paddingBottom: 2 }}>
+                                    <ArrowRightOutlined style={{ color: "var(--muted, #5c667a)", opacity: 0.5, fontSize: 12 }} />
+                                  </div>
+
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Ideal Target</span>
+                                    <div><Tag color="blue" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{granCheck.ideal}</Tag></div>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1056,29 +1194,12 @@ export const TableDetail = () => {
             <Col xs={24} xl={10}>
               <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }} style={{ height: "100%", margin: 0 }}>
                 <div className="td-chart-card-header" style={{ marginBottom: 16 }}>
-                  <span className="td-chart-card-title">Diagnosis & Score Factors</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-                  <HealthGauge
-                    score={score}
-                    trendDirection={trendDirection}
-                    trendLabel={trendLabel}
-                    daysToCritical={healthTrends.data?.days_to_critical}
-                  />
+                  <span className="td-chart-card-title">Score Factors</span>
                 </div>
                 {row ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <Alert
-                      type={alertType}
-                      showIcon
-                      title={<strong>{verdict.message}</strong>}
-                      style={{ fontSize: 11 }}
-                    />
-                    <div>
-                      <div className="td-diagnosis-section-title" style={{ fontWeight: 600, fontSize: 11, marginBottom: 8, color: "var(--muted, #5c667a)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Score Factors</div>
-                      <div className="td-sidebar-score-bars" style={{ marginBottom: 12 }}>
-                        <HealthScoreBreakdown factors={scoreFactors} />
-                      </div>
+                    <div className="td-sidebar-score-bars">
+                      <HealthScoreBreakdown factors={scoreFactors} />
                     </div>
                     {pointDeductions.length > 0 ? (
                       <div>
@@ -1090,8 +1211,7 @@ export const TableDetail = () => {
                           padding: '10px 12px',
                           borderRadius: 6,
                           backgroundColor: score < 60 ? 'rgba(220, 53, 69, 0.025)' : score < 80 ? 'rgba(240, 160, 32, 0.025)' : 'rgba(92, 102, 122, 0.015)',
-                          border: score < 60 ? '1px solid rgba(220, 53, 69, 0.12)' : score < 80 ? '1px solid rgba(240, 160, 32, 0.15)' : '1px solid var(--line, #e1e6ed)',
-                          marginBottom: 14
+                          border: score < 60 ? '1px solid rgba(220, 53, 69, 0.12)' : score < 80 ? '1px solid rgba(240, 160, 32, 0.15)' : '1px solid var(--line, #e1e6ed)'
                         }}>
                           {pointDeductions.map((item, idx) => (
                             <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, gap: 12 }}>
@@ -1114,189 +1234,6 @@ export const TableDetail = () => {
                         </div>
                       </div>
                     ) : null}
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                        <div className="td-diagnosis-section-title" style={{ fontWeight: 600, fontSize: 11, margin: 0, color: "var(--muted, #5c667a)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Detected Health Issues & Remediation</div>
-                        {triggered.length > 0 ? (
-                          <Badge
-                            count={triggered.length}
-                            style={{ backgroundColor: "var(--error, #dc3545)" }}
-                            size="small"
-                          />
-                        ) : null}
-                      </div>
-                      <QueryErrorAlert error={tableSignals.error} title="Failed to load table signals" />
-                      {tableSignals.isLoading ? (
-                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>Checking diagnostic signals…</Typography.Text>
-                      ) : triggered.length ? (
-                        <div className="td-diagnosis-signals" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                          {triggered.map((signal, idx) => {
-                            const details = getSignalPointerDetail(signal.signal_name, signal.severity);
-                            const total_files = stats?.total_files ?? 0;
-                            const small_files_count = stats?.small_files_count ?? 0;
-                            const small_pct = total_files > 0 ? (small_files_count / total_files) * 100 : 0;
-                            const matrix = getSignalMatrix(signal.signal_name, stats, statsRaw, reclaimableBytes, savingsUsd, small_pct);
-                            const borderLeftColor = signal.severity === "critical" ? "var(--error, #dc3545)" : "var(--warning, #f0a020)";
-                            const bgStyleColor = signal.severity === "critical" ? "rgba(220, 53, 69, 0.015)" : "rgba(240, 160, 32, 0.015)";
-                            
-                            return (
-                              <div
-                                key={signal.signal_name ?? `signal-${idx}`}
-                                className={`td-diagnosis-signal-row td-diagnosis-signal-${signal.severity}`}
-                                style={{
-                                  borderLeft: `4px solid ${borderLeftColor}`,
-                                  backgroundColor: bgStyleColor,
-                                  padding: '14px 16px',
-                                  borderRadius: '0 8px 8px 0',
-                                  boxShadow: '0 1px 4px rgba(0,0,0,0.02)',
-                                  border: '1px solid var(--line, #e1e6ed)',
-                                  borderLeftColor: borderLeftColor,
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: 12
-                                }}
-                              >
-                                {/* 1. Header with Title & Impact Tag */}
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13 }}>
-                                    {signal.severity === "critical" ? (
-                                      <CloseCircleOutlined style={{ color: "var(--error, #dc3545)", fontSize: 14 }} />
-                                    ) : (
-                                      <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 14 }} />
-                                    )}
-                                    <span style={{ color: "var(--foreground, #1a202c)" }}>{details.title}</span>
-                                  </div>
-                                  <Tag color={signal.severity === "critical" ? "red" : "orange"} style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4 }}>
-                                    {details.impactText}
-                                  </Tag>
-                                </div>
-
-                                {/* 2. Metrics & Explanation Matrix */}
-                                <div style={{
-                                  display: "grid",
-                                  gridTemplateColumns: "1fr 1fr",
-                                  gap: "10px",
-                                  padding: "10px 12px",
-                                  borderRadius: 6,
-                                  backgroundColor: "var(--background, #ffffff)",
-                                  border: "1px dashed var(--line, #e1e6ed)",
-                                  fontSize: 11
-                                }}>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Metric Name</span>
-                                    <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 700 }}>{matrix.what}</span>
-                                  </div>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Impact Description</span>
-                                    <span style={{ color: "var(--muted, #5c667a)", fontSize: 10, lineHeight: "14px" }}>{matrix.why}</span>
-                                  </div>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Current State</span>
-                                    <span style={{ color: signal.severity === "critical" ? "var(--error, #dc3545)" : "var(--warning, #f0a020)", fontWeight: 700 }}>{matrix.current}</span>
-                                  </div>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--line, #e1e6ed)", paddingTop: 8 }}>
-                                    <span style={{ fontWeight: 600, color: "var(--muted, #5c667a)", textTransform: "uppercase", fontSize: 9, letterSpacing: "0.5px" }}>Ideal Target</span>
-                                    <span style={{ color: "var(--success, #28a745)", fontWeight: 700 }}>{matrix.ideal}</span>
-                                  </div>
-                                </div>
-
-                                {/* 3. Recommendation block */}
-                                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 11 }}>
-                                  <ToolOutlined style={{ color: "var(--primary, #3d6fd4)", marginTop: 2, fontSize: 13 }} />
-                                  <span style={{ color: "var(--foreground, #1a202c)", lineHeight: '16px' }}>
-                                    <strong style={{ color: "var(--primary, #3d6fd4)" }}>Action Recommended:</strong> {details.recommendation}
-                                  </span>
-                                </div>
-
-                                {/* 4. Action Button Bar (Fix & Engine controls) */}
-                                <div style={{
-                                  marginTop: 4,
-                                  paddingTop: 8,
-                                  borderTop: "1px dashed var(--line, #e1e6ed)",
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  alignItems: "center",
-                                  gap: 12
-                                }}>
-                                  {/* Preset/Engine Selector */}
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                                    <span style={{ fontSize: 10, color: "var(--muted, #5c667a)", fontWeight: 600, flexShrink: 0 }}>Engine Preset:</span>
-                                    <Select
-                                      placeholder="Assign Preset"
-                                      value={effectivePreset.data?.preset_id ?? undefined}
-                                      options={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
-                                      onChange={(presetId) => assign.mutate(presetId)}
-                                      loading={assign.isPending || presets.isLoading}
-                                      disabled={!row}
-                                      size="small"
-                                      style={{ width: 150 }}
-                                      popupMatchSelectWidth={false}
-                                    />
-                                  </div>
-
-                                  {/* Quick Action Trigger */}
-                                  <div style={{ flexShrink: 0 }}>
-                                    {queuedMaintenanceRunId || run.isPending ? (
-                                      <Button
-                                        type="primary"
-                                        size="small"
-                                        icon={<ThunderboltOutlined />}
-                                        loading={run.isPending}
-                                        onClick={handleRunAction}
-                                        disabled={!row || run.isPending || !queuedMaintenanceRunId}
-                                      >
-                                        {run.isPending ? "Queueing..." : "Open Run"}
-                                      </Button>
-                                    ) : (
-                                      <ConfirmAction
-                                        title="Execute Maintenance Job?"
-                                        description={`This will trigger compaction and optimization for ${row ? `${row.schema_name}.${row.table_name}` : 'this table'} using the assigned engine preset.`}
-                                        onConfirm={() => run.mutate()}
-                                      >
-                                        <Button
-                                          type="primary"
-                                          size="small"
-                                          icon={<ThunderboltOutlined />}
-                                          disabled={!row || !effectivePreset.data?.preset_id}
-                                          aria-label="Fix Now"
-                                          style={{ backgroundColor: "var(--success, #28a745)", borderColor: "var(--success, #28a745)" }}
-                                        >
-                                          Fix Now
-                                        </Button>
-                                      </ConfirmAction>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : tableSignals.data ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: '12px 14px', borderRadius: 6, border: '1px solid var(--line, #e1e6ed)', backgroundColor: 'rgba(40, 167, 69, 0.03)' }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, fontSize: 12, color: "var(--success, #28a745)" }}>
-                            <CheckCircleOutlined style={{ color: "var(--success, #28a745)" }} />
-                            <span>Diagnostic Profile Healthy</span>
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--muted, #5c667a)", lineHeight: '16px', display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                              <CheckCircleOutlined style={{ fontSize: 10, color: "var(--success, #28a745)" }} />
-                              <span>[Fragmentation Check] Healthy — file ratios are under threshold.</span>
-                            </div>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                              <CheckCircleOutlined style={{ fontSize: 10, color: "var(--success, #28a745)" }} />
-                              <span>[Latency Check] Healthy — scan latency conforms to standard baseline.</span>
-                            </div>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                              <CheckCircleOutlined style={{ fontSize: 10, color: "var(--success, #28a745)" }} />
-                              <span>[Cost Spike Check] Healthy — S3 storage overhead is fully optimized.</span>
-                            </div>
-                          </div>
-                          <Typography.Text type="secondary" style={{ fontSize: 10, display: "block", marginTop: 4, borderTop: '1px solid var(--line, #e1e6ed)', paddingTop: 6 }}>
-                            All {tableSignals.data.signals.length} background telemetry signals checks completed, 0 alarms triggered.
-                          </Typography.Text>
-                        </div>
-                      ) : null}
-                    </div>
                   </div>
                 ) : (
                   <EmptyState title="No health details" description="Fetch or scan table to load diagnostics." />
@@ -1304,7 +1241,20 @@ export const TableDetail = () => {
               </Card>
             </Col>
           </Row>
+            )}
+          </div>
         </div>
+      ),
+      forceRender: true
+    },
+    {
+      key: "schema",
+      label: <SchemaTabLabel />,
+      children: (
+        <SchemaTab
+          columns={mergedColumns as SchemaColumn[]}
+          loading={table.isLoading || pii.isLoading || dataQuality.isLoading}
+        />
       ),
       forceRender: true
     },
@@ -1821,175 +1771,207 @@ export const TableDetail = () => {
 
         {/* Intentional Interaction Toolbar */}
         <div className="td-interaction-toolbar">
-          <Select
-            placeholder="Assign preset"
-            value={effectivePreset.data?.preset_id ?? undefined}
-            options={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
-            onChange={(presetId) => assign.mutate(presetId)}
-            loading={assign.isPending || presets.isLoading}
-            disabled={!row}
-            style={{ width: 150 }}
-            size="small"
-            className="td-toolbar-select"
-          />
-          <Button size="small" onClick={() => setPreviewOpen(true)} disabled={!row} className="td-toolbar-btn">
-            Preview
-          </Button>
           <Button
-            size="small"
-            type={queuedScanRunId ? "primary" : "default"}
-            className={scan.isPending ? "scan-action-pending td-toolbar-btn" : "td-toolbar-btn"}
+            type="text"
+            icon={<SyncOutlined spin={scan.isPending} />}
             loading={scan.isPending}
             onClick={handleScanAction}
-            disabled={!row || scan.isPending}
-            aria-label={scan.isPending ? "Queueing stats refresh" : queuedScanRunId ? "Open scan run" : "Refresh stats"}
+            disabled={!row}
+            style={{
+              fontSize: '12px',
+              fontWeight: 550,
+              color: scan.isPending ? 'var(--primary)' : 'var(--muted, #5c667a)',
+            }}
+            className="td-refresh-btn"
+            aria-label={scan.isPending ? "Refreshing stats" : queuedScanRunId ? "Open scan run" : "Refresh stats"}
           >
-            {scan.isPending ? "Queueing stats refresh…" : queuedScanRunId ? "Open scan run" : "Refresh stats"}
+            {scan.isPending ? "Refreshing stats..." : queuedScanRunId ? "Open scan run" : "Refresh stats"}
           </Button>
-          {queuedMaintenanceRunId || run.isPending ? (
-            <Button
-              type="primary"
-              size="small"
-              className={run.isPending ? "scan-action-pending td-toolbar-btn" : "td-toolbar-btn"}
-              loading={run.isPending}
-              onClick={handleRunAction}
-              disabled={!row || run.isPending || !queuedMaintenanceRunId}
-              aria-label={
-                run.isPending
-                  ? "Queueing maintenance run"
-                  : queuedMaintenanceRunId
-                    ? "Open maintenance run"
-                    : "Run maintenance"
-              }
-            >
-              {run.isPending ? "Queueing run…" : "Open run"}
-            </Button>
-          ) : (
-            <ConfirmAction
-              title="Run maintenance?"
-              description="Queues a real maintenance job using the assigned preset and destination."
-              onConfirm={() => run.mutate()}
-            >
-              <Button type="primary" size="small" disabled={!row || !effectivePreset.data?.preset_id} aria-label="Run maintenance" className="td-toolbar-btn td-toolbar-btn-run">
-                Run
-              </Button>
-            </ConfirmAction>
-          )}
-          <ConfirmAction
-            title="Rewrite manifests?"
-            description="Queues manifest-only maintenance without data file compaction."
-            onConfirm={() => manifestRewrite.mutate()}
-          >
-            <Button size="small" loading={manifestRewrite.isPending} disabled={!row || !effectivePreset.data?.preset_id} className="td-toolbar-btn">
-              Manifest
-            </Button>
-          </ConfirmAction>
-          {effectivePreset.data?.preset_id ? (
-            <ConfirmAction
-              title="Unassign preset?"
-              description="Clears the manual preset assignment."
-              onConfirm={() => unassign.mutate()}
-            >
-              <Button size="small" loading={unassign.isPending} disabled={!row} className="td-toolbar-btn">
-                Unassign
-              </Button>
-            </ConfirmAction>
-          ) : null}
         </div>
       </div>
 
       {/* 3. Quick-Attribution Bar */}
-      <div className="td-quick-attribution-bar">
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Health Score</span>
-          <span className="td-attribution-value td-health-score" style={{ color: healthScoreColor(score) }}>
-            {formatNumber(score)}
-          </span>
+      <div className="td-quick-attribution-bar" style={{ display: "flex", gap: "16px", padding: "10px 16px", overflowX: "auto" }}>
+        {/* Health Score */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 120 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <HeartOutlined style={{ color: healthScoreColor(score) }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Health Score</span>
+            <span className="td-attribution-value td-health-score" style={{ color: healthScoreColor(score) }}>
+              {formatNumber(score)}
+            </span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Total Size</span>
-          <span className="td-attribution-value">{formatGb(stats?.total_size_gb)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Total Size */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <DatabaseOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Total Size</span>
+            <span className="td-attribution-value">{formatGb(stats?.total_size_gb)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Records</span>
-          <span className="td-attribution-value">{formatNumber(stats?.total_records, true)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Records */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <TableOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Records</span>
+            <span className="td-attribution-value">{formatNumber(stats?.total_records, true)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Partition col</span>
-          <span className="td-attribution-value" title={stats?.partition_col ?? "-"}>
-            {stats?.partition_col ?? "-"}
-            {stats?.partition_col_type ? (
-              <span className="td-attribution-subtle">
-                ({stats.partition_col_type})
-              </span>
-            ) : null}
-          </span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Partition col */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 140 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <PartitionOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Partition col</span>
+            <span className="td-attribution-value" title={stats?.partition_col ?? "-"}>
+              {stats?.partition_col ?? "-"}
+              {stats?.partition_col_type ? (
+                <span className="td-attribution-subtle">
+                  ({stats.partition_col_type})
+                </span>
+              ) : null}
+            </span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Savings / Mo</span>
-          <span className="td-attribution-value td-savings-value">
-            {formatCurrency(savingsUsd)}
-            {reclaimableBytes > 0 ? (
-              <span className="td-attribution-subtle">
-                {formatBytesGb(reclaimableBytes)} rec.
-              </span>
-            ) : null}
-          </span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Savings / Mo */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 140 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(30, 142, 90, 0.06)", color: "var(--savings, #1e8e5a)", fontSize: 13, flexShrink: 0 }}>
+            <DollarOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Savings / Mo</span>
+            <span className="td-attribution-value td-savings-value">
+              {formatCurrency(savingsUsd)}
+              {reclaimableBytes > 0 ? (
+                <span className="td-attribution-subtle">
+                  {formatBytesGb(reclaimableBytes)} rec.
+                </span>
+              ) : null}
+            </span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Partitions</span>
-          <span className="td-attribution-value">{formatNumber(stats?.total_partitions)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Partitions */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <AppstoreOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Partitions</span>
+            <span className="td-attribution-value">{formatNumber(stats?.total_partitions)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Files</span>
-          <span className="td-attribution-value">{formatNumber(stats?.total_files, true)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Files */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <FileTextOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Files</span>
+            <span className="td-attribution-value">{formatNumber(stats?.total_files, true)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Small Files</span>
-          <span className="td-attribution-value">
-            {formatNumber(stats?.small_files_count, true)}
-            {stats?.total_files && stats.small_files_count != null ? (
-              <span className="td-attribution-subtle">
-                {((stats.small_files_count / stats.total_files) * 100).toFixed(0)}%
-              </span>
-            ) : null}
-          </span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Small Files */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 130 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: stats?.small_files_count ? "rgba(240, 160, 32, 0.08)" : "rgba(92, 102, 122, 0.05)", color: stats?.small_files_count ? "var(--warning, #f0a020)" : "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <WarningOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Small Files</span>
+            <span className="td-attribution-value">
+              {formatNumber(stats?.small_files_count, true)}
+              {stats?.total_files && stats.small_files_count != null ? (
+                <span className="td-attribution-subtle">
+                  {((stats.small_files_count / stats.total_files) * 100).toFixed(0)}%
+                </span>
+              ) : null}
+            </span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Snapshots</span>
-          <span className="td-attribution-value">{formatNumber(stats?.total_snapshots)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Snapshots */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <HistoryOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Snapshots</span>
+            <span className="td-attribution-value">{formatNumber(stats?.total_snapshots)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Manifests</span>
-          <span className="td-attribution-value">{formatNumber(stats?.manifest_count)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Manifests */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <BranchesOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Manifests</span>
+            <span className="td-attribution-value">{formatNumber(stats?.manifest_count)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Delete files</span>
-          <span className="td-attribution-value">{formatNumber(stats?.total_delete_files)}</span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Delete files */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 120 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: stats?.total_delete_files ? "rgba(220, 53, 69, 0.08)" : "rgba(92, 102, 122, 0.05)", color: stats?.total_delete_files ? "var(--error, #dc3545)" : "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <DeleteOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Delete files</span>
+            <span className="td-attribution-value">{formatNumber(stats?.total_delete_files)}</span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Avg file size</span>
-          <span className="td-attribution-value">
-            {stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}
-          </span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Avg file size */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 130 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <InfoCircleOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Avg file size</span>
+            <span className="td-attribution-value">
+              {stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}
+            </span>
+          </div>
         </div>
-        <div className="td-attribution-divider" />
-        <div className="td-attribution-item">
-          <span className="td-attribution-label">Partition skew</span>
-          <span className="td-attribution-value">
-            {stats?.partition_skew_ratio != null ? `${stats.partition_skew_ratio.toFixed(2)}x` : "-"}
-          </span>
+        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+
+        {/* Partition skew */}
+        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 130 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "rgba(240, 160, 32, 0.08)" : "rgba(92, 102, 122, 0.05)", color: stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "var(--warning, #f0a020)" : "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+            <SlidersOutlined />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="td-attribution-label">Partition skew</span>
+            <span className="td-attribution-value">
+              {stats?.partition_skew_ratio != null ? `${stats.partition_skew_ratio.toFixed(2)}x` : "-"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1997,14 +1979,6 @@ export const TableDetail = () => {
       <Row gutter={[24, 24]} className="td-split-layout">
         {/* LEFT COLUMN: Main Interactive Workspace (70%) */}
         <Col xs={24} lg={17} className="td-main-column">
-          <RecommendedActions
-            costView={costView}
-            signals={tableSignals.data}
-            benefitScores={benefitScores.data}
-            onPreview={() => setPreviewOpen(true)}
-            onRun={() => run.mutate()}
-          />
-
           {silentLoss.data && !silentLoss.data.is_clean ? (
             <Alert
               type="error"
@@ -2031,7 +2005,7 @@ export const TableDetail = () => {
             />
           ) : null}
 
-          <Tabs defaultActiveKey="schema" items={tabItems} className="td-main-tabs" />
+          <Tabs defaultActiveKey="overview" items={tabItems} className="td-main-tabs" />
         </Col>
 
         {/* RIGHT COLUMN: Metadata & Compliance Sidebar (30%) */}
@@ -2041,15 +2015,32 @@ export const TableDetail = () => {
             {/* Card 2: Configuration & Engine Status */}
             <Card className="td-sidebar-card" title="Preset & Engine" size="small">
               <div className="td-sidebar-meta-list">
-                <div className="td-sidebar-meta-item">
-                  <span className="td-sidebar-meta-label">Active Preset</span>
-                  <span className="td-sidebar-meta-value">
-                    <strong>{effectivePreset.data?.preset_name ?? "None"}</strong>
-                    <span className="td-meta-faint" style={{ fontSize: 10, marginLeft: 4 }}>
-                      ({provenanceLabel(effectivePreset.data?.provenance)})
+                <div className="td-sidebar-meta-item" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 12 }}>
+                  <span className="td-sidebar-meta-label">Assign Preset</span>
+                  <Select
+                    placeholder="Assign preset"
+                    value={effectivePreset.data?.preset_id ?? undefined}
+                    options={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
+                    onChange={(presetId) => {
+                      if (presetId) {
+                        assign.mutate(presetId);
+                      } else {
+                        unassign.mutate();
+                      }
+                    }}
+                    loading={assign.isPending || presets.isLoading || unassign.isPending}
+                    disabled={!row}
+                    style={{ width: '100%' }}
+                    size="small"
+                    allowClear
+                  />
+                  {effectivePreset.data?.provenance ? (
+                    <span className="td-meta-faint" style={{ fontSize: 10 }}>
+                      Active: <strong>{effectivePreset.data?.preset_name}</strong> ({provenanceLabel(effectivePreset.data?.provenance)})
                     </span>
-                  </span>
+                  ) : null}
                 </div>
+
                 {stats?.scan_at ? (
                   <div className="td-sidebar-meta-item">
                     <span className="td-sidebar-meta-label">Last scan</span>
@@ -2062,6 +2053,67 @@ export const TableDetail = () => {
                     <span className="td-sidebar-meta-value">{formatTime(lastSnapshotCommittedAt)}</span>
                   </div>
                 ) : null}
+
+                {/* Maintenance Actions Consolidated */}
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1.5px solid var(--line, #e1e6ed)", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {queuedMaintenanceRunId || run.isPending ? (
+                    <Button
+                      type="primary"
+                      icon={<ThunderboltOutlined />}
+                      loading={run.isPending}
+                      onClick={handleRunAction}
+                      disabled={!row || run.isPending || !queuedMaintenanceRunId}
+                      size="small"
+                      block
+                      aria-label={run.isPending ? "Queueing run" : "Open maintenance run"}
+                    >
+                      {run.isPending ? "Queueing run..." : "Open maintenance run"}
+                    </Button>
+                  ) : (
+                    <ConfirmAction
+                      title="Run maintenance?"
+                      description="Queues a real maintenance job using the assigned preset and destination."
+                      onConfirm={() => run.mutate()}
+                    >
+                      <Button
+                        type="primary"
+                        icon={<ThunderboltOutlined />}
+                        disabled={!row || !effectivePreset.data?.preset_id}
+                        size="small"
+                        block
+                        aria-label="Run maintenance"
+                      >
+                        Run maintenance
+                      </Button>
+                    </ConfirmAction>
+                  )}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button
+                      icon={<DashboardOutlined />}
+                      onClick={() => setPreviewOpen(true)}
+                      disabled={!row || !effectivePreset.data?.preset_id}
+                      size="small"
+                      style={{ flex: 1, fontSize: 11 }}
+                    >
+                      Preview
+                    </Button>
+                    <ConfirmAction
+                      title="Rewrite manifests?"
+                      description="Queues manifest-only maintenance without data file compaction."
+                      onConfirm={() => manifestRewrite.mutate()}
+                    >
+                      <Button
+                        icon={<RobotOutlined />}
+                        loading={manifestRewrite.isPending}
+                        disabled={!row}
+                        size="small"
+                        style={{ flex: 1, fontSize: 11 }}
+                      >
+                        Manifest
+                      </Button>
+                    </ConfirmAction>
+                  </div>
+                </div>
               </div>
             </Card>
 
@@ -2097,8 +2149,10 @@ export const TableDetail = () => {
                   </Descriptions>
                 ) : compliance.isLoading ? (
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>Loading compliance status…</Typography.Text>
+                ) : compliance.error ? (
+                  <QueryErrorAlert error={compliance.error} title="Failed to load compliance status" />
                 ) : (
-                  <EmptyState title="Compliance unavailable" description="Could not load compliance status." />
+                  <EmptyState title="Compliance unavailable" description="No compliance data has been recorded for this table yet." />
                 )}
 
                 {(role === "admin" || role === "operator") ? (
