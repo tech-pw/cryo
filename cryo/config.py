@@ -132,6 +132,17 @@ class Settings(BaseSettings):
         default=None,
         description="Optional Athena workgroup filter for query-log ingestion.",
     )
+    s3_log_trino_catalog: str = Field(
+        default="hive",
+        description=(
+            "Trino Hive-connector catalog used to register S3 access-log external tables "
+            "for request-cost ingestion (docs/s3-request-cost-tracking.md §5)."
+        ),
+    )
+    s3_log_trino_schema: str = Field(
+        default="cryo_s3_logs",
+        description="Schema within s3_log_trino_catalog that request-cost log tables live in.",
+    )
     query_log_retention_days: int = Field(
         default=90,
         gt=0,
