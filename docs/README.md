@@ -48,6 +48,10 @@ The authoritative architecture / contract docs live at the repo root:
 
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — cost-savings UI
   patterns.
+- [`ux-improvement-loop.md`](./ux-improvement-loop.md) — design for a self-paced,
+  autonomous `/loop` that fixes one UX issue per iteration on a dedicated branch,
+  grounded in `PRODUCT.md`/`DESIGN.md`. Designed and proven with one iteration; not
+  currently running.
 
 ### Cost / FinOps
 
