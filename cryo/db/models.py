@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -225,6 +225,13 @@ class Table(Base):
     # Single accountable owner for SLA/quality breach alerts (see TableAlertSubscription for the
     # broader consumer/watcher list). Free-text email -- no user directory to validate against.
     owner_email: Mapped[str | None] = mapped_column(Text)
+    # S3 location (e.g. ``s3://bucket/path/to/table``) of the table's root. Computed live
+    # at scan time and previously discarded; persisted here so the S3 request-cost tracking
+    # feature (``docs/s3-request-cost-tracking.md`` §4.1) can do per-source bucket
+    # discovery via ``SELECT DISTINCT bucket FROM tables WHERE source_id = X`` without
+    # needing a separate catalog-discovery step. Updated in place on each scan, not
+    # appended-to, so this column is not a scale concern.
+    location: Mapped[str | None] = mapped_column(Text)
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(
@@ -332,6 +339,24 @@ class TableCost(Base):
     query_request_savings_usd_month: Mapped[float] = mapped_column(
         Float, nullable=False, server_default=text("0")
     )
+    # Measured S3 request-cost rollup (docs/s3-request-cost-tracking.md §6.3), distinct from
+    # query_request_savings_usd_month above which is a *projected savings estimate* from
+    # internal query telemetry, not a measured AWS request count. These four are a 30-day
+    # rolling summary, recomputed from S3RequestCostDaily (the bounded, retained per-day
+    # table) after each ingestion run -- this is the one-row-per-table read path the UI
+    # queries; S3RequestCostDaily is the write/audit path behind it. NULL here (not 0) means
+    # "no ingestion has run for this table yet", distinguishing "measured zero requests" from
+    # "not tracked" -- the UI must not render a NULL as $0.
+    get_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
+    put_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
+    list_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
+    request_cost_usd_month: Mapped[float | None] = mapped_column(Float)
+    # "live" (fetch_s3_request_prices succeeded for every day in the window) or
+    # "fallback_default" (at least one day's rollup used the fallback price) -- the UI uses
+    # this, not request_cost_usd_month's mere presence, to decide whether to show the
+    # "approximate" label from §6.4. Never let a fallback-derived number look as confident as
+    # a fully live-priced one.
+    request_cost_pricing_source: Mapped[str | None] = mapped_column(Text)
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
     table: Mapped[Table] = relationship(back_populates="cost")
@@ -562,9 +587,7 @@ class Preset(TimestampMixin, Base):
     guardrails: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    is_default: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
@@ -1061,6 +1084,157 @@ class AWSInventoryObject(Base):
     )
 
 
+class S3BucketLogConfig(TimestampMixin, Base):
+    """Per-bucket S3 server access-log ingestion config (``docs/s3-request-cost-tracking.md`` §6.2).
+
+    One row per ``(source_id, bucket)``. The bucket is *discovered* via §4.1 (``SELECT
+    DISTINCT bucket FROM tables WHERE source_id = X``) — never hand-typed into a config
+    block — so the table stays self-maintaining as tables are added or moved between
+    buckets. ``logging_status`` records the most recent ``GetBucketLogging`` response:
+    ``enabled`` (already logging), ``disabled`` (turned off, can auto-provision §4.3),
+    or ``unknown`` (most recent check failed / permission denied). ``manual_override``
+    is True when the user typed the target bucket/prefix themselves (§4.4) — the
+    teardown path in §9.4 needs this to know which statements on the target bucket's
+    policy Cryo added vs. pre-existed.
+
+    NOTE: this is the third per-source, bucket-scoped AWS config table alongside
+    ``AWSIntegration`` and ``AWSCostInsightConfig``. Three is a pattern; see the
+    "schema-convergence" note in §6.2 of the design doc.
+
+    Credentials: deliberately the same ``access_key_id``/``secret_ref`` shape as
+    ``AWSIntegration``/``AWSCostInsightConfig`` (§6.2 of the design doc), rather than an
+    implicit "borrow whichever other AWS config row this source happens to have" — a source
+    can have zero, one, or both of those other rows, and guessing which one's credentials
+    are scoped correctly for ``GetBucketLogging``/``PutBucketLogging``/``PutBucketPolicy``
+    would be a silent correctness trap. ``None`` here means "not yet configured" (falls
+    through to §4.4 manual entry with no auto-detect), not "borrow from elsewhere."
+    """
+
+    __tablename__ = "s3_bucket_log_configs"
+    __table_args__ = (
+        UniqueConstraint("source_id", "bucket", name="uq_s3_log_config_source_bucket"),
+        Index("ix_s3_log_config_source", "source_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    region: Mapped[str | None] = mapped_column(Text)
+    # Same access-key + encrypted-secret-reference shape as AWSIntegration/AWSCostInsightConfig
+    # (see class docstring) -- explicit per-row credentials, never implicitly borrowed.
+    access_key_id: Mapped[str | None] = mapped_column(Text)
+    secret_ref: Mapped[str | None] = mapped_column(Text)
+    logging_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'unknown'")
+    )
+    log_target_bucket: Mapped[str | None] = mapped_column(Text)
+    log_target_prefix: Mapped[str | None] = mapped_column(Text)
+    manual_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Statement Sid(s) Cryo inserted on the target bucket's policy during §4.3.1
+    # auto-provisioning. The teardown path (§9.4) uses these to delete exactly the
+    # statements it added — never touching statements Cryo didn't insert.
+    cryo_added_policy_sids: Mapped[list[str] | None] = mapped_column(JSONB)
+    last_checked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_ingested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_ingested_date: Mapped[date | None] = mapped_column(Date)
+    # Per-bucket ingestion error message, surfaced in the Source detail UI per §9.3. A
+    # ``None`` here is "last run succeeded" — never leave stale error text behind.
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class S3RequestCostDaily(TimestampMixin, Base):
+    """Per-bucket, per-day, per-table, per-operation S3 request counts and cost.
+
+    One row per ``(source_id, bucket, table_id, day, operation_tier)`` — UPSERTed
+    every ingestion run (§5 step 5), with re-aggregation of the trailing 2–3 day window
+    so the same ``day`` may be updated in place rather than appended to.
+
+    This table is the **bounded, retained-window** audit trail behind the rolling-30-day
+    summary fields on ``TableCost`` (``get_requests_30d`` etc.) -- ``TableCost`` is what UI
+    reads (fast, one row per table, matches the design doc's flat-footprint goal exactly),
+    this table is what ingestion writes to and what a retention job prunes (see
+    ``prune_s3_request_cost_daily`` in ``cryo/scanner/cost.py``, default 35-day retention --
+    a few days more than the 30-day rollup window so a delayed rollup run never reads a
+    just-pruned day). At 5k tables and a 35-day retention window that's ~175k rows tops,
+    not the unbounded-with-all-history alternative.
+
+    Note: ``operation_tier`` matches AWS's Price List API grouping: ``"tier1"`` for
+    PUT/COPY/POST/LIST and ``"tier2"`` for GET/SELECT/HEAD.
+    """
+
+    __tablename__ = "s3_request_cost_daily"
+    __table_args__ = (
+        # NOTE for whoever writes the P1 ingestion UPSERT: Postgres treats every NULL as
+        # distinct for uniqueness purposes, so this constraint does *not* dedupe rows where
+        # `table_id IS NULL` (log entries under this bucket/day that matched no known table
+        # prefix -- a real case, not hypothetical, e.g. metadata paths or not-yet-scanned
+        # tables). Re-aggregating the trailing window (§5 step 3) would append duplicate
+        # unmatched-table rows each run rather than upserting them. The ingestion writer
+        # should either exclude `table_id IS NULL` rows from the upsert (aggregate them
+        # separately, not per-day) or delete-then-insert that day's unmatched rows instead of
+        # relying on `ON CONFLICT` for them specifically.
+        UniqueConstraint(
+            "source_id",
+            "bucket",
+            "table_id",
+            "day",
+            "operation_tier",
+            name="uq_s3_request_cost_daily_row",
+        ),
+        Index(
+            "ix_s3_request_cost_daily_table_day",
+            "table_id",
+            "day",
+        ),
+        Index(
+            "ix_s3_request_cost_daily_source_bucket_day",
+            "source_id",
+            "bucket",
+            "day",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    operation_tier: Mapped[str] = mapped_column(Text, nullable=False)
+    request_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    # Cost in USD for that day. Filled in at ingestion time using the live price
+    # returned by ``fetch_s3_request_prices()``; falls back to a per-call default if
+    # the live fetch returned None (which the design doc says must be logged + flagged
+    # in the UI as approximate — see §6.4).
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    # Pricing source: ``"live"`` (from ``fetch_s3_request_prices``) or
+    # ``"fallback_default"`` (settings constant). The UI uses this to render the
+    # "approximate" label per §6.4 — never let a fallback-derived number look the
+    # same as a live-fetched one.
+    pricing_source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'fallback_default'")
+    )
+
+
 class QPPObservation(Base):
     """Variance-aware QPP observation row (CLOUD 2026, arXiv:2606.03464).
 
@@ -1168,6 +1342,8 @@ __all__ = [
     "QPPObservation",
     "QueryLog",
     "QueryPattern",
+    "S3BucketLogConfig",
+    "S3RequestCostDaily",
     "SilentDataLossEvent",
     "Skillset",
     "SkillsetOutcome",

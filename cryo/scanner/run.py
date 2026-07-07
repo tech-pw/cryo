@@ -15,10 +15,12 @@ from sqlalchemy.orm import Session
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.db.model_utils import catalog_name_for_source, qualified_name
-from cryo.db.models import Source, Table, TableCost
+from cryo.db.models import Source, Table, TableCost, TableStats
 from cryo.db.repositories.sources import intersect_requested_schemas, source_allowed_schemas
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import CostPrecision
+from cryo.integrations.aws_credentials import credentials_for_source
+from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
 from cryo.observability.metrics import scanner_tables_scanned_total
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
@@ -183,6 +185,7 @@ def _run_scan_serial(
 ) -> ScanSummary:
     """Scan tables serially within the current session."""
     scanned = skipped = failed = 0
+    live_price_cache: dict[UUID, float | None] = {}
 
     for candidate in assigned:
         if _cancel_requested(cancel_checker):
@@ -231,6 +234,7 @@ def _run_scan_serial(
                 settings=settings,
                 scan_at=scan_at,
                 cost_full_scan=cost_full_scan,
+                live_price_cache=live_price_cache,
             )
             persist_table_analysis(
                 session,
@@ -303,6 +307,10 @@ def _run_scan_parallel(
 ) -> ScanSummary:
     """Scan tables in parallel using separate DB sessions per table."""
     scanned = skipped = failed = 0
+    # Shared across worker threads (GIL makes individual dict get/set safe enough for a
+    # best-effort cache; a rare race just costs one redundant AWS lookup, not a correctness
+    # bug -- see _resolve_live_s3_get_price's docstring).
+    live_price_cache: dict[UUID, float | None] = {}
 
     def scan_one(candidate: ScanCandidate) -> tuple[str, str | None]:
         """Scan a single table, returning outcome and optional error."""
@@ -340,6 +348,7 @@ def _run_scan_parallel(
                     settings=settings,
                     scan_at=scan_at,
                     cost_full_scan=cost_full_scan,
+                    live_price_cache=live_price_cache,
                 )
                 persist_table_analysis(
                     table_session,
@@ -618,6 +627,48 @@ def _list_candidate_tables(catalog: Any, requested_schemas: set[str]) -> list[tu
     return pairs
 
 
+def _resolve_live_s3_get_price(
+    session: Session,
+    source_id: UUID,
+    settings: Settings,
+    cache: dict[UUID, float | None],
+) -> float | None:
+    """Look up the live S3 GET request price for a source, at most once per scan run.
+
+    `cache` is created fresh per `_run_scan_serial`/`_run_scan_parallel` call and keyed by
+    source_id, so a fleet scan across many tables of the same source resolves+decrypts AWS
+    credentials once, not once per table (`fetch_s3_request_prices` itself also caches per
+    (region, storage_class) for 24h, but that doesn't save the DB lookup+decrypt step).
+
+    Returns ``None`` -- not a fallback numeric value -- when the source has no usable
+    ``AWSIntegration``; `project_savings`/`build_table_cost_analysis` already fall back to
+    `settings.s3_get_usd_per_1k` themselves when given ``None``, so there is no duplicate
+    fallback logic here (see docs/s3-request-cost-tracking.md §6.4).
+    """
+    if source_id in cache:
+        return cache[source_id]
+    price: float | None = None
+    try:
+        credentials = credentials_for_source(session, source_id)
+        if credentials is not None:
+            info = fetch_s3_request_prices(
+                credentials.region,
+                credentials,
+                fallback_price_per_1k_put=settings.s3_put_usd_per_1k,
+                fallback_price_per_1k_get=settings.s3_get_usd_per_1k,
+            )
+            price = info.price_per_1k_get
+    except Exception:
+        logger.warning(
+            "Failed to resolve live S3 GET price for source %s; this table's cost estimate "
+            "will use the configured default rate instead.",
+            source_id,
+            exc_info=True,
+        )
+    cache[source_id] = price
+    return price
+
+
 def _apply_orphan_scan(
     session: Session,
     *,
@@ -627,11 +678,24 @@ def _apply_orphan_scan(
     settings: Settings,
     scan_at: datetime,
     cost_full_scan: bool,
+    live_price_cache: dict[UUID, float | None],
 ) -> TableAnalysis:
     if analysis.cost is None:
         return analysis
 
     previous_cost = session.get(TableCost, table_id)
+    # TableStats for *this* scan hasn't been persisted yet (persist_table_analysis runs after
+    # this function returns) -- the previous scan's query_count_30d is the best available proxy
+    # for "how much traffic is this table seeing", same staleness tradeoff already accepted for
+    # orphan_bytes via carry_forward_orphans below. Previously this was hardcoded to 0 at every
+    # real call site, which made query_request_savings_usd_month always compute to exactly $0
+    # in production regardless of price -- a bigger, pre-existing bug than the pricing gap this
+    # function is otherwise here to fix.
+    previous_stats = session.get(TableStats, table_id)
+    query_count_30d = previous_stats.query_count_30d if previous_stats is not None else 0
+    live_s3_get_price = _resolve_live_s3_get_price(
+        session, candidate.source.id, settings, live_price_cache
+    )
 
     if not should_run_orphan_scan(previous_cost, scan_at, settings, force=cost_full_scan):
         orphan_bytes, listed_bytes, last_full = carry_forward_orphans(previous_cost)
@@ -643,6 +707,8 @@ def _apply_orphan_scan(
                 listed_bytes=listed_bytes,
                 last_full_cost_scan_at=last_full,
                 precision=CostPrecision.METADATA,
+                query_count_30d=query_count_30d,
+                live_s3_get_price_per_1k=live_s3_get_price,
             )
         return analysis
 
@@ -663,6 +729,8 @@ def _apply_orphan_scan(
             listed_bytes=listed_bytes,
             last_full_cost_scan_at=last_full,
             precision=CostPrecision.METADATA,
+            query_count_30d=query_count_30d,
+            live_s3_get_price_per_1k=live_s3_get_price,
         )
 
     return _rebuild_cost_analysis(
@@ -672,6 +740,8 @@ def _apply_orphan_scan(
         listed_bytes=orphan_result.listed_bytes,
         last_full_cost_scan_at=orphan_result.last_full_cost_scan_at,
         precision=CostPrecision.STORAGE_TRUTH,
+        query_count_30d=query_count_30d,
+        live_s3_get_price_per_1k=live_s3_get_price,
     )
 
 
@@ -683,6 +753,8 @@ def _rebuild_cost_analysis(
     listed_bytes: int | None,
     last_full_cost_scan_at: datetime | None,
     precision: CostPrecision,
+    query_count_30d: int = 0,
+    live_s3_get_price_per_1k: float | None = None,
 ) -> TableAnalysis:
     if analysis.cost is None:
         return analysis
@@ -702,7 +774,7 @@ def _rebuild_cost_analysis(
         small_files_count=analysis.small_files_count,
         small_file_bytes=0,
         target_file_size_bytes=analysis.target_file_size_bytes or 268_435_456,
-        query_count_30d=0,
+        query_count_30d=query_count_30d,
     )
     new_cost = build_table_cost_analysis(
         metadata,
@@ -713,6 +785,7 @@ def _rebuild_cost_analysis(
         listed_bytes=listed_bytes,
         last_full_cost_scan_at=last_full_cost_scan_at,
         precision=precision,
+        live_s3_get_price_per_1k=live_s3_get_price_per_1k,
     )
     return replace(analysis, cost=new_cost)
 

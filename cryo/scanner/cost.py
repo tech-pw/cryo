@@ -220,6 +220,7 @@ def build_table_cost_analysis(
     listed_bytes: int | None = None,
     last_full_cost_scan_at: datetime | None = None,
     precision: CostPrecision | None = None,
+    live_s3_get_price_per_1k: float | None = None,
 ) -> TableCostAnalysis:
     effective_precision = precision or metadata.precision
     breakdown = StorageBreakdown(
@@ -243,6 +244,7 @@ def build_table_cost_analysis(
         settings,
         precision=effective_precision,
         assumptions=dict(metadata.raw.get("assumptions", {})),
+        live_s3_get_price_per_1k=live_s3_get_price_per_1k,
     )
     return TableCostAnalysis(
         scan_at=scan_at,
@@ -263,6 +265,12 @@ def build_table_cost_analysis(
         raw={
             "by_operation": {op.value: usd for op, usd in projection.by_operation.items()},
             "metadata": metadata.raw,
+            # projection.assumptions carries "s3_get_price_source" ("live"/"fallback_default",
+            # set unconditionally in project_savings) -- without persisting it here, the UI has
+            # no way to know whether query_request_savings_usd_month used a live-fetched price
+            # or the hardcoded config default, defeating the whole point of §6.4's "never let a
+            # fallback-derived number look as confident as a live one" requirement.
+            "assumptions": projection.assumptions,
         },
     )
 

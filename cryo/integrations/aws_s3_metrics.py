@@ -24,11 +24,14 @@ explicitly do not want to incur any AWS charges just to get better cost visibili
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import boto3
+
+logger = logging.getLogger(__name__)
 
 # S3 storage classes CloudWatch reports BucketSizeBytes for, keyed by the StorageType dimension
 # value. See https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html
@@ -102,6 +105,42 @@ class S3PriceInfo:
     storage_class: str
     price_per_gb_month: float
     source: str = "aws_price_list_api"
+
+
+@dataclass(frozen=True)
+class S3RequestPriceInfo:
+    """Per-(region, storage class, operation tier) S3 request pricing, live-fetched.
+
+    AWS publishes one `Requests-Tier1` SKU covering PUT/COPY/POST/LIST (charged per 1k) and
+    one `Requests-Tier2` SKU covering GET/SELECT/HEAD (per 1k), both keyed by region +
+    storage class. They're a single call away from each other so we always fetch both at once.
+    """
+
+    region: str
+    storage_class: str
+    price_per_1k_put: float  # Tier1: PUT, COPY, POST, LIST
+    price_per_1k_get: float  # Tier2: GET, SELECT, HEAD
+    source: str = "aws_price_list_api"
+    fetched_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+# Cache for request prices, per (region, storage_class). Storage class is part of the
+# Price List API key for request SKUs because some pricing varies by class. The cache TTL is
+# a day: AWS's published price list changes on the order of months, not hours, and pricing
+# drift between calls is not the kind of thing that matters at a daily cadence.
+_REQUEST_PRICE_CACHE: dict[tuple[str, str], tuple[S3RequestPriceInfo, datetime]] = {}
+_REQUEST_PRICE_CACHE_TTL = timedelta(hours=24)
+
+
+def get_cached_request_price(region: str, storage_class: str) -> S3RequestPriceInfo | None:
+    """Read from the in-process request-price cache. Exposed for tests."""
+    entry = _REQUEST_PRICE_CACHE.get((region, storage_class))
+    if entry is None:
+        return None
+    info, cached_at = entry
+    if datetime.now(UTC) - cached_at > _REQUEST_PRICE_CACHE_TTL:
+        return None
+    return info
 
 
 def _session(credentials: AWSCredentials, *, region: str | None = None) -> Any:
@@ -245,6 +284,140 @@ def fetch_s3_price_per_gb(
         return None
     except Exception:
         return None
+
+
+def fetch_s3_request_prices(
+    region: str,
+    credentials: AWSCredentials,
+    *,
+    storage_class: str = "General Purpose",
+    use_cache: bool = True,
+    fallback_price_per_1k_put: float,
+    fallback_price_per_1k_get: float,
+) -> S3RequestPriceInfo:
+    """Look up live S3 request pricing (PUT/COPY/POST/LIST and GET/SELECT/HEAD) for a region.
+
+    Reuses the same Price List API call pattern as ``fetch_s3_price_per_gb`` so a single
+    IAM-granted ``pricing:GetProducts`` covers both. Caches the result per
+    (region, storage class) for a day (AWS prices change on the order of months, not hours,
+    and request-pricing drift between calls is not the kind of signal that matters at a
+    daily cadence).
+
+    ``fallback_price_per_1k_put``/``fallback_price_per_1k_get`` are **required, not
+    optional** — the design doc (§6.4) is explicit that a missing price must fall back to
+    *the account's configured default rate*, never to zero (zero would make that operation
+    type look free, which is a worse error than a stale-but-plausible number). This module
+    deliberately doesn't import ``cryo.config`` itself to stay a thin AWS-API wrapper, so the
+    caller (which has ``Settings``) must supply the defaults explicitly rather than this
+    function inventing its own.
+
+    Always returns a usable :class:`S3RequestPriceInfo` — **never ``None``** — so callers get
+    exactly one fallback code path to write, not one inside this function and a duplicate one
+    in every caller. Check ``.source`` to decide how much to trust the number:
+
+    - ``"aws_price_list_api"`` — both tiers came back live from AWS.
+    - ``"aws_price_list_api_partial"`` — one tier came back live, the other used the caller's
+      fallback default. This is the "permitted but empty for one SKU" AWS quirk (§6.4): a
+      region that exists in the billing console can still have an incomplete Price List entry,
+      and this must be visually distinguishable from a fully-live fetch.
+    - ``"fallback_default"`` — the API call was denied, raised, or returned zero matching SKUs
+      entirely (region unresolvable, credentials lack ``pricing:GetProducts``, or AWS's Price
+      List has no entry at all for this region/storage-class). Both tiers use the caller's
+      configured defaults. **Logs a single grep-able WARNING** in every case that reaches this
+      branch — a silent-empty response is exactly what the whole "fetch live pricing" decision
+      exists to prevent, so it must never look identical to a successful fetch anywhere in the
+      pipeline.
+    """
+    cache_key = (region, storage_class)
+    if use_cache:
+        cached = get_cached_request_price(region, storage_class)
+        if cached is not None:
+            return cached
+
+    def _fallback(reason: str) -> S3RequestPriceInfo:
+        logger.warning(
+            "S3 request pricing: falling back to configured defaults for region=%r "
+            "storage_class=%r (%s). Cost derived from this will be approximate, not the "
+            "live account rate.",
+            region,
+            storage_class,
+            reason,
+        )
+        info = S3RequestPriceInfo(
+            region=region,
+            storage_class=storage_class,
+            price_per_1k_put=fallback_price_per_1k_put,
+            price_per_1k_get=fallback_price_per_1k_get,
+            source="fallback_default",
+        )
+        if use_cache:
+            _REQUEST_PRICE_CACHE[cache_key] = (info, datetime.now(UTC))
+        return info
+
+    region_name = _REGION_NAMES.get(region)
+    if region_name is None:
+        return _fallback(f"unrecognized region {region!r}")
+    try:
+        pricing = _session(credentials, region=PRICING_API_REGION).client("pricing")
+        response = pricing.get_products(
+            ServiceCode="AmazonS3",
+            Filters=[
+                {"Type": "TERM_MATCH", "Field": "productFamily", "Value": "API Request"},
+                {"Type": "TERM_MATCH", "Field": "location", "Value": region_name},
+                {"Type": "TERM_MATCH", "Field": "storageClass", "Value": storage_class},
+            ],
+            MaxResults=20,  # both tiers come back in one call
+        )
+        tier1 = tier2 = None
+        for raw in response.get("PriceList", []):
+            product = json.loads(raw)
+            sku_attrs = product.get("product", {}).get("attributes", {}) or {}
+            group = sku_attrs.get("group", "") or sku_attrs.get("groupDescription", "")
+            price = _extract_price_per_unit(product)
+            if price is None:
+                continue
+            if "Tier1" in group or "PUT" in group or "POST" in group or "LIST" in group:
+                if tier1 is None:
+                    tier1 = price
+            elif "Tier2" in group or "GET" in group or "SELECT" in group:
+                if tier2 is None:
+                    tier2 = price
+        if tier1 is None and tier2 is None:
+            return _fallback(
+                "GetProducts granted but returned 0 matching SKUs — AWS Price List "
+                "incomplete for this region/storage-class"
+            )
+        # Partial: one tier returned, the other didn't. Still useful, but call it out -- and
+        # fall back to the caller's configured default for the missing tier, never to zero
+        # (see the docstring: zero would make that operation type look free, not approximate).
+        source = "aws_price_list_api"
+        if tier1 is None or tier2 is None:
+            logger.warning(
+                "S3 request pricing: GetProducts returned only one tier for region=%r "
+                "storage_class=%r (tier1=%s, tier2=%s). Falling back to the configured "
+                "default for the missing tier.",
+                region,
+                storage_class,
+                tier1,
+                tier2,
+            )
+            source = "aws_price_list_api_partial"
+            if tier1 is None:
+                tier1 = fallback_price_per_1k_put
+            if tier2 is None:
+                tier2 = fallback_price_per_1k_get
+        info = S3RequestPriceInfo(
+            region=region,
+            storage_class=storage_class,
+            price_per_1k_put=tier1,
+            price_per_1k_get=tier2,
+            source=source,
+        )
+        if use_cache:
+            _REQUEST_PRICE_CACHE[cache_key] = (info, datetime.now(UTC))
+        return info
+    except Exception as exc:
+        return _fallback(f"GetProducts raised: {exc}")
 
 
 def _extract_price_per_unit(product: dict[str, Any]) -> float | None:

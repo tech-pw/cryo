@@ -25,6 +25,8 @@ from cryo.db.models import (
     PresetRule,
     QueryLog,
     QueryPattern,
+    S3BucketLogConfig,
+    S3RequestCostDaily,
     Source,
     Table,
     TableAlertDispatch,
@@ -51,6 +53,8 @@ UUID_ID_MODELS = (
     AWSInventoryObject,
     TableAlertDispatch,
     TableAlertSubscription,
+    S3BucketLogConfig,
+    S3RequestCostDaily,
 )
 _AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog, QueryPattern)
 _next_autoincrement_id = itertools.count(1)

@@ -8,13 +8,15 @@ from typing import Any
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
+from cryo.config import Settings
 from cryo.db.base import Base
 from cryo.db.models import Source, Table, TablePartition, TableStats, TableStatsHistory
+from cryo.domain.enums import CostPrecision
 from cryo.scanner.analyze import analyze_table
 from cryo.scanner.cost import GB, estimate_storage_cost
 from cryo.scanner.health import compute_health_score
 from cryo.scanner.persistence import persist_table_analysis, record_table_scan_outcome
-from cryo.scanner.run import deterministic_chunk, parse_args
+from cryo.scanner.run import _rebuild_cost_analysis, deterministic_chunk, parse_args
 from tests.test_presets_api_db import (
     _assign_missing_uuid_primary_keys,
     _patch_sqlite_incompatible_defaults,
@@ -99,6 +101,98 @@ def test_analyze_table_supports_fake_manifest_objects() -> None:
     assert analysis.partitions[0].small_files_in_partition_count == 3
     assert analysis.partitions[0].compaction_status == "F"
     assert analysis.raw["partition_fields"][0]["transform"] == "day"
+
+
+def _small_file_analysis(scan_at: datetime):
+    table = FakeTable(
+        files=[
+            FakeDataFile(10 * MB, 10, ("2026-06-29",)),
+            FakeDataFile(20 * MB, 20, ("2026-06-29",)),
+            FakeDataFile(30 * MB, 30, ("2026-06-29",)),
+            FakeDataFile(256 * MB, 100, ("2026-06-30",)),
+        ],
+        snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
+    )
+    return analyze_table(table, "demo", "events", scan_at=scan_at)
+
+
+def test_rebuild_cost_analysis_defaults_query_count_30d_to_zero() -> None:
+    """Documents the function's own safe default -- the real bug this guarded against was the
+    *caller* (cryo/scanner/run.py's _apply_orphan_scan) always passing a hardcoded 0 regardless
+    of the table's actual traffic, which made query_request_savings_usd_month permanently $0 in
+    production. That call site now passes the table's real previous-scan query_count_30d; this
+    test just pins the function's own default when a caller omits it entirely."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    analysis = _small_file_analysis(scan_at)
+    assert analysis.cost is not None
+
+    rebuilt = _rebuild_cost_analysis(
+        analysis,
+        settings=Settings(),
+        orphan_bytes=0,
+        listed_bytes=0,
+        last_full_cost_scan_at=None,
+        precision=CostPrecision.METADATA,
+    )
+
+    assert rebuilt.cost is not None
+    assert rebuilt.cost.query_request_savings_usd_month == 0.0
+
+
+def test_rebuild_cost_analysis_uses_real_query_count_30d_when_given() -> None:
+    """Regression test for the fix: a nonzero query_count_30d (the table's previous-scan
+    telemetry, as now threaded through by _apply_orphan_scan) must actually produce a nonzero
+    savings estimate -- previously this was hardcoded to 0 at the call site, so no amount of
+    real traffic ever showed up in query_request_savings_usd_month."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    analysis = _small_file_analysis(scan_at)
+    assert analysis.small_files_count > 0
+
+    rebuilt = _rebuild_cost_analysis(
+        analysis,
+        settings=Settings(),
+        orphan_bytes=0,
+        listed_bytes=0,
+        last_full_cost_scan_at=None,
+        precision=CostPrecision.METADATA,
+        query_count_30d=1000,
+    )
+
+    assert rebuilt.cost is not None
+    assert rebuilt.cost.query_request_savings_usd_month > 0.0
+
+
+def test_rebuild_cost_analysis_live_price_changes_savings_and_is_tagged() -> None:
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    analysis = _small_file_analysis(scan_at)
+    settings = Settings()
+
+    fallback = _rebuild_cost_analysis(
+        analysis,
+        settings=settings,
+        orphan_bytes=0,
+        listed_bytes=0,
+        last_full_cost_scan_at=None,
+        precision=CostPrecision.METADATA,
+        query_count_30d=1000,
+    )
+    live = _rebuild_cost_analysis(
+        analysis,
+        settings=settings,
+        orphan_bytes=0,
+        listed_bytes=0,
+        last_full_cost_scan_at=None,
+        precision=CostPrecision.METADATA,
+        query_count_30d=1000,
+        live_s3_get_price_per_1k=settings.s3_get_usd_per_1k * 10,
+    )
+
+    assert fallback.cost is not None and live.cost is not None
+    assert live.cost.query_request_savings_usd_month == round(
+        fallback.cost.query_request_savings_usd_month * 10, 4
+    )
+    assert fallback.cost.raw["assumptions"]["s3_get_price_source"] == "fallback_default"
+    assert live.cost.raw["assumptions"]["s3_get_price_source"] == "live"
 
 
 def test_analyze_table_computes_zero_scan_column_quality() -> None:
