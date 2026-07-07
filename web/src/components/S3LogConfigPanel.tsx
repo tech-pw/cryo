@@ -6,9 +6,12 @@ import {
   ingestS3LogConfig,
   listS3LogConfigs,
   patchS3LogConfig,
-  probeS3LogConfigTarget
+  probeS3LogConfigTarget,
+  provisionS3LogConfig,
+  teardownS3LogConfig
 } from "../api/client";
 import type { S3LogConfigRead, UUID } from "../api/types";
+import { ConfirmAction } from "./confirm";
 import { useAuth } from "../lib/auth";
 import { formatTime } from "../lib/format";
 
@@ -97,6 +100,32 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
     onError: (error) => message.error((error as Error).message)
   });
 
+  const enableLogging = useMutation({
+    mutationFn: () => provisionS3LogConfig(api, sourceId, config.bucket),
+    onSuccess: (result) => {
+      if (result.ok) {
+        message.success(`Logging enabled, delivering to ${result.log_target_bucket}`);
+      } else {
+        message.error(result.error ?? "Could not enable logging");
+      }
+      invalidate();
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
+  const removeTracking = useMutation({
+    mutationFn: () => teardownS3LogConfig(api, sourceId, config.bucket, { revert_policy: true }),
+    onSuccess: (result) => {
+      if (result.warnings.length) {
+        message.warning(result.warnings.join("; "));
+      } else {
+        message.success("Bucket tracking removed");
+      }
+      invalidate();
+    },
+    onError: (error) => message.error((error as Error).message)
+  });
+
   const hasTarget = Boolean(config.log_target_bucket);
   const awaitingFirstDelivery = hasTarget && config.enabled && !config.last_ingested_at;
 
@@ -129,6 +158,16 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
               Ingest now
             </Button>
           ) : null}
+          <ConfirmAction
+            title="Remove tracking for this bucket?"
+            description="Removes Cryo's config for this bucket and, if Cryo turned logging on itself, offers to revert the bucket-policy statement it added. Logging itself is left running on AWS unless Cryo added it."
+            onConfirm={() => removeTracking.mutate()}
+            okText="Remove"
+          >
+            <Button size="small" danger loading={removeTracking.isPending}>
+              Remove tracking
+            </Button>
+          </ConfirmAction>
         </Space>
 
         {config.last_error ? (
@@ -160,9 +199,20 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
           <>
             <Typography.Text type="secondary">
               Cryo can see request activity for this bucket once server access logging is turned
-              on and pointed at a log target it can read. Enter the target below, or ask whoever
-              manages this bucket's logging for the path.
+              on and pointed at a log target it can read. Turn it on with one click if Cryo's
+              credentials allow it, enter the target manually below, or ask whoever manages this
+              bucket's logging for the path.
             </Typography.Text>
+            <ConfirmAction
+              title="Turn on request-cost logging for this bucket?"
+              description={`Cryo will create or reuse a log target bucket ("${config.bucket}-cryo-access-logs" unless one already exists), grant it permission to receive delivery, and turn on S3 server access logging for "${config.bucket}". Requires the optional write-permission tier -- if Cryo's credentials don't have it, this will fail with a clear error and you can use manual entry below instead.`}
+              onConfirm={() => enableLogging.mutate()}
+              okText="Enable logging"
+            >
+              <Button size="small" type="primary" loading={enableLogging.isPending}>
+                Enable logging
+              </Button>
+            </ConfirmAction>
             <Form
               form={form}
               layout="vertical"
