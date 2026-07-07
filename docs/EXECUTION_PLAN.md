@@ -21,13 +21,12 @@ Before writing any code, read these — in order — so decisions aren't re-liti
    plan overlap with or complete todo.md items.
 4. [`current-state.md`](./current-state.md) — what's actually implemented today vs. planned.
    **Keep it updated** as you land work.
-5. [`RECOMMENDATIONS.md`](./RECOMMENDATIONS.md) — the feature backlog, grounded in what's already
-   built vs. real gaps, with a suggested phase sequencing.
-6. [`PERFORMANCE_AND_OPENNESS.md`](./PERFORMANCE_AND_OPENNESS.md) — performance deep-dive
-   (corrected/fact-checked) and open-source governance notes.
-7. [`ARCHITECTURE_AND_AI_STRATEGY.md`](./ARCHITECTURE_AND_AI_STRATEGY.md) — the decided control-plane
-   architecture (event fast-path), the decided execution-engine architecture (native Rust engine +
-   Trino/Spark interoperability), and the decided AI layer.
+5. [`research-and-roadmap.md`](./research-and-roadmap.md) — the feature backlog, grounded in what's already
+   built vs. real gaps, with a suggested phase sequencing. Also includes performance deep-dive and
+   open-source governance notes.
+6. [`architecture.md`](./architecture.md) — the decided control-plane architecture (event fast-path),
+   the decided execution-engine architecture (native Rust engine + Trino/Spark interoperability),
+   and the decided AI layer.
 
 **This plan does not duplicate the "why" from those docs — it only says "what, in what order, and
 how do you know it's done."** If a task here seems to lack rationale, the rationale is in one of
@@ -66,7 +65,7 @@ the docs above; go read it rather than guessing or re-deciding.
 
 ### Phase 1 — Close the core plumbing gap (prerequisite for everything else) ✅
 
-**Why:** per `RECOMMENDATIONS.md` Part 0, none of the performance or feature work matters if a
+**Why:** per `research-and-roadmap.md` Part 1 §0, none of the performance or feature work matters if a
 preset can't actually run against a real engine end-to-end yet.
 
 - [x] `cryo/engines/trino/client.py` — per-coordinator connection (HTTPS + BasicAuth).
@@ -103,7 +102,7 @@ preset can't actually run against a real engine end-to-end yet.
 
 ### Phase 2 — Finish the cost dashboard + cheap health-signal extensions ✅
 
-**Why:** per `RECOMMENDATIONS.md` Part 2, the hard data work for cost accounting is already done
+**Why:** per `research-and-roadmap.md` Part 1 §2, the hard data work for cost accounting is already done
 and persisted (`table_cost`, `table_cost_history`) — only wiring remains, making this the highest
 ROI-per-hour item in the backlog. The health-signal extensions listed alongside it reuse data the
 scanner already collects.
@@ -112,7 +111,7 @@ scanner already collects.
       on `/maintenance/preview`; cost summary fields in the predicate grammar for filter/sort by
       savings; `/scans` accepts `cost_full_scan`). Implemented in `cryo/api/routes.py` and
       `cryo/api/preview_cost.py`.
-- [x] Cost & Savings UI at `/cost` per [`ui-cost-savings.md`](./ui-cost-savings.md); Health page summary + link.
+- [x] Cost & Savings UI at `/cost` per [`research-and-roadmap.md` Part 7](./research-and-roadmap.md); Health page summary + link.
 - [x] Surface `metadata_bytes / data_bytes` ratio as an explicit health metric. Implemented in
       `cryo/scanner/signals.py` (`metadata_to_data_ratio`) and `cryo/scanner/health.py`.
 - [x] Streaming/commit-velocity detection: derive commits/day from snapshot-count deltas between
@@ -131,7 +130,7 @@ scanner already collects.
 ### Phase 3 — Operations & safety features ✅
 
 **Why:** these are the real gaps identified against the current planner/governor, per
-`RECOMMENDATIONS.md` Part 2.
+`research-and-roadmap.md` Part 1 §2.
 
 - [x] Hot/cold partition tracking: extend partition selection in `cryo/planner/` with a "no writes
       in N hours" filter. Implemented in `cryo/planner/planner.py` (`_is_hot_partition`).
@@ -148,7 +147,7 @@ scanner already collects.
 
 ### Phase 4 — Event fast-path (control-plane architecture) ✅
 
-**Why:** per `ARCHITECTURE_AND_AI_STRATEGY.md` §1.2 — adds Netflix-style event-driven reaction
+**Why:** per `architecture.md` §1.2 — adds Netflix-style event-driven reaction
 alongside the existing cron sweep, without replacing it.
 
 - [x] New module `cryo/events/watcher.py` — polls `current-snapshot-id` at a tight interval for
@@ -169,7 +168,7 @@ alongside the existing cron sweep, without replacing it.
 
 ### Phase 5 — Native Rust execution engine (`cryo-engine`) ✅ Complete
 
-**Why:** per `ARCHITECTURE_AND_AI_STRATEGY.md` §1.5 — a first-class peer engine, not a
+**Why:** per `architecture.md` §1.5 — a first-class peer engine, not a
 replacement for Trino/Spark.
 
 - [x] `RenderedStatement.payload` + `EngineType.NATIVE` — backward compatible with Trino/Spark.
@@ -188,7 +187,7 @@ replacement for Trino/Spark.
 
 ### Phase 6 — Compliance & governance features ✅
 
-**Why:** per `RECOMMENDATIONS.md` Part 2 — real gaps, genuine differentiators, verified against
+**Why:** per `research-and-roadmap.md` Part 1 §2 — real gaps, genuine differentiators, verified against
 real competitor features (Ryft).
 
 - [x] Compliance/GDPR-CCPA deletion tracking: track tables with soft-deletes pending a snapshot-
@@ -209,7 +208,7 @@ real competitor features (Ryft).
 
 ### Phase 7 — AI layer ✅
 
-**Why:** per `ARCHITECTURE_AND_AI_STRATEGY.md` Part 2 and its own sequencing note — build in this
+**Why:** per `architecture.md` Part 2 and its own sequencing note — build in this
 order specifically because each step depends on the data/signals the previous step establishes.
 
 - [x] **Anomaly detection first, no LLM dependency:** classical EWMA/z-score time-series detection
@@ -230,7 +229,7 @@ order specifically because each step depends on the data/signals the previous st
 - [x] **Gated `run_preset` MCP tool** (write path) — defined in tool descriptions; execution
       requires explicit role scope through existing `/maintenance/run` endpoint.
 
-**Explicitly do not build** (see `ARCHITECTURE_AND_AI_STRATEGY.md` §2.7): zero-shot NL-to-SQL
+**Explicitly do not build** (see `architecture.md` §2.7): zero-shot NL-to-SQL
 against live Iceberg tables; LLM-auto-approves-DDL/schema-changes; "AI-powered black-box autopilot"
 positioning of any kind; vector-native storage in Iceberg/Cryo; full RL-based scheduling; full
 "self-driving" whole-system autotuning.
@@ -252,13 +251,13 @@ external contributor interest) — don't build ahead of need.
       `GET /tables/{id}/tier-candidates`. Migration `20260703_0004`.
 - [x] Apache-style open governance formalization — **pre-v1 scope:** documented GitHub-first
       governance in `docs/GOVERNANCE.md` + updated `CONTRIBUTING.md`. Full PMC/CLA deferred per
-      `PERFORMANCE_AND_OPENNESS.md` Part 4 until external contributor volume warrants it.
+      `research-and-roadmap.md` Part 5 until external contributor volume warrants it.
 
 ---
 
 ### Phase 9 — Embedding-based intelligence & research-backed AI track ✅ Complete
 
-**Why:** added 2026-07-05, per `ARCHITECTURE_AND_AI_STRATEGY.md` §2.5/§2.6 — real, verified
+**Why:** added 2026-07-05, per `architecture.md` §2.5/§2.6 — real, verified
 precedent (not speculation) for going beyond Phase 7's rule/threshold-based AI layer. Each item
 below cites the specific paper/product precedent behind it; read §2.5/§2.6 for the full "why," not
 just the "what."
@@ -378,15 +377,15 @@ projections. Hard constraint from the user, honored throughout: **zero paid AWS 
 
 | Phase | Primary doc(s) |
 |---|---|
-| 1 (core plumbing) | `../todo.md` P2/P3/P6, `RECOMMENDATIONS.md` Part 0 |
-| 2 (cost + cheap health signals) | `RECOMMENDATIONS.md` Part 2, `ui-cost-savings.md` |
-| 3 (ops & safety) | `RECOMMENDATIONS.md` Part 2 |
-| 4 (event fast-path) | `ARCHITECTURE_AND_AI_STRATEGY.md` §1.1–1.2 |
-| 5 (native engine) | `ARCHITECTURE_AND_AI_STRATEGY.md` §1.5, `PERFORMANCE_AND_OPENNESS.md` Part 1 |
-| 6 (compliance/governance features) | `RECOMMENDATIONS.md` Part 2 |
-| 7 (AI layer) | `ARCHITECTURE_AND_AI_STRATEGY.md` Part 2 (§2.1–2.4, §2.7) |
-| 8 (long-term) | `RECOMMENDATIONS.md` Part 2 (⏳ Later), `PERFORMANCE_AND_OPENNESS.md` Part 4 |
-| 9 (embedding/research-backed AI) | `ARCHITECTURE_AND_AI_STRATEGY.md` §2.5–2.6 |
+| 1 (core plumbing) | `../todo.md` P2/P3/P6, `research-and-roadmap.md` Part 1 §0 |
+| 2 (cost + cheap health signals) | `research-and-roadmap.md` Part 1 §2, `research-and-roadmap.md` Part 7 |
+| 3 (ops & safety) | `research-and-roadmap.md` Part 1 §2 |
+| 4 (event fast-path) | `architecture.md` §1.1–1.2 |
+| 5 (native engine) | `architecture.md` §1.5, `research-and-roadmap.md` Part 4 |
+| 6 (compliance/governance features) | `research-and-roadmap.md` Part 1 §2 |
+| 7 (AI layer) | `architecture.md` Part 2 (§2.1–2.4, §2.7) |
+| 8 (long-term) | `research-and-roadmap.md` Part 1 §2 (⏳ Later), `research-and-roadmap.md` Part 5 |
+| 9 (embedding/research-backed AI) | `architecture.md` §2.5–2.6 |
 
 ---
 
@@ -404,7 +403,7 @@ plan rather than its exact file-path assumptions.
 
 ### Must-do before v1:
 1. **Live Docker e2e validation** — `make up && make smoke-compact`
-2. **Frontend Cost UI** — implement `ui-cost-savings.md` spec
+2. **Frontend Cost UI** — implement `research-and-roadmap.md` Part 7 spec
 3. **Native engine Rust implementation** — integrate iceberg-rust + DataFusion
 
 ### Nice-to-have:

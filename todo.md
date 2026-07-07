@@ -2,7 +2,7 @@
 
 Phased, actionable checklist. Mirrors the roadmap in `plan.md` §6 and the sequenced work in
 `docs/EXECUTION_PLAN.md`. Check items off as you go and keep this file honest. `P0`…`P7` = original
-phase plan; `P8+` = post-MVP extensions from `docs/RECOMMENDATIONS.md` and the 2026 feature roadmap.
+phase plan; `P8+` = post-MVP extensions from `research-and-roadmap.md` Part 1 and the 2026 feature roadmap.
 
 Legend: `[ ]` todo · `[~]` in progress / partial · `[x]` done · `(parity)` must match the reference impl.
 
@@ -53,7 +53,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       opt-in (`--cost-full-scan`), age-guarded, cadence-gated; carry-forward last-known when skipped.
 - [x] Migration (additive): `cryo.table_cost` + `cryo.table_cost_history` + `table_stats` cost summary
       columns + `audit_log.actual_bytes_freed`; persist from `scanner/run.py`.
-- [x] **Scanner concurrency** (`RECOMMENDATIONS.md` §1.2): parallel manifest reads
+- [x] **Scanner concurrency** (`research-and-roadmap.md` Part 1 §1.2): parallel manifest reads
       (`CRYO_SCAN_PARALLEL_MANIFESTS`) + parallel table scans (`CRYO_SCAN_PARALLEL_TABLES`).
 - [x] **Health signals** (`scanner/signals.py`): `metadata_to_data_ratio`, streaming/commit-velocity
       (`is_streaming`), V2/V3 format detection + upgrade candidates.
@@ -134,7 +134,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] **Sources & Destinations** management + health checks.
 - [x] **Lakehouse schema filter**: per-source `maintenance_schema_names` allowlist on Connections;
       empty = all namespaces; scanner + scheduler + ad-hoc runs honor the filter.
-- [x] **UI/UX polish** per `docs/UI_UX_DESIGN.md`: dark theme toggle, always-dark sidebar,
+- [x] **UI/UX polish** per `research-and-roadmap.md` Part 6: dark theme toggle, always-dark sidebar,
       IBM Plex typography, focus rings, reduced-motion, log-line animation.
 - [x] WebSocket endpoint `/ws/runs/{id}` streams run snapshots plus Redis-backed live log events.
 - [x] **Log streaming** for scan runs and maintenance runs — live log tail with replay and polling
@@ -170,15 +170,15 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       deployment templates, Ingress, HPAs, or leader-lease manifests yet.
 - [~] Security pass: JWT auth works; secret encryption, RBAC hardening, destructive-op `force` audit
       incomplete.
-- [~] e2e smoke (`make smoke-compact`, `scripts/smoke_cryo_e2e.py`) exists; not yet in CI pipeline.
+  - [~] e2e smoke (`make smoke-compact`, `scripts/smoke_cryo_e2e.py`) exists; not yet in CI pipeline.
 - [x] Native expire + orphan e2e (`tests/integration/native/`, `make test-native-e2e-local`, CI `native-e2e` job).
-- [~] Docs: `docs/operator-runbook.md` + `docs/local-development.md` exist; deployment guide +
-      README/`hld.md`/`lld.md` polish pending.
+- [~] Docs: `docs/operator-guide.md` exists; deployment guide +
+        README/`hld.md`/`lld.md` polish pending.
 
 ---
 
 ## P8 — Event fast-path (control plane) ✅
-Per `docs/EXECUTION_PLAN.md` Phase 4 / `ARCHITECTURE_AND_AI_STRATEGY.md` §1.2 — Netflix-style event reaction
+Per `docs/EXECUTION_PLAN.md` Phase 4 / `architecture.md` §1.2 — Netflix-style event reaction
 alongside cron sweep.
 
 - [x] `cryo/events/watcher.py` — polls `current-snapshot-id` for hot/streaming tables; publishes
@@ -188,14 +188,14 @@ alongside cron sweep.
 - [x] `cryo cli events` — CLI entrypoint; cron full-scan remains slow-path backstop.
 
 ## P9 — Native Rust engine (`cryo-engine`) ⚠️
-Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §1.5 and `docs/RUST_ENGINE_PRODUCTION_HARDENING.md`.
+Per `architecture.md` §1.5 and `architecture.md` §1.5.
 
 - [x] `EngineType.NATIVE`; `RenderedStatement.payload` field; `cryo/engines/native/engine.py` adapter.
-- [x] `cryo-engine/` Rust crate — JSON stdin/stdout protocol, progress JSONL on stderr.
+  - [x] `cryo-engine/` Rust crate — JSON stdin/stdout protocol, progress JSONL on stderr.
 - [x] Worker subprocess adapter (`cryo/engines/native/runner.py`) + source catalog config at execution time.
 - [x] Default platform preset `default-native-deep` (deep, no cron) seeded on fresh migrate.
 - [~] Full write operations via iceberg-rust — `expire_snapshots` commits; compaction/orphans/manifests
-      still partial upstream. See `docs/RUST_ENGINE_PRODUCTION_HARDENING.md` checklist.
+     still partial upstream. See `architecture.md` §1.5 checklist.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.
 - [ ] Production hardening: retries, Prometheus metrics, distributed mode, benchmark suite.
 
@@ -207,7 +207,7 @@ Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §1.5 and `docs/RUST_ENGINE_PRODUCTIO
       `GET /sources/{id}/catalog-latency`.
 
 ## P11 — AI layer ✅
-Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` Part 2 — no freeform NL-to-SQL against live Iceberg.
+Per `architecture.md` Part 2 — no freeform NL-to-SQL against live Iceberg.
 
 - [x] `cryo/ai/anomaly.py` — EWMA/z-score over `table_stats_history`; `GET /tables/{id}/anomalies`.
 - [x] `cryo/ai/explain.py` — `explain_health_change()`; `POST /tables/{id}/explain-health`.
@@ -263,10 +263,10 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       (Remaining: multi-region price tables, non-storage AWS cost lines like data transfer.)
 - [ ] Saved filters / scheduled saved views in the Explorer.
 - [x] Redis WebSocket fanout for live run console (run events via Redis Streams + `/ws/runs/{id}`).
-- [ ] Self-host IBM Plex fonts (woff2) instead of Google Fonts CDN (`docs/UI_UX_DESIGN.md` §8).
+- [ ] Self-host IBM Plex fonts (woff2) instead of Google Fonts CDN (`research-and-roadmap.md` Part 6 §8).
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
-- [ ] Native engine production hardening — see `docs/RUST_ENGINE_PRODUCTION_HARDENING.md`.
+- [ ] Native engine production hardening — see `architecture.md` §1.5.
 
 ## Open decisions to confirm (see `plan.md` §7)
 - [ ] Spark execution target: **EMR Serverless** (assumed, implemented) vs EMR-on-EKS / Livy / Spark Connect.

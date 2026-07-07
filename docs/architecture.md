@@ -1,12 +1,9 @@
-# Cryo: Architecture & AI Strategy — Decided
+# Architecture
 
-> Written 2026-07-03; extended 2026-07-05 with §2.5/2.6 (embedding-based intelligence and a
-> research-paper-grounded "cutting edge" track). This is a **decision** document, not an options
-> survey — the point was to pick one architecture and one AI approach, grounded in real prior art,
-> and commit to implementing them. It extends `docs/RECOMMENDATIONS.md` (what to build) with *how*
-> to build it and *what the AI layer actually is*.
-
----
+> Last reconciled: 2026-07-05, against `main` @ the July hardening pass. Sources (merged into
+> this doc): `architecture.md` (the architecture decision + AI strategy),
+> `architecture.md` (component layering), `architecture.md` (migration policy),
+> `docs/README.md` (the directory tour).
 
 ## Part 1 — The architecture decision
 
@@ -66,7 +63,7 @@ sweep, is the one addition worth making.
   │  watcher.py — polls current-snapshot-id at a tight interval    │
   │  (seconds) *only* for tables already flagged "hot" by a prior   │
   │  scan (streaming/commit-velocity detection — see               │
-  │  RECOMMENDATIONS.md Part 2) → publishes TableCommitted to a     │
+  │  research-and-roadmap.md Part 1 §2) → publishes TableCommitted to a     │
   │  Redis Stream on change.                                        │
   │                                                                │
   │  consumer.py — Scanner + Governor subscribe as a Redis Streams  │
@@ -91,7 +88,7 @@ mechanism yet.
 
 ### 1.3 Execution engines (recap — no change to earlier guidance)
 
-Trino and Spark/EMR stay primary; finish P2 and P6 first (see `RECOMMENDATIONS.md` Part 0/1). A
+Trino and Spark/EMR stay primary; finish P2 and P6 first (see `research-and-roadmap.md` Part 1 §0/1). A
 scoped Rust/DataFusion compaction component is legitimate longer-term — Netflix itself moved this
 direction once JVM overhead was empirically their bottleneck — but only once profiling on the
 finished Python/Trino/Spark path actually justifies it, not speculatively.
@@ -122,6 +119,10 @@ and Spark — not a replacement, and not a fallback.** All three sit behind the
 against in an engine-agnostic way. This *is* the interoperability architecture — it already
 exists in the codebase, it just needs a third implementation alongside `engines/trino/` and
 `engines/spark/`.
+
+> **Update (2026-07-07):** the `cryo-engine` Rust crate was removed from this repo. Native
+> engine support is currently disabled and unused; the scaffold path above is preserved here for
+> reference. The platform works end-to-end today on Trino and Spark/EMR.
 
 **Two small, backward-compatible changes make the existing interface fit a non-SQL engine:**
 - `RenderedStatement` currently carries `sql: str`, which is SQL-shaped. Add an optional
@@ -309,7 +310,7 @@ a z-score suffices here and is more trustworthy than reaching for an LLM.
 
 **Extending the signal set (added 2026-07-05):** the "negative result" above notes Monte
 Carlo/Bigeye/Anomalo cover downstream DQ signals (null rates, drift) that Cryo doesn't. A May 2026
-workshop paper (see `RECOMMENDATIONS.md`'s "Zero-scan data quality signals" row,
+workshop paper (see `research-and-roadmap.md`'s "Zero-scan data quality signals" row,
 [arXiv:2605.30308](https://arxiv.org/pdf/2605.30308v1)) shows those same DQ signals are derivable
 straight from Iceberg's own manifest/Puffin metadata, zero data scans — meaning Cryo could close
 that gap itself, feeding the same anomaly detector above, rather than needing a separate DQ tool
@@ -346,7 +347,7 @@ Embedding-based intelligence *about* Cryo's own metadata is a different, validat
 
 **What we build:**
 1. **Embedding-based PII/sensitive-column classification** — extends the governance-gating already
-   planned in 2.3/`RECOMMENDATIONS.md`: embed column name + type + sample values, compare against a
+   planned in 2.3/`research-and-roadmap.md`: embed column name + type + sample values, compare against a
    small library of known-PII embeddings, flag likely-PII columns that aren't already tagged,
    feeding the same "don't compact/rewrite untagged sensitive columns" gate.
 2. **Embedding fallback for Cryo Copilot** — when a question doesn't match the curated "verified
@@ -388,7 +389,7 @@ bet production reliability on yet."
   (SIGMOD 2024, deployed in Redshift) is the reference architecture: a lightweight per-instance
   model (XGBoost-class) with Bayesian uncertainty, plus a transferable global model, trained on
   realized outcomes (predicted vs. actual). Cryo already has the missing piece this needs —
-  `RECOMMENDATIONS.md`'s planned "realized savings" capture (predicted vs. `actual_bytes_freed`) is
+  `research-and-roadmap.md`'s planned "realized savings" capture (predicted vs. `actual_bytes_freed`) is
   exactly the training signal. Add uncertainty quantification in the style of **Roq** (risk-aware
   learned cost models) or **conformal prediction for learned query optimization**, so Cryo falls
   back to the current heuristic whenever the model isn't confident, rather than trusting a black
@@ -471,7 +472,7 @@ bet production reliability on yet."
 
 ## Part 3 — Sequencing addendum
 
-This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
+This slots into the phases already laid out in `research-and-roadmap.md` Part 1 §3:
 
 - **Alongside Phase A/B** (finishing P2/P3/P6, cost dashboard): stand up `cryo/events/` as a small,
   isolated addition — it doesn't block or get blocked by the engine-completion work, and the
@@ -496,6 +497,159 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
   pass against Cryo's real fleet data before being treated as shipped.
 - **Long-term/optional**: the write-gated `run_preset` MCP tool, once there's enough operational
   trust in the read-only surface to justify agent-triggered execution.
+
+---
+
+## Part 4 — Backend component layering
+
+> Merged from `architecture.md`. This is the developer-side view: how the code is
+> organized, who calls what, and the layering rules.
+
+Cryo separates metadata reads from maintenance execution.
+
+```text
+Sources          Scanner             Postgres
+Iceberg REST ->  PyIceberg scan  ->   tables / stats / partitions / history
+
+Presets + rules + assignments  ->  Scheduler / API effective-preset resolution
+
+Governor  ->  Queue + locks + live load probes  ->  Worker  ->  Engine
+                                                     Planner -> Trino/Spark renderer
+```
+
+### Source side
+
+Sources answer where table metadata is read from. Adapters in `cryo/sources/`:
+
+- `cryo/sources/base.py` — `SourceCatalog` Protocol.
+- `cryo/sources/pyiceberg_catalog.py` — Iceberg REST / HMS / Glue via PyIceberg.
+- `cryo/sources/factory.py` — `source_catalog_for(source)`.
+
+Scanner output is persisted into Postgres and becomes the input for the table explorer, health
+views, preset rules, and planner decisions.
+
+### Destination side
+
+Destinations answer where maintenance executes. Engines in `cryo/engines/`:
+
+- `cryo/engines/trino/` — Trino client, live load probe, statement execution.
+- `cryo/engines/spark/` — Spark SQL renderer + EMR execution adapter.
+- `cryo/engines/native/` — Rust/DataFusion adapter (experimental; scaffolded but unused).
+- `cryo/engines/flink/` — Flink table-maintenance config emitter (team-operated, not Cryo-executed).
+
+Sources and destinations are intentionally separate. A table can be discovered from one source and
+maintained through a destination selected by its effective preset.
+
+### Planner
+
+The planner is engine-agnostic:
+
+- It consumes latest table stats and partition rows.
+- It produces `MaintenancePlan` operations with structured predicates.
+- It does **not** generate SQL.
+
+Renderers are engine-specific:
+
+- Trino SQL lives in `cryo/engines/trino/sql.py`.
+- Spark SQL lives in `cryo/engines/spark/sql.py`.
+
+### Predicate handling
+
+API filters, assignment filters, and preset rules share one predicate grammar in
+`cryo/api/predicates.py`.
+
+The same JSON predicate can be:
+
+- compiled to SQLAlchemy for database filtering
+- evaluated in memory for scheduler rule matching
+
+This prevents UI/API selection from diverging from scheduled rule resolution.
+
+### API layer
+
+`cryo/api/routes.py` registers the P4 surface under the FastAPI app. Route handlers stay thin
+and delegate DB/domain behavior to repository helpers (`cryo/db/repositories/`).
+
+### Orchestration
+
+The orchestration core is implemented as libraries and tested with in-memory stores:
+
+- `cryo/scheduler` resolves preset rules and builds scheduled run drafts.
+- `cryo/governor` admits jobs based on load, locks, cooldown, off-peak windows, and deadlines.
+- `cryo/worker` builds plans, renders statements, executes an engine, and records audits.
+- `cryo/queue` provides Redis and in-memory queue/lock implementations.
+
+### Data flow for a scan
+
+1. Load enabled sources from Postgres.
+2. Use the source adapter to list tables.
+3. Assign tables to a scanner chunk deterministically.
+4. Load each Iceberg table through PyIceberg.
+5. Analyze file, partition, snapshot, manifest, and property metadata.
+6. Upsert latest table stats and append history.
+
+### Data flow for a maintenance preview
+
+1. API receives table stats and partition rows.
+2. Planner builds an engine-agnostic `MaintenancePlan`.
+3. Trino or Spark renderer turns operations into SQL.
+4. API returns rendered statements and planner notes.
+5. No execution happens during preview.
+
+### Data flow for a scheduled run
+
+This flow is partially implemented:
+
+1. Scheduler resolves effective presets.
+2. Scheduler creates run/job drafts.
+3. Queue receives pending jobs.
+4. Governor admits jobs within capacity.
+5. Worker claims admitted jobs and executes.
+6. Audit and job status are persisted.
+
+The core components are present, but the production service loop and full DB-backed end-to-end flow
+still need completion.
+
+---
+
+## Part 5 — Migration policy
+
+> Merged from `architecture.md`. Decision rationale preserved here.
+
+**Decision: do not squash** the migration history before public launch.
+
+### Why not squash
+
+1. **Squashing 28 migrations is not free.** Anyone running the existing migration chain (every
+   install since the first commit, every developer with a `git pull` history) would need to
+   either drop their database and re-create it, or hand-merge a squashed replacement that
+   produces the same schema. For a codebase that has no production installs yet this is
+   survivable — but only if done **before** the first external contributor clones. Once we
+   are public, doing it later is far more disruptive than doing it now.
+2. **Squashing hides bug archaeology.** Three of the revisions resolve real bugs (the
+   `abac_policies` FK constraint, the band-state column rename, the initial schema column
+   default alignment). Those commit messages are searchable in `git log` after the fact —
+   useful for an external reviewer tracing a column through history.
+3. **Migration history is not a behavior signal for an evaluator in the same way §3 of
+   `OSS_READINESS.md` suggested.** A reviewer skimming `git log` will see the commit rhythm
+   immediately regardless of whether migrations are squashed — squashing does not disguise
+   "this was AI-velocity-built." The honest answer is to own the velocity in the README and
+   PR template, not to launder the history.
+4. **The "28 migrations in 5 days" framing counts only additive changes** (most are one
+   `CREATE TABLE` or one column). The schema surface area is small: one schema (`cryo`),
+   one base, ~35 tables. New external contributors will not be slowed by the migration count.
+
+### What we ship instead
+
+- A short **Migrations** section in the root `README.md` explaining the additive-first policy,
+  the schema layout (one `cryo` schema, every table uses UUID PKs), and the
+  `alembic upgrade head` quick command. Removes the "is this normal?" question for a
+  first-time reader.
+- The **squash is preserved as an option** for a future v1.0.0 cutoff, at which point a
+  single `20260101_0001_initial_baseline.py` can be generated from a freshly-built dev
+  database using `pg_dump --schema-only` filtered to the `cryo` schema. The historical
+  revisions remain in `git log` / GitHub history; the new install path starts from one
+  file. This is a **one-line decision** documented here, not a code change.
 
 ---
 
@@ -531,4 +685,4 @@ This slots into the phases already laid out in `docs/RECOMMENDATIONS.md` Part 3:
 - [OmniMatch — GNN-based join discovery, VLDB 2025](https://arxiv.org/abs/2403.07653); [AutoG](https://arxiv.org/abs/2501.15282); [JOINT](https://arxiv.org/pdf/2509.07230); ["Graph Neural Networks for Databases" survey, IJCAI 2025](https://arxiv.org/pdf/2502.12908)
 - [Sawmill — causal diagnosis from logs, SIGMOD 2024](https://dl.acm.org/doi/10.14778/3705829.3705836); [Salimi — quantifying causal effects on query answering via do-calculus](https://arxiv.org/pdf/1603.02705)
 
-- Internal: [`docs/RECOMMENDATIONS.md`](./RECOMMENDATIONS.md), [`docs/PERFORMANCE_AND_OPENNESS.md`](./PERFORMANCE_AND_OPENNESS.md), [`todo.md`](../todo.md)
+- Internal: [`research-and-roadmap.md`](./research-and-roadmap.md), [`todo.md`](../todo.md)

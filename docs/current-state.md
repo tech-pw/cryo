@@ -102,7 +102,7 @@ depend on iceberg-rust's table modification APIs which are still stabilizing ups
 
 ### Phase 9 — AI Strategy completion ✅
 
-Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §2.5–2.6 (production-wired):
+Per `architecture.md` §2.5–2.6 (production-wired):
 
 - `cryo/ai/pii.py` + `cryo/compliance/pii_gate.py` — PII classification gates rewrite ops in Governor
 - `cryo/ai/embeddings.py`, `similarity.py`, copilot embedding fallback (`POST /ai/copilot/search`)
@@ -148,7 +148,7 @@ Per `docs/ARCHITECTURE_AND_AI_STRATEGY.md` §2.5–2.6 (production-wired):
 
 ### Web UI ✅
 
-React/TypeScript frontend per `UI_UX_DESIGN.md`:
+React/TypeScript frontend per `research-and-roadmap.md` Part 6:
 
 - 7 pages: Health, Cost, Tables, Table Detail, Presets, Runs, Connections
 - Dark theme with toggle (persisted to localStorage, respects system preference)
@@ -169,7 +169,7 @@ React/TypeScript frontend per `UI_UX_DESIGN.md`:
 
 ### Scanner Concurrency Optimizations ✅
 
-Implemented per `RECOMMENDATIONS.md` Part 1.2:
+Implemented per `research-and-roadmap.md` Part 1 §1.2:
 
 - **Parallel manifest fetching:** `cryo/scanner/analyze.py::iter_data_files()` uses a thread pool
   to fetch manifest entries concurrently (default 8 workers, configurable via

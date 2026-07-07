@@ -32,8 +32,8 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
    new features, design decisions, operational notes, and any project knowledge future agents
    or maintainers will need. If you're picking up work with no other context, start at
    [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md) — it sequences everything in
-   `docs/RECOMMENDATIONS.md`, `docs/PERFORMANCE_AND_OPENNESS.md`, and
-   `docs/ARCHITECTURE_AND_AI_STRATEGY.md` into an ordered, actionable plan.
+   `docs/research-and-roadmap.md Part 1`, `docs/research-and-roadmap.md Part 4`, and
+   `docs/architecture.md` into an ordered, actionable plan.
 6. This file — conventions & guardrails.
 7. [`docs/LOCAL_DEV_ONLY_INVENTORY.md`](./docs/LOCAL_DEV_ONLY_INVENTORY.md) — ad-hoc local datalake
    components that must not ship to prod; **update in the same PR** when adding new dev-only scripts

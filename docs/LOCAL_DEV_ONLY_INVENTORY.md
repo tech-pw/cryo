@@ -20,7 +20,7 @@ Keep entries grouped by category. For each item record:
 - **Purpose** — one line on what it simulates or enables locally
 - **Prod action** — `do-not-deploy`, `remove`, or `gate` (keep code but disable outside dev/CI)
 
-Related layout docs: [`local-docker-compose.md`](./local-docker-compose.md).
+Related layout docs: [`operator-guide.md`](./operator-guide.md#part-1-local-dev-stack).
 
 ---
 
@@ -132,6 +132,7 @@ Makefile targets that invoke the above against the datalake compose file:
 | [`start.sh`](../start.sh) | JupyterLab workflow: datalake + Postgres/Redis + demo seed | `gate` |
 | [`start-local.sh`](../start-local.sh) | Starts datalake + observability Docker stacks; Cryo app on host (see `START_DATALAKE`, `START_OBSERVABILITY`, `DOCKER_DATALAKE_*` env vars) | `gate` (datalake/obs sections only) |
 | [`requirements.txt`](../requirements.txt) | JupyterLab / PySpark / PyIceberg exploration deps (not backend `pyproject` prod install) | `gate` |
+| [`Pipfile`](../Pipfile) | Mirror of `requirements.txt` for `pipenv` users (not used in backend prod install) | `gate` |
 | [`notebooks/iceberg_local_demo.ipynb`](../notebooks/iceberg_local_demo.ipynb) | Interactive local Iceberg demo | `gate` |
 
 ---

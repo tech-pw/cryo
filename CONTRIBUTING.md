@@ -227,6 +227,35 @@ def analyze_table(
 
 - Keep commits atomic and focused
 - Write meaningful commit messages
+
+### Migrations (Alembic)
+
+Before merging any Alembic revision:
+
+- **Schema additions only** — Cryo's policy is additive-first. Prefer adding columns (nullable
+  or with sensible defaults) over altering types, renaming, or dropping. If a destructive
+  change is unavoidable, write the migration in two revisions (additive → backfill → switch
+  → cleanup) so it can be paused between each.
+- **One concern per migration** — don't bundle a column add + an index + a constraint into a
+  single revision. Each revision should be deployable in isolation.
+- **Reversible** — every revision's `downgrade()` must restore the previous schema. If a
+  migration is genuinely irreversible, leave `downgrade()` empty and call it out in the
+  docstring.
+- **UUID primary keys** — every table uses `UUID(as_uuid=True)` PKs, server-side
+  `gen_random_uuid()` default.
+- **Schema-qualified** — every table lives in the `cryo` schema; every operation in the
+  migration file passes `schema="cryo"`.
+- **Naming** — `<YYYYMMDD>_<HHMM>_<slug>.py`, slug describes the change (`query_log_config`,
+  `table_alert_ownership`). Revision ID is the filename without the `.py`.
+- **Test the migration** — write a test that runs `upgrade head` against an empty DB, then
+  `downgrade base`, then `upgrade head` again, asserting no errors and that the schema
+  matches expectations.
+- **No backfill data in migrations** — if existing rows need values, do it in a separate
+  one-off script run from CI before the migration lands, or in a follow-up revision gated
+  by a column-presence check.
+
+The full migration history is preserved (not squashed) per the decision recorded in
+[`architecture.md` Part 5](./docs/architecture.md#part-5--migration-policy).
 - Rebase before merging (squash if needed)
 
 ## Project Structure
