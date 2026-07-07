@@ -25,6 +25,8 @@ from cryo.db.models import (
     PresetRule,
     Source,
     Table,
+    TableAlertDispatch,
+    TableAlertSubscription,
     TableStats,
 )
 from tests.auth_helpers import (
@@ -34,7 +36,17 @@ from tests.auth_helpers import (
     ensure_test_jwt_secret,
 )
 
-UUID_ID_MODELS = (Source, Destination, Preset, PresetRule, Table, MaintenanceRun, MaintenanceJob)
+UUID_ID_MODELS = (
+    Source,
+    Destination,
+    Preset,
+    PresetRule,
+    Table,
+    MaintenanceRun,
+    MaintenanceJob,
+    TableAlertSubscription,
+    TableAlertDispatch,
+)
 
 
 @compiles(JSONB, "sqlite")

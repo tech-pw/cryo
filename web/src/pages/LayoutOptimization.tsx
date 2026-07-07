@@ -499,7 +499,7 @@ const ClusteringPlanDrawer = ({
             type="info"
             showIcon
             icon={<ExperimentOutlined />}
-            message="Recommendation"
+            title="Recommendation"
             description={
               <Space orientation="vertical">
                 <Text>
@@ -534,7 +534,7 @@ const ClusteringPlanDrawer = ({
             type={partitionRecommendation.data.cardinality_estimate === "unknown" ? "warning" : "info"}
             showIcon
             icon={<FilterOutlined />}
-            message="Partition Evolution Recommendation"
+            title="Partition Evolution Recommendation"
             description={
               <Space orientation="vertical" style={{ width: "100%" }}>
                 <Text>

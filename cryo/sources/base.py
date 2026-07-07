@@ -12,10 +12,21 @@ class SourceCatalog(Protocol):
         """Return ``(schema, table)`` identifiers."""
 
     def list_namespaces(self) -> list[str]:
-        """Return namespace names only -- one cheap call, no per-namespace table listing.
+        """Return top-level namespace names only -- one cheap call, no per-namespace table listing.
 
         Used for connection tests, which need to prove reachability quickly, not enumerate the
         whole catalog. See PyIcebergSourceCatalog.list_namespaces for why this matters.
+        """
+
+    def list_all_namespaces(self, *, max_depth: int = 3) -> list[str]:
+        """Recursively enumerate every namespace under the catalog root, up to ``max_depth`` levels.
+
+        ``list_namespaces()`` returns only top-level namespaces per the Iceberg spec -- for catalogs
+        that nest schemas (e.g. ``prod_data.bronze.events``) that's just ``prod_data``, which is
+        useless for the scan-scope picker. This walks ``list_namespaces(parent)`` for every parent
+        found so far. Capped at ``max_depth`` so a misconfigured catalog can't pin a worker.
+
+        Returns dotted namespace names (matching what ``list_tables_in_namespace`` accepts).
         """
 
     def list_tables_in_namespace(self, namespace: str) -> list[str]:

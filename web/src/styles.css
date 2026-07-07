@@ -502,12 +502,30 @@ textarea.mono-input {
 }
 
 .log-list {
-  max-height: 260px;
-  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.log-list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2, rgba(255, 255, 255, 0.02));
+}
+
+.log-list-body {
+  max-height: 260px;
+  overflow: auto;
   mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent);
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+
+.log-list-reconnect {
+  cursor: pointer;
+  text-decoration: underline dotted;
 }
 
 .log-list .ant-list-item {

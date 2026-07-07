@@ -207,6 +207,9 @@ class Table(Base):
         nullable=True,
         index=True,
     )
+    # Single accountable owner for SLA/quality breach alerts (see TableAlertSubscription for the
+    # broader consumer/watcher list). Free-text email -- no user directory to validate against.
+    owner_email: Mapped[str | None] = mapped_column(Text)
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(
@@ -230,6 +233,12 @@ class Table(Base):
     jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="table")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="table")
     protected_snapshots: Mapped[list[ProtectedSnapshot]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    alert_subscriptions: Mapped[list[TableAlertSubscription]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    alert_dispatches: Mapped[list[TableAlertDispatch]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
 
@@ -412,6 +421,55 @@ class ProtectedSnapshot(Base):
     )
 
     table: Mapped[Table] = relationship(back_populates="protected_snapshots")
+
+
+class TableAlertSubscription(Base):
+    """A consumer/watcher who wants SLA or data-quality breach alerts for a table.
+
+    Distinct from ``Table.owner_email`` -- the owner is the single accountable person,
+    subscriptions are the broader "anyone who reads this table and wants to know" list.
+    """
+
+    __tablename__ = "table_alert_subscriptions"
+    __table_args__ = (UniqueConstraint("table_id", "email"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table: Mapped[Table] = relationship(back_populates="alert_subscriptions")
+
+
+class TableAlertDispatch(Base):
+    """Record of a breach-alert notification actually sent, for cooldown + audit history."""
+
+    __tablename__ = "table_alert_dispatches"
+    __table_args__ = (Index("ix_table_alert_dispatches_table", "table_id", "sent_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    reasons: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    recipients: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table: Mapped[Table] = relationship(back_populates="alert_dispatches")
 
 
 class TierPolicyRecord(TimestampMixin, Base):

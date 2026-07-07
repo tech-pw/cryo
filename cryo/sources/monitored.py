@@ -19,6 +19,13 @@ class MonitoredSourceCatalog:
     def list_namespaces(self) -> list[str]:
         return timed_catalog_call(self._monitor, "list_namespaces", self._catalog.list_namespaces)
 
+    def list_all_namespaces(self, *, max_depth: int = 3) -> list[str]:
+        return timed_catalog_call(
+            self._monitor,
+            "list_all_namespaces",
+            lambda: self._catalog.list_all_namespaces(max_depth=max_depth),
+        )
+
     def list_tables_in_namespace(self, namespace: str) -> list[str]:
         return timed_catalog_call(
             self._monitor,

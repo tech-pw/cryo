@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 from pyiceberg.catalog import load_catalog
 
 from cryo.sources.base import TableIdentifier
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,6 +50,51 @@ class PyIcebergSourceCatalog:
         (cryo/scanner/run.py), not the test button.
         """
         return sorted({_namespace_name(namespace) for namespace in self._catalog.list_namespaces()})
+
+    def list_all_namespaces(self, *, max_depth: int = 3) -> list[str]:
+        """BFS walk that returns every namespace under root, joined as dotted strings.
+
+        Iceberg's ``list_namespaces()`` is top-level only; nested namespaces (the common case in
+        REST catalogs, e.g. ``account.bronze.events``) are invisible to it. The scan-scope picker
+        calls this so users see the schemas they can actually target. The walk is breadth-first
+        and bounded by ``max_depth`` to keep worst-case latency predictable on hostile catalogs.
+
+        ``max_depth`` counts levels below root: ``max_depth=1`` returns only top-level namespaces,
+        ``max_depth=2`` adds one level of children, etc.
+        """
+        if max_depth < 1:
+            return []
+        seen: set[str] = set()
+        frontier: list[str] = [""]
+        for level in range(max_depth):
+            if not frontier:
+                break
+            next_frontier: list[str] = []
+            for parent in frontier:
+                try:
+                    children = (
+                        self._catalog.list_namespaces(parent)
+                        if parent
+                        else self._catalog.list_namespaces()
+                    )
+                except Exception:
+                    logger.warning(
+                        "list_namespaces failed for parent=%r at level=%d; skipping subtree",
+                        parent,
+                        level,
+                    )
+                    continue
+                for child in children:
+                    if not child:
+                        continue
+                    name = _namespace_name(child)
+                    if not name or name in seen:
+                        continue
+                    seen.add(name)
+                    if level + 1 < max_depth:
+                        next_frontier.append(name)
+            frontier = next_frontier
+        return sorted(seen)
 
     def list_tables_in_namespace(self, namespace: str) -> list[str]:
         """Table names within a single, already-known namespace -- one call, same cost as

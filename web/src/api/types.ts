@@ -141,8 +141,16 @@ export interface TableRead {
   consecutive_scan_failures?: number;
   last_scan_error?: string | null;
   last_scan_error_at?: string | null;
+  owner_email?: string | null;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
+}
+
+export interface TableAlertSubscriptionRead {
+  id: UUID;
+  table_id: UUID;
+  email: string;
+  created_at: string;
 }
 
 export interface PiiMatchRead {

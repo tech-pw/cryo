@@ -130,6 +130,24 @@ class BenefitScoreUpdaterRunner(DaemonRunner):
             )
 
 
+class AlertDispatcherRunner(DaemonRunner):
+    """Checks owned/subscribed tables for SLA/data-quality breaches and notifies them."""
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().table_alert_dispatch_interval_hours * 3600
+        super().__init__(
+            "table-alert-dispatcher",
+            interval or settings_interval,
+        )
+
+    def _tick(self) -> None:
+        from cryo.scheduler.alert_dispatcher import run_alert_dispatch
+
+        sent = run_alert_dispatch()
+        if sent:
+            self._logger.info("Dispatched %s table breach alert(s)", sent)
+
+
 class GovernorRunner(DaemonRunner):
     """Runs the admission governor wave loop."""
 
@@ -422,12 +440,18 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         daemon=True,
     )
     updater_thread.start()
+
+    alert_dispatcher = AlertDispatcherRunner()
+    alert_thread = Thread(target=alert_dispatcher.run, name="table-alert-dispatcher", daemon=True)
+    alert_thread.start()
     try:
         runner = SchedulerRunner(interval=args.check_interval)
         _run_with_signal(runner, service_name="scheduler")
     finally:
         updater_stop.set()
         updater_thread.join(timeout=5)
+        alert_dispatcher.stop()
+        alert_thread.join(timeout=5)
 
 
 def run_events(args: argparse.Namespace) -> NoReturn:
@@ -455,6 +479,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         SchedulerRunner(interval=args.check_interval, wiring=wiring),
         ScannerRunner(interval=args.poll_interval, wiring=wiring),
         BenefitScoreUpdaterRunner(),
+        AlertDispatcherRunner(),
     ]
     for runner, (service_name, port) in zip(runners[:4], health_services, strict=True):
 
@@ -484,7 +509,9 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    logger.info("Cryo serve started (governor + worker + scheduler + scanner + benefit scores)")
+    logger.info(
+        "Cryo serve started (governor + worker + scheduler + scanner + benefit scores + alerts)"
+    )
     while not stop.is_set():
         time.sleep(1)
 
