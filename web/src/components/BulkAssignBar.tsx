@@ -2,6 +2,7 @@ import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import type { DestinationRead, Mode, PresetRead, UUID } from "../api/types";
 import type { Predicate } from "../lib/predicate";
+import { formatEngineLabel } from "../lib/engines";
 import { ConfirmAction } from "./confirm";
 
 export type BulkSelection =
@@ -55,7 +56,7 @@ export const BulkAssignBar = ({
     value: preset.id
   }));
   const destinationOptions = destinations.map((destination) => ({
-    label: `${destination.name} · ${formatEngine(destination.engine)}`,
+    label: `${destination.name} · ${formatEngineLabel(destination.engine)}`,
     value: destination.id
   }));
 
@@ -106,7 +107,7 @@ export const BulkAssignBar = ({
           <Tooltip
             title={
               activeDestination
-                ? `${activeDestination.name} runs maintenance through ${formatEngine(activeDestination.engine)}.`
+                ? `${activeDestination.name} runs maintenance through ${formatEngineLabel(activeDestination.engine)}.`
                 : "Choose the engine that will run maintenance."
             }
           >
@@ -202,5 +203,3 @@ export const BulkAssignBar = ({
 };
 
 const formatMode = (mode: Mode): string => mode.replace(/_/g, " ");
-
-const formatEngine = (engine: DestinationRead["engine"]): string => engine.replace(/_/g, " ");

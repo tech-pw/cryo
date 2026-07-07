@@ -1,0 +1,17 @@
+.git
+.local
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+__pycache__
+*.pyc
+
+web/node_modules
+web/dist
+
+cryo-native/target
+cryo-engine/target/*
+!cryo-engine/target/release
+cryo-engine/target/release/*
+!cryo-engine/target/release/cryo-engine

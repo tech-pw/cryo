@@ -28,7 +28,7 @@ Core services (full local stack via `make up`):
 |---------|--------------|---------|-----|
 | `cryo-api` | `docker-compose.yml` | FastAPI backend | http://localhost:8000 |
 | `cryo-web` | `docker-compose.yml` | React UI | http://localhost:5173 |
-| `cryo-scanner` | `docker-compose.yml` | Catalog scanner CronJob-style worker | — |
+| `cryo-scanner` | `docker-compose.yml` | Ad-hoc scan queue consumer (`cryo scanner`) | — |
 | `cryo-scheduler` | `docker-compose.yml` | Maintenance scheduler (leader-elected) | — |
 | `cryo-governor` | `docker-compose.yml` | Load-aware admission controller | — |
 | `cryo-worker` | `docker-compose.yml` | Maintenance job executor | — |

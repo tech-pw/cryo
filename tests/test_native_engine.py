@@ -13,7 +13,12 @@ from unittest.mock import patch
 
 import pytest
 
-from cryo.engines.native.engine import NativeCompactionConfig, NativeEngine, is_native_available
+from cryo.engines.native.engine import (
+    NativeCompactionConfig,
+    NativeEngine,
+    is_native_available,
+    is_pyo3_native_available,
+)
 
 
 class TestNativeEngineAvailability:
@@ -90,7 +95,7 @@ class TestNativeEngineIntegration:
 
         return paths, tmpdir
 
-    @pytest.mark.skipif(not is_native_available(), reason="cryo_native not compiled")
+    @pytest.mark.skipif(not is_pyo3_native_available(), reason="cryo_native not compiled")
     def test_binpack_compaction(self, tmp_parquet_files):
         """BinPack should merge multiple small files into fewer large files."""
         input_files, tmpdir = tmp_parquet_files
@@ -111,7 +116,7 @@ class TestNativeEngineIntegration:
         assert result.total_input_rows == 0
         assert result.total_output_rows == 0
 
-    @pytest.mark.skipif(not is_native_available(), reason="cryo_native not compiled")
+    @pytest.mark.skipif(not is_pyo3_native_available(), reason="cryo_native not compiled")
     def test_sort_compaction(self, tmp_parquet_files):
         """Sort compaction should produce sorted output files."""
         input_files, tmpdir = tmp_parquet_files
@@ -125,7 +130,7 @@ class TestNativeEngineIntegration:
         assert result.ok
         assert result.total_output_rows == result.total_input_rows
 
-    @pytest.mark.skipif(not is_native_available(), reason="cryo_native not compiled")
+    @pytest.mark.skipif(not is_pyo3_native_available(), reason="cryo_native not compiled")
     @pytest.mark.xfail(
         reason=(
             "KNOWN GAP: cryo_native.PyCompactionEngine.analyze_files returns a list of plain "
@@ -148,7 +153,7 @@ class TestNativeEngineIntegration:
             assert result.file_size_bytes > 0
             assert "id" in result.columns
 
-    @pytest.mark.skipif(not is_native_available(), reason="cryo_native not compiled")
+    @pytest.mark.skipif(not is_pyo3_native_available(), reason="cryo_native not compiled")
     def test_effectiveness_ratio(self, tmp_parquet_files):
         """Verify effectiveness ratio is calculated correctly."""
         input_files, tmpdir = tmp_parquet_files

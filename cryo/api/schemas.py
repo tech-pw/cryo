@@ -337,6 +337,7 @@ class PresetCreate(BaseModel):
     priority: int = 100
     enabled: bool = True
     guardrails: JsonDict = Field(default_factory=dict)
+    is_default: bool = False
 
 
 class PresetRead(PresetCreate, OrmModel):
@@ -356,6 +357,7 @@ class PresetPatch(BaseModel):
     priority: int | None = None
     enabled: bool | None = None
     guardrails: JsonDict | None = None
+    is_default: bool | None = None
 
 
 class PresetRuleCreate(BaseModel):
@@ -389,7 +391,7 @@ class EffectivePresetResponse(BaseModel):
     table_id: uuid.UUID
     preset_id: uuid.UUID | None = None
     preset_name: str | None = None
-    provenance: Literal["assignment", "rule", "none"]
+    provenance: Literal["assignment", "rule", "default", "none"]
     rule_id: uuid.UUID | None = None
 
 

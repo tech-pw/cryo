@@ -140,3 +140,11 @@ def test_build_plan_chunks_large_partitioned_tables_and_preserves_deep_order() -
         for operation in plan.operations
         if operation.type is OperationType.OPTIMIZE
     ] == [1, 2]
+
+
+def test_orphan_params_emit_min_age_hours() -> None:
+    from cryo.planner.planner import _orphan_params
+
+    params = _orphan_params({"orphan_retention_days": 3})
+    assert params["retention_days"] == 3
+    assert params["orphan_min_age_hours"] == 72

@@ -152,7 +152,8 @@ make seed               # create demo Iceberg tables (scripts/)
 # Backend
 make install            # uv/pip install -e .[dev]
 make migrate            # alembic upgrade head
-make scan               # run scanner once against the local source
+make scan               # run one-shot batch scanner against local sources
+make scanner            # run ad-hoc scan queue consumer
 make api                # run FastAPI (uvicorn) locally
 make worker             # run a worker
 make governor           # run the governor

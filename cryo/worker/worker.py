@@ -55,6 +55,7 @@ class MaintenanceJobRecord:
 class TableMaintenanceData:
     stats: Mapping[str, Any]
     partitions: Sequence[Mapping[str, Any]] = ()
+    source_config: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,8 @@ class AuditRecord:
     input_files_count: int | None = None
     output_files_count: int | None = None
     actual_bytes_freed: int | None = None
+    snapshots_expired: int | None = None
+    manifests_rewritten: int | None = None
     actor: str | None = None
 
 
@@ -219,10 +222,12 @@ class FakeMaintenanceEngine:
         engine_type: EngineType | str = EngineType.TRINO,
         *,
         fail_actions: set[OperationType] | None = None,
+        skip_actions: set[OperationType] | None = None,
         bytes_freed_by_action: dict[OperationType, int] | None = None,
     ) -> None:
         self.type = engine_type
         self.fail_actions = fail_actions or set()
+        self.skip_actions = skip_actions or set()
         self.bytes_freed_by_action = bytes_freed_by_action or {}
         self.executed: list[RenderedStatement] = []
 
@@ -244,6 +249,13 @@ class FakeMaintenanceEngine:
             raise RuntimeError(f"fake engine failed {stmt.action.value}")
         self.executed.append(stmt)
         job_id = str(ctx.job_id)[:8] if ctx and ctx.job_id else "noctx"
+        if stmt.action in self.skip_actions:
+            return BaseExecResult(
+                ok=True,
+                skipped=True,
+                engine_ref=f"fake-{job_id}-{len(self.executed)}",
+                detail=f"skipped {stmt.action.value}",
+            )
         return BaseExecResult(
             ok=True,
             engine_ref=f"fake-{job_id}-{len(self.executed)}",
@@ -307,6 +319,8 @@ class Worker:
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
         engine_ref: str | None = None
+        had_success = False
+        had_skip = False
         try:
             table_data = self._store.get_table_data(job.table_id)
             table_ref = _table_ref_from_stats(table_data.stats)
@@ -342,6 +356,8 @@ class Worker:
             self._store.save_plan(job.id, plan_to_dict(plan))
 
             engine = self._engine_factory(destination)
+            if hasattr(engine, "with_source_config") and table_data.source_config:
+                engine = engine.with_source_config(table_data.source_config)
             statements = engine.render(plan)
             safe_publish(
                 self._run_events,
@@ -360,26 +376,101 @@ class Worker:
             )
             if not statements:
                 final_status = JobStatus.SKIPPED
-            for index, statement in enumerate(statements):
-                self._renew_table_lock(job)
-                from cryo.db.session import SessionLocal
-                from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+            elif engine.type is EngineType.NATIVE and hasattr(engine, "execute_plan"):
+                (
+                    native_status,
+                    native_error,
+                    native_engine_ref,
+                    native_had_success,
+                    native_had_skip,
+                ) = self._run_native_plan(
+                    engine=engine,
+                    plan=plan,
+                    job=job,
+                    table_ref=table_ref,
+                )
+                final_status = native_status
+                error = native_error
+                engine_ref = native_engine_ref or engine_ref
+                had_success = native_had_success
+                had_skip = native_had_skip
+            else:
+                for index, statement in enumerate(statements):
+                    self._renew_table_lock(job)
+                    from cryo.db.session import SessionLocal
+                    from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
-                try:
-                    table_uuid = UUID(job.table_id)
-                except ValueError:
-                    table_uuid = None
-                if table_uuid is not None:
-                    with SessionLocal() as abac_session:
-                        allowed, reason = evaluate_maintenance_allowed(
-                            abac_session,
-                            table_uuid,
-                            None,
-                            statement.action,
+                    try:
+                        table_uuid = UUID(job.table_id)
+                    except ValueError:
+                        table_uuid = None
+                    if table_uuid is not None:
+                        with SessionLocal() as abac_session:
+                            allowed, reason = evaluate_maintenance_allowed(
+                                abac_session,
+                                table_uuid,
+                                None,
+                                statement.action,
+                            )
+                        if not allowed:
+                            final_status = JobStatus.FAILED
+                            error = reason or "abac_denied"
+                            safe_publish(
+                                self._run_events,
+                                job.run_id,
+                                build_log_line(
+                                    run_id=job.run_id,
+                                    job_id=job.id,
+                                    table_id=job.table_id,
+                                    table_ref=table_ref,
+                                    operation=statement.action.value,
+                                    level="error",
+                                    message=error,
+                                ),
+                            )
+                            break
+                    started = perf_counter()
+                    exec_ctx = ExecContext(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        destination_id=job.destination_id,
+                        statement_index=index,
+                        replica=job.replica,
+                    )
+                    safe_publish(
+                        self._run_events,
+                        job.run_id,
+                        build_log_line(
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            table_ref=table_ref,
+                            operation=statement.action.value,
+                            engine=str(engine.type),
+                            message=(
+                                f"Executing {statement.action.value} "
+                                f"({index + 1}/{len(statements)})"
+                            ),
+                        ),
+                    )
+                    try:
+                        result = engine.execute(statement, _to_exec_ctx(exec_ctx))
+                    except Exception as exc:
+                        duration_ms = int((perf_counter() - started) * 1000)
+                        self._store.record_audit(
+                            AuditRecord(
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                action=statement.action,
+                                status="FAILED",
+                                engine=engine.type,
+                                detail=str(exc),
+                                duration_ms=duration_ms,
+                                input_files_count=None,
+                                output_files_count=None,
+                                actor=job.actor,
+                            )
                         )
-                    if not allowed:
-                        final_status = JobStatus.FAILED
-                        error = reason or "abac_denied"
                         safe_publish(
                             self._run_events,
                             job.run_id,
@@ -389,90 +480,106 @@ class Worker:
                                 table_id=job.table_id,
                                 table_ref=table_ref,
                                 operation=statement.action.value,
+                                engine=str(engine.type),
                                 level="error",
-                                message=error,
+                                message=f"{statement.action.value} failed: {exc}",
                             ),
                         )
+                        final_status = JobStatus.FAILED
+                        error = str(exc)
                         break
-                started = perf_counter()
-                exec_ctx = ExecContext(
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    destination_id=job.destination_id,
-                    statement_index=index,
-                    replica=job.replica,
-                )
-                safe_publish(
-                    self._run_events,
-                    job.run_id,
-                    build_log_line(
-                        run_id=job.run_id,
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        table_ref=table_ref,
-                        operation=statement.action.value,
-                        engine=str(engine.type),
-                        message=(
-                            f"Executing {statement.action.value} ({index + 1}/{len(statements)})"
-                        ),
-                    ),
-                )
-                try:
-                    result = engine.execute(statement, _to_exec_ctx(exec_ctx))
-                except Exception as exc:
-                    duration_ms = int((perf_counter() - started) * 1000)
-                    self._store.record_audit(
-                        AuditRecord(
-                            job_id=job.id,
-                            table_id=job.table_id,
-                            action=statement.action,
-                            status="FAILED",
-                            engine=engine.type,
-                            detail=str(exc),
-                            duration_ms=duration_ms,
-                            input_files_count=None,
-                            output_files_count=None,
-                            actor=job.actor,
-                        )
-                    )
-                    safe_publish(
-                        self._run_events,
-                        job.run_id,
-                        build_log_line(
-                            run_id=job.run_id,
-                            job_id=job.id,
-                            table_id=job.table_id,
-                            table_ref=table_ref,
-                            operation=statement.action.value,
-                            engine=str(engine.type),
-                            level="error",
-                            message=f"{statement.action.value} failed: {exc}",
-                        ),
-                    )
-                    final_status = JobStatus.FAILED
-                    error = str(exc)
-                    break
 
-                result_duration_ms = result.duration_ms
-                if result_duration_ms is None:
-                    result_duration_ms = int((perf_counter() - started) * 1000)
-                engine_ref = result.engine_ref or engine_ref
-                if not getattr(result, "ok", True):
-                    detail = result.error or result.detail or "engine execution failed"
+                    result_duration_ms = result.duration_ms
+                    if result_duration_ms is None:
+                        result_duration_ms = int((perf_counter() - started) * 1000)
+                    engine_ref = result.engine_ref or engine_ref
+                    if getattr(result, "skipped", False):
+                        had_skip = True
+                        detail = result.detail or result.error or "operation skipped"
+                        self._store.record_audit(
+                            AuditRecord(
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                action=statement.action,
+                                status="SKIPPED",
+                                engine=engine.type,
+                                detail=detail,
+                                duration_ms=result_duration_ms,
+                                actor=job.actor,
+                            )
+                        )
+                        safe_publish(
+                            self._run_events,
+                            job.run_id,
+                            build_log_line(
+                                run_id=job.run_id,
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                table_ref=table_ref,
+                                operation=statement.action.value,
+                                engine=str(engine.type),
+                                level="warning",
+                                message=f"Skipped {statement.action.value}: {detail}",
+                            ),
+                        )
+                        continue
+                    if not getattr(result, "ok", True):
+                        detail = result.error or result.detail or "engine execution failed"
+                        self._store.record_audit(
+                            AuditRecord(
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                action=statement.action,
+                                status="FAILED",
+                                engine=engine.type,
+                                detail=detail,
+                                duration_ms=result_duration_ms,
+                                input_files_count=getattr(result, "input_files_count", None),
+                                output_files_count=getattr(result, "output_files_count", None),
+                                actor=job.actor,
+                            )
+                        )
+                        safe_publish(
+                            self._run_events,
+                            job.run_id,
+                            build_log_line(
+                                run_id=job.run_id,
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                table_ref=table_ref,
+                                operation=statement.action.value,
+                                engine=str(engine.type),
+                                level="error",
+                                message=f"{statement.action.value} failed: {detail}",
+                            ),
+                        )
+                        final_status = JobStatus.FAILED
+                        error = detail
+                        break
+                    had_success = True
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
                             table_id=job.table_id,
                             action=statement.action,
-                            status="FAILED",
+                            status="OK",
                             engine=engine.type,
-                            detail=detail,
+                            detail=result.detail,
                             duration_ms=result_duration_ms,
                             input_files_count=getattr(result, "input_files_count", None),
                             output_files_count=getattr(result, "output_files_count", None),
+                            actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
                             actor=job.actor,
                         )
                     )
+                    success_message = (
+                        f"Completed {statement.action.value} in {result_duration_ms}ms"
+                    )
+                    if result.engine_ref:
+                        success_message += f" (ref {result.engine_ref})"
+                    bytes_freed = getattr(result, "actual_bytes_freed", None)
+                    if bytes_freed:
+                        success_message += f"; freed {bytes_freed} bytes"
                     safe_publish(
                         self._run_events,
                         job.run_id,
@@ -483,47 +590,11 @@ class Worker:
                             table_ref=table_ref,
                             operation=statement.action.value,
                             engine=str(engine.type),
-                            level="error",
-                            message=f"{statement.action.value} failed: {detail}",
+                            message=success_message,
                         ),
                     )
-                    final_status = JobStatus.FAILED
-                    error = detail
-                    break
-                self._store.record_audit(
-                    AuditRecord(
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        action=statement.action,
-                        status="OK",
-                        engine=engine.type,
-                        detail=result.detail,
-                        duration_ms=result_duration_ms,
-                        input_files_count=getattr(result, "input_files_count", None),
-                        output_files_count=getattr(result, "output_files_count", None),
-                        actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
-                        actor=job.actor,
-                    )
-                )
-                success_message = f"Completed {statement.action.value} in {result_duration_ms}ms"
-                if result.engine_ref:
-                    success_message += f" (ref {result.engine_ref})"
-                bytes_freed = getattr(result, "actual_bytes_freed", None)
-                if bytes_freed:
-                    success_message += f"; freed {bytes_freed} bytes"
-                safe_publish(
-                    self._run_events,
-                    job.run_id,
-                    build_log_line(
-                        run_id=job.run_id,
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        table_ref=table_ref,
-                        operation=statement.action.value,
-                        engine=str(engine.type),
-                        message=success_message,
-                    ),
-                )
+            if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
+                final_status = JobStatus.SKIPPED
         except Exception as exc:
             final_status = JobStatus.FAILED
             error = str(exc)
@@ -614,6 +685,250 @@ class Worker:
     def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is not None:
             self._lock_store.release_table_lock(job.table_id, job.id)
+
+    def _run_native_plan(
+        self,
+        *,
+        engine: ExecutableMaintenanceEngine,
+        plan: MaintenancePlan,
+        job: MaintenanceJobRecord,
+        table_ref: str | None,
+    ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
+        from cryo.db.session import SessionLocal
+        from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+        supported_operations = tuple(
+            operation
+            for operation in plan.operations
+            if operation.type
+            in {
+                OperationType.EXPIRE_SNAPSHOTS,
+                OperationType.REMOVE_ORPHAN_FILES,
+                OperationType.OPTIMIZE,
+                OperationType.OPTIMIZE_MANIFESTS,
+            }
+        )
+        if not supported_operations:
+            return JobStatus.SKIPPED, None, None, False, False
+
+        self._renew_table_lock(job)
+        try:
+            table_uuid = UUID(job.table_id)
+        except ValueError:
+            table_uuid = None
+        for operation in supported_operations:
+            if table_uuid is not None:
+                with SessionLocal() as abac_session:
+                    allowed, reason = evaluate_maintenance_allowed(
+                        abac_session,
+                        table_uuid,
+                        None,
+                        operation.type,
+                    )
+                if not allowed:
+                    detail = reason or "abac_denied"
+                    safe_publish(
+                        self._run_events,
+                        job.run_id,
+                        build_log_line(
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            table_ref=table_ref,
+                            operation=operation.type.value,
+                            level="error",
+                            message=detail,
+                        ),
+                    )
+                    return JobStatus.FAILED, detail, None, False, False
+
+        native_plan = MaintenancePlan(
+            table_ref=plan.table_ref,
+            mode=plan.mode,
+            operations=supported_operations,
+        )
+        safe_publish(
+            self._run_events,
+            job.run_id,
+            build_log_line(
+                run_id=job.run_id,
+                job_id=job.id,
+                table_id=job.table_id,
+                table_ref=table_ref,
+                engine=str(engine.type),
+                message=(
+                    f"Executing native plan with {len(supported_operations)} operations "
+                    "in one subprocess"
+                ),
+            ),
+        )
+        started = perf_counter()
+        exec_ctx = _to_exec_ctx(
+            ExecContext(
+                job_id=job.id,
+                table_id=job.table_id,
+                destination_id=job.destination_id,
+                statement_index=0,
+                replica=job.replica,
+            ),
+            run_id=job.run_id,
+            on_progress=_native_progress_callback(
+                self._run_events,
+                job=job,
+                table_ref=table_ref,
+                engine=engine.type,
+            ),
+        )
+        try:
+            results = engine.execute_plan(native_plan, exec_ctx)
+        except Exception as exc:
+            duration_ms = int((perf_counter() - started) * 1000)
+            self._store.record_audit(
+                AuditRecord(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    action=supported_operations[0].type,
+                    status="FAILED",
+                    engine=engine.type,
+                    detail=str(exc),
+                    duration_ms=duration_ms,
+                    actor=job.actor,
+                )
+            )
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    engine=str(engine.type),
+                    level="error",
+                    message=f"Native plan failed: {exc}",
+                ),
+            )
+            return JobStatus.FAILED, str(exc), None, False, False
+
+        final_status = JobStatus.SUCCEEDED
+        error: str | None = None
+        engine_ref: str | None = None
+        had_success = False
+        had_skip = False
+        for operation, result in zip(supported_operations, results, strict=False):
+            result_duration_ms = result.duration_ms
+            if result_duration_ms is None:
+                result_duration_ms = int((perf_counter() - started) * 1000)
+            engine_ref = result.engine_ref or engine_ref
+            if getattr(result, "skipped", False):
+                had_skip = True
+                detail = result.detail or result.error or "operation skipped"
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=operation.type,
+                        status="SKIPPED",
+                        engine=engine.type,
+                        detail=detail,
+                        duration_ms=result_duration_ms,
+                        actor=job.actor,
+                    )
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=operation.type.value,
+                        engine=str(engine.type),
+                        level="warning",
+                        message=f"Skipped {operation.type.value}: {detail}",
+                    ),
+                )
+                continue
+            if not getattr(result, "ok", True):
+                detail = result.error or result.detail or "engine execution failed"
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=operation.type,
+                        status="FAILED",
+                        engine=engine.type,
+                        detail=detail,
+                        duration_ms=result_duration_ms,
+                        input_files_count=getattr(result, "input_files_count", None),
+                        output_files_count=getattr(result, "output_files_count", None),
+                        snapshots_expired=getattr(result, "snapshots_expired", None),
+                        manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                        actor=job.actor,
+                    )
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=operation.type.value,
+                        engine=str(engine.type),
+                        level="error",
+                        message=f"{operation.type.value} failed: {detail}",
+                    ),
+                )
+                return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+            had_success = True
+            self._store.record_audit(
+                AuditRecord(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    action=operation.type,
+                    status="OK",
+                    engine=engine.type,
+                    detail=result.detail,
+                    duration_ms=result_duration_ms,
+                    input_files_count=getattr(result, "input_files_count", None),
+                    output_files_count=getattr(result, "output_files_count", None),
+                    actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
+                    snapshots_expired=getattr(result, "snapshots_expired", None),
+                    manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                    actor=job.actor,
+                )
+            )
+            success_message = f"Completed {operation.type.value} in {result_duration_ms}ms"
+            if result.engine_ref:
+                success_message += f" (ref {result.engine_ref})"
+            snapshots_expired = getattr(result, "snapshots_expired", None)
+            if snapshots_expired:
+                success_message += f"; expired {snapshots_expired} snapshots"
+            manifests_rewritten = getattr(result, "manifests_rewritten", None)
+            if manifests_rewritten:
+                success_message += f"; rewrote {manifests_rewritten} manifests"
+            bytes_freed = getattr(result, "actual_bytes_freed", None)
+            if bytes_freed:
+                success_message += f"; freed {bytes_freed} bytes"
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    operation=operation.type.value,
+                    engine=str(engine.type),
+                    message=success_message,
+                ),
+            )
+        if had_skip and not had_success:
+            final_status = JobStatus.SKIPPED
+        return final_status, error, engine_ref, had_success, had_skip
 
 
 def _metric_status(status: JobStatus) -> str:
@@ -716,7 +1031,12 @@ def _predicate_to_dict(predicate: PartitionPredicate) -> dict[str, Any]:
     }
 
 
-def _to_exec_ctx(ctx: ExecContext) -> ExecCtx:
+def _to_exec_ctx(
+    ctx: ExecContext,
+    *,
+    run_id: str | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+) -> ExecCtx:
     """Convert worker ExecContext to engine ExecCtx."""
     from uuid import UUID
 
@@ -732,7 +1052,56 @@ def _to_exec_ctx(ctx: ExecContext) -> ExecCtx:
         job_id=_safe_uuid(ctx.job_id),
         table_id=_safe_uuid(ctx.table_id),
         replica=ctx.replica,
+        run_id=run_id,
+        on_progress=on_progress,
     )
+
+
+def _native_progress_callback(
+    run_events: RunEventSink | None,
+    *,
+    job: MaintenanceJobRecord,
+    table_ref: str | None,
+    engine: EngineType | str,
+) -> Callable[[dict[str, Any]], None] | None:
+    if run_events is None:
+        return None
+
+    def callback(event: dict[str, Any]) -> None:
+        message = _native_progress_message(event)
+        safe_publish(
+            run_events,
+            job.run_id,
+            build_log_line(
+                run_id=job.run_id,
+                job_id=job.id,
+                table_id=job.table_id,
+                table_ref=table_ref,
+                operation=str(event.get("operation") or "native"),
+                engine=str(engine),
+                message=message,
+            ),
+        )
+
+    return callback
+
+
+def _native_progress_message(event: dict[str, Any]) -> str:
+    operation = str(event.get("operation") or "native")
+    event_name = str(event.get("event") or "progress")
+    if event_name == "failed":
+        return f"{operation} failed: {event.get('message') or 'unknown error'}"
+    pct = event.get("progress_pct")
+    files = event.get("files_processed")
+    bytes_processed = event.get("bytes_processed")
+    if pct is not None:
+        return (
+            f"{operation}: {event_name} {pct}%"
+            f" ({files or 0} files, {bytes_processed or 0} bytes)"
+        )
+    if event.get("message"):
+        return str(event["message"])
+    return f"{operation}: {event_name}"
 
 
 def main() -> None:

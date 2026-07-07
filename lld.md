@@ -332,7 +332,11 @@ CREATE TABLE cryo.table_assignments (
 ```
 
 **Effective preset** for a table = `pinned assignment` if present, else the **highest-priority
-enabled rule** that matches its latest stats, else none.
+enabled rule** that matches its latest stats, else the **enabled platform default preset**
+(`presets.is_default = true`, provenance `default`), else none.
+
+Default bootstrap (migration `20260706_0011`): destination `native-datafusion` (`engine = native`)
+and preset `default-native-deep` (`mode = deep`, `schedule_cron = null`, manual/default runs only).
 
 ### 3.4 Runs, jobs, audit (write side)
 
@@ -716,7 +720,7 @@ GET/POST/DELETE        /api/v1/presets/{id}/rules
 POST  /api/v1/assignments                                     # body: {selection, preset_id}
         # selection = {mode:"ids", ids:[...]} OR {mode:"filter", filter:<predicate>}
 DELETE /api/v1/assignments                                    # same selection grammar (unassign)
-GET   /api/v1/tables/{id}/effective-preset                    # provenance: pinned vs rule vs none
+GET   /api/v1/tables/{id}/effective-preset                    # provenance: assignment | rule | default | none
 
 # Maintenance (ad-hoc) + preview
 POST  /api/v1/maintenance/preview                             # dry-run -> per-table rendered SQL +

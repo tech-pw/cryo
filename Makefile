@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate api scan worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker test-hms-integration smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures test-hms-integration test-native-e2e smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 COMPOSE_CRYO = docker compose -f docker-compose.yml
@@ -32,6 +32,9 @@ api:
 
 scan:
 	$(PYTHON) -m cryo.scanner.run
+
+scanner:
+	$(PYTHON) -m cryo.cli scanner
 
 worker:
 	$(PYTHON) -m cryo.cli worker
@@ -90,6 +93,18 @@ seed-hms-fixtures-docker: up-datalake
 
 test-hms-integration:
 	CRYO_HMS_URI=$${CRYO_HMS_URI:-thrift://localhost:9083} pytest tests/integration/hms/test_hms_catalog_integration.py -v
+
+seed-native-fixtures:
+	$(PYTHON) tests/integration/native/generate_rest_fixture.py
+
+test-native-e2e:
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	  pytest tests/integration/native/test_native_expire_orphan_e2e.py -v
+
+test-native-e2e-local: up-datalake-native seed-native-fixtures test-native-e2e
+
+up-datalake-native:
+	$(COMPOSE_DATALAKE) up -d minio minio-init iceberg-rest
 
 smoke-hms-trino: up-datalake
 	$(PYTHON) tests/integration/hms/smoke_hms_trino.py

@@ -180,25 +180,34 @@ Implemented per `RECOMMENDATIONS.md` Part 1.2:
 - **Configuration:** `cryo/config.py` Settings now include `scan_parallel_tables` and
   `scan_parallel_manifests`.
 
-### Native Rust Engine (`cryo-native`) — ⚠️ Experimental, opt-in only
+### Native Rust engines — worker subprocess + optional PyO3 helpers
 
-Located in `cryo-native/`. The earlier `cryo-engine/` sibling tree was removed per
-`docs/OSS_READINESS.md` §2.2 (the codebase shipped two competing unfinished Rust
-trees; only the one wired into `cryo/engines/native/engine.py` was kept).
+Two Rust stacks serve different paths (see `docs/native-iceberg-rust-engine-errors.md` #12):
 
-- **`Cargo.toml` / `pyproject.toml`** — Rust crate with PyO3 bindings (maturin).
-- **`python/cryo_native.pyi`** — Python type stubs.
-- **`src/`** — DataFusion + Arrow-backed binpack / sort / z-order compaction.
-- **`README.md`** — Build instructions; install via `pip install ./cryo-native` or
-  `maturin develop`.
+**`cryo-engine/` (worker maintenance, default native workflow)**
 
-**Status:** experimental, off by default (`Settings.native_engine_enabled = False`,
-see `cryo/config.py`). Not exercised by CI today. Treat as a performance preview, not
-as the v1 launch surface — see `docs/OSS_READINESS.md` §2.2.
+- Worker invokes `cryo-engine execute` via `cryo/engines/native/runner.py`
+- `expire_snapshots` and `remove_orphan_files` execute against pinned iceberg-rust
+- `rewrite_data_files` analyze reports scoped candidate counts; execute is blocked until
+  upstream `RewriteFilesAction` lands (EPIC #2269)
+- `rewrite_manifests` execute blocked upstream (#2556); analyze supported
 
-For production maintenance today, use the Trino engine (`cryo/engines/trino/`) or the
-Spark engine (`cryo/engines/spark/`). Both have parity tests against the
-reference Airflow + dbt workflow that this codebase is replacing.
+Fresh databases seed destination `native-datafusion` and preset `default-native-deep`
+(`expire_snapshots` + `remove_orphan_files`). See `scripts/seed_local_config.py`.
+
+- **`cryo-engine/Cargo.toml`** — iceberg-rust (git pin), iceberg-catalog-rest, opendal S3
+- **`src/main.rs`** — JSON stdin/stdout protocol
+- **`src/operations.rs`** — maintenance operations
+- **`src/progress.rs`** — progress events on stdout (`CRYO_PROGRESS:` prefix)
+
+**`cryo-native/` (optional PyO3 compaction helpers — not the worker path)**
+
+- **`Cargo.toml` / `pyproject.toml`** — PyO3 bindings (maturin)
+- **`src/compaction.rs`** — DataFusion binpack / sort / z-order for direct file compaction tests
+- Used by `NativeEngine.compact_files()` helpers only; worker maintenance does **not** call this path
+
+**Status:** native is the default deep preset for fresh local seeds, but compaction execute remains
+upstream-gated. Trino/Spark remain the production-safe choice for OPTIMIZE until Phase 3 completes.
 
 ## Partial / In Progress
 

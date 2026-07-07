@@ -129,6 +129,82 @@ jobs:
           CRYO_REDIS_URL: redis://localhost:6379/0
         run: pytest tests/ -v --tb=short
 
+  cryo-engine:
+    name: cryo-engine (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cryo-engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: cargo test
+        run: cargo test
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      - name: Verify cryo-engine spawnable from repo root
+        working-directory: .
+        run: |
+          pip install -e ".[dev]"
+          python - <<'PY'
+          from cryo.engines.native.runner import resolve_binary_path, verify_cryo_engine_spawnable
+          binary = resolve_binary_path({"binary_path": "cryo-engine/target/release/cryo-engine"})
+          assert binary is not None, "release binary missing after cargo build"
+          assert verify_cryo_engine_spawnable({"binary_path": binary}) is None
+          PY
+
+  native-e2e:
+    name: native-e2e (REST + MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Start MinIO and Iceberg REST
+        run: |
+          docker compose -f docker-compose.dev-datalake.yml up -d minio minio-init iceberg-rest
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8181/v1/config >/dev/null; then
+              echo "Iceberg REST is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Iceberg REST did not become ready in time" >&2
+          exit 1
+
+      - name: Install Python dependencies
+        run: |
+          pip install -U pip
+          pip install -e ".[dev]"
+
+      - name: Build cryo-engine
+        working-directory: cryo-engine
+        run: cargo build --release
+
+      - name: Run native expire + orphan e2e
+        env:
+          CRYO_REST_URI: http://localhost:8181
+          CRYO_ENGINE_BINARY: cryo-engine/target/release/cryo-engine
+        run: pytest tests/integration/native/test_native_expire_orphan_e2e.py -v
+
   build:
     name: Build Check
     runs-on: ubuntu-latest

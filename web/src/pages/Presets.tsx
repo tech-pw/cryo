@@ -12,6 +12,7 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
   message,
   Alert
@@ -30,7 +31,7 @@ import {
   previewRouting,
   simulatePreset
 } from "../api/client";
-import type { PresetRead, PresetWrite, UUID } from "../api/types";
+import type { DestinationRead, PresetRead, PresetWrite, UUID } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
 import { CronInput } from "../components/CronInput";
 import { EmptyState, PageHeader } from "../components/common";
@@ -41,6 +42,7 @@ import { cronFormValidator } from "../lib/cron";
 import { formatGb, formatNumber } from "../lib/format";
 import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
+import { formatEngineLabel } from "../lib/engines";
 
 const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
 type SimulationSample = NonNullable<Awaited<ReturnType<typeof simulatePreset>>["sample"]>[number];
@@ -98,7 +100,10 @@ export const Presets = () => {
             title: "Preset",
             render: (_, row) => (
               <Space orientation="vertical" size={0}>
-                <Typography.Text strong>{row.name}</Typography.Text>
+                <Space size={6}>
+                  <Typography.Text strong>{row.name}</Typography.Text>
+                  {row.is_default ? <Tag color="blue">Default</Tag> : null}
+                </Space>
                 <Typography.Text type="secondary">{row.description ?? "No description"}</Typography.Text>
               </Space>
             )
@@ -106,7 +111,11 @@ export const Presets = () => {
           { title: "Mode", dataIndex: "mode" },
           {
             title: "Engine",
-            render: (_, row) => destinations.data?.find((item) => item.id === row.destination_id)?.name ?? row.destination_id
+            render: (_, row) => {
+              const destination = destinations.data?.find((item) => item.id === row.destination_id);
+              if (!destination) return row.destination_id;
+              return `${destination.name} · ${formatEngineLabel(destination.engine)}`;
+            }
           },
           { title: "Priority", dataIndex: "priority", align: "right" },
           { title: "Enabled", dataIndex: "enabled", render: (value) => <StatusTag status={value ? "succeeded" : "skipped"} /> },
@@ -169,7 +178,7 @@ const PresetDrawer = ({
 }: {
   open: boolean;
   preset: PresetRead | null;
-  destinations: Array<{ id: UUID; name: string }>;
+  destinations: DestinationRead[];
   saving: boolean;
   onClose: () => void;
   onSave: (body: PresetWrite) => void;
@@ -190,6 +199,7 @@ const PresetDrawer = ({
           schedule_cron: preset?.schedule_cron,
           priority: preset?.priority ?? 100,
           enabled: preset?.enabled ?? true,
+          is_default: preset?.is_default ?? false,
           params: JSON.stringify(preset?.params ?? { min_small_files: 128, chunk_size_gb: 100 }, null, 2),
           guardrails: JSON.stringify(preset?.guardrails ?? { cooldown_hours: 24 }, null, 2)
         }}
@@ -204,6 +214,7 @@ const PresetDrawer = ({
               schedule_cron: values.schedule_cron || null,
               priority: values.priority,
               enabled: values.enabled,
+              is_default: values.is_default,
               params: JSON.parse(values.params || "{}"),
               guardrails: JSON.parse(values.guardrails || "{}")
             });
@@ -219,7 +230,12 @@ const PresetDrawer = ({
           <Input />
         </Form.Item>
         <Form.Item name="destination_id" label="Engine" rules={[{ required: true }]}>
-          <Select options={destinations.map((item) => ({ label: item.name, value: item.id }))} />
+          <Select
+            options={destinations.map((item) => ({
+              label: `${item.name} · ${formatEngineLabel(item.engine)}`,
+              value: item.id
+            }))}
+          />
         </Form.Item>
         <Space className="full-width" size={12}>
           <Form.Item name="mode" label="Mode" rules={[{ required: true }]}>
@@ -237,6 +253,9 @@ const PresetDrawer = ({
             <InputNumber min={0} style={{ width: 120 }} />
           </Form.Item>
           <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="is_default" label="Platform default" valuePropName="checked">
             <Switch />
           </Form.Item>
         </Space>
@@ -438,7 +457,7 @@ const RoutingDrawer = ({ preset, onClose }: { preset: PresetRead | null; onClose
               pagination={false}
               dataSource={routing.data.ranked_destinations}
               columns={[
-                { title: "Engine", dataIndex: "engine", width: 100 },
+                { title: "Engine", dataIndex: "engine", width: 140, render: (value: string) => formatEngineLabel(value) },
                 { title: "Destination", dataIndex: "destination_id", ellipsis: true },
                 {
                   title: "Score",

@@ -562,6 +562,9 @@ class Preset(TimestampMixin, Base):
     guardrails: Mapped[JsonDict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),

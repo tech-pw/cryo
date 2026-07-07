@@ -127,6 +127,7 @@ import {
 } from "../lib/format";
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
+import { formatEngineLabel } from "../lib/engines";
 
 const provenanceLabel = (provenance?: string | null): string => {
   switch (provenance) {
@@ -134,6 +135,8 @@ const provenanceLabel = (provenance?: string | null): string => {
       return "manually assigned";
     case "rule":
       return "matched a rule";
+    case "default":
+      return "platform default";
     case "none":
       return "no preset assigned";
     default:
@@ -586,6 +589,12 @@ export const TableDetail = () => {
     }
     return items.slice(0, 8);
   }, [audit.data]);
+
+  const effectiveDestination = useMemo(() => {
+    const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+    if (!preset) return null;
+    return destinations.data?.find((item) => item.id === preset.destination_id) ?? null;
+  }, [presets.data, destinations.data, effectivePreset.data?.preset_id]);
 
   const protectedItems: Array<{ snapshot_id: number; label?: string | null; ts?: string | null }> = [
     ...protectedLocal,
@@ -2138,6 +2147,28 @@ export const TableDetail = () => {
             {stats?.grade ? <GradePill grade={stats.grade} /> : null}
             {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}
             <CompactionTag needsCompaction={stats?.needs_compaction} />
+          </div>
+          <div className="td-hero-meta">
+            <span>
+              Preset: <strong>{effectivePreset.data?.preset_name ?? "None"}</strong>
+              <span className="td-meta-faint"> ({provenanceLabel(effectivePreset.data?.provenance)})</span>
+              {effectiveDestination ? (
+                <span className="td-meta-faint">
+                  {" "}
+                  · {effectiveDestination.name} ({formatEngineLabel(effectiveDestination.engine)})
+                </span>
+              ) : null}
+            </span>
+            {stats?.scan_at ? (
+              <span>
+                Last scan: <strong>{formatTime(stats.scan_at)}</strong>
+              </span>
+            ) : null}
+            {lastSnapshotCommittedAt ? (
+              <span>
+                Last commit: <strong>{formatTime(lastSnapshotCommittedAt)}</strong>
+              </span>
+            ) : null}
           </div>
         </div>
 

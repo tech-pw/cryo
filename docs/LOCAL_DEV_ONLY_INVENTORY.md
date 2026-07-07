@@ -34,11 +34,13 @@ artifacts themselves are permanent.
 |------|---------|
 | `tests/` | Unit and integration tests (including HMS catalog tests) |
 | `tests/integration/hms/test_hms_catalog_integration.py` | Opt-in HMS catalog integration test |
+| `tests/integration/native/test_native_expire_orphan_e2e.py` | Opt-in native expire + orphan e2e (REST + MinIO) |
+| `tests/integration/native/generate_rest_fixture.py` | Seed native e2e table + orphan object |
 | `tests/integration/hms/smoke_hms_trino.py` | Smoke test: Trino can read HMS fixture tables |
 | `scripts/smoke_file_counts.py` | Smoke test: file counts / local Spark compaction |
 | `scripts/smoke_cryo_e2e.py` | Smoke test: scan → plan → execute path |
-| `make test`, `make smoke-*`, `make test-hms-integration` | Makefile entrypoints for the above |
-| `.github/workflows/ci.yml` | CI lint, typecheck, unit tests (no full datalake stack today) |
+| `make test`, `make smoke-*`, `make test-hms-integration`, `make test-native-e2e`, `make test-native-e2e-local` | Makefile entrypoints for the above |
+| `.github/workflows/ci.yml` | CI lint, typecheck, unit tests; `native-e2e` job (REST + MinIO + cryo-engine) |
 
 **Fixture generators** (below) write data to local MinIO only; they are inventoried under
 [Ad-hoc data scripts](#ad-hoc-data-scripts-not-tests) because they are not test assertions—they

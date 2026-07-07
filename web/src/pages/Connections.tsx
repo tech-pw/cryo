@@ -60,7 +60,7 @@ import {
   type SlackConfigRead,
   type SlackConfigWrite
 } from "../api/client";
-import type { DestinationRead, DestinationWrite, RunRead, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
+import type { DestinationRead, DestinationWrite, EngineType, RunRead, SourceRead, SourceTestResult, SourceWrite } from "../api/types";
 import { CronInput } from "../components/CronInput";
 import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
 import { OpsPanel } from "../components/OpsPanel";
@@ -77,6 +77,7 @@ import {
   isConnectionPendingScan,
   type ConnectionScanNotice
 } from "../lib/connectionScanPrompt";
+import { ENGINE_TYPE_OPTIONS, engineTagColor, formatEngineLabel } from "../lib/engines";
 
 // Matches cryo/api/redact.py's REDACTED_PLACEHOLDER -- a saved secret field is never sent back
 // to the browser as its real value, only this sentinel. Used to decide when a "Test connection"
@@ -371,9 +372,9 @@ export const Connections = () => {
             children: (
               <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
-                  The processing engines that actually run maintenance — a Trino coordinator or a
-                  Spark/EMR cluster. Presets and manual runs target one of these to do the real work
-                  (compaction, snapshot expiry, orphan cleanup).
+                  The processing engines that actually run maintenance — Trino, Spark/EMR, or the
+                  native iceberg-rust/DataFusion engine. Presets and manual runs target one of these
+                  to do the real work (compaction, snapshot expiry, orphan cleanup).
                 </Typography.Paragraph>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setDestinationDrawer("new")}>
                   New engine
@@ -393,6 +394,13 @@ export const Connections = () => {
                         ) : null}
                       </Space>
                     ) },
+                    {
+                      title: "Engine",
+                      dataIndex: "engine",
+                      render: (value: string) => (
+                        <Tag color={engineTagColor(value)}>{formatEngineLabel(value)}</Tag>
+                      )
+                    },
                     {
                       title: "Enabled",
                       dataIndex: "enabled",
@@ -424,7 +432,7 @@ export const Connections = () => {
                       )
                     }
                   ]}
-                  locale={{ emptyText: <EmptyState title="No engines connected" description="Add a Trino or Spark engine to run maintenance." /> }}
+                  locale={{ emptyText: <EmptyState title="No engines connected" description="Add a Trino, Spark, or native engine to run maintenance." /> }}
                 />
               </Space>
             )
@@ -1369,9 +1377,9 @@ const SourceDrawer = ({
 // Engine (Destination) drawer
 //
 // Unlike lakehouse config, an engine's config keys are entirely Cryo's own (see
-// cryo/engines/trino/client.py and cryo/engines/spark/emr.py) — a small, fixed, known surface,
-// so this can be fully structured with no JSON escape hatch needed except the one genuinely
-// open-ended Spark field (spark_submit_params, arbitrary --conf overrides).
+// cryo/engines/trino/client.py, cryo/engines/spark/emr.py, and cryo/engines/native/) — a small,
+// fixed, known surface, so this can be fully structured with no JSON escape hatch needed except
+// the one genuinely open-ended Spark field (spark_submit_params, arbitrary --conf overrides).
 // ---------------------------------------------------------------------------
 
 interface TrinoCoordinatorFormValue {
@@ -1382,7 +1390,7 @@ interface TrinoCoordinatorFormValue {
 
 interface DestinationFormValues {
   name: string;
-  engine: "trino" | "spark_emr";
+  engine: EngineType;
   offpeak_start?: number;
   offpeak_end?: number;
   secret_ref?: string | null;
@@ -1414,6 +1422,10 @@ interface DestinationFormValues {
   query_log_watermark_overlap_seconds?: number;
   query_log_telemetry_coordinators?: string;
   query_log_retention_days?: number;
+  // Native (iceberg-rust subprocess)
+  slot_cap?: number;
+  operation_mode?: string;
+  binary_path?: string;
 }
 
 const decomposeDestinationConfig = (engine: string, config: Record<string, unknown> | undefined) => {
@@ -1431,6 +1443,14 @@ const decomposeDestinationConfig = (engine: string, config: Record<string, unkno
       poll_interval_seconds: typeof cfg.poll_interval_seconds === "number" ? cfg.poll_interval_seconds : 10,
       timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
       spark_submit_params_json: sparkParams ? JSON.stringify(sparkParams, null, 2) : ""
+    };
+  }
+  if (engine === "native") {
+    return {
+      slot_cap: typeof cfg.slot_cap === "number" ? cfg.slot_cap : 5,
+      operation_mode: typeof cfg.operation_mode === "string" ? cfg.operation_mode : "execute",
+      timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
+      binary_path: typeof cfg.binary_path === "string" ? cfg.binary_path : ""
     };
   }
 
@@ -1497,6 +1517,15 @@ const buildDestinationConfig = (values: DestinationFormValues): Record<string, u
     }
     return config;
   }
+  if (values.engine === "native") {
+    const config: Record<string, unknown> = {
+      slot_cap: values.slot_cap ?? 5,
+      operation_mode: values.operation_mode || "execute",
+      timeout_seconds: values.timeout_seconds ?? 3600
+    };
+    if (values.binary_path?.trim()) config.binary_path = values.binary_path.trim();
+    return config;
+  }
 
   const config: Record<string, unknown> = {
     coordinators: (values.coordinators ?? []).map((c) => ({
@@ -1556,7 +1585,7 @@ const DestinationDrawer = ({
   const [form] = Form.useForm<DestinationFormValues>();
   const isEditing = value && value !== "new";
   const initialEngine = isEditing ? value.engine : "trino";
-  const [engine, setEngine] = useState<"trino" | "spark_emr">(initialEngine as "trino" | "spark_emr");
+  const [engine, setEngine] = useState<EngineType>(initialEngine as EngineType);
   const existingConfig = isEditing
     ? decomposeDestinationConfig(initialEngine, value.config as Record<string, unknown>)
     : decomposeDestinationConfig("trino", undefined);
@@ -1627,7 +1656,7 @@ const DestinationDrawer = ({
           <Input placeholder="trino-primary" />
         </Form.Item>
         <Form.Item name="engine" label="Engine" rules={[{ required: true }]}>
-          <Select options={[{ label: "Trino", value: "trino" }, { label: "Spark on EMR Serverless", value: "spark_emr" }]} />
+          <Select options={ENGINE_TYPE_OPTIONS} />
         </Form.Item>
 
         {engine === "trino" ? (
@@ -1699,7 +1728,7 @@ const DestinationDrawer = ({
               </Space>
             ) : null}
           </>
-        ) : (
+        ) : engine === "spark_emr" ? (
           <>
             <Form.Item name="application_id" label="EMR Serverless application ID" rules={[{ required: true }]}>
               <Input placeholder="00fcxxxxxxxxxxxx" />
@@ -1762,6 +1791,47 @@ const DestinationDrawer = ({
               ]}
             />
           </>
+        ) : (
+          <>
+            <Form.Item
+              name="slot_cap"
+              label={
+                <HintLabel
+                  label="Slot cap"
+                  tooltip="Maximum concurrent native maintenance jobs the governor admits for this engine."
+                />
+              }
+            >
+              <InputNumber min={1} max={64} style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item
+              name="operation_mode"
+              label={
+                <HintLabel label="Operation mode" tooltip="Passed to cryo-engine execute payloads (default: execute)." />
+              }
+            >
+              <Input placeholder="execute" />
+            </Form.Item>
+            <Form.Item
+              name="timeout_seconds"
+              label={
+                <HintLabel label="Timeout (s)" tooltip="Cryo gives up waiting for the cryo-engine subprocess after this long." />
+              }
+            >
+              <InputNumber min={1} style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item
+              name="binary_path"
+              label={
+                <HintLabel
+                  label="Binary path (optional)"
+                  tooltip="Path to the cryo-engine binary. Leave empty to use PATH or cryo-engine/target/{release,debug}/cryo-engine."
+                />
+              }
+            >
+              <Input placeholder="/usr/local/bin/cryo-engine" />
+            </Form.Item>
+          </>
         )}
 
         <Form.Item>
@@ -1811,7 +1881,7 @@ const DestinationDrawer = ({
           <Switch />
         </Form.Item>
 
-        <QueryLogIngestionFields engine={engine} />
+        {engine === "trino" ? <QueryLogIngestionFields engine={engine} /> : null}
 
         {!testPassed && (
           <Alert

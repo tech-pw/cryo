@@ -1573,7 +1573,7 @@ export interface components {
              * Provenance
              * @enum {string}
              */
-            provenance: "assignment" | "rule" | "none";
+            provenance: "assignment" | "rule" | "default" | "none";
             /** Rule Id */
             rule_id?: string | null;
         };

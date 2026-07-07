@@ -69,6 +69,28 @@ describe("BulkAssignBar", () => {
     );
 
     expect(screen.getByText("trino-standard · Default local Trino maintenance profile")).toBeInTheDocument();
-    expect(screen.getByText("trino-main · trino")).toBeInTheDocument();
+    expect(screen.getByText("trino-main · Trino")).toBeInTheDocument();
+  });
+
+  it("labels native engine destinations clearly", () => {
+    const nativeDestination: DestinationRead = {
+      ...destination,
+      id: "dest-native",
+      name: "native-datafusion",
+      engine: "native"
+    };
+    render(
+      <BulkAssignBar
+        selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
+        presets={[{ ...preset, destination_id: "dest-native" }]}
+        destinations={[nativeDestination]}
+        onClear={vi.fn()}
+        onAssign={vi.fn()}
+        onPreview={vi.fn()}
+        onRun={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("native-datafusion · Native (iceberg-rust)")).toBeInTheDocument();
   });
 });

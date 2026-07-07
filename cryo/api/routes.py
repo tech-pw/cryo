@@ -133,6 +133,8 @@ from cryo.db.tenant_scope import (
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.base import RenderedStatement
+from cryo.engines.native.engine import NativeEngine, is_native_available
+from cryo.engines.native.render import render as render_native
 from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
@@ -749,6 +751,8 @@ def test_destination_config(
             )
         except Exception as exc:
             return DestinationTestResponse(ok=False, message=str(exc))
+    if payload.engine == EngineType.NATIVE:
+        return _test_native_destination(dict(config))
     return DestinationTestResponse(
         ok=True,
         message="Configuration present; live engine probe is implemented in the governor/worker.",
@@ -781,6 +785,17 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
                 "name": destination.name,
                 "message": str(exc),
             }
+    if destination.engine == EngineType.NATIVE.value:
+        result = _test_native_destination(dict(destination.config or {}))
+        return {
+            "ok": result.ok and destination.enabled,
+            "engine": destination.engine,
+            "name": destination.name,
+            "capacity": result.capacity,
+            "used": result.used,
+            "available": result.available,
+            "message": result.message,
+        }
     return {
         "ok": bool(destination.enabled),
         "engine": destination.engine,
@@ -829,6 +844,11 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
     guardrail_errors = validate_guardrails(values.get("guardrails") or {})
     if guardrail_errors:
         raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
+    if values.get("is_default"):
+        presets.clear_other_default_presets(
+            session,
+            tenant_id=tenant_id,
+        )
     preset = Preset(**values)
     session.add(preset)
     session.commit()
@@ -861,6 +881,12 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
         guardrail_errors = validate_guardrails(values.get("guardrails") or {})
         if guardrail_errors:
             raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
+    if values.get("is_default"):
+        presets.clear_other_default_presets(
+            session,
+            tenant_id=getattr(preset, "tenant_id", None),
+            keep_preset_id=preset.id,
+        )
     _apply_patch(preset, values)
     session.commit()
     session.refresh(preset)
@@ -1177,7 +1203,7 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         return EffectivePresetResponse(table_id=table_id, provenance="none")
-    provenance = cast(Literal["assignment", "rule", "none"], effective.provenance)
+    provenance = cast(Literal["assignment", "rule", "default", "none"], effective.provenance)
     return EffectivePresetResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id),
@@ -1940,6 +1966,8 @@ def _renderer_for(
         return render_trino
     if engine is EngineType.SPARK_EMR:
         return render_spark
+    if engine is EngineType.NATIVE:
+        return render_native
     raise HTTPException(status_code=400, detail=f"Unsupported engine: {engine}")
 
 
@@ -1987,4 +2015,20 @@ def _build_plan_for_table(
         mode=mode,
         operations=tuple(parsed_ops),  # type: ignore[arg-type]
         notes=("verifier-checked",),
+    )
+
+
+def _test_native_destination(config: dict[str, object]) -> DestinationTestResponse:
+    if not is_native_available(config):
+        return DestinationTestResponse(
+            ok=False,
+            message="cryo-engine binary not found; set binary_path or install cryo-engine on PATH",
+        )
+    snapshot = NativeEngine(config).probe_capacity()
+    return DestinationTestResponse(
+        ok=True,
+        capacity=snapshot.capacity,
+        used=snapshot.used,
+        available=snapshot.available,
+        message="cryo-engine binary found",
     )

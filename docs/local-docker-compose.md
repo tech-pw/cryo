@@ -22,6 +22,20 @@ Starts datalake + Cryo deps + observability in Docker, then runs API/web/orchest
 ./start-local.sh start
 ```
 
+### Full local dev with native engine
+
+Use Docker mode when testing `EngineType.NATIVE`. The worker then runs inside Linux and can execute
+the bundled Linux `cryo-engine` binary instead of trying to spawn it from macOS:
+
+```bash
+START_CRYO_DOCKER=1 ./start-local.sh start
+```
+
+The checked-in `cryo-engine/target/release/cryo-engine` artifact is Linux ARM64. Docker Desktop on
+Apple Silicon runs Linux ARM64 containers by default, so that binary is compatible there. For an
+AMD64 Linux node or Kubernetes pod, build or provide a Linux AMD64 `cryo-engine` binary in the image
+or set the native destination `config.binary_path` to a compatible binary.
+
 Equivalent Docker-only full stack:
 
 ```bash
@@ -62,8 +76,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev-datalake.yml -f docke
 |----------|---------|--------|
 | `START_DATALAKE` | `1` | Start dev datalake compose file |
 | `START_OBSERVABILITY` | `1` | Start observability compose file |
-| `START_CRYO_DOCKER` | `0` | When `0`, only `postgres` + `redis` from Cryo file; app runs on host |
-| `DOCKER_CRYO_SERVICES` | `postgres redis` | Services from `docker-compose.yml` |
+| `START_CRYO_DOCKER` | `0` | When `0`, only `postgres` + `redis` from Cryo file; app runs on host. When `1`, API/web/orchestration run in Linux containers. |
+| `DOCKER_CRYO_SERVICES` | `postgres redis` | Services from `docker-compose.yml`; in `START_CRYO_DOCKER=1` mode defaults to `postgres redis cryo-api cryo-scanner cryo-scheduler cryo-governor cryo-worker cryo-web` (`cryo-scanner` runs `cryo scanner`, the Redis-backed ad-hoc scan queue consumer) |
 | `DOCKER_DATALAKE_SERVICES` | `minio minio-init iceberg-rest hms-postgres hive-metastore trino` | Services from dev-datalake file |
 | `DOCKER_OBS_SERVICES` | `prometheus grafana loki promtail` | Services from observability file |
 
