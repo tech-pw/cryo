@@ -55,4 +55,31 @@ describe("useRunLiveEvents", () => {
     expect(result.current.messages[0]?.message).toBe("Started maintenance job");
     expect(result.current.snapshot?.run?.id).toBe("run-1");
   });
+
+  it("does not reconnect when the server closes after a terminal run snapshot", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+
+    const { result } = renderHook(() => useRunLiveEvents("run-1", "token"));
+
+    await waitFor(() => {
+      expect(result.current.wsOpen).toBe(true);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0]?.emit({
+        type: "run_snapshot",
+        run: { id: "run-1", kind: "adhoc", status: "succeeded", created_at: "2026-07-06T00:00:00Z" },
+        jobs: []
+      });
+      MockWebSocket.instances[0]?.close();
+    });
+
+    await waitFor(() => {
+      expect(result.current.wsOpen).toBe(false);
+    });
+
+    expect(result.current.runTerminal).toBe(true);
+    expect(result.current.reconnectAttempt).toBe(0);
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
 });

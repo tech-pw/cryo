@@ -7,6 +7,16 @@ const BASE_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 30_000;
 const MAX_MESSAGES = 200;
 
+export const TERMINAL_RUN_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "partial_failed",
+  "cancelled"
+]);
+
+export const isTerminalRunStatus = (status?: string | null): boolean =>
+  Boolean(status && TERMINAL_RUN_STATUSES.has(status));
+
 export type RunLiveEventType = "log_line" | "scan_progress" | "job_status" | "run_snapshot" | "error";
 
 export interface RunLiveEvent {
@@ -52,11 +62,21 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
   const [wsOpen, setWsOpen] = useState(false);
   const [wsExhausted, setWsExhausted] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [runTerminal, setRunTerminal] = useState(false);
   const [manualReconnectKey, setManualReconnectKey] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
+  const runTerminalRef = useRef(false);
   const seenKeysRef = useRef<Set<string>>(new Set());
+
+  const markRunTerminal = useCallback((status?: string | null) => {
+    if (!isTerminalRunStatus(status)) {
+      return;
+    }
+    runTerminalRef.current = true;
+    setRunTerminal(true);
+  }, []);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current !== null) {
@@ -90,6 +110,7 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
   const ingestEvent = useCallback((event: RunLiveEvent) => {
     if (event.type === "run_snapshot") {
       setSnapshot({ run: event.run, jobs: event.jobs });
+      markRunTerminal(event.run?.status);
       return;
     }
     if (!isLiveLogEvent(event)) {
@@ -101,12 +122,14 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     }
     seenKeysRef.current.add(key);
     setMessages((current) => [event, ...current].slice(0, MAX_MESSAGES));
-  }, []);
+  }, [markRunTerminal]);
 
   useEffect(() => {
     clearRetryTimer();
     retryCountRef.current = 0;
     setReconnectAttempt(0);
+    setRunTerminal(false);
+    runTerminalRef.current = false;
     setWsExhausted(false);
     setWsOpen(false);
     setMessages([]);
@@ -133,7 +156,7 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     socket.onerror = () => setWsOpen(false);
     socket.onclose = () => {
       setWsOpen(false);
-      if (socketRef.current === socket) {
+      if (socketRef.current === socket && !runTerminalRef.current) {
         scheduleReconnect();
       }
     };
@@ -156,6 +179,7 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     snapshot,
     wsOpen,
     wsExhausted,
+    runTerminal,
     reconnectAttempt,
     manualReconnect: handleManualReconnect
   };
