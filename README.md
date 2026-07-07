@@ -1,146 +1,136 @@
-# Cryo — Apache Iceberg Maintenance & Health Platform
+# Cryo
 
-Before Cryo, "maintaining the datalake" meant four different things living in four different
-places. A nightly Airflow DAG scanned every table and wrote a health grade nobody fully trusted.
-A second DAG decided what to optimize next and shelled out to per-table dbt subprocesses. The
-actual maintenance logic — the partition-aware chunking, the load-aware throttling, the thing that
-kept our Trino clusters from falling over — lived buried inside dbt macros. And if you needed to
-run maintenance on one table *right now*, your only option was to hand-edit a dbt macro's
-arguments and hope you got the flags right, because there was no UI, no dry run, and no one place
-that could tell you what was actually broken across the fleet.
+**Self-hosted Apache Iceberg maintenance and health platform.**
 
-That split-brain setup is why a single mis-scanned table could sit silently unhealthy for weeks —
-nobody was looking at the DAG logs unless something else broke first. We only recently traced two
-such cases to their root cause in production: a table whose column stats contained a stray NUL
-byte, and another whose float bounds decoded to `Infinity`. Both are perfectly legal values inside
-an Iceberg manifest. Neither is a value Postgres's JSON column will accept. Both silently failed
-the insert and discarded a scan's worth of otherwise-good stats — for tables sitting in a fleet of
-**11,000+**, that kind of failure doesn't page anyone. It just makes the dashboard quietly wrong.
+Cryo scans every table in your lake, grades it A–F, tells you exactly what maintenance will cost
+and save, and lets you run that maintenance — on Trino or Spark, from a UI or an API — without
+writing another Airflow DAG or dbt macro. One system for compaction, snapshot expiry, orphan-file
+cleanup, cost tracking, and data-quality monitoring, deployable to Kubernetes.
 
-*A datalake doesn't fail loudly — it gets slower, then more expensive, then wrong, roughly in
-that order, until someone finally notices the health grade has been stale for a month.*
+[![CI](https://github.com/shelf-project/Cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/shelf-project/Cryo/actions/workflows/ci.yml)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20PostgreSQL-informational)
+![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20TypeScript-informational)
+![License](https://img.shields.io/badge/license-TBD-lightgrey)
 
-**Cryo** is a self-hosted platform that ends the split brain: **Apache Iceberg table
-maintenance**, **datalake health**, and **ad-hoc operations**, consolidated into one product,
-driven from a UI and a Python API, deployable to Kubernetes. It replaces the Airflow DAGs, the dbt
-macros, and the ad-hoc Spark jobs with a single system that knows your catalogs, your partitions,
-your engines, and your S3 bill.
+## Table of contents
 
----
+- [Why Cryo](#why-cryo)
+- [How it compares](#how-it-compares)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Research foundations](#research-foundations)
+- [Documentation](#documentation)
+- [Tech stack](#tech-stack)
+- [Local development](#local-development)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Why not just keep bolting onto Airflow — or adopt Floe / Apache Amoro as-is?
+## Why Cryo
 
-Cryo is inspired by [Floe](https://github.com/nssalian/floe) and
-[Apache Amoro](https://github.com/apache/amoro) — both good answers to "how do you maintain an
-Iceberg lake" — but neither fits our constraints without surgery:
+Most teams running Apache Iceberg at any real scale end up with the same pile of infrastructure:
+an Airflow DAG that scans tables and computes health stats, a second DAG that decides what to
+optimize and shells out to per-table dbt subprocesses, and a set of dbt macros carrying the actual
+maintenance logic — partition-aware chunking, load-aware throttling, cooldowns, drift detection.
+None of it shares state. None of it has a UI. Running maintenance on one table right now means
+hand-editing a macro's arguments and hoping you got the flags right.
 
-- **We can't lose the load-aware, partition-aware behaviour we already depend on.** Our planner
-  has to keep reading live Trino load (`system.runtime.queries`) before admitting work, and keep
-  GB-budgeting/partition-capping chunks the exact way the dbt macros do today, or Trino falls
-  over the same way it used to before that logic existed.
-- **We need Spark-on-EMR for the tables Trino shouldn't touch.** Neither Floe nor a Trino-only
-  setup gives us a second, pluggable execution engine for the large-table path.
-- **"Just keep improving the Airflow DAGs" doesn't remove the actual problem**, which was never
-  Airflow itself — it was that maintenance logic, scheduling, concurrency governance, and health
-  visibility were split across three codebases with no shared state and no UI. More DAGs make
-  that worse, not better.
+Cryo replaces that pile with one deployable product:
 
-Floe and Amoro both deserve credit for proving the shape of this problem is tractable — Cryo is
-closer to "Floe, but built for our engines and our failure modes" than a from-scratch idea.
+- **One scanner** produces the stats, health grade, and cost estimate that everything else reads —
+  the planner, the dashboards, the alerts, all from the same source of truth.
+- **One planner**, engine-agnostic, that renders to either Trino SQL or Spark SQL instead of
+  hard-wiring maintenance to a single engine.
+- **One governor** that watches live engine load and admits work accordingly, so scaling workers
+  doesn't silently scale concurrent `OPTIMIZE` jobs into a Trino outage.
+- **One UI and API** for everything above — assigning maintenance policies, triggering ad-hoc
+  runs, watching a live run console, and seeing exactly what's broken across the fleet and why.
 
----
+It's designed for fleets in the thousands of tables, because that's the scale it was built
+against.
 
-## What it does
+## How it compares
 
-### Maintenance (write side)
-- **Sources (read)** connect Iceberg catalogs (REST / Hive Metastore / Glue). Discover tables
-  and read metadata via PyIceberg. Sources are configured **independently** of write engines.
-- **Destinations (write)** submit maintenance to **Trino** (SQL) or **Spark on EMR** (Spark
-  SQL). Trino SQL and Spark SQL are generated by separate renderers — the planner emits **no
-  SQL strings**.
-- **Planner** is engine-agnostic and partition-aware. It walks **pre-computed scan data**
-  (no live `$files` reads on hot paths), GB-budgets chunks, caps partitions-per-chunk to avoid
-  Trino `FilterNode` blowups, runs oversize partitions solo, bypasses small tables, applies
-  cooldown / off-peak windows / adaptive budgets / deadlines.
-- **Governor** is the global, load-aware admission controller. It reads Trino
-  `system.runtime.queries` to bound real concurrency against live engine load, applies
-  per-replica caps with round-robin, and uses a contextual-bandit policy to tune thresholds
-  per destination.
+| | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Managed cloud (Databricks / S3 Tables / Snowflake) |
+|---|---|---|---|---|---|
+| Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | Fully managed |
+| Engines | Trino **and** Spark/EMR | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Locked to the platform |
+| Load-aware admission control | Yes — reads live engine load before admitting work | Only if you built it | Limited | Yes | N/A (fully managed) |
+| Table health grading (A–F) + cost projection | Yes, built in | No — usually a one-off script | No | Partial | Varies by platform |
+| Data leaves your infra | No | No | No | Yes — telemetry goes to LakeOps | Yes — data lives on the platform |
+| UI for fleet-wide assignment | Yes | No | Limited | Yes | Yes |
+| Cost | Free, self-hosted | Free, but you build and own everything | Free, self-hosted | Paid SaaS | Usage-based, platform lock-in |
 
-  *Think of the Governor as a bouncer, not a doorman — it doesn't care who's next in line, only
-  how packed the room already is.*
+Cryo sits where **LakeOps** does — a dedicated, self-hosted control plane rather than a managed
+platform — but keeps your telemetry on your own infrastructure, and treats Trino as a first-class
+engine rather than an afterthought. Against **Apache Amoro**, Cryo is lighter to operate (no
+Mixed-Iceberg coupling) and Trino-first rather than Flink-first. Against the managed clouds
+(Databricks Predictive Optimization, AWS S3 Tables, Snowflake), Cryo is the answer for teams who
+aren't consolidating onto a single vendor's compute.
 
-- **Presets** are named maintenance profiles binding *operations + params + target engine +
-  schedule + selection rules*. Example: `spark-large = "tables > 100 GB → Spark/EMR, deep
-  maintenance weekly"`.
-- **Assignment UX** is a table explorer with rich filters (schema, size, small-file count/%,
-  grade, partitioning, drift…) → *filter → Select all matches → assign a preset* (across
-  pages), plus rule-based auto-matching with manual override.
+## Features
+
+### Maintenance
+- **Sources (read)** connect Iceberg catalogs — REST, Hive Metastore, or Glue — and discover
+  tables via PyIceberg, configured independently of write engines.
+- **Destinations (write)** submit maintenance to **Trino** or **Spark on EMR**, each with its own
+  SQL renderer. The planner itself emits no SQL — it stays engine-agnostic.
+- **Planner** walks pre-computed scan data (no live `$files` reads on hot paths), GB-budgets
+  chunks, caps partitions-per-chunk to avoid Trino `FilterNode` blowups, and applies cooldowns,
+  off-peak windows, adaptive budgets, and deadlines.
+- **Governor** is the global, load-aware admission controller — reads Trino
+  `system.runtime.queries` to bound real concurrency, applies per-replica caps with round-robin,
+  and tunes thresholds per destination with a contextual-bandit policy.
+- **Presets** bind *operations + params + target engine + schedule + selection rules* into a
+  named profile, e.g. `spark-large = "tables > 100 GB → Spark/EMR, deep maintenance weekly"`.
+- **Assignment UX**: filter the fleet by schema, size, small-file ratio, grade, or drift, select
+  every matching table across pages, and assign a preset in one action — or let rule-based
+  auto-matching do it, with manual override.
 
 ### Health & observability
-- **Scanner** runs chunked, resumable datalake scans → per-table & per-partition stats,
-  **A–F health grade**, `needs_compaction` priority, and an **S3 cost** estimate. Used as the
-  input to both the planner and the dashboards.
-- **Health dashboards** for datalake health, per-table health + audit timeline, drift/cost
-  alerts, scheduled email/Slack summaries, and a **live run console** (WebSocket-backed)
-  showing per-chunk progress and per-table log lines.
-- **Anomaly detection** across the fleet — null-rate, size, file-count, and small-file-ratio
-  drift, persisted with history for baseline comparison.
-- **AWS cost & inventory** — opt-in S3 size / object-count from CloudWatch storage metrics and
-  free-tier CUR / inventory feeds, so the platform can quote real storage spend per source.
-- **Owner & consumer alerting** — tables can carry an owner and a list of subscribed consumers;
-  when a table's SLA or data-quality signal breaches its guardrail, the alert dispatcher emails
-  (and optionally Slacks) the people who'd actually notice the table went bad, instead of
-  leaving it for someone to stumble on later.
+- **Scanner** runs chunked, resumable datalake scans, producing per-table and per-partition
+  stats, an A–F health grade, `needs_compaction` priority, and an S3 cost estimate.
+- **Dashboards** for datalake and per-table health, audit timelines, drift/cost alerts, scheduled
+  email/Slack summaries, and a WebSocket-backed live run console.
+- **Anomaly detection** across the fleet for null-rate, size, file-count, and small-file-ratio
+  drift, with history for baseline comparison.
+- **AWS cost & inventory**: opt-in S3 size/object-count from CloudWatch and CUR/inventory feeds,
+  so the platform quotes real storage spend per source.
+- **Owner and consumer alerting**: tables carry an owner and subscribed consumers; SLA or
+  data-quality breaches email (and optionally Slack) the people who'd actually notice.
 
 ### Operations
-- **Scheduler / Governor / Worker** are leader-elected and run as separate Kubernetes
-  deployments. The **Governor** bounds real concurrency against live engine load — scaling
-  workers does **not** automatically scale parallel OPTIMIZEs.
-- **Per-table locks** prevent double maintenance. **Failure isolation**: a bad table doesn't
-  fail the run; it shows up in the audit log and the failed-tables panel, with the
-  `consecutive_scan_failures` streak and last error tracked per table so a chronically broken
-  table doesn't just vanish back into the noise of "discovered but not assigned."
-- **Audit log** captures every action (table, action, status, detail, engine, duration,
-  input/output file counts, actor).
-- **Auth** is JWT-based with optional RS256 OIDC, ABAC enforcement, and per-tenant
-  isolation. The API ships with role decorators (`viewer` / `operator` / `admin` /
-  `editor`) wired to every route.
+- **Scheduler / Governor / Worker** are leader-elected, separate Kubernetes deployments — scaling
+  workers does not automatically scale parallel `OPTIMIZE`s.
+- **Per-table locks** prevent double maintenance. **Failure isolation** means a bad table doesn't
+  fail the run — it shows up in the audit log and the failed-tables panel, with a
+  `consecutive_scan_failures` streak and last error tracked per table.
+- **Audit log** captures every action: table, action, status, detail, engine, duration, file
+  counts, actor.
+- **Auth** is JWT-based with optional RS256 OIDC, ABAC enforcement, and per-tenant isolation.
+  Every API route is wired to a role decorator (`viewer` / `operator` / `admin` / `editor`).
 
-### What's built today (vs. still on the roadmap)
+## Quick start
 
-The `cryo/` backend package, `web/` frontend, `migrations/`, and Helm chart are now implemented
-against the design in [`plan.md`](./plan.md). Run `pytest` and you'll see **~360 tests** covering
-planner, renderers (both engines), parity with the legacy Airflow behaviour, governance,
-observability, and the AI features. Status of every feature is tracked in [`todo.md`](./todo.md).
+Requires Docker, Python 3.12+, and Node 22+.
 
-None of that means the edges are all found. The NUL-byte and `Infinity` bugs mentioned above
-were both real, both in production, and both invisible until someone went looking — which is
-the honest state of a platform that scans a manifest format never designed with "every possible
-decoded value must also be valid JSON" in mind. We fix these as they surface and add a regression
-test each time; we don't claim the list is closed.
+```bash
+git clone https://github.com/shelf-project/Cryo.git
+cd Cryo
 
----
+make up      # Postgres, Redis, MinIO, Iceberg REST/HMS catalogs, Trino, Cryo API + web
+make seed    # create demo Iceberg tables with intentional maintenance issues
+```
 
-## Research foundations
+Open **http://localhost:5173**, sign in with any username (dev auth issues a JWT locally; real
+deployments wire up OIDC — see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)), and you'll land on
+the datalake health dashboard for the tables `make seed` just created.
 
-The platform is built on a small set of recent papers; every paper-backed feature ships
-behind a parity test. Citations, in the order the feature appears in the UI:
+From there: **Tables** to explore the fleet and filter/assign presets, **Scanner** to trigger a
+scan on demand, **Runs** to watch maintenance execute live.
 
-| Paper | Feature | Where it lives |
-|---|---|---|
-| [arXiv:2504.04186](https://arxiv.org/abs/2504.04186) — *AutoComp: Automated Data Compaction for Log-Structured Tables in Data Lakes* (SIGMOD 2025 industry, LinkedIn) | Compaction candidate ranking by small-file count, skew, and benefit score; informs the planner's per-partition target list. | `cryo/scanner/compaction_candidates.py`, `cryo/planner/benefit_score.py` |
-| [arXiv:2510.09567](https://arxiv.org/abs/2510.09567) — *Proof-Carrying AI Agents* | **Plan Verifier**: statically checks a `MaintenancePlan` against the live catalog and engine capabilities before enqueue (SHA-256 hash, invariant registry, critical-violation refusal). | `cryo/planner/verifier.py`, `POST /plans/verify` |
-| [arXiv:2511.02674](https://arxiv.org/abs/2511.02674) — *EasyTUS: A Framework for Easy Table Union Search* | Embedding-based **unionable-table search** so the AI advisor can suggest joins across the fleet. | `cryo/ai/union_search.py`, `GET /tables/union-search` |
-| [arXiv:2512.02795](https://arxiv.org/abs/2512.02795) — *Observation Lakehouse* (SANER 2026) | Tall, append-only local archive of every actuation (stimulus / response / context), sitting next to Redis Streams and Postgres audit. | `cryo/observability/observation_lakehouse.py` |
-| [arXiv:2604.20081](https://arxiv.org/abs/2604.20081) — *Silent Data Loss* formalization for Iceberg | **Silent-data-loss detector**: scans manifest lists for orphan-after-rewrite, partition-skip, and snapshot-skip failure modes; flags events and blocks unsafe compactions. | `cryo/scanner/silent_data_loss.py`, `cryo/scheduler/health.py` |
-| [arXiv:2605.30308](https://arxiv.org/abs/2605.30308) — *Zero-Scan Data Quality: Leveraging Table Format Metadata for Continuous Observability at Scale* (FORMATS '26) | Per-column **null rates / value bounds / distribution drift** derived from manifest metadata (no data scans); Puffin-sidecar sketches for future NDV. | `cryo/scanner/quality.py`, `cryo/scanner/puffin_writer.py`, `cryo/scanner/sketches.py` |
-| [arXiv:2606.01185](https://arxiv.org/abs/2606.01185) — *Skill Issues: A Taxonomy of Optimization Failure Modes in LLM Training* | **Versioned AI skillset** (prompt + tool registry) with rolling outcome metrics so the AI advisor can promote higher-performing versions. | `cryo/ai/skillset.py` |
-| [arXiv:2606.03464](https://arxiv.org/abs/2606.03464) — *Variance-aware Query Performance Prediction* (CLOUD 2026) | **QPP** linear regression over per-job features; the Governor refuses jobs whose predicted p95 exceeds the per-destination target. | `cryo/governor/qpp.py` |
-
----
-
-## Architecture at a glance
+## Architecture
 
 ```
 Sources (read)            Cryo platform                              Destinations (write)
@@ -152,120 +142,103 @@ Hive / Glue   ─┼─ read ─► Scheduler ─► Governor ─► Workers ─
                 └────────► Redis (queue / locks / live WS)  ·  S3 / MinIO (data)
 ```
 
-Full diagrams and component responsibilities in [`hld.md`](./hld.md).
+Sources and destinations are independent: a table is *discovered* from a source, then *maintained*
+on whichever destination its preset targets. Full diagrams and component responsibilities in
+[`hld.md`](./hld.md).
 
-## Key principles (do not violate)
+## Research foundations
 
-These aren't style preferences — each one exists because dropping it broke something before:
+Several features ship as direct implementations of recent papers, each behind a parity test —
+not just inspired-by, but citable:
 
-- **No Airflow.** Scheduling and orchestration live in the platform (`scheduler/` + `governor/`).
-- **Sources ≠ Destinations.** Separate DB tables, separate configs, separate code paths.
-- **Trino SQL and Spark SQL are generated separately** (`engines/trino/sql.py` vs
-  `engines/spark/sql.py`). The planner is engine-agnostic and emits **no SQL strings**.
-- **Preserve the load-aware, partition-aware behaviour** that protects Trino today (see
-  `agents.md` §5 parity checklist).
-- **Audit every action.** Every maintenance act leaves a row in `cryo.audit_log`.
-
----
+| Paper | Feature | Where it lives |
+|---|---|---|
+| [arXiv:2504.04186](https://arxiv.org/abs/2504.04186) — *AutoComp* (SIGMOD 2025, LinkedIn) | Compaction candidate ranking by small-file count, skew, and benefit score | `cryo/scanner/compaction_candidates.py`, `cryo/planner/benefit_score.py` |
+| [arXiv:2510.09567](https://arxiv.org/abs/2510.09567) — *Proof-Carrying AI Agents* | Plan Verifier: statically checks a plan against the live catalog before enqueue | `cryo/planner/verifier.py`, `POST /plans/verify` |
+| [arXiv:2511.02674](https://arxiv.org/abs/2511.02674) — *EasyTUS* | Embedding-based unionable-table search across the fleet | `cryo/ai/union_search.py`, `GET /tables/union-search` |
+| [arXiv:2512.02795](https://arxiv.org/abs/2512.02795) — *Observation Lakehouse* (SANER 2026) | Append-only archive of every actuation, for audit and replay | `cryo/observability/observation_lakehouse.py` |
+| [arXiv:2604.20081](https://arxiv.org/abs/2604.20081) — *Silent Data Loss* formalization for Iceberg | Detector for orphan-after-rewrite, partition-skip, and snapshot-skip failure modes | `cryo/scanner/silent_data_loss.py`, `cryo/scheduler/health.py` |
+| [arXiv:2605.30308](https://arxiv.org/abs/2605.30308) — *Zero-Scan Data Quality* (FORMATS '26) | Per-column null rates, value bounds, and drift from manifest metadata — no data scans | `cryo/scanner/quality.py`, `cryo/scanner/puffin_writer.py` |
+| [arXiv:2606.01185](https://arxiv.org/abs/2606.01185) — *Skill Issues* | Versioned AI skillsets (prompt + tool registry) with outcome-based promotion | `cryo/ai/skillset.py` |
+| [arXiv:2606.03464](https://arxiv.org/abs/2606.03464) — *Variance-aware QPP* (CLOUD 2026) | Query performance prediction; the Governor refuses jobs predicted to blow p95 | `cryo/governor/qpp.py` |
 
 ## Documentation
 
 | Doc | What's in it |
-|-----|--------------|
-| [`plan.md`](./plan.md) | Vision, scope, architecture decisions, phased roadmap, assumptions. |
-| [`hld.md`](./hld.md) | High-level design: components, data flow, deployment topology, diagrams. |
-| [`lld.md`](./lld.md) | Low-level design: repo layout, Postgres schema, interfaces, planner algorithm, rendered SQL per engine, API surface. |
-| [`agents.md`](./agents.md) / [`AGENTS.md`](./AGENTS.md) | Guide & guardrails for AI agents and contributors. Includes the parity checklist that any planner/scanner/engine change must satisfy. |
-| [`todo.md`](./todo.md) | Phased, checkbox task breakdown (P0–P7). |
-| [`docs/`](./docs/) | Persistent project brain — execution plan, recommendations, architecture, competitive analysis, FORMATS '26 notes. Start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md). |
-| [`docs/local-docker-compose.md`](./docs/local-docker-compose.md) | Three-file Compose layout (Cryo / dev datalake / observability). |
-| [`docs/LOCAL_DEV_ONLY_INVENTORY.md`](./docs/LOCAL_DEV_ONLY_INVENTORY.md) | Ad-hoc local datalake components **not for prod** — update in the same PR when adding new dev-only tooling. |
+|---|---|
+| [`plan.md`](./plan.md) | Vision, scope, architecture decisions, phased roadmap |
+| [`hld.md`](./hld.md) | High-level design: components, data flow, deployment topology |
+| [`lld.md`](./lld.md) | Low-level design: schema, interfaces, planner algorithm, API surface |
+| [`agents.md`](./agents.md) / [`AGENTS.md`](./AGENTS.md) | Guardrails for contributors and AI agents, including the parity checklist |
+| [`todo.md`](./todo.md) | Phased, checkbox task breakdown (P0–P7) |
+| [`docs/`](./docs/) | Execution plan, recommendations, competitive analysis — start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md) |
+| [`docs/local-docker-compose.md`](./docs/local-docker-compose.md) | Three-file Compose layout (Cryo / dev datalake / observability) |
 
 ## Tech stack
 
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector),
+- **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector),
   PyIceberg, trino-python-client, boto3 (EMR Serverless), Redis, structlog.
-- **Frontend:** React 19 + TypeScript (Vite), Ant Design, Recharts, TanStack Query.
-  Types generated from the backend OpenAPI schema (`npm run gen:api`).
-- **AI:** pgvector for table/column embeddings; pluggable AI provider (Anthropic / OpenAI
-  / local) behind a single `cryo.ai.llm` interface; versioned *skillsets* for prompts and
-  tools.
-- **Observability:** OpenTelemetry tracing (OTLP), Prometheus metrics, Loki logs, structlog.
-- **Deploy:** Docker images + Helm chart per service (`api`, `web`, `scheduler`, `governor`,
-  `worker`; `scanner` as a `CronJob`). Postgres + Redis as dependencies.
-
----
+- **Frontend** — React 19 + TypeScript (Vite), Ant Design, Recharts, TanStack Query. Types are
+  generated from the backend's OpenAPI schema (`npm run gen:api`).
+- **AI** — pgvector for table/column embeddings; a pluggable provider interface (Anthropic /
+  OpenAI / local); versioned skillsets for prompts and tools.
+- **Observability** — OpenTelemetry tracing, Prometheus metrics, Loki logs.
+- **Deploy** — Docker images + a Helm chart per service (`api`, `web`, `scheduler`, `governor`,
+  `worker`; `scanner` as a `CronJob`), with Postgres and Redis as dependencies.
 
 ## Local development
-
-The full stack — datalake, Cryo's own dependencies, and observability — comes up with one
-command; each Make target below exists because someone got tired of typing the underlying
-`docker compose` / `alembic` / `uvicorn` invocation by hand often enough to name it.
 
 ```bash
 # Full local stack (datalake + Cryo deps + observability)
 make up                 # all three compose files
-make up-cryo            # Cryo platform only (prod-shaped)
-make up-datalake        # MinIO + catalogs + Trino (LOCAL/CI only)
-make down               # stop full local stack
-make seed               # create demo Iceberg tables (scripts/)
+make up-cryo             # Cryo platform only (prod-shaped)
+make up-datalake         # MinIO + catalogs + Trino (LOCAL/CI only)
+make down                # stop full local stack
+make seed                # create demo Iceberg tables (scripts/)
 
 # Backend
-make install            # uv/pip install -e .[dev]
-make migrate            # alembic upgrade head
-make scan               # run scanner once against the local source
-make api                # run FastAPI (uvicorn) locally
-make worker             # run a worker
-make governor           # run the governor
-make scheduler          # run the scheduler
+make install             # uv/pip install -e .[dev]
+make migrate             # alembic upgrade head
+make scan                # run scanner once against the local source
+make api                 # run FastAPI (uvicorn) locally
+make worker              # run a worker
+make governor            # run the governor
+make scheduler           # run the scheduler
 
 # Quality (run before finishing any change)
-make lint               # ruff check + ruff format --check
-make typecheck          # mypy
-make test               # pytest (unit + parity); add -k for a subset
+make lint                # ruff check + ruff format --check
+make typecheck           # mypy
+make test                # pytest (unit + parity); add -k for a subset
 
 # Frontend
 cd web && npm install && npm run dev      # Vite dev server
 cd web && npm run build && npm run test
 ```
 
-The local OSS Iceberg environment used for development and contract/e2e tests includes
-MinIO, an Iceberg REST catalog, Hive Metastore, Trino, a Spark runner, plus Prometheus /
-Grafana / Loki.
-
-Service endpoints:
+Service endpoints once `make up` is running:
 
 | Service | URL |
-|---------|-----|
-| MinIO API | http://localhost:9000 |
+|---|---|
+| Cryo Web | http://localhost:5173 |
+| Cryo API | http://localhost:8000 |
 | MinIO Console | http://localhost:9001 (minioadmin / minioadmin) |
 | Iceberg REST catalog | http://localhost:8181 |
 | Trino | http://localhost:8080 |
 | Postgres | localhost:5432 (`cryo` / `cryo` / `cryo`) |
-| Redis | localhost:6379 |
-| Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 (admin / admin) |
-| Cryo API | http://localhost:8000 |
-| Cryo Web | http://localhost:5173 |
-
-Query with Trino:
 
 ```bash
+# Query the demo lake directly
 docker exec -it cryo-trino trino --execute "SHOW SCHEMAS FROM iceberg"
 docker exec -it cryo-trino trino --execute "SELECT * FROM iceberg.demo.customers"
 ```
 
----
-
 ## Contributing
 
-Read [`AGENTS.md`](./AGENTS.md) and [`agents.md`](./agents.md) before opening a PR. The
-non-negotiables are: the parity checklist (§5), the sources/destinations separation,
-separate Trino/Spark SQL renderers with golden tests, and an Alembic migration for every
-schema change.
-
-*This is a living platform, not a finished one. If a doc doesn't explain what you hit, that's
-a gap in the doc, not a rule you broke — open an issue or a PR either way.*
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full setup guide, and read
+[`AGENTS.md`](./AGENTS.md) before opening a PR — the non-negotiables are the parity checklist
+(§5), the sources/destinations separation, separate Trino/Spark SQL renderers with golden tests,
+and an Alembic migration for every schema change.
 
 ## License
 
