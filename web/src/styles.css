@@ -489,6 +489,107 @@ body {
   vertical-align: middle;
 }
 
+.catalogs-table .ant-table-cell {
+  vertical-align: middle;
+}
+
+.catalogs-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.catalogs-table-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.catalogs-table-tag-cell {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.catalogs-table-health {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 88px;
+  margin-left: auto;
+}
+
+.catalogs-table-health .ant-progress {
+  width: 88px;
+}
+
+.catalog-cost-chart {
+  position: relative;
+}
+
+.catalog-cost-chart .chart-frame {
+  position: relative;
+  z-index: 2;
+}
+
+.catalog-cost-chart-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+  z-index: 1;
+}
+
+.catalog-cost-chart-total {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.catalog-cost-chart-label {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.catalog-cost-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.catalog-cost-legend-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.catalog-cost-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.catalog-cost-legend-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-cost-legend-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.catalog-cost-legend-pct {
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .datalake-table .numeric-cell {
   font-variant-numeric: tabular-nums;
 }
