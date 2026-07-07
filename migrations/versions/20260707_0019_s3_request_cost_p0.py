@@ -1,7 +1,7 @@
 """S3 request-cost tracking (P0)
 
 Revision ID: 20260707_0019_s3_request_cost_p0
-Revises: 20260707_0019
+Revises: 20260707_0020
 Create Date: 2026-07-07 00:00:00.000000
 
 Per ``docs/s3-request-cost-tracking.md`` §12 P0:
@@ -31,7 +31,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "20260707_0019_s3_request_cost_p0"
-down_revision = "20260707_0019"
+down_revision = "20260707_0020"
 branch_labels = None
 depends_on = None
 
