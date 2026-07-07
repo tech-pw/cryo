@@ -72,9 +72,7 @@ def test_subscribe_list_and_unsubscribe_round_trip(api_db: ApiDb) -> None:
     subscription_id = create.json()["id"]
     assert create.json()["email"] == "consumer@example.com"
 
-    listing = client.get(
-        f"/api/v1/tables/{table_id}/alert-subscriptions", headers=VIEWER_HEADERS
-    )
+    listing = client.get(f"/api/v1/tables/{table_id}/alert-subscriptions", headers=VIEWER_HEADERS)
     assert listing.status_code == 200
     assert [s["email"] for s in listing.json()] == ["consumer@example.com"]
 
@@ -109,9 +107,7 @@ def test_resubscribing_same_email_is_idempotent(api_db: ApiDb) -> None:
     assert second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
 
-    listing = client.get(
-        f"/api/v1/tables/{table_id}/alert-subscriptions", headers=VIEWER_HEADERS
-    )
+    listing = client.get(f"/api/v1/tables/{table_id}/alert-subscriptions", headers=VIEWER_HEADERS)
     assert len(listing.json()) == 1
 
 

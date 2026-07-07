@@ -51,13 +51,22 @@ export interface DestinationRead {
   offpeak_start?: number | null;
   offpeak_end?: number | null;
   enabled: boolean;
+  query_log_config?: JsonObject | null;
+  query_log_retention_days?: number | null;
   created_at: string;
   updated_at: string;
 }
 
 export type DestinationWrite = Pick<
   DestinationRead,
-  "name" | "engine" | "config" | "enabled" | "offpeak_start" | "offpeak_end"
+  | "name"
+  | "engine"
+  | "config"
+  | "enabled"
+  | "offpeak_start"
+  | "offpeak_end"
+  | "query_log_config"
+  | "query_log_retention_days"
 > & { secret_ref?: string | null };
 
 export interface PresetRead {

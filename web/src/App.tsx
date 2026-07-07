@@ -9,7 +9,6 @@ import {
   ExperimentOutlined,
   HistoryOutlined,
   MoonOutlined,
-  PartitionOutlined,
   SettingOutlined,
   RobotOutlined,
   SunOutlined,
@@ -72,6 +71,11 @@ const queryClient = new QueryClient({
   }
 });
 
+// Cost attribution is intentionally not in the nav: per docs/OSS_READINESS.md §2.2 the
+// feature is a stub that requires custom `cost_center` / `department` tags on Source /
+// Connection models and isn't ready for the v1 launch surface. The /attribution route
+// remains registered so the URL still works for direct links from docs / future
+// re-introduction, but no entry point exists in the navigation.
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
   { key: "/catalogs", icon: <DatabaseOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
@@ -81,7 +85,6 @@ const navItems = [
   { key: "/governance", icon: <TeamOutlined />, label: <Link to="/governance">Governance</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
-  { key: "/attribution", icon: <PartitionOutlined />, label: <Link to="/attribution">Attribution</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
@@ -91,31 +94,40 @@ const navItems = [
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
+// Index lookup is fragile to nav reordering — resolve by route key instead.
+const navByKey = Object.fromEntries(navItems.map((item) => [item.key, item]));
+
 const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Overview",
-    children: [navItems[0], navItems[9]]
+    children: [navByKey["/health"], navByKey["/sla"]]
   },
   {
     type: "group",
     label: "Inventory",
-    children: [navItems[1], navItems[2], navItems[3]]
+    children: [navByKey["/catalogs"], navByKey["/tables"], navByKey["/scans"]]
   },
   {
     type: "group",
     label: "Operations",
-    children: [navItems[10], navItems[11], navItems[12]]
+    children: [navByKey["/optimize"], navByKey["/presets"], navByKey["/runs"]]
   },
   {
     type: "group",
     label: "Insights",
-    children: [navItems[4], navItems[5], navItems[6], navItems[7], navItems[8]]
+    children: [
+      navByKey["/ai"],
+      navByKey["/governance"],
+      navByKey["/queries"],
+      navByKey["/cost"],
+      navByKey["/cost-insights"]
+    ]
   },
   {
     type: "group",
     label: "Settings",
-    children: [navItems[13], navItems[14]]
+    children: [navByKey["/aws"], navByKey["/connections"]]
   }
 ];
 

@@ -17,7 +17,6 @@ the practical guide for running and extending the current implementation.
 - `ui-cost-savings.md` — frontend build spec for visualizing storage gains + cost savings in the
   health UI (current→projected waterfall, savings-by-operation, current-vs-projected by schema);
   consumes the `cost-savings.md` backend.
-- `chat-b413e9e0-build-log.md` — implementation log for the referenced Cursor chat transcript.
 
 ## Quick Commands
 

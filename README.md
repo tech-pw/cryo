@@ -11,7 +11,7 @@ cleanup, cost tracking, and data-quality monitoring, deployable to Kubernetes.
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
 ![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20PostgreSQL-informational)
 ![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20TypeScript-informational)
-![License](https://img.shields.io/badge/license-TBD-lightgrey)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 ## Table of contents
 
@@ -69,6 +69,21 @@ Mixed-Iceberg coupling) and Trino-first rather than Flink-first. Against the man
 (Databricks Predictive Optimization, AWS S3 Tables, Snowflake), Cryo is the answer for teams who
 aren't consolidating onto a single vendor's compute.
 
+### Who this isn't for (yet)
+
+- **Multi-tenant SaaS operators.** Tenant isolation is opt-in (`Settings.enforce_tenant_isolation`),
+  not default. Run one instance per customer until that switches.
+- **Flink-primary streaming shops.** The Flink engine ships config generation only; it does **not**
+  submit jobs to a cluster (see `cryo/engines/flink/engine.py` module docstring).
+- **Teams wanting a zero-config managed product.** This is a thing you operate — Kubernetes,
+  Postgres, Redis, an Iceberg catalog — not a SaaS you sign up for.
+- **Anyone needing the native Rust engine for production.** It's experimental, off by default,
+  and not exercised by CI (see `docs/RUST_ENGINE_PRODUCTION_HARDENING.md` and
+  `cryo/engines/native/engine.py`). Use Trino or Spark.
+- **Heavy "advanced" / AI / FinOps / tiering / anomaly dashboards out of the box.** These are
+  partially implemented and become useful only once query-log ingestion is enabled (`Settings`
+  → `telemetry_*`). Until then, expect empty charts, not broken ones.
+
 ## Features
 
 ### Maintenance
@@ -110,6 +125,19 @@ aren't consolidating onto a single vendor's compute.
   counts, actor.
 - **Auth** is JWT-based with optional RS256 OIDC, ABAC enforcement, and per-tenant isolation.
   Every API route is wired to a role decorator (`viewer` / `operator` / `admin` / `editor`).
+
+## Status (read this before adopting)
+
+Cryo is **pre-1.0** (`v0.x` SemVer). The **launch-tier surface** — scanner, health grading,
+planner, governor, Trino/Spark engines, presets + assignment, bulk run, audit log, run
+console, JWT/OIDC auth — is real and tested (379 backend + 58 frontend tests). The
+**advanced** / **AI / FinOps / tiering / anomaly** tiers are partially implemented and
+depend on opt-in query-log ingestion to populate; see `docs/OSS_READINESS.md` §2.4 for
+which surfaces are launch-tier versus behind-flags.
+
+For an honest accounting of what's solid, what's partial, and what isn't shipped yet, see
+[`docs/current-state.md`](./docs/current-state.md). For the production-readiness reasoning
+backing this `v0.x` floor, see [`docs/PREMORTEM.md`](./docs/PREMORTEM.md).
 
 ## Quick start
 
@@ -242,4 +270,7 @@ and an Alembic migration for every schema change.
 
 ## License
 
-TBD.
+[Apache License 2.0](./LICENSE). Copyright 2026 shelf-project.
+
+By contributing, you agree your contributions are licensed under the same Apache-2.0 terms.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [docs/GOVERNANCE.md](./docs/GOVERNANCE.md).

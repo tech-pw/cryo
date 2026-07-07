@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import QueryLog, Source, Table
-from cryo.telemetry.parser import extract_table_from_query, parse_query_predicates
+from cryo.telemetry.parser import parse_query_predicates
 
 logger = logging.getLogger(__name__)
 
@@ -146,119 +146,40 @@ async def ingest_trino_query_log(
     since: datetime | None = None,
     limit: int = 1000,
 ) -> int:
-    """Ingest Trino query logs into the database.
+    """Fetch recent Trino query logs and hand them off to the Redis buffer.
+
+    In the new tiered pipeline this function is a *pure fetcher* -- it does NOT write to
+    Postgres ``query_logs`` directly. The curator drains the Redis buffer on a separate
+    cadence, archives rows to Iceberg, and only writes a curated subset back to Postgres.
+    That separation is what makes the pipeline scale to 1M+ queries/day: per-query
+    Postgres rows are reserved for the small "summary-worthy" subset, and the rest live
+    in columnar Iceberg.
 
     Args:
-        session: Database session
+        session: Database session (used for watermark bookkeeping; no row inserts here)
         source: The Cryo source (lakehouse) these queries are for
         ingester: TrinoQueryIngester instance
-        since: Only ingest queries after this time
-        limit: Maximum queries to ingest
+        since: Only fetch queries after this time
+        limit: Maximum queries to fetch
 
     Returns:
-        Number of queries ingested
+        Number of raw rows handed off to the Redis buffer.
+
+    The return value is preserved for the legacy scheduler's logging so existing
+    dashboards keep working -- the meaning shifts from "rows inserted" to "rows buffered".
     """
-    # Get existing query IDs to avoid duplicates
-    existing_ids = set(
-        session.scalars(select(QueryLog.query_id).where(QueryLog.source_id == source.id))
-    )
-
-    # Fetch queries from Trino
     queries = await ingester.fetch_recent_queries(since=since, limit=limit)
-    logger.info(f"Fetched {len(queries)} queries from Trino")
+    logger.info("Fetched %s queries from Trino (curator will archive + curate)", len(queries))
+    if not queries:
+        return 0
+    try:
+        from cryo.telemetry.query_buffer import buffer_trino_queries
 
-    # Build a lookup of tables by schema.table_name
-    tables = session.scalars(
-        select(Table).where(Table.source_id == source.id, Table.is_active.is_(True))
-    ).all()
-    table_lookup: dict[str, Table] = {}
-    for t in tables:
-        key = f"{t.schema_name}.{t.table_name}".lower()
-        table_lookup[key] = t
-
-    ingested = 0
-    for q in queries:
-        query_id = q.get("query_id")
-        if not query_id or query_id in existing_ids:
-            continue
-
-        query_text = q.get("query", "")
-        if not query_text:
-            continue
-
-        # Parse the query to extract predicates
-        predicate_info = parse_query_predicates(query_text)
-
-        # Try to match to a known table
-        schema_name, table_name = extract_table_from_query(query_text)
-        table_id = None
-        if schema_name and table_name:
-            key = f"{schema_name}.{table_name}".lower()
-            if key in table_lookup:
-                table_id = table_lookup[key].id
-
-        # Parse execution time
-        executed_at = q.get("executed_at")
-        if isinstance(executed_at, str):
-            try:
-                executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
-            except ValueError:
-                executed_at = datetime.now(UTC)
-        elif executed_at is None:
-            executed_at = datetime.now(UTC)
-
-        # Calculate total duration
-        duration_ms = (
-            (q.get("queued_time_ms") or 0)
-            + (q.get("analysis_time_ms") or 0)
-            + (q.get("planning_time_ms") or 0)
-            + (q.get("execution_time_ms") or 0)
-        )
-
-        log_entry = QueryLog(
-            source_id=source.id,
-            table_id=table_id,
-            query_id=query_id,
-            engine="trino",
-            query_text=query_text[:10000] if len(query_text) > 10000 else query_text,
-            query_type=predicate_info.query_type,
-            filter_columns=[
-                {
-                    "column": c.column,
-                    "operator": c.operator,
-                    "is_equality": c.is_equality,
-                    "is_range": c.is_range,
-                }
-                for c in predicate_info.filter_columns
-            ],
-            join_columns=[{"column": c} for c in predicate_info.join_columns],
-            projection_columns=[{"column": c} for c in predicate_info.projection_columns],
-            executed_at=executed_at,
-            duration_ms=duration_ms,
-            rows_read=q.get("physical_input_rows"),
-            bytes_read=q.get("physical_input_bytes"),
-            user_name=q.get("user_name"),
-            raw={
-                k: v
-                for k, v in q.items()
-                if k
-                not in (
-                    "query",
-                    "query_id",
-                    "user_name",
-                    "executed_at",
-                    "physical_input_rows",
-                    "physical_input_bytes",
-                )
-            },
-        )
-
-        session.add(log_entry)
-        ingested += 1
-
-    session.commit()
-    logger.info(f"Ingested {ingested} new query logs")
-    return ingested
+        accepted = buffer_trino_queries(queries, source_id=source.id)
+        return int(accepted)
+    except Exception as exc:  # noqa: BLE001 -- Redis or buffer failures must not break the tick
+        logger.warning("Failed to buffer Trino queries to Redis: %s", exc)
+        return 0
 
 
 async def ingest_from_query_events(

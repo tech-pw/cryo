@@ -228,6 +228,15 @@ class SchedulerService:
             logging.getLogger(__name__).warning("ML drift check failed: %s", exc)
 
     def _maybe_ingest_telemetry(self, current: datetime) -> None:
+        """Per-tick telemetry pipeline. Two stages run on the same tick:
+
+        1. **Fetch** (legacy path): for sources that haven't opted into the per-destination
+           curator yet, still poll ``telemetry_trino_url`` and buffer rows to Redis. Cheap
+           when there's nothing new; harmless when the URL isn't set.
+        2. **Curate**: for every destination with ``query_log_config`` enabled, drain its
+           Redis buffer -> Iceberg archive -> curated Postgres -> query_patterns. Failures
+           on one destination never block another.
+        """
         from datetime import timedelta
 
         from cryo.config import get_settings
@@ -244,67 +253,99 @@ class SchedulerService:
 
             from sqlalchemy import select
 
-            from cryo.db.models import Source
+            from cryo.db.models import Destination, Source
             from cryo.telemetry.iceberg_source import (
                 aggregate_from_iceberg_query_log,
                 parse_iceberg_query_log_config,
             )
 
-            async def _run() -> tuple[int, int]:
-                total_ingested = 0
+            async def _run() -> tuple[int, int, int, int]:
+                total_buffered = 0
+                total_curated = 0
                 total_patterns_updated = 0
+                curators_run = 0
                 with SessionLocal() as session:
+                    # 1. Legacy fetch path: poll the global Trino URL for any Source that
+                    #    hasn't migrated to the per-destination curator yet. Buffers to Redis;
+                    #    the curator (or the next curator tick) will handle the rest.
                     sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
                     for source in sources:
-                        iceberg_config = parse_iceberg_query_log_config(source.config or {})
-                        if iceberg_config is not None:
-                            # This source already has a durable, Iceberg-native query log
-                            # (e.g. a Trino event listener writing every completed query into
-                            # its own Iceberg table) -- read that directly instead of polling a
-                            # live Trino coordinator, and don't duplicate rows into query_logs.
+                        if parse_iceberg_query_log_config(source.config or {}) is not None:
                             total_patterns_updated += aggregate_from_iceberg_query_log(
                                 session, source, now=current
                             )
                             continue
-
                         if not settings.telemetry_trino_url:
                             continue
                         from cryo.telemetry.ingestion import (
                             TrinoQueryIngester,
                             ingest_trino_query_log,
                         )
-                        from cryo.telemetry.patterns import aggregate_query_patterns
 
                         ingester = TrinoQueryIngester(settings.telemetry_trino_url)
-                        count = await ingest_trino_query_log(
+                        total_buffered += await ingest_trino_query_log(
                             session,
                             source,
                             ingester,
                             limit=500,
                         )
-                        total_ingested += count
-                        # Aggregate immediately so query_patterns (what partition/layout
-                        # recommendations actually read) reflects this tick's data -- without
-                        # this, the scheduled path only ever wrote raw query_logs rows and
-                        # relied on someone manually re-triggering ingestion via the UI to
-                        # get patterns updated at all.
-                        total_patterns_updated += aggregate_query_patterns(session, table_id=None)
-                    session.commit()
-                return total_ingested, total_patterns_updated
 
-            ingested, patterns_updated = asyncio.run(_run())
+                    # 2. Curator path: for every destination with a query_log_config block,
+                    #    drain the Redis buffer, archive to Iceberg, spill curated to Postgres,
+                    #    and aggregate query_patterns. read_through destinations skip the
+                    #    archive but still aggregate.
+                    destinations = session.scalars(
+                        select(Destination).where(Destination.enabled.is_(True))
+                    ).all()
+                    for destination in destinations:
+                        # Bind the destination to a Source. A destination without a Source
+                        # link can't spill curated rows (Postgres FK is to sources.id) but
+                        # can still archive to Iceberg via the destination's own config.
+                        source = _source_for_destination(session, destination)
+                        try:
+                            from cryo.telemetry.curator import curator_for_destination
+
+                            curator = curator_for_destination(destination, source=source)
+                            if curator is None:
+                                continue
+                            result = await curator.run(session, now=current)
+                            curators_run += 1
+                            total_curated += result.curated_inserted
+                            total_patterns_updated += result.patterns_updated
+                            if result.error:
+                                import logging
+
+                                logging.getLogger(__name__).warning(
+                                    "Curator tick for destination %s partial: %s",
+                                    destination.id,
+                                    result.error,
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            import logging
+
+                            logging.getLogger(__name__).warning(
+                                "Curator tick for destination %s failed: %s",
+                                destination.id,
+                                exc,
+                            )
+                    session.commit()
+                return total_buffered, total_curated, total_patterns_updated, curators_run
+
+            buffered, curated, patterns_updated, curators_run = asyncio.run(_run())
             import logging
 
             logging.getLogger(__name__).info(
-                "Telemetry ingest tick: %s query logs, %s patterns updated",
-                ingested,
+                "Telemetry tick: %s buffered, %s curated, %s patterns updated across %s destinations",  # noqa: E501
+                buffered,
+                curated,
                 patterns_updated,
+                curators_run,
             )
             self._last_telemetry_ingest = current
         except Exception as exc:
             import logging
 
-            logging.getLogger(__name__).warning("Telemetry ingest tick failed: %s", exc)
+            logging.getLogger(__name__).warning("Telemetry tick failed: %s", exc)
 
     def _maybe_purge_query_logs(self, current: datetime) -> None:
         from datetime import timedelta
@@ -450,3 +491,22 @@ class InMemorySchedulerStore:
 
 def new_job_id() -> str:
     return str(uuid4())
+
+
+def _source_for_destination(session: Any, destination: Any) -> Any:
+    """Resolve a Source to bind a destination to for the curator.
+
+    Bootstrap heuristic: pick the first enabled Source in the same tenant as the
+    destination. Single-tenant deployments work directly; multi-tenant deployments
+    will get a per-destination binding (likely a new FK column) once we add
+    multi-engine-per-lakehouse routing. Until then, the curator can still archive
+    to Iceberg (no FK) -- only the curated-Postgres spill is gated on having a Source.
+    """
+    from sqlalchemy import select
+
+    from cryo.db.models import Source
+
+    stmt = select(Source).where(Source.enabled.is_(True))
+    if destination.tenant_id is not None:
+        stmt = stmt.where(Source.tenant_id == destination.tenant_id)
+    return session.scalars(stmt.limit(1)).first()

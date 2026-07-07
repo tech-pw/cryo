@@ -232,6 +232,13 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       `LayoutOptimization`.
 - [~] Query-pattern-aware sort/layout optimization (`cryo/optimizer/`) — logic exists; needs sustained
       query-log volume for calibration.
+- [x] **Tiered query-log pipeline** (`cryo/telemetry/iceberg_writer.py`, `curator.py`, `query_buffer.py`)
+      — Redis Streams buffer -> Iceberg archive (`cryo_internal.queries`) -> curated Postgres `query_logs`
+      -> `query_patterns`. Per-destination config block in Connections drawer; retention via
+      `expire_snapshots`; multi-coordinator poll; deterministic sample by `query_id`. Migration
+      `20260707_0018_query_log_config.py`. 33 new unit tests in `tests/test_query_log_pipeline.py`.
+- [ ] Spark History Server integration for `query_log` mode on `spark_emr` destinations — out of
+      scope for this PR; flag in `todo.md` so the next person picks it up.
 - [~] Approval workflows (`cryo/workflows/approvals.py`) — backend scaffold; full UI flow TBD.
 - [~] GitOps policy loader (`cryo/gitops/policy_loader.py`) — YAML loader; Git watcher not wired.
 - [~] Multi-tenant isolation (`cryo/multi_tenant.py`) — session scoping scaffold.

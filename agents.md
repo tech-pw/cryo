@@ -39,11 +39,15 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
    components that must not ship to prod; **update in the same PR** when adding new dev-only scripts
    or compose services.
 
-The reference implementation being ported lives **outside this repo** (read-only, for parity):
-- `/Users/pw/PycharmProjects/pw-data-connectors/airflow/dags/data_team/trino_admin/dag_iceberg_auto_maintenance_with_trino.py`
-- `/Users/pw/PycharmProjects/pw-data-connectors/airflow/dags/data_team/iceberg_compaction_utils/iceberg_table_stats_batch.py`
-- `/Users/pw/PycharmProjects/pw-data-connectors/airflow/pw_dbt_trino/macros/iceberg_*.sql`
-- `/Users/pw/PycharmProjects/pw-data-connectors/airflow/dags/data_team/trino_admin/iceberg_maintenance_report.py`
+The reference implementation being ported lives **outside this repo** (read-only, for parity).
+The maintainer team tracks these upstream files locally for behavior comparison; the exact
+paths are intentionally not committed here because they reference a private developer
+checkout. Files of interest when checking semantic parity:
+
+- `dags/data_team/trino_admin/dag_iceberg_auto_maintenance_with_trino.py`
+- `dags/data_team/iceberg_compaction_utils/iceberg_table_stats_batch.py`
+- `pw_dbt_trino/macros/iceberg_*.sql`
+- `dags/data_team/trino_admin/iceberg_maintenance_report.py`
 
 When in doubt about maintenance semantics, **match these files' behavior** unless `lld.md` says otherwise.
 

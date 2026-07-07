@@ -270,6 +270,8 @@ class DestinationCreate(BaseModel):
     offpeak_start: int | None = None
     offpeak_end: int | None = None
     enabled: bool = True
+    query_log_config: JsonDict | None = None
+    query_log_retention_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class DestinationTestRequest(BaseModel):
@@ -303,6 +305,8 @@ class DestinationRead(OrmModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
+    query_log_config: JsonDict | None = None
+    query_log_retention_days: int | None = None
 
     @field_serializer("config")
     def redact_config(self, config: JsonDict) -> JsonDict:
@@ -318,6 +322,8 @@ class DestinationPatch(BaseModel):
     offpeak_start: int | None = None
     offpeak_end: int | None = None
     enabled: bool | None = None
+    query_log_config: JsonDict | None = None
+    query_log_retention_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class PresetCreate(BaseModel):

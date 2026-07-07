@@ -1481,6 +1481,12 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /** Query Log Config */
+            query_log_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Query Log Retention Days */
+            query_log_retention_days?: number | null;
         };
         /** DestinationPatch */
         DestinationPatch: {
@@ -1499,6 +1505,12 @@ export interface components {
             offpeak_end?: number | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Query Log Config */
+            query_log_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Query Log Retention Days */
+            query_log_retention_days?: number | null;
         };
         /** DestinationRead */
         DestinationRead: {
@@ -1525,6 +1537,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Query Log Config
+             */
+            query_log_config?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Query Log Retention Days
+             */
+            query_log_retention_days?: number | null;
             /**
              * Created At
              * Format: date-time

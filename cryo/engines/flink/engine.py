@@ -1,8 +1,11 @@
 """Flink engine for Cryo.
 
-Generates Flink TableMaintenance configurations rather than executing
-SQL directly. The generated config is meant to be deployed as a
-Flink streaming job alongside an Iceberg Sink V2 pipeline.
+**EXPERIMENTAL — CONFIG GENERATION ONLY.** Does not submit jobs to a Flink cluster.
+Generates Flink ``TableMaintenance`` configurations that you must deploy yourself
+as a Flink streaming job alongside an Iceberg Sink V2 pipeline. Not part of the v1
+launch surface; see ``docs/OSS_READINESS.md`` §2.2.
+
+Opt-in gated by ``Settings.flink_engine_enabled`` (defaults to ``False``).
 """
 
 from __future__ import annotations
