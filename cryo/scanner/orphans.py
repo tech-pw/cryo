@@ -47,7 +47,7 @@ def scan_orphans(
     scan_at: datetime,
     settings: Settings,
 ) -> OrphanScanResult:
-    location = _table_location(table_obj)
+    location = table_location(table_obj)
     if not location:
         return OrphanScanResult(
             orphan_bytes=0,
@@ -57,7 +57,7 @@ def scan_orphans(
             skipped_reason="no_location",
         )
 
-    bucket, prefix = _parse_s3_location(location)
+    bucket, prefix = parse_s3_location(location)
     if bucket is None:
         return OrphanScanResult(
             orphan_bytes=0,
@@ -122,7 +122,8 @@ def carry_forward_orphans(
     )
 
 
-def _table_location(table_obj: object) -> str | None:
+def table_location(table_obj: object) -> str | None:
+    """Resolve the live S3 location of an Iceberg table object (its root, not the data/ subpath)."""
     location = getattr(table_obj, "location", None)
     if callable(location):
         try:
@@ -139,7 +140,7 @@ def _table_location(table_obj: object) -> str | None:
     return None
 
 
-def _parse_s3_location(location: str) -> tuple[str | None, str]:
+def parse_s3_location(location: str) -> tuple[str | None, str]:
     parsed = urlparse(location)
     if parsed.scheme == "s3":
         bucket = parsed.netloc

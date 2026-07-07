@@ -165,6 +165,10 @@ def persist_table_analysis(
     )
     table_id = table_row.id
 
+    location = (analysis.raw or {}).get("location")
+    if location:
+        table_row.location = location
+
     stats_values = _stats_values(table_id, analysis)
     existing_stats = session.get(TableStats, table_id)
     if existing_stats is None:
