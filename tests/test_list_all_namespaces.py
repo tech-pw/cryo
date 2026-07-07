@@ -30,22 +30,26 @@ def test_list_all_namespaces_walks_nested_namespaces() -> None:
 
     def fake_list(parent=()):
         if not parent:
-            return [("prod_data",)]
-        if parent == "prod_data":
-            return [("prod_data.bronze",), ("prod_data.silver",), ("prod_data.gold",)]
-        if parent == "prod_data.bronze":
-            return [("prod_data.bronze.events",)]
+            return [("sample_catalog",)]
+        if parent == "sample_catalog":
+            return [
+                ("sample_catalog.bronze",),
+                ("sample_catalog.silver",),
+                ("sample_catalog.gold",),
+            ]
+        if parent == "sample_catalog.bronze":
+            return [("sample_catalog.bronze.events",)]
         return []
 
     fake.list_namespaces.side_effect = fake_list
 
     result = catalog.list_all_namespaces()
     assert result == [
-        "prod_data",
-        "prod_data.bronze",
-        "prod_data.bronze.events",
-        "prod_data.gold",
-        "prod_data.silver",
+        "sample_catalog",
+        "sample_catalog.bronze",
+        "sample_catalog.bronze.events",
+        "sample_catalog.gold",
+        "sample_catalog.silver",
     ]
 
 
