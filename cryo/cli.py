@@ -248,7 +248,7 @@ class GovernorRunner(DaemonRunner):
                 queue=wiring.queue,
                 lock_store=wiring.lock_store,
                 store=wiring.job_store,
-                capacity_provider=LiveCapacityProvider(),
+                capacity_provider=LiveCapacityProvider(wiring.queue),
             )
             return self._governor
         except Exception as exc:

@@ -39,6 +39,11 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return failResult(operation, err)
 	}
 
+	if err := validateCompactionSortMode(tbl, op.Params); err != nil {
+		progress.Failed(operation, err.Error())
+		return failResult(operation, err)
+	}
+
 	rowFilter, err := predicate.BuildRowFilter(tbl.Schema(), op.Predicates)
 	if err != nil {
 		progress.Failed(operation, err.Error())

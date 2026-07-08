@@ -23,6 +23,10 @@ NATIVE_MANIFESTS_DETAIL = (
     "optimize_manifests not implemented in iceberg-go; route to Trino/Spark (Phase F)"
 )
 
+NATIVE_ZORDER_DETAIL = (
+    "z-order compaction is not supported in cryo-engine-go; route OPTIMIZE to Trino/Spark (Phase F)"
+)
+
 NATIVE_V3_PARTITIONED_DV_DETAIL = (
     "v3 partitioned deletion vectors not supported in pinned iceberg-go (#1135); "
     "route OPTIMIZE to Trino/Spark"
@@ -176,6 +180,18 @@ def native_supported_operation_types(
     return frozenset(supported)
 
 
+def _optimize_requires_sql_fallback(operation: Operation, stats: Mapping[str, Any] | None) -> str | None:
+    """Return a fallback detail when OPTIMIZE must not run on the Go subprocess."""
+    params = operation.params or {}
+    strategy = str(params.get("strategy", "")).strip().lower()
+    zorder_columns = params.get("zorder_columns") or []
+    if strategy == "zorder" or (isinstance(zorder_columns, list) and zorder_columns):
+        return NATIVE_ZORDER_DETAIL
+    if has_v3_partitioned_deletion_vectors(stats):
+        return NATIVE_V3_PARTITIONED_DV_DETAIL
+    return None
+
+
 def resolve_native_routing(
     plan: MaintenancePlan,
     stats: Mapping[str, Any] | None,
@@ -194,6 +210,13 @@ def resolve_native_routing(
             continue
 
         if operation.type is OperationType.OPTIMIZE:
+            sql_fallback_detail = _optimize_requires_sql_fallback(operation, stats)
+            if sql_fallback_detail is not None:
+                if has_sql_fallback:
+                    fallback_ops.append((operation, sql_fallback_detail))
+                else:
+                    skipped_ops.append((operation, sql_fallback_detail))
+                continue
             if native_optimize_enabled(stats, cfg):
                 native_ops.append(operation)
                 continue

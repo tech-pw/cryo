@@ -50,14 +50,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Base native ops always routed to the subprocess. OPTIMIZE is added dynamically for
-# Go engine tables (COW + MOR; v3 partitioned DV gated — see routing.py). Manifests
-# route to sql_fallback_destination_id when configured.
+# Go engine tables (COW + MOR; v3 partitioned DV gated — see routing.py).
+# OPTIMIZE_MANIFESTS always routes to sql_fallback_destination_id (Phase F opt.1).
 NATIVE_SUPPORTED_OPERATIONS = NATIVE_BASE_OPERATIONS
 
-NATIVE_DISCONNECTED_OPERATIONS = (
-    OperationType.OPTIMIZE,
-    OperationType.OPTIMIZE_MANIFESTS,
-)
+# Legacy constant kept for tests/docs; worker routing uses routing.py.
+NATIVE_DISCONNECTED_OPERATIONS = (OperationType.OPTIMIZE_MANIFESTS,)
 NATIVE_DISCONNECTED_DETAIL = NATIVE_LEGACY_DISCONNECTED_DETAIL
 
 # Flag to track if optional cryo_native PyO3 helpers are available
@@ -193,8 +191,26 @@ class NativeEngine:
         return self._engine
 
     def probe_capacity(self) -> CapacitySnapshot:
-        """Return configured slot capacity; governor subtracts queue in-flight counts."""
-        return CapacitySnapshot(capacity=self._slot_cap, used=0)
+        """Return slot capacity with optional queue in-flight when destination_id is set."""
+        from cryo.governor.capacity import probe_native_capacity
+        from cryo.queue.redis_queue import get_redis_client
+
+        destination_id = self.config.get("destination_id")
+        queue = None
+        if destination_id:
+            try:
+                from cryo.queue.redis_queue import RedisMaintenanceQueue
+
+                client = get_redis_client()
+                if client is not None:
+                    queue = RedisMaintenanceQueue(client)
+            except Exception:  # noqa: BLE001 - optional Redis for API probes
+                queue = None
+        return probe_native_capacity(
+            self.config,
+            destination_id=str(destination_id) if destination_id else None,
+            queue=queue,
+        )
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]:
         supported_types = native_supported_operation_types(self.table_stats, self.config)
@@ -653,6 +669,10 @@ def _is_unsupported_native_error(error: str | None) -> bool:
         return False
     lowered = error.lower()
     if "blocked upstream" in lowered or "not available on pinned iceberg-rust" in lowered:
+        return True
+    if "not available on iceberg-go" in lowered or "not implemented upstream" in lowered:
+        return True
+    if "route optimize_manifests to trino/spark" in lowered:
         return True
     return "not yet implemented" in lowered and "rewrite_data_files commit blocked" in lowered
 
