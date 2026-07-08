@@ -132,17 +132,24 @@ def execute_request_via_job(
     service_account = str(config.get("k8s_service_account", "default"))
     ttl_seconds = int(config.get("k8s_ttl_seconds_after_finished", 300))
     image_pull_policy = str(config.get("k8s_image_pull_policy", "IfNotPresent"))
+    namespace = str(config.get("k8s_namespace", "default"))
+    destination_id = str(config.get("destination_id") or config.get("id") or "")
 
     job_manifest: dict[str, Any] = {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
             "name": job_name,
-            "namespace": "default",
+            "namespace": namespace,
             "labels": {
                 "app.kubernetes.io/name": "cryo",
                 "app.kubernetes.io/component": "native-engine",
                 "cryo/table_ref": table_ref,
+                "cryo/destination": destination_id or "default",
+            },
+            "annotations": {
+                "cryo/cpu": f"{cpu_milli}m",
+                "cryo/memory": f"{mem_mib}Mi",
             },
         },
         "spec": {
@@ -155,6 +162,7 @@ def execute_request_via_job(
                         "app.kubernetes.io/name": "cryo",
                         "app.kubernetes.io/component": "native-engine",
                         "cryo/table_ref": table_ref,
+                        "cryo/destination": destination_id or "default",
                     },
                 },
                 "spec": {
@@ -192,7 +200,7 @@ def execute_request_via_job(
     batch_api = _new_k8s_batch_client()
 
     try:
-        batch_api.create_namespaced_job(body=job_manifest, namespace="default")
+        batch_api.create_namespaced_job(body=job_manifest, namespace=namespace)
         logger.info("Created Kubernetes Job %s for table %s", job_name, table_ref)
     except Exception as exc:
         logger.error("Failed to create Job %s: %s", job_name, exc)
@@ -208,16 +216,16 @@ def execute_request_via_job(
 
     try:
         while time.monotonic() < deadline:
-            job = batch_api.read_namespaced_job(name=job_name, namespace="default")
+            job = batch_api.read_namespaced_job(name=job_name, namespace=namespace)
             status = job.status
 
             if status.succeeded is not None and status.succeeded >= 1:
-                pods = _get_job_pods(batch_api, job_name, "default")
+                pods = _get_job_pods(batch_api, job_name, namespace)
                 stdout_text = _read_pod_logs(pods, "cryo-engine", k8s_client)
                 return _parse_job_result(stdout_text, table_ref, job_name)
 
             if status.failed is not None and status.failed >= 1:
-                pods = _get_job_pods(batch_api, job_name, "default")
+                pods = _get_job_pods(batch_api, job_name, namespace)
                 stderr_text = _read_pod_logs(pods, "cryo-engine", k8s_client)
                 return NativeExecuteResult(
                     ok=False,
@@ -229,7 +237,7 @@ def execute_request_via_job(
 
             time.sleep(poll_interval)
 
-        batch_api.delete_namespaced_job(name=job_name, namespace="default")
+        batch_api.delete_namespaced_job(name=job_name, namespace=namespace)
         return NativeExecuteResult(
             ok=False,
             table_ref=table_ref,
@@ -239,7 +247,7 @@ def execute_request_via_job(
 
     except Exception as exc:
         try:
-            batch_api.delete_namespaced_job(name=job_name, namespace="default")
+            batch_api.delete_namespaced_job(name=job_name, namespace=namespace)
         except Exception:
             pass
         return NativeExecuteResult(

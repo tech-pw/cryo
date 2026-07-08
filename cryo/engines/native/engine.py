@@ -879,6 +879,7 @@ def _exec_results_from_native_batch(
             OperationType.REMOVE_ORPHAN_FILES: "remove_orphan_files",
             OperationType.OPTIMIZE: "rewrite_data_files",
             OperationType.OPTIMIZE_MANIFESTS: "rewrite_manifests",
+            OperationType.COMPUTE_STATISTICS: "compute_statistics",
         }[operation.type]
         op_result = results_by_operation.get(native_type)
         if op_result is None and result.results:

@@ -328,6 +328,14 @@ collected, not new instrumentation" (Part 2). **Unblocks:** parity with LakeOps/
 treat this as a primary signal, and early warning for the e6data-style metadata-bloat failure
 mode documented in `native-engine-scoping-research.md` §3.1.
 
+**Implementation log (2026-07-08):**
+- ✅ `metadata_to_data_ratio(metadata_bytes, data_bytes)` helper in `cryo/scanner/signals.py` (returns 0.0 when `data_bytes <= 0`)
+- ✅ Thresholds `metadata_to_data_ratio_warn=0.05`, `metadata_to_data_ratio_crit=0.15` added to `HEALTH_THRESHOLDS` in `cryo/scanner/health.py`
+- ✅ Deduction wired into `compute_health_score` with a `Metadata ratio overhead` label (warn −8 / crit −20 points, "Metadata ratio of X% (exceeds limit of Y%)")
+- ✅ `enrich_stats_signals()` in `cryo/scanner/signals.py` computes the ratio from the cost-accounting `breakdown.metadata_bytes / breakdown.live_bytes` collected by `account_metadata_cost` in `cryo/scanner/cost.py`
+- ✅ Surfaced on the table-detail UI via `web/src/components/table-detail/helpers.tsx::statsRaw.metadata_to_data_ratio`; rationale surfaced by `cryo/ai/explain.py`
+- ✅ Tests in `tests/test_strategy_move_9.py`: helper unit tests + warn/crit health-score integration
+
 **Move 10 — V2→V3 format detection + deletion-vector upgrade flag.** *Effort: ~1 day.*
 `format-version` is already read in `analyze_table`; flag V2 tables with high delete ratios
 as V3-upgrade candidates (citing the AWS EMR benchmark — 55% faster deletes, 28.5% faster
