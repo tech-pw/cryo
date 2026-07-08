@@ -122,7 +122,7 @@ def test_test_aws_integration_records_result(session):
     )
 
     with patch(
-        "cryo.api.routes.check_aws_connection",
+        "cryo.api.routes_sources.check_aws_connection",
         return_value=AWSConnectionTestResult(
             ok=True, account_id="123456789012", arn="arn:aws:iam::123456789012:user/x"
         ),
@@ -147,7 +147,7 @@ def test_get_aws_usage_combines_metrics_and_pricing(session):
 
     with (
         patch(
-            "cryo.api.routes.fetch_bucket_storage_metrics",
+            "cryo.api.routes_sources.fetch_bucket_storage_metrics",
             return_value=BucketStorageMetrics(
                 bucket="b",
                 region="us-east-1",
@@ -157,7 +157,7 @@ def test_get_aws_usage_combines_metrics_and_pricing(session):
             ),
         ),
         patch(
-            "cryo.api.routes.fetch_s3_price_per_gb",
+            "cryo.api.routes_sources.fetch_s3_price_per_gb",
             return_value=S3PriceInfo(
                 region="us-east-1", storage_class="General Purpose", price_per_gb_month=0.023
             ),

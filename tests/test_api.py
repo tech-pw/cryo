@@ -122,7 +122,8 @@ def test_preview_skips_bucket_filter_without_unsafe_sql() -> None:
     assert any("bucket_filter" in note for note in item["notes"])
 
 
-def test_preview_renders_native_payload_statements() -> None:
+def test_preview_renders_native_payload_statements(monkeypatch) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
     response = _client().post(
         "/api/v1/maintenance/preview",
         headers=AUTH_HEADERS,
