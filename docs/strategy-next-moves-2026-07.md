@@ -82,6 +82,13 @@ require new research to start.
 - **Unblocks:** removing the "not exercised by CI" caveat from the README, and every future
   promotion of the native engine. This is the mitigation for risk #1, at near-zero cost.
 
+**Implementation log (2026-07-08):**
+- ✅ C2/C3 MOR concurrency suite already wired in `native-compaction-e2e-go` job (was done prior to this session)
+- ✅ Created `tests/integration/native/test_native_differential_e2e.py` — parameterized over COW fixtures (unpartitioned, day-partitioned, identity-partitioned); clones table to S3, runs Trino `ALTER TABLE ... EXECUTE optimize` on clone, runs Go engine OPTIMIZE on original, asserts identical row counts; skips when `CRYO_TRINO_URI` not set
+- ✅ Added `trino/catalog/iceberg_rest.properties` — Trino `iceberg-rest` connector pointing at `http://iceberg-rest:8181` with the same MinIO warehouse, enabling Trino to read tables created by the REST catalog
+- ✅ Updated `native-compaction-e2e-go` CI job: added `trino` to `docker compose up`, waits for Trino `/v1/info` readiness, runs differential tests with `CRYO_TRINO_URI` set
+- ⚠️ Differential test needs a real CI run to validate end-to-end: the REST→HMS metadata bridge may need adjustment if Trino's `iceberg-rest` connector does not pick up REST-created tables automatically (the connector reads S3 metadata directly, not HMS metadata — this is the correct behaviour but needs confirmation against the live catalog)
+
 ### Move 3 — Kubernetes `Job`-based dispatch for native execution, sized from planner data
 
 - **Effort:** 1–2 weeks.
