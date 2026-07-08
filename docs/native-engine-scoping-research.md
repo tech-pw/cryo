@@ -31,14 +31,14 @@ recommend a scope-in/scope-out split.
 | Component | Current state | Source |
 |---|---|---|
 | Engine selection | `CRYO_ENGINE_IMPL` set to `go` or `rust`; Rust path structurally blocked (`NATIVE_RUST_OPTIMIZE_DETAIL`: "native compaction blocked upstream on iceberg-rust (EPIC #2269)") | `cryo/engines/native/routing.py` |
-| Execution model | Native engine runs as an OS **subprocess of the Worker pod** (`subprocess.run`/`Popen`) — no resource isolation from the Worker's own container | `cryo/engines/native/runner.py` |
+| Execution model | Subprocess runner (default). K8s Job dispatch **added** behind `k8s_dispatch=True` config flag — `cryo/engines/native/job_dispatch.py` creates per-chunk Jobs with resource requests sized from `chunk_size_gb`; falls back to subprocess when not in-cluster | `cryo/engines/native/runner.py`, `cryo/engines/native/job_dispatch.py` |
 | Worker pod sizing | Fixed: `requests: {cpu: 500m, memory: 1Gi}`, `limits: {cpu: "2", memory: 4Gi}`, 2 replicas — **identical ceiling for a 2GB table and a 20TB table** | `deploy/helm/cryo/values.yaml` |
 | Governor capacity model (native) | `_probe_native()` returns a **static configured `slot_cap`** (concurrency count only); `used=0` is hardcoded — no live CPU/memory/subprocess accounting | `cryo/governor/capacity.py` |
 | Planner chunking | Already splits a table's plan by `chunk_size_gb` / `gb_budget` — the input a resource-sizing formula would need already exists | `cryo/planner/planner.py` |
 | Compaction prioritization | Already implements the LinkedIn **AutoComp** paper's benefit-score ranking (not naive small-file-count ordering) — explicitly cited in-code | `cryo/planner/benefit_score.py` |
 | Query latency prediction | QPP model predicts **read-query** p50/p95/p99 latency for Governor admission — not resource sizing for maintenance jobs; a structurally similar model doesn't yet exist for "how much CPU/mem will this compaction job need" | `cryo/governor/qpp.py` |
-| K8s deployment primitives | Only `Deployment` manifests exist (worker/governor/scheduler/scanner) — **no `Job` template** for per-run elastic dispatch | `deploy/helm/cryo/templates/` |
-| CI coverage (Go engine) | Unit tests + build + spawn-verification run in CI. Differential testing vs. Trino and the concurrency/fault-injection suite (§8.5/§8.7 of the Go plan) **do not yet run in CI** | `.github/workflows/ci.yml` |
+| K8s deployment primitives | `Deployment` manifests for Worker/Governor/Scheduler/Scanner. **Job template added** (`native-job.yaml`) — documented manifest for K8s Job dispatch, with `native.*` values for image/serviceAccount/ttl/max resources. Actual Job creation via `kubernetes` Python client in `job_dispatch.py`, not Helm rendering | `deploy/helm/cryo/templates/` |
+| CI coverage (Go engine) | Unit tests + build + spawn-verification + COW/MOR e2e + C2/C3 concurrency in CI. **Differential vs Trino added** (2026-07-08) via `test_native_differential_e2e.py` wired into `native-compaction-e2e-go` job | `.github/workflows/ci.yml`, `tests/integration/native/test_native_differential_e2e.py` |
 | Phase E status (Go plan) | "Live native capacity from queue/DB in-flight subprocess accounting" is explicitly **planned but not done** (rust finding #9) — this document's scaling recommendations feed directly into that already-open task | `docs/native-iceberg-go-compaction-plan.md` §7 |
 
 Two things fall out of this table immediately, before any external research: **(a)** nothing in
@@ -363,12 +363,12 @@ actually being asked to be scoped in now vs. deferred.
 
 **Scope IN (next 1–2 quarters, in dependency order):**
 - Finish Go engine COW+MOR compaction to Phase E exit criteria (already scoped, in flight).
-- Wire differential-testing-vs-Trino and concurrency/fault-injection suites into CI as a hard
-  release gate (closes §3.3's exposure; currently the single biggest reputational risk).
-- Kubernetes `Job`-based dispatch for native-engine execution, replacing subprocess-in-Worker-pod
-  (closes Scenario A/D).
+- ✅ Wire differential-testing-vs-Trino and concurrency/fault-injection suites into CI as a hard
+  release gate (closes §3.3's exposure; currently the single biggest reputational risk) — done 2026-07-08.
+- ✅ Kubernetes `Job`-based dispatch for native-engine execution, replacing subprocess-in-Worker-pod
+  (closes Scenario A/D) — scaffolding done 2026-07-08; needs in-cluster testing + RBAC + kubernetes image dependency.
 - Resource-sizing formula seeded from Planner's existing `total_size_gb`/`chunk_size_gb`/file
-  counts (closes Scenario A; feeds Phase E's capacity-accounting gap).
+  counts (closes Scenario A; feeds Phase E's capacity-accounting gap) — wired into job_dispatch.py.
 - Chunk-level checkpointing / partial-progress commits (closes Scenario B/F; prerequisite for
   everything else being safe).
 - Governor live-capacity accounting from real Job resource state (closes the Phase E gap with
@@ -399,10 +399,10 @@ correctness risks) with the orchestration/deployment/community risks this docume
 
 | Risk | Impact | Mitigation | Status |
 |---|---|---|---|
-| Native subprocess confined to fixed Worker pod resources | Large-table jobs OOM or silently fall back to expensive engines | K8s Job-based dispatch, sized per job (§6.1–3) | Not started |
+| Native subprocess confined to fixed Worker pod resources | Large-table jobs OOM or silently fall back to expensive engines | K8s Job-based dispatch, sized per job (§6.1–3) | 🟡 In progress — scaffolding done; needs in-cluster testing, RBAC, and kubernetes in Worker image |
 | No live resource accounting for native jobs | Governor can't distinguish "5 small jobs" from "1 huge job" when admitting work | Extend capacity model with real Job state (§6.6) | Planned (Phase E), not started |
 | No job checkpointing | Any interruption (commit-race loss, spot reclaim, node failure) forfeits the entire job | Chunk-level partial-progress commits (§6.4) | Not started |
-| Differential/concurrency tests not in CI | A correctness incident (data loss, table corruption) ships before it's caught | Hard CI gate before wide promotion (§7) | Scoped, not wired into CI |
+| Differential/concurrency tests not in CI | A correctness incident (data loss, table corruption) ships before it's caught | Hard CI gate before wide promotion (§7) | ✅ Wired in CI (2026-07-08) |
 | Manifest bloat outside the fast path | `optimize_manifests` always routes to Trino/Spark; native speed gains don't cover this cost center | Accept as scoped-out (Go plan Phase F option 1); monitor manifest counts | Accepted, documented |
 | Aggressive retention config deletes live data | Table corruption / data loss, OSS trust incident | Conservative defaults + active warning on short retention windows; differential testing | Partially addressed (correctness invariants exist), needs CI gate |
 | Spot usage on uncheckpointed large jobs | Wasted multi-hour compute repeatedly | Gate spot on size/duration + checkpointing (§6.5) | Not started |
