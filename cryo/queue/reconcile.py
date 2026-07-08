@@ -29,7 +29,7 @@ def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
         queue_status = queue.status(job.id)
         if callable(destination_exists) and not destination_exists(job.destination_id):
             if queue_status in _ACTIVE_QUEUE_STATUSES:
-                queue.cancel_pending(job.id)
+                queue.cancel_pending(job.id, job.destination_id)
             store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
             logger.warning(
                 "Marked queued job %s failed: destination %s missing or disabled",
@@ -95,19 +95,19 @@ def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:
     for destination_id, job_ids in queue.pending_by_destination().items():
         if callable(destination_exists) and not destination_exists(destination_id):
             for job_id in job_ids:
-                queue.cancel_pending(job_id)
+                queue.cancel_pending(job_id, destination_id)
                 purged += 1
             continue
 
         for job_id in job_ids:
             if not _is_valid_job_id(job_id):
-                queue.cancel_pending(job_id)
+                queue.cancel_pending(job_id, destination_id)
                 purged += 1
                 continue
             try:
                 store.get_job(job_id)
             except KeyError:
-                queue.cancel_pending(job_id)
+                queue.cancel_pending(job_id, destination_id)
                 purged += 1
 
     if purged:
