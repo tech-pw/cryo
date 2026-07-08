@@ -687,14 +687,15 @@ Tasks:
 | 3 | Conflict validation (`serializable` + `commit.retry.*`) | ✅ Done | `ensureMORCompactionProperties` on MOR txn; app-level retry for non-REST catalogs |
 | 4 | v3 partitioned deletion vectors gate | ✅ Done | Go `AssertPartitionedDeletionVectorsUnsupported`; Python `has_v3_partitioned_deletion_vectors` |
 | 5 | MOR OPTIMIZE routes to native | ✅ Done | `routing.py`: `native_optimize_enabled()` includes MOR; v3-partitioned-DV → SQL fallback |
-| 6 | MOR e2e fixtures + harness (§8) | ✅ Done | Go `seed-native-fixtures` (seed/count/live-column/seed-table); `test_native_mor_compaction_e2e.py`; `make test-native-compaction-e2e-go` |
+| 6 | MOR e2e fixtures + harness (§8) | ✅ Done | Go `seed-native-fixtures` (seed/count/live-column/seed-table/commit-equality-delete); `test_native_mor_compaction_e2e.py`; `make test-native-compaction-e2e-go` |
+| 7 | MOR concurrency matrix C2/C3 (§8.5) | ✅ Done | `CRYO_TEST_PAUSE_BEFORE_COMMIT` hook; `test_native_mor_concurrency_e2e.py` |
 
 **Exit criteria status:**
 
 | Criterion | Status |
 |-----------|--------|
 | §8 MOR scenario matrix (pos/eq/mixed/partial) | 🟡 Partial — Go seeder (`seed-table` per test), `mor_inspect.py` Go live-row oracle, `test_native_mor_compaction_e2e.py` green (pos/eq/mixed execute; partial precondition); mixed O7 asserts eq-delete only (pos on `f_mor_pos`) |
-| §8.5 concurrency/fault matrix (C2/C3) | 🔴 Pending |
+| §8.5 concurrency/fault matrix (C2/C3) | 🟡 Partial — `test_native_mor_concurrency_e2e.py` (C2 concurrent delete, C3 dual compaction); C4–C8 pending |
 | Differential vs Trino/Spark on MOR fixtures | 🔴 Pending |
 | Invariants #1, #2, #7 in-process | 🟡 Partial — #1 + #7 guarded pre-commit; MOR e2e asserts O1/O7 on REST+MinIO |
 
