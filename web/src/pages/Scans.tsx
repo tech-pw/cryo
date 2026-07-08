@@ -690,7 +690,12 @@ export const Scans = () => {
                   emptyText: (
                     <EmptyState
                       title="No scan runs yet"
-                      description="Scheduled and ad-hoc scanner runs will appear here."
+                      description="Trigger a scan from a connection, or let the scheduler pick one up on its 5-minute tick."
+                      action={
+                        <Link to="/connections">
+                          <Button type="primary">Open connections</Button>
+                        </Link>
+                      }
                     />
                   )
                 }}

@@ -170,7 +170,19 @@ export const Runs = () => {
                 }
               ]}
               scroll={{ x: runId ? 980 : 1160 }}
-              locale={{ emptyText: <EmptyState title="No runs yet" description="Ad-hoc and scheduled runs appear here." /> }}
+              locale={{
+                emptyText: (
+                  <EmptyState
+                    title="No runs yet"
+                    description="Ad-hoc and scheduled maintenance runs will appear here once maintenance kicks off for a table."
+                    action={
+                      <Link to="/catalogs">
+                        <Button type="primary">Browse tables</Button>
+                      </Link>
+                    }
+                  />
+                )
+              }}
             />
           </Card>
   );
