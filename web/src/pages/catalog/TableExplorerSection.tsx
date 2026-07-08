@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Space, Table, Typography, message as antdMessage } from "antd";
+import { Alert, Button, Input, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
@@ -9,6 +9,7 @@ import {
   listPresets,
   listSources,
   listTables,
+  translateTableFilter,
   runMaintenance,
   runManifestRewrite,
   triggerScan,
@@ -30,6 +31,36 @@ import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
 import { useTableExplorerSelection } from "../useTableExplorerSelection";
 
 const pageSize = 50;
+
+const applyTranslatedFilter = (
+  current: TableFilterState,
+  translated: Record<string, unknown>
+): TableFilterState => ({
+  ...current,
+  ...(typeof translated.activeOnly === "boolean" ? { activeOnly: translated.activeOnly } : {}),
+  ...(Array.isArray(translated.grades)
+    ? { grades: translated.grades.map((v) => String(v)) as TableFilterState["grades"] }
+    : {}),
+  ...(Array.isArray(translated.priorities)
+    ? { priorities: translated.priorities.map((v) => String(v)) as TableFilterState["priorities"] }
+    : {}),
+  ...(typeof translated.needsCompaction === "boolean"
+    ? { needsCompaction: translated.needsCompaction }
+    : {}),
+  ...(typeof translated.schemaSearch === "string"
+    ? { schemaSearch: translated.schemaSearch }
+    : {}),
+  ...(typeof translated.minSizeGb === "number" ? { minSizeGb: translated.minSizeGb } : {}),
+  ...(typeof translated.minSmallFiles === "number"
+    ? { minSmallFiles: Math.round(translated.minSmallFiles) }
+    : {}),
+  ...(typeof translated.minMonthlySavings === "number"
+    ? { minMonthlySavings: translated.minMonthlySavings }
+    : {}),
+  ...(typeof translated.minReclaimableGb === "number"
+    ? { minReclaimableGb: translated.minReclaimableGb }
+    : {})
+});
 
 const initialFiltersFromSearch = (sourceParam: string | null): TableFilterState => {
   const base: TableFilterState = { activeOnly: true };
@@ -57,6 +88,7 @@ export const TableExplorerSection = () => {
   const [sort, setSort] = useState<string | undefined>("-small_files_count");
   const [savingsView, setSavingsView] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [nlQuery, setNlQuery] = useState("");
 
   const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
   const tables = useQuery({
@@ -219,6 +251,18 @@ export const TableExplorerSection = () => {
     },
     onError: (error) => antdMessage.error((error as Error).message)
   });
+  const translator = useMutation({
+    mutationFn: (query: string) => translateTableFilter(api, { query, use_llm: true }),
+    onSuccess: (result) => {
+      if (result.errors.length) {
+        antdMessage.warning("Could not apply parts of the NL filter; review error chips.");
+      }
+      setFilters((current) => applyTranslatedFilter(current, result.filter as Record<string, unknown>));
+      setPage(1);
+      resetSelectionForFilterChange();
+    },
+    onError: (error) => antdMessage.error((error as Error).message)
+  });
 
   const selectedTables = useMemo(
     () =>
@@ -284,6 +328,34 @@ export const TableExplorerSection = () => {
           Export CSV
         </Button>
         <Button onClick={() => void tables.refetch()}>Refresh</Button>
+      </Space>
+      <Space direction="vertical" style={{ width: "100%", marginBottom: 10 }} size={6}>
+        <Input.Search
+          allowClear
+          value={nlQuery}
+          placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
+          enterButton="Translate"
+          loading={translator.isPending}
+          onChange={(event) => setNlQuery(event.target.value)}
+          onSearch={(value) => {
+            const queryText = value.trim();
+            if (!queryText) return;
+            translator.mutate(queryText);
+          }}
+        />
+        {translator.data?.chips.length ? (
+          <Typography.Text type="secondary">
+            Applied: {translator.data.chips.join(" · ")}
+          </Typography.Text>
+        ) : null}
+        {translator.data?.errors.length ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Translation issues"
+            description={translator.data.errors.join(" · ")}
+          />
+        ) : null}
       </Space>
       <FilterBar
         value={filters}

@@ -62,9 +62,20 @@ import type {
   SkillsetListResponse,
   SkillsetRead,
   SkillsetWrite,
+  SkillsetActivateRequest,
+  SkillsetPromoteRequest,
   SkillsetRollbackRequest,
   SkillsetOutcomeWrite,
   SkillsetOutcomeRead,
+  LLMObservationListResponse,
+  RunFailureDiagnosisRead,
+  RunFailureDiagnosisFeedbackWrite,
+  TableFilterTranslationRequest,
+  TableFilterTranslationResponse,
+  PlanNarrationRequest,
+  PlanNarrationResponse,
+  AnomalyRootCauseBriefRead,
+  ResourcePredictionRead,
   TableAlertSubscriptionRead,
   TableCostRead,
   TableRead,
@@ -1329,6 +1340,7 @@ export interface SLAResponse {
 
 export interface JobDetailDashboard {
   job_id: string;
+  run_id: string;
   table_id: string;
   table_name: string;
   operation_type: string;
@@ -1837,6 +1849,26 @@ export const rollbackSkillset = (
     body
   });
 
+export const activateSkillset = (
+  api: ApiOptions,
+  name: string,
+  body: SkillsetActivateRequest
+): Promise<SkillsetRead> =>
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/activate`, api, {
+    method: "POST",
+    body
+  });
+
+export const promoteSkillset = (
+  api: ApiOptions,
+  name: string,
+  body: SkillsetPromoteRequest
+): Promise<SkillsetRead> =>
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/promote`, api, {
+    method: "POST",
+    body
+  });
+
 export const recordSkillsetOutcome = (
   api: ApiOptions,
   name: string,
@@ -1846,6 +1878,66 @@ export const recordSkillsetOutcome = (
     method: "POST",
     body
   });
+
+export const listLlmObservations = (
+  api: ApiOptions,
+  query: {
+    feature?: string;
+    provider_type?: string;
+    skillset_name?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<LLMObservationListResponse> =>
+  apiFetch<LLMObservationListResponse>("/advanced/llm-observations", api, { query });
+
+export const diagnoseRunFailure = (
+  api: ApiOptions,
+  runId: UUID
+): Promise<RunFailureDiagnosisRead> =>
+  apiFetch<RunFailureDiagnosisRead>(`/ai/runs/${runId}/diagnose`, api, {
+    method: "POST"
+  });
+
+export const submitDiagnosisFeedback = (
+  api: ApiOptions,
+  diagnosisId: UUID,
+  body: RunFailureDiagnosisFeedbackWrite
+): Promise<RunFailureDiagnosisRead> =>
+  apiFetch<RunFailureDiagnosisRead>(`/ai/runs/diagnoses/${diagnosisId}/feedback`, api, {
+    method: "POST",
+    body
+  });
+
+export const translateTableFilter = (
+  api: ApiOptions,
+  body: TableFilterTranslationRequest
+): Promise<TableFilterTranslationResponse> =>
+  apiFetch<TableFilterTranslationResponse>("/ai/table-filter/translate", api, {
+    method: "POST",
+    body
+  });
+
+export const narratePlan = (
+  api: ApiOptions,
+  body: PlanNarrationRequest
+): Promise<PlanNarrationResponse> =>
+  apiFetch<PlanNarrationResponse>("/ai/plan/narrate", api, {
+    method: "POST",
+    body
+  });
+
+export const getAnomalyRootCauseBrief = (
+  api: ApiOptions,
+  tableId: UUID
+): Promise<AnomalyRootCauseBriefRead> =>
+  apiFetch<AnomalyRootCauseBriefRead>(`/ai/tables/${tableId}/anomaly-brief`, api);
+
+export const getResourcePrediction = (
+  api: ApiOptions,
+  tableId: UUID
+): Promise<ResourcePredictionRead> =>
+  apiFetch<ResourcePredictionRead>(`/ai/tables/${tableId}/resource-prediction`, api);
 
 // ============================================================================
 // Plan Verifier (arXiv:2510.09567)

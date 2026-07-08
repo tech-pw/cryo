@@ -1130,6 +1130,16 @@ class SkillsetRollbackRequest(BaseModel):
     version: str
 
 
+class SkillsetActivateRequest(BaseModel):
+    version: str
+
+
+class SkillsetPromoteRequest(BaseModel):
+    source_version: str
+    target_version: str
+    activate: bool = True
+
+
 class SkillsetOutcomeWrite(BaseModel):
     prompt_name: str
     recommendation: str
@@ -1147,6 +1157,88 @@ class SkillsetOutcomeRead(BaseModel):
     recommendation: str
     decision: str
     score: float | None
+
+
+class LLMObservationRead(BaseModel):
+    id: uuid.UUID
+    recorded_at: datetime
+    provider_type: str
+    model_id: str
+    feature: str
+    prompt_name: str | None = None
+    prompt_hash: str
+    skillset_id: uuid.UUID | None = None
+    skillset_name: str | None = None
+    skillset_version: str | None = None
+    run_id: uuid.UUID | None = None
+    table_id: uuid.UUID | None = None
+    outcome_id: uuid.UUID | None = None
+    latency_ms: int | None = None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float | None = None
+    status: str
+    budget_denied: bool
+    error: str | None = None
+    extra: JsonDict = Field(default_factory=dict)
+
+
+class LLMObservationListResponse(BaseModel):
+    items: list[LLMObservationRead]
+    total: int
+
+
+class RunFailureDiagnosisRead(BaseModel):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    job_id: uuid.UUID | None = None
+    table_id: uuid.UUID | None = None
+    diagnosis_class: str
+    confidence: float
+    summary: str | None = None
+    runbook_step: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+    feedback: str | None = None
+    feedback_note: str | None = None
+    diagnosed_at: datetime
+    skillset_id: uuid.UUID | None = None
+    observation_id: uuid.UUID | None = None
+
+
+class RunFailureDiagnosisFeedbackWrite(BaseModel):
+    feedback: Literal["up", "down"]
+    note: str | None = None
+
+
+class TableFilterTranslationRequest(BaseModel):
+    query: str
+    use_llm: bool = True
+
+
+class TableFilterTranslationResponse(BaseModel):
+    filter: JsonDict = Field(default_factory=dict)
+    chips: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    used_llm: bool = False
+    provider: str | None = None
+    model: str | None = None
+    observation_id: uuid.UUID | None = None
+
+
+class PlanNarrationRequest(BaseModel):
+    table_ref: str
+    notes: list[str] = Field(default_factory=list)
+    operations: list[str] = Field(default_factory=list)
+    sql_statements: list[str] = Field(default_factory=list)
+
+
+class PlanNarrationResponse(BaseModel):
+    deterministic_summary: str
+    llm_narration: str | None = None
+    used_llm: bool = False
+    observation_id: uuid.UUID | None = None
 
 
 # ============================================================================

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Space, Table, Typography, message } from "antd";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { cancelRun, getRunJobs, listRuns } from "../api/client";
+import { cancelRun, diagnoseRunFailure, getRunJobs, listRuns } from "../api/client";
 import type { JobRead, RunRead } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
 import { EmptyState } from "../components/common";
@@ -49,6 +49,15 @@ export const Runs = () => {
       message.success("Run cancelled");
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
+    onError: (error) => message.error((error as Error).message)
+  });
+  const diagnose = useMutation({
+    mutationFn: (id: string) => diagnoseRunFailure(api, id),
+    onSuccess: (result) =>
+      message.info(
+        `${result.diagnosis_class.replaceAll("_", " ")} (${Math.round(result.confidence * 100)}%): ${result.summary ?? "No summary"}`,
+        6
+      ),
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -118,7 +127,22 @@ export const Runs = () => {
                         </Typography.Text>
                       ) : null}
                       {status === "failed" && targetTableId(row) ? (
-                        <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
+                        <Space size={4}>
+                          <Link to={`/tables/${targetTableId(row)}`}>Review table</Link>
+                          <Button
+                            type="link"
+                            size="small"
+                            loading={diagnose.isPending}
+                            style={{ padding: 0, height: "auto" }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              diagnose.mutate(row.id);
+                            }}
+                          >
+                            Diagnose
+                          </Button>
+                        </Space>
                       ) : null}
                     </Space>
                   )

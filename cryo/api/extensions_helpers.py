@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from cryo.ai.explain import explain_health_change
 from cryo.api.preview_cost import savings_projection_from_stats, savings_projection_to_dict
 from cryo.api.serializers import table_to_read
+from cryo.ai.filter_translate import build_filter_chips, deterministic_translate, validate_filter_spec
 from cryo.config import get_settings
 from cryo.db.models import (
     AuditLog,
@@ -195,6 +196,21 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
         projection = savings_projection_from_stats(stats_dict, settings)
         return savings_projection_to_dict(projection)
 
+    def filter_translation(args: dict[str, Any]) -> dict[str, Any]:
+        query = str(args.get("query") or "").strip()
+        if not query:
+            raise ValueError("filter_translation requires query")
+        translated = deterministic_translate(query)
+        validated, errors = validate_filter_spec(translated.filter)
+        return {
+            "query": query,
+            "filter": validated,
+            "chips": build_filter_chips(validated),
+            "warnings": translated.warnings,
+            "errors": translated.errors + errors,
+            "used_llm": False,
+        }
+
     def get_table_schema(args: dict[str, Any]) -> dict[str, Any]:
         table_id = uuid.UUID(str(args["table_id"]))
         stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
@@ -273,13 +289,16 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             "status": run.status,
         }
 
+    run_preset_handler = run_preset if settings.mcp_run_preset_enabled else None
+
     return build_default_mcp_server(
         get_table_health=get_table_health,
         list_stale_tables=list_stale_tables,
         list_compaction_backlog=list_compaction_backlog,
         explain_health_change=explain_tool,
         simulate_preset=simulate_preset,
+        filter_translation=filter_translation,
         get_table_schema=get_table_schema,
         get_snapshot_history=get_snapshot_history,
-        run_preset=run_preset,
+        run_preset=run_preset_handler,
     )

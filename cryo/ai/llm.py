@@ -10,17 +10,64 @@ from typing import Any
 
 import httpx
 
+from cryo.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 
-# Default models
-DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-20250514",
-    "openai": "gpt-4o",
-    "azure_openai": "gpt4o",
+SUPPORTED_MODEL_MAP: dict[str, tuple[str, ...]] = {
+    "anthropic": (
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+    ),
+    "openai": (
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo",
+    ),
+    "azure_openai": (
+        "gpt4o",
+        "gpt-4",
+        "gpt-4-turbo",
+        "gpt-35-turbo",
+        "gpt-5.4-nano",
+    ),
 }
+
+
+def _default_models() -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "anthropic": settings.llm_default_model_anthropic,
+        "openai": settings.llm_default_model_openai,
+        "azure_openai": settings.llm_default_model_azure_openai,
+    }
+
+
+def _resolve_model(
+    provider_type: str,
+    requested_model: str | None,
+    *,
+    allow_custom: bool,
+) -> str:
+    defaults = _default_models()
+    fallback = defaults.get(provider_type, requested_model or "unknown-model")
+    model = (requested_model or "").strip() or fallback
+    supported = SUPPORTED_MODEL_MAP.get(provider_type, ())
+    if supported and model not in supported and not allow_custom:
+        logger.warning(
+            "Model %s not supported for provider %s; falling back to %s",
+            model,
+            provider_type,
+            fallback,
+        )
+        return fallback
+    return model
 
 # System prompt for Cryo Copilot
 CRYO_SYSTEM_PROMPT = """You are Cryo Copilot, an AI assistant for Apache Iceberg table maintenance.
@@ -73,7 +120,7 @@ class AnthropicClient(LLMClient):
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key
-        self.model = model or DEFAULT_MODELS["anthropic"]
+        self.model = model or _default_models()["anthropic"]
 
     @property
     def provider_name(self) -> str:
@@ -121,9 +168,18 @@ class AnthropicClient(LLMClient):
 class OpenAIClient(LLMClient):
     """OpenAI GPT client."""
 
-    def __init__(self, api_key: str, model: str | None = None):
+    def __init__(self, api_key: str, model: str | None = None, *, api_base: str | None = None):
         self.api_key = api_key
-        self.model = model or DEFAULT_MODELS["openai"]
+        self.model = model or _default_models()["openai"]
+        if api_base:
+            base = api_base.rstrip("/")
+            self.api_url = (
+                base
+                if base.endswith("/chat/completions")
+                else f"{base}/chat/completions"
+            )
+        else:
+            self.api_url = OPENAI_API_URL
 
     @property
     def provider_name(self) -> str:
@@ -156,7 +212,7 @@ class OpenAIClient(LLMClient):
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                OPENAI_API_URL,
+                self.api_url,
                 headers=headers,
                 json={**base_payload, "max_tokens": max_tokens},
             )
@@ -167,7 +223,7 @@ class OpenAIClient(LLMClient):
                     error_msg = error_data.get("error", {}).get("message", "")
                     if "max_completion_tokens" in error_msg:
                         response = await client.post(
-                            OPENAI_API_URL,
+                            self.api_url,
                             headers=headers,
                             json={**base_payload, "max_completion_tokens": max_tokens},
                         )
@@ -204,7 +260,7 @@ class AzureOpenAIClient(LLMClient):
         api_version: str = "2024-03-01-preview",
     ):
         self.api_key = api_key
-        self.model = model or DEFAULT_MODELS["azure_openai"]
+        self.model = model or _default_models()["azure_openai"]
         self.api_base = api_base or "https://apim-aiguru-gpt4.azure-api.net"
         self.api_version = api_version
 
@@ -394,6 +450,9 @@ def create_llm_client(
     """
     config = config or {}
 
+    allow_custom_model = bool(config.get("allow_custom_model", False))
+    model = _resolve_model(provider_type, model, allow_custom=allow_custom_model)
+
     if provider_type == "anthropic":
         if not api_key:
             raise ValueError("API key required for Anthropic")
@@ -401,7 +460,9 @@ def create_llm_client(
     elif provider_type == "openai":
         if not api_key:
             raise ValueError("API key required for OpenAI")
-        return OpenAIClient(api_key, model)
+        settings = get_settings()
+        api_base = config.get("api_base") or settings.llm_openai_base_url
+        return OpenAIClient(api_key, model, api_base=api_base)
     elif provider_type == "azure_openai":
         if not api_key:
             raise ValueError("API key required for Azure OpenAI")
@@ -441,7 +502,21 @@ SUPPORTED_PROVIDERS = [
             "gpt-3.5-turbo",
         ],
         "default_model": "gpt-4o",
-        "config_fields": [],
+        "config_fields": [
+            {
+                "name": "api_base",
+                "label": "OpenAI-compatible API Base",
+                "placeholder": "https://api.openai.com/v1",
+                "required": False,
+            },
+            {
+                "name": "allow_custom_model",
+                "label": "Allow custom model/deployment name",
+                "placeholder": "false",
+                "required": False,
+                "default": False,
+            },
+        ],
     },
     {
         "type": "azure_openai",

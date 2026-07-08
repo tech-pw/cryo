@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Card,
   Descriptions,
@@ -12,6 +12,7 @@ import {
   Button,
   Space,
   Collapse,
+  message,
 } from "antd";
 import {
   ClockCircleOutlined,
@@ -22,9 +23,19 @@ import {
   DatabaseOutlined,
   CodeOutlined,
   FilterOutlined,
+  LikeOutlined,
+  DislikeOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { Link, useParams, useNavigate } from "react-router-dom";
-import { getJob, getJobDetailDashboard, type JobDetailDashboard } from "../api/client";
+import {
+  diagnoseRunFailure,
+  getJob,
+  getJobDetailDashboard,
+  getResourcePrediction,
+  submitDiagnosisFeedback,
+  type JobDetailDashboard
+} from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
@@ -55,6 +66,22 @@ export const JobDetail = () => {
     queryFn: () => getJob(api, jobId!),
     enabled: Boolean(jobId),
     retry: false
+  });
+  const resourcePrediction = useQuery({
+    queryKey: ["resource-prediction", data?.table_id],
+    queryFn: () => getResourcePrediction(api, data!.table_id),
+    enabled: Boolean(data?.table_id),
+    retry: false
+  });
+  const diagnose = useMutation({
+    mutationFn: () => diagnoseRunFailure(api, data!.run_id),
+    onError: (err) => message.error((err as Error).message)
+  });
+  const diagnosisFeedback = useMutation({
+    mutationFn: (feedback: "up" | "down") =>
+      submitDiagnosisFeedback(api, diagnose.data!.id, { feedback }),
+    onSuccess: () => message.success("Diagnosis feedback recorded"),
+    onError: (err) => message.error((err as Error).message)
   });
 
   if (isLoading) {
@@ -104,6 +131,67 @@ export const JobDetail = () => {
           style={{ marginBottom: 24 }}
         />
       )}
+      {data.status === "failed" ? (
+        <Card
+          title={
+            <Space>
+              <RobotOutlined />
+              Failure diagnosis
+            </Space>
+          }
+          style={{ marginBottom: 16 }}
+          extra={
+            <Button loading={diagnose.isPending} onClick={() => diagnose.mutate()}>
+              Diagnose
+            </Button>
+          }
+        >
+          {diagnose.data ? (
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Typography.Text strong>
+                {diagnose.data.diagnosis_class.replaceAll("_", " ")} ({Math.round(diagnose.data.confidence * 100)}% confidence)
+              </Typography.Text>
+              {diagnose.data.summary ? (
+                <Typography.Text>{diagnose.data.summary}</Typography.Text>
+              ) : null}
+              {diagnose.data.runbook_step ? (
+                <Alert type="info" showIcon title="Runbook step" description={diagnose.data.runbook_step} />
+              ) : null}
+              {diagnose.data.evidence.length ? (
+                <ul style={{ margin: 0, paddingInlineStart: 16 }}>
+                  {diagnose.data.evidence.map((line, idx) => (
+                    <li key={`${idx}-${line}`}>
+                      <Typography.Text type="secondary">{line}</Typography.Text>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <Space>
+                <Button
+                  size="small"
+                  icon={<LikeOutlined />}
+                  loading={diagnosisFeedback.isPending}
+                  onClick={() => diagnosisFeedback.mutate("up")}
+                >
+                  Helpful
+                </Button>
+                <Button
+                  size="small"
+                  icon={<DislikeOutlined />}
+                  loading={diagnosisFeedback.isPending}
+                  onClick={() => diagnosisFeedback.mutate("down")}
+                >
+                  Not helpful
+                </Button>
+              </Space>
+            </Space>
+          ) : (
+            <Typography.Text type="secondary">
+              Run diagnosis uses run/job/audit evidence. Trigger when triaging failed jobs.
+            </Typography.Text>
+          )}
+        </Card>
+      ) : null}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={6}>
@@ -148,6 +236,28 @@ export const JobDetail = () => {
           </Card>
         </Col>
       </Row>
+      {resourcePrediction.data ? (
+        <Card title="Resource prediction (shadow mode)" style={{ marginBottom: 16 }}>
+          <Descriptions size="small" bordered column={2}>
+            <Descriptions.Item label="Predicted p50">
+              {formatJobDuration(resourcePrediction.data.predicted_p50_seconds)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Predicted p90">
+              {formatJobDuration(resourcePrediction.data.predicted_p90_seconds)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Recommended CPU">
+              {resourcePrediction.data.recommended_cpu_cores.toFixed(1)} cores
+            </Descriptions.Item>
+            <Descriptions.Item label="Recommended memory">
+              {resourcePrediction.data.recommended_memory_gb.toFixed(1)} GB
+            </Descriptions.Item>
+            <Descriptions.Item label="Confidence">
+              {Math.round(resourcePrediction.data.confidence * 100)}%
+            </Descriptions.Item>
+            <Descriptions.Item label="Samples">{resourcePrediction.data.samples}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+      ) : null}
 
       <Card title="Job Information" style={{ marginBottom: 16 }}>
         <Descriptions column={2} bordered>

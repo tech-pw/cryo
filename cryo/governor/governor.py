@@ -32,6 +32,7 @@ from cryo.governor.roi_gate import GateAction, ROIGate
 from cryo.observability.correlation import set_job_id
 from cryo.observability.metrics import (
     governor_admission_decisions,
+    governor_qpp_decisions_total,
     governor_queue_depth,
     governor_wave_duration_seconds,
 )
@@ -318,11 +319,19 @@ class Governor:
                                         job_id,
                                         predicted_p95_ms,
                                     )
+                                    governor_qpp_decisions_total.labels(
+                                        destination=destination_id,
+                                        outcome="refused",
+                                    ).inc()
                                     self._lock_store.release_table_lock(job.table_id, job.id)
                                     self._defer(job, "qpp_refused")
                                     deferred += 1
                                     destination_outcomes[destination_id]["deferred"] += 1
                                     continue
+                                governor_qpp_decisions_total.labels(
+                                    destination=destination_id,
+                                    outcome="confirmed",
+                                ).inc()
                             except Exception as exc:
                                 logger.warning(
                                     "QPP gate failed for job %s table %s: %s",
@@ -330,6 +339,31 @@ class Governor:
                                     table_uuid,
                                     exc,
                                 )
+                                governor_qpp_decisions_total.labels(
+                                    destination=destination_id,
+                                    outcome="error",
+                                ).inc()
+
+                        # Resource predictor runs in shadow mode first: log recommendations and
+                        # compare against static sizing before any enforcement.
+                        try:
+                            from cryo.ai.resource_predictor import predict_resources_for_table
+
+                            sizing = predict_resources_for_table(session, table_uuid)
+                            logger.info(
+                                "Resource predictor (shadow) for table %s: cpu=%.1f mem=%.1fGiB "
+                                "p50=%.1fs p90=%.1fs conf=%.2f samples=%d static_cap=%d",
+                                table_uuid,
+                                sizing.recommended_cpu_cores,
+                                sizing.recommended_memory_gb,
+                                sizing.predicted_p50_seconds,
+                                sizing.predicted_p90_seconds,
+                                sizing.confidence,
+                                sizing.samples,
+                                config.per_replica_cap,
+                            )
+                        except Exception as exc:
+                            logger.debug("Resource predictor shadow failed for %s: %s", table_uuid, exc)
 
                         replica = replicas.pop(0)
                         self._queue.admit(job.id, destination_id, replica)

@@ -1374,8 +1374,7 @@ class Skillset(TimestampMixin, Base):
     __tablename__ = "skillsets"
     __table_args__ = (
         UniqueConstraint("name", "version", name="uq_skillsets_name_version"),
-        UniqueConstraint("name", name="uq_skillsets_name"),
-        Index("ix_skillsets_name", "name", unique=True),
+        Index("ix_skillsets_name", "name"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -1423,6 +1422,89 @@ class SkillsetOutcome(Base):
     score: Mapped[float | None] = mapped_column(Float)
 
 
+class LLMObservation(Base):
+    """Durable telemetry for every LLM invocation."""
+
+    __tablename__ = "llm_observations"
+    __table_args__ = (
+        Index("ix_llm_observations_recorded_at", "recorded_at"),
+        Index("ix_llm_observations_provider_day", "provider_type", "recorded_at"),
+        Index("ix_llm_observations_skillset", "skillset_id", "recorded_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.ai_providers.id")
+    )
+    provider_type: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str] = mapped_column(Text, nullable=False)
+    feature: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_name: Mapped[str | None] = mapped_column(Text)
+    prompt_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    skillset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.skillsets.id")
+    )
+    skillset_name: Mapped[str | None] = mapped_column(Text)
+    skillset_version: Mapped[str | None] = mapped_column(Text)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
+    table_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.tables.id"))
+    outcome_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.skillset_outcomes.id")
+    )
+    latency_ms: Mapped[int | None] = mapped_column(BigInteger)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    estimated_cost_usd: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'success'"))
+    budget_denied: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    extra: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+
+class RunFailureDiagnosis(Base):
+    """Persisted run-failure diagnosis result + operator feedback."""
+
+    __tablename__ = "run_failure_diagnoses"
+    __table_args__ = (
+        Index("ix_run_failure_diagnoses_run", "run_id", "diagnosed_at"),
+        Index("ix_run_failure_diagnoses_job", "job_id", "diagnosed_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.jobs.id"))
+    table_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.tables.id"))
+    skillset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.skillsets.id")
+    )
+    diagnosis_class: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    summary: Mapped[str | None] = mapped_column(Text)
+    runbook_step: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    raw_response: Mapped[JsonDict | None] = mapped_column(JSONB)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    feedback_note: Mapped[str | None] = mapped_column(Text)
+    diagnosed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    feedback_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
 __all__ = [
     "AIProvider",
     "AWSCostInsightConfig",
@@ -1434,6 +1516,7 @@ __all__ = [
     "Destination",
     "GovernorBanditState",
     "LayoutRecommendation",
+    "LLMObservation",
     "MaintenanceJob",
     "MaintenanceRun",
     "Preset",
@@ -1442,6 +1525,7 @@ __all__ = [
     "QPPObservation",
     "QueryLog",
     "QueryPattern",
+    "RunFailureDiagnosis",
     "S3BucketLogConfig",
     "S3RequestCostDaily",
     "SilentDataLossEvent",

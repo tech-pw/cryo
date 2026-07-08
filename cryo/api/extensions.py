@@ -18,6 +18,7 @@ from cryo.ai.copilot import (
 from cryo.ai.embedding_cache import find_similar_tables_cached
 from cryo.ai.explain import explain_health_change
 from cryo.ai.llm import SUPPORTED_PROVIDERS, create_llm_client
+from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.ai.pii import classify_table_columns
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.extensions_helpers import (
@@ -29,6 +30,7 @@ from cryo.api.extensions_helpers import (
     table_stats_dict,
 )
 from cryo.api.extensions_routes.benefit import router as benefit_router
+from cryo.api.extensions_routes.ai_features import router as ai_features_router
 from cryo.api.extensions_routes.compliance import router as compliance_router
 from cryo.api.extensions_routes.qpp import router as qpp_router
 from cryo.api.extensions_routes.triggers import router as triggers_router
@@ -47,6 +49,7 @@ from cryo.security.crypto import encrypt_secret
 router = APIRouter(prefix="/api/v1")
 router.include_router(compliance_router)
 router.include_router(benefit_router)
+router.include_router(ai_features_router)
 router.include_router(qpp_router)
 router.include_router(triggers_router)
 
@@ -596,36 +599,35 @@ async def copilot_natural_language(
     session: SessionDep,
 ) -> NaturalLanguageResponse:
     """Answer a natural language question about the datalake using LLM."""
-    # Get the default AI provider
-    provider = session.scalar(
-        select(AIProvider).where(
-            AIProvider.is_default.is_(True),
-            AIProvider.enabled.is_(True),
-        )
-    )
-    if provider is None:
-        provider = session.scalar(select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1))
-    if provider is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No AI provider configured. Add one in Connections > AI Providers.",
-        )
-    if not provider.api_key_encrypted:
-        raise HTTPException(status_code=400, detail="AI provider has no API key configured")
-
     # Gather context about the datalake
     context = None
     if payload.include_context:
         context = _gather_copilot_context(session)
 
-    # Call the LLM
-    client = create_llm_client(
-        provider.provider_type,
-        _provider_api_key(provider.api_key_encrypted) or "",
-        provider.model,
-        config=provider.config,
+    response, _observation = await complete_with_budget_and_observation(
+        session,
+        payload.question,
+        invoke=LLMInvokeContext(
+            feature="copilot_natural",
+            prompt_name="copilot_natural",
+            extra={"include_context": payload.include_context},
+        ),
+        context=context,
+        max_tokens=600,
     )
-    response = await client.complete(payload.question, context=context)
+    if response is None:
+        fallback = answer_question(payload.question, session)
+        fallback_answer = str(
+            fallback.get("answer")
+            or fallback.get("result")
+            or "No LLM provider is configured; using deterministic copilot fallback."
+        )
+        return NaturalLanguageResponse(
+            answer=fallback_answer,
+            context_used=context,
+            model="deterministic",
+            provider="none",
+        )
 
     return NaturalLanguageResponse(
         answer=response.content,
@@ -907,34 +909,18 @@ async def test_ai_provider_config(
 )
 async def ai_chat(payload: AIChatRequest, session: SessionDep) -> AIChatResponse:
     """Chat with the default AI provider."""
-    # Get the default provider
-    provider = session.scalar(
-        select(AIProvider).where(
-            AIProvider.is_default.is_(True),
-            AIProvider.enabled.is_(True),
-        )
-    )
-    if provider is None:
-        # Fall back to any enabled provider
-        provider = session.scalar(select(AIProvider).where(AIProvider.enabled.is_(True)).limit(1))
-    if provider is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No AI provider configured. Add one in Connections > AI Providers.",
-        )
-    if not provider.api_key_encrypted:
-        raise HTTPException(status_code=400, detail="AI provider has no API key configured")
-
-    client = create_llm_client(
-        provider.provider_type,
-        _provider_api_key(provider.api_key_encrypted) or "",
-        provider.model,
-        config=provider.config,
-    )
-    response = await client.complete(
+    response, _observation = await complete_with_budget_and_observation(
+        session,
         payload.prompt,
+        invoke=LLMInvokeContext(feature="ai_chat", prompt_name="ai_chat"),
         context=payload.context if payload.context else None,
+        max_tokens=800,
     )
+    if response is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No LLM provider available (or budget denied). Configure provider or retry later.",
+        )
     return AIChatResponse(
         response=response.content,
         model=response.model,

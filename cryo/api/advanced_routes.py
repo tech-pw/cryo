@@ -20,13 +20,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
 
-from cryo.api.deps import SessionDep, require_editor, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_editor, require_viewer
 from cryo.api.schemas import (
     CompactionCandidateRead,
     CompactionCandidatesResponse,
+    LLMObservationListResponse,
+    LLMObservationRead,
     ObservationCompactResponse,
     ObservationEventRead,
     ObservationSearchResponse,
@@ -35,9 +37,11 @@ from cryo.api.schemas import (
     PlanVerifyRequest,
     PlanViolationRead,
     SkillsetListResponse,
+    SkillsetPromoteRequest,
     SkillsetOutcomeRead,
     SkillsetOutcomeWrite,
     SkillsetRead,
+    SkillsetActivateRequest,
     SkillsetRollbackRequest,
     SkillsetWrite,
     UnionableResponse,
@@ -752,7 +756,7 @@ def get_active_skillset(
 def create_skillset(
     payload: SkillsetWrite,
     session: SessionDep,
-    _principal: Annotated[Principal, Depends(require_editor)],
+    _principal: Annotated[Principal, Depends(require_admin)],
 ) -> SkillsetRead:
     """Create a new skillset version (and optionally activate it)."""
     from cryo.ai.skillset import Skillset as SkillsetDC
@@ -784,7 +788,7 @@ def rollback_skillset(
     name: str,
     payload: SkillsetRollbackRequest,
     session: SessionDep,
-    _principal: Annotated[Principal, Depends(require_editor)],
+    _principal: Annotated[Principal, Depends(require_admin)],
 ) -> SkillsetRead:
     """Re-activate a prior skillset version."""
     from cryo.ai.skillset import set_active_skillset
@@ -793,6 +797,66 @@ def rollback_skillset(
         row = set_active_skillset(session, name, payload.version)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    return SkillsetRead(
+        id=row.id,
+        name=row.name,
+        version=row.version,
+        prompts=row.prompts,
+        tools=row.tools,
+        created_at=row.created_at,
+        is_active=row.is_active,
+        metrics=row.metrics,
+    )
+
+
+@router.post("/skillsets/{name}/activate", response_model=SkillsetRead)
+def activate_skillset(
+    name: str,
+    payload: SkillsetActivateRequest,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_admin)],
+) -> SkillsetRead:
+    """Activate a target version without changing its content."""
+    from cryo.ai.skillset import set_active_skillset
+
+    try:
+        row = set_active_skillset(session, name, payload.version)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return SkillsetRead(
+        id=row.id,
+        name=row.name,
+        version=row.version,
+        prompts=row.prompts,
+        tools=row.tools,
+        created_at=row.created_at,
+        is_active=row.is_active,
+        metrics=row.metrics,
+    )
+
+
+@router.post("/skillsets/{name}/promote", response_model=SkillsetRead)
+def promote_skillset(
+    name: str,
+    payload: SkillsetPromoteRequest,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_admin)],
+) -> SkillsetRead:
+    """Clone a candidate version as a promoted version and optionally activate it."""
+    from cryo.ai.skillset import promote_skillset as promote_skillset_impl
+
+    try:
+        row = promote_skillset_impl(
+            session,
+            name=name,
+            source_version=payload.source_version,
+            target_version=payload.target_version,
+            activate=payload.activate,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return SkillsetRead(
         id=row.id,
         name=row.name,
@@ -837,6 +901,63 @@ def record_skillset_outcome(
         recommendation=outcome.recommendation,
         decision=outcome.decision,
         score=outcome.score,
+    )
+
+
+@router.get("/llm-observations", response_model=LLMObservationListResponse)
+def list_llm_observations(
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+    feature: str | None = Query(None),
+    provider_type: str | None = Query(None),
+    skillset_name: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> LLMObservationListResponse:
+    """Query durable LLM invocation telemetry for scorecards and promotions."""
+    from cryo.db.models import LLMObservation
+
+    stmt = select(LLMObservation)
+    if feature:
+        stmt = stmt.where(LLMObservation.feature == feature)
+    if provider_type:
+        stmt = stmt.where(LLMObservation.provider_type == provider_type)
+    if skillset_name:
+        stmt = stmt.where(LLMObservation.skillset_name == skillset_name)
+    rows = list(
+        session.scalars(
+            stmt.order_by(desc(LLMObservation.recorded_at)).offset(offset).limit(limit)
+        )
+    )
+    return LLMObservationListResponse(
+        items=[
+            LLMObservationRead(
+                id=row.id,
+                recorded_at=row.recorded_at,
+                provider_type=row.provider_type,
+                model_id=row.model_id,
+                feature=row.feature,
+                prompt_name=row.prompt_name,
+                prompt_hash=row.prompt_hash,
+                skillset_id=row.skillset_id,
+                skillset_name=row.skillset_name,
+                skillset_version=row.skillset_version,
+                run_id=row.run_id,
+                table_id=row.table_id,
+                outcome_id=row.outcome_id,
+                latency_ms=row.latency_ms,
+                input_tokens=row.input_tokens,
+                output_tokens=row.output_tokens,
+                total_tokens=row.total_tokens,
+                estimated_cost_usd=row.estimated_cost_usd,
+                status=row.status,
+                budget_denied=bool(row.budget_denied),
+                error=row.error,
+                extra=dict(row.extra or {}),
+            )
+            for row in rows
+        ],
+        total=len(rows),
     )
 
 

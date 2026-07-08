@@ -38,6 +38,12 @@ governor_in_flight = Gauge(
     ["destination", "replica"],
 )
 
+governor_qpp_decisions_total = Counter(
+    "cryo_governor_qpp_decisions_total",
+    "QPP gate decisions during governor admission.",
+    ["destination", "outcome"],  # outcome: confirmed, refused, error
+)
+
 # ==================== Worker Metrics ====================
 
 worker_job_duration_seconds = Histogram(
@@ -201,4 +207,18 @@ anomaly_detection_duration_seconds = Histogram(
     "cryo_anomaly_detection_duration_seconds",
     "Duration of anomaly detection runs",
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+)
+
+# ==================== LLM / AI Metrics ====================
+
+llm_tokens_total = Counter(
+    "cryo_llm_tokens_total",
+    "Total LLM tokens consumed by provider and feature.",
+    ["provider", "feature"],
+)
+
+llm_budget_denials_total = Counter(
+    "cryo_llm_budget_denials_total",
+    "Total LLM calls denied by budget guardrails.",
+    ["provider", "reason"],
 )

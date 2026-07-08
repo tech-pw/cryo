@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.ai.llm import get_llm_client
+from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.db.models import Source, Table
 
 logger = logging.getLogger(__name__)
@@ -255,12 +255,6 @@ async def _maybe_llm_rationale(
     if session is None:
         return deterministic
     try:
-        client = get_llm_client(session)
-    except Exception:
-        return deterministic
-    if client is None:
-        return deterministic
-    try:
         prompt = (
             "You are an Iceberg data engineer. Explain in one sentence why these two tables "
             "could be UNION ALL'd together.\n\n"
@@ -270,10 +264,22 @@ async def _maybe_llm_rationale(
             f"Type-coercible columns: {', '.join(cast[:8]) or 'none'}\n\n"
             "Return a single concise rationale sentence."
         )
-        response = await asyncio.wait_for(
-            client.complete(prompt, max_tokens=120),
+        response, _observation = await asyncio.wait_for(
+            complete_with_budget_and_observation(
+                session,
+                prompt,
+                invoke=LLMInvokeContext(
+                    feature="unionable_rationale",
+                    prompt_name="unionable_rationale",
+                    table_id=target.table_id,
+                    extra={"candidate_table_id": str(candidate.table_id)},
+                ),
+                max_tokens=120,
+            ),
             timeout=10.0,
         )
+        if response is None:
+            return deterministic
         text = response.content.strip().splitlines()[0] if response.content else deterministic
         return text or deterministic
     except Exception as exc:

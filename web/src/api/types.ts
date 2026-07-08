@@ -796,6 +796,16 @@ export interface SkillsetRollbackRequest {
   version: string;
 }
 
+export interface SkillsetActivateRequest {
+  version: string;
+}
+
+export interface SkillsetPromoteRequest {
+  source_version: string;
+  target_version: string;
+  activate?: boolean;
+}
+
 export interface SkillsetOutcomeWrite {
   prompt_name: string;
   recommendation: string;
@@ -813,6 +823,113 @@ export interface SkillsetOutcomeRead {
   recommendation: string;
   decision: string;
   score?: number | null;
+}
+
+export interface LLMObservationRead {
+  id: UUID;
+  recorded_at: string;
+  provider_type: string;
+  model_id: string;
+  feature: string;
+  prompt_name?: string | null;
+  prompt_hash: string;
+  skillset_id?: UUID | null;
+  skillset_name?: string | null;
+  skillset_version?: string | null;
+  run_id?: UUID | null;
+  table_id?: UUID | null;
+  outcome_id?: UUID | null;
+  latency_ms?: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd?: number | null;
+  status: string;
+  budget_denied: boolean;
+  error?: string | null;
+  extra: JsonObject;
+}
+
+export interface LLMObservationListResponse {
+  items: LLMObservationRead[];
+  total: number;
+}
+
+export interface RunFailureDiagnosisRead {
+  id: UUID;
+  run_id: UUID;
+  job_id?: UUID | null;
+  table_id?: UUID | null;
+  diagnosis_class: string;
+  confidence: number;
+  summary?: string | null;
+  runbook_step?: string | null;
+  evidence: string[];
+  feedback?: "up" | "down" | null;
+  feedback_note?: string | null;
+  diagnosed_at: string;
+  skillset_id?: UUID | null;
+  observation_id?: UUID | null;
+}
+
+export interface RunFailureDiagnosisFeedbackWrite {
+  feedback: "up" | "down";
+  note?: string | null;
+}
+
+export interface TableFilterTranslationRequest {
+  query: string;
+  use_llm?: boolean;
+}
+
+export interface TableFilterTranslationResponse {
+  filter: JsonObject;
+  chips: string[];
+  warnings: string[];
+  errors: string[];
+  used_llm: boolean;
+  provider?: string | null;
+  model?: string | null;
+  observation_id?: UUID | null;
+}
+
+export interface PlanNarrationRequest {
+  table_ref: string;
+  notes: string[];
+  operations: string[];
+  sql_statements: string[];
+}
+
+export interface PlanNarrationResponse {
+  deterministic_summary: string;
+  llm_narration?: string | null;
+  used_llm: boolean;
+  observation_id?: UUID | null;
+}
+
+export interface AnomalyHypothesisRead {
+  title: string;
+  confidence: number;
+  because: string;
+}
+
+export interface AnomalyRootCauseBriefRead {
+  table_id: UUID;
+  evidence: string[];
+  hypotheses: AnomalyHypothesisRead[];
+  used_llm: boolean;
+  observation_id?: UUID | null;
+}
+
+export interface ResourcePredictionRead {
+  table_id: UUID;
+  predicted_p50_seconds: number;
+  predicted_p90_seconds: number;
+  recommended_cpu_cores: number;
+  recommended_memory_gb: number;
+  confidence: number;
+  samples: number;
+  shadow_mode: boolean;
 }
 
 export interface TableCostRead {
