@@ -1,6 +1,6 @@
-"""Native Rust engine for Cryo.
+"""Native engine for Cryo.
 
-Worker maintenance runs invoke the ``cryo-engine`` subprocess (iceberg-rust).
+Worker maintenance runs invoke the ``cryo-engine-go`` or ``cryo-engine`` subprocess.
 Optional ``cryo_native`` PyO3 helpers remain available for direct compaction tests.
 """
 
@@ -23,6 +23,12 @@ from cryo.engines.native.payload import (
     operation_from_dict,
     operation_to_dict,
 )
+from cryo.engines.native.routing import (
+    NATIVE_BASE_OPERATIONS,
+    NATIVE_LEGACY_DISCONNECTED_DETAIL,
+    filter_native_operations,
+    native_supported_operation_types,
+)
 from cryo.engines.native.runner import (
     NativeExecuteResult,
     NativeOperationResult,
@@ -40,20 +46,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Worker-routed native maintenance: expire + orphan only. Compaction/manifests Rust code
-# remains for direct cryo-engine calls and future re-enable once upstream commit lands.
-NATIVE_SUPPORTED_OPERATIONS = (
-    OperationType.EXPIRE_SNAPSHOTS,
-    OperationType.REMOVE_ORPHAN_FILES,
-)
+# Base native ops always routed to the subprocess. OPTIMIZE is added dynamically for
+# Go engine tables (COW + MOR; v3 partitioned DV gated — see routing.py). Manifests
+# route to sql_fallback_destination_id when configured.
+NATIVE_SUPPORTED_OPERATIONS = NATIVE_BASE_OPERATIONS
+
 NATIVE_DISCONNECTED_OPERATIONS = (
     OperationType.OPTIMIZE,
     OperationType.OPTIMIZE_MANIFESTS,
 )
-NATIVE_DISCONNECTED_DETAIL = (
-    "native compaction/manifests disconnected; blocked upstream — "
-    "Phase 3 task 7 / EPIC #2269, issue #2556"
-)
+NATIVE_DISCONNECTED_DETAIL = NATIVE_LEGACY_DISCONNECTED_DETAIL
 
 # Flag to track if optional cryo_native PyO3 helpers are available
 _PYO3_AVAILABLE: bool | None = None
@@ -143,11 +145,12 @@ class NativeCompactionResult:
 
 @dataclass
 class NativeEngine:
-    """Native Rust engine for Iceberg maintenance via cryo-engine subprocess."""
+    """Native subprocess engine for Iceberg maintenance (cryo-engine-go / cryo-engine)."""
 
     config: dict[str, Any]
     settings: Settings | None = None
     source_config: Mapping[str, Any] = field(default_factory=dict)
+    table_stats: Mapping[str, Any] | None = None
 
     type: EngineType = EngineType.NATIVE
 
@@ -161,6 +164,15 @@ class NativeEngine:
             config=self.config,
             settings=self.settings,
             source_config=dict(source_config),
+            table_stats=self.table_stats,
+        )
+
+    def with_table_stats(self, table_stats: Mapping[str, Any] | None) -> NativeEngine:
+        return NativeEngine(
+            config=self.config,
+            settings=self.settings,
+            source_config=dict(self.source_config),
+            table_stats=table_stats,
         )
 
     @property
@@ -178,20 +190,14 @@ class NativeEngine:
         return self._engine
 
     def probe_capacity(self) -> CapacitySnapshot:
-        """Probe native engine capacity.
-
-        Native engine runs locally, so capacity is based on CPU cores.
-        """
-        import os
-
-        cpu_count = os.cpu_count() or 4
-        return CapacitySnapshot(capacity=min(cpu_count, self._slot_cap), used=0)
+        """Return configured slot capacity; governor subtracts queue in-flight counts."""
+        return CapacitySnapshot(capacity=self._slot_cap, used=0)
 
     def render(self, plan: MaintenancePlan) -> list[RenderedStatement]:
-        supported = NATIVE_SUPPORTED_OPERATIONS
-        operations = tuple(op for op in plan.operations if op.type in supported)
+        supported_types = native_supported_operation_types(self.table_stats, self.config)
+        operations = tuple(op for op in plan.operations if op.type in supported_types)
         for operation in plan.operations:
-            if operation.type not in supported:
+            if operation.type not in supported_types:
                 logger.warning("Native engine skipping unsupported operation %s", operation.type)
         if not operations:
             return []
@@ -266,7 +272,7 @@ class NativeEngine:
                 for operation in plan.operations
             ]
 
-        operations = _supported_operations(plan)
+        operations = _supported_operations(plan, self.table_stats, self.config)
         if not operations:
             return []
 
@@ -623,16 +629,17 @@ def _is_unsupported_native_error(error: str | None) -> bool:
     if not error:
         return False
     lowered = error.lower()
-    return (
-        "not yet implemented" in lowered
-        or "not available on pinned iceberg-rust" in lowered
-        or "blocked upstream" in lowered
-    )
+    if "blocked upstream" in lowered or "not available on pinned iceberg-rust" in lowered:
+        return True
+    return "not yet implemented" in lowered and "rewrite_data_files commit blocked" in lowered
 
 
-def _supported_operations(plan: MaintenancePlan) -> tuple[Operation, ...]:
-    supported = set(NATIVE_SUPPORTED_OPERATIONS)
-    return tuple(operation for operation in plan.operations if operation.type in supported)
+def _supported_operations(
+    plan: MaintenancePlan,
+    stats: Mapping[str, Any] | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> tuple[Operation, ...]:
+    return filter_native_operations(plan, stats, config)
 
 
 def _plan_from_batch_payload(payload: Mapping[str, object]) -> MaintenancePlan | None:

@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures test-hms-integration test-native-e2e smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go build-engine-go build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 COMPOSE_CRYO = docker compose -f docker-compose.yml
@@ -100,11 +100,45 @@ test-hms-integration:
 seed-native-fixtures:
 	$(PYTHON) tests/integration/native/generate_rest_fixture.py
 
+seed-native-compaction-fixtures: build-engine-go build-seed-native-fixtures
+	CRYO_SEED_NATIVE_FIXTURES_BINARY=engine-go/bin/seed-native-fixtures \
+	  $(PYTHON) tests/integration/native/generate_compaction_fixtures.py
+
+build-seed-native-fixtures:
+	cd engine-go && CGO_ENABLED=0 go build -o bin/seed-native-fixtures ./cmd/seed-native-fixtures
+
 test-native-e2e:
 	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
 	  pytest tests/integration/native/test_native_expire_orphan_e2e.py -v
 
+build-engine-go:
+	cd engine-go && CGO_ENABLED=0 go build -o bin/cryo-engine-go ./cmd/cryo-engine-go
+
+test-engine-go:
+	cd engine-go && CGO_ENABLED=0 go test ./...
+
+test-native-e2e-go: build-engine-go
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	CRYO_ENGINE_IMPL=go \
+	  $(PYTHON) -m pytest tests/integration/native/test_native_expire_orphan_e2e.py -v
+
 test-native-e2e-local: up-datalake-native seed-native-fixtures test-native-e2e
+
+test-native-e2e-local-go: up-datalake-native seed-native-fixtures test-native-e2e-go
+
+test-native-compaction-e2e:
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	  pytest tests/integration/native/test_native_compaction_e2e.py -v
+
+test-native-compaction-e2e-go: build-engine-go
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	CRYO_ENGINE_IMPL=go \
+	CRYO_ENGINE_BINARY=$${CRYO_ENGINE_BINARY:-engine-go/bin/cryo-engine-go} \
+	  $(PYTHON) -m pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py -v
+
+test-native-compaction-e2e-local: up-datalake-native seed-native-compaction-fixtures test-native-compaction-e2e
+
+test-native-compaction-e2e-local-go: up-datalake-native seed-native-compaction-fixtures test-native-compaction-e2e-go
 
 up-datalake-native:
 	$(COMPOSE_DATALAKE) up -d minio minio-init iceberg-rest
