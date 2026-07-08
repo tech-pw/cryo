@@ -18,6 +18,10 @@ COMPACTION_NAMESPACE = "native_compaction"
 UNPARTITIONED_TABLE = "f_unpart_small"
 PARTITIONED_TABLE = "f_part_small"
 PARTITIONED_IDENTITY_TABLE = "f_part_identity"
+MOR_POS_TABLE = "f_mor_pos"
+MOR_EQ_TABLE = "f_mor_eq"
+MOR_MIXED_TABLE = "f_mor_mixed"
+MOR_PARTIAL_TABLE = "f_mor_partial"
 TINY_APPEND_COUNT = 16
 
 

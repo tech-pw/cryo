@@ -38,7 +38,6 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return failResult(operation, err)
 	}
 
-	cfg := compactionConfigFromParams(op.Params)
 	rowFilter, err := predicate.BuildRowFilter(tbl.Schema(), op.Predicates)
 	if err != nil {
 		progress.Failed(operation, err.Error())
@@ -51,9 +50,20 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return failResult(operation, err)
 	}
 
+	morCompaction := validate.HasDeleteFilesInScope(tasks)
+	cfg := compactionConfigFromParams(op.Params)
+	if morCompaction {
+		cfg = compactionConfigForMOR(op.Params)
+	}
+
 	if tbl.CurrentSnapshot() == nil && len(tasks) == 0 {
 		progress.Completed(operation, 0, 0)
 		return rewriteResult(true, 0, 0, 0, 0, 0, "")
+	}
+
+	if err := validate.AssertPartitionedDeletionVectorsUnsupported(tbl, tasks); err != nil {
+		progress.Failed(operation, err.Error())
+		return failResult(operation, err)
 	}
 
 	plan, err := cfg.PlanCompaction(tasks)
@@ -78,22 +88,96 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return rewriteResult(true, 0, 0, 0, 0, 0, "")
 	}
 
-	if err := validate.AssertNoDeleteFilesInScope(collectPlanTasks(plan)); err != nil {
+	scopedTasks := collectPlanTasks(plan)
+	rewrittenPaths := rewrittenPathsFromPlan(plan)
+	if err := validate.AssertDeleteFileInvariant(rewrittenPaths, scopedTasks); err != nil {
 		progress.Failed(operation, err.Error())
 		return failResult(operation, err)
 	}
+
+	groups := toTaskGroups(plan.Groups)
+	attempts := 1
+	if morCompaction && !isRESTCatalog(req) {
+		attempts = appCommitRetries + 1
+	}
+
+	var lastErr error
+	for attempt := range attempts {
+		if attempt > 0 {
+			reloaded, reloadErr := reloadTable(ctx, req)
+			if reloadErr != nil {
+				progress.Failed(operation, reloadErr.Error())
+				return failResult(operation, reloadErr)
+			}
+			tbl = reloaded
+		}
+
+		result, runErr := executeRewriteOnce(
+			ctx,
+			tbl,
+			op,
+			cfg,
+			rowFilter,
+			groups,
+			rewrittenPaths,
+			morCompaction,
+		)
+		if runErr == nil {
+			progress.Completed(operation, inputFiles, result.bytesWritten)
+			return rewriteResult(
+				true,
+				inputFiles,
+				result.outputFiles,
+				inputFiles,
+				result.bytesRemoved,
+				result.bytesWritten,
+				"",
+			)
+		}
+		lastErr = runErr
+		if !isRetryableCommitError(runErr) || attempt == attempts-1 {
+			progress.Failed(operation, runErr.Error())
+			return failResult(operation, runErr)
+		}
+	}
+
+	progress.Failed(operation, lastErr.Error())
+	return failResult(operation, lastErr)
+}
+
+type rewriteOnceResult struct {
+	outputFiles  uint64
+	bytesRemoved uint64
+	bytesWritten uint64
+}
+
+func executeRewriteOnce(
+	ctx context.Context,
+	tbl *table.Table,
+	op *protocol.OperationRequest,
+	cfg compaction.Config,
+	rowFilter iceberg.BooleanExpression,
+	groups []table.CompactionTaskGroup,
+	rewrittenPaths map[string]struct{},
+	morCompaction bool,
+) (rewriteOnceResult, error) {
+	var zero rewriteOnceResult
 
 	beforeRows, err := countScopedRows(ctx, tbl, rowFilter, op.Predicates)
 	if err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, err)
+		return zero, err
 	}
 
 	beforeMeta := validate.CaptureMetadataSnapshot(tbl)
-	groups := toTaskGroups(plan.Groups)
 	snapshotProps := validate.CustomSnapshotProps(tbl)
 
 	txn := tbl.NewTransaction()
+	if morCompaction {
+		if err := ensureMORCompactionProperties(txn, tbl.Metadata().Properties()); err != nil {
+			return zero, fmt.Errorf("configure MOR compaction properties: %w", err)
+		}
+	}
+
 	rewriteOpts := table.RewriteDataFilesOptions{
 		SnapshotProps: snapshotProps,
 		GroupOptions: []table.CompactionGroupOption{
@@ -101,51 +185,45 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		},
 	}
 
+	if morCompaction {
+		deadEqDeletes, eqErr := collectDeadEqualityDeletes(ctx, tbl, rewrittenPaths)
+		if eqErr != nil {
+			return zero, eqErr
+		}
+		rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
+	}
+
 	result, err := txn.RewriteDataFiles(ctx, groups, rewriteOpts)
 	if err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, fmt.Errorf("rewrite_data_files: %w", err))
+		return zero, fmt.Errorf("rewrite_data_files: %w", err)
 	}
 
 	if result == nil || result.RewrittenGroups == 0 {
-		progress.Completed(operation, 0, 0)
-		return rewriteResult(true, 0, 0, 0, 0, 0, "")
+		return zero, nil
 	}
 
 	afterRows, err := countScopedRowsOnTxn(ctx, txn, tbl, rowFilter, op.Predicates)
 	if err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, err)
+		return zero, err
 	}
 	if err := validate.AssertRowCountInvariant(beforeRows, afterRows); err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, err)
+		return zero, err
 	}
 
 	updated, err := txn.Commit(ctx)
 	if err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, fmt.Errorf("commit rewrite_data_files: %w", err))
+		return zero, fmt.Errorf("commit rewrite_data_files: %w", err)
 	}
 
 	if err := validate.AssertMetadataStable(beforeMeta, updated); err != nil {
-		progress.Failed(operation, err.Error())
-		return failResult(operation, err)
+		return zero, err
 	}
 
-	bytesWritten := uint64(result.BytesAfter)
-	bytesRemoved := uint64(result.BytesBefore)
-	progress.Completed(operation, inputFiles, bytesWritten)
-
-	return rewriteResult(
-		true,
-		inputFiles,
-		uint64(result.AddedDataFiles),
-		inputFiles,
-		bytesRemoved,
-		bytesWritten,
-		"",
-	)
+	return rewriteOnceResult{
+		outputFiles:  uint64(result.AddedDataFiles),
+		bytesRemoved: uint64(result.BytesBefore),
+		bytesWritten: uint64(result.BytesAfter),
+	}, nil
 }
 
 func planScopedTasks(
@@ -191,6 +269,15 @@ func compactionConfigFromParams(raw json.RawMessage) compaction.Config {
 	return cfg
 }
 
+func compactionConfigForMOR(raw json.RawMessage) compaction.Config {
+	cfg := compactionConfigFromParams(raw)
+	cfg.DeleteFileThreshold = 1
+	if cfg.MinInputFiles > 1 {
+		cfg.MinInputFiles = 1
+	}
+	return cfg
+}
+
 func compactionCandidates(plan compaction.Plan) (files uint64, bytes uint64) {
 	for _, group := range plan.Groups {
 		files += uint64(len(group.Tasks))
@@ -229,6 +316,9 @@ func countScopedRows(
 	if err != nil {
 		return 0, err
 	}
+	if validate.HasDeleteFilesInScope(tasks) {
+		return countLiveTaskRows(ctx, tbl, tasks)
+	}
 	return countTaskRows(tasks)
 }
 
@@ -248,6 +338,9 @@ func countScopedRowsOnTxn(
 		return 0, fmt.Errorf("plan staged scoped files: %w", err)
 	}
 	if !predicate.HasPredicates(&protocol.OperationRequest{Predicates: predicates}) {
+		if validate.HasDeleteFilesInScope(tasks) {
+			return countLiveTaskRowsOnScan(ctx, scan, tasks)
+		}
 		return countTaskRows(tasks)
 	}
 	filtered := make([]table.FileScanTask, 0, len(tasks))
@@ -260,7 +353,38 @@ func countScopedRowsOnTxn(
 			filtered = append(filtered, task)
 		}
 	}
+	if validate.HasDeleteFilesInScope(filtered) {
+		return countLiveTaskRowsOnScan(ctx, scan, filtered)
+	}
 	return countTaskRows(filtered)
+}
+
+func countLiveTaskRows(ctx context.Context, tbl *table.Table, tasks []table.FileScanTask) (int64, error) {
+	scan := tbl.Scan()
+	return countLiveTaskRowsOnScan(ctx, scan, tasks)
+}
+
+func countLiveTaskRowsOnScan(
+	ctx context.Context,
+	scan *table.Scan,
+	tasks []table.FileScanTask,
+) (int64, error) {
+	if len(tasks) == 0 {
+		return 0, nil
+	}
+	_, records, err := scan.ReadTasks(ctx, tasks)
+	if err != nil {
+		return 0, fmt.Errorf("read scoped tasks for live row count: %w", err)
+	}
+	var total int64
+	for rec, err := range records {
+		if err != nil {
+			return 0, err
+		}
+		total += rec.NumRows()
+		rec.Release()
+	}
+	return total, nil
 }
 
 func countTaskRows(tasks []table.FileScanTask) (int64, error) {

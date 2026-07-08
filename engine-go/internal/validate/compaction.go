@@ -55,18 +55,6 @@ func AssertRowCountInvariant(beforeRows, afterRows int64) error {
 	return nil
 }
 
-// AssertNoDeleteFilesInScope rejects MOR tables until Phase D.
-func AssertNoDeleteFilesInScope(tasks []table.FileScanTask) error {
-	for _, task := range tasks {
-		if len(task.DeleteFiles) > 0 || len(task.EqualityDeleteFiles) > 0 || len(task.DeletionVectorFiles) > 0 {
-			return fmt.Errorf(
-				"rewrite_data_files found delete files in scope; MOR compaction requires Phase D",
-			)
-		}
-	}
-	return nil
-}
-
 // AssertOutputFilesExist checks that rewritten output files are reachable before commit.
 func AssertOutputFilesExist(ctx context.Context, tbl *table.Table, paths []string) error {
 	if len(paths) == 0 {

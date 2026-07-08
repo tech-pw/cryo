@@ -35,7 +35,9 @@ artifacts themselves are permanent.
 | `tests/` | Unit and integration tests (including HMS catalog tests) |
 | `tests/integration/hms/test_hms_catalog_integration.py` | Opt-in HMS catalog integration test |
 | `tests/integration/native/test_native_expire_orphan_e2e.py` | Opt-in native expire + orphan e2e (REST + MinIO) |
-| `tests/integration/native/generate_rest_fixture.py` | Seed native e2e table + orphan object |
+| `tests/integration/native/test_native_mor_compaction_e2e.py` | Opt-in native MOR compaction e2e (REST + MinIO + cryo-engine-go) |
+| `tests/integration/native/generate_compaction_fixtures.py` | Seed COW + MOR compaction fixture tables |
+| `engine-go/bin/seed-native-fixtures` | Go CLI: seed MOR tables, `count-live-rows`, `live-int-column`, `seed-table` |
 | `tests/integration/hms/smoke_hms_trino.py` | Smoke test: Trino can read HMS fixture tables |
 | `scripts/smoke_file_counts.py` | Smoke test: file counts / local Spark compaction |
 | `scripts/smoke_cryo_e2e.py` | Smoke test: scan → plan → execute path |

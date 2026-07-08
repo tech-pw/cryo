@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-import pyarrow as pa
+from pyiceberg.manifest import DataFileContent
 from pyiceberg.table import Table
 
+from tests.integration.native.mor_inspect import count_live_rows, live_int_column_values as mor_live_ints
 from tests.integration.native.rest_env import list_object_sizes, normalize_uri
 
 
@@ -21,6 +22,7 @@ class TableSnapshot:
     row_count: int
     data_file_count: int
     data_file_paths: frozenset[str]
+    delete_file_count: int
 
 
 def capture_table_snapshot(table: Table) -> TableSnapshot:
@@ -32,29 +34,63 @@ def capture_table_snapshot(table: Table) -> TableSnapshot:
         schema_id=metadata.current_schema_id,
         default_spec_id=metadata.default_spec_id,
         sort_order_id=sort_order_id,
-        row_count=count_rows(table),
+        row_count=count_live_rows(table),
         data_file_count=len(paths),
         data_file_paths=paths,
+        delete_file_count=count_delete_files(table),
     )
 
 
 def count_rows(table: Table) -> int:
-    arrow = table.scan().to_arrow()
-    if isinstance(arrow, pa.RecordBatch):
-        return arrow.num_rows
-    return arrow.num_rows
+    return count_live_rows(table)
+
+
+def count_delete_files(table: Table) -> int:
+    total = 0
+    for entry in _iter_manifest_entries(table):
+        if entry.data_file.content != DataFileContent.DATA:
+            total += 1
+    return total
+
+
+def live_int_column_values(table: Table, column: str) -> list[int]:
+    return mor_live_ints(table, column)
+
+
+def assert_deleted_ids_absent(table: Table, deleted_ids: set[int]) -> None:
+    live_ids = set(live_int_column_values(table, "id"))
+    overlap = live_ids & deleted_ids
+    assert not overlap, f"O7 deleted rows reappeared: ids={sorted(overlap)}"
+
+
+def assert_delete_files_reduced(before: TableSnapshot, after: TableSnapshot) -> None:
+    assert after.delete_file_count < before.delete_file_count, (
+        f"O7 expected fewer delete files: {before.delete_file_count} -> {after.delete_file_count}"
+    )
 
 
 def paths_for_path_token(table: Table, token: str) -> set[str]:
     return {path for path in _iter_data_file_paths(table) if token in path}
 
 
+def _iter_manifest_entries(table: Table):
+    metadata = table.metadata
+    snapshot_id = metadata.current_snapshot_id
+    if snapshot_id is None:
+        return
+    snapshot = metadata.snapshot_by_id(snapshot_id)
+    if snapshot is None:
+        return
+    for manifest in snapshot.manifests(table.io):
+        for entry in manifest.fetch_manifest_entry(table.io):
+            yield entry
+
+
 def _iter_data_file_paths(table: Table) -> list[str]:
     paths: list[str] = []
-    for task in table.scan().plan_files():
-        path = _file_path_from_task(task)
-        if path is not None:
-            paths.append(path)
+    for entry in _iter_manifest_entries(table):
+        if entry.data_file.content == DataFileContent.DATA:
+            paths.append(normalize_uri(entry.data_file.file_path))
     return paths
 
 
