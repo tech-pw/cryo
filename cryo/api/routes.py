@@ -32,6 +32,11 @@ from cryo.api.deps import (
     require_viewer,
 )
 from cryo.api.predicates import compile_predicate
+from cryo.api.route_helpers import (
+    CONNECTION_TEST_TIMEOUT_SECONDS,
+    NAMESPACE_LIST_TIMEOUT_SECONDS,
+    run_with_timeout as _run_with_timeout,
+)
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
     savings_projection_to_dict,
@@ -326,57 +331,8 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
     return source
 
 
-_CONNECTION_TEST_TIMEOUT_SECONDS = 120.0
-
-# Interactive picker timeout: the scan-scope dropdown opens while a human is waiting, so this
-# has to fail fast (the picker silently falls back to scanned schemas on timeout/error). Keep
-# well below the connection-test timeout above -- that one is for the "Test connection" button
-# where the user has explicitly asked to verify reachability and is willing to wait.
-_NAMESPACE_LIST_TIMEOUT_SECONDS = 10.0
-
-
-def _run_with_timeout(
-    fn: Callable[[], Any], *, seconds: float = _CONNECTION_TEST_TIMEOUT_SECONDS
-) -> Any:
-    """Run a blocking call with a hard wall-clock timeout.
-
-    Needed because some catalog/engine clients block indefinitely with no timeout of their own
-    -- verified PyIceberg's HiveCatalog opens a raw Thrift TSocket with zero timeout handling
-    anywhere in its code, so an unreachable metastore host (wrong network, VPN required,
-    firewalled) hangs the request forever instead of failing. The underlying worker thread can
-    still be stuck after this returns (a blocking socket connect can't be cleanly interrupted
-    from another thread), but the caller gets a bounded, honest "timed out" response instead of
-    an infinite spinner.
-
-    Uses a plain daemon Thread, not ThreadPoolExecutor: (1) ThreadPoolExecutor's worker threads
-    are NOT daemon threads, so a leaked one (still blocked on the underlying call) would prevent
-    a clean process shutdown -- e.g. a k8s pod failing to terminate on SIGTERM during a rolling
-    restart, exactly the kind of thing that's easy to miss until it happens in production. (2)
-    ThreadPoolExecutor used as a context manager also calls shutdown(wait=True) on exit, which
-    blocks on that same stuck thread and defeats the entire point of this function -- an earlier
-    version of this had exactly that bug, caught by tests/test_connection_test_timeout.py.
-    """
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-
-    def _target() -> None:
-        try:
-            result_box["value"] = fn()
-        except BaseException as exc:  # noqa: BLE001 - re-raised in the calling thread below
-            error_box["error"] = exc
-
-    thread = threading.Thread(target=_target, daemon=True)
-    thread.start()
-    thread.join(timeout=seconds)
-
-    if thread.is_alive():
-        raise TimeoutError(
-            f"Connection attempt timed out after {seconds:.0f}s -- check the host is "
-            "reachable from the Cryo backend's network (VPN, firewall, DNS)."
-        )
-    if "error" in error_box:
-        raise error_box["error"]
-    return result_box.get("value")
+_CONNECTION_TEST_TIMEOUT_SECONDS = CONNECTION_TEST_TIMEOUT_SECONDS
+_NAMESPACE_LIST_TIMEOUT_SECONDS = NAMESPACE_LIST_TIMEOUT_SECONDS
 
 
 @router.post(
@@ -487,139 +443,17 @@ def purge_source(source_id: uuid.UUID, session: SessionDep) -> None:
         ) from exc
 
 
-@router.get(
-    "/sources/{source_id}/aws-integration",
-    response_model=AWSIntegrationRead,
-    dependencies=[Depends(require_viewer)],
-    tags=["sources"],
+# AWS integration routes moved to cryo/api/routes_sources.py — see Move 22.
+# Re-export for backward-compat with code that imports these from cryo.api.routes
+# (the moved functions' behaviour and signatures are unchanged).
+from cryo.api.routes_sources import (  # noqa: E402, F401
+    create_aws_integration,
+    delete_aws_integration,
+    get_aws_integration,
+    get_aws_usage,
+    patch_aws_integration,
+    test_aws_integration,
 )
-def get_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSIntegration:
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None:
-        raise HTTPException(status_code=404, detail="No AWS integration configured")
-    return integration
-
-
-@router.post(
-    "/sources/{source_id}/aws-integration",
-    response_model=AWSIntegrationRead,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
-    tags=["sources"],
-)
-def create_aws_integration(
-    source_id: uuid.UUID, payload: AWSIntegrationCreate, session: SessionDep
-) -> AWSIntegration:
-    get_scoped_resource(session, Source, source_id, resource_type="Source")
-    existing = session.scalar(select(AWSIntegration).where(AWSIntegration.source_id == source_id))
-    if existing is not None:
-        raise HTTPException(
-            status_code=400, detail="AWS integration already exists for this source"
-        )
-    integration = AWSIntegration(
-        source_id=source_id,
-        bucket=payload.bucket,
-        region=payload.region,
-        access_key_id=payload.access_key_id,
-        secret_ref=encrypt_secret(payload.secret_access_key),
-        enabled=payload.enabled,
-    )
-    session.add(integration)
-    session.commit()
-    session.refresh(integration)
-    return integration
-
-
-@router.patch(
-    "/sources/{source_id}/aws-integration",
-    response_model=AWSIntegrationRead,
-    dependencies=[Depends(require_admin)],
-    tags=["sources"],
-)
-def patch_aws_integration(
-    source_id: uuid.UUID, payload: AWSIntegrationPatch, session: SessionDep
-) -> AWSIntegration:
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None:
-        raise HTTPException(status_code=404, detail="No AWS integration configured")
-    values = payload.model_dump(exclude_unset=True)
-    if "secret_access_key" in values:
-        values["secret_ref"] = encrypt_secret(values.pop("secret_access_key"))
-    _apply_patch(integration, values)
-    session.commit()
-    session.refresh(integration)
-    return integration
-
-
-@router.delete(
-    "/sources/{source_id}/aws-integration",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_admin)],
-    tags=["sources"],
-)
-def delete_aws_integration(source_id: uuid.UUID, session: SessionDep) -> None:
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None:
-        raise HTTPException(status_code=404, detail="No AWS integration configured")
-    session.delete(integration)
-    session.commit()
-
-
-@router.post(
-    "/sources/{source_id}/aws-integration/test",
-    response_model=AWSConnectionTestResponse,
-    dependencies=[Depends(require_operator)],
-    tags=["sources"],
-)
-def test_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSConnectionTestResponse:
-    """Verify AWS credentials work via sts:GetCallerIdentity — free, no AWS charges."""
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None:
-        raise HTTPException(status_code=404, detail="No AWS integration configured")
-    result = check_aws_connection(credentials_from_integration(integration))
-    integration.last_tested_at = datetime.now(UTC)
-    integration.last_test_ok = result.ok
-    session.commit()
-    return AWSConnectionTestResponse(
-        ok=result.ok, account_id=result.account_id, arn=result.arn, error=result.error
-    )
-
-
-@router.get(
-    "/sources/{source_id}/aws-usage",
-    response_model=AWSUsageResponse,
-    dependencies=[Depends(require_viewer)],
-    tags=["sources"],
-)
-def get_aws_usage(source_id: uuid.UUID, session: SessionDep) -> AWSUsageResponse:
-    """Real S3 bucket size/object count (free daily CloudWatch metrics) and the real regional
-    $/GB-month rate (free Price List API) — no data scan, no AWS charges."""
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None or not integration.enabled:
-        raise HTTPException(status_code=404, detail="No enabled AWS integration configured")
-    credentials = credentials_from_integration(integration)
-    metrics = fetch_bucket_storage_metrics(integration.bucket, credentials)
-    price = fetch_s3_price_per_gb(integration.region, credentials)
-    return AWSUsageResponse(
-        bucket=metrics.bucket,
-        region=metrics.region,
-        measured_at=metrics.measured_at,
-        size_bytes_by_storage_class=dict(metrics.size_bytes_by_storage_class),
-        total_size_bytes=metrics.total_size_bytes,
-        object_count=metrics.object_count,
-        price_per_gb_month=price.price_per_gb_month if price else None,
-        price_source=price.source if price else None,
-    )
 
 
 @router.get(
@@ -1012,6 +846,7 @@ def list_tables(
     sort: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query()] = None,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1033,12 +868,54 @@ def list_tables(
         count_stmt = count_stmt.where(predicate)
 
     total = session.scalar(count_stmt) or 0
-    items = list(session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(offset).limit(limit)))
+
+    # Server-side cursor takes precedence over offset — clients pass back the
+    # previous page's cursor instead of computing `offset += limit`. The two
+    # compose: cursor pins the start of the page, limit caps its size.
+    actual_offset = offset
+    if cursor:
+        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
+
+        try:
+            decoded = PageCursor.decode(cursor)
+        except Exception as exc:  # noqa: BLE001 - any decode problem ⇒ 400 with the message
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
+        if not decoded.matches_request(
+            filter_repr=make_filter_repr(filter), sort_repr=make_sort_repr(sort)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Cursor was issued for a different filter/sort combination",
+            )
+        actual_offset = decoded.offset_within_key
+
+    items = list(
+        session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(actual_offset).limit(limit))
+    )
+
+    # Emit a next-page cursor only when there might be more rows past this page.
+    # The cheap "fetch limit+1 rows and trim" probe is correct without needing
+    # a second count query — and on a fully-indexed sort the row read is O(1)
+    # with the existing ORDER BY + LIMIT plan.
+    next_cursor = None
+    has_more = actual_offset + len(items) < total
+    if has_more and items:
+        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
+
+        next_cursor = PageCursor(
+            key=str(items[-1].id),
+            offset_within_key=actual_offset + len(items),
+            filter_repr=make_filter_repr(filter),
+            sort_repr=make_sort_repr(sort),
+        ).encode()
+
     return PaginatedTables(
         items=[table_to_read(item) for item in items],
         total=total,
         limit=limit,
-        offset=offset,
+        offset=actual_offset,
+        cursor=next_cursor,
+        has_more=has_more,
     )
 
 

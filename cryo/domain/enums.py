@@ -68,3 +68,4 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
     DEFERRED = "deferred"
+    PARTIAL = "partial"

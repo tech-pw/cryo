@@ -28,6 +28,8 @@ class ExecCtx:
     replica: str | None = None
     run_id: str | None = None
     on_progress: ProgressCallback | None = None
+    session_factory: Any = None
+    chunk_checkpointing: bool = False
 
 
 @dataclass(frozen=True)
