@@ -47,7 +47,9 @@ from tests.integration.native.compaction_oracles import count_rows
 from tests.integration.native.rest_env import (
     catalog_properties,
     source_config,
+    trino_connect,
     wait_for_rest_catalog,
+    wait_for_trino,
 )
 from tests.integration.native.test_native_compaction_e2e import (
     _engine_config,
@@ -74,36 +76,11 @@ COW_FIXTURES = (UNPARTITIONED_TABLE, PARTITIONED_TABLE, PARTITIONED_IDENTITY_TAB
 
 
 def _trino_cursor():
-    import trino
-
-    return trino.connect(
-        host="localhost",
-        port=8080,
-        user="cryo-test",
-        catalog="iceberg_rest",
-        schema=CROSS_ENGINE_NAMESPACE,
-    ).cursor()
+    return trino_connect(schema=CROSS_ENGINE_NAMESPACE).cursor()
 
 
 def _wait_for_trino(*, timeout_seconds: float = 60.0) -> None:
-    import trino
-
-    deadline = time.monotonic() + timeout_seconds
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            trino.connect(
-                host="localhost",
-                port=8080,
-                user="cryo-test",
-                catalog="iceberg_rest",
-                schema=CROSS_ENGINE_NAMESPACE,
-            ).cursor().execute("SELECT 1")
-            return
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-        time.sleep(2.0)
-    raise TimeoutError(f"Trino not ready: {last_error}") from last_error
+    wait_for_trino(schema=CROSS_ENGINE_NAMESPACE, timeout_seconds=timeout_seconds)
 
 
 def _ensure_cross_engine_namespace() -> None:

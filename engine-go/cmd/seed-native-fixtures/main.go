@@ -23,6 +23,9 @@ func main() {
 		case "seed-table":
 			runSeedTable(os.Args[2:])
 			return
+		case "seed-table-copy":
+			runSeedTableCopy(os.Args[2:])
+			return
 		case "commit-equality-delete":
 			runCommitEqualityDelete(os.Args[2:])
 			return
@@ -90,6 +93,19 @@ func runSeedTable(args []string) {
 	defer cancel()
 	if err := fixtures.SeedMORTableByName(ctx, fixtures.ConfigFromEnv(), args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "seed table failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runSeedTableCopy(args []string) {
+	if len(args) != 2 {
+		fmt.Fprintf(os.Stderr, "usage: seed-native-fixtures seed-table-copy <template> <dest>\n")
+		os.Exit(2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := fixtures.SeedMORTableCopy(ctx, fixtures.ConfigFromEnv(), args[0], args[1]); err != nil {
+		fmt.Fprintf(os.Stderr, "seed table copy failed: %v\n", err)
 		os.Exit(1)
 	}
 }

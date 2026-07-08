@@ -18,6 +18,7 @@ import (
 	_ "github.com/apache/iceberg-go/io/gocloud"
 
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
+	"github.com/cryo-lake/cryo/engine-go/internal/testhook"
 )
 
 // LoadTable opens the REST (or configured) catalog and loads the target table.
@@ -27,6 +28,7 @@ func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catal
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to catalog: %w", err)
 	}
+	cat = testhook.WrapCatalog(cat)
 
 	ident, err := ParseTableIdent(req.TableRef)
 	if err != nil {
