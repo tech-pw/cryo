@@ -340,7 +340,7 @@ jobs:
           CRYO_REST_URI: http://localhost:8181
           CRYO_ENGINE_IMPL: go
           CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
-        run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py -v
+        run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py -v
 
   build:
     name: Build Check
