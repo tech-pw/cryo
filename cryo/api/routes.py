@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import uuid
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -32,26 +32,23 @@ from cryo.api.deps import (
     require_viewer,
 )
 from cryo.api.predicates import compile_predicate
-from cryo.api.route_helpers import (
-    CONNECTION_TEST_TIMEOUT_SECONDS,
-    NAMESPACE_LIST_TIMEOUT_SECONDS,
-    run_with_timeout as _run_with_timeout,
-)
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
     savings_projection_to_dict,
 )
 from cryo.api.redact import unredact_merge
+from cryo.api.route_helpers import (
+    CONNECTION_TEST_TIMEOUT_SECONDS,
+    NAMESPACE_LIST_TIMEOUT_SECONDS,
+)
+from cryo.api.route_helpers import (
+    run_with_timeout as _run_with_timeout,
+)
 from cryo.api.schemas import (
     AssignmentDeleteRequest,
     AssignmentRequest,
     AssignmentResponse,
     AssignmentSelection,
-    AWSConnectionTestResponse,
-    AWSIntegrationCreate,
-    AWSIntegrationPatch,
-    AWSIntegrationRead,
-    AWSUsageResponse,
     CostDashboardResponse,
     DatalakeDashboardResponse,
     DestinationCreate,
@@ -65,6 +62,7 @@ from cryo.api.schemas import (
     MaintenancePreviewResponse,
     MaintenanceRunRequest,
     MaintenanceRunResponse,
+    OrphanScanCostRead,
     PaginatedTables,
     PresetCreate,
     PresetPatch,
@@ -107,7 +105,6 @@ from cryo.api.serializers import table_to_read
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
-    AWSIntegration,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -136,7 +133,7 @@ from cryo.db.tenant_scope import (
     scoped_select,
     tenant_id_for_create,
 )
-from cryo.domain.enums import EngineType, JobStatus, Mode
+from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.base import RenderedStatement
 from cryo.engines.native.engine import NativeEngine, is_native_available
@@ -145,15 +142,10 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
-from cryo.integrations.aws_credentials import credentials_from_integration
-from cryo.integrations.aws_s3_metrics import (
-    fetch_bucket_storage_metrics,
-    fetch_s3_price_per_gb,
-)
-from cryo.integrations.aws_s3_metrics import test_aws_connection as check_aws_connection
 from cryo.planner.guardrails import validate_guardrails, validate_operation_order, validate_params
 from cryo.planner.planner import build_plan
 from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
+from cryo.scanner.orphans import estimate_orphan_scan_cost
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config, source_catalog_for
 
@@ -1141,6 +1133,12 @@ def unassign_tables(payload: AssignmentDeleteRequest, session: SessionDep) -> As
     return AssignmentResponse(affected=affected)
 
 
+def _estimate_partition_depth(partitions: list[dict[str, Any]]) -> int:
+    if not partitions:
+        return 0
+    return len(set().union(*(set(p.keys()) for p in partitions)))
+
+
 def _parse_stats_as_of(stats: dict[str, Any]) -> datetime | None:
     raw = stats.get("scan_at") or stats.get("stats_as_of")
     if raw is None:
@@ -1204,6 +1202,18 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
                     f"Stats as of {stats_as_of.isoformat()} ({age_hours:.0f}h old) — "
                     "re-scan before execute if the table changed."
                 )
+
+        orphan_scan_cost_read: OrphanScanCostRead | None = None
+        if OperationType.REMOVE_ORPHAN_FILES in op_types:
+            total_files = stats.get("total_files", 0)
+            partition_depth = _estimate_partition_depth(table.partitions)
+            preflight = estimate_orphan_scan_cost(
+                total_files=total_files,
+                partition_depth=partition_depth,
+                settings=settings,
+            )
+            orphan_scan_cost_read = OrphanScanCostRead(**asdict(preflight))
+
         items.append(
             TablePreviewRead(
                 table_ref=plan.table_ref,
@@ -1211,6 +1221,7 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
                 statements=statements,
                 savings=savings_payload,
                 stats_as_of=stats_as_of,
+                orphan_scan_cost=orphan_scan_cost_read,
             )
         )
     return MaintenancePreviewResponse(items=items)

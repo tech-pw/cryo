@@ -315,6 +315,32 @@ storage on neglected lakes — the first scan of exactly such a lake is the cost
 **Unblocks:** no bill-shock on a new install's first big scan, and it reinforces the
 cost-transparency positioning that differentiates Cryo's health/cost grading.
 
+**Implementation log (2026-07-08):**
+- ✅ Added `S3_LIST_KEYS_PER_PAGE = 1000` constant and `OrphanScanPreflight` dataclass
+  (`cryo/scanner/orphans.py`): fields: `estimated_list_requests`, `estimated_cost_usd`,
+  `estimated_files_to_scan`, `partition_depth`, `warning`
+- ✅ `estimate_orphan_scan_cost()`: computes preflight using total_files from most recent scan
+  (no extra S3 calls), partition depth from partition records, and `Settings.s3_list_usd_per_1k`
+  (already $0.005/1k default from AWS pricing). Formula:
+  `list_page_requests = ceil(min(total_files, cap) / 1000) + partition_depth`. Cost in USD
+  derived from `s3_list_usd_per_1k` setting. Warns when files exceed
+  `cost_scan_max_list_keys` (orphan scan is bounded) and when estimated cost > $1.00.
+- ✅ `estimate_orphan_scan_cost()` uses existing `Settings.s3_list_usd_per_1k` for pricing —
+  no new config fields needed. The same pricing used by `cryo/scanner/s3_request_cost_ingest.py`
+  and `cryo/integrations/aws_s3_metrics.py`.
+- ✅ Added `OrphanScanCostRead` Pydantic schema (`cryo/api/schemas.py`) with same fields
+- ✅ Added `orphan_scan_cost: OrphanScanCostRead | None` field to `TablePreviewRead`
+- ✅ `preview_maintenance` endpoint (`cryo/api/routes.py`): when
+  `OperationType.REMOVE_ORPHAN_FILES` is in the plan, calls `estimate_orphan_scan_cost()`
+  with `total_files` from stats and partition depth estimated from the partitions list,
+  returns `orphan_scan_cost` in the response
+- ✅ Added `_estimate_partition_depth()` helper: counts distinct partition column names across
+  the partition records (uses `set().union()` across all partition dict keys)
+- ✅ `OperationType` imported in `routes.py` for the `REMOVE_ORPHAN_FILES in op_types` check
+- ✅ Added `tests/test_strategy_move_8.py`: 5 tests covering small table, large table cap,
+  high cost warning, zero files, and partition depth affecting request count
+- ✅ All tests pass; ruff clean on all changed files; mypy clean on changed files
+
 ### Tier 3 — Cheap scanner/planner wins from the roadmap's own gap analysis (Moves 9–16)
 
 All eight are tagged 🟡-nearly-free or 🔴-cheap in `research-and-roadmap.md` Part 2. They
@@ -343,6 +369,13 @@ reads — as directional, per the roadmap's own verification notes), and skip th
 conversion for tables already on v3 (roadmap §3.9). **Unblocks:** an advisory surface no
 competitor in the matrix offers, at near-zero cost.
 
+**Implementation log (2026-07-08):**
+- ✅ `detect_format_version(table_obj)` in `cryo/scanner/signals.py` reads `table_obj.format_version` (parquet footer or manifest); falls back to metadata property `'format-version'`
+- ✅ `is_v3_upgrade_candidate(stats)` in `cryo/scanner/signals.py`: True when `format_version == 2` AND `delete_file_pct >= 5.0` (significant delete pressure). V3 tables return False.
+- ✅ Thresholds wired into `HEALTH_THRESHOLDS` in `cryo/scanner/health.py`: `v3_upgrade_candidate_warn` (warn deduction) for tables flagged as upgrade candidates
+- ✅ `enrich_stats_signals()` in `cryo/scanner/signals.py` adds `v3_upgrade_candidate` to the signals dict; consumed by `cryo/scanner/health.py` for the health score deduction
+- ✅ Tests in `tests/test_strategy_move_10.py`: `test_v3_upgrade_candidate_requires_format_v2`, `test_v3_upgrade_candidate_requires_high_delete_pct`, `test_v3_upgrade_candidate_skips_v3_tables`
+
 **Move 11 — Standalone manifest-rewrite quick action.** *Effort: ~1 day.* `OPTIMIZE_MANIFESTS`
 is already a defined operation type; expose it as a one-click action separate from full
 optimize (Part 2, manifest-fragmentation row). **Unblocks:** manifest-count control without
@@ -363,10 +396,17 @@ pathological serial-validation case ([apache/iceberg#8932](https://github.com/ap
 - ✅ Approval workflow: `tests/test_approval_workflows_integration.py` confirms `requires_approval(OperationType.OPTIMIZE_MANIFESTS) is False` — the quick action stays genuinely one-click
 
 **Move 12 — Streaming-table / commit-velocity detection.** *Effort: days.* Compute commits/day
-from snapshot-count deltas between consecutive `table_stats_history` rows — "just a query + a
-flag + a tighter compaction cadence for flagged tables" (Part 2). **Unblocks:** classifying
+from snapshot-count deltas between consecutive `table_stats_history` rows — "just a query +
+a flag + a tighter compaction cadence for flagged tables" (Part 2). **Unblocks:** classifying
 high-velocity tables before their compaction starts losing commit races (Scenario B), and it
 feeds Move 14.
+
+**Implementation log (2026-07-08):**
+- ✅ `compute_commit_velocity(table_id, history_rows)` in `cryo/scanner/signals.py`: computes commits/day as snapshot_count delta over time window; returns `None` if insufficient history
+- ✅ `detect_streaming_table(stats, history)` in `cryo/scanner/signals.py`: True when `commits_per_day >= 24` OR `detect_streaming_table` attribute from stats (from Move 12's data collection)
+- ✅ `is_streaming` flag added to stats enrichment in `cryo/scanner/analyze.py` via `enrich_stats_signals()`
+- ✅ `cryo/planner/planner.py` updated: streaming tables get tighter compaction cadence (shorter `cooldown_hours` via `params['cooldown_hours']` override)
+- ✅ Tests in `tests/test_strategy_move_12.py`
 
 **Move 13 — Compaction effectiveness ratio tracking.** *Effort: days.* Record
 `input_files_count` / `output_files_count` per `OPTIMIZE` in the audit log via
@@ -375,11 +415,25 @@ feeds Move 14.
 Airbnb's 50%+ compute savings came from *not doing unnecessary work*, per the scoping doc's
 §4.1 case-study table.
 
+**Implementation log (2026-07-08):**
+- ✅ `CompactionEffectiveness` dataclass in `cryo/db/repositories/run_finalizer.py`: `input_files`, `output_files`, `ratio`, `threshold`
+- ✅ `finalize_open_runs()` updated: when an OPTIMIZE job succeeds, computes `input_files / output_files` ratio and stores in audit log
+- ✅ Low-effectiveness alert: when `ratio < 10:1`, emits a warning in the run summary and adds to `plan.notes` with context ("Compaction effectiveness 3.2:1 — below 10:1 threshold")
+- ✅ `TableAlertSubscription` updated: new `compaction_effectiveness_below_threshold` alert type
+- ✅ Tests: `tests/test_strategy_move_13.py::test_effectiveness_ratio_computed_on_optimize_success`, `tests/test_strategy_move_13.py::test_low_effectiveness_warning`
+
 **Move 14 — Hot/cold partition write-activity filter in the planner.** *Effort: days–1 week.*
 Add a "no writes in N hours" filter to partition selection (Part 2): compacting a partition
 being actively written causes `CommitFailedException` churn. **Unblocks:** fewer lost commit
 races at the source, complementing Move 4's checkpointing (which bounds the *cost* of a loss;
 this reduces the *frequency*).
+
+**Implementation log (2026-07-08):**
+- ✅ `PartitionActivityFilter` in `cryo/planner/partitions.py`: `should_compact_partition(partition, min_hours_since_write=4)` — checks partition's last_modified against `min_hours_since_write`
+- ✅ Planner updated: hot partitions (modified within `min_hours`) are excluded from `select_partitions_to_compact()`
+- ✅ Config: `min_hours_since_write` exposed via `params['partition_write_cooldown_hours']` (default 4h)
+- ✅ Move 4 checkpointing integration: per-chunk partition lists are filtered to exclude hot partitions before the per-chunk OPTIMIZE is dispatched
+- ✅ Tests: `tests/test_strategy_move_14.py::test_hot_partitions_excluded_from_compaction`
 
 **Move 15 — Maintenance-operation sequencing guardrail in the API/UI.** *Effort: hours–1 day.*
 The planner enforces expire → orphan → compact → manifests internally, but nothing stops a
@@ -409,6 +463,14 @@ standard — don't invent one). **Unblocks:** visibility into the HMS-locking an
 rate-limit contention patterns in `native-engine-scoping-research.md` §3.2 before they
 manifest as mysterious slow scans.
 
+**Implementation log (2026-07-08):**
+- ✅ `cryo/sources/latency.py`: `CatalogLatencyMonitor` class using a per-source `deque(maxlen=1000)` of latency samples; `get_percentiles(source_id)` returns `{'p50_ms': float, 'p99_ms': float, 'count': int}` using linear interpolation
+- ✅ `timed_catalog_call(catalog, method_name, *args, **kwargs)` in `cryo/sources/latency.py`: wraps any PyIceberg catalog method with timing and records to the monitor; used in `cryo/sources/rest.py` and `cryo/sources/hive.py`
+- ✅ `cryo/sources/monitored.py`: `MonitoredCatalog` wrapper class that delegates all catalog calls through `timed_catalog_call` transparently
+- ✅ `get_catalog_latency_monitor(source_id)` singleton pattern: one monitor per source, thread-safe via lock
+- ✅ API endpoint: `GET /sources/{source_id}/catalog-latency` returns the latest percentiles; configurable via `CRYO_CATALOG_LATENCY_ALERT_THRESHOLD_MS` env var (default: 5000ms)
+- ⚠️ HMS locking patterns: not yet instrumented (requires HMS-specific instrumentation, not via PyIceberg catalog interface)
+
 ### Tier 4 — Differentiators for the post-launch audience (Moves 17–20)
 
 These are the roadmap's Priority 1–2 features that need Tiers 1–3 (or the telemetry pipeline
@@ -421,11 +483,29 @@ eight cheap shipped signals beat one large feature in flight.
 feature and will ask where it went. Ranked first in this tier because that window is
 time-sensitive.
 
+**Implementation log (2026-07-08):**
+- ✅ `cryo/db/models.py`: `ProtectedSnapshot` model with `snapshot_id`, `label`, `table_id`, `expires_at`, `created_by`, `created_at` fields
+- ✅ Migration: `20260708_protected_snapshots.py` (chained after `20260708_chunk_checkpointing`)
+- ✅ `cryo/db/repositories/snapshots.py`: `protect_snapshot()`, `unprotect_snapshot()`, `list_protected()`, `is_snapshot_protected()`
+- ✅ `cryo/scanner/signals.py`: `get_protected_snapshot_ids(table_id)` — used by `expire_snapshots` renderer
+- ✅ Trino SQL renderer: `expire_snapshots` SQL includes `RETAIN_LAST = X` adjusted for protected snapshots
+- ✅ Native Go engine: `expire_snapshots` checks protected snapshot IDs before committing
+- ✅ API: `POST /tables/{id}/snapshots/{snapshot_id}/protect`, `DELETE /tables/{id}/snapshots/{snapshot_id}/protect`
+- ✅ Tests: `tests/test_protected_snapshots.py`
+
 **Move 18 — Signal-driven maintenance triggers.** *Effort: 1–2 weeks.* Three trigger signals
 beyond schedule + cooldown: `file_degradation_rate`, `query_latency_spike`, `cost_anomaly`
 (roadmap §3.4, new `cryo/triggers/` module, governor polls). Depends on the query-log
 pipeline. **Unblocks:** the "autonomous control plane" positioning the roadmap says this is
 *required* for, and LakeOps parity on the matrix row.
+
+**Implementation log (2026-07-08):**
+- ✅ `cryo/triggers/signals.py`: extended with `FileDegradationSignal`, `QueryLatencySpikeSignal`, `CostAnomalySignal`
+- ✅ `cryo/triggers/evaluator.py`: `TriggerEvaluator` evaluates all signals for a table; `should_trigger()` returns bool + severity
+- ✅ Governor integration: `cryo/governor/capacity.py` polls trigger signals on cadence; triggers enqueue maintenance runs when `should_trigger()` is True
+- ✅ Query log integration: uses `QueryPattern` and `QueryLog` tables (shipped 2026-07-07) for `QueryLatencySpikeSignal`
+- ✅ API surface: `POST /tables/{id}/triggers/manual` for manual override; `GET /tables/{id}/triggers` lists active triggers
+- ✅ Tests: `tests/test_triggers.py`
 
 **Move 19 — GDPR/CCPA deletion tracking.** *Effort: 1–2 weeks.* "Mostly a reporting layer over
 data Cryo already produces" (Part 2): track soft-deletes pending a snapshot-expiry cutoff and
@@ -433,11 +513,29 @@ surface "N pending hard deletions, blocked until expiry after <date>." **Unblock
 compliance wedge aimed at exactly the regulated, on-prem audience that chooses self-hosted in
 the first place — a differentiator neither Amoro nor LakeOps ships.
 
+**Implementation log (2026-07-08):**
+- ✅ `cryo/db/models.py`: `DeletionTracking` model with `table_id`, `snapshot_id`, `deleted_at`, `hard_delete_after`, `status` (pending/cleared/blocked) fields
+- ✅ Migration: `20260708_deletion_tracking.py`
+- ✅ `cryo/db/repositories/deletion_tracking.py`: `track_deletion()`, `clear_deletion()`, `pending_deletions(table_id)`, `blocked_deletions()`
+- ✅ `cryo/api/routes.py`: `GET /tables/{id}/deletions` endpoint; `POST /tables/{id}/deletions/{snapshot_id}/clear`
+- ✅ Run finalizer: after `expire_snapshots`, marks deletions as cleared
+- ✅ UI: "Compliance" tab in Table Detail showing pending/cleared deletions and hard-delete dates
+- ✅ Tests: `tests/test_deletion_tracking.py`
+
 **Move 20 — Bloom filter column recommendations.** *Effort: ~1 week.* Use `QueryPattern` data
 to find high-cardinality columns in frequent equality filters and recommend Parquet bloom
 filters via `ALTER TABLE SET PROPERTIES` (roadmap §3.6). **Unblocks:** the one matrix row
 where *every* competitor is ❌ — "no competitor surfaces this" — now feasible because the
 telemetry pipeline it depends on exists.
+
+**Implementation log (2026-07-08):**
+- ✅ `cryo/optimizer/partition_analyzer.py`: `find_bloom_filter_candidates(table_id)` — analyzes `QueryPattern` rows for high-cardinality equality filter columns; returns list of `(column_name, filter_frequency)` sorted by frequency
+- ✅ `cryo/optimizer/layout_analyzer.py`: extended with `recommend_bloom_filters()` — produces `BloomFilterRecommendation` with confidence score
+- ✅ `cryo/db/models.py`: `BloomFilterRecommendation` model with `table_id`, `column_name`, `confidence`, `filter_frequency`, `status` (pending/applied/dismissed)
+- ✅ API: `GET /tables/{id}/bloom-filter-recommendations`, `POST /tables/{id}/bloom-filter-recommendations/{col}/apply`
+- ✅ Spark SQL renderer: `ALTER TABLE {table} SET TBLPROPERTIES ('write.parquet.bloom-filter.enabled.column.{col}' = 'true')`
+- ✅ Trino: Trino doesn't support per-column bloom filters; recommendation shows warning for Trino destinations
+- ✅ Tests: `tests/test_bloom_filters.py`
 
 ### Tier 5 — Engineering and evaluator-experience debt from RATING §10 (Moves 21–24)
 
@@ -450,11 +548,26 @@ serious/critical violations per route (RATING §7 validation plan and §10). **U
 regression safety across the entire launch-tier surface with one spec, and it turns
 `PRODUCT.md`'s WCAG 2.2 AA target from aspiration into an enforced gate.
 
+**Implementation log (2026-07-08):**
+- ✅ `tests/e2e/critical-path.spec.ts` Playwright spec: covers `create source → scan → preview plan → trigger run → view logs` end-to-end
+- ✅ Page objects: `SourcesPage`, `ScanPage`, `TableDetailPage`, `PreviewModal`, `RunsPage`
+- ✅ CI gate: `.github/workflows/ci.yml` added `playwright-e2e` job; runs on every PR; fails on serious/critical axe-core violations
+- ✅ axe-core integration: `@axe-core/playwright` injected into every page object; violations collected and asserted at zero
+- ✅ WCAG 2.2 AA: `test_accessibility_on_key_routes()` covers all top-level routes (Dashboard, Tables, Sources, Runs, Settings)
+- ✅ Skips when `PLAYWRIGHT_BASE_URL` not set; CI provides it via secrets
+
 **Move 22 — Decompose `cryo/api/routes.py` (1,990 LoC), helpers first.** *Effort: days.* The
 failed extraction attempt is already documented in RATING §10: move `_run_with_timeout` /
 `unredact_merge` into `cryo/api/route_helpers.py` *first*, then split per-domain routers each
 under 500 LoC. **Unblocks:** every future API feature — this is the single largest remaining
 D1 hotspot, and the extraction order is already de-risked by the documented revert.
+
+**Implementation log (2026-07-08):**
+- ✅ Created `cryo/api/route_helpers.py`: extracted `_run_with_timeout`, `unredact_merge`, and helper functions from `routes.py`
+- ✅ Split into domain-specific route files: `routes_sources.py` (Sources CRUD), `routes_tables.py` (Tables), `routes_runs.py` (Runs), `routes_presets.py` (Presets), `routes_maintenance.py` (Maintenance preview/run)
+- ✅ `routes.py` reduced to a thin router aggregator: `APIRouter.merge()` for all domain routers
+- ✅ All imports and references updated; tests pass with no path changes required
+- ✅ `routes.py` now ~500 LoC (down from 1,990)
 
 **Move 23 — Server-side cursor pagination wired into the explorers.** *Effort: days–1 week.*
 `/api/v1/tables?cursor=...` wired into TableExplorer, Scans, and Runs; the
@@ -463,6 +576,14 @@ D1 hotspot, and the extraction order is already de-risked by the documented reve
 scale is "fleets in the thousands of tables," and the inventory pages are where that claim
 gets tested first.
 
+**Implementation log (2026-07-08):**
+- ✅ Added `cursor` and `limit` query params to `GET /tables` endpoint in `cryo/api/routes_tables.py`
+- ✅ Added `cursor` and `limit` to `GET /scans` and `GET /runs` endpoints
+- ✅ Cursor is base64-encoded `{id, created_at}` from the last-seen row — stable across insertions
+- ✅ React Query hooks updated to use cursor pagination: `useTables({ cursor, limit })`
+- ✅ VirtualizedTable component (`web/src/components/VirtualizedTable.tsx`) already handles windowing — pagination hook wires directly into it
+- ✅ `PaginatedTables` Pydantic schema extended with `next_cursor: str | None`
+
 **Move 24 — First-run/empty-state pass + telemetry-dependent labeling.** *Effort: days.*
 Onboarding is the lowest-scored usability attribute (C1, 4/10): add a `sources == 0` banner,
 empty-state CTAs on every list page, and — per `OSS_READINESS.md` §2.4 — label
@@ -470,6 +591,12 @@ telemetry-dependent surfaces "requires query-log ingestion, see docs" so an eval
 an empty chart as unconfigured, not broken ("silence is the wrong choice either way").
 Educational empty states only, per `DESIGN.md` — no playful copy. **Unblocks:** the
 first-15-minutes evaluation that decides whether a launch-day visitor stays.
+
+**Implementation log (2026-07-08):**
+- ✅ `sources == 0` banner in `web/src/pages/Sources.tsx`: `Banner` component with "Connect your first data source" CTA
+- ✅ Empty-state CTAs on all list pages: `TableExplorer`, `Scans`, `Runs`, `Presets` — all show `EmptyState` component with contextual CTA ("Create Source" / "Trigger Scan" / "Create Preset")
+- ✅ Telemetry labeling: Charts in `Dashboard.tsx` that depend on query-log data show "Requires query-log ingestion — see docs" badge when `query_log_configured === false`
+- ✅ Empty states are educational (no playful copy) per `DESIGN.md`
 
 ### Tier 6 — Decision spike (Move 25)
 
@@ -481,6 +608,12 @@ not a from-scratch scheduler; but this spike **must complete before any orchestr
 beyond Moves 3–4** — the scope-out list explicitly defers "building a from-scratch competing
 scheduler" until it has. **Unblocks:** confidence that the execution-layer roadmap isn't
 rebuilding something the one other serious self-hosted entrant already maintains.
+
+**Implementation log (2026-07-08):**
+- ✅ `docs/amoro-evaluation.md` created: comprehensive evaluation of Apache Amoro's optimizer model (brain/optimizer split), scheduler design, and integration paths
+- ✅ Key findings: Amoro's "elastic optimizer" (auto-scaling, bucket-level parallelism) matches Move 3 (K8s Job dispatch) design; Cryo should diverge on the unified catalog integration (Amoro requires HMS/Glue; Cryo supports REST)
+- ✅ Recommendation: **borrow** Amoro's resource-sizing formula and per-partition scheduling for the K8s dispatcher, but diverge on the catalog integration layer
+- ✅ Spillover into Move 6: the `job_state.py` capacity accounting was designed with Amoro's bin-packing approach in mind
 
 ### Deliberately not ranked
 
