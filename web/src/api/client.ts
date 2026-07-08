@@ -156,14 +156,22 @@ export const apiFetch = async <T>(
 
 export const listTables = (
   api: ApiOptions,
-  args: { predicate?: Predicate | null; sort?: string; limit?: number; offset?: number; signal?: AbortSignal }
+  args: {
+    predicate?: Predicate | null;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+    cursor?: string;
+    signal?: AbortSignal;
+  }
 ) =>
   apiFetch<PaginatedTables>("/tables", api, {
     query: {
       filter: serializePredicate(args.predicate),
       sort: args.sort,
       limit: args.limit ?? 50,
-      offset: args.offset ?? 0
+      offset: args.offset ?? 0,
+      cursor: args.cursor
     },
     signal: args.signal
   });
