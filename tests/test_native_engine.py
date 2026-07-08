@@ -189,10 +189,18 @@ class TestCryoNativePyo3HelpersWithMock:
             assert engine is not None
 
     def test_compact_files_returns_error_without_native(self):
-        """compact_files should return a failure result when Rust module is unavailable."""
-        with patch("cryo.engines.native.engine.is_native_available", return_value=False):
+        """compact_files should return a failure result when cryo_native module is unavailable."""
+        import builtins
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "cryo_native":
+                raise ImportError("cryo_native not available")
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", side_effect=mock_import):
             engine = NativeEngine(config={})
-            # compact_files catches errors and returns a result rather than raising
             result = engine.compact_files([], "/tmp/output", NativeCompactionConfig())
             assert not result.ok
             assert result.error is not None
