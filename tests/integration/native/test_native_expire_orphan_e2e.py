@@ -30,9 +30,15 @@ requires_rest = pytest.mark.skipif(
 
 
 def _engine_config() -> dict[str, str]:
+    config: dict[str, str] = {}
     configured = os.getenv("CRYO_ENGINE_BINARY")
     if configured:
-        return {"binary_path": configured}
+        config["binary_path"] = configured
+    impl = os.getenv("CRYO_ENGINE_IMPL")
+    if impl:
+        config["engine_impl"] = impl
+    if config:
+        return config
     resolved = resolve_binary_path({})
     if resolved is None:
         return {}

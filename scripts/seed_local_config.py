@@ -102,6 +102,7 @@ LOCAL_NATIVE_DESTINATION = {
     "engine": "native",
     "config": {
         "slot_cap": 5,
+        "engine_impl": "go",
         "operation_mode": "execute",
         "timeout_seconds": 3600,
     },
@@ -144,17 +145,22 @@ LOCAL_LARGE_PRESET = {
 LOCAL_DEFAULT_NATIVE_PRESET = {
     "name": "default-native-deep",
     "mode": "deep",
-    # Phase 2: expire_snapshots is paired with remove_orphan_files to avoid file leaks (#20).
-    "operations": ["expire_snapshots", "remove_orphan_files"],
+    "operations": [
+        "expire_snapshots",
+        "remove_orphan_files",
+        "optimize",
+        "optimize_manifests",
+    ],
     "params": {
         "min_small_files": 10,
         "retention_days": 7,
         "retain_last": 1,
         "orphan_retention_days": 7,
+        "file_size_mb": 256,
     },
     "description": (
-        "Native maintenance (expire_snapshots + remove_orphan_files; optimize deferred). "
-        "Selectable preset; not a platform default."
+        "Native deep maintenance: expire + orphan + COW optimize (iceberg-go); "
+        "MOR optimize and manifests route to sql_fallback_destination_id (Trino)."
     ),
     "guardrails": {"cooldown_hours": 24},
     # No preset is seeded as the platform default by design; users must explicitly
@@ -236,7 +242,15 @@ def main() -> None:
         trino = upsert_destination(session, LOCAL_TRINO_DESTINATION)
         trino_hms = upsert_destination(session, LOCAL_TRINO_HMS_DESTINATION)
         spark = upsert_destination(session, LOCAL_SPARK_DESTINATION)
-        native = upsert_destination(session, LOCAL_NATIVE_DESTINATION)
+        native_payload = {
+            **LOCAL_NATIVE_DESTINATION,
+            "config": {
+                **LOCAL_NATIVE_DESTINATION["config"],
+                # MOR optimize + optimize_manifests route to Trino (Phase C hybrid path).
+                "sql_fallback_destination_id": str(trino.id),
+            },
+        }
+        native = upsert_destination(session, native_payload)
         standard = upsert_preset(session, LOCAL_STANDARD_PRESET, destination_id=trino.id)
         large = upsert_preset(session, LOCAL_LARGE_PRESET, destination_id=trino.id)
         default_native = upsert_preset(
