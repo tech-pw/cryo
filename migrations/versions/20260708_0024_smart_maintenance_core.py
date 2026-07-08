@@ -1,7 +1,7 @@
 """Smart maintenance core schema additions.
 
-Revision ID: 20260708_0024_smart_maintenance_core
-Revises: 20260708_chunk_checkpointing
+Revision ID: 20260708_0024
+Revises: 20260708_0023
 Create Date: 2026-07-08 19:45:00.000000
 """
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260708_0024_smart_maintenance_core"
-down_revision = "20260708_chunk_checkpointing"
+revision = "20260708_0024"
+down_revision = "20260708_0023"
 branch_labels = None
 depends_on = None
 
