@@ -23,6 +23,9 @@ func main() {
 		case "seed-table":
 			runSeedTable(os.Args[2:])
 			return
+		case "commit-equality-delete":
+			runCommitEqualityDelete(os.Args[2:])
+			return
 		}
 	}
 	runSeed()
@@ -87,6 +90,24 @@ func runSeedTable(args []string) {
 	defer cancel()
 	if err := fixtures.SeedMORTableByName(ctx, fixtures.ConfigFromEnv(), args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "seed table failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runCommitEqualityDelete(args []string) {
+	if len(args) != 2 {
+		fmt.Fprintf(os.Stderr, "usage: seed-native-fixtures commit-equality-delete <namespace.table> <id[,id...]>\n")
+		os.Exit(2)
+	}
+	ids, err := fixtures.ParseInt64List(args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse ids: %v\n", err)
+		os.Exit(2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := fixtures.CommitEqualityDeleteOnTable(ctx, fixtures.ConfigFromEnv(), args[0], ids); err != nil {
+		fmt.Fprintf(os.Stderr, "commit equality delete failed: %v\n", err)
 		os.Exit(1)
 	}
 }
