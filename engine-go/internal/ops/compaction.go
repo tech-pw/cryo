@@ -13,6 +13,7 @@ import (
 	"github.com/cryo-lake/cryo/engine-go/internal/predicate"
 	"github.com/cryo-lake/cryo/engine-go/internal/progress"
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
+	"github.com/cryo-lake/cryo/engine-go/internal/testhook"
 	"github.com/cryo-lake/cryo/engine-go/internal/validate"
 )
 
@@ -209,6 +210,8 @@ func executeRewriteOnce(
 	if err := validate.AssertRowCountInvariant(beforeRows, afterRows); err != nil {
 		return zero, err
 	}
+
+	testhook.PauseBeforeCommit()
 
 	updated, err := txn.Commit(ctx)
 	if err != nil {
