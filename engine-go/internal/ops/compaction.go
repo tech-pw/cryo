@@ -57,9 +57,9 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 	}
 
 	morCompaction := validate.HasDeleteFilesInScope(tasks)
-	cfg := compactionConfigFromParams(op.Params)
+	cfg, partialProgress := compactionConfigFromParams(op.Params)
 	if morCompaction {
-		cfg = compactionConfigForMOR(op.Params)
+		cfg = compactionConfigForMORParams(cfg, op.Params)
 	}
 
 	if tbl.CurrentSnapshot() == nil && len(tasks) == 0 {
@@ -123,6 +123,7 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 			tbl,
 			op,
 			cfg,
+			partialProgress,
 			rowFilter,
 			groups,
 			rewrittenPaths,
@@ -162,6 +163,7 @@ func executeRewriteOnce(
 	tbl *table.Table,
 	op *protocol.OperationRequest,
 	cfg compaction.Config,
+	partialProgress bool,
 	rowFilter iceberg.BooleanExpression,
 	groups []table.CompactionTaskGroup,
 	rewrittenPaths map[string]struct{},
@@ -191,12 +193,26 @@ func executeRewriteOnce(
 		},
 	}
 
+	if partialProgress {
+		return executePartialProgress(
+			ctx, tbl, op, groups, morCompaction, rewrittenPaths,
+			rewriteOpts, beforeRows, beforeMeta,
+		)
+	}
+
 	if morCompaction {
 		deadEqDeletes, eqErr := collectDeadEqualityDeletes(ctx, tbl, rewrittenPaths)
 		if eqErr != nil {
 			return zero, eqErr
 		}
 		rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
+	}
+
+	if partialProgress {
+		return executePartialProgress(
+			ctx, tbl, op, groups, morCompaction, rewrittenPaths,
+			rewriteOpts, beforeRows, beforeMeta, snapshotProps,
+		)
 	}
 
 	result, err := txn.RewriteDataFiles(ctx, groups, rewriteOpts)
@@ -234,6 +250,83 @@ func executeRewriteOnce(
 	}, nil
 }
 
+func executePartialProgress(
+	ctx context.Context,
+	tbl *table.Table,
+	op *protocol.OperationRequest,
+	groups []table.CompactionTaskGroup,
+	morCompaction bool,
+	rewrittenPaths map[string]struct{},
+	rewriteOpts table.RewriteDataFilesOptions,
+	beforeRows int64,
+	beforeMeta validate.MetadataSnapshot,
+) (rewriteOnceResult, error) {
+	var zero rewriteOnceResult
+	var totalOutputFiles, totalBytesRemoved, totalBytesWritten uint64
+
+	for i, group := range groups {
+		if err := ctx.Err(); err != nil {
+			return zero, fmt.Errorf("context cancelled before group %d: %w", i, err)
+		}
+
+		groupTxn := tbl.NewTransaction()
+
+		if morCompaction {
+			if err := ensureMORCompactionProperties(groupTxn, tbl.Metadata().Properties()); err != nil {
+				return zero, fmt.Errorf("configure MOR compaction properties for group %d: %w", i, err)
+			}
+
+			groupRewritten := rewrittenPathsForGroup(rewrittenPaths, group)
+			deadEqDeletes, eqErr := collectDeadEqualityDeletesForGroup(ctx, tbl, groupRewritten)
+			if eqErr != nil {
+				return zero, fmt.Errorf("collect dead eq deletes for group %d: %w", i, eqErr)
+			}
+			rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
+		}
+
+		groupResult, err := groupTxn.RewriteDataFiles(ctx, []table.CompactionTaskGroup{group}, rewriteOpts)
+		if err != nil {
+			return zero, fmt.Errorf("rewrite_data_files group %d: %w", i, err)
+		}
+
+		if groupResult != nil && groupResult.RewrittenGroups > 0 {
+			progress.Progress("rewrite_data_files", i*100/len(groups), uint64(len(group.Tasks)), uint64(group.TotalSizeBytes))
+
+			testhook.PauseBeforeCommit()
+
+			updated, commitErr := groupTxn.Commit(ctx)
+			if commitErr != nil {
+				return zero, fmt.Errorf("commit rewrite_data_files group %d: %w", i, commitErr)
+			}
+
+			if err := validate.AssertMetadataStable(beforeMeta, updated); err != nil {
+				return zero, fmt.Errorf("metadata stable group %d: %w", i, err)
+			}
+
+			totalOutputFiles += uint64(groupResult.AddedDataFiles)
+			totalBytesRemoved += uint64(groupResult.BytesBefore)
+			totalBytesWritten += uint64(groupResult.BytesAfter)
+		}
+
+		reloaded, refreshErr := tbl.Refresh(ctx)
+		if refreshErr != nil {
+			progress.Progress("rewrite_data_files", (i+1)*100/len(groups), 0, 0)
+		} else {
+			tbl = reloaded
+		}
+	}
+
+	if totalOutputFiles == 0 {
+		return zero, nil
+	}
+
+	return rewriteOnceResult{
+		outputFiles:  totalOutputFiles,
+		bytesRemoved: totalBytesRemoved,
+		bytesWritten: totalBytesWritten,
+	}, nil
+}
+
 func planScopedTasks(
 	ctx context.Context,
 	tbl *table.Table,
@@ -262,7 +355,7 @@ func planScopedTasks(
 	return filtered, nil
 }
 
-func compactionConfigFromParams(raw json.RawMessage) compaction.Config {
+func compactionConfigFromParams(raw json.RawMessage) (compaction.Config, bool) {
 	cfg := compaction.DefaultConfig()
 	target := int64Param(raw, "target_file_size_bytes", defaultTargetFileSizeBytes)
 	minSize := int64Param(raw, "min_file_size_bytes", defaultMinFileSizeBytes)
@@ -274,11 +367,11 @@ func compactionConfigFromParams(raw json.RawMessage) compaction.Config {
 	if minInput := intParam(raw, "min_input_files", 0); minInput > 0 {
 		cfg.MinInputFiles = uint(minInput)
 	}
-	return cfg
+	partialProgress := boolParam(raw, "partial_progress", false)
+	return cfg, partialProgress
 }
 
-func compactionConfigForMOR(raw json.RawMessage) compaction.Config {
-	cfg := compactionConfigFromParams(raw)
+func compactionConfigForMORParams(cfg compaction.Config, raw json.RawMessage) compaction.Config {
 	cfg.DeleteFileThreshold = 1
 	if cfg.MinInputFiles > 1 {
 		cfg.MinInputFiles = 1
