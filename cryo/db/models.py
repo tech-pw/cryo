@@ -463,6 +463,43 @@ class ProtectedSnapshot(Base):
     table: Mapped[Table] = relationship(back_populates="protected_snapshots")
 
 
+class DeletionTracking(Base):
+    """Tracks rows pending hard-delete for GDPR/CCPA compliance.
+
+    Soft-deleted rows remain query-visible until the next successful
+    expire_snapshots pass clears them. This table records the
+    soft-delete timestamp, the count, and the projected hard-delete
+    cutoff date the expiry will reach.
+    """
+
+    __tablename__ = "deletion_tracking"
+    __table_args__ = (Index("ix_deletion_tracking_table", "table_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    soft_deleted_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    pending_rows: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    blocked_until: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+
 class TableAlertSubscription(Base):
     """A consumer/watcher who wants SLA or data-quality breach alerts for a table.
 
@@ -704,6 +741,40 @@ class MaintenanceJob(Base):
     table: Mapped[Table] = relationship(back_populates="jobs")
     destination: Mapped[Destination] = relationship(back_populates="jobs")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
+
+
+class ChunkCheckpoint(Base):
+    """Per-chunk execution checkpoint for native engine.
+
+    Written after each chunk commits to Iceberg. Allows resume after mid-run failure:
+    the worker queries which chunks already succeeded, then re-runs only the remaining ones.
+    Chunk ordering is defined by the planner's greedy_pack, which produces a deterministic
+    sequence of partition-disjoint chunks.
+    """
+
+    __tablename__ = "chunk_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("run_id", "chunk_index", name="uq_chunk_checkpoint_run_chunk"),
+        Index("ix_chunk_checkpoints_run", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    partition_summary: Mapped[str | None] = mapped_column(Text)
+    input_files: Mapped[int | None] = mapped_column(Integer)
+    output_files: Mapped[int | None] = mapped_column(Integer)
+    bytes_removed: Mapped[int | None] = mapped_column(BigInteger)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    committed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    raw_result: Mapped[JsonDict | None] = mapped_column(JSONB)
 
 
 class AuditLog(Base):
@@ -1344,6 +1415,7 @@ __all__ = [
     "AWSInventoryObject",
     "AuditLog",
     "ColumnStatsSketch",
+    "DeletionTracking",
     "Destination",
     "GovernorBanditState",
     "LayoutRecommendation",

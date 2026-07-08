@@ -148,3 +148,151 @@ def test_orphan_params_emit_min_age_hours() -> None:
     params = _orphan_params({"orphan_retention_days": 3})
     assert params["retention_days"] == 3
     assert params["orphan_min_age_hours"] == 72
+
+
+def test_planner_skips_hot_partitions_with_recent_writes() -> None:
+    """Move 14: 'no writes in N hours' filter keeps actively-written partitions alone."""
+    from datetime import UTC, datetime, timedelta
+
+    cold_write = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    hot_write = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 500,
+            "total_size_gb": 250,
+            "partition_fields": [
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": "2025-05-20",
+                "small_files_in_partition_count": 250,
+                "partition_size_gb": 60,
+                "last_write_at": cold_write,
+            },
+            {
+                "partition_value": "2025-05-19",
+                "small_files_in_partition_count": 250,
+                "partition_size_gb": 60,
+                "last_write_at": hot_write,
+            },
+        ],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "chunk_size_gb": 100,
+            "max_partitions_per_chunk": 100,
+            "partition_write_idle_hours": 6,
+        },
+    )
+    optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
+    assert optimize_ops, "cold partition should still produce an optimize op"
+    # Only the cold partition's predicate should appear in any optimize op.
+    flat_predicates = [
+        term.base_column
+        for op in optimize_ops
+        for predicate in (op.predicates or ())
+        for term in predicate.terms
+    ]
+    assert "event_date" in flat_predicates
+    # The hot partition should be excluded (predicates for 2025-05-19 should not be present).
+    cold_present = any(
+        any(
+            term.base_column == "event_date" and term.value == "2025-05-20"
+            for term in (predicate.terms if predicate else [])
+        )
+        for op in optimize_ops
+        for predicate in (op.predicates or ())
+    )
+    hot_present = any(
+        any(
+            term.base_column == "event_date" and term.value == "2025-05-19"
+            for term in (predicate.terms if predicate else [])
+        )
+        for op in optimize_ops
+        for predicate in (op.predicates or ())
+    )
+    assert cold_present, "expected cold partition 2025-05-20 in optimize predicates"
+    assert not hot_present, "hot partition 2025-05-19 must be skipped (CommitFailedException risk)"
+    assert any("Skipped hot partition" in note for note in plan.notes)
+
+
+def test_planner_includes_partitions_without_last_write_at() -> None:
+    """Move 14: partitions with unknown last_write_at are treated as cold (best-effort)."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 500,
+            "total_size_gb": 250,
+            "partition_fields": [
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": "2025-05-20",
+                "small_files_in_partition_count": 250,
+                "partition_size_gb": 60,
+            },
+        ],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "chunk_size_gb": 100,
+            "max_partitions_per_chunk": 100,
+            "partition_write_idle_hours": 6,
+        },
+    )
+    optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
+    assert optimize_ops, "partition with unknown last_write_at should be eligible"
+    assert not any("Skipped hot partition" in note for note in plan.notes)
+
+
+def test_planner_hot_cold_filter_off_by_default() -> None:
+    """Move 14: filter only kicks in when partition_write_idle_hours > 0."""
+    from datetime import UTC, datetime, timedelta
+
+    hot_write = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 500,
+            "total_size_gb": 250,
+            "partition_fields": [
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": "2025-05-19",
+                "small_files_in_partition_count": 500,
+                "partition_size_gb": 60,
+                "last_write_at": hot_write,
+            },
+        ],
+        Mode.STANDARD,
+        {"min_small_files": 128, "chunk_size_gb": 100, "max_partitions_per_chunk": 100},
+    )
+    assert not any("Skipped hot partition" in note for note in plan.notes)
+    optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
+    assert optimize_ops

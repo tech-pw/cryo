@@ -213,12 +213,19 @@ def compute_health_score(
 
     if stats.get("is_streaming"):
         score -= 8
+        commits_per_day = float(stats.get("commits_per_day") or 0.0)
+        reason = "Table receives streaming writes causing high commit velocity"
+        if commits_per_day > 0:
+            reason = (
+                f"{reason} ({commits_per_day:.1f} commits/day from snapshot-count deltas "
+                "across table_stats_history)"
+            )
         deductions.append(
             {
                 "label": "High velocity streaming",
                 "deduction": 8,
                 "severity": "warning",
-                "reason": "Table receives streaming writes causing high commit velocity",
+                "reason": reason,
             }
         )
 
