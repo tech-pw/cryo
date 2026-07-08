@@ -29,9 +29,6 @@ import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NotificationProvider } from "./components/NotificationRegion";
 
-const AwsIntegrations = lazy(() =>
-  import("./pages/AwsIntegrations").then((m) => ({ default: m.AwsIntegrations }))
-);
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
 const Skillsets = lazy(() => import("./pages/Skillsets").then((m) => ({ default: m.Skillsets })));
 const CostAttribution = lazy(() =>
@@ -40,14 +37,14 @@ const CostAttribution = lazy(() =>
 const CostInsights = lazy(() =>
   import("./pages/CostInsights").then((m) => ({ default: m.CostInsights }))
 );
-const CostSavings = lazy(() => import("./pages/CostSavings").then((m) => ({ default: m.CostSavings })));
+const Cost = lazy(() => import("./pages/Cost").then((m) => ({ default: m.Cost })));
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
 const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
 const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
 const LayoutOptimization = lazy(() => import("./pages/LayoutOptimization"));
-const MultiCatalog = lazy(() => import("./pages/MultiCatalog").then((m) => ({ default: m.MultiCatalog })));
+const Catalog = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.Catalog })));
 const Presets = lazy(() => import("./pages/Presets").then((m) => ({ default: m.Presets })));
 const QueryPerformance = lazy(() =>
   import("./pages/QueryPerformance").then((m) => ({ default: m.QueryPerformance }))
@@ -56,7 +53,6 @@ const Runs = lazy(() => import("./pages/Runs").then((m) => ({ default: m.Runs })
 const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
 const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
 const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ default: m.TableDetail })));
-const TableExplorer = lazy(() => import("./pages/TableExplorer").then((m) => ({ default: m.TableExplorer })));
 
 const PageFallback = () => (
   <div className="content" style={{ display: "grid", placeItems: "center", minHeight: 240 }}>
@@ -81,18 +77,15 @@ const queryClient = new QueryClient({
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
   { key: "/catalogs", icon: <AppstoreOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
-  { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
   { key: "/governance", icon: <TeamOutlined />, label: <Link to="/governance">Governance</Link> },
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
-  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Savings</Link> },
+  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
-  { key: "/aws", icon: <CloudOutlined />, label: <Link to="/aws">AWS</Link> },
-  { key: "/cost-insights", icon: <DollarOutlined />, label: <Link to="/cost-insights">Cost insights</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
@@ -108,7 +101,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Inventory",
-    children: [navByKey["/catalogs"], navByKey["/tables"], navByKey["/scans"]]
+    children: [navByKey["/catalogs"], navByKey["/scans"]]
   },
   {
     type: "group",
@@ -129,7 +122,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Settings",
-    children: [navByKey["/aws"], navByKey["/connections"]]
+    children: [navByKey["/connections"]]
   }
 ];
 
@@ -228,10 +221,15 @@ const Shell = () => {
             <Routes>
               <Route path="/" element={<Navigate to="/health" replace />} />
               <Route path="/health" element={<DatalakeHealth />} />
-              <Route path="/catalogs" element={<MultiCatalog />} />
-              <Route path="/cost" element={<CostSavings />} />
+              <Route path="/catalogs" element={<Catalog />} />
+              <Route path="/cost" element={<Cost />} />
+              <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
+              <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
               <Route path="/attribution" element={<CostAttribution />} />
-              <Route path="/tables" element={<TableExplorer />} />
+              <Route
+                path="/tables"
+                element={<Navigate to="/catalogs" replace />}
+              />
               <Route path="/tables/:tableId" element={<TableDetail />} />
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:runId" element={<Scans />} />
@@ -246,7 +244,6 @@ const Shell = () => {
               <Route path="/jobs/:jobId" element={<Navigate to="/runs/:jobId" replace />} />
               <Route path="/connections" element={<Connections />} />
               <Route path="/skillsets" element={<Skillsets />} />
-              <Route path="/aws" element={<AwsIntegrations />} />
               <Route path="/cost-insights" element={<CostInsights />} />
             </Routes>
             </ErrorBoundary>

@@ -9,13 +9,16 @@ Endpoints (all under ``/api/v1``):
 - ``POST   /sources/{id}/s3-log-configs/{bucket}/ingest``        — manually trigger an ingestion run
 - ``POST   /sources/{id}/s3-log-configs/{bucket}/provision``     — one-click auto-provision (§4.3)
 - ``POST   /sources/{id}/s3-log-configs/{bucket}/teardown``      — destructive cleanup (§9.4)
+- ``GET    /sources/{id}/s3-request-cost-rollup``                — fleet-view rollup across all
+  of a source's tracked buckets (Cost page "S3 requests" tab)
 """
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
@@ -29,6 +32,9 @@ from cryo.api.schemas import (
     S3LogProvisionResponse,
     S3LogTeardownRequest,
     S3LogTeardownResponse,
+    S3RequestCostByDayRead,
+    S3RequestCostByTierRead,
+    S3RequestCostRollupRead,
 )
 from cryo.db.models import S3BucketLogConfig, Source
 from cryo.db.tenant_scope import get_scoped_resource
@@ -211,4 +217,50 @@ def teardown_bucket(
         policy_reverted=result.policy_reverted,
         warnings=result.warnings,
         error=result.error,
+    )
+
+
+@router.get(
+    "/sources/{source_id}/s3-request-cost-rollup",
+    response_model=S3RequestCostRollupRead,
+    dependencies=[Depends(require_viewer)],
+)
+def get_source_s3_request_cost_rollup(
+    source_id: UUID,
+    session: SessionDep,
+    lookback_days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> S3RequestCostRollupRead:
+    """Fleet-view rollup for the Cost page's "S3 requests" tab — aggregates every bucket this
+    source tracks. 404 when the source has no S3BucketLogConfig rows at all (nothing
+    discovered/configured yet), distinct from "configured but zero requests measured" which
+    returns real zeros."""
+    from cryo.scanner.s3_request_cost_ingest import compute_source_request_cost_rollup
+
+    source = get_scoped_resource(session, Source, source_id, resource_type="Source")
+    result = compute_source_request_cost_rollup(session, source_id, lookback_days=lookback_days)
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="No S3 request-cost tracking configured for this source"
+        )
+    return S3RequestCostRollupRead(
+        bucket=result.bucket,
+        source_id=source_id,
+        source_name=source.name,
+        region=result.region,
+        enabled=result.enabled,
+        logging_status=result.logging_status,
+        last_ingested_at=result.last_ingested_at,
+        total_request_count_30d=result.total_request_count_30d,
+        total_cost_usd_month=result.total_cost_usd_month,
+        by_tier=S3RequestCostByTierRead(
+            tier1_count=result.by_tier.tier1_count,
+            tier2_count=result.by_tier.tier2_count,
+            tier1_cost_usd=result.by_tier.tier1_cost_usd,
+            tier2_cost_usd=result.by_tier.tier2_cost_usd,
+        ),
+        by_day=[
+            S3RequestCostByDayRead(day=d.day, count=d.count, cost_usd=d.cost_usd)
+            for d in result.by_day
+        ],
+        approximate=result.approximate,
     )

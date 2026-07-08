@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cryo.domain.enums import EngineType, Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
     MaintenancePlan,
@@ -335,7 +337,9 @@ def test_split_stdout_lines() -> None:
     assert response_lines[0].startswith('{"ok"')
 
 
-def test_resolve_binary_path_prefers_go_impl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_binary_path_prefers_go_impl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     go_binary = tmp_path / "cryo-engine-go"
     go_binary.write_text("#!/bin/sh\nexit 2\n")
     go_binary.chmod(0o755)

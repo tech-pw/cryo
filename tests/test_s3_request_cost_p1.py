@@ -823,3 +823,162 @@ def test_prune_s3_request_cost_daily_deletes_only_stale_rows(session) -> None:
     remaining = session.query(S3RequestCostDaily).all()
     assert len(remaining) == 1
     assert remaining[0].day == now.date() - timedelta(days=10)
+
+
+# ---------------------------------------------------------------------------
+# Cost page "S3 requests" tab -- fleet-wide per-source rollup
+# ---------------------------------------------------------------------------
+
+
+def test_compute_source_rollup_returns_none_with_no_tracked_buckets(session) -> None:
+    source = _seed_source(session)
+
+    result = ingest_mod.compute_source_request_cost_rollup(session, source.id)
+
+    assert result is None
+
+
+def test_compute_source_rollup_aggregates_across_buckets_and_tiers(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add(
+        S3BucketLogConfig(
+            source_id=source.id,
+            bucket="lake-bucket",
+            region="ap-south-1",
+            logging_status="enabled",
+            enabled=True,
+            last_ingested_at=now,
+        )
+    )
+    session.add_all(
+        [
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date(),
+                operation_tier="get",
+                request_count=1000,
+                cost_usd=0.4,
+                pricing_source="aws_price_list_api",
+            ),
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date(),
+                operation_tier="put",
+                request_count=200,
+                cost_usd=1.0,
+                pricing_source="aws_price_list_api",
+            ),
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date() - timedelta(days=1),
+                operation_tier="list",
+                request_count=50,
+                cost_usd=0.25,
+                pricing_source="aws_price_list_api",
+            ),
+        ]
+    )
+    session.commit()
+
+    result = ingest_mod.compute_source_request_cost_rollup(session, source.id, now=now)
+
+    assert result is not None
+    assert result.bucket == "lake-bucket"
+    assert result.region == "ap-south-1"
+    assert result.logging_status == "enabled"
+    assert result.total_request_count_30d == 1250
+    assert result.total_cost_usd_month == 1.65
+    assert result.by_tier.tier2_count == 1000
+    assert result.by_tier.tier1_count == 250
+    assert result.approximate is False
+    assert len(result.by_day) == 2
+
+
+def test_compute_source_rollup_excludes_rows_outside_lookback_window(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add(S3BucketLogConfig(source_id=source.id, bucket="lake-bucket", enabled=True))
+    session.add(
+        S3RequestCostDaily(
+            source_id=source.id,
+            bucket="lake-bucket",
+            table_id=table.id,
+            day=now.date() - timedelta(days=45),
+            operation_tier="get",
+            request_count=999,
+            cost_usd=9.99,
+            pricing_source="aws_price_list_api",
+        )
+    )
+    session.commit()
+
+    result = ingest_mod.compute_source_request_cost_rollup(
+        session, source.id, lookback_days=30, now=now
+    )
+
+    assert result is not None
+    assert result.total_request_count_30d == 0
+    assert result.total_cost_usd_month == 0.0
+
+
+def test_compute_source_rollup_flags_approximate_when_any_row_used_fallback_pricing(
+    session,
+) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add(S3BucketLogConfig(source_id=source.id, bucket="lake-bucket", enabled=True))
+    session.add(
+        S3RequestCostDaily(
+            source_id=source.id,
+            bucket="lake-bucket",
+            table_id=table.id,
+            day=now.date(),
+            operation_tier="get",
+            request_count=10,
+            cost_usd=0.1,
+            pricing_source="fallback_default",
+        )
+    )
+    session.commit()
+
+    result = ingest_mod.compute_source_request_cost_rollup(session, source.id, now=now)
+
+    assert result is not None
+    assert result.approximate is True
+
+
+def test_compute_source_rollup_picks_most_recently_ingested_bucket_as_primary(session) -> None:
+    source = _seed_source(session)
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add_all(
+        [
+            S3BucketLogConfig(
+                source_id=source.id,
+                bucket="stale-bucket",
+                enabled=True,
+                last_ingested_at=now - timedelta(days=5),
+            ),
+            S3BucketLogConfig(
+                source_id=source.id,
+                bucket="fresh-bucket",
+                enabled=True,
+                last_ingested_at=now,
+            ),
+        ]
+    )
+    session.commit()
+
+    result = ingest_mod.compute_source_request_cost_rollup(session, source.id, now=now)
+
+    assert result is not None
+    assert result.bucket == "fresh-bucket"
