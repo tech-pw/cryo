@@ -39,7 +39,7 @@ artifacts themselves are permanent.
 | `tests/integration/hms/smoke_hms_trino.py` | Smoke test: Trino can read HMS fixture tables |
 | `scripts/smoke_file_counts.py` | Smoke test: file counts / local Spark compaction |
 | `scripts/smoke_cryo_e2e.py` | Smoke test: scan → plan → execute path |
-| `make test`, `make smoke-*`, `make test-hms-integration`, `make test-native-e2e`, `make test-native-e2e-local` | Makefile entrypoints for the above |
+| `make test`, `make smoke-*`, `make test-hms-integration`, `make test-native-e2e`, `make test-native-e2e-local`, `make test-native-compaction-e2e`, `make test-native-compaction-e2e-local-go` | Makefile entrypoints for the above |
 | `.github/workflows/ci.yml` | CI lint, typecheck, unit tests; `native-e2e` job (REST + MinIO + cryo-engine) |
 
 **Fixture generators** (below) write data to local MinIO only; they are inventoried under
