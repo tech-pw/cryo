@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -58,6 +59,43 @@ class ScanSummary:
 
 class ScanProgressCallback(Protocol):
     def __call__(self, event: dict[str, Any]) -> None: ...
+
+
+_SCAN_ANALYZE_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _scan_analyze_executor() -> ThreadPoolExecutor:
+    """Shared pool for catalog/S3-bound scan work, isolated from per-table scan threads.
+
+    Using a separate pool (rather than reusing the outer parallel-scan executor) means a
+    table submitted here from within a parallel `scan_one` worker can't deadlock against
+    that worker's own pool capacity.
+    """
+    global _SCAN_ANALYZE_EXECUTOR
+    if _SCAN_ANALYZE_EXECUTOR is None:
+        _SCAN_ANALYZE_EXECUTOR = ThreadPoolExecutor(
+            max_workers=8, thread_name_prefix="scan-analyze"
+        )
+    return _SCAN_ANALYZE_EXECUTOR
+
+
+def _run_bounded[R](fn: Callable[[], R], *, timeout_seconds: float, description: str) -> R:
+    """Run `fn` with a hard wall-clock bound.
+
+    PyIceberg/boto3 catalog clients don't reliably enforce their own timeouts against a slow
+    or unresponsive Hive Metastore/S3 endpoint. Without this bound, a single bad table can
+    wedge the scanner daemon's single-threaded poll loop indefinitely (seen in production:
+    one table hung for 100+ minutes and starved every subsequently queued scan). A timed-out
+    call keeps running in the background executor -- it's abandoned, not cancelled -- but the
+    caller regains control instead of blocking forever.
+    """
+    future = _scan_analyze_executor().submit(fn)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FuturesTimeoutError as exc:
+        raise TimeoutError(
+            f"{description} exceeded {timeout_seconds:.0f}s and was abandoned"
+        ) from exc
 
 
 def deterministic_chunk[T](items: list[T], *, chunk_id: int, num_chunks: int) -> list[T]:
@@ -216,15 +254,26 @@ def _run_scan_serial(
 
         try:
             history = stats_history_for_signals(session, table_row.id)
-            analysis = analyze_catalog_table(
-                candidate.catalog,
-                candidate.schema_name,
-                candidate.table_name,
-                scan_at=scan_at,
-                small_file_mb=settings.scan_small_file_mb,
-                file_size_threshold_mb=settings.scan_needs_compaction_threshold,
-                settings=settings,
-                stats_history=history,
+
+            def _analyze(
+                candidate: ScanCandidate = candidate,
+                history: Sequence[Mapping[str, Any]] | None = history,
+            ) -> TableAnalysis:
+                return analyze_catalog_table(
+                    candidate.catalog,
+                    candidate.schema_name,
+                    candidate.table_name,
+                    scan_at=scan_at,
+                    small_file_mb=settings.scan_small_file_mb,
+                    file_size_threshold_mb=settings.scan_needs_compaction_threshold,
+                    settings=settings,
+                    stats_history=history,
+                )
+
+            analysis = _run_bounded(
+                _analyze,
+                timeout_seconds=settings.scan_table_timeout_seconds,
+                description=f"analyze_catalog_table({table_ref})",
             )
             analysis = _apply_orphan_scan(
                 session,
@@ -330,15 +379,20 @@ def _run_scan_parallel(
 
             try:
                 history = stats_history_for_signals(table_session, table_row.id)
-                analysis = analyze_catalog_table(
-                    candidate.catalog,
-                    candidate.schema_name,
-                    candidate.table_name,
-                    scan_at=scan_at,
-                    small_file_mb=settings.scan_small_file_mb,
-                    file_size_threshold_mb=settings.scan_needs_compaction_threshold,
-                    settings=settings,
-                    stats_history=history,
+                table_ref = _table_ref(candidate)
+                analysis = _run_bounded(
+                    lambda: analyze_catalog_table(
+                        candidate.catalog,
+                        candidate.schema_name,
+                        candidate.table_name,
+                        scan_at=scan_at,
+                        small_file_mb=settings.scan_small_file_mb,
+                        file_size_threshold_mb=settings.scan_needs_compaction_threshold,
+                        settings=settings,
+                        stats_history=history,
+                    ),
+                    timeout_seconds=settings.scan_table_timeout_seconds,
+                    description=f"analyze_catalog_table({table_ref})",
                 )
                 analysis = _apply_orphan_scan(
                     table_session,
@@ -682,6 +736,9 @@ def _apply_orphan_scan(
 ) -> TableAnalysis:
     if analysis.cost is None:
         return analysis
+    # Narrowed to a plain value (not `analysis.cost.…`) so the closure below -- which mypy
+    # can't re-narrow an Optional attribute access through -- captures a concrete list.
+    referenced_file_paths = analysis.cost.referenced_file_paths
 
     previous_cost = session.get(TableCost, table_id)
     # TableStats for *this* scan hasn't been persisted yet (persist_table_analysis runs after
@@ -712,13 +769,20 @@ def _apply_orphan_scan(
             )
         return analysis
 
-    table_obj = candidate.catalog.load_table(candidate.schema_name, candidate.table_name)
-    orphan_result = scan_orphans(
-        table_obj,
-        source_config=dict(candidate.source.config),
-        referenced_file_paths=analysis.cost.referenced_file_paths,
-        scan_at=scan_at,
-        settings=settings,
+    def _load_and_scan_orphans() -> Any:
+        table_obj = candidate.catalog.load_table(candidate.schema_name, candidate.table_name)
+        return scan_orphans(
+            table_obj,
+            source_config=dict(candidate.source.config),
+            referenced_file_paths=referenced_file_paths,
+            scan_at=scan_at,
+            settings=settings,
+        )
+
+    orphan_result = _run_bounded(
+        _load_and_scan_orphans,
+        timeout_seconds=settings.scan_table_timeout_seconds,
+        description=f"orphan scan({candidate.schema_name}.{candidate.table_name})",
     )
     if orphan_result.skipped_reason:
         orphan_bytes, listed_bytes, last_full = carry_forward_orphans(previous_cost)
