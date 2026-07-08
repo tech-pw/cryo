@@ -13,10 +13,10 @@ import { AwsIntegrationsTab } from "./cost/AwsIntegrationsTab";
  * Replaces:
  *   - `/cost`        (was CostSavings)        -> "Overview" tab
  *   - `/aws`         (was AwsIntegrations)    -> "AWS integrations" tab
- *   - (new)                                    -> "S3 requests" tab
+ *   - `/cost-insights`                         -> "S3 requests" tab
  *
- * `/attribution` and `/cost-insights` stay as-is -- they answer distinct
- * "team-split" / "ML forecasting" questions and aren't duplicates of these three.
+ * `/attribution` stays hidden and intentionally out of nav until tag-based team
+ * attribution is production-ready.
  *
  * The page header + subtitle lives once at the top of the page; each tab adds its
  * own KPI strip, charts, and tables. Tab keys map to URL `?tab=` so the active tab is

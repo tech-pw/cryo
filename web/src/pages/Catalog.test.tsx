@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Catalog } from "./Catalog";
 import { ThemeProvider } from "../lib/themeContext";
 
@@ -43,6 +43,8 @@ vi.mock("../api/client", () => ({
 
 import {
   getMultiCatalogDashboard,
+  listDestinations,
+  listPresets,
   listSources,
   listTables
 } from "../api/client";
@@ -66,6 +68,11 @@ const renderPage = (initialRoute = "/catalogs") => {
 };
 
 describe("Consolidated Catalog page", () => {
+  beforeEach(() => {
+    vi.mocked(listPresets).mockResolvedValue([]);
+    vi.mocked(listDestinations).mockResolvedValue([]);
+  });
+
   it("renders the page header and the table explorer even when the dashboard is empty", async () => {
     vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
       total_catalogs: 0,
