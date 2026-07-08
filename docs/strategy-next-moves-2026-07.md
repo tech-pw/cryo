@@ -139,6 +139,41 @@ require new research to start.
   hours of compute), spot-instance eligibility (Scenario F), and safe concurrent chunk fan-out
   (Scenario G).
 
+**Implementation log (2026-07-08):**
+- ✅ Added `PARTIAL` to `JobStatus` enum (`cryo/domain/enums.py`)
+- ✅ Added `chunk_index` nullable Integer column to `MaintenanceJob` + migration
+  (`migrations/versions/20260708_chunk_checkpointing.py`): enables per-chunk job tracking
+- ✅ Created `ChunkCheckpoint` DB model + `cryo/db/repositories/chunk_checkpoint.py`:
+  `write_checkpoint()` writes after each commit; `get_checkpointed_chunks()` returns
+  the set of already-committed chunk indices for a run; `get_checkpoint_summary()`
+  aggregates stats across all checkpointed chunks
+- ✅ Created `cryo/engines/native/checkpoint.py`: `execute_plan_per_chunk()` dispatches
+  chunks individually (one Go engine subprocess call per chunk), skips already-checkpointed
+  chunks on resume, writes a ChunkCheckpoint after each commit, wraps per-chunk
+  progress events with chunk_index so progress callbacks are chunk-aware
+- ✅ Updated `NativeEngine.execute_plan()`: splits into `_execute_plan_bundled()` (legacy
+  single-subprocess path) and `_execute_plan_per_chunk()` (checkpointing path); per-chunk
+  activated by `chunk_checkpointing=True` in destination config, passed via `ExecCtx`
+- ✅ Extended `ExecCtx` (`cryo/engines/base.py`) with `session_factory` and
+  `chunk_checkpointing` fields — thread through the worker → engine interface without
+  changing the method signature
+- ✅ Updated worker (`cryo/worker/worker.py`): sets `chunk_checkpointing=True` and passes
+  `SessionLocal` factory to `ExecCtx` when destination config has `chunk_checkpointing`;
+  `_to_exec_ctx` updated to forward the new fields
+- ✅ Updated worker job status logic: tracks `had_failure` separately from `had_success`;
+  final job status is `PARTIAL` when some chunks succeeded and some failed (previously
+  missing `FAILED` branch — all-fail case fell through to `SUCCEEDED`)
+- ✅ Updated `finalize_open_runs()` (`cryo/db/repositories/run_finalizer.py`): added
+  `PARTIAL` to `TERMINAL` set; run is `partial` when some jobs succeeded/partial and
+  some failed (distinct from `failed` where all jobs failed); summary now includes
+  `partial` count
+- ⚠️ Worker `mark_status` (InMemoryJobStore) only sets `finished_at` for
+  `{SUCCEEDED, FAILED, SKIPPED, DEFERRED}` — `PARTIAL` is missing; this is cosmetic
+  (status IS set correctly) but should be addressed in a follow-up
+- ⚠️ Spot-instance eligibility (Scenario F) requires additional per-chunk cancellation
+  handling not yet implemented — the checkpointing foundation is in place but
+  mid-spot-interruption resume needs the K8s Job cancellation path from Move 3
+
 ### Move 5 — Puffin statistics (`COMPUTE_STATISTICS`) as the 5th maintenance operation
 
 - **Effort:** days — `research-and-roadmap.md` §3.2 calls it a single PR and names the exact

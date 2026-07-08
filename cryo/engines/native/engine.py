@@ -16,6 +16,7 @@ from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.native.checkpoint import execute_plan_per_chunk
 from cryo.engines.native.job_dispatch import (
     execute_request_via_job,
 )
@@ -266,8 +267,21 @@ class NativeEngine:
         return self._execute_single(stmt, ctx, start)
 
     def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
-        """Run all plan operations in one cryo-engine subprocess."""
+        """Run all plan operations, either per-chunk (checkpointing) or bundled."""
         start = time.monotonic()
+
+        if ctx is not None and ctx.chunk_checkpointing and ctx.session_factory is not None:
+            return self._execute_plan_per_chunk(plan, ctx, start)
+
+        return self._execute_plan_bundled(plan, ctx, start)
+
+    def _execute_plan_bundled(
+        self,
+        plan: MaintenancePlan,
+        ctx: ExecCtx | None,
+        start: float,
+    ) -> list[ExecResult]:
+        """Run all plan operations in one cryo-engine subprocess (legacy path)."""
         if not self.source_config:
             error = "Native engine requires table source catalog config at execution time"
             return [
@@ -341,6 +355,87 @@ class NativeEngine:
             ]
 
         return _exec_results_from_native_batch(operations, result, _elapsed_ms(start))
+
+    def _execute_plan_per_chunk(
+        self,
+        plan: MaintenancePlan,
+        ctx: ExecCtx,
+        start: float,
+    ) -> list[ExecResult]:
+        """Run plan operations one chunk at a time, checkpointing each commit."""
+        if not self.source_config:
+            error = "Native engine requires table source catalog config at execution time"
+            return [
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=_elapsed_ms(start),
+                )
+                for operation in plan.operations
+            ]
+        if resolve_binary_path(self.config) is None:
+            error = "cryo-engine binary not found (set destination.config.binary_path)"
+            return [
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=_elapsed_ms(start),
+                )
+                for operation in plan.operations
+            ]
+
+        operations = _supported_operations(plan, self.table_stats, self.config)
+        if not operations:
+            return []
+
+        run_id = ctx.run_id or str(plan.table_ref)
+        session_factory = ctx.session_factory
+
+        chunk_results = execute_plan_per_chunk(
+            plan=plan,
+            operations=operations,
+            source_config=dict(self.source_config),
+            destination_config=self.config,
+            run_id=run_id,
+            session_factory=session_factory,
+            on_progress=_progress_callback(ctx),
+        )
+
+        exec_results: list[ExecResult] = []
+        for chunk in chunk_results:
+            op = chunk["operation"]
+            native_result = chunk["native_result"]
+
+            if chunk["skipped"]:
+                exec_results.append(
+                    ExecResult(
+                        ok=True,
+                        skipped=True,
+                        detail="already checkpointed",
+                        duration_ms=0,
+                    )
+                )
+            elif chunk["ok"]:
+                exec_results.append(
+                    _operation_result_to_exec_result(
+                        detail=op.type.value,
+                        op_result=native_result,
+                        result=_native_result_from_op_result(native_result),
+                        duration_ms=chunk["duration_ms"],
+                    )
+                )
+            else:
+                exec_results.append(
+                    ExecResult(
+                        ok=False,
+                        detail=chunk["error"] or "chunk execution failed",
+                        error=chunk["error"],
+                        duration_ms=chunk["duration_ms"],
+                    )
+                )
+        return exec_results
 
     def _execute_single(
         self,
@@ -810,6 +905,25 @@ def _exec_result_from_native(
         op_result=op_result,
         result=result,
         duration_ms=duration_ms,
+    )
+
+
+def _native_result_from_op_result(
+    op_result: NativeOperationResult | None,
+) -> NativeExecuteResult:
+    """Wrap a single NativeOperationResult into a NativeExecuteResult for the helper."""
+    if op_result is None:
+        return NativeExecuteResult(
+            ok=False,
+            table_ref="",
+            results=(),
+            error="no result",
+        )
+    return NativeExecuteResult(
+        ok=op_result.success,
+        table_ref="",
+        results=(op_result,),
+        error=op_result.error if not op_result.success else None,
     )
 
 
