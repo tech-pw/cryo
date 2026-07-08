@@ -103,6 +103,8 @@ class CapacitySnapshot:
     capacity: int
     used: int
     queued: int = 0
+    cpu_used_milli: int = 0
+    mem_used_mib: int = 0
 
     @property
     def available(self) -> int:

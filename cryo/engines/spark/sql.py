@@ -56,6 +56,7 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
     protected_ids = sorted({int(s) for s in params.get("protected_snapshot_ids") or []})
     set_clause = ""
     if protected_ids:
+        joined = ",".join(str(s) for s in protected_ids)
         set_clause = (
             f"CALL {catalog}.system.set_snapshot_ref("
             f"table => '{table_name}', "

@@ -470,18 +470,20 @@ jobs:
       - name: Run DB migrations
         run: alembic upgrade head
 
-      - name: Start API for e2e
+      - name: Start API + Vite dev server
         run: |
-          nohup uvicorn cryo.api.app:create_app --factory --port 8000 --host 127.0.0.1 >/tmp/api.log 2>&1 &
-          for attempt in $(seq 1 60); do
+          uvicorn cryo.api.app:create_app --factory --port 8000 --host 127.0.0.1 &
+          API_PID=$!
+          sleep 10
+          echo "API_PID=$API_PID"
+          # Wait for API to come up
+          for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then
               echo "API is ready"
-              exit 0
+              break
             fi
             sleep 1
           done
-          echo "API did not become ready" >&2
-          exit 1
 
       - name: Run critical-path + WCAG 2.2 AA gate (axe-core)
         run: |

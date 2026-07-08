@@ -112,7 +112,6 @@ def test_streaming_aware_cadence_tightens_chunk_and_threshold() -> None:
     )
     optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
     assert optimize_ops, "expected optimize ops with streaming cadence"
-    # max_partitions_per_chunk=1 forces per-partition chunks regardless of budget.
     assert len(optimize_ops) == 2
     assert any("Streaming-aware cadence" in note for note in plan.notes)
     assert any("96.0 commits/day" in note for note in plan.notes)
@@ -160,3 +159,5 @@ def test_streaming_aware_cadence_opt_out() -> None:
         },
     )
     assert not any("Streaming-aware cadence" in note for note in plan.notes)
+    optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
+    assert len(optimize_ops) == 1

@@ -17,11 +17,23 @@ NATIVE_BASE_OPERATIONS: tuple[OperationType, ...] = (
     OperationType.REMOVE_ORPHAN_FILES,
 )
 
-NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (OperationType.OPTIMIZE_MANIFESTS,)
+# Operations the native subprocess never executes itself. They route to a SQL
+# fallback destination (Trino/Spark) when one is configured, otherwise they are
+# recorded as skipped with the reason below. Fixes the silent-drop of
+# COMPUTE_STATISTICS logged as bug #25 in docs/native-iceberg-rust-engine-errors.md.
+NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (
+    OperationType.OPTIMIZE_MANIFESTS,
+    OperationType.COMPUTE_STATISTICS,
+)
 
 NATIVE_MANIFESTS_DETAIL = (
     "optimize_manifests is not supported by the native engine (iceberg-go) and is not "
     "routed to Trino/Spark; skipped"
+)
+
+NATIVE_COMPUTE_STATISTICS_DETAIL = (
+    "compute_statistics (Puffin NDV + Bloom filters) not implemented in cryo-engine-go; "
+    "route to Trino (ANALYZE) / Spark (CALL system.compute_table_stats)"
 )
 
 NATIVE_ZORDER_DETAIL = (
@@ -234,9 +246,14 @@ def resolve_native_routing(
             continue
 
         if operation.type in NATIVE_ALWAYS_DISCONNECTED:
-            # optimize_manifests is never routed to a SQL engine (Trino/Spark): iceberg-go
-            # cannot rewrite manifests, so it is skipped instead of falling back.
-            skipped_ops.append((operation, NATIVE_MANIFESTS_DETAIL))
+            if operation.type is OperationType.COMPUTE_STATISTICS:
+                detail = NATIVE_COMPUTE_STATISTICS_DETAIL
+            else:
+                detail = NATIVE_MANIFESTS_DETAIL
+            if has_sql_fallback:
+                fallback_ops.append((operation, detail))
+            else:
+                skipped_ops.append((operation, detail))
             continue
 
     return NativeRoutingResult(

@@ -216,14 +216,12 @@ def _expire_params(
     *,
     protected_snapshot_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    out: dict[str, Any] = {
+    out = {
         "retention_days": int(params.get("retention_days", 7)),
         "retain_last": int(params.get("retain_last", 1)),
     }
     if protected_snapshot_ids:
-        out["protected_snapshot_ids"] = sorted(
-            set(int(s) for s in protected_snapshot_ids)
-        )
+        out["protected_snapshot_ids"] = sorted(set(int(s) for s in protected_snapshot_ids))
     return out
 
 
