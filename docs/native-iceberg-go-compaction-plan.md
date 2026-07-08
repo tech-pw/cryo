@@ -721,6 +721,7 @@ Tasks:
 | §8 MOR scenario matrix (pos/eq/mixed/partial) | 🟡 Partial — Go seeder (`seed-table` per test), `mor_inspect.py` Go live-row oracle, `test_native_mor_compaction_e2e.py` green (pos/eq/mixed execute; partial precondition); mixed O7 asserts eq-delete only (pos on `f_mor_pos`) |
 | §8.5 concurrency/fault matrix (C2/C3) | 🟡 Partial — `test_native_mor_concurrency_e2e.py` (C2 concurrent delete, C3 dual compaction); C1 pending |
 | §8.5 fault-injection matrix (C4–C8) | ✅ Done — `test_native_fault_injection_e2e.py` + Go `internal/testhook` |
+| §8.5 partial-progress commit-race matrix (C9/C10) | ✅ Done — `test_native_checkpoint_resume_e2e.py` (C9 transient loss resumes to completion, C10 sustained loss → `commit_race_lost` no-op) |
 | Differential vs Trino/Spark on MOR fixtures | 🟡 Partial — `test_native_mor_differential_e2e.py`: **eq** full Trino reference; **pos/mixed** Go-oracle baseline (Trino cannot read fixture position-delete Parquet yet) |
 | Invariants #1, #2, #7 in-process | 🟡 Partial — #1 + #7 guarded pre-commit; MOR e2e asserts O1/O7 on REST+MinIO |
 
@@ -753,6 +754,7 @@ Tasks:
 | 3 | Docs truth-in-advertising (#15) | ✅ Done | `engine-go/README.md` ops matrix at pinned iceberg-go v0.6.0 |
 | 4 | Split subprocess vs PyO3 naming/tests (#12) | ✅ Done | `test_native_engine.py` class rename + docstring; subprocess tests separated |
 | 5 | Benchmark suite (P2/P4/P5) | 🟡 Partial | `test_native_compaction_perf.py` + `perf_harness.py`; P2 request-count vs Trino pending |
+| 6 | Resumable checkpointing + commit-race signal | ✅ Done (2026-07-08) | `executePartialProgressResumable` commits each group atomically; a lost commit race reloads + re-plans from the current snapshot (idempotent resume) and only forfeits the current group; `progress.Checkpoint` event per committed group; exhausted races tagged `commit_race_lost` (`errCommitRaceLost`, `runner.is_commit_race_lost`) so the worker surfaces a first-class alert instead of a silent retry loop. Go unit tests: `compaction_checkpoint_test.go`, `progress_test.go`; MinIO/REST injected-conflict e2e: `test_native_checkpoint_resume_e2e.py` (C9 resume-to-completion, C10 exhausted-race no-op) |
 
 **Exit criteria status:**
 
@@ -761,6 +763,7 @@ Tasks:
 | Full §8 suite green ≥N consecutive CI runs | 🔴 Pending |
 | Deep validation O2 over all fixtures | 🔴 Pending |
 | Docs match pinned commit behavior | 🟡 Partial — `engine-go/README.md` + this plan updated |
+| Checkpointing resilient to per-group commit-race loss | ✅ Done — resumable per-group commits + `commit_race_lost` signal (2026-07-08); validated by Go unit tests **and** the MinIO/REST injected-conflict e2e `test_native_checkpoint_resume_e2e.py` (C9/C10) |
 
 **Exit criteria / DONE WHEN:** CI runs the full §8 suite (COW + MOR + concurrency + cost/perf +
 differential) green for **≥N consecutive runs** with no flakes; the "deep validation" (O2 over all
@@ -934,6 +937,13 @@ These are where tables actually break. Each must end with the table valid (O2, O
   aborts; no snapshot references a missing file (O3).
 - **C8 Duplicate/late retry:** ensure a retried commit can't apply the same rewrite twice (idempotency of
   the CAS envelope).
+- **C9 Transient commit-race loss with partial progress:** ✅ Done — with `partial_progress` on a
+  3-group fixture, fail the first per-group commit (no in-process OCC retry). Assert the engine reloads,
+  re-plans from the current snapshot, and lands **every** group (idempotent resume), emitting a
+  `checkpoint` progress event per committed group (`test_native_checkpoint_resume_e2e.py`).
+- **C10 Sustained commit-race loss:** ✅ Done — fail *every* commit; assert the bounded checkpoint rounds
+  are exhausted, the run surfaces `commit_race_lost`, and the table is a byte-for-byte no-op (O9)
+  (`test_native_checkpoint_resume_e2e.py`).
 
 Implement injection via a wrapper catalog/FileIO in a Go integration test that fails on the Nth call, and
 at the Python e2e level by interleaving Trino/PyIceberg writes with the native run.
@@ -966,8 +976,8 @@ commit matches established engines — **especially for MOR**, where the whole r
 - **Python:** `make lint typecheck test` incl. payload/predicate/routing unit tests + the **byte-level
   protocol conformance test** (Go response parses identically to the Rust one).
 - **E2E job `native-compaction-e2e`:** brings up MinIO+REST (+Trino/Spark for differential), builds
-  `cryo-engine-go`, runs §8.4 COW matrix + §8.5 C1/C4/C5/C6 + §8.6 + §8.7. MOR matrix + C2/C3 gated on
-  Phase D.
+  `cryo-engine-go`, runs §8.4 COW matrix + §8.5 C1/C4/C5/C6 + C9/C10 (partial-progress commit-race) +
+  §8.6 + §8.7. MOR matrix + C2/C3 gated on Phase D.
 - **Ship rule:** native OPTIMIZE default-ON only after the **COW gate** is green for ≥N consecutive CI runs
   (no flakes) and a manual "deep validation" (O2 over all fixtures) passes. **MOR default-ON** only after
   the MOR gate + C2/C3 + differential-vs-Trino are green. **The implementation is declared "possible"

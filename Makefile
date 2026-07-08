@@ -137,7 +137,7 @@ test-native-compaction-e2e-go: build-engine-go build-seed-native-fixtures
 	CRYO_ENGINE_IMPL=go \
 	CRYO_ENGINE_BINARY=$${CRYO_ENGINE_BINARY:-engine-go/bin/cryo-engine-go} \
 	CRYO_SEED_NATIVE_FIXTURES_BINARY=$${CRYO_SEED_NATIVE_FIXTURES_BINARY:-engine-go/bin/seed-native-fixtures} \
-	  $(PYTHON) -m pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py tests/integration/native/test_native_fault_injection_e2e.py -v
+	  $(PYTHON) -m pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py tests/integration/native/test_native_fault_injection_e2e.py tests/integration/native/test_native_checkpoint_resume_e2e.py -v
 
 test-native-differential-e2e-go: build-engine-go build-seed-native-fixtures
 	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
