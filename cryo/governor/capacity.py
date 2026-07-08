@@ -27,7 +27,18 @@ class LiveCapacityProvider:
         if engine_type is EngineType.SPARK_EMR:
             return self._probe_emr(destination.config)
 
+        if engine_type is EngineType.NATIVE:
+            return self._probe_native(destination.config)
+
         return _static_capacity(destination.config)
+
+    def _probe_native(self, config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot]:
+        """Native subprocess capacity uses slot_cap; governor subtracts queue in-flight."""
+        slot_cap = int(config.get("slot_cap") or config.get("per_replica_cap") or 5)
+        replicas = config.get("replicas") or ("default",)
+        if isinstance(replicas, str):
+            replicas = (replicas,)
+        return {str(replica): CapacitySnapshot(capacity=slot_cap, used=0) for replica in replicas}
 
     def _probe_trino(self, config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot]:
         from cryo.engines.trino.client import coordinators_from_config
