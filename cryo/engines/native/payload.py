@@ -62,6 +62,12 @@ def source_catalog_config(source_config: Mapping[str, Any]) -> dict[str, Any]:
         "catalog_uri": uri,
         "warehouse": warehouse,
     }
+    # Forward the catalog type so the native engine selects the right catalog client
+    # (e.g. Hive Metastore for thrift:// URIs) instead of defaulting to REST, which fails
+    # with `unsupported protocol scheme "thrift"` on a Hive source.
+    catalog_type = source_config.get("type")
+    if isinstance(catalog_type, str) and catalog_type.strip():
+        payload["catalog_type"] = catalog_type.strip()
     endpoint = source_config.get("s3.endpoint")
     access_key = source_config.get("s3.access-key-id")
     secret_key = source_config.get("s3.secret-access-key")

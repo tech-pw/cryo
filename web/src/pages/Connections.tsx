@@ -88,7 +88,16 @@ import {
   isConnectionPendingScan,
   type ConnectionScanNotice
 } from "../lib/connectionScanPrompt";
-import { ENGINE_TYPE_OPTIONS, engineTagColor, formatEngineLabel } from "../lib/engines";
+import {
+  ENGINE_VIRTUAL_OPTIONS,
+  engineTagColor,
+  engineVirtualFromDestination,
+  formatEngineLabel,
+  parseEngineVirtual,
+  resolveNativeEngineImpl,
+  type EngineVirtualValue,
+  type NativeEngineImpl
+} from "../lib/engines";
 import { SourceTestResultPanel } from "./connections/SourceTestResultPanel";
 import { SourceScansPanel } from "./connections/SourceScansPanel";
 
@@ -386,9 +395,9 @@ export const Connections = () => {
             children: (
               <Space orientation="vertical" size={12} className="full-width">
                 <Typography.Paragraph type="secondary" className="tab-intro">
-                  The processing engines that actually run maintenance — Trino, Spark/EMR, or the
-                  native iceberg-rust/DataFusion engine. Presets and manual runs target one of these
-                  to do the real work (compaction, snapshot expiry, orphan cleanup).
+                  The processing engines that actually run maintenance — Trino, Spark/EMR, or native
+                  iceberg-go / iceberg-rust subprocess engines. Presets and manual runs target one of
+                  these to do the real work (compaction, snapshot expiry, orphan cleanup).
                 </Typography.Paragraph>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setDestinationDrawer("new")}>
                   New engine
@@ -411,8 +420,10 @@ export const Connections = () => {
                     {
                       title: "Engine",
                       dataIndex: "engine",
-                      render: (value: string) => (
-                        <Tag color={engineTagColor(value)}>{formatEngineLabel(value)}</Tag>
+                      render: (value: string, row: DestinationRead) => (
+                        <Tag color={engineTagColor(value)}>
+                          {formatEngineLabel(value, row.config)}
+                        </Tag>
                       )
                     },
                     {
@@ -1213,6 +1224,8 @@ interface TrinoCoordinatorFormValue {
 interface DestinationFormValues {
   name: string;
   engine: EngineType;
+  engine_virtual: EngineVirtualValue;
+  engine_impl?: NativeEngineImpl;
   offpeak_start?: number;
   offpeak_end?: number;
   secret_ref?: string | null;
@@ -1244,7 +1257,7 @@ interface DestinationFormValues {
   query_log_watermark_overlap_seconds?: number;
   query_log_telemetry_coordinators?: string;
   query_log_retention_days?: number;
-  // Native (iceberg-rust subprocess)
+  // Native (iceberg-go / iceberg-rust subprocess)
   slot_cap?: number;
   operation_mode?: string;
   binary_path?: string;
@@ -1268,7 +1281,10 @@ const decomposeDestinationConfig = (engine: string, config: Record<string, unkno
     };
   }
   if (engine === "native") {
+    const engine_impl = resolveNativeEngineImpl(cfg);
     return {
+      engine_impl,
+      engine_virtual: engineVirtualFromDestination("native", cfg),
       slot_cap: typeof cfg.slot_cap === "number" ? cfg.slot_cap : 5,
       operation_mode: typeof cfg.operation_mode === "string" ? cfg.operation_mode : "execute",
       timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
@@ -1341,6 +1357,7 @@ const buildDestinationConfig = (values: DestinationFormValues): Record<string, u
   }
   if (values.engine === "native") {
     const config: Record<string, unknown> = {
+      engine_impl: values.engine_impl ?? "go",
       slot_cap: values.slot_cap ?? 5,
       operation_mode: values.operation_mode || "execute",
       timeout_seconds: values.timeout_seconds ?? 3600
@@ -1407,10 +1424,13 @@ const DestinationDrawer = ({
   const [form] = Form.useForm<DestinationFormValues>();
   const isEditing = value && value !== "new";
   const initialEngine = isEditing ? value.engine : "trino";
+  const initialEngineVirtual = isEditing
+    ? engineVirtualFromDestination(value.engine, value.config)
+    : "trino";
   const [engine, setEngine] = useState<EngineType>(initialEngine as EngineType);
   const existingConfig = isEditing
     ? decomposeDestinationConfig(initialEngine, value.config as Record<string, unknown>)
-    : decomposeDestinationConfig("trino", undefined);
+    : { engine_virtual: "trino" as const };
   const useBasicAuth = Form.useWatch("use_basic_auth", form);
   const [testPassed, setTestPassed] = useState(false);
 
@@ -1441,6 +1461,7 @@ const DestinationDrawer = ({
         initialValues={{
           name: isEditing ? value.name : "",
           engine: initialEngine,
+          engine_virtual: initialEngineVirtual,
           secret_ref: isEditing ? value.secret_ref : null,
           enabled: isEditing ? value.enabled : true,
           offpeak_start: isEditing ? value.offpeak_start : 0,
@@ -1448,7 +1469,16 @@ const DestinationDrawer = ({
           ...existingConfig
         }}
         onValuesChange={(changed) => {
-          if (changed.engine) setEngine(changed.engine);
+          if (changed.engine_virtual) {
+            const parsed = parseEngineVirtual(changed.engine_virtual);
+            setEngine(parsed.engine);
+            form.setFieldsValue({
+              engine: parsed.engine,
+              engine_impl: parsed.engine_impl
+            });
+          } else if (changed.engine) {
+            setEngine(changed.engine);
+          }
           setTestPassed(false);
           testConnection.reset();
         }}
@@ -1477,8 +1507,14 @@ const DestinationDrawer = ({
         <Form.Item name="name" label="Name" rules={[{ required: true }]}>
           <Input placeholder="trino-primary" />
         </Form.Item>
-        <Form.Item name="engine" label="Engine" rules={[{ required: true }]}>
-          <Select options={ENGINE_TYPE_OPTIONS} />
+        <Form.Item name="engine_virtual" label="Engine" rules={[{ required: true }]}>
+          <Select options={[...ENGINE_VIRTUAL_OPTIONS]} />
+        </Form.Item>
+        <Form.Item name="engine" hidden>
+          <Input />
+        </Form.Item>
+        <Form.Item name="engine_impl" hidden>
+          <Input />
         </Form.Item>
 
         {engine === "trino" ? (
@@ -1629,7 +1665,10 @@ const DestinationDrawer = ({
             <Form.Item
               name="operation_mode"
               label={
-                <HintLabel label="Operation mode" tooltip="Passed to cryo-engine execute payloads (default: execute)." />
+                <HintLabel
+                  label="Operation mode"
+                  tooltip="Passed to the cryo-engine subprocess execute payloads (default: execute)."
+                />
               }
             >
               <Input placeholder="execute" />
@@ -1637,7 +1676,10 @@ const DestinationDrawer = ({
             <Form.Item
               name="timeout_seconds"
               label={
-                <HintLabel label="Timeout (s)" tooltip="Cryo gives up waiting for the cryo-engine subprocess after this long." />
+                <HintLabel
+                  label="Timeout (s)"
+                  tooltip="Cryo gives up waiting for the cryo-engine subprocess after this long."
+                />
               }
             >
               <InputNumber min={1} style={{ width: 160 }} />
@@ -1647,11 +1689,11 @@ const DestinationDrawer = ({
               label={
                 <HintLabel
                   label="Binary path (optional)"
-                  tooltip="Path to the cryo-engine binary. Leave empty to use PATH or cryo-engine/target/{release,debug}/cryo-engine."
+                  tooltip="Path to cryo-engine-go or cryo-engine. Leave empty to use PATH or engine-go/bin/cryo-engine-go."
                 />
               }
             >
-              <Input placeholder="/usr/local/bin/cryo-engine" />
+              <Input placeholder="/usr/local/bin/cryo-engine-go" />
             </Form.Item>
           </>
         )}

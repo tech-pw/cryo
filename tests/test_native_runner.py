@@ -86,6 +86,28 @@ def test_source_catalog_config_forwards_storage_and_auth() -> None:
     assert config["catalog_properties"]["token"] == "test-token"
 
 
+def test_source_catalog_config_forwards_hive_catalog_type() -> None:
+    config = source_catalog_config(
+        {
+            "type": "hive",
+            "uri": "thrift://hive-metastore:9083",
+            "warehouse": "s3://bronze/",
+        }
+    )
+    assert config["catalog_type"] == "hive"
+    assert config["catalog_uri"] == "thrift://hive-metastore:9083"
+
+
+def test_source_catalog_config_omits_catalog_type_when_absent() -> None:
+    config = source_catalog_config(
+        {
+            "uri": "http://localhost:8181",
+            "warehouse": "s3://warehouse/",
+        }
+    )
+    assert "catalog_type" not in config
+
+
 def test_operation_roundtrip_preserves_predicates() -> None:
     operation = Operation(
         OperationType.OPTIMIZE,

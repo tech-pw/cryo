@@ -4,25 +4,26 @@ import "encoding/json"
 
 // ExecuteRequest mirrors cryo-engine/src/main.rs ExecuteRequest JSON.
 type ExecuteRequest struct {
-	TableRef          string            `json:"table_ref"`
-	CatalogURI        string            `json:"catalog_uri"`
-	Warehouse         string            `json:"warehouse"`
-	Mode              string            `json:"mode"`
+	TableRef          string             `json:"table_ref"`
+	CatalogURI        string             `json:"catalog_uri"`
+	CatalogType       string             `json:"catalog_type,omitempty"`
+	Warehouse         string             `json:"warehouse"`
+	Mode              string             `json:"mode"`
 	Operations        []OperationRequest `json:"operations"`
-	Params            json.RawMessage   `json:"params,omitempty"`
-	S3Endpoint        *string           `json:"s3_endpoint,omitempty"`
-	S3AccessKey       *string           `json:"s3_access_key,omitempty"`
-	S3SecretKey       *string           `json:"s3_secret_key,omitempty"`
-	CatalogProperties map[string]string `json:"catalog_properties,omitempty"`
+	Params            json.RawMessage    `json:"params,omitempty"`
+	S3Endpoint        *string            `json:"s3_endpoint,omitempty"`
+	S3AccessKey       *string            `json:"s3_access_key,omitempty"`
+	S3SecretKey       *string            `json:"s3_secret_key,omitempty"`
+	CatalogProperties map[string]string  `json:"catalog_properties,omitempty"`
 }
 
 // PredicateTermRequest mirrors cryo-engine PredicateTermRequest.
 type PredicateTermRequest struct {
-	BaseColumn      string          `json:"base_column"`
-	Transform       string          `json:"transform"`
-	Value           json.RawMessage `json:"value"`
-	ColType         *string         `json:"col_type,omitempty"`
-	PartitionField  *string         `json:"partition_field,omitempty"`
+	BaseColumn     string          `json:"base_column"`
+	Transform      string          `json:"transform"`
+	Value          json.RawMessage `json:"value"`
+	ColType        *string         `json:"col_type,omitempty"`
+	PartitionField *string         `json:"partition_field,omitempty"`
 }
 
 // PredicateRequest mirrors cryo-engine PredicateRequest.
@@ -32,8 +33,8 @@ type PredicateRequest struct {
 
 // OperationRequest mirrors cryo-engine OperationRequest.
 type OperationRequest struct {
-	OperationType string            `json:"type"`
-	Params        json.RawMessage   `json:"params,omitempty"`
+	OperationType string             `json:"type"`
+	Params        json.RawMessage    `json:"params,omitempty"`
 	Predicates    []PredicateRequest `json:"predicates,omitempty"`
 }
 

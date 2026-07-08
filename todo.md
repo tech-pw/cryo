@@ -199,6 +199,8 @@ Per `architecture.md` §1.5 and `docs/native-iceberg-go-compaction-plan.md` Phas
 - [x] COW + MOR compaction via `Transaction.RewriteDataFiles` (Go).
 - [x] `optimize_manifests` routed to SQL fallback (Go analyze-only manifest count).
 - [x] Optional sort compaction validates table sort order / `sort_columns`; z-order routes to SQL.
+- [x] Web UI: split Native (iceberg-go) / Native (iceberg-rust) engine options; `engine_impl` on
+  destination form; preset labels + grey-out `optimize_manifests` / manifest-only for native.
 - [ ] Retire Rust `cryo-engine/` (Docker stage, CI job) after Phase E consecutive green CI.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.
 - [ ] Production hardening: retries, Prometheus metrics, distributed mode, benchmark suite.
