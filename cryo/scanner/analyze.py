@@ -24,6 +24,7 @@ from cryo.scanner.cost import (
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_health_score
+from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals
 
@@ -337,6 +338,7 @@ def analyze_table(
         **quality_summary,
         "first_snapshot_at": snapshot_info["first_snapshot_at"],
         "last_snapshot_committed_at": snapshot_info["last_snapshot_committed_at"],
+        "location": table_location(table_obj),
     }
     if manifest_read_errors:
         raw["manifest_read_errors"] = manifest_read_errors

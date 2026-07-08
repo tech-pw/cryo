@@ -83,7 +83,16 @@ import type {
   QPPPredictResponse,
   QPPFeaturesPayload,
   QPPObservationPayload,
-  QPPConfidenceResponse
+  QPPConfidenceResponse,
+  S3LogConfigRead,
+  S3LogConfigPatch,
+  S3LogConfigCheckResponse,
+  S3LogConfigProbeResponse,
+  S3LogIngestResponse,
+  S3LogProvisionRequest,
+  S3LogProvisionResponse,
+  S3LogTeardownRequest,
+  S3LogTeardownResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -894,6 +903,60 @@ export const testAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
 
 export const getAwsUsage = (api: ApiOptions, sourceId: UUID) =>
   apiFetch<AWSUsageResponse>(`/sources/${sourceId}/aws-usage`, api);
+
+export const listS3LogConfigs = (api: ApiOptions, sourceId: UUID) =>
+  apiFetch<S3LogConfigRead[]>(`/sources/${sourceId}/s3-log-configs`, api);
+
+export const patchS3LogConfig = (api: ApiOptions, sourceId: UUID, bucket: string, body: S3LogConfigPatch) =>
+  apiFetch<S3LogConfigRead>(`/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}`, api, {
+    method: "PATCH",
+    body
+  });
+
+export const checkS3LogConfigLogging = (api: ApiOptions, sourceId: UUID, bucket: string) =>
+  apiFetch<S3LogConfigCheckResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/check-logging`,
+    api,
+    { method: "POST" }
+  );
+
+export const probeS3LogConfigTarget = (api: ApiOptions, sourceId: UUID, bucket: string) =>
+  apiFetch<S3LogConfigProbeResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/probe`,
+    api,
+    { method: "POST" }
+  );
+
+export const ingestS3LogConfig = (api: ApiOptions, sourceId: UUID, bucket: string) =>
+  apiFetch<S3LogIngestResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/ingest`,
+    api,
+    { method: "POST" }
+  );
+
+export const provisionS3LogConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  bucket: string,
+  body: S3LogProvisionRequest = {}
+) =>
+  apiFetch<S3LogProvisionResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/provision`,
+    api,
+    { method: "POST", body }
+  );
+
+export const teardownS3LogConfig = (
+  api: ApiOptions,
+  sourceId: UUID,
+  bucket: string,
+  body: S3LogTeardownRequest = {}
+) =>
+  apiFetch<S3LogTeardownResponse>(
+    `/sources/${sourceId}/s3-log-configs/${encodeURIComponent(bucket)}/teardown`,
+    api,
+    { method: "POST", body }
+  );
 
 export const getAwsCostInsightConfig = (api: ApiOptions, sourceId: UUID) =>
   apiFetch<AWSCostInsightConfigRead>(`/sources/${sourceId}/cost-insight-config`, api);
