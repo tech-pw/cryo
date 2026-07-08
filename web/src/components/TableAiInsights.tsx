@@ -3,12 +3,14 @@ import { Alert, Button, Card, Col, Row, Space, Table, Tabs, Tag, Typography, mes
 import { Link } from "react-router-dom";
 import {
   explainTableHealth,
+  getAnomalyRootCauseBrief,
   getAutoCompCompare,
   getDataQualityProfile,
   getSimilarTables,
   getTableAnomalies,
   getTableHealthClassification,
-  getTablePiiClassification
+  getTablePiiClassification,
+  recordSkillsetOutcome
 } from "../api/client";
 import type { SimilarTableRead, UUID } from "../api/types";
 import { EmptyState } from "../components/common";
@@ -53,6 +55,11 @@ export const TableAiInsights = ({
     queryFn: () => getTableAnomalies(api, tableId),
     retry: false
   });
+  const anomalyBrief = useQuery({
+    queryKey: ["table-anomaly-brief", tableId],
+    queryFn: () => getAnomalyRootCauseBrief(api, tableId),
+    retry: false
+  });
   const dataQuality = useQuery({
     queryKey: ["table-data-quality", tableId],
     queryFn: () => getDataQualityProfile(api, tableId),
@@ -69,6 +76,19 @@ export const TableAiInsights = ({
     onSuccess: (result) => {
       message.info(result.explanation, 8);
     },
+    onError: (error) => message.error((error as Error).message)
+  });
+  const anomalyFeedback = useMutation({
+    mutationFn: (decision: "accepted" | "rejected") =>
+      recordSkillsetOutcome(api, "iceberg_advisor", {
+        prompt_name: "anomaly_root_cause_brief",
+        recommendation:
+          anomalyBrief.data?.hypotheses?.[0]?.title ??
+          "No anomaly hypothesis available",
+        decision,
+        table_id: tableId
+      }),
+    onSuccess: () => message.success("Feedback recorded"),
     onError: (error) => message.error((error as Error).message)
   });
 
@@ -158,43 +178,88 @@ export const TableAiInsights = ({
     {
       key: "anomalies",
       label: `Anomalies${anomalies.data?.anomalies.length ? ` (${anomalies.data.anomalies.length})` : ""}`,
-      children: (anomalies.data?.anomalies ?? []).length ? (
-        <Table
-          size="small"
-          pagination={false}
-          rowKey={(row) => `${row.metric}-${row.z_score}`}
-          dataSource={anomalies.data?.anomalies ?? []}
-          columns={[
-            { title: "Metric", dataIndex: "metric" },
-            {
-              title: "Value",
-              dataIndex: "value",
-              align: "right",
-              render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
-            },
-            {
-              title: "Baseline",
-              dataIndex: "baseline",
-              align: "right",
-              render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
-            },
-            {
-              title: "Z",
-              dataIndex: "z_score",
-              align: "right",
-              render: (v: number) => v.toFixed(2)
-            },
-            {
-              title: "Severity",
-              dataIndex: "severity",
-              render: (v: string) => (
-                <Tag color={v === "critical" ? "red" : v === "warning" ? "orange" : "default"}>{v}</Tag>
-              )
-            }
-          ]}
-        />
-      ) : (
-        <EmptyState title="No anomalies" description="Stats history looks stable vs recent baseline." />
+      children: (
+        <Space orientation="vertical" className="full-width">
+          {anomalyBrief.data ? (
+            <Alert
+              type="info"
+              showIcon
+              title="Root-cause brief"
+              description={
+                <Space orientation="vertical" size={4}>
+                  {anomalyBrief.data.hypotheses.map((hypothesis) => (
+                    <div key={hypothesis.title}>
+                      <Typography.Text strong>
+                        {hypothesis.title} ({Math.round(hypothesis.confidence * 100)}%)
+                      </Typography.Text>
+                      <br />
+                      <Typography.Text type="secondary">{hypothesis.because}</Typography.Text>
+                    </div>
+                  ))}
+                  {anomalyBrief.data.evidence.length ? (
+                    <Typography.Text type="secondary">
+                      Evidence: {anomalyBrief.data.evidence.join(" | ")}
+                    </Typography.Text>
+                  ) : null}
+                  <Space>
+                    <Button
+                      size="small"
+                      loading={anomalyFeedback.isPending}
+                      onClick={() => anomalyFeedback.mutate("accepted")}
+                    >
+                      Helpful
+                    </Button>
+                    <Button
+                      size="small"
+                      loading={anomalyFeedback.isPending}
+                      onClick={() => anomalyFeedback.mutate("rejected")}
+                    >
+                      Not helpful
+                    </Button>
+                  </Space>
+                </Space>
+              }
+            />
+          ) : null}
+          {(anomalies.data?.anomalies ?? []).length ? (
+            <Table
+              size="small"
+              pagination={false}
+              rowKey={(row) => `${row.metric}-${row.z_score}`}
+              dataSource={anomalies.data?.anomalies ?? []}
+              columns={[
+                { title: "Metric", dataIndex: "metric" },
+                {
+                  title: "Value",
+                  dataIndex: "value",
+                  align: "right",
+                  render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                },
+                {
+                  title: "Baseline",
+                  dataIndex: "baseline",
+                  align: "right",
+                  render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                },
+                {
+                  title: "Z",
+                  dataIndex: "z_score",
+                  align: "right",
+                  render: (v: number) => v.toFixed(2)
+                },
+                {
+                  title: "Severity",
+                  dataIndex: "severity",
+                  render: (v: string) => (
+                    <Tag color={v === "critical" ? "red" : v === "warning" ? "orange" : "default"}>{v}</Tag>
+                  )
+                }
+              ]}
+            />
+          ) : (
+            <EmptyState title="No anomalies" description="Stats history looks stable vs recent baseline." />
+          )}
+        </Space>
       )
     },
     {

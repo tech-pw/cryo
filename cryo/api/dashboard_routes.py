@@ -238,6 +238,7 @@ class JobDetailRead(BaseModel):
     """Detailed maintenance job information."""
 
     job_id: UUID
+    run_id: UUID
     table_id: UUID
     table_name: str
     operation_type: str
@@ -521,6 +522,7 @@ def get_job_detail(
 
     return JobDetailRead(
         job_id=job_id,
+        run_id=job.run_id,
         table_id=job.table_id,
         table_name=table_name,
         operation_type=operation_type,

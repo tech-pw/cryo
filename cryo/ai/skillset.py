@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -228,6 +229,62 @@ def set_active_skillset(session: Session, name: str, version: str) -> Skillset:
     return Skillset.from_row(target)
 
 
+def get_skillset_version(session: Session, name: str, version: str) -> Skillset | None:
+    row = session.scalar(
+        select(SkillsetRow).where(SkillsetRow.name == name, SkillsetRow.version == version).limit(1)
+    )
+    return Skillset.from_row(row) if row is not None else None
+
+
+def promote_skillset(
+    session: Session,
+    *,
+    name: str,
+    source_version: str,
+    target_version: str,
+    activate: bool = True,
+) -> Skillset:
+    source = session.scalar(
+        select(SkillsetRow).where(
+            SkillsetRow.name == name,
+            SkillsetRow.version == source_version,
+        )
+    )
+    if source is None:
+        raise LookupError(f"Skillset {name}@{source_version} not found")
+
+    existing_target = session.scalar(
+        select(SkillsetRow).where(
+            SkillsetRow.name == name,
+            SkillsetRow.version == target_version,
+        )
+    )
+    if existing_target is not None:
+        raise ValueError(f"Skillset {name}@{target_version} already exists")
+
+    if activate:
+        session.execute(update(SkillsetRow).where(SkillsetRow.name == name).values(is_active=False))
+
+    promoted = SkillsetRow(
+        name=name,
+        version=target_version,
+        prompts=deepcopy(source.prompts or {}),
+        tools=deepcopy(source.tools or []),
+        is_active=activate,
+        metrics={
+            "accept_count": 0,
+            "reject_count": 0,
+            "sample_count": 0,
+            "acceptance_rate": 0.0,
+            "confidence": 0.0,
+        },
+    )
+    session.add(promoted)
+    session.flush()
+    session.commit()
+    return Skillset.from_row(promoted)
+
+
 def list_skillsets(session: Session) -> list[Skillset]:
     """Return every skillset version, newest first."""
     _ensure_builtin_default(session)
@@ -282,8 +339,10 @@ def record_outcome(
         metrics["accept_count"] = accept
         metrics["reject_count"] = reject
         metrics["sample_count"] = samples
+        metrics["outcomes_count"] = samples
         denom = max(accept + reject, 1)
         metrics["acceptance_rate"] = round(accept / denom, 4)
+        metrics["confidence"] = round(min(1.0, (accept + reject) / 20.0), 4)
         row.metrics = metrics
 
     session.commit()
@@ -295,6 +354,8 @@ __all__ = [
     "Skillset",
     "list_skillsets",
     "load_skillset",
+    "get_skillset_version",
+    "promote_skillset",
     "record_outcome",
     "register_skillset",
     "set_active_skillset",
