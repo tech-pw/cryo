@@ -706,6 +706,40 @@ class MaintenanceJob(Base):
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
 
 
+class ChunkCheckpoint(Base):
+    """Per-chunk execution checkpoint for native engine.
+
+    Written after each chunk commits to Iceberg. Allows resume after mid-run failure:
+    the worker queries which chunks already succeeded, then re-runs only the remaining ones.
+    Chunk ordering is defined by the planner's greedy_pack, which produces a deterministic
+    sequence of partition-disjoint chunks.
+    """
+
+    __tablename__ = "chunk_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("run_id", "chunk_index", name="uq_chunk_checkpoint_run_chunk"),
+        Index("ix_chunk_checkpoints_run", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    partition_summary: Mapped[str | None] = mapped_column(Text)
+    input_files: Mapped[int | None] = mapped_column(Integer)
+    output_files: Mapped[int | None] = mapped_column(Integer)
+    bytes_removed: Mapped[int | None] = mapped_column(BigInteger)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    committed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    raw_result: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (Index("ix_audit_log_table_ts", "table_id", "ts"),)
