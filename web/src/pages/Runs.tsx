@@ -124,7 +124,16 @@ export const Runs = () => {
                   )
                 },
                 { title: "Kind", dataIndex: "kind", width: 96 },
-                { title: "Trigger", dataIndex: "trigger", width: 104, render: (value) => value ?? "-" },
+                {
+                  title: "Trigger",
+                  dataIndex: "trigger",
+                  width: 140,
+                  filters: Array.from(
+                    new Set((runs.data ?? []).map((run) => run.trigger).filter(Boolean) as string[])
+                  ).map((value) => ({ text: value, value })),
+                  onFilter: (value, record) => (record.trigger ?? "manual") === value,
+                  render: (value) => value ?? "manual"
+                },
                 {
                   title: "Jobs",
                   width: 120,

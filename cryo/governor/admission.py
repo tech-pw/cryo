@@ -19,6 +19,7 @@ class AdmissionJob:
     destination_id: str
     mode: Mode | str
     cooldown_hours: int = 0
+    estimated_benefit_score: float | None = None
     last_maintained_at: datetime | None = None
     deadline_at: datetime | None = None
 
@@ -32,6 +33,8 @@ class AdmissionConfig:
     adaptive_budget: bool = True
     high_load_ratio: float = 0.8
     high_load_fraction: float = 0.5
+    default_cooldown_hours: int = 0
+    min_benefit_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -72,8 +75,16 @@ def decide_job_admission(
     if deadline_expired(job.deadline_at, current, config.wave_wait_sec):
         return AdmissionDecision(False, "deadline_near", defer=True)
 
-    if not cooldown_elapsed(job.last_maintained_at, job.cooldown_hours, current):
+    cooldown_hours = max(int(job.cooldown_hours), int(config.default_cooldown_hours))
+    if not cooldown_elapsed(job.last_maintained_at, cooldown_hours, current):
         return AdmissionDecision(False, "cooldown", defer=True)
+
+    if (
+        job.estimated_benefit_score is not None
+        and config.min_benefit_score > 0
+        and float(job.estimated_benefit_score) < config.min_benefit_score
+    ):
+        return AdmissionDecision(False, "benefit_below_threshold", defer=True)
 
     if is_heavy_mode(mode) and not is_offpeak(
         current, config.offpeak_start_ist, config.offpeak_end_ist

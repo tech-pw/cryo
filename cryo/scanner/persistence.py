@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -16,6 +16,7 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 
 
@@ -122,6 +123,25 @@ def already_scanned_today(
     )
 
 
+def needs_weekly_reconcile(
+    session: Session,
+    *,
+    table_id: uuid.UUID,
+    now: datetime | None = None,
+    cadence_days: int = 7,
+) -> bool:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    stats = session.get(TableStats, table_id)
+    if stats is None or stats.last_full_reconcile_at is None:
+        return True
+    last = stats.last_full_reconcile_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return (current - last).days >= cadence_days
+
+
 def stats_history_for_signals(
     session: Session,
     table_id: uuid.UUID,
@@ -169,8 +189,38 @@ def persist_table_analysis(
     if location:
         table_row.location = location
 
-    stats_values = _stats_values(table_id, analysis)
     existing_stats = session.get(TableStats, table_id)
+    stats_values = _stats_values(table_id, analysis)
+    previous_raw = dict(existing_stats.raw or {}) if existing_stats and isinstance(existing_stats.raw, dict) else {}
+    previous_history = previous_raw.get("commit_event_history")
+    if isinstance(previous_history, list):
+        raw_payload = dict(stats_values.get("raw") or {})
+        raw_payload["commit_event_history"] = previous_history
+        previous_smart = previous_raw.get("smart_maintenance")
+        if isinstance(previous_smart, dict):
+            raw_payload["smart_maintenance"] = previous_smart
+        stats_values["raw"] = raw_payload
+
+    scan_at = analysis.scan_at.astimezone(UTC) if analysis.scan_at.tzinfo else analysis.scan_at.replace(tzinfo=UTC)
+    history = stats_values.get("raw", {}).get("commit_event_history") if isinstance(stats_values.get("raw"), dict) else None
+    commits_7d = _count_commits_in_window(history, scan_at, days=7)
+    commits_24h = _count_commits_in_window(history, scan_at, hours=24)
+    query_count_7d = 0
+    if existing_stats is not None and existing_stats.query_count_30d:
+        query_count_7d = max(0, int(existing_stats.query_count_30d // 4))
+    tier_decision = classify_detection_tier(
+        TierInputs(
+            commits_24h=commits_24h,
+            commits_7d=commits_7d,
+            query_count_7d=query_count_7d,
+            small_files_count=max(0, int(analysis.small_files_count)),
+            delete_file_pct=float(analysis.delete_file_pct or 0.0),
+            last_scan_at=scan_at,
+        ),
+        now=scan_at,
+    )
+    stats_values["detection_tier"] = tier_decision.tier.value
+
     if existing_stats is None:
         session.add(TableStats(**stats_values))
     else:
@@ -285,6 +335,15 @@ def persist_table_cost(
 
 
 def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any]:
+    raw = dict(_json_safe(analysis.raw) or {})
+    if not isinstance(raw, dict):
+        raw = {}
+    current_snapshot_id = raw.get("current_snapshot_id")
+    try:
+        snapshot_watermark = int(current_snapshot_id) if current_snapshot_id is not None else None
+    except (TypeError, ValueError):
+        snapshot_watermark = None
+
     return {
         "table_id": table_id,
         "scan_at": analysis.scan_at,
@@ -303,7 +362,11 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         "avg_file_size_mb": analysis.avg_file_size_mb,
         "total_snapshots": analysis.total_snapshots,
         "total_delete_files": analysis.total_delete_files,
+        "equality_delete_files": int((analysis.raw or {}).get("equality_delete_files") or 0),
+        "position_delete_files": int((analysis.raw or {}).get("position_delete_files") or 0),
         "delete_file_pct": analysis.delete_file_pct,
+        "snapshot_watermark": snapshot_watermark,
+        "last_full_reconcile_at": analysis.scan_at,
         "manifest_count": analysis.manifest_count,
         "partition_col": analysis.partition_col,
         "partition_col_type": analysis.partition_col_type,
@@ -318,8 +381,31 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
             analysis.cost.projected_savings_usd_month if analysis.cost else None
         ),
         "reclaimable_bytes": analysis.cost.reclaimable_bytes if analysis.cost else None,
-        "raw": _json_safe(analysis.raw),
+        "raw": raw,
     }
+
+
+def _count_commits_in_window(
+    history: Any,
+    scan_at: datetime,
+    *,
+    days: int = 0,
+    hours: int = 0,
+) -> int:
+    if not isinstance(history, list):
+        return 0
+    lower = scan_at - timedelta(days=days, hours=hours)
+    total = 0
+    for value in history:
+        if not isinstance(value, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(value).astimezone(UTC)
+        except ValueError:
+            continue
+        if ts >= lower:
+            total += 1
+    return total
 
 
 def _cost_values(table_id: uuid.UUID, cost: Any) -> dict[str, Any]:

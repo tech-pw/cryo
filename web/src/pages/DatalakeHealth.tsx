@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Typography } from "antd";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
-import { getDatalakeDashboard, listTables } from "../api/client";
+import { getDatalakeDashboard, getSmartMaintenanceOverview, listTables } from "../api/client";
 import type { DatalakeDashboard, TableRead } from "../api/types";
 import { ChartFrame, EmptyState, PageHeader, StatStrip, QueryErrorAlert, FirstRunEmptyState, TruncatedResultsBanner } from "../components/common";
 import { GradePill, PriorityTag } from "../components/status";
@@ -32,6 +32,11 @@ export const DatalakeHealth = () => {
     queryKey: ["dashboard-fallback-tables", token],
     queryFn: () => listTables(api, { limit: 500, offset: 0 }),
     enabled: dashboard.isError
+  });
+  const smartOverview = useQuery({
+    queryKey: ["smart-maintenance-overview", token],
+    queryFn: () => getSmartMaintenanceOverview(api),
+    retry: 1
   });
 
   const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
@@ -110,6 +115,25 @@ export const DatalakeHealth = () => {
               }
             ]}
           />
+          {smartOverview.data ? (
+            <Card
+              title="Smart maintenance posture"
+              extra={<Link to="/smart-maintenance">Open Smart Maintenance</Link>}
+              style={{ marginBottom: 12 }}
+            >
+              <Space size={24} wrap>
+                <Typography.Text>
+                  HOT tables: <strong>{smartOverview.data.tiers.hot}</strong>
+                </Typography.Text>
+                <Typography.Text>
+                  ROI shadow decisions: <strong>{smartOverview.data.roi_shadow_decisions_30d}</strong>
+                </Typography.Text>
+                <Typography.Text>
+                  Pending layout actions: <strong>{smartOverview.data.pending_layout_recommendations}</strong>
+                </Typography.Text>
+              </Space>
+            </Card>
+          ) : null}
           <Row gutter={[12, 12]}>
             <Col xs={24} lg={9}>
               <Card title="Grade distribution">

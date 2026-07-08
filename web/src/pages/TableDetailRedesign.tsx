@@ -72,6 +72,7 @@ import {
   getTableHealthTrends,
   getTableS3Tiering,
   getTableSignals,
+  getTableRoiBreakdown,
   listDestinations,
   listPresets,
   listSources,
@@ -225,6 +226,11 @@ export const TableDetail = () => {
   const tableCost = useQuery({
     queryKey: ["table-cost", tableId, token],
     queryFn: () => getTableCost(api, tableId),
+    retry: false
+  });
+  const tableRoi = useQuery({
+    queryKey: ["table-roi-breakdown", tableId, token],
+    queryFn: () => getTableRoiBreakdown(api, tableId),
     retry: false
   });
   const tableSignals = useQuery({
@@ -692,6 +698,30 @@ export const TableDetail = () => {
             schedulePending={schedule.isPending}
             tableLabel={row ? `${row.schema_name}.${row.table_name}` : "this table"}
           />
+
+          {tableRoi.data ? (
+            <Card size="small" style={{ marginTop: 12 }}>
+              <Space size={12} wrap>
+                <Tag
+                  color={
+                    tableRoi.data.decision.bcr >= tableRoi.data.decision.threshold
+                      ? "green"
+                      : "orange"
+                  }
+                >
+                  ROI {tableRoi.data.decision.action.toUpperCase()}
+                </Tag>
+                <Typography.Text type="secondary">
+                  BCR {tableRoi.data.decision.bcr.toFixed(2)} /{" "}
+                  {tableRoi.data.decision.threshold.toFixed(2)}
+                </Typography.Text>
+                <Typography.Text type="secondary">
+                  Benefit {formatCurrency(tableRoi.data.monthly_benefit_usd)} vs cost{" "}
+                  {formatCurrency(tableRoi.data.monthly_cost_usd)}
+                </Typography.Text>
+              </Space>
+            </Card>
+          ) : null}
 
           <div style={{ marginBottom: 16 }} />
 

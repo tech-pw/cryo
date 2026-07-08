@@ -22,6 +22,7 @@ NATIVE_BASE_OPERATIONS: tuple[OperationType, ...] = (
 # recorded as skipped with the reason below. Fixes the silent-drop of
 # COMPUTE_STATISTICS logged as bug #25 in docs/native-iceberg-rust-engine-errors.md.
 NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (
+    OperationType.CONVERT_DELETES,
     OperationType.OPTIMIZE_MANIFESTS,
     OperationType.COMPUTE_STATISTICS,
 )
@@ -34,6 +35,11 @@ NATIVE_MANIFESTS_DETAIL = (
 NATIVE_COMPUTE_STATISTICS_DETAIL = (
     "compute_statistics (Puffin NDV + Bloom filters) not implemented in cryo-engine-go; "
     "route to Trino (ANALYZE) / Spark (CALL system.compute_table_stats)"
+)
+
+NATIVE_CONVERT_DELETES_DETAIL = (
+    "convert_deletes requires SQL engine rewrite_data_files options; "
+    "route to Spark/Trino fallback"
 )
 
 NATIVE_ZORDER_DETAIL = (
@@ -248,6 +254,8 @@ def resolve_native_routing(
         if operation.type in NATIVE_ALWAYS_DISCONNECTED:
             if operation.type is OperationType.COMPUTE_STATISTICS:
                 detail = NATIVE_COMPUTE_STATISTICS_DETAIL
+            elif operation.type is OperationType.CONVERT_DELETES:
+                detail = NATIVE_CONVERT_DELETES_DETAIL
             else:
                 detail = NATIVE_MANIFESTS_DETAIL
             if has_sql_fallback:
