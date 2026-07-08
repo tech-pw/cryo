@@ -5,7 +5,7 @@ COPY cryo-engine/Cargo.toml cryo-engine/Cargo.lock* ./
 COPY cryo-engine/src ./src
 RUN cargo build --release
 
-FROM golang:1.24-bookworm AS cryo-engine-go-builder
+FROM golang:1.25-bookworm AS cryo-engine-go-builder
 
 WORKDIR /build
 COPY engine-go/go.mod engine-go/go.sum ./
