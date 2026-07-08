@@ -7,6 +7,10 @@ from typing import Any
 
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot
+from cryo.engines.native.job_state import (
+    NativeJobStateReader,
+    summarize_native_jobs,
+)
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.worker.worker import DestinationConfig
 
@@ -29,17 +33,46 @@ def probe_native_capacity(
     *,
     destination_id: str | None = None,
     queue: MaintenanceQueue | None = None,
+    job_state_reader: NativeJobStateReader | None = None,
 ) -> CapacitySnapshot:
     """Return native subprocess capacity with queue in-flight as ``used``.
 
     Governor admission still passes ``local_in_flight`` separately; ``max(used, local)``
     keeps accounting conservative when both sources are present.
+
+    When ``job_state_reader`` is provided and live K8s reads are available, the
+    snapshot is populated from real Kubernetes Job state (Move 6). The queue is
+    used as a conservative fallback when K8s is unavailable.
     """
     capacity = native_slot_capacity(config)
     used = 0
+    queued = 0
+    cpu_used_milli = 0
+    mem_used_mib = 0
+
     if destination_id and queue is not None:
         used = queue.local_in_flight(destination_id)
-    return CapacitySnapshot(capacity=capacity, used=used, queued=used)
+        queued = used
+
+    if job_state_reader is not None and job_state_reader.is_available():
+        jobs = job_state_reader.list_active_native_jobs(destination_id=destination_id)
+        totals = summarize_native_jobs(jobs)
+        if jobs is not None:
+            # Real Job state takes precedence: count of active Jobs is the
+            # load signal; cpu/mem are recorded on the snapshot for downstream
+            # observability.
+            used = max(used, totals.job_count)
+            queued = used
+            cpu_used_milli = totals.cpu_used_milli
+            mem_used_mib = totals.mem_used_mib
+
+    return CapacitySnapshot(
+        capacity=capacity,
+        used=used,
+        queued=queued,
+        cpu_used_milli=cpu_used_milli,
+        mem_used_mib=mem_used_mib,
+    )
 
 
 def probe_native_capacity_by_replica(
@@ -47,18 +80,54 @@ def probe_native_capacity_by_replica(
     *,
     destination_id: str | None = None,
     queue: MaintenanceQueue | None = None,
+    job_state_reader: NativeJobStateReader | None = None,
 ) -> Mapping[str, CapacitySnapshot]:
     slot_cap = native_slot_capacity(config)
     in_flight: Mapping[str, int] = {}
     if destination_id and queue is not None:
         in_flight = queue.local_in_flight_by_replica(destination_id)
+
+    k8s_bucket: str | None = None
+    k8s_count = 0
+    k8s_cpu = 0
+    k8s_mem = 0
+    if job_state_reader is not None and job_state_reader.is_available() and destination_id:
+        jobs = job_state_reader.list_active_native_jobs(destination_id=destination_id)
+        if jobs is not None:
+            # In K8s mode each active Job is its own workload; the per-replica
+            # round-robin from the subprocess path doesn't apply. Aggregate all
+            # active Jobs into one bucket keyed by destination_id.
+            k8s_bucket = str(destination_id)
+            k8s_count = len(jobs)
+            k8s_cpu = sum(job.cpu_milli for job in jobs)
+            k8s_mem = sum(job.mem_mib for job in jobs)
+
+    replicas = native_replica_names(config)
+    if k8s_bucket is not None and k8s_count > 0:
+        result: dict[str, CapacitySnapshot] = {
+            replica: CapacitySnapshot(
+                capacity=slot_cap,
+                used=0,
+                queued=0,
+            )
+            for replica in replicas
+        }
+        result[k8s_bucket] = CapacitySnapshot(
+            capacity=slot_cap,
+            used=k8s_count,
+            queued=k8s_count,
+            cpu_used_milli=k8s_cpu,
+            mem_used_mib=k8s_mem,
+        )
+        return result
+
     return {
         replica: CapacitySnapshot(
             capacity=slot_cap,
             used=int(in_flight.get(replica, 0)),
             queued=int(in_flight.get(replica, 0)),
         )
-        for replica in native_replica_names(config)
+        for replica in replicas
     }
 
 
@@ -67,11 +136,19 @@ class LiveCapacityProvider:
 
     For Trino: queries system.runtime.queries to count running OPTIMIZE statements.
     For Spark EMR: lists running EMR Serverless job runs.
-    For Native: reports queue/Redis in-flight subprocess counts as ``used``.
+    For Native: lists active Kubernetes Jobs (Move 6) and parses their CPU/memory
+    requests; falls back to queue/Redis in-flight when the kubernetes client is
+    unavailable or the destination runs Jobs via the in-process subprocess path.
     """
 
-    def __init__(self, queue: MaintenanceQueue | None = None) -> None:
+    def __init__(
+        self,
+        queue: MaintenanceQueue | None = None,
+        *,
+        job_state_reader: NativeJobStateReader | None = None,
+    ) -> None:
         self._queue = queue
+        self._job_state_reader = job_state_reader
 
     def probe(self, destination: DestinationConfig) -> Mapping[str, CapacitySnapshot | int]:
         engine_type = EngineType(destination.engine)
@@ -96,6 +173,7 @@ class LiveCapacityProvider:
             config,
             destination_id=destination_id,
             queue=self._queue,
+            job_state_reader=self._job_state_reader,
         )
 
     def _probe_trino(self, config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot]:
