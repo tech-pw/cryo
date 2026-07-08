@@ -59,6 +59,7 @@ import {
   nativeUnsupportedOpTooltip,
   resolveNativeEngineImpl
 } from "../lib/engines";
+import { validateOperationOrder } from "../lib/operationOrder";
 
 const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
 type SimulationSample = NonNullable<Awaited<ReturnType<typeof simulatePreset>>["sample"]>[number];
@@ -209,6 +210,11 @@ const PresetDrawer = ({
 }) => {
   const [form] = Form.useForm<PresetFormValues>();
   const destinationId = Form.useWatch("destination_id", form);
+  const selectedOps = Form.useWatch("operations", form) as string[] | undefined;
+  const operationOrderWarnings = useMemo(
+    () => validateOperationOrder(selectedOps ?? []),
+    [selectedOps]
+  );
   const selectedDestination = useMemo(
     () => destinations.find((item) => item.id === destinationId),
     [destinations, destinationId]
@@ -314,6 +320,21 @@ const PresetDrawer = ({
         <Form.Item name="operations" label="Operations">
           <Checkbox.Group options={operationOptions} />
         </Form.Item>
+        {operationOrderWarnings.length > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Operations are out of the recommended order"
+            description={
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {operationOrderWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            }
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
         <Form.Item name="schedule_cron" label="Schedule cron" rules={[{ validator: cronFormValidator({ allowEmpty: true }) }]}>
           <CronInput allowEmpty />
         </Form.Item>

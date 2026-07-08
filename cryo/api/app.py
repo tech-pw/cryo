@@ -17,6 +17,7 @@ from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
+from cryo.api.routes_sources import router as sources_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.config import Settings, get_settings
 from cryo.observability.logging import configure_logging
@@ -101,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ready", "environment": settings.environment}
 
     app.include_router(api_router)
+    app.include_router(sources_router)
     app.include_router(auth_router)
     app.include_router(extensions_router)
     app.include_router(phase8_router)

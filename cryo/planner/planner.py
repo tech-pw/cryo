@@ -30,6 +30,8 @@ def build_plan(
     partitions: Sequence[Mapping[str, Any]],
     mode: Mode | str,
     params: Mapping[str, Any] | None = None,
+    *,
+    protected_snapshot_ids: Sequence[int] | None = None,
 ) -> MaintenancePlan:
     params = params or {}
     resolved_mode = Mode(mode)
@@ -46,7 +48,14 @@ def build_plan(
         )
 
     if resolved_mode in {Mode.LIGHT, Mode.STANDARD, Mode.DEEP}:
-        operations.append(Operation(OperationType.EXPIRE_SNAPSHOTS, _expire_params(params)))
+        operations.append(
+            Operation(
+                OperationType.EXPIRE_SNAPSHOTS,
+                _expire_params(
+                    params, protected_snapshot_ids=list(protected_snapshot_ids or [])
+                ),
+            )
+        )
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.REMOVE_ORPHAN_FILES, _orphan_params(params)))
@@ -87,6 +96,27 @@ def _optimize_operations(
     total_size_gb = float(stats.get("total_size_gb") or 0.0)
     chunk_size_gb = float(params.get("chunk_size_gb", 100))
     fields = partition_fields_from_stats(stats, params)
+
+    # Streaming-aware compaction cadence: high-velocity tables fragment faster, so we
+    # tighten the chunk size + min_small_files threshold to keep compaction windows small
+    # enough that we never run on top of an actively-being-written partition. Caller can
+    # opt out by setting `streaming_aware_cadence=false` in params. Detected upstream by
+    # `detect_streaming_from_history` (cryo/scanner/signals.py) from snapshot-count
+    # deltas across consecutive `table_stats_history` rows.
+    is_streaming = bool(stats.get("is_streaming"))
+    commits_per_day = float(stats.get("commits_per_day") or 0.0)
+    streaming_aware = params.get("streaming_aware_cadence", True)
+    if is_streaming and streaming_aware:
+        original_chunk = chunk_size_gb
+        original_min_small = min_small_files
+        chunk_size_gb = max(1.0, chunk_size_gb / 2.0)
+        min_small_files = max(1, int(min_small_files * 0.75))
+        notes.append(
+            f"Streaming-aware cadence: table flagged as streaming "
+            f"({commits_per_day:.1f} commits/day) — tightened chunk_size_gb "
+            f"{original_chunk:g} → {chunk_size_gb:g} and min_small_files "
+            f"{original_min_small} → {min_small_files}."
+        )
 
     delete_triggered = delete_ratio_trigger > 0 and delete_file_pct >= delete_ratio_trigger
     if table_small_files < min_small_files and not delete_triggered:
@@ -181,11 +211,20 @@ def _optimize_operation(
     return Operation(OperationType.OPTIMIZE, dict(params), predicates)
 
 
-def _expire_params(params: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+def _expire_params(
+    params: Mapping[str, Any],
+    *,
+    protected_snapshot_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "retention_days": int(params.get("retention_days", 7)),
         "retain_last": int(params.get("retain_last", 1)),
     }
+    if protected_snapshot_ids:
+        out["protected_snapshot_ids"] = sorted(
+            set(int(s) for s in protected_snapshot_ids)
+        )
+    return out
 
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:

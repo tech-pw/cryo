@@ -13,6 +13,7 @@ TERMINAL = {
     JobStatus.SUCCEEDED.value,
     JobStatus.FAILED.value,
     JobStatus.SKIPPED.value,
+    JobStatus.PARTIAL.value,
 }
 
 
@@ -34,13 +35,23 @@ def finalize_open_runs(session_factory: Callable[[], Session]) -> int:
                 if run.status != "running":
                     run.status = "running"
                 continue
-            run.status = "failed" if counts.get(JobStatus.FAILED.value, 0) else "succeeded"
+            succeeded_count = counts.get(JobStatus.SUCCEEDED.value, 0)
+            failed_count = counts.get(JobStatus.FAILED.value, 0)
+            skipped_count = counts.get(JobStatus.SKIPPED.value, 0)
+            partial_count = counts.get(JobStatus.PARTIAL.value, 0)
+            if failed_count == 0 and partial_count == 0:
+                run.status = "succeeded"
+            elif succeeded_count > 0 or partial_count > 0:
+                run.status = "partial"
+            else:
+                run.status = "failed"
             run.finished_at = datetime.now(UTC)
             run.summary = {
                 "jobs_total": sum(counts.values()),
-                "succeeded": counts.get(JobStatus.SUCCEEDED.value, 0),
-                "failed": counts.get(JobStatus.FAILED.value, 0),
-                "skipped": counts.get(JobStatus.SKIPPED.value, 0),
+                "succeeded": succeeded_count,
+                "failed": failed_count,
+                "skipped": skipped_count,
+                "partial": partial_count,
                 "deferred": counts.get(JobStatus.DEFERRED.value, 0),
             }
             finalized += 1

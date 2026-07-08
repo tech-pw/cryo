@@ -50,6 +50,83 @@ from cryo.observability.observation_lakehouse import ObservationLakehouse
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
 
+# ==================== Bloom Filter Recommendations ====================
+
+
+class BloomFilterRecommendationRead(BaseModel):
+    column: str
+    reason: str
+    estimated_skip_rate: float
+    cardinality: str
+    equality_filter_count: int
+    spark_sql: str
+
+
+class BloomFilterRecommendationsResponse(BaseModel):
+    table_id: UUID
+    table_name: str
+    recommendations: list[BloomFilterRecommendationRead]
+    telemetry_source: str
+    message: str | None = None
+
+
+@router.get(
+    "/bloom-filter-recommendations/{table_id}",
+    response_model=BloomFilterRecommendationsResponse,
+)
+def get_bloom_filter_recommendations(
+    table_id: UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> BloomFilterRecommendationsResponse:
+    """Bloom filter column recommendations for a table.
+
+    Surfaces Parquet Bloom-filter candidates derived from ``QueryPattern`` data
+    (equality-filter frequency on high-cardinality columns). Each recommendation
+    includes the Spark ``ALTER TABLE ... SET TBLPROPERTIES`` statement to apply
+    the change.
+
+    Returns an empty list with ``telemetry_source="none"`` when no query-pattern
+    data exists yet; this is an *unconfigured* state, not an error.
+    """
+    from cryo.db.models import Table, TableStats
+    from cryo.optimizer.layout_analyzer import analyze_table_layout
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        return BloomFilterRecommendationsResponse(
+            table_id=table_id,
+            table_name=f"{table.schema_name}.{table.table_name}",
+            recommendations=[],
+            telemetry_source="none",
+            message="No table_stats yet; bloom filter recommendations require the scanner.",
+        )
+
+    analysis = analyze_table_layout(session, table_id)
+
+    return BloomFilterRecommendationsResponse(
+        table_id=table_id,
+        table_name=f"{table.schema_name}.{table.table_name}",
+        recommendations=[
+            BloomFilterRecommendationRead(
+                column=r.column_name,
+                reason=r.reason,
+                estimated_skip_rate=r.estimated_skip_rate,
+                cardinality=r.cardinality_estimate,
+                equality_filter_count=r.equality_filter_count,
+                spark_sql=r.spark_alter_statement,
+            )
+            for r in analysis.bloom_filter_recommendations
+        ],
+        telemetry_source="query_patterns",
+        message=None,
+    )
+
+
 # ==================== Approval Workflows ====================
 
 

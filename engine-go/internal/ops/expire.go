@@ -171,6 +171,25 @@ func intParam(raw json.RawMessage, key string, defaultValue int) int {
 	return defaultValue
 }
 
+func boolParam(raw json.RawMessage, key string, defaultValue bool) bool {
+	if len(raw) == 0 {
+		return defaultValue
+	}
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return defaultValue
+	}
+	value, ok := params[key]
+	if !ok {
+		return defaultValue
+	}
+	var asBool bool
+	if err := json.Unmarshal(value, &asBool); err == nil {
+		return asBool
+	}
+	return defaultValue
+}
+
 func failResult(operation string, err error) protocol.OperationResult {
 	msg := err.Error()
 	return protocol.OperationResult{

@@ -365,6 +365,7 @@ class Worker:
                 table_data.partitions,
                 job.mode,
                 _execution_plan_params(job.params, destination, table_data.stats),
+                protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
             )
             plan = _gate_native_optimize_manifests(plan, job, destination)
             self._store.save_plan(job.id, plan_to_dict(plan))
@@ -794,6 +795,8 @@ class Worker:
                 mode=plan.mode,
                 operations=supported_operations,
             )
+            started = perf_counter()
+            chunk_checkpointing = bool(destination.config.get("chunk_checkpointing", False))  # type: ignore[union-attr]
             safe_publish(
                 self._run_events,
                 job.run_id,
@@ -805,11 +808,16 @@ class Worker:
                     engine=str(engine.type),
                     message=(
                         f"Executing native plan with {len(supported_operations)} operations "
-                        "in one subprocess"
+                        f"({'per-chunk checkpointing' if chunk_checkpointing else 'bundled'})"
                     ),
                 ),
             )
-            started = perf_counter()
+            if chunk_checkpointing:
+                from cryo.db.session import SessionLocal
+
+                session_factory = SessionLocal
+            else:
+                session_factory = None
             exec_ctx = _to_exec_ctx(
                 ExecContext(
                     job_id=job.id,
@@ -825,6 +833,8 @@ class Worker:
                     table_ref=table_ref,
                     engine=engine.type,
                 ),
+                session_factory=session_factory,
+                chunk_checkpointing=chunk_checkpointing,
             )
             try:
                 results = engine.execute_plan(native_plan, exec_ctx)
@@ -857,6 +867,8 @@ class Worker:
                 )
                 return JobStatus.FAILED, str(exc), None, False, had_skip
 
+            had_failure = False
+            first_error: str | None = None
             for operation, result in zip(supported_operations, results, strict=False):
                 result_duration_ms = result.duration_ms
                 if result_duration_ms is None:
@@ -893,7 +905,10 @@ class Worker:
                     )
                     continue
                 if not getattr(result, "ok", True):
+                    had_failure = True
                     detail = result.error or result.detail or "engine execution failed"
+                    if first_error is None:
+                        first_error = detail
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
@@ -924,7 +939,9 @@ class Worker:
                             message=f"{operation.type.value} failed: {detail}",
                         ),
                     )
-                    return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+                    if not chunk_checkpointing:
+                        return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+                    continue
                 had_success = True
                 self._store.record_audit(
                     AuditRecord(
@@ -972,8 +989,6 @@ class Worker:
                         message=success_message,
                     ),
                 )
-        if had_skip and not had_success:
-            final_status = JobStatus.SKIPPED
 
         if routing.fallback_operations and destination is not None and table_data is not None:
             (
@@ -1001,6 +1016,15 @@ class Worker:
             if fallback_status is JobStatus.SKIPPED and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
 
+        if had_skip and not had_success and not had_failure:
+            final_status = JobStatus.SKIPPED
+        elif had_success and had_failure:
+            final_status = JobStatus.PARTIAL
+        elif had_failure and not had_success:
+            final_status = JobStatus.FAILED
+
+        if error is None and first_error is not None:
+            error = first_error
         return final_status, error, engine_ref, had_success, had_skip
 
     def _record_native_skipped(
@@ -1057,16 +1081,16 @@ class Worker:
 
         fallback_destination = _try_get_destination(self._store, fallback_id.strip())
         if fallback_destination is None:
-            error = f"sql_fallback_destination_id {fallback_id!r} not found"
+            not_found_error = f"sql_fallback_destination_id {fallback_id!r} not found"
             for operation, detail in operations:
                 self._record_native_skipped(
                     job=job,
                     table_ref=table_ref,
                     engine=self._engine_factory(destination),
                     operation=operation,
-                    detail=f"{detail}; {error}",
+                    detail=f"{detail}; {not_found_error}",
                 )
-            return JobStatus.FAILED, error, None, False, True
+            return JobStatus.FAILED, not_found_error, None, False, True
 
         fallback_engine = self._engine_factory(fallback_destination)
         final_status = JobStatus.SUCCEEDED
@@ -1254,6 +1278,35 @@ def _execution_plan_params(
     return merged
 
 
+def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
+    """Return snapshot IDs tagged as protected for a table.
+
+    Reads protected_snapshots via the worker session factory. Returns [] on
+    any session failure so a transient DB issue cannot block maintenance.
+    """
+    if table_id is None:
+        return []
+    try:
+        from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
+        from cryo.db.session import SessionLocal
+    except Exception:
+        return []
+    if isinstance(table_id, str):
+        try:
+            table_uuid = UUID(table_id)
+        except (ValueError, TypeError):
+            return []
+    else:
+        table_uuid = table_id
+    try:
+        with SessionLocal() as session:
+            return sorted(
+                ProtectedSnapshotRepository(session).list_snapshot_ids(table_uuid)
+            )
+    except Exception:
+        return []
+
+
 def _job_operation_type(job: MaintenanceJobRecord) -> str:
     mode = job.mode
     if isinstance(mode, Mode):
@@ -1357,6 +1410,8 @@ def _to_exec_ctx(
     *,
     run_id: str | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    session_factory: Any = None,
+    chunk_checkpointing: bool = False,
 ) -> ExecCtx:
     """Convert worker ExecContext to engine ExecCtx."""
     from uuid import UUID
@@ -1375,6 +1430,8 @@ def _to_exec_ctx(
         replica=ctx.replica,
         run_id=run_id,
         on_progress=on_progress,
+        session_factory=session_factory,
+        chunk_checkpointing=chunk_checkpointing,
     )
 
 

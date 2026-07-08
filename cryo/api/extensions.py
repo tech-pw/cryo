@@ -31,6 +31,7 @@ from cryo.api.extensions_helpers import (
 from cryo.api.extensions_routes.benefit import router as benefit_router
 from cryo.api.extensions_routes.compliance import router as compliance_router
 from cryo.api.extensions_routes.qpp import router as qpp_router
+from cryo.api.extensions_routes.triggers import router as triggers_router
 from cryo.api.schemas import JsonDict
 from cryo.api.validators import validate_cron_field
 from cryo.db.models import (
@@ -47,6 +48,7 @@ router = APIRouter(prefix="/api/v1")
 router.include_router(compliance_router)
 router.include_router(benefit_router)
 router.include_router(qpp_router)
+router.include_router(triggers_router)
 
 
 # Backwards-compatible aliases (legacy code refers to the underscore-prefixed names)

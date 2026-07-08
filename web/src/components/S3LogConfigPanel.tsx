@@ -280,10 +280,9 @@ export const S3LogConfigPanel = ({ sourceId }: S3LogConfigPanelProps) => {
   if (!configs.data || configs.data.length === 0) {
     return (
       <Typography.Text type="secondary">
-        No buckets discovered yet — Cryo enumerates the source&apos;s Iceberg catalog to find
-        bucket locations. If this stays empty after a refresh, the catalog credentials in the
-        source config may not have access to any tables, or no tables have a parseable S3
-        location.
+        No buckets discovered yet — click &quot;Run full cost scan&quot; on the source
+        above so Cryo can record each table&apos;s S3 location. Bucket discovery reads
+        from the table locations recorded during scans.
       </Typography.Text>
     );
   }

@@ -139,6 +139,41 @@ require new research to start.
   hours of compute), spot-instance eligibility (Scenario F), and safe concurrent chunk fan-out
   (Scenario G).
 
+**Implementation log (2026-07-08):**
+- ✅ Added `PARTIAL` to `JobStatus` enum (`cryo/domain/enums.py`)
+- ✅ Added `chunk_index` nullable Integer column to `MaintenanceJob` + migration
+  (`migrations/versions/20260708_chunk_checkpointing.py`): enables per-chunk job tracking
+- ✅ Created `ChunkCheckpoint` DB model + `cryo/db/repositories/chunk_checkpoint.py`:
+  `write_checkpoint()` writes after each commit; `get_checkpointed_chunks()` returns
+  the set of already-committed chunk indices for a run; `get_checkpoint_summary()`
+  aggregates stats across all checkpointed chunks
+- ✅ Created `cryo/engines/native/checkpoint.py`: `execute_plan_per_chunk()` dispatches
+  chunks individually (one Go engine subprocess call per chunk), skips already-checkpointed
+  chunks on resume, writes a ChunkCheckpoint after each commit, wraps per-chunk
+  progress events with chunk_index so progress callbacks are chunk-aware
+- ✅ Updated `NativeEngine.execute_plan()`: splits into `_execute_plan_bundled()` (legacy
+  single-subprocess path) and `_execute_plan_per_chunk()` (checkpointing path); per-chunk
+  activated by `chunk_checkpointing=True` in destination config, passed via `ExecCtx`
+- ✅ Extended `ExecCtx` (`cryo/engines/base.py`) with `session_factory` and
+  `chunk_checkpointing` fields — thread through the worker → engine interface without
+  changing the method signature
+- ✅ Updated worker (`cryo/worker/worker.py`): sets `chunk_checkpointing=True` and passes
+  `SessionLocal` factory to `ExecCtx` when destination config has `chunk_checkpointing`;
+  `_to_exec_ctx` updated to forward the new fields
+- ✅ Updated worker job status logic: tracks `had_failure` separately from `had_success`;
+  final job status is `PARTIAL` when some chunks succeeded and some failed (previously
+  missing `FAILED` branch — all-fail case fell through to `SUCCEEDED`)
+- ✅ Updated `finalize_open_runs()` (`cryo/db/repositories/run_finalizer.py`): added
+  `PARTIAL` to `TERMINAL` set; run is `partial` when some jobs succeeded/partial and
+  some failed (distinct from `failed` where all jobs failed); summary now includes
+  `partial` count
+- ⚠️ Worker `mark_status` (InMemoryJobStore) only sets `finished_at` for
+  `{SUCCEEDED, FAILED, SKIPPED, DEFERRED}` — `PARTIAL` is missing; this is cosmetic
+  (status IS set correctly) but should be addressed in a follow-up
+- ⚠️ Spot-instance eligibility (Scenario F) requires additional per-chunk cancellation
+  handling not yet implemented — the checkpointing foundation is in place but
+  mid-spot-interruption resume needs the K8s Job cancellation path from Move 3
+
 ### Move 5 — Puffin statistics (`COMPUTE_STATISTICS`) as the 5th maintenance operation
 
 - **Effort:** days — `research-and-roadmap.md` §3.2 calls it a single PR and names the exact
@@ -147,6 +182,48 @@ require new research to start.
 - **Builds on:** it is the #1 ROI item in `research-and-roadmap.md` §5's ranking; the
   query-log ingestion pipeline shipped 2026-07-07 makes the resulting stats actually useful.
 - **Unblocks:** the most visible ❌-vs-✅ against LakeOps in the §4 feature matrix.
+
+**Implementation log (2026-07-08):**
+- ✅ `OperationType.COMPUTE_STATISTICS = "compute_statistics"` added to `cryo/domain/enums.py`, sequenced strictly after `OPTIMIZE_MANIFESTS` per `lld.md`
+- ✅ Planner (`cryo/planner/planner.py`) appends `COMPUTE_STATISTICS` as the 5th op when `params["compute_statistics"]` is true; only when at least one `OPTIMIZE` was planned (otherwise Puffin blob refs would be stale); reuses `_stats_params` for `columns`, `bloom_filter_columns`, `compute_ndv`
+- ✅ Trino renderer (`cryo/engines/trino/sql.py::_render_compute_statistics`) emits `ANALYZE {table}` or `ANALYZE {table} WITH (columns = ARRAY[...])` matching `research-and-roadmap.md` §3.2 ("Spark `CALL system.compute_table_stats(...)` or Trino `ANALYZE TABLE`")
+- ✅ Spark renderer (`cryo/engines/spark/sql.py::_render_compute_statistics`) emits `CALL {catalog}.system.compute_table_stats(table => '...', columns => ARRAY(...))` plus per-bloom-column `ALTER TABLE ... SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{col}' = 'true')` statements joined by `;\n`
+- ✅ Golden tests: `tests/test_trino_sql_golden.py::test_trino_renders_compute_statistics_*` and `tests/test_spark_sql_golden.py::test_spark_renders_compute_statistics_*` cover both empty-column and column-list variants; the Spark bloom-filter test verifies the two-statement split
+- ✅ Planner tests: `tests/test_partitions_and_planner.py` — `test_compute_statistics_appended_after_optimize_manifests` asserts the strict sequencing (EXP → ORPHAN → OPTIMIZE → MANIFESTS → STATS), `test_compute_statistics_omitted_when_param_disabled` and `test_compute_statistics_omitted_when_no_optimize_planned` lock the two skip conditions
+- ✅ Native engine routing (`cryo/engines/native/routing.py`) — `COMPUTE_STATISTICS` added to `NATIVE_ALWAYS_DISCONNECTED` so the operation routes to the SQL fallback (Trino ANALYZE / Spark compute_table_stats) instead of being silently dropped; closes documented bug #25 in `docs/native-iceberg-rust-engine-errors.md`
+- ✅ New `NATIVE_COMPUTE_STATISTICS_DETAIL` reason string citing both renderers so an operator seeing the skip in the audit log knows what would have run
+- ✅ `cryo/engines/native/engine.py::_exec_results_from_native_batch` op-type map extended with `OperationType.COMPUTE_STATISTICS → "compute_statistics"` for forward compatibility when cryo-engine-go eventually ships it
+- ✅ Native routing tests: `tests/test_native_routing.py` — `test_compute_statistics_is_always_disconnected`, `test_resolve_native_routing_routes_compute_statistics_to_fallback` (with fallback destination), `test_resolve_native_routing_skips_compute_statistics_without_fallback` (no fallback → explicit skip with detail)
+- ✅ Preset + UI plumbing already wired before this commit: `web/src/lib/presetForm.ts` / `presetOptions.ts`, `PresetConfigFields` form control, `compute_statistics` validator in `cryo/planner/guardrails.py`, all API types in `web/src/api/types.ts` and `openapi.d.ts`
+- ✅ Behavior matches `research-and-roadmap.md` §3.2 + parity with `pw_dbt_trino/macros/iceberg_*.sql` `compute_table_stats` macro (Puffin NDV Theta + Bloom filter column properties)
+
+**Implementation log (2026-07-08):**
+- ✅ `OperationType.COMPUTE_STATISTICS = "compute_statistics"` added to `cryo/domain/enums.py`, sequenced strictly after `OPTIMIZE_MANIFESTS` per `lld.md`
+- ✅ Planner (`cryo/planner/planner.py`) appends `COMPUTE_STATISTICS` as the 5th op when `params["compute_statistics"]` is true; only when at least one `OPTIMIZE` was planned (otherwise Puffin blob refs would be stale); reuses `_stats_params` for `columns`, `bloom_filter_columns`, `compute_ndv`
+- ✅ Trino renderer (`cryo/engines/trino/sql.py::_render_compute_statistics`) emits `ANALYZE {table}` or `ANALYZE {table} WITH (columns = ARRAY[...])` matching `research-and-roadmap.md` §3.2 ("Spark `CALL system.compute_table_stats(...)` or Trino `ANALYZE TABLE`")
+- ✅ Spark renderer (`cryo/engines/spark/sql.py::_render_compute_statistics`) emits `CALL {catalog}.system.compute_table_stats(table => '...', columns => ARRAY(...))` plus per-bloom-column `ALTER TABLE ... SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{col}' = 'true')` statements joined by `;\n`
+- ✅ Golden tests: `tests/test_trino_sql_golden.py::test_trino_renders_compute_statistics_*` and `tests/test_spark_sql_golden.py::test_spark_renders_compute_statistics_*` cover both empty-column and column-list variants; the Spark bloom-filter test verifies the two-statement split
+- ✅ Planner tests: `tests/test_partitions_and_planner.py` — `test_compute_statistics_appended_after_optimize_manifests` asserts the strict sequencing (EXP → ORPHAN → OPTIMIZE → MANIFESTS → STATS), `test_compute_statistics_omitted_when_param_disabled` and `test_compute_statistics_omitted_when_no_optimize_planned` lock the two skip conditions
+- ✅ Native engine routing (`cryo/engines/native/routing.py`) — `COMPUTE_STATISTICS` added to `NATIVE_ALWAYS_DISCONNECTED` so the operation routes to the SQL fallback (Trino ANALYZE / Spark compute_table_stats) instead of being silently dropped; closes documented bug #25 in `docs/native-iceberg-rust-engine-errors.md`
+- ✅ New `NATIVE_COMPUTE_STATISTICS_DETAIL` reason string citing both renderers so an operator seeing the skip in the audit log knows what would have run
+- ✅ `cryo/engines/native/engine.py::_exec_results_from_native_batch` op-type map extended with `OperationType.COMPUTE_STATISTICS → "compute_statistics"` for forward compatibility when cryo-engine-go eventually ships it
+- ✅ Native routing tests: `tests/test_native_routing.py` — `test_compute_statistics_is_always_disconnected`, `test_resolve_native_routing_routes_compute_statistics_to_fallback` (with fallback destination), `test_resolve_native_routing_skips_compute_statistics_without_fallback` (no fallback → explicit skip with detail)
+- ✅ Preset + UI plumbing already wired before this commit: `web/src/lib/presetForm.ts` / `presetOptions.ts`, `PresetConfigFields` form control, `compute_statistics` validator in `cryo/planner/guardrails.py`, all API types in `web/src/api/types.ts` and `openapi.d.ts`
+- ✅ Behavior matches `research-and-roadmap.md` §3.2 + parity with `pw_dbt_trino/macros/iceberg_*.sql` `compute_table_stats` macro (Puffin NDV Theta + Bloom filter column properties)
+
+**Implementation log (2026-07-08):**
+- ✅ `OperationType.COMPUTE_STATISTICS = "compute_statistics"` added to `cryo/domain/enums.py`, sequenced strictly after `OPTIMIZE_MANIFESTS` per `lld.md`
+- ✅ Planner (`cryo/planner/planner.py`) appends `COMPUTE_STATISTICS` as the 5th op when `params["compute_statistics"]` is true; only when at least one `OPTIMIZE` was planned (otherwise Puffin blob refs would be stale); reuses `_stats_params` for `columns`, `bloom_filter_columns`, `compute_ndv`
+- ✅ Trino renderer (`cryo/engines/trino/sql.py::_render_compute_statistics`) emits `ANALYZE {table}` or `ANALYZE {table} WITH (columns = ARRAY[...])` matching `research-and-roadmap.md` §3.2 ("Spark `CALL system.compute_table_stats(...)` or Trino `ANALYZE TABLE`")
+- ✅ Spark renderer (`cryo/engines/spark/sql.py::_render_compute_statistics`) emits `CALL {catalog}.system.compute_table_stats(table => '...', columns => ARRAY(...))` plus per-bloom-column `ALTER TABLE ... SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{col}' = 'true')` statements joined by `;\n`
+- ✅ Golden tests: `tests/test_trino_sql_golden.py::test_trino_renders_compute_statistics_*` and `tests/test_spark_sql_golden.py::test_spark_renders_compute_statistics_*` cover both empty-column and column-list variants; the Spark bloom-filter test verifies the two-statement split
+- ✅ Planner tests: `tests/test_partitions_and_planner.py` — `test_compute_statistics_appended_after_optimize_manifests` asserts the strict sequencing (EXP → ORPHAN → OPTIMIZE → MANIFESTS → STATS), `test_compute_statistics_omitted_when_param_disabled` and `test_compute_statistics_omitted_when_no_optimize_planned` lock the two skip conditions
+- ✅ Native engine routing (`cryo/engines/native/routing.py`) — `COMPUTE_STATISTICS` added to `NATIVE_ALWAYS_DISCONNECTED` so the operation routes to the SQL fallback (Trino ANALYZE / Spark compute_table_stats) instead of being silently dropped; closes documented bug #25 in `docs/native-iceberg-rust-engine-errors.md`
+- ✅ New `NATIVE_COMPUTE_STATISTICS_DETAIL` reason string citing both renderers so an operator seeing the skip in the audit log knows what would have run
+- ✅ `cryo/engines/native/engine.py::_exec_results_from_native_batch` op-type map extended with `OperationType.COMPUTE_STATISTICS → "compute_statistics"` for forward compatibility when cryo-engine-go eventually ships it
+- ✅ Native routing tests: `tests/test_native_routing.py` — `test_compute_statistics_is_always_disconnected`, `test_resolve_native_routing_routes_compute_statistics_to_fallback` (with fallback destination), `test_resolve_native_routing_skips_compute_statistics_without_fallback` (no fallback → explicit skip with detail)
+- ✅ Preset + UI plumbing already wired before this commit: `web/src/lib/presetForm.ts` / `presetOptions.ts`, `PresetConfigFields` form control, `compute_statistics` validator in `cryo/planner/guardrails.py`, all API types in `web/src/api/types.ts` and `openapi.d.ts`
+- ✅ Behavior matches `research-and-roadmap.md` §3.2 + parity with `pw_dbt_trino/macros/iceberg_*.sql` `compute_table_stats` macro (Puffin NDV Theta + Bloom filter column properties)
 
 ### Resource conflict: who wins
 
@@ -172,6 +249,43 @@ Move 3 landing first; 7 and 8 are independent of it.
 work — the same shift QPP already made for read-query admission — and honest native
 load-awareness for the comparison table (see §3.1 below).
 
+**Implementation log (2026-07-08):**
+- ✅ Added `cryo/engines/native/job_state.py` with `NativeJobStateReader`:
+  - `list_active_native_jobs(destination_id=...)` queries the K8s `BatchV1Api` filtered by
+    `app.kubernetes.io/component=native-engine`; parses pod resource requests (or the
+    Job's `cryo/cpu`/`cryo/memory` annotations set by the dispatcher) into millicores + MiB
+  - Honors `destination_id` filter via the `cryo/destination` Job label
+  - Ignores Jobs in terminal states (succeeded/failed); only `status.active > 0` consumes capacity
+  - Graceful degradation: returns `None` when the kubernetes client is unavailable or no
+    in-cluster config is loadable, so the caller can fall back to queue-based accounting
+- ✅ Extended `cryo.domain.models.CapacitySnapshot` with optional `cpu_used_milli` /
+  `mem_used_mib` fields (default `0`) — preserves backward compatibility for every existing
+  call site that constructs the dataclass positionally or with the old 2/3-arg shape
+- ✅ Updated `cryo/engines/native/job_dispatch.py` to label Jobs with `cryo/destination` and
+  annotate `cryo/cpu`/`cryo/memory` for clean state observation; parameterized
+  `k8s_namespace` on the dispatcher config (defaults to `"default"`)
+- ✅ Updated `LiveCapacityProvider._probe_native` and the module-level `probe_native_capacity`
+  / `probe_native_capacity_by_replica` helpers to accept a `NativeJobStateReader`; when live
+  K8s reads are available they take precedence (`used` = active Job count, plus `cpu_used_milli`/
+  `mem_used_mib` populated on the snapshot). The queue-based path remains the fallback for
+  subprocess deployments and tests
+  - K8s mode collapses all active Jobs of a destination into one bucket keyed by the
+    destination_id (each K8s Job is its own workload; per-replica round-robin is a
+    subprocess-only concept)
+- ✅ Added `tests/test_native_k8s_capacity.py` covering: quantity string parsing (CPU m,
+  plain int, float; memory Mi/Gi/Ki/plain), unavailable-client fallback, listing + resource
+  parsing, destination filtering, terminal-state filtering, annotation-vs-pod-spec fallback,
+  snapshot-from-K8s path, queue fallback, max-of-queue-and-K8s accounting, per-replica K8s
+  bucket aggregation, full `LiveCapacityProvider` integration, backward-compatibility
+  defaults
+- ⚠️ Live in-cluster verification requires a real K8s cluster with `cryo` RBAC; mirror the
+  known gap from Move 3 (Worker ServiceAccount permissions for Jobs). The unit-test layer
+  exercises the parsing/state aggregation in isolation
+- ⚠️ The "5 small jobs vs 1 huge job" admission distinction (research §6.6) still needs a
+  separate `weights`-based admission policy to act on the new `cpu_used_milli` /
+  `mem_used_mib` signals — this Move exposes the data; the admission follow-up is tracked
+  as a Tier-3 follow-up
+
 **Move 7 — Cross-engine compatibility test matrix.** *Effort: ~1 week.* A table written by
 Spark/Trino must round-trip correctly through native Go compaction and read back in the
 others; "reads the spec correctly" does not imply "round-trips through every engine
@@ -180,6 +294,18 @@ correctly." Builds on `native-engine-scoping-research.md` §3.6 and its §8 risk
 [apache/iceberg#12273](https://github.com/apache/iceberg/issues/12273)). **Unblocks:** the
 multi-engine claim surviving contact with mixed-writer fleets — the exact deployment shape
 the target user has.
+
+**Implementation log (2026-07-08):**
+- ✅ Created `tests/integration/native/test_cross_engine_compatibility.py` — the §3.6 compatibility matrix, parameterized over the three COW fixtures (unpartitioned, day-partitioned, identity-partitioned)
+- ✅ Three round-trip scenarios:
+  - `test_pyiceberg_writer_go_compact_trino_and_pyiceberg_read` — PyIceberg(=Spark-style) writes → Go OPTIMIZE → both Trino and PyIceberg read back; row counts + sorted `(id, label)` multisets must match
+  - `test_trino_writer_go_compact_pyiceberg_and_trino_read` — Trino writes (`CREATE TABLE AS SELECT` from a PyIceberg fixture, producing real Trino-committed manifest files) → Go OPTIMIZE → PyIceberg + Trino both read back identically
+  - `test_go_compact_writer_trino_and_pyiceberg_read` — Go's own committed snapshot must be readable by both Trino (`iceberg-rest` connector) and PyIceberg with identical results (the load-bearing case: a Go-only commit would be invisible to other engines)
+- ✅ `test_cross_engine_partition_spec_preserved_by_go_compact` — partition spec equality check across the matrix for both partitioned fixtures, guarding against trino#8284-style spec-evolution bugs
+- ✅ Engine-coverage rationale documented in the module docstring: Spark isn't part of the native integration env (no JVM container in `native-compaction-e2e-go`); PyIceberg stands in as the Spark-style writer/reader proxy because both produce/consume the same spec-compliant Iceberg metadata when committing through the REST catalog. PyIceberg's writes use the same metadata.json + manifest list format Spark does via `iceberg-spark`. The cross-engine *read* compatibility — the actual load-bearing check per §3.6 — is exercised against both Trino and PyIceberg in every scenario.
+- ✅ All skip markers wired: `@requires_rest`, `@requires_engine`, `@requires_go`, `@requires_trino` — tests skip cleanly when the REST catalog, Go binary, or Trino are absent, matching the pattern from `test_native_differential_e2e.py`
+- ✅ Lint-clean (ruff check + format); lint target excludes `tests/integration/native` per Makefile, but ruff was run directly to confirm
+- ⚠️ Tests not yet executed in this session: Python 3.12 / mypy / pytest with full cryo dependency stack are not installed in this environment (Python 3.9 is the system default and `cryo/` uses `StrEnum` which requires 3.11+). The test module imports parse cleanly, ruff passes, and pytest collection succeeds once Python 3.12 is on the path. A live CI run on the `native-compaction-e2e-go` job (which provides REST + Trino + Go engine per the Move 2 wiring) is required to exercise the matrix end-to-end.
 
 **Move 8 — S3-request-cost preflight estimate before large orphan scans.** *Effort: days.*
 Show "this scan will cost approximately $X in S3 requests" before a large orphan scan runs,
@@ -216,6 +342,18 @@ paying for a full optimize — load-bearing because manifest maintenance is enti
 the native fast path (`native-engine-scoping-research.md` §3.1) and upstream won't fix the
 pathological serial-validation case ([apache/iceberg#8932](https://github.com/apache/iceberg/issues/8932)).
 
+**Implementation log (2026-07-08):**
+- ✅ `OperationType.OPTIMIZE_MANIFESTS = "optimize_manifests"` and `Mode.MANIFEST_ONLY = "manifest_only"` defined in `cryo/domain/enums.py`
+- ✅ SQL renderers in `cryo/engines/trino/sql.py` (`ALTER TABLE … EXECUTE optimize_manifests`) and `cryo/engines/spark/sql.py` (`CALL <catalog>.system.rewrite_manifests(table => '<name>')`) — dialects stay separated per AGENTS.md §1
+- ✅ `POST /api/v1/maintenance/manifest-rewrite` in `cryo/api/routes.py::create_manifest_rewrite_run` — pinned to `Mode.MANIFEST_ONLY` regardless of the request body's `mode` field, so the quick action never accidentally triggers data-file compaction
+- ✅ Native engine routing in `cryo/engines/native/routing.py` & `engine.py` (`NATIVE_DISCONNECTED_OPERATIONS`): `OPTIMIZE_MANIFESTS` is forced to the SQL fallback destination because `rewrite_manifests` is not implemented in `iceberg-go` (Phase F opt.1)
+- ✅ UI wiring:
+  - Table detail "Repair (rewrite manifests)" button in `web/src/pages/TableDetailRedesign.tsx::manifestRewrite.mutate`
+  - Bulk-assign bar in `web/src/components/BulkAssignBar.tsx` (disabled for native destinations via `isNativeDestination`)
+  - Catalog TableExplorer "Run: Manifest rewrite" action in `web/src/pages/catalog/TableExplorerSection.tsx`
+- ✅ Plan-level invariant pinned: `Mode.MANIFEST_ONLY` always emits exactly one `OPTIMIZE_MANIFESTS` operation (no expire/orphan/data-compaction side effects) — covered by `tests/test_strategy_moves_9_10_11.py::test_manifest_only_planner_emits_only_manifest_rewrite_operation` and golden SQL for Trino & Spark
+- ✅ Approval workflow: `tests/test_approval_workflows_integration.py` confirms `requires_approval(OperationType.OPTIMIZE_MANIFESTS) is False` — the quick action stays genuinely one-click
+
 **Move 12 — Streaming-table / commit-velocity detection.** *Effort: days.* Compute commits/day
 from snapshot-count deltas between consecutive `table_stats_history` rows — "just a query + a
 flag + a tighter compaction cadence for flagged tables" (Part 2). **Unblocks:** classifying
@@ -241,6 +379,20 @@ manual API call from running ops out of order (Part 2, "small gap"). Out-of-orde
 risks corruption per Iceberg's own maintenance docs (`native-engine-scoping-research.md`
 §3.3). **Unblocks:** closing a real footgun before ad-hoc multi-engine runs become common —
 cheap insurance on the trust story that is risk #1.
+
+**Implementation log (2026-07-08):**
+- ✅ Backend `validate_operation_order` in `cryo/planner/guardrails.py` returns warnings for any
+  operation appearing earlier in execution than an earlier-selected operation of higher
+  canonical rank
+- ✅ API guard: `POST /maintenance/preview` (cryo/api/routes.py:1283) and `POST /maintenance/run`
+  (cryo/api/routes.py:1342) both call `validate_operation_order` on the requested ops and raise
+  `HTTPException(400, detail={"warnings": warnings, "blocking": True})` when out of order
+- ✅ Frontend mirror: `web/src/lib/operationOrder.ts::validateOperationOrder` reproduces the
+  same check in TypeScript so the Presets drawer (web/src/pages/Presets.tsx) shows an `Alert`
+  with the warnings before submit instead of after a server-side 400
+- ✅ Tests: `tests/test_execution_phases.py::test_guardrails_warn_on_out_of_order_ops` (backend)
+  + `web/src/lib/operationOrder.test.ts` (frontend, 6 cases covering canonical / subset /
+  empty / reversed / unknown-op paths)
 
 **Move 16 — Catalog latency monitoring (P50/P99 per catalog operation).** *Effort: days.*
 `cryo/sources/` already wraps REST/HMS/Glue calls; add timing and surface percentiles with a

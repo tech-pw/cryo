@@ -75,6 +75,113 @@ def test_worker_continues_when_engine_skips_unsupported_operation() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+class TestChunkCheckpointing:
+    def test_worker_marks_partial_when_some_chunks_fail_with_checkpointing(
+        self,
+    ) -> None:
+        from cryo.domain.enums import EngineType
+        from cryo.engines.base import ExecCtx, ExecResult
+
+        class PartialFakeEngine:
+            type = EngineType.NATIVE
+
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            def with_source_config(self, config):
+                return self
+
+            def with_table_stats(self, stats):
+                return self
+
+            def render(self, plan):
+                from cryo.engines.base import RenderedStatement
+
+                return [
+                    RenderedStatement(
+                        action=op.type,
+                        sql=f"FAKE {op.type.value}",
+                        engine=EngineType.NATIVE,
+                    )
+                    for op in plan.operations
+                ]
+
+            def session_setup(self):
+                return []
+
+            def execute_plan(self, plan, ctx: ExecCtx | None = None):
+                self.call_count += 1
+                assert ctx is not None
+                assert ctx.chunk_checkpointing is True
+                assert ctx.session_factory is not None
+                return [
+                    ExecResult(ok=True, detail="chunk 0 ok", duration_ms=100),
+                    ExecResult(ok=False, error="chunk 1 failed", duration_ms=50),
+                    ExecResult(ok=True, detail="chunk 2 ok", duration_ms=80),
+                ]
+
+        queue, locks, store = _worker_fixture(
+            chunk_checkpointing=True,
+            engine_impl="go",
+            sql_fallback_destination_id="dest",
+        )
+        engine = PartialFakeEngine()
+
+        result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+        assert result is not None
+        assert result.status is JobStatus.PARTIAL
+        assert "chunk 1 failed" in (result.error or "")
+
+    def test_worker_returns_failed_when_all_chunks_fail_with_checkpointing(
+        self,
+    ) -> None:
+        from cryo.domain.enums import EngineType
+        from cryo.engines.base import ExecCtx, ExecResult
+
+        class AllFailFakeEngine:
+            type = EngineType.NATIVE
+
+            def with_source_config(self, config):
+                return self
+
+            def with_table_stats(self, stats):
+                return self
+
+            def render(self, plan):
+                from cryo.engines.base import RenderedStatement
+
+                return [
+                    RenderedStatement(
+                        action=op.type,
+                        sql=f"FAKE {op.type.value}",
+                        engine=EngineType.NATIVE,
+                    )
+                    for op in plan.operations
+                ]
+
+            def session_setup(self):
+                return []
+
+            def execute_plan(self, plan, ctx: ExecCtx | None = None):
+                return [
+                    ExecResult(ok=False, error="chunk 0 failed", duration_ms=50),
+                    ExecResult(ok=False, error="chunk 1 failed", duration_ms=50),
+                ]
+
+        queue, locks, store = _worker_fixture(
+            chunk_checkpointing=True,
+            engine_impl="go",
+            sql_fallback_destination_id="dest",
+        )
+        engine = AllFailFakeEngine()
+
+        result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+        assert result is not None
+        assert result.status is JobStatus.FAILED
+
+
 def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
@@ -116,11 +223,22 @@ def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     assert result.plan["table_ref"] == "cdp.admin.orphan_files_removal_audit_log"
 
 
-def _worker_fixture() -> tuple[InMemoryMaintenanceQueue, InMemoryLockStore, InMemoryJobStore]:
+def _worker_fixture(
+    chunk_checkpointing: bool = False,
+    engine_impl: str | None = None,
+    sql_fallback_destination_id: str | None = None,
+) -> tuple[InMemoryMaintenanceQueue, InMemoryLockStore, InMemoryJobStore]:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
     store = InMemoryJobStore()
-    store.add_destination(DestinationConfig("dest"))
+    config: dict = {}
+    if chunk_checkpointing:
+        config["chunk_checkpointing"] = True
+    if engine_impl:
+        config["engine_impl"] = engine_impl
+    if sql_fallback_destination_id:
+        config["sql_fallback_destination_id"] = sql_fallback_destination_id
+    store.add_destination(DestinationConfig("dest", config=config))
     store.add_table_data(
         "table-1",
         TableMaintenanceData(

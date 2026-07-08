@@ -231,3 +231,30 @@ export const FirstRunEmptyState = () => (
     }
   />
 );
+
+/**
+ * Move 24 — surfaces that depend on query-log ingestion (e.g. the Query
+ * Performance page, the Layout optimization recommendations) should
+ * never look "broken" when telemetry hasn't been ingested yet. This
+ * banner makes the dependency explicit: silence is the wrong answer,
+ * but so is pretending the page is empty for an unrelated reason.
+ */
+export const TelemetryRequiredNotice = ({
+  surface
+}: {
+  surface: string;
+}) => (
+  <Alert
+    type="info"
+    showIcon
+    style={{ marginBottom: 16 }}
+    message={`${surface} requires query-log ingestion`}
+    description={
+      <span>
+        Connect a Trino or Spark access log via <strong>Connections → Query log ingestion</strong>{" "}
+        to populate this view. See the docs for ingestion setup; this view shows empty until at
+        least one telemetry source is wired in.
+      </span>
+    }
+  />
+);

@@ -27,6 +27,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
 import { ThemeProvider, useTheme } from "./lib/themeContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { NoSourcesBanner } from "./components/NoSourcesBanner";
 import { NotificationProvider } from "./components/NotificationRegion";
 
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
@@ -216,6 +217,7 @@ const Shell = () => {
           </Space>
         </Layout.Header>
         <Layout.Content className="content" id="main-content" tabIndex={-1}>
+          <NoSourcesBanner />
           <Suspense fallback={<PageFallback />}>
             <ErrorBoundary>
             <Routes>
