@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import date, datetime
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
@@ -862,12 +863,21 @@ class SavingsProjectionRead(BaseModel):
     assumptions: JsonDict = Field(default_factory=dict)
 
 
+class OrphanScanCostRead(BaseModel):
+    estimated_list_requests: int
+    estimated_cost_usd: float
+    estimated_files_to_scan: int
+    partition_depth: int
+    warning: str | None = None
+
+
 class TablePreviewRead(BaseModel):
     table_ref: str
     notes: list[str]
     statements: list[RenderedStatementRead]
     savings: SavingsProjectionRead | None = None
     stats_as_of: datetime | None = None
+    orphan_scan_cost: OrphanScanCostRead | None = None
 
 
 class MaintenancePreviewResponse(BaseModel):

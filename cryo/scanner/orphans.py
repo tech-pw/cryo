@@ -11,6 +11,8 @@ from botocore.config import Config
 from cryo.config import Settings
 from cryo.db.models import TableCost
 
+S3_LIST_KEYS_PER_PAGE = 1000
+
 
 @dataclass(frozen=True)
 class OrphanScanResult:
@@ -20,6 +22,60 @@ class OrphanScanResult:
     last_full_cost_scan_at: datetime | None
     skipped_reason: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OrphanScanPreflight:
+    estimated_list_requests: int
+    estimated_cost_usd: float
+    estimated_files_to_scan: int
+    partition_depth: int
+    warning: str | None = None
+
+
+def estimate_orphan_scan_cost(
+    *,
+    total_files: int,
+    partition_depth: int,
+    settings: Settings,
+) -> OrphanScanPreflight:
+    """Move 8: preflight S3 LIST request cost estimate before running an orphan scan.
+
+    S3 LIST is paginated at 1,000 keys per request. Each partition prefix incurs one
+    additional LIST request to enumerate CommonPrefixes. The estimate uses the table's
+    total_file_count from the most recent scan (already collected, no extra S3 calls).
+
+    The orphan scan itself is bounded by cost_scan_max_list_keys, so the estimate is
+    capped accordingly.
+    """
+    capped_files = min(total_files, settings.cost_scan_max_list_keys)
+    list_page_requests = (capped_files + S3_LIST_KEYS_PER_PAGE - 1) // S3_LIST_KEYS_PER_PAGE
+    partition_requests = partition_depth
+    total_requests = list_page_requests + partition_requests
+
+    estimated_cost = (total_requests / 1000.0) * settings.s3_list_usd_per_1k
+
+    warning: str | None = None
+    if total_files > settings.cost_scan_max_list_keys:
+        warning = (
+            f"Table has ~{total_files:,} estimated files; orphan scan is capped at "
+            f"{settings.cost_scan_max_list_keys:,} keys by cost_scan_max_list_keys. "
+            f"Actual S3 request count may be higher for uncovered partitions."
+        )
+    elif estimated_cost > 1.0:
+        warning = (
+            f"Estimated S3 request cost ${estimated_cost:.2f} exceeds $1.00. "
+            f"Consider increasing orphan_retention_days to reduce the scan scope, "
+            f"or run during off-peak hours."
+        )
+
+    return OrphanScanPreflight(
+        estimated_list_requests=total_requests,
+        estimated_cost_usd=round(estimated_cost, 6),
+        estimated_files_to_scan=capped_files,
+        partition_depth=partition_depth,
+        warning=warning,
+    )
 
 
 def should_run_orphan_scan(
