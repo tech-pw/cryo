@@ -151,6 +151,7 @@ interface ActNowSectionProps {
   onRun: () => void;
   runPending: boolean;
   queuedMaintenanceRunId?: string | null;
+  lastRunSkipNotes?: string[];
   onOpenRun: () => void;
   onPreview: () => void;
   onSchedule: (scheduledAtIso: string) => void;
@@ -176,6 +177,7 @@ export const ActNowSection = ({
   onRun,
   runPending,
   queuedMaintenanceRunId,
+  lastRunSkipNotes,
   onOpenRun,
   onPreview,
   onSchedule,
@@ -269,6 +271,16 @@ export const ActNowSection = ({
 
   return (
     <div className="td-act-now-section">
+      {lastRunSkipNotes && lastRunSkipNotes.length > 0 ? (
+        <Card className="td-chart-card td-act-now-skip-banner" classNames={{ body: "td-chart-card-body" }}>
+          <Space align="start" size={8}>
+            <WarningOutlined style={{ color: "var(--warning, #f0a020)" }} />
+            <Typography.Text style={{ fontSize: 12 }}>
+              The last run completed but didn't change this: {lastRunSkipNotes.join(" · ")}
+            </Typography.Text>
+          </Space>
+        </Card>
+      ) : null}
       <div className="td-act-now-header">
         <span className="td-chart-card-title">Act now</span>
         <Tag color="error" style={{ margin: 0 }}>{issues.length}</Tag>

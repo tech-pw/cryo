@@ -92,7 +92,9 @@ import {
   patchTable,
   listTableAlertSubscriptions,
   createTableAlertSubscription,
-  deleteTableAlertSubscription
+  deleteTableAlertSubscription,
+  getRun,
+  getRunJobs
 } from "../api/client";
 import type { AuditEntry, CompactionCandidateRead, UnionScoreRead, ColumnStatsResponse, SilentDataLossReportRead } from "../api/types";
 import { EmptyState, QueryErrorAlert } from "../components/common";
@@ -148,6 +150,14 @@ export const TableDetail = () => {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [queuedScanRunId, setQueuedScanRunId] = useState<string | null>(null);
   const [queuedMaintenanceRunId, setQueuedMaintenanceRunId] = useState<string | null>(null);
+  // Tracks a run to completion independently of queuedMaintenanceRunId (which the "in flight"
+  // banner owns) so we can surface it even after that banner clears. A run can report
+  // status=succeeded while its plan skipped the one operation that would've fixed the
+  // diagnostic that prompted it (e.g. a table just under the preset's min_small_files
+  // threshold) -- silently returning to the same "Act now" card as if nothing happened reads
+  // as a broken product, not a no-op. See cryo/planner/planner.py's "Skipped optimize" notes.
+  const [trackedRunId, setTrackedRunId] = useState<string | null>(null);
+  const [lastRunSkipNotes, setLastRunSkipNotes] = useState<string[]>([]);
   const [protectedLocal, setProtectedLocal] = useState<Array<{ snapshot_id: number; label?: string | null }>>([]);
   const [ownerEmailInput, setOwnerEmailInput] = useState("");
   const [newSubscriberEmail, setNewSubscriberEmail] = useState("");
@@ -155,8 +165,41 @@ export const TableDetail = () => {
   useEffect(() => {
     setQueuedScanRunId(null);
     setQueuedMaintenanceRunId(null);
+    setTrackedRunId(null);
+    setLastRunSkipNotes([]);
     setProtectedLocal([]);
   }, [tableId]);
+
+  const trackedRun = useQuery({
+    queryKey: ["maintenance-run-tracker", trackedRunId, token],
+    queryFn: () => getRun(api, trackedRunId as string),
+    enabled: Boolean(trackedRunId),
+    refetchInterval: (query) => (query.state.data?.finished_at ? false : 2000)
+  });
+
+  useEffect(() => {
+    if (!trackedRunId || !trackedRun.data?.finished_at) return;
+    let cancelled = false;
+    getRunJobs(api, trackedRunId)
+      .then((jobs) => {
+        if (cancelled) return;
+        const notes = jobs.flatMap((job) => {
+          const raw = (job.plan as { notes?: unknown } | null | undefined)?.notes;
+          return Array.isArray(raw) ? raw.filter((note): note is string => typeof note === "string") : [];
+        });
+        setLastRunSkipNotes(notes.filter((note) => note.toLowerCase().startsWith("skipped")));
+      })
+      .catch(() => {
+        // Best-effort: if we can't fetch the job breakdown, just show no skip banner rather
+        // than block on it -- the run's own status is still visible via "Open run".
+      })
+      .finally(() => {
+        if (!cancelled) setTrackedRunId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, trackedRunId, trackedRun.data?.finished_at]);
 
   const table = useQuery({ queryKey: ["table", tableId, token], queryFn: () => getTable(api, tableId) });
 
@@ -323,6 +366,8 @@ export const TableDetail = () => {
   const run = useMutation({
     mutationFn: () => {
       setQueuedMaintenanceRunId(null);
+      setTrackedRunId(null);
+      setLastRunSkipNotes([]);
       const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
       const destinationId = preset?.destination_id;
       if (!preset || !destinationId) {
@@ -339,6 +384,7 @@ export const TableDetail = () => {
     onSuccess: (result) => {
       message.success(`Run queued: ${result.run_id}`);
       setQueuedMaintenanceRunId(result.run_id);
+      setTrackedRunId(result.run_id);
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
@@ -639,6 +685,7 @@ export const TableDetail = () => {
             onRun={() => run.mutate()}
             runPending={run.isPending}
             queuedMaintenanceRunId={queuedMaintenanceRunId}
+            lastRunSkipNotes={lastRunSkipNotes}
             onOpenRun={handleRunAction}
             onPreview={() => setPreviewOpen(true)}
             onSchedule={(scheduledAtIso) => schedule.mutate(scheduledAtIso)}
