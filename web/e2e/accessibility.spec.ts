@@ -25,7 +25,11 @@ const protectedRoutes = [
   { path: "/catalogs", name: "Catalogs" },
   { path: "/scans", name: "Scanner" },
   { path: "/runs", name: "Runs" },
-  { path: "/presets", name: "Presets" }
+  { path: "/presets", name: "Presets" },
+  { path: "/queries", name: "Queries" },
+  { path: "/governance", name: "Governance" },
+  { path: "/ai", name: "Intelligence" },
+  { path: "/cost", name: "Cost" }
 ];
 
 test.describe("WCAG 2.2 AA gate (axe-core)", () => {

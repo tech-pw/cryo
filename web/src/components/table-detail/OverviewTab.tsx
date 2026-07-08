@@ -58,6 +58,7 @@ import { HealthGauge } from "./HealthGauge";
 import { buildDiagnosisVerdict, type DiagnosisVerdict } from "../TableDiagnosisPanel";
 import { chartTooltipProps, cryoColors } from "../../lib/theme";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
+import { formatPartitionColumnLabel } from "./helpers";
 
 interface OverviewTabProps {
   score: number;
@@ -546,7 +547,7 @@ export const OverviewTab = (props: OverviewTabProps) => {
                         Active Partition Column
                       </span>
                       <strong style={{ fontSize: 12, color: "var(--foreground, #1a202c)" }}>
-                        {stats?.partition_col ? formatPartitionColumnLabel(stats.partition_col) : "None"}
+                        {formatPartitionColumnLabel(stats?.partition_col)}
                       </strong>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -864,11 +865,6 @@ export const OverviewTab = (props: OverviewTabProps) => {
       </div>
     </div>
   );
-};
-
-const formatPartitionColumnLabel = (col: string): string => {
-  if (!col || col === "_unpartitioned" || col.toLowerCase() === "unpartitioned") return "Unpartitioned";
-  return col;
 };
 
 interface PartitionChecklistProps {

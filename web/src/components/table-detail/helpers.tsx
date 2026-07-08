@@ -27,6 +27,15 @@ export interface SignalMatrixDetail {
   ideal: string;
 }
 
+export const formatPartitionColumnLabel = (col?: string | null): string => {
+  if (!col) return "Unpartitioned";
+  const normalized = col.trim().toLowerCase();
+  if (normalized === "_unpartitioned" || normalized === "unpartitioned") {
+    return "Unpartitioned";
+  }
+  return col;
+};
+
 export const provenanceLabel = (provenance?: string | null): string => {
   switch (provenance) {
     case "assignment":

@@ -32,6 +32,14 @@ vi.mock("../components/PlanPreview", () => ({
 }));
 
 vi.mock("../api/client", () => ({
+  ApiError: class ApiError extends Error {
+    status?: number;
+
+    constructor(message: string, status?: number) {
+      super(message);
+      this.status = status;
+    }
+  },
   getTable: vi.fn().mockResolvedValue({
     id: "table-1",
     source_id: "source-1",
@@ -85,6 +93,12 @@ vi.mock("../api/client", () => ({
   getTablePartitions: vi.fn().mockResolvedValue([]),
   getTableAudit: vi.fn().mockResolvedValue([]),
   getTableHistory: vi.fn().mockResolvedValue([]),
+  getBloomFilterRecommendations: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_name: "public.events",
+    telemetry_source: "none",
+    recommendations: []
+  }),
   getTableHealthTrends: vi.fn().mockResolvedValue({
     table_id: "table-1",
     table_name: "events",
@@ -209,6 +223,96 @@ vi.mock("../api/client", () => ({
   unassignTables: vi.fn(),
   runMaintenance: vi.fn(),
   runManifestRewrite: vi.fn(),
+  getTableRoiBreakdown: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    decision: {
+      action: "run",
+      reason: "benefit exceeds threshold",
+      bcr: 2.1,
+      threshold: 1.2,
+      shadow: false,
+      benefit_usd_month: 4.2,
+      cost_usd_month: 2
+    },
+    monthly_benefit_usd: 4.2,
+    monthly_cost_usd: 2,
+    details: { io_savings_usd_month: 2.2, cpu_savings_usd_month: 2.0 }
+  }),
+  getSlaStatusDashboard: vi.fn().mockResolvedValue({
+    generated_at: "2026-07-01T00:00:00Z",
+    days: 7,
+    total_tables: 1,
+    healthy_tables: 1,
+    warning_tables: 0,
+    critical_tables: 0,
+    buckets: []
+  }),
+  getQueryPerformanceDashboard: vi.fn().mockResolvedValue({
+    summary: {
+      telemetry_ready: false,
+      total_queries: 0,
+      p50_latency_ms: 0,
+      p95_latency_ms: 0,
+      p99_latency_ms: 0,
+      avg_scanned_gb: 0,
+      estimated_scan_cost_usd: 0
+    },
+    latency_trend: [],
+    top_queries: []
+  }),
+  getCompactionCandidates: vi.fn().mockResolvedValue({
+    generated_at: "2026-07-01T00:00:00Z",
+    table_id: "table-1",
+    table_name: "events",
+    candidates: []
+  }),
+  getUnionable: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    table_name: "events",
+    peers: [],
+    generated_at: "2026-07-01T00:00:00Z"
+  }),
+  getColumnStats: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    columns: {}
+  }),
+  getSilentDataLoss: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    snapshot_id: null,
+    orphan_data_files: [],
+    orphan_size_bytes: 0,
+    missing_files: [],
+    detected_at: "2026-07-01T00:00:00Z",
+    root_cause: "none",
+    is_clean: true
+  }),
+  repairSilentDataLoss: vi.fn().mockResolvedValue({
+    status: "accepted",
+    message: "queued"
+  }),
+  patchTable: vi.fn().mockResolvedValue({
+    id: "table-1",
+    source_id: "source-1",
+    schema_name: "public",
+    table_name: "events",
+    first_seen_at: "2026-07-01T00:00:00Z",
+    is_active: true
+  }),
+  listTableAlertSubscriptions: vi.fn().mockResolvedValue([]),
+  createTableAlertSubscription: vi.fn().mockResolvedValue({
+    id: "sub-1",
+    table_id: "table-1",
+    email: "alerts@example.com"
+  }),
+  deleteTableAlertSubscription: vi.fn().mockResolvedValue(undefined),
+  getRun: vi.fn().mockResolvedValue({
+    id: "run-1",
+    kind: "maintenance",
+    status: "queued",
+    created_at: "2026-07-01T00:00:00Z",
+    trigger: "web"
+  }),
+  getRunJobs: vi.fn().mockResolvedValue([]),
   protectSnapshot: vi.fn(),
   triggerScan: vi.fn()
 }));
@@ -345,12 +449,8 @@ describe("TableDetail page", () => {
 
     expect(await screen.findByText("public.events")).toBeInTheDocument();
 
-    // Verify red badge counter is rendered on the Health & Diagnosis tab label
-    const tabBadge = await screen.findByText("Health & Diagnosis");
-    expect(tabBadge).toBeInTheDocument();
-
-    // Click on Health & Diagnosis tab to view the Act Now section
-    fireEvent.click(tabBadge);
+    // Overview is the default tab and now contains the consolidated Act Now + diagnostics content.
+    expect(await screen.findByText("Overview")).toBeInTheDocument();
 
     // The Act Now card is the single deduplicated rendering of this signal -- it used to also
     // render a second time in a separate "Detected Health Issues" panel; that duplication was
@@ -371,11 +471,6 @@ describe("TableDetail page", () => {
 
     expect(await screen.findByText("public.events")).toBeInTheDocument();
 
-    const tabBadge = await screen.findByText("Health & Diagnosis");
-    fireEvent.click(tabBadge);
-
-    // Partition Columns Analyzer lives inside the collapsed-by-default Diagnostics section --
-    // most operators don't need it on every visit, so it has to be expanded first.
     fireEvent.click(await screen.findByText("Diagnostics"));
 
     // Verify Partition Columns Analyzer card headers and descriptions

@@ -89,7 +89,7 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
           }
         />
       ) : null}
-      <div className="console-summary">
+      <div className="console-summary" role="status" aria-live="polite" aria-atomic="true">
         <Typography.Text strong>{runData?.kind ?? "Run"}</Typography.Text>
         <StatusTag status={runData?.status} />
         <Typography.Text type="secondary">Created {formatTime(runData?.created_at)}</Typography.Text>

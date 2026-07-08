@@ -10,10 +10,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty && tsc --noEmit -p tsconfig.node.json --pretty",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "check:styles-budget": "node scripts/check-styles-budget.mjs",
     "gen:api": "openapi-typescript http://localhost:8000/openapi.json -o src/api/openapi.d.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.0.0",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "@tanstack/react-query": "^5.0.0",
     "antd": "^6.0.0",
     "openapi-fetch": "^0.15.0",

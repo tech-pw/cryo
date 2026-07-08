@@ -25,6 +25,7 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   CodeOutlined,
+  DatabaseOutlined,
   ExperimentOutlined,
   FilterOutlined,
   PlayCircleOutlined,
@@ -41,6 +42,7 @@ import {
   createClusteringPlan,
   dismissSmartLayoutRecommendation,
   executeSmartLayoutRecommendation,
+  getBloomFilterRecommendations,
   getLayoutRecommendation,
   getPartitionEvolutionRecommendation,
   getTableQueryPatterns,
@@ -387,6 +389,15 @@ const LayoutOptimization = () => {
                 </span>
               ),
               children: <QueryPatternsTab api={api} tables={tables.data?.items ?? []} />
+            },
+            {
+              key: "bloom",
+              label: (
+                <span>
+                  <DatabaseOutlined /> Bloom Filters
+                </span>
+              ),
+              children: <BloomFiltersTab api={api} tables={tables.data?.items ?? []} />
             }
           ]}
         />
@@ -491,6 +502,76 @@ const QueryPatternsTab = ({
           />
         </>
       )}
+    </Space>
+  );
+};
+
+const BloomFiltersTab = ({
+  api,
+  tables
+}: {
+  api: import("../api/client").ApiOptions;
+  tables: TableRead[];
+}) => {
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const bloom = useQuery({
+    queryKey: ["bloom-filter-recommendations", selectedTableId],
+    queryFn: () => getBloomFilterRecommendations(api, selectedTableId as string),
+    enabled: Boolean(selectedTableId)
+  });
+
+  return (
+    <Space orientation="vertical" style={{ width: "100%" }}>
+      <Select
+        showSearch
+        placeholder="Select a table for bloom recommendations"
+        style={{ width: 400 }}
+        filterOption={(input, option) =>
+          (option?.label?.toString() ?? "").toLowerCase().includes(input.toLowerCase())
+        }
+        options={tables.map((t) => ({
+          label: qualifiedTableName(t),
+          value: t.id
+        }))}
+        onChange={(value) => setSelectedTableId(value)}
+      />
+      {bloom.data ? (
+        bloom.data.recommendations.length === 0 ? (
+          <Alert
+            type="info"
+            showIcon
+            title="No bloom filter recommendations yet"
+            description={bloom.data.message ?? "Ingest query telemetry to generate suggestions."}
+          />
+        ) : (
+          <Table
+            size="small"
+            rowKey="column"
+            pagination={false}
+            dataSource={bloom.data.recommendations}
+            columns={[
+              { title: "Column", dataIndex: "column", key: "column" },
+              { title: "Cardinality", dataIndex: "cardinality", key: "cardinality", width: 120 },
+              {
+                title: "Estimated skip",
+                dataIndex: "estimated_skip_rate",
+                key: "estimated_skip_rate",
+                width: 120,
+                align: "right" as const,
+                render: (value: number) => `${(value * 100).toFixed(0)}%`
+              },
+              {
+                title: "Equality filters",
+                dataIndex: "equality_filter_count",
+                key: "equality_filter_count",
+                width: 140,
+                align: "right" as const
+              },
+              { title: "Reason", dataIndex: "reason", key: "reason" }
+            ]}
+          />
+        )
+      ) : null}
     </Space>
   );
 };

@@ -74,13 +74,17 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
       {queueError ? <Alert type="error" showIcon title="Queue error" description={queueError} /> : null}
       {lastError ? <Alert type="warning" showIcon title="Latest table error" description={lastError} /> : null}
 
-      <div className="console-summary">
+      <div className="console-summary" role="status" aria-live="polite" aria-atomic="true">
         <Typography.Text strong>{summary?.target_label?.toString() ?? "Scan run"}</Typography.Text>
         <StatusTag status={runData?.status} />
         <Typography.Text type="secondary">Created {formatTime(runData?.created_at)}</Typography.Text>
       </div>
 
-      <Progress percent={percent} status={runData?.status === "failed" ? "exception" : "active"} />
+      <Progress
+        percent={percent}
+        status={runData?.status === "failed" ? "exception" : "active"}
+        aria-label={`Scan progress ${percent}%`}
+      />
       <StatStrip
         items={[
           { label: "Discovered", value: formatNumber(numberValue(summary, "discovered")) },

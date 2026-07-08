@@ -17,7 +17,7 @@ import {
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getQueryPerformanceDashboard, type QueryPerformanceData } from "../api/client";
-import { StatStrip } from "../components/common";
+import { StatStrip, TelemetryRequiredNotice } from "../components/common";
 import { OverviewPage } from "../components/layout/OverviewPage";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatDuration } from "../lib/format";
@@ -167,6 +167,9 @@ export const QueryPerformance = () => {
         />
       }
     >
+      {!isLoading && !error && (data?.total ?? 0) === 0 ? (
+        <TelemetryRequiredNotice surface="Query performance" />
+      ) : null}
       <Card title="Top slowest queries" extra={<DatabaseOutlined />}>
         <Table
           columns={columns}

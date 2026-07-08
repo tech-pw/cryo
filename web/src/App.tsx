@@ -32,11 +32,9 @@ import { NotificationProvider } from "./components/NotificationRegion";
 
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
 const Skillsets = lazy(() => import("./pages/Skillsets").then((m) => ({ default: m.Skillsets })));
+const JobDetail = lazy(() => import("./pages/JobDetail").then((m) => ({ default: m.JobDetail })));
 const CostAttribution = lazy(() =>
   import("./pages/CostAttribution").then((m) => ({ default: m.CostAttribution }))
-);
-const CostInsights = lazy(() =>
-  import("./pages/CostInsights").then((m) => ({ default: m.CostInsights }))
 );
 const Cost = lazy(() => import("./pages/Cost").then((m) => ({ default: m.Cost })));
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
@@ -80,6 +78,7 @@ const queryClient = new QueryClient({
 // re-introduction, but no entry point exists in the navigation.
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
+  { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/catalogs", icon: <AppstoreOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
@@ -110,7 +109,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Inventory",
-    children: [navByKey["/catalogs"], navByKey["/scans"]]
+    children: [navByKey["/tables"], navByKey["/catalogs"], navByKey["/scans"]]
   },
   {
     type: "group",
@@ -125,13 +124,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Insights",
-    children: [
-      navByKey["/ai"],
-      navByKey["/governance"],
-      navByKey["/queries"],
-      navByKey["/cost"],
-      navByKey["/cost-insights"]
-    ]
+    children: [navByKey["/ai"], navByKey["/governance"], navByKey["/queries"], navByKey["/cost"]]
   },
   {
     type: "group",
@@ -154,6 +147,14 @@ const ThemeToggle = () => {
       />
     </Tooltip>
   );
+};
+
+const SkillsetsRoute = () => {
+  const { role } = useAuth();
+  if (role !== "admin") {
+    return <Navigate to="/health" replace />;
+  }
+  return <Skillsets />;
 };
 
 const Shell = () => {
@@ -241,10 +242,7 @@ const Shell = () => {
               <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
               <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
               <Route path="/attribution" element={<CostAttribution />} />
-              <Route
-                path="/tables"
-                element={<Navigate to="/catalogs" replace />}
-              />
+              <Route path="/tables" element={<Catalog />} />
               <Route path="/tables/:tableId" element={<TableDetail />} />
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:runId" element={<Scans />} />
@@ -257,10 +255,9 @@ const Shell = () => {
               <Route path="/presets" element={<Presets />} />
               <Route path="/runs" element={<Runs />} />
               <Route path="/runs/:runId" element={<Runs />} />
-              <Route path="/jobs/:jobId" element={<Navigate to="/runs/:jobId" replace />} />
+              <Route path="/jobs/:jobId" element={<JobDetail />} />
               <Route path="/connections" element={<Connections />} />
-              <Route path="/skillsets" element={<Skillsets />} />
-              <Route path="/cost-insights" element={<CostInsights />} />
+              <Route path="/skillsets" element={<SkillsetsRoute />} />
             </Routes>
             </ErrorBoundary>
           </Suspense>

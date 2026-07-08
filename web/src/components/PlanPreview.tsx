@@ -2,8 +2,8 @@ import { CopyOutlined, SafetyOutlined } from "@ant-design/icons";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Descriptions, Drawer, Empty, Segmented, Select, Space, Tabs, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { previewMaintenance } from "../api/client";
-import type { JsonObject, Mode, SavingsProjectionRead, TableRead } from "../api/types";
+import { previewMaintenance, verifyPlan } from "../api/client";
+import type { JsonObject, MaintenancePlan, Mode, SavingsProjectionRead, TablePreviewRead, TableRead } from "../api/types";
 import { CostPrecisionBadge } from "./CostPrecisionBadge";
 import { StatStrip } from "./common";
 import { SavingsByOperation } from "./SavingsByOperation";
@@ -58,6 +58,22 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
       })
   });
 
+  const planVerifier = useMutation({
+    mutationFn: (item: TablePreviewRead) =>
+      verifyPlan(api, {
+        plan: {
+          table_ref: item.table_ref,
+          mode,
+          operations: item.statements.map((statement) => ({
+            type: statement.action as MaintenancePlan["operations"][number]["type"],
+            params: (statement.payload ?? {}) as Record<string, unknown>,
+            predicates: null
+          })),
+          notes: item.notes
+        }
+      })
+  });
+
   const estimate = useMemo(() => {
     const statements = preview.data?.items.flatMap((item) => item.statements) ?? [];
     const savingsItems = preview.data?.items.map((item) => item.savings).filter(Boolean) ?? [];
@@ -81,6 +97,11 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   useEffect(() => {
     if (open && requestTables.length) preview.mutate();
   }, [open, engineVirtual, mode, requestTables.length]);
+
+  useEffect(() => {
+    if (!open || !preview.data?.items.length) return;
+    planVerifier.mutate(preview.data.items[0]);
+  }, [open, preview.data?.items, mode]);
 
   return (
     <Drawer
@@ -132,6 +153,27 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
               { label: "Reclaimable", value: formatBytesGb(estimate.totalReclaimable) }
             ]}
           />
+          {planVerifier.data ? (
+            <Descriptions size="small" bordered column={2}>
+              <Descriptions.Item label="Plan verifier">
+                {planVerifier.data.verified ? "Verified" : "Violations detected"}
+              </Descriptions.Item>
+              <Descriptions.Item label="Version">{planVerifier.data.verifier_version}</Descriptions.Item>
+              <Descriptions.Item label="Invariants checked">
+                {planVerifier.data.invariants_checked.length}
+              </Descriptions.Item>
+              <Descriptions.Item label="Violations">
+                {planVerifier.data.violations.length}
+              </Descriptions.Item>
+            </Descriptions>
+          ) : null}
+          {planVerifier.data?.violations.length ? (
+            <Typography.Paragraph type="warning">
+              {planVerifier.data.violations
+                .map((violation) => `${violation.severity.toUpperCase()}: ${violation.message}`)
+                .join(" · ")}
+            </Typography.Paragraph>
+          ) : null}
           <Tabs
             items={(preview.data?.items ?? []).map((item, tableIndex) => ({
               key: item.table_ref ?? `table-${tableIndex}`,
