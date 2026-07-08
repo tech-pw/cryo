@@ -103,6 +103,92 @@ def test_discover_buckets_ignores_tables_with_no_location(session) -> None:
     assert configs == []
 
 
+def test_discover_buckets_falls_back_to_live_catalog_enumeration(
+    session, monkeypatch
+) -> None:
+    """§4.1 fallback: when Table.location is empty (source added post-migration, no scan
+    yet), enumerate live tables from the Iceberg catalog and infer the bucket from each
+    table's location. The user shouldn't have to run a scan just to see "what buckets
+    are reachable from this lakehouse." A source with no scanned tables but reachable
+    Iceberg catalogs should still surface buckets.
+    """
+    source = _seed_source(session)
+    # No _seed_table calls -- the table rows are empty so the DB-only path finds nothing.
+
+    class _FakeTable:
+        def __init__(self, location: str) -> None:
+            self.location = location
+
+    class _FakeCatalog:
+        def list_tables(self) -> list[tuple[str, str]]:
+            return [("db1", "t1"), ("db1", "t2"), ("db2", "t3")]
+
+        def load_table(self, schema_name: str, table_name: str) -> _FakeTable:
+            # db1 -> bucket-a, db2 -> bucket-b
+            bucket = "lake-bucket-a" if schema_name == "db1" else "lake-bucket-b"
+            return _FakeTable(f"s3://{bucket}/{schema_name}/{table_name}")
+
+    monkeypatch.setattr(
+        "cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog()
+    )
+
+    configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
+
+    buckets = sorted(c.bucket for c in configs)
+    assert buckets == ["lake-bucket-a", "lake-bucket-b"]
+    # All configs start in the default "unknown" logging status until a §4.2 check runs.
+    assert all(c.logging_status == "unknown" for c in configs)
+
+
+def test_discover_buckets_fallback_swallows_catalog_errors(session, monkeypatch) -> None:
+    """Catalog unreachable / auth-denied / etc. must not raise -- the panel's empty-state
+    copy is the user-facing signal. The doc's §2 non-goal explicitly says "do not error"
+    on this fallback path.
+    """
+    source = _seed_source(session)
+
+    def _boom(_src):
+        raise RuntimeError("catalog unreachable")
+
+    monkeypatch.setattr("cryo.sources.factory.source_catalog_for", _boom)
+
+    configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
+
+    assert configs == []
+
+
+def test_discover_buckets_fallback_skips_per_table_errors(session, monkeypatch) -> None:
+    """One bad table in the catalog should not block discovery for the rest of the source.
+    """
+    source = _seed_source(session)
+
+    class _BrokenTable:
+        @property
+        def location(self):
+            raise RuntimeError("this table is broken")
+
+    class _FineTable:
+        def __init__(self, location: str) -> None:
+            self.location = location
+
+    class _FakeCatalog:
+        def list_tables(self) -> list[tuple[str, str]]:
+            return [("db1", "broken"), ("db1", "fine")]
+
+        def load_table(self, schema_name: str, table_name: str):
+            if table_name == "broken":
+                return _BrokenTable()
+            return _FineTable("s3://good-bucket/t1")
+
+    monkeypatch.setattr(
+        "cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog()
+    )
+
+    configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
+
+    assert sorted(c.bucket for c in configs) == ["good-bucket"]
+
+
 # ---------------------------------------------------------------------------
 # §4.2 / §4.4 logging-status check + manual probe
 # ---------------------------------------------------------------------------
