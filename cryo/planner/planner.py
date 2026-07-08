@@ -61,7 +61,11 @@ def build_plan(
         operations.append(Operation(OperationType.REMOVE_ORPHAN_FILES, _orphan_params(params)))
 
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
-        operations.extend(_optimize_operations(stats, partitions, params, notes))
+        optimize_ops = _optimize_operations(stats, partitions, params, notes)
+        convert_op = _convert_deletes_operation(stats, params, optimize_ops, notes)
+        if convert_op is not None:
+            operations.append(convert_op)
+        operations.extend(optimize_ops)
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
@@ -209,6 +213,37 @@ def _optimize_operation(
     predicates: tuple[PartitionPredicate, ...] | None = None,
 ) -> Operation:
     return Operation(OperationType.OPTIMIZE, dict(params), predicates)
+
+
+def _convert_deletes_operation(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+    optimize_ops: Sequence[Operation],
+    notes: list[str],
+) -> Operation | None:
+    enabled = bool(params.get("enable_convert_deletes", True))
+    if not enabled:
+        return None
+    delete_files = int(stats.get("total_delete_files") or 0)
+    if delete_files <= 0:
+        return None
+    delete_pct = float(stats.get("delete_file_pct") or 0.0)
+    threshold = float(params.get("convert_deletes_threshold_pct", 5.0))
+    if delete_pct < threshold:
+        return None
+    if optimize_ops and not bool(params.get("force_convert_deletes", False)):
+        notes.append(
+            "Skipped convert_deletes: planned optimize already rewrites data files for this table."
+        )
+        return None
+    convert_params = {
+        "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
+        "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
+    }
+    notes.append(
+        f"Planned convert_deletes: delete_file_pct {delete_pct:.2f}% >= threshold {threshold:.2f}%."
+    )
+    return Operation(OperationType.CONVERT_DELETES, convert_params)
 
 
 def _expire_params(

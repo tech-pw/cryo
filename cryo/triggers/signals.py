@@ -232,6 +232,36 @@ class CostAnomalySignal:
         )
 
 
+@dataclass
+class AnomalySignal:
+    high_severity_threshold: int = 1
+    medium_severity_threshold: int = 3
+
+    def evaluate(self, session: Session, table_id: uuid.UUID) -> SignalResult:
+        from cryo.ml.anomaly_detector import detect_table_anomalies
+
+        alerts = detect_table_anomalies(session, table_id)
+        critical = [a for a in alerts if str(a.severity).lower() == "high"]
+        warning = [a for a in alerts if str(a.severity).lower() in {"medium", "low"}]
+        triggered = bool(critical) or len(warning) >= self.medium_severity_threshold
+        if critical:
+            reason = critical[0].reason
+            severity = "critical"
+            metric = float(len(critical))
+        else:
+            reason = f"{len(warning)} warning-level anomalies"
+            severity = "warning" if triggered else "info"
+            metric = float(len(warning))
+        return SignalResult(
+            triggered=triggered,
+            signal_name="anomaly",
+            reason=reason,
+            severity=severity,
+            metric_value=metric,
+            threshold=float(self.high_severity_threshold),
+        )
+
+
 def check_all_signals(
     session: Session,
     table_id: uuid.UUID,
@@ -260,6 +290,10 @@ def check_all_signals(
         ),
         CostAnomalySignal(
             min_savings_usd=config.get("cost_anomaly_min_savings_usd", 50.0),
+        ),
+        AnomalySignal(
+            high_severity_threshold=config.get("anomaly_high_severity_threshold", 1),
+            medium_severity_threshold=config.get("anomaly_medium_severity_threshold", 3),
         ),
     ]
 

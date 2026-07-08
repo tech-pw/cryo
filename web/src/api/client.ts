@@ -808,6 +808,78 @@ export interface LayoutRecommendationRead {
   updated_at: string;
 }
 
+export interface SmartMaintenanceOverviewRead {
+  generated_at: string;
+  tables_with_stats: number;
+  tiers: {
+    hot: number;
+    warm: number;
+    cold: number;
+    dormant: number;
+    unknown: number;
+  };
+  roi_shadow_decisions_30d: number;
+  roi_enforced: boolean;
+  pending_layout_recommendations: number;
+}
+
+export interface DetectionTierRowRead {
+  table_id: UUID;
+  table_name: string;
+  schema_name: string;
+  tier: string;
+  score?: number | null;
+  commits_24h: number;
+  commits_7d: number;
+  delete_file_pct?: number | null;
+  query_count_30d: number;
+}
+
+export interface DetectionTierResponseRead {
+  items: DetectionTierRowRead[];
+}
+
+export interface RoiBreakdownRead {
+  table_id: UUID;
+  decision: {
+    action: string;
+    reason: string;
+    bcr: number;
+    threshold: number;
+    shadow: boolean;
+    benefit_usd_month: number;
+    cost_usd_month: number;
+    ts?: string | null;
+  };
+  monthly_benefit_usd: number;
+  monthly_cost_usd: number;
+  details: Record<string, number>;
+}
+
+export interface WorkloadForecastRead {
+  table_id: UUID;
+  generated_at: string;
+  horizon_hours: number;
+  expected_total_queries: number;
+  points: Array<{ hour_start: string; expected_queries: number }>;
+}
+
+export interface SmartLayoutRecommendationRead {
+  id: UUID;
+  table_id: UUID;
+  table_ref: string;
+  recommended_strategy: string;
+  recommended_columns: string[];
+  status: string;
+  confidence: number;
+  estimated_prune_improvement?: number | null;
+  observed_prune_improvement?: number | null;
+  approved_at?: string | null;
+  dismissed_at?: string | null;
+  applied_at?: string | null;
+  applied_run_id?: UUID | null;
+}
+
 export interface ClusteringPlanRequest {
   strategy?: string;
   columns?: string[] | null;
@@ -877,6 +949,66 @@ export const updateRecommendationStatus = (api: ApiOptions, recId: UUID, status:
     method: "PATCH",
     query: { status }
   });
+
+export const getSmartMaintenanceOverview = (api: ApiOptions) =>
+  apiFetch<SmartMaintenanceOverviewRead>("/smart-maintenance/overview", api);
+
+export const getDetectionTiers = (api: ApiOptions, limit?: number) =>
+  apiFetch<DetectionTierResponseRead>("/smart-maintenance/detection-tiers", api, {
+    query: { limit }
+  });
+
+export const getTableRoiBreakdown = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<RoiBreakdownRead>(`/smart-maintenance/tables/${tableId}/roi`, api);
+
+export const getTableWorkloadForecast = (
+  api: ApiOptions,
+  tableId: UUID,
+  horizonHours?: number
+) =>
+  apiFetch<WorkloadForecastRead>(`/smart-maintenance/tables/${tableId}/workload-forecast`, api, {
+    query: { horizon_hours: horizonHours }
+  });
+
+export const listSmartLayoutRecommendations = (api: ApiOptions, status?: string) =>
+  apiFetch<{ items: SmartLayoutRecommendationRead[] }>(
+    "/smart-maintenance/layout-recommendations",
+    api,
+    { query: { status } }
+  );
+
+export const approveSmartLayoutRecommendation = (
+  api: ApiOptions,
+  recId: UUID,
+  note?: string
+) =>
+  apiFetch<SmartLayoutRecommendationRead>(
+    `/smart-maintenance/layout-recommendations/${recId}/approve`,
+    api,
+    { method: "POST", body: { note } }
+  );
+
+export const dismissSmartLayoutRecommendation = (
+  api: ApiOptions,
+  recId: UUID,
+  reason: string
+) =>
+  apiFetch<SmartLayoutRecommendationRead>(
+    `/smart-maintenance/layout-recommendations/${recId}/dismiss`,
+    api,
+    { method: "POST", body: { reason } }
+  );
+
+export const executeSmartLayoutRecommendation = (
+  api: ApiOptions,
+  recId: UUID,
+  mode: "light" | "standard" | "deep" = "standard"
+) =>
+  apiFetch<MaintenanceRunResponse>(
+    `/smart-maintenance/layout-recommendations/${recId}/execute`,
+    api,
+    { method: "POST", body: { mode } }
+  );
 
 export const ingestQueryTelemetry = (
   api: ApiOptions,

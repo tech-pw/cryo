@@ -8,6 +8,7 @@ from cryo.domain.predicates import LEAF_OPERATORS, SUPPORTED_FIELDS
 CORRECT_ORDER: tuple[OperationType, ...] = (
     OperationType.EXPIRE_SNAPSHOTS,
     OperationType.REMOVE_ORPHAN_FILES,
+    OperationType.CONVERT_DELETES,
     OperationType.OPTIMIZE,
     OperationType.OPTIMIZE_MANIFESTS,
 )
@@ -26,7 +27,7 @@ def validate_operation_order(operations: Sequence[OperationType | str]) -> list[
         if index < last_index:
             warnings.append(
                 f"Operation {operation.value} should run after earlier maintenance steps; "
-                "recommended order is expire → orphan → optimize → manifests."
+                "recommended order is expire → orphan → convert_deletes → optimize → manifests."
             )
         last_index = max(last_index, index)
     return warnings

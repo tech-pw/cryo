@@ -543,7 +543,12 @@ class TableStatsRead(OrmModel):
     avg_file_size_mb: float | None = None
     total_snapshots: int | None = None
     total_delete_files: int | None = None
+    equality_delete_files: int | None = None
+    position_delete_files: int | None = None
     delete_file_pct: float | None = None
+    detection_tier: str | None = None
+    snapshot_watermark: int | None = None
+    last_full_reconcile_at: datetime | None = None
     manifest_count: int | None = None
     partition_col: str | None = None
     partition_col_type: str | None = None

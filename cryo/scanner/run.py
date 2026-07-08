@@ -28,6 +28,7 @@ from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
 from cryo.scanner.persistence import (
     already_scanned_today,
+    needs_weekly_reconcile,
     persist_table_analysis,
     record_table_scan_outcome,
     stats_history_for_signals,
@@ -244,7 +245,11 @@ def _run_scan_serial(
             schema_name=candidate.schema_name,
             table_name=candidate.table_name,
         )
-        if not full_scan and already_scanned_today(session, table_id=table_row.id, now=scan_at):
+        if (
+            not full_scan
+            and already_scanned_today(session, table_id=table_row.id, now=scan_at)
+            and not needs_weekly_reconcile(session, table_id=table_row.id, now=scan_at)
+        ):
             skipped += 1
             _emit_progress(
                 progress_callback,
@@ -372,8 +377,10 @@ def _run_scan_parallel(
                 schema_name=candidate.schema_name,
                 table_name=candidate.table_name,
             )
-            if not full_scan and already_scanned_today(
-                table_session, table_id=table_row.id, now=scan_at
+            if (
+                not full_scan
+                and already_scanned_today(table_session, table_id=table_row.id, now=scan_at)
+                and not needs_weekly_reconcile(table_session, table_id=table_row.id, now=scan_at)
             ):
                 return ("skipped", None)
 

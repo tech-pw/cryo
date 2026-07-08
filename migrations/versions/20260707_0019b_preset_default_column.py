@@ -18,7 +18,6 @@ and 20260707_0020 so the existing migration's assumption becomes true by the tim
 """
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
 
 revision = "20260707_0019b_preset_default"
@@ -28,12 +27,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "presets",
-        sa.Column("is_default", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        schema="cryo",
+    # Idempotent: 20260706_0011_default_native_preset.py already adds this column,
+    # so on a clean-DB linear upgrade the column exists by the time we get here.
+    # Kept as a no-op-when-present ADD COLUMN so environments that reached this
+    # revision before 20260706_0011 landed (or via the other head) still converge.
+    op.execute(
+        "ALTER TABLE cryo.presets "
+        "ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false"
     )
 
 
 def downgrade() -> None:
-    op.drop_column("presets", "is_default", schema="cryo")
+    op.execute("ALTER TABLE cryo.presets DROP COLUMN IF EXISTS is_default")

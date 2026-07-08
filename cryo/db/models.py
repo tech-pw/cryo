@@ -287,7 +287,12 @@ class TableStats(Base):
     avg_file_size_mb: Mapped[float | None] = mapped_column(Float)
     total_snapshots: Mapped[int | None] = mapped_column(Integer)
     total_delete_files: Mapped[int | None] = mapped_column(Integer)
+    equality_delete_files: Mapped[int | None] = mapped_column(Integer)
+    position_delete_files: Mapped[int | None] = mapped_column(Integer)
     delete_file_pct: Mapped[float | None] = mapped_column(Float)
+    detection_tier: Mapped[str | None] = mapped_column(Text)
+    snapshot_watermark: Mapped[int | None] = mapped_column(BigInteger)
+    last_full_reconcile_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     manifest_count: Mapped[int | None] = mapped_column(Integer)
     partition_col: Mapped[str | None] = mapped_column(Text)
     partition_col_type: Mapped[str | None] = mapped_column(Text)
@@ -909,7 +914,17 @@ class LayoutRecommendation(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'pending'")
     )  # pending, applied, rejected
+    approval_note: Mapped[str | None] = mapped_column(Text)
+    approved_by: Mapped[str | None] = mapped_column(Text)
+    approved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    dismissed_by: Mapped[str | None] = mapped_column(Text)
+    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    dismissed_reason: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    applied_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
+    baseline_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    post_apply_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    observed_prune_improvement: Mapped[float | None] = mapped_column(Float)
     detail: Mapped[JsonDict | None] = mapped_column(JSONB)  # Additional analysis details
     bloom_filter_columns: Mapped[JsonList | None] = mapped_column(
         JSONB

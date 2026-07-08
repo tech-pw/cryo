@@ -36,8 +36,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth";
 import { qualifiedTableName } from "../lib/tableLabels";
 import {
+  approveSmartLayoutRecommendation,
   ClusteringPlanResponse,
   createClusteringPlan,
+  dismissSmartLayoutRecommendation,
+  executeSmartLayoutRecommendation,
   getLayoutRecommendation,
   getPartitionEvolutionRecommendation,
   getTableQueryPatterns,
@@ -99,6 +102,35 @@ const LayoutOptimization = () => {
     }
   });
 
+  const approveMutation = useMutation({
+    mutationFn: (recId: string) => approveSmartLayoutRecommendation(api, recId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["layout-recommendations"] });
+      void queryClient.invalidateQueries({ queryKey: ["smart-maintenance-layout-recommendations"] });
+    },
+    onError: (e) => message.error((e as Error).message)
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: (recId: string) =>
+      dismissSmartLayoutRecommendation(api, recId, "dismissed_from_layout_optimization"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["layout-recommendations"] });
+      void queryClient.invalidateQueries({ queryKey: ["smart-maintenance-layout-recommendations"] });
+    },
+    onError: (e) => message.error((e as Error).message)
+  });
+
+  const executeMutation = useMutation({
+    mutationFn: (recId: string) => executeSmartLayoutRecommendation(api, recId, "standard"),
+    onSuccess: (result) => {
+      message.success("Maintenance run queued");
+      void queryClient.invalidateQueries({ queryKey: ["layout-recommendations"] });
+      window.location.href = `/runs/${result.run_id}`;
+    },
+    onError: (e) => message.error((e as Error).message)
+  });
+
   const strategyColors: Record<string, string> = {
     sort: "blue",
     zorder: "purple",
@@ -108,6 +140,7 @@ const LayoutOptimization = () => {
 
   const statusColors: Record<string, string> = {
     pending: "orange",
+    approved: "blue",
     applied: "green",
     rejected: "red",
     scheduled: "blue"
@@ -203,16 +236,35 @@ const LayoutOptimization = () => {
                 size="small"
                 type="primary"
                 icon={<CheckCircleOutlined />}
-                onClick={() => updateStatusMutation.mutate({ recId: row.id, status: "applied" })}
+                onClick={() => approveMutation.mutate(row.id)}
               >
-                Applied
+                Approve
               </Button>
               <Button
                 size="small"
                 danger
-                onClick={() => updateStatusMutation.mutate({ recId: row.id, status: "rejected" })}
+                onClick={() => dismissMutation.mutate(row.id)}
               >
                 Reject
+              </Button>
+            </>
+          )}
+          {row.status === "approved" && (
+            <>
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                onClick={() => executeMutation.mutate(row.id)}
+                loading={executeMutation.isPending}
+              >
+                Execute
+              </Button>
+              <Button
+                size="small"
+                onClick={() => updateStatusMutation.mutate({ recId: row.id, status: "applied" })}
+              >
+                Mark Applied
               </Button>
             </>
           )}

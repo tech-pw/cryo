@@ -8,7 +8,7 @@ fleet-wide \"N pending hard deletions, blocked until expiry after <date>\"
 report is queryable.
 
 Revision ID: 20260708_0023
-Revises: 20260708_chunk_checkpointing
+Revises: 20260708_0022, 20260708_chunk_checkpointing
 Create Date: 2026-07-08 17:00:00.000000
 """
 
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "20260708_0023"
-down_revision = "20260708_chunk_checkpointing"
+down_revision = ("20260708_0022", "20260708_chunk_checkpointing")
 branch_labels = None
 depends_on = None
 

@@ -54,6 +54,9 @@ const Runs = lazy(() => import("./pages/Runs").then((m) => ({ default: m.Runs })
 const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
 const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
 const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ default: m.TableDetail })));
+const SmartMaintenance = lazy(() =>
+  import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
+);
 
 const PageFallback = () => (
   <div className="content" style={{ display: "grid", placeItems: "center", minHeight: 240 }}>
@@ -85,6 +88,11 @@ const navItems = [
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
   { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
+  {
+    key: "/smart-maintenance",
+    icon: <CloudOutlined />,
+    label: <Link to="/smart-maintenance">Smart Maintenance</Link>
+  },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
@@ -107,7 +115,12 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Operations",
-    children: [navByKey["/optimize"], navByKey["/presets"], navByKey["/runs"]]
+    children: [
+      navByKey["/optimize"],
+      navByKey["/smart-maintenance"],
+      navByKey["/presets"],
+      navByKey["/runs"]
+    ]
   },
   {
     type: "group",
@@ -240,6 +253,7 @@ const Shell = () => {
               <Route path="/queries" element={<QueryPerformance />} />
               <Route path="/sla" element={<SLAStatus />} />
               <Route path="/optimize" element={<LayoutOptimization />} />
+              <Route path="/smart-maintenance" element={<SmartMaintenance />} />
               <Route path="/presets" element={<Presets />} />
               <Route path="/runs" element={<Runs />} />
               <Route path="/runs/:runId" element={<Runs />} />

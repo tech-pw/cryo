@@ -10,6 +10,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Protocol, cast
 
+from cryo.config import get_settings
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import JobStatus
@@ -27,6 +28,7 @@ from cryo.governor.prefetch import (
     prefetch_approved_operation_keys,
     prefetch_table_stats,
 )
+from cryo.governor.roi_gate import GateAction, ROIGate
 from cryo.observability.correlation import set_job_id
 from cryo.observability.metrics import (
     governor_admission_decisions,
@@ -92,6 +94,10 @@ class Governor:
         self._session_factory = SessionLocal
         self._trigger_evaluator = trigger_evaluator or TriggerEvaluator()
         self._enable_signal_triggers = enable_signal_triggers
+        settings = get_settings()
+        self._qpp_enabled = settings.qpp_enabled
+        self._roi_gate_enabled = settings.roi_gate_enabled
+        self._roi_gate = ROIGate()
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         wave_start = perf_counter()
@@ -265,6 +271,28 @@ class Governor:
                                     destination_outcomes[destination_id]["blocked"] += 1
                                 continue
 
+                        if self._roi_gate_enabled:
+                            roi = self._roi_gate.decide(session, _admission_job(job))
+                            if roi.shadow:
+                                logger.info(
+                                    "ROI gate shadow: job %s action=%s bcr=%.4f threshold=%.4f",
+                                    job_id,
+                                    roi.action.value,
+                                    roi.bcr,
+                                    roi.threshold,
+                                )
+                            elif roi.action == GateAction.SKIP:
+                                self._queue.cancel_pending(job.id, destination_id)
+                                self._store.mark_status(job.id, JobStatus.SKIPPED, error=roi.reason)
+                                blocked += 1
+                                destination_outcomes[destination_id]["blocked"] += 1
+                                continue
+                            elif roi.action == GateAction.DEFER:
+                                self._defer(job, roi.reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                                continue
+
                         if not self._lock_store.acquire_table_lock(
                             job.table_id,
                             job.id,
@@ -274,6 +302,34 @@ class Governor:
                             deferred += 1
                             destination_outcomes[destination_id]["deferred"] += 1
                             continue
+
+                        if self._qpp_enabled:
+                            try:
+                                qpp_admit, predicted_p95_ms = _evaluate_qpp_for_governor(
+                                    table_uuid=table_uuid,
+                                    stats_cache=stats_cache,
+                                    live_capacity=live_capacity,
+                                    job=job,
+                                    session=self._session_factory,
+                                )
+                                if not qpp_admit:
+                                    logger.info(
+                                        "Job %s deferred: QPP refused (p95=%.0fms)",
+                                        job_id,
+                                        predicted_p95_ms,
+                                    )
+                                    self._lock_store.release_table_lock(job.table_id, job.id)
+                                    self._defer(job, "qpp_refused")
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                    continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "QPP gate failed for job %s table %s: %s",
+                                    job_id,
+                                    table_uuid,
+                                    exc,
+                                )
 
                         replica = replicas.pop(0)
                         self._queue.admit(job.id, destination_id, replica)
@@ -355,12 +411,17 @@ class Governor:
 
 
 def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
+    params = dict(job.params) if job.params else {}
+    estimated_benefit = params.get("min_expected_benefit_score")
+    if estimated_benefit is None:
+        estimated_benefit = params.get("benefit_score")
     return AdmissionJob(
         job_id=job.id,
         table_id=job.table_id,
         destination_id=job.destination_id,
         mode=job.mode,
         cooldown_hours=job.cooldown_hours,
+        estimated_benefit_score=float(estimated_benefit) if estimated_benefit is not None else None,
         last_maintained_at=job.last_maintained_at,
         deadline_at=job.deadline_at,
     )
@@ -425,6 +486,69 @@ def _admission_config_from_destination(
         adaptive_budget=bool(config.get("adaptive_budget", default.adaptive_budget)),
         high_load_ratio=float(config.get("high_load_ratio", default.high_load_ratio)),
         high_load_fraction=float(config.get("high_load_fraction", default.high_load_fraction)),
+        default_cooldown_hours=int(
+            config.get("default_cooldown_hours", default.default_cooldown_hours)
+        ),
+        min_benefit_score=float(config.get("min_benefit_score", default.min_benefit_score)),
+    )
+
+
+def _cotenant_load_pct(live_capacity: Mapping[str, object]) -> float:
+    """Average load fraction across replicas, for the QPP gate."""
+    if not live_capacity:
+        return 0.0
+    total = 0.0
+    count = 0
+    for _replica, snapshot in live_capacity.items():
+        if isinstance(snapshot, CapacitySnapshot):
+            used = max(snapshot.used, snapshot.queued)
+            if snapshot.capacity > 0:
+                total += used / snapshot.capacity
+                count += 1
+        elif isinstance(snapshot, (int, float)) and int(snapshot) > 0:
+            total += int(snapshot) / 100
+            count += 1
+    return total / count if count else 0.0
+
+
+def _evaluate_qpp_for_governor(
+    *,
+    table_uuid: uuid.UUID | None,
+    stats_cache: Mapping[uuid.UUID, object],
+    live_capacity: Mapping[str, object],
+    job: MaintenanceJobRecord,
+    session: type[SessionLocal],
+) -> tuple[bool, float]:
+    """Run the variance-aware QPP gate for one governor admission decision.
+
+    Returns ``(admit, predicted_p95_ms)``. ``admit=False`` means the job should be deferred.
+    """
+    from cryo.config import get_settings
+    from cryo.governor.capacity import evaluate_qpp_for_job
+
+    settings = get_settings()
+    if not settings.qpp_enabled:
+        return True, 0.0
+
+    files_scanned = 0
+    partition_count = 0
+    if table_uuid is not None:
+        stats = stats_cache.get(table_uuid)
+        if stats is not None:
+            files_scanned = getattr(stats, "total_files", 0) or 0
+            partition_count = getattr(stats, "total_partitions", 0) or 0
+
+    cotenant_load = _cotenant_load_pct(live_capacity)
+
+    return evaluate_qpp_for_job(
+        table_id=table_uuid,
+        files_scanned=files_scanned,
+        partition_count=partition_count,
+        cotenant_load_pct=cotenant_load,
+        target_p95_ms=settings.qpp_target_p95_ms,
+        is_cached=False,
+        query_text=None,
+        model=None,
     )
 
 

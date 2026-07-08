@@ -176,8 +176,8 @@ on whichever destination its preset targets. Full diagrams and component respons
 
 ## Research foundations
 
-Several features ship as direct implementations of recent papers, each behind a parity test —
-not just inspired-by, but citable:
+Several features are inspired by or directly implement recent papers. The claim of "parity
+tests" means there is at least one test exercising the core logic of each paper's contribution.
 
 | Paper | Feature | Where it lives |
 |---|---|---|
@@ -185,10 +185,10 @@ not just inspired-by, but citable:
 | [arXiv:2510.09567](https://arxiv.org/abs/2510.09567) — *Proof-Carrying AI Agents* | Plan Verifier: statically checks a plan against the live catalog before enqueue | `cryo/planner/verifier.py`, `POST /plans/verify` |
 | [arXiv:2511.02674](https://arxiv.org/abs/2511.02674) — *EasyTUS* | Embedding-based unionable-table search across the fleet | `cryo/ai/union_search.py`, `GET /tables/union-search` |
 | [arXiv:2512.02795](https://arxiv.org/abs/2512.02795) — *Observation Lakehouse* (SANER 2026) | Append-only archive of every actuation, for audit and replay | `cryo/observability/observation_lakehouse.py` |
-| [arXiv:2604.20081](https://arxiv.org/abs/2604.20081) — *Silent Data Loss* formalization for Iceberg | Detector for orphan-after-rewrite, partition-skip, and snapshot-skip failure modes | `cryo/scanner/silent_data_loss.py`, `cryo/scheduler/health.py` |
+| [arXiv:2604.20081](https://arxiv.org/abs/2604.20081) — *Silent Data Loss* (inspired by) | Detector for orphan data files and missing committed files | `cryo/scanner/silent_data_loss.py`, `cryo/scheduler/health.py` |
 | [arXiv:2605.30308](https://arxiv.org/abs/2605.30308) — *Zero-Scan Data Quality* (FORMATS '26) | Per-column null rates, value bounds, and drift from manifest metadata — no data scans | `cryo/scanner/quality.py`, `cryo/scanner/puffin_writer.py` |
-| [arXiv:2606.01185](https://arxiv.org/abs/2606.01185) — *Skill Issues* | Versioned AI skillsets (prompt + tool registry) with outcome-based promotion | `cryo/ai/skillset.py` |
-| [arXiv:2606.03464](https://arxiv.org/abs/2606.03464) — *Variance-aware QPP* (CLOUD 2026) | Query performance prediction; the Governor refuses jobs predicted to blow p95 | `cryo/governor/qpp.py` |
+| [arXiv:2606.01185](https://arxiv.org/abs/2606.01185) — *Skill Issues* (inspired by) | Versioned AI skillsets (prompt + tool registry) with outcome-based promotion | `cryo/ai/skillset.py` |
+| [arXiv:2606.03464](https://arxiv.org/abs/2606.03464) — *Variance-aware QPP* (CLOUD 2026) | Query performance prediction; the Governor refuses jobs predicted to blow p95 | `cryo/governor/qpp.py`, `cryo/governor/governor.py` |
 
 ## Documentation
 

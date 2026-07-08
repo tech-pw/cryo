@@ -382,6 +382,41 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Smart maintenance ROI gate / forecasting
+    roi_gate_enabled: bool = Field(
+        default=False,
+        description="Enable ROI-based governor gate for maintenance admission decisions.",
+    )
+    roi_gate_shadow_mode: bool = Field(
+        default=True,
+        description="Log ROI decisions without enforcing skip/defer while tuning thresholds.",
+    )
+    roi_min_bcr: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Minimum benefit-cost ratio required for non-streaming tables.",
+    )
+    roi_min_bcr_streaming: float = Field(
+        default=0.5,
+        ge=0.0,
+        description="Minimum benefit-cost ratio required for streaming/hot tables.",
+    )
+    roi_shadow_min_samples: int = Field(
+        default=200,
+        ge=10,
+        description="Minimum shadow decisions before suggesting ROI enforcement.",
+    )
+    forecast_window_days: int = Field(
+        default=14,
+        ge=3,
+        description="Historical window used by EWMA workload forecaster.",
+    )
+    forecast_default_horizon_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Default workload forecast horizon for smart-maintenance API endpoints.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

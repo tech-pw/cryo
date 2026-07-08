@@ -16,6 +16,14 @@ class TableCommitted:
     table_ref: str
     snapshot_id: int
     observed_at: datetime
+    parent_snapshot_id: int | None = None
+    files_added: int = 0
+    files_removed: int = 0
+    bytes_added: int = 0
+    bytes_removed: int = 0
+    delete_files_added: int = 0
+    equality_delete_files_added: int = 0
+    position_delete_files_added: int = 0
 
 
 class TableCommitWatcher:

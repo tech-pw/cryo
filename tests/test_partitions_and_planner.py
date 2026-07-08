@@ -296,3 +296,23 @@ def test_planner_hot_cold_filter_off_by_default() -> None:
     assert not any("Skipped hot partition" in note for note in plan.notes)
     optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
     assert optimize_ops
+
+
+def test_planner_adds_convert_deletes_when_optimize_not_planned() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 50,
+            "delete_file_pct": 25.0,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {"min_small_files": 128, "convert_deletes_threshold_pct": 5.0},
+    )
+    assert [op.type for op in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.CONVERT_DELETES,
+    ]

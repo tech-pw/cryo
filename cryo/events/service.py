@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -13,6 +13,7 @@ from cryo.events.consumer import TableCommitConsumer
 from cryo.events.redis_stream import RedisEventStream
 from cryo.events.watcher import TableCommitted, TableCommitWatcher
 from cryo.infra.wiring import RuntimeWiring, build_runtime_wiring
+from cryo.scanner.incremental import CommitDelta, apply_commit_delta
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,65 @@ def _on_table_committed(event: TableCommitted) -> None:
         stats = session.scalar(select(TableStats).where(TableStats.table_id == table.id))
         if stats is None:
             return
-        raw = dict(stats.raw or {})
-        raw["last_commit_at"] = datetime.now(UTC).isoformat()
-        raw["last_commit_snapshot_id"] = event.snapshot_id
-        stats.raw = raw
+        applied = apply_commit_delta(
+            session,
+            CommitDelta(
+                table_id=table.id,
+                snapshot_id=event.snapshot_id,
+                parent_snapshot_id=event.parent_snapshot_id,
+                files_added=event.files_added,
+                files_removed=event.files_removed,
+                bytes_added=event.bytes_added,
+                bytes_removed=event.bytes_removed,
+                delete_files_added=event.delete_files_added,
+                equality_delete_files_added=event.equality_delete_files_added,
+                position_delete_files_added=event.position_delete_files_added,
+                committed_at=event.observed_at,
+            ),
+        )
+        if not applied:
+            session.rollback()
+            return
         session.commit()
+        _enqueue_maintenance_evaluation(
+            table_id=str(table.id),
+            source_id=str(table.source_id),
+            trigger="commit_event",
+            snapshot_id=event.snapshot_id,
+            reconcile_due=_reconciliation_due(stats),
+        )
+
+
+def _reconciliation_due(stats: TableStats, *, now: datetime | None = None) -> bool:
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    last = stats.last_full_reconcile_at
+    if last is None:
+        return True
+    return current - last.astimezone(UTC) >= timedelta(days=7)
+
+
+def _enqueue_maintenance_evaluation(
+    *,
+    table_id: str,
+    source_id: str,
+    trigger: str,
+    snapshot_id: int,
+    reconcile_due: bool,
+) -> None:
+    try:
+        wiring = build_runtime_wiring()
+        wiring.redis_client.xadd(
+            "cryo:maintenance-eval",
+            {
+                "table_id": table_id,
+                "source_id": source_id,
+                "trigger": trigger,
+                "snapshot_id": str(snapshot_id),
+                "reconcile_due": "1" if reconcile_due else "0",
+                "enqueued_at": datetime.now(UTC).isoformat(),
+            },
+            maxlen=10_000,
+            approximate=True,
+        )
+    except Exception as exc:  # pragma: no cover - best effort path
+        logger.warning("Failed to enqueue maintenance evaluation for table %s: %s", table_id, exc)

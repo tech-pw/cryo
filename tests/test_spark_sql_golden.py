@@ -136,3 +136,23 @@ def test_spark_renders_compute_statistics_with_bloom_filters() -> None:
     assert len(parts) == 2
     assert "compute_table_stats" in parts[0]
     assert "bloom-filter-enabled.column.user_id" in parts[1]
+
+
+def test_spark_renders_convert_deletes_operation() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.CONVERT_DELETES,
+                {"delete_file_threshold": 2, "partial_progress_enabled": True},
+            ),
+        ),
+    )
+    statements = render(plan)
+    assert len(statements) == 1
+    assert statements[0].sql == (
+        "CALL iceberg.system.rewrite_data_files("
+        "table => 'demo.events', options => map("
+        "'delete-file-threshold', '2', 'partial-progress.enabled', 'true'))"
+    )

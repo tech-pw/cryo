@@ -41,6 +41,8 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
         sql = _render_orphan(catalog, table_name, operation.params)
     elif operation.type is OperationType.OPTIMIZE:
         sql = _render_optimize(catalog, table_name, operation)
+    elif operation.type is OperationType.CONVERT_DELETES:
+        sql = _render_convert_deletes(catalog, table_name, operation.params)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
@@ -129,6 +131,19 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
 
     args.append(f"options => map({', '.join(options)})")
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def _render_convert_deletes(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+    threshold = int(params.get("delete_file_threshold", 1))
+    partial_progress_enabled = bool(params.get("partial_progress_enabled", True))
+    options = [
+        f"'delete-file-threshold', '{max(1, threshold)}'",
+        f"'partial-progress.enabled', '{str(partial_progress_enabled).lower()}'",
+    ]
+    return (
+        f"CALL {catalog}.system.rewrite_data_files("
+        f"table => '{table_name}', options => map({', '.join(options)}))"
+    )
 
 
 def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, Any]) -> str:

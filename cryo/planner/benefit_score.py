@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,6 +33,85 @@ DEFAULT_MIN_BENEFIT_SCORE = 1.0
 # Cost factor: relative cost estimate of rewriting N GB
 # (pure heuristic: 1 GB ≈ cost_factor=1 unit)
 _COST_PER_GB = 1.0
+
+
+@dataclass(frozen=True)
+class BenefitCostBreakdown:
+    latency_benefit_usd_month: float
+    storage_benefit_usd_month: float
+    request_benefit_usd_month: float
+    opportunity_benefit_usd_month: float
+    rewrite_compute_cost_usd_month: float
+    write_amplification_cost_usd_month: float
+    opportunity_cost_usd_month: float
+
+    @property
+    def total_benefit_usd_month(self) -> float:
+        return (
+            self.latency_benefit_usd_month
+            + self.storage_benefit_usd_month
+            + self.request_benefit_usd_month
+            + self.opportunity_benefit_usd_month
+        )
+
+    @property
+    def total_cost_usd_month(self) -> float:
+        return (
+            self.rewrite_compute_cost_usd_month
+            + self.write_amplification_cost_usd_month
+            + self.opportunity_cost_usd_month
+        )
+
+    @property
+    def bcr(self) -> float:
+        return self.total_benefit_usd_month / max(self.total_cost_usd_month, 0.0001)
+
+
+def enhanced_bcr_from_table(
+    table_stats: Mapping[str, Any],
+    *,
+    projected_storage_savings_usd_month: float | None = None,
+    query_request_savings_usd_month: float | None = None,
+    value_per_query_second_usd: float = 0.0002,
+    rewrite_cost_per_gb_usd: float = 0.025,
+    write_amp_multiplier: float = 1.15,
+) -> BenefitCostBreakdown:
+    """Compute monthly ROI terms in USD for smart-maintenance gating."""
+    query_count_30d = float(table_stats.get("query_count_30d") or 0.0)
+    small_files = float(table_stats.get("small_files_count") or 0.0)
+    delete_pct = float(table_stats.get("delete_file_pct") or 0.0)
+    table_size_gb = float(table_stats.get("total_size_gb") or 0.0)
+    projected = float(
+        projected_storage_savings_usd_month
+        if projected_storage_savings_usd_month is not None
+        else (table_stats.get("projected_savings_usd_month") or 0.0)
+    )
+    request = float(
+        query_request_savings_usd_month
+        if query_request_savings_usd_month is not None
+        else (table_stats.get("query_request_savings_usd_month") or 0.0)
+    )
+
+    # Cheap but monotonic proxy: more small files and more delete pressure generally
+    # translate to larger planning/pruning wins.
+    latency_seconds_saved_per_query = (small_files / 2000.0) + (delete_pct / 100.0 * 0.35)
+    latency_benefit = query_count_30d * latency_seconds_saved_per_query * value_per_query_second_usd
+
+    rewrite_compute_cost = max(0.0, table_size_gb * rewrite_cost_per_gb_usd)
+    write_amp_cost = max(0.0, table_size_gb * max(write_amp_multiplier - 1.0, 0.0) * 0.006)
+    # Opportunity cost captures foregone slots for other jobs in busy clusters.
+    opportunity_cost = rewrite_compute_cost * 0.1
+    opportunity_benefit = max(0.0, min(projected * 0.25, latency_benefit * 0.5))
+
+    return BenefitCostBreakdown(
+        latency_benefit_usd_month=round(latency_benefit, 6),
+        storage_benefit_usd_month=round(max(projected, 0.0), 6),
+        request_benefit_usd_month=round(max(request, 0.0), 6),
+        opportunity_benefit_usd_month=round(opportunity_benefit, 6),
+        rewrite_compute_cost_usd_month=round(rewrite_compute_cost, 6),
+        write_amplification_cost_usd_month=round(write_amp_cost, 6),
+        opportunity_cost_usd_month=round(opportunity_cost, 6),
+    )
 
 
 def compute_benefit_score(

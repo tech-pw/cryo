@@ -54,6 +54,14 @@ class TableCommitConsumer:
             "table_ref": event.table_ref,
             "snapshot_id": event.snapshot_id,
             "observed_at": event.observed_at.isoformat(),
+            "parent_snapshot_id": event.parent_snapshot_id,
+            "files_added": event.files_added,
+            "files_removed": event.files_removed,
+            "bytes_added": event.bytes_added,
+            "bytes_removed": event.bytes_removed,
+            "delete_files_added": event.delete_files_added,
+            "equality_delete_files_added": event.equality_delete_files_added,
+            "position_delete_files_added": event.position_delete_files_added,
         }
         return self._stream.publish(self._stream_name, payload)
 
@@ -116,4 +124,16 @@ def _parse_event(payload: dict[str, Any]) -> TableCommitted:
         table_ref=str(payload["table_ref"]),
         snapshot_id=int(payload["snapshot_id"]),
         observed_at=observed_at,
+        parent_snapshot_id=(
+            int(payload["parent_snapshot_id"])
+            if payload.get("parent_snapshot_id") not in (None, "")
+            else None
+        ),
+        files_added=int(payload.get("files_added") or 0),
+        files_removed=int(payload.get("files_removed") or 0),
+        bytes_added=int(payload.get("bytes_added") or 0),
+        bytes_removed=int(payload.get("bytes_removed") or 0),
+        delete_files_added=int(payload.get("delete_files_added") or 0),
+        equality_delete_files_added=int(payload.get("equality_delete_files_added") or 0),
+        position_delete_files_added=int(payload.get("position_delete_files_added") or 0),
     )

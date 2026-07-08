@@ -16,7 +16,13 @@ from typing import Any
 from cryo.governor.admission import AdmissionConfig
 
 # Tunable knobs (small set per ARCHITECTURE_AND_AI_STRATEGY §2.6).
-_KNOBS = ("high_load_ratio", "high_load_fraction", "per_replica_cap")
+_KNOBS = (
+    "high_load_ratio",
+    "high_load_fraction",
+    "per_replica_cap",
+    "default_cooldown_hours",
+    "min_benefit_score",
+)
 _MIN_OBSERVATIONS = 20
 _CONFIDENCE_Z = 1.96
 
@@ -70,6 +76,8 @@ class AdmissionBandit:
             "high_load_ratio": (0.70, 0.75, 0.80, 0.85, 0.90),
             "high_load_fraction": (0.40, 0.50, 0.60, 0.70),
             "per_replica_cap": (3.0, 4.0, 5.0, 6.0, 7.0),
+            "default_cooldown_hours": (0.0, 1.0, 2.0, 4.0, 6.0),
+            "min_benefit_score": (0.0, 0.5, 1.0, 1.5, 2.0),
         }
 
     @property
@@ -92,6 +100,10 @@ class AdmissionBandit:
         ratio = self._pick_variant("high_load_ratio", base.high_load_ratio)
         fraction = self._pick_variant("high_load_fraction", base.high_load_fraction)
         cap = int(self._pick_variant("per_replica_cap", float(base.per_replica_cap)))
+        cooldown = int(
+            self._pick_variant("default_cooldown_hours", float(base.default_cooldown_hours))
+        )
+        min_benefit = self._pick_variant("min_benefit_score", base.min_benefit_score)
 
         tuned = AdmissionConfig(
             offpeak_start_ist=base.offpeak_start_ist,
@@ -101,6 +113,8 @@ class AdmissionBandit:
             adaptive_budget=base.adaptive_budget,
             high_load_ratio=ratio,
             high_load_fraction=fraction,
+            default_cooldown_hours=max(0, cooldown),
+            min_benefit_score=max(0.0, min_benefit),
         )
         return tuned, True
 
@@ -116,6 +130,10 @@ class AdmissionBandit:
         self._state.record(f"high_load_ratio:{config.high_load_ratio}", success=success)
         self._state.record(f"high_load_fraction:{config.high_load_fraction}", success=success)
         self._state.record(f"per_replica_cap:{config.per_replica_cap}", success=success)
+        self._state.record(
+            f"default_cooldown_hours:{config.default_cooldown_hours}", success=success
+        )
+        self._state.record(f"min_benefit_score:{config.min_benefit_score}", success=success)
         self._state.observations += 1
 
     def evaluate_vs_static(

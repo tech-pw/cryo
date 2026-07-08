@@ -232,3 +232,21 @@ def test_supported_operations_preserves_planner_order(monkeypatch: pytest.Monkey
         OperationType.REMOVE_ORPHAN_FILES,
         OperationType.OPTIMIZE,
     ]
+
+
+def test_convert_deletes_routes_to_sql_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(OperationType.CONVERT_DELETES, {"delete_file_threshold": 1}),
+        ),
+    )
+    routing = resolve_native_routing(
+        plan,
+        {"total_delete_files": 5},
+        {"engine_impl": "go", "sql_fallback_destination_id": "spark-1"},
+    )
+    assert not routing.native_operations
+    assert {op.type for op, _ in routing.fallback_operations} == {OperationType.CONVERT_DELETES}
