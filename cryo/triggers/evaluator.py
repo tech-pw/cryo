@@ -46,6 +46,14 @@ class TriggerEvaluator:
 
     def __init__(self, signal_config: dict[str, Any] | None = None):
         self.signal_config = signal_config or {}
+        self._manual_overrides: dict[uuid.UUID, str] = {}
+
+    def request_manual_trigger(self, table_id: uuid.UUID, reason: str = "operator") -> None:
+        """Mark a table as manually triggered (always admitted on next eval)."""
+        self._manual_overrides[table_id] = reason
+
+    def clear_manual_trigger(self, table_id: uuid.UUID) -> None:
+        self._manual_overrides.pop(table_id, None)
 
     def evaluate(
         self,
@@ -65,6 +73,17 @@ class TriggerEvaluator:
         Returns:
             TriggerResult with admission decision
         """
+        # Manual override always wins.
+        manual_reason = self._manual_overrides.get(table_id)
+        if manual_reason is not None:
+            return TriggerResult(
+                table_id=table_id,
+                should_run=True,
+                trigger_type=TriggerType.MANUAL,
+                reason=f"Manual trigger: {manual_reason}",
+                priority_boost=1.0,
+            )
+
         # Always check signals for signal-triggered tables or when forced
         signal_results = []
         if not is_due_for_schedule or force_signal_check:
