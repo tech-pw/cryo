@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
@@ -103,9 +104,7 @@ def test_discover_buckets_ignores_tables_with_no_location(session) -> None:
     assert configs == []
 
 
-def test_discover_buckets_falls_back_to_live_catalog_enumeration(
-    session, monkeypatch
-) -> None:
+def test_discover_buckets_falls_back_to_live_catalog_enumeration(session, monkeypatch) -> None:
     """§4.1 fallback: when Table.location is empty (source added post-migration, no scan
     yet), enumerate live tables from the Iceberg catalog and infer the bucket from each
     table's location. The user shouldn't have to run a scan just to see "what buckets
@@ -128,9 +127,7 @@ def test_discover_buckets_falls_back_to_live_catalog_enumeration(
             bucket = "lake-bucket-a" if schema_name == "db1" else "lake-bucket-b"
             return _FakeTable(f"s3://{bucket}/{schema_name}/{table_name}")
 
-    monkeypatch.setattr(
-        "cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog()
-    )
+    monkeypatch.setattr("cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog())
 
     configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
 
@@ -158,8 +155,7 @@ def test_discover_buckets_fallback_swallows_catalog_errors(session, monkeypatch)
 
 
 def test_discover_buckets_fallback_skips_per_table_errors(session, monkeypatch) -> None:
-    """One bad table in the catalog should not block discovery for the rest of the source.
-    """
+    """One bad table in the catalog should not block discovery for the rest of the source."""
     source = _seed_source(session)
 
     class _BrokenTable:
@@ -180,13 +176,81 @@ def test_discover_buckets_fallback_skips_per_table_errors(session, monkeypatch) 
                 return _BrokenTable()
             return _FineTable("s3://good-bucket/t1")
 
-    monkeypatch.setattr(
-        "cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog()
-    )
+    monkeypatch.setattr("cryo.sources.factory.source_catalog_for", lambda src: _FakeCatalog())
 
     configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
 
     assert sorted(c.bucket for c in configs) == ["good-bucket"]
+
+
+def test_discover_buckets_fallback_stops_after_max_tables(session, monkeypatch) -> None:
+    """Regression test for a real hang: a ~1,850-table catalog with no Table.location rows
+    made this fallback enumerate every table synchronously inside a GET request, which never
+    returned. The fallback must give up after a bounded number of tables, not run to
+    completion against an arbitrarily large catalog.
+    """
+    source = _seed_source(session)
+
+    monkeypatch.setattr(s3_bucket_logging, "_FALLBACK_MAX_TABLES", 5)
+    monkeypatch.setattr(s3_bucket_logging, "_FALLBACK_MAX_SECONDS", 999.0)
+
+    load_calls = {"count": 0}
+
+    class _FakeTable:
+        def __init__(self, location: str) -> None:
+            self.location = location
+
+    class _HugeFakeCatalog:
+        def list_tables(self):
+            # Simulate a catalog far larger than the cap -- iterating this fully (if the
+            # bound didn't work) would never finish in a test run either.
+            return [("db", f"t{i}") for i in range(100_000)]
+
+        def load_table(self, schema_name: str, table_name: str) -> _FakeTable:
+            load_calls["count"] += 1
+            return _FakeTable(f"s3://huge-bucket/{schema_name}/{table_name}")
+
+    monkeypatch.setattr("cryo.sources.factory.source_catalog_for", lambda src: _HugeFakeCatalog())
+
+    configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
+
+    assert load_calls["count"] == 5
+    assert sorted(c.bucket for c in configs) == ["huge-bucket"]
+
+
+def test_discover_buckets_fallback_stops_when_list_tables_itself_is_slow(
+    session, monkeypatch
+) -> None:
+    """Regression test for the real hang: ``catalog.list_tables()`` is itself an unbounded
+    network call (O(namespaces) round-trips internally) -- a per-iteration clock check inside
+    the for-loop doesn't help if the hang happens *before* the loop ever starts, which is
+    exactly what happened against the real ~1,850-table catalog. The fallback must return
+    within ``_FALLBACK_MAX_SECONDS`` even when ``list_tables()`` itself never returns in time.
+
+    The fake catalog's ``list_tables()`` sleep is deliberately short (not "hangs forever") so
+    the abandoned background thread (see ``_discover_buckets_from_live_catalog`` -- Python has
+    no way to force-kill a thread, so a timed-out call keeps running unobserved) finishes
+    quickly and doesn't tie up the shared fallback worker pool for the rest of the test suite.
+    """
+    source = _seed_source(session)
+
+    monkeypatch.setattr(s3_bucket_logging, "_FALLBACK_MAX_SECONDS", 0.05)
+
+    class _SlowListCatalog:
+        def list_tables(self):
+            time.sleep(0.3)
+            return []  # pragma: no cover - never reached before the timeout fires
+
+    monkeypatch.setattr("cryo.sources.factory.source_catalog_for", lambda src: _SlowListCatalog())
+
+    start = time.monotonic()
+    configs = s3_bucket_logging.discover_buckets_for_source(session, source.id)
+    elapsed = time.monotonic() - start
+
+    assert configs == []
+    # Well under the fake catalog's 0.3s list_tables() sleep -- proves the caller didn't wait
+    # for it, not just that the eventual result was empty.
+    assert elapsed < 0.25
 
 
 # ---------------------------------------------------------------------------
