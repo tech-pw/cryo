@@ -20,7 +20,8 @@ NATIVE_BASE_OPERATIONS: tuple[OperationType, ...] = (
 NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (OperationType.OPTIMIZE_MANIFESTS,)
 
 NATIVE_MANIFESTS_DETAIL = (
-    "optimize_manifests not implemented in iceberg-go; route to Trino/Spark (Phase F)"
+    "optimize_manifests is not supported by the native engine (iceberg-go) and is not "
+    "routed to Trino/Spark; skipped"
 )
 
 NATIVE_ZORDER_DETAIL = (
@@ -233,11 +234,9 @@ def resolve_native_routing(
             continue
 
         if operation.type in NATIVE_ALWAYS_DISCONNECTED:
-            detail = NATIVE_MANIFESTS_DETAIL
-            if has_sql_fallback:
-                fallback_ops.append((operation, detail))
-            else:
-                skipped_ops.append((operation, detail))
+            # optimize_manifests is never routed to a SQL engine (Trino/Spark): iceberg-go
+            # cannot rewrite manifests, so it is skipped instead of falling back.
+            skipped_ops.append((operation, NATIVE_MANIFESTS_DETAIL))
             continue
 
     return NativeRoutingResult(

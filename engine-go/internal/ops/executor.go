@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cryo-lake/cryo/engine-go/internal/catalog"
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
 
@@ -32,6 +33,11 @@ func ExecuteOperation(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 
 // Execute runs all operations in the request and returns the aggregate response.
 func Execute(ctx context.Context, req *protocol.ExecuteRequest) protocol.ExecuteResponse {
+	// Seed the context with the source's static S3 credentials so the commit write path
+	// (which rebuilds FileIO from table properties, not catalog properties) does not fall back
+	// to the default AWS chain / STS AssumeRole. See catalog.WithSourceAWSConfig.
+	ctx = catalog.WithSourceAWSConfig(ctx, req)
+
 	results := make([]protocol.OperationResult, 0, len(req.Operations))
 	allOK := true
 

@@ -17,7 +17,7 @@ from cryo.db.models import (
     Table,
     TablePartition,
 )
-from cryo.domain.enums import JobStatus, Mode
+from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.worker.worker import (
     AuditRecord,
     DestinationConfig,
@@ -212,6 +212,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     preset = job.run.preset if job.run else None
     params: dict[str, Any] = dict(preset.params) if preset else {}
     guardrails = dict(preset.guardrails) if preset else {}
+    operations = _coerce_operations(preset.operations) if preset else None
     summary = dict(job.run.summary or {}) if job.run else {}
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
@@ -233,7 +234,25 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         cooldown_hours=int(guardrails.get("cooldown_hours") or 0),
         last_maintained_at=_last_maintained_at(session, job.table_id),
         actor=actor,
+        operations=operations,
     )
+
+
+def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
+    """Convert a preset's stored operations list into OperationType values.
+
+    Returns None when the preset does not declare an operations list so callers can
+    distinguish "not configured" from "configured as empty". Unknown values are dropped.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return None
+    operations: list[OperationType] = []
+    for value in raw:
+        try:
+            operations.append(OperationType(value))
+        except ValueError:
+            continue
+    return tuple(operations)
 
 
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:

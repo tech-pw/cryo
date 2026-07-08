@@ -46,6 +46,8 @@ COMPOSE_DATALAKE_FILE="docker-compose.dev-datalake.yml"
 COMPOSE_OBS_FILE="docker-compose.observability.yml"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-cryo}"
 LEGACY_COMPOSE_PROJECT="${LEGACY_COMPOSE_PROJECT:-iceberg_compactor}"
+TRINO_VERSION="${TRINO_VERSION:-480}"
+export TRINO_VERSION
 
 # Fixed container_name values across compose files (used to reconcile pre-split stacks).
 CRYO_CONTAINER_NAMES=(

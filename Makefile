@@ -1,6 +1,8 @@
 .PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go build-engine-go build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
+TRINO_VERSION ?= 480
+export TRINO_VERSION
 COMPOSE_CRYO = docker compose -f docker-compose.yml
 COMPOSE_DATALAKE = docker compose -f docker-compose.dev-datalake.yml
 COMPOSE_LOCAL = docker compose -f docker-compose.yml -f docker-compose.dev-datalake.yml -f docker-compose.observability.yml

@@ -3,11 +3,15 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
+	"github.com/apache/iceberg-go/utils"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 
 	_ "github.com/apache/iceberg-go/catalog/hive"
 	_ "github.com/apache/iceberg-go/catalog/rest"
@@ -35,6 +39,61 @@ func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catal
 	}
 
 	return cat, tbl, nil
+}
+
+// WithSourceAWSConfig attaches an explicit static-credential aws.Config to ctx when the request
+// carries S3 access keys, and returns ctx unchanged otherwise (so IRSA / instance-profile
+// deployments keep working via the default AWS chain).
+//
+// Why this is required: iceberg-go's commit path (catalog.CommitTable -> internal.WriteMetadata)
+// rebuilds the S3 FileIO from the *table* metadata properties, which do NOT carry Cryo's
+// per-source S3 credentials — only the read/scan FileIO is built from catalog properties. Without
+// this, the commit that writes the new `*.metadata.json` falls back to the default AWS credential
+// chain, which in role-based environments attempts an STS AssumeRole and fails with
+// `InvalidClientTokenId`. gocloud's createS3Bucket checks utils.GetAwsConfig(ctx) before that
+// fallback, so seeding the context makes both the scan and the metadata write use the same static
+// credentials. Endpoint/path-style are still read from properties (or AWS_S3_ENDPOINT), so custom
+// endpoints (e.g. MinIO) are propagated via the env var for the property-less write path.
+func WithSourceAWSConfig(ctx context.Context, req *protocol.ExecuteRequest) context.Context {
+	accessKey := firstNonEmpty(deref(req.S3AccessKey), req.CatalogProperties["s3.access-key-id"])
+	secretKey := firstNonEmpty(deref(req.S3SecretKey), req.CatalogProperties["s3.secret-access-key"])
+	if accessKey == "" || secretKey == "" {
+		return ctx
+	}
+	sessionToken := req.CatalogProperties["s3.session-token"]
+
+	cfg := aws.Config{
+		Credentials: credentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken),
+	}
+	if region := firstNonEmpty(
+		req.CatalogProperties["s3.region"],
+		os.Getenv("AWS_REGION"),
+		os.Getenv("AWS_DEFAULT_REGION"),
+	); region != "" {
+		cfg.Region = region
+	}
+	if endpoint := firstNonEmpty(deref(req.S3Endpoint), req.CatalogProperties["s3.endpoint"]); endpoint != "" {
+		// The commit write path has no s3.endpoint in table properties; gocloud falls back to
+		// this env var, so a custom endpoint (MinIO) still reaches the metadata write.
+		_ = os.Setenv("AWS_S3_ENDPOINT", endpoint)
+	}
+	return utils.WithAwsConfig(ctx, &cfg)
+}
+
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildProperties(req *protocol.ExecuteRequest) iceberg.Properties {

@@ -354,6 +354,20 @@ and iceberg-go registers it under `hive` — **not** the `thrift` scheme — so 
 loaded as REST fails with `unsupported protocol scheme "thrift"`. `internal/catalog` imports the
 `catalog/hive` build tag alongside `catalog/rest` so both clients are registered.
 
+**Commit-path S3 credentials (Hive/HMS):** iceberg-go builds the read/scan FileIO from *catalog*
+properties (which carry Cryo's per-source S3 creds), but `catalog.CommitTable → internal.WriteMetadata`
+rebuilds the S3 FileIO from *table* metadata properties, which do **not** carry those creds. On a Hive
+catalog (client writes `*.metadata.json` itself, unlike REST where the server persists it) the commit
+therefore falls back to the default AWS credential chain; in role-based deployments that triggers an STS
+`AssumeRole` and fails with `InvalidClientTokenId`. `internal/catalog.WithSourceAWSConfig` fixes this by
+attaching an explicit static-credential `aws.Config` (from the request's S3 keys) to the context in
+`ops.Execute`; gocloud's `createS3Bucket` honors `utils.GetAwsConfig(ctx)` before the fallback, so both
+the scan and the metadata write use the same static credentials. When no static keys are provided the
+context is left untouched so IRSA / instance-profile auth still works. A custom endpoint (MinIO) is
+propagated to the property-less write path via the `AWS_S3_ENDPOINT` env var. Note iceberg-go v0.6.0's
+gocloud FileIO registers `s3`, `s3a`, `s3n`, and `oss`, so Hadoop-style `s3a://` metadata/data
+locations resolve without extra work.
+
 **`native_table_ref` parity:** the Python side already strips the display-catalog prefix
 (`display_catalog.schema.table` → `schema.table`). The Go binary receives the stripped `table_ref` and
 must parse `schema.table`, `ns1.ns2.table`, and multi-level namespaces the same way `parse_table_ident`

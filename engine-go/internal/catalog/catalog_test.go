@@ -1,9 +1,12 @@
 package catalog_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/apache/iceberg-go/utils"
 	"github.com/cryo-lake/cryo/engine-go/internal/catalog"
+	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
 
 func TestParseTableIdentSchemaTable(t *testing.T) {
@@ -33,6 +36,45 @@ func TestParseTableIdentMultiLevelNamespace(t *testing.T) {
 	}
 	if len(ident) != 3 || ident[2] != "orders" {
 		t.Fatalf("unexpected ident: %#v", ident)
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestWithSourceAWSConfigStaticCredentials(t *testing.T) {
+	req := &protocol.ExecuteRequest{
+		CatalogURI:  "thrift://hms:9083",
+		S3AccessKey: strptr("AKIAEXAMPLE"),
+		S3SecretKey: strptr("secretExample"),
+		CatalogProperties: map[string]string{
+			"s3.region": "ap-south-1",
+		},
+	}
+	ctx := catalog.WithSourceAWSConfig(context.Background(), req)
+	cfg := utils.GetAwsConfig(ctx)
+	if cfg == nil {
+		t.Fatal("expected aws config on context when static creds provided")
+	}
+	if cfg.Region != "ap-south-1" {
+		t.Fatalf("region = %q, want ap-south-1", cfg.Region)
+	}
+	creds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		t.Fatalf("retrieve creds: %v", err)
+	}
+	if creds.AccessKeyID != "AKIAEXAMPLE" || creds.SecretAccessKey != "secretExample" {
+		t.Fatalf("unexpected creds: %+v", creds)
+	}
+	if creds.CanExpire {
+		t.Fatal("static credentials should not expire (no STS refresh)")
+	}
+}
+
+func TestWithSourceAWSConfigNoCredentialsLeavesContext(t *testing.T) {
+	req := &protocol.ExecuteRequest{CatalogURI: "thrift://hms:9083"}
+	ctx := catalog.WithSourceAWSConfig(context.Background(), req)
+	if cfg := utils.GetAwsConfig(ctx); cfg != nil {
+		t.Fatal("expected no aws config on context when creds absent (preserve default chain / IRSA)")
 	}
 }
 
