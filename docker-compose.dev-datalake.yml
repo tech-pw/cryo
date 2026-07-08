@@ -105,7 +105,8 @@ services:
       start_period: 90s
 
   trino:
-    image: trinodb/trino:480
+    # Pinned — do not use :latest (catalog connector names differ across releases).
+    image: trinodb/trino:${TRINO_VERSION:-480}
     container_name: cryo-trino
     ports:
       - "8080:8080"

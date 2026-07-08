@@ -98,9 +98,10 @@ def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.Monkey
         OperationType.REMOVE_ORPHAN_FILES,
         OperationType.OPTIMIZE,
     }
-    fallback_types = {op.type for op, _ in routing.fallback_operations}
-    assert fallback_types == {OperationType.OPTIMIZE_MANIFESTS}
-    assert not routing.skipped_operations
+    # optimize_manifests is never routed to Trino/Spark; it is skipped for native.
+    assert not routing.fallback_operations
+    skipped_types = {op.type for op, _ in routing.skipped_operations}
+    assert skipped_types == {OperationType.OPTIMIZE_MANIFESTS}
 
 
 def test_resolve_native_routing_mor_includes_native_optimize(
@@ -114,9 +115,10 @@ def test_resolve_native_routing_mor_includes_native_optimize(
     )
     native_types = {op.type for op in routing.native_operations}
     assert OperationType.OPTIMIZE in native_types
-    fallback_types = {op.type for op, _ in routing.fallback_operations}
-    assert OperationType.OPTIMIZE not in fallback_types
-    assert fallback_types == {OperationType.OPTIMIZE_MANIFESTS}
+    # optimize_manifests is never routed to Trino/Spark; it is skipped for native.
+    assert not routing.fallback_operations
+    skipped_types = {op.type for op, _ in routing.skipped_operations}
+    assert skipped_types == {OperationType.OPTIMIZE_MANIFESTS}
 
 
 def test_resolve_native_routing_v3_dv_routes_optimize_to_fallback(

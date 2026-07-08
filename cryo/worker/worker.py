@@ -49,6 +49,7 @@ class MaintenanceJobRecord:
     cooldown_hours: int = 0
     last_maintained_at: datetime | None = None
     actor: str | None = None
+    operations: tuple[OperationType, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -365,6 +366,7 @@ class Worker:
                 job.mode,
                 _execution_plan_params(job.params, destination, table_data.stats),
             )
+            plan = _gate_native_optimize_manifests(plan, job, destination)
             self._store.save_plan(job.id, plan_to_dict(plan))
 
             engine = self._engine_factory(destination)
@@ -1257,6 +1259,44 @@ def _job_operation_type(job: MaintenanceJobRecord) -> str:
     if isinstance(mode, Mode):
         return mode.value
     return str(mode)
+
+
+def _engine_type_of(engine: EngineType | str) -> EngineType | None:
+    if isinstance(engine, EngineType):
+        return engine
+    try:
+        return EngineType(engine)
+    except ValueError:
+        return None
+
+
+def _gate_native_optimize_manifests(
+    plan: MaintenancePlan,
+    job: MaintenanceJobRecord,
+    destination: DestinationConfig,
+) -> MaintenancePlan:
+    """Drop optimize_manifests from a native plan unless the preset configured it.
+
+    The native engine cannot rewrite manifests and optimize_manifests is never routed to
+    Trino/Spark. For native destinations we therefore only keep the operation when it is
+    explicitly listed in the preset's operations; otherwise it is removed so it never runs.
+    """
+    if _engine_type_of(destination.engine) is not EngineType.NATIVE:
+        return plan
+    if all(op.type is not OperationType.OPTIMIZE_MANIFESTS for op in plan.operations):
+        return plan
+    configured = job.operations
+    if configured is not None and OperationType.OPTIMIZE_MANIFESTS in configured:
+        return plan
+    filtered = tuple(
+        op for op in plan.operations if op.type is not OperationType.OPTIMIZE_MANIFESTS
+    )
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=filtered,
+        notes=plan.notes,
+    )
 
 
 def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintenanceEngine:
