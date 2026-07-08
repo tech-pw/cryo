@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.db.models import (
+    AuditLog,
     Source,
     Table,
     TableAlertDispatch,
@@ -174,3 +175,48 @@ def test_run_alert_dispatch_tick_includes_subscribers_without_owner(session):
     assert sent == 1
     dispatch = session.query(TableAlertDispatch).one()
     assert dispatch.recipients == ["consumer@example.com"]
+
+
+def _seed_optimize_audit_rows(
+    session, table: Table, *, input_files: int, output_files: int, count: int
+) -> None:
+    """Write ``count`` optimize AuditLog rows so the 30-day ratio aggregates correctly."""
+    now = datetime.now(UTC)
+    for offset in range(count):
+        session.add(
+            AuditLog(
+                table_id=table.id,
+                action="optimize",
+                status="ok",
+                ts=now - timedelta(days=offset),
+                input_files_count=input_files,
+                output_files_count=output_files,
+            )
+        )
+    session.commit()
+
+
+def test_effectiveness_breach_alerts_below_10_to_1(session):
+    """Move 13: a sustained ratio below 10:1 should appear as a breach reason."""
+    table = _seed_table(session)
+    scan_at = datetime.now(UTC)
+    _seed_breached_stats(session, table, scan_at=scan_at)
+    # 80 input files / 20 output files = 4:1 -- well below the 10:1 threshold.
+    _seed_optimize_audit_rows(session, table, input_files=80, output_files=20, count=5)
+
+    breach = check_table_breach(session, table)
+
+    assert any("Compaction effectiveness below 10:1" in r for r in breach.reasons), breach.reasons
+
+
+def test_effectiveness_breach_silent_at_or_above_20_to_1(session):
+    """Move 13: an excellent ratio (>=20:1) should NOT trigger the alert."""
+    table = _seed_table(session)
+    scan_at = datetime.now(UTC)
+    _seed_breached_stats(session, table, scan_at=scan_at)
+    # 200 input files / 5 output files = 40:1 -- well above the 20:1 threshold.
+    _seed_optimize_audit_rows(session, table, input_files=200, output_files=5, count=5)
+
+    breach = check_table_breach(session, table)
+
+    assert not any("Compaction effectiveness" in r for r in breach.reasons)
