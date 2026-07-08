@@ -2,7 +2,7 @@ import { CopyOutlined, SafetyOutlined } from "@ant-design/icons";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Descriptions, Drawer, Empty, Segmented, Select, Space, Tabs, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { previewMaintenance, verifyPlan } from "../api/client";
+import { narratePlan, previewMaintenance, verifyPlan } from "../api/client";
 import type { JsonObject, MaintenancePlan, Mode, SavingsProjectionRead, TablePreviewRead, TableRead } from "../api/types";
 import { CostPrecisionBadge } from "./CostPrecisionBadge";
 import { StatStrip } from "./common";
@@ -28,6 +28,18 @@ const savingsToByOperation = (savings?: SavingsProjectionRead | null): CostByOpe
       savings_usd_month,
       reclaimable_bytes: 0
     }));
+};
+
+const buildDeterministicNarrative = (
+  tableRef: string | undefined,
+  operations: string[],
+  notes: string[],
+  verifierSummary?: string
+): string => {
+  const opOrder = operations.length ? operations.join(" -> ") : "no maintenance operations";
+  const noteSummary = notes.length ? notes.slice(0, 3).join(" | ") : "no planner notes";
+  const verifier = verifierSummary ?? "Verifier status is unavailable.";
+  return `${tableRef ?? "Selected table"} executes ${opOrder}. ${noteSummary}. ${verifier}`;
 };
 
 export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
@@ -73,6 +85,15 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
         }
       })
   });
+  const narration = useMutation({
+    mutationFn: (item: TablePreviewRead) =>
+      narratePlan(api, {
+        table_ref: item.table_ref ?? "table",
+        notes: item.notes,
+        operations: item.statements.map((statement) => statement.action),
+        sql_statements: item.statements.map((statement) => statement.sql)
+      })
+  });
 
   const estimate = useMemo(() => {
     const statements = preview.data?.items.flatMap((item) => item.statements) ?? [];
@@ -101,6 +122,11 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   useEffect(() => {
     if (!open || !preview.data?.items.length) return;
     planVerifier.mutate(preview.data.items[0]);
+  }, [open, preview.data?.items, mode]);
+
+  useEffect(() => {
+    if (!open || !preview.data?.items.length) return;
+    narration.mutate(preview.data.items[0]);
   }, [open, preview.data?.items, mode]);
 
   return (
@@ -173,6 +199,27 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
                 .map((violation) => `${violation.severity.toUpperCase()}: ${violation.message}`)
                 .join(" · ")}
             </Typography.Paragraph>
+          ) : null}
+          {preview.data?.items[0] ? (
+            <Descriptions size="small" bordered column={1}>
+              <Descriptions.Item label="Explain this plan">
+                {narration.data?.deterministic_summary ??
+                  buildDeterministicNarrative(
+                    preview.data.items[0].table_ref,
+                    preview.data.items[0].statements.map((statement) => statement.action),
+                    preview.data.items[0].notes,
+                    planVerifier.data
+                      ? planVerifier.data.verified
+                        ? "Plan verifier passed all configured invariants."
+                        : `Plan verifier found ${planVerifier.data.violations.length} violation(s).`
+                      : undefined
+                  )}
+              </Descriptions.Item>
+              <Descriptions.Item label="SQL narration">
+                {narration.data?.llm_narration ??
+                  "LLM narration unavailable; deterministic explanation remains authoritative."}
+              </Descriptions.Item>
+            </Descriptions>
           ) : null}
           <Tabs
             items={(preview.data?.items ?? []).map((item, tableIndex) => ({

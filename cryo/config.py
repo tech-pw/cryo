@@ -373,6 +373,66 @@ class Settings(BaseSettings):
         description="On-disk path where the observation lakehouse stores long-term actuations.",
     )
 
+    # LLM defaults / guardrails
+    llm_default_model_anthropic: str = Field(
+        default="claude-sonnet-4-20250514",
+        description="Default Anthropic model when provider row omits model.",
+    )
+    llm_default_model_openai: str = Field(
+        default="gpt-4o",
+        description="Default OpenAI model when provider row omits model.",
+    )
+    llm_default_model_azure_openai: str = Field(
+        default="gpt4o",
+        description="Default Azure OpenAI deployment when provider row omits model.",
+    )
+    llm_openai_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Optional OpenAI-compatible API base override (vLLM/Ollama/local gateways). "
+            "When set, OpenAI provider calls are routed through this endpoint."
+        ),
+    )
+    llm_per_call_max_tokens_default: int = Field(
+        default=1200,
+        ge=64,
+        description="Default max completion tokens allowed per LLM call when provider budget omits it.",
+    )
+    llm_daily_token_cap_default: int = Field(
+        default=300_000,
+        ge=1_000,
+        description="Default per-provider daily token cap when provider budget omits it.",
+    )
+    llm_daily_cost_cap_usd_default: float = Field(
+        default=15.0,
+        ge=0.0,
+        description="Default per-provider daily spend cap in USD (best-effort; derived from provider config pricing).",
+    )
+    llm_over_budget_mode: Literal["reject", "abstain"] = Field(
+        default="abstain",
+        description="Behavior when an LLM provider exceeds budget: hard reject or abstain-with-fallback.",
+    )
+    ai_feature_diagnosis_enabled: bool = Field(
+        default=True,
+        description="Enable run-failure diagnosis API/UI surfaces.",
+    )
+    ai_feature_filter_translation_enabled: bool = Field(
+        default=True,
+        description="Enable natural-language table-filter translation.",
+    )
+    ai_feature_plan_narration_enabled: bool = Field(
+        default=True,
+        description="Enable optional plan narration for SQL intent in PlanPreview.",
+    )
+    ai_feature_anomaly_brief_enabled: bool = Field(
+        default=True,
+        description="Enable anomaly root-cause brief surfaces.",
+    )
+    mcp_run_preset_enabled: bool = Field(
+        default=False,
+        description="Allow write-capable MCP run_preset tool. Disabled by default for safety.",
+    )
+
     # Plan Verifier (arXiv:2510.09567)
     plan_verifier_enabled: bool = Field(
         default=True,

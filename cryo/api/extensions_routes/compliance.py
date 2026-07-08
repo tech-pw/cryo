@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,8 +11,9 @@ from sqlalchemy import select
 
 from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
+from cryo.api.security import Principal, Role
 from cryo.compliance.governance import track_pending_deletions
-from cryo.db.models import ProtectedSnapshot, Source, Table, TableStats
+from cryo.db.models import AuditLog, ProtectedSnapshot, Source, Table, TableStats
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
@@ -82,15 +83,66 @@ def mcp_list_tools(session: SessionDep) -> list[dict[str, str]]:
 @router.post(
     "/mcp/tools/call",
     response_model=McpToolCallResponse,
-    dependencies=[Depends(require_operator)],
+    dependencies=[Depends(require_viewer)],
     tags=["ai"],
 )
-def mcp_call_tool(payload: McpToolCallRequest, session: SessionDep) -> McpToolCallResponse:
+def mcp_call_tool(
+    payload: McpToolCallRequest,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_viewer)],
+) -> McpToolCallResponse:
+    required_role = Role.OPERATOR if payload.name == "run_preset" else Role.VIEWER
+    if not principal.can(required_role):
+        raise HTTPException(status_code=403, detail=f"Tool {payload.name} requires {required_role.value} role")
+
     server = build_mcp_server(session)
+    table_id = None
+    raw_table_id = payload.arguments.get("table_id")
+    if isinstance(raw_table_id, str):
+        try:
+            table_id = uuid.UUID(raw_table_id)
+        except ValueError:
+            table_id = None
+
     try:
         result = server.call(payload.name, payload.arguments)
     except KeyError as exc:
+        session.add(
+            AuditLog(
+                table_id=table_id,
+                action=f"mcp.{payload.name}",
+                status="ERROR",
+                engine="mcp",
+                detail=f"tool_not_found: {exc}",
+                actor=principal.subject,
+            )
+        )
+        session.commit()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        session.add(
+            AuditLog(
+                table_id=table_id,
+                action=f"mcp.{payload.name}",
+                status="ERROR",
+                engine="mcp",
+                detail=f"tool_error: {exc}",
+                actor=principal.subject,
+            )
+        )
+        session.commit()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session.add(
+        AuditLog(
+            table_id=table_id,
+            action=f"mcp.{payload.name}",
+            status="OK",
+            engine="mcp",
+            detail=f"arguments={payload.arguments}",
+            actor=principal.subject,
+        )
+    )
+    session.commit()
     return McpToolCallResponse(result=result)
 
 

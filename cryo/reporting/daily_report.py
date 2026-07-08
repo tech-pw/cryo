@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.ai.anomaly import Anomaly, detect_anomalies
-from cryo.ai.llm import create_llm_client
+from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.db.models import AIProvider, AuditLog, Table, TableStats, TableStatsHistory
 from cryo.reporting.slack import (
     SlackBlock,
@@ -83,6 +83,7 @@ async def generate_daily_report(
     ai_summary = None
     if use_ai_summary:
         ai_summary = await _generate_ai_summary(session, report_data)
+    narrated_summary = ai_summary or _deterministic_digest_summary(report_data)
 
     # Build report result
     result: dict[str, Any] = {
@@ -104,12 +105,13 @@ async def generate_daily_report(
             "total_cost_usd": report_data.total_cost_usd,
             "projected_savings_usd": report_data.projected_savings_usd,
         },
-        "ai_summary": ai_summary,
+        "ai_summary": narrated_summary,
+        "ai_summary_used_llm": ai_summary is not None,
     }
 
     # Send to Slack if client provided
     if slack_client:
-        blocks = _build_slack_blocks(report_data, ai_summary)
+        blocks = _build_slack_blocks(report_data, narrated_summary)
         slack_sent = await slack_client.send_blocks(
             blocks,
             fallback_text=f"Cryo Daily Report - {report_data.report_date.date()}",
@@ -118,15 +120,25 @@ async def generate_daily_report(
 
     from cryo.reporting.email import send_report_email
 
-    summary_text = ai_summary or f"Cryo daily report: {report_data.total_anomalies} anomalies"
     email_sent = send_report_email(
         f"Cryo Daily Report — {report_data.report_date.date()}",
-        f"<pre>{summary_text}</pre>",
+        f"<pre>{narrated_summary}</pre>",
     )
     if email_sent:
         result["email_sent"] = True
 
     return result
+
+
+def _deterministic_digest_summary(data: DailyReportData) -> str:
+    return (
+        f"Fleet health: {data.healthy_tables}/{data.total_tables} tables are healthy, "
+        f"with {data.unhealthy_tables} requiring attention. "
+        f"Detected {data.total_anomalies} anomalies ({len(data.critical_anomalies)} critical) and "
+        f"{data.tables_needing_compaction} tables currently need compaction. "
+        f"Current monthly cost is ${data.total_cost_usd:,.2f} with projected savings of "
+        f"${data.projected_savings_usd:,.2f} from recommended maintenance actions."
+    )
 
 
 def _collect_report_data(session: Session) -> DailyReportData:
@@ -332,13 +344,19 @@ Focus on:
 4. Cost optimization opportunities"""
 
     try:
-        client = create_llm_client(
-            provider.provider_type,
-            provider.api_key_encrypted,
-            provider.model,
-            config=provider.config,
+        response, _observation = await complete_with_budget_and_observation(
+            session,
+            prompt,
+            invoke=LLMInvokeContext(
+                feature="daily_digest_narration",
+                prompt_name="daily_report_summary",
+                extra={"report_date": data.report_date.date().isoformat()},
+            ),
+            system=REPORT_SYSTEM_PROMPT,
+            max_tokens=500,
         )
-        response = await client.complete(prompt, system=REPORT_SYSTEM_PROMPT, max_tokens=500)
+        if response is None:
+            return None
         return response.content
     except Exception as e:
         logger.exception(f"Failed to generate AI summary: {e}")
