@@ -911,6 +911,23 @@ export interface PartitionEvolutionRecommendationRead {
   warnings: string[];
 }
 
+export interface BloomFilterRecommendationRead {
+  column: string;
+  reason: string;
+  estimated_skip_rate: number;
+  cardinality: string;
+  equality_filter_count: number;
+  spark_sql: string;
+}
+
+export interface BloomFilterRecommendationsResponse {
+  table_id: UUID;
+  table_name: string;
+  telemetry_source: string;
+  message?: string | null;
+  recommendations: BloomFilterRecommendationRead[];
+}
+
 export const getTableQueryPatterns = (api: ApiOptions, tableId: UUID) =>
   apiFetch<TableQueryPatternsResponse>(`/tables/${tableId}/query-patterns`, api);
 
@@ -924,6 +941,9 @@ export const getPartitionEvolutionRecommendation = (
     api,
     { query: { min_query_threshold: minQueryThreshold } }
   );
+
+export const getBloomFilterRecommendations = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<BloomFilterRecommendationsResponse>(`/advanced/bloom-filter-recommendations/${tableId}`, api);
 
 export const getLayoutRecommendation = (api: ApiOptions, tableId: UUID, refresh?: boolean) =>
   apiFetch<LayoutRecommendationRead>(`/tables/${tableId}/layout-recommendation`, api, {

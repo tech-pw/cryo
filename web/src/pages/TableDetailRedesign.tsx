@@ -59,9 +59,10 @@ import {
   YAxis
 } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   assignTables,
+  getBloomFilterRecommendations,
   getComplianceStatus,
   getEffectivePreset,
   getPartitionEvolutionRecommendation,
@@ -70,6 +71,8 @@ import {
   getTableBenefitScores,
   getTableCost,
   getTableHealthTrends,
+  getTableHistory,
+  getTablePartitions,
   getTableS3Tiering,
   getTableSignals,
   getTableRoiBreakdown,
@@ -97,7 +100,7 @@ import {
   getRun,
   getRunJobs
 } from "../api/client";
-import type { AuditEntry, CompactionCandidateRead, UnionScoreRead, ColumnStatsResponse, SilentDataLossReportRead } from "../api/types";
+import type { AuditEntry, CompactionCandidateRead, UnionScoreRead, ColumnStatsResponse, SilentDataLossReportRead, HistoryPoint } from "../api/types";
 import { EmptyState, QueryErrorAlert } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
 import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
@@ -105,12 +108,17 @@ import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
 import { HealthScoreBreakdown, buildHealthScoreFactors } from "../components/HealthScoreBreakdown";
 import { SavingsByOperation } from "../components/SavingsByOperation";
 import { PlanPreview } from "../components/PlanPreview";
+import { QueryState } from "../components/QueryState";
 import { TableAiInsights } from "../components/TableAiInsights";
 import { TableCompactionAnalytics } from "../components/TableCompactionAnalytics";
 import { TableDiagnosisPanel, buildDiagnosisVerdict } from "../components/TableDiagnosisPanel";
 import { ActNowSection } from "../components/table-detail/ActNowSection";
 import { HealthGauge } from "../components/table-detail/HealthGauge";
 import { KpiStripe } from "../components/table-detail/KpiStripe";
+import { OverviewTab } from "../components/table-detail/OverviewTab";
+import { PartitionHistogram } from "../components/table-detail/PartitionHistogram";
+import { RecommendedActions } from "../components/table-detail/RecommendedActions";
+import { SectionNav } from "../components/table-detail/SectionNav";
 import { StorageDonut } from "../components/table-detail/StorageDonut";
 import { CompactionCandidatesTab } from "../components/table-detail/CompactionCandidatesTab";
 import { UnionableTab } from "../components/table-detail/UnionableTab";
@@ -140,11 +148,18 @@ import {
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatEngineLabel } from "../lib/engines";
-import { provenanceLabel } from "../components/table-detail/helpers";
+import { formatPartitionColumnLabel, provenanceLabel } from "../components/table-detail/helpers";
+
+const isNotFoundError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const maybeHttpError = error as { status?: number; response?: { status?: number } };
+  return maybeHttpError.status === 404 || maybeHttpError.response?.status === 404;
+};
 
 export const TableDetail = () => {
   const { tableId = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -258,6 +273,21 @@ export const TableDetail = () => {
   const compliance = useQuery({
     queryKey: ["table-compliance", tableId, token],
     queryFn: () => getComplianceStatus(api, tableId),
+    retry: false
+  });
+  const partitions = useQuery({
+    queryKey: ["table-partitions", tableId, token],
+    queryFn: () => getTablePartitions(api, tableId),
+    retry: false
+  });
+  const history = useQuery({
+    queryKey: ["table-history", tableId, token],
+    queryFn: () => getTableHistory(api, tableId) as Promise<HistoryPoint[]>,
+    retry: false
+  });
+  const bloomRecommendations = useQuery({
+    queryKey: ["table-bloom-recommendations", tableId, token],
+    queryFn: () => getBloomFilterRecommendations(api, tableId),
     retry: false
   });
   const sources = useQuery({
@@ -499,13 +529,29 @@ export const TableDetail = () => {
     stats?.projected_monthly_s3_cost_usd ??
     stats?.estimated_monthly_s3_cost_usd ??
     0;
-  const savingsUsd = costView?.projected_savings_usd_month ?? stats?.projected_savings_usd_month ?? 0;
+  const projectedSavingsRaw =
+    costView?.projected_savings_usd_month ?? stats?.projected_savings_usd_month;
+  const hasProjectedSavings = typeof projectedSavingsRaw === "number";
+  const savingsUsd = projectedSavingsRaw ?? 0;
+  const showLatencyBenefit =
+    hasProjectedSavings &&
+    savingsUsd === 0 &&
+    (Boolean(stats?.needs_compaction) || triggered.length > 0);
+  const savingsDisplay = !hasProjectedSavings
+    ? "Not estimated"
+    : showLatencyBenefit
+      ? "Latency benefit"
+      : formatCurrency(savingsUsd);
   const reclaimableBytes = costView?.reclaimable_bytes ?? stats?.reclaimable_bytes ?? 0;
   const storageBytes =
     (costView?.live_bytes ?? 0) +
     (costView?.dead_bytes ?? 0) +
     (costView?.metadata_bytes ?? 0) +
     (costView?.orphan_bytes ?? 0);
+  const partitionColLabel = formatPartitionColumnLabel(stats?.partition_col);
+  const hideSinglePartitionKpi =
+    partitionColLabel === "Unpartitioned" && (stats?.total_partitions ?? 0) <= 1;
+  const complianceNotFound = isNotFoundError(compliance.error);
   const score = stats?.overall_score ?? 0;
   const scoreFactors = useMemo(
     () => buildHealthScoreFactors(stats, costView?.orphan_bytes ?? 0, storageBytes),
@@ -637,6 +683,18 @@ export const TableDetail = () => {
         (dataQuality.data?.new_columns.length ?? 0) + (dataQuality.data?.dropped_columns.length ?? 0)
     };
   }, [dataQuality.data]);
+
+  const historyPoints = useMemo(
+    () =>
+      (history.data ?? [])
+        .filter((point) => Boolean(point.scan_at))
+        .map((point) => ({
+          ...point,
+          timestamp: new Date(point.scan_at as string).getTime()
+        }))
+        .sort((a, b) => a.timestamp - b.timestamp),
+    [history.data]
+  );
 
   const tabItems = [
     {
@@ -1799,6 +1857,256 @@ export const TableDetail = () => {
     }
   ];
 
+  const tabsByKey = Object.fromEntries(tabItems.map((item) => [item.key, item]));
+  const consolidatedTabItems = [
+    {
+      key: "overview",
+      label: (
+        <span>
+          <HeartOutlined />
+          Overview
+        </span>
+      ),
+      children: (
+        <div className="td-tab-content">
+          <OverviewTab
+            score={score}
+            scoreFactors={scoreFactors}
+            rowExists={Boolean(row)}
+            verdict={verdict}
+            healthTrends={healthTrends.data}
+            trendDirection={trendDirection}
+            trendLabel={trendLabel}
+            tableSignals={tableSignals.data}
+            tableSignalsLoading={tableSignals.isLoading}
+            tableSignalsError={tableSignals.error}
+            costView={costView}
+            benefitScores={benefitScores.data}
+            stats={stats}
+            statsRaw={statsRaw}
+            reclaimableBytes={reclaimableBytes}
+            savingsUsd={savingsUsd}
+            presetOptions={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
+            presetsLoading={presets.isLoading}
+            effectivePresetId={effectivePreset.data?.preset_id ?? undefined}
+            onAssignPreset={(presetId) => assign.mutate(presetId)}
+            assignPending={assign.isPending}
+            onRun={() => run.mutate()}
+            runPending={run.isPending}
+            queuedMaintenanceRunId={queuedMaintenanceRunId}
+            lastRunSkipNotes={lastRunSkipNotes}
+            onOpenRun={handleRunAction}
+            onPreview={() => setPreviewOpen(true)}
+            onSchedule={(scheduledAtIso) => schedule.mutate(scheduledAtIso)}
+            schedulePending={schedule.isPending}
+            tableLabel={row ? `${row.schema_name}.${row.table_name}` : "this table"}
+            partitionEvolution={partitionEvolution.data ?? undefined}
+            tableQueries={tableQueries.data ?? undefined}
+            tableQueriesLoading={tableQueries.isLoading}
+            pointDeductions={pointDeductions}
+          />
+          <RecommendedActions
+            costView={costView}
+            signals={tableSignals.data}
+            benefitScores={benefitScores.data}
+            onPreview={() => setPreviewOpen(true)}
+            onRun={() => run.mutate()}
+          />
+        </div>
+      ),
+      forceRender: true
+    },
+    {
+      key: "structure",
+      label: (
+        <span>
+          <DatabaseOutlined />
+          Structure
+        </span>
+      ),
+      children: (
+        <div className="td-tab-content">
+          <SectionNav
+            sections={[
+              { id: "structure-schema", label: "Schema" },
+              { id: "structure-partitions", label: "Partitions" },
+              { id: "structure-history", label: "History" },
+              { id: "structure-bloom", label: "Bloom Filters" }
+            ]}
+          />
+          <div id="structure-schema">{tabsByKey["schema"]?.children}</div>
+          <div id="structure-partitions" style={{ marginTop: 16 }}>
+            <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
+              <div className="td-chart-card-header">
+                <span className="td-chart-card-title">Partition breakdown</span>
+                <span className="td-chart-card-subtitle">
+                  Top partitions by data size and small-file pressure
+                </span>
+              </div>
+              <div className="td-chart-card-content">
+                {partitions.isLoading ? (
+                  <Typography.Text type="secondary">Loading partition breakdown…</Typography.Text>
+                ) : partitions.error ? (
+                  <QueryErrorAlert error={partitions.error} title="Failed to load partitions" />
+                ) : (
+                  <PartitionHistogram partitions={partitions.data ?? []} />
+                )}
+              </div>
+            </Card>
+            {tabsByKey["column-stats"]?.children}
+          </div>
+          <div id="structure-history" style={{ marginTop: 16 }}>
+            <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
+              <div className="td-chart-card-header">
+                <span className="td-chart-card-title">Stats history</span>
+                <span className="td-chart-card-subtitle">Scan-over-scan trend</span>
+              </div>
+              <div className="td-chart-card-content">
+                {history.isLoading ? (
+                  <Typography.Text type="secondary">Loading historical stats…</Typography.Text>
+                ) : history.error ? (
+                  <QueryErrorAlert error={history.error} title="Failed to load table history" />
+                ) : historyPoints.length ? (
+                  <div className="chart-frame" style={{ height: 260 }}>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart data={historyPoints}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
+                        <XAxis
+                          dataKey="timestamp"
+                          tickFormatter={(ts) =>
+                            new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                          }
+                          tick={{ fontSize: 11 }}
+                          stroke="var(--muted, #5c667a)"
+                        />
+                        <YAxis yAxisId="left" tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
+                        <RechartsTooltip
+                          {...chartTooltipProps}
+                          labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+                          formatter={(value, name) => {
+                            const n = Number(value ?? 0);
+                            if (String(name) === "total_size_gb") return [`${n.toFixed(1)} GB`, "Size"];
+                            return [n.toLocaleString(), String(name)];
+                          }}
+                        />
+                        <Line yAxisId="left" type="monotone" dataKey="small_files_count" stroke={cryoColors.chartPrimary} strokeWidth={2} dot={false} />
+                        <Line yAxisId="right" type="monotone" dataKey="total_size_gb" stroke={cryoColors.gradeA} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <EmptyState title="No stats history yet" description="History appears after multiple scans." />
+                )}
+              </div>
+            </Card>
+          </div>
+          <div id="structure-bloom" style={{ marginTop: 16 }}>
+            <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
+              <div className="td-chart-card-header">
+                <span className="td-chart-card-title">Bloom filter recommendations</span>
+                <span className="td-chart-card-subtitle">Equality-heavy high-cardinality columns</span>
+              </div>
+              <div className="td-chart-card-content">
+                {bloomRecommendations.isLoading ? (
+                  <Typography.Text type="secondary">Loading bloom recommendations…</Typography.Text>
+                ) : bloomRecommendations.error ? (
+                  <QueryErrorAlert error={bloomRecommendations.error} title="Failed to load bloom recommendations" />
+                ) : (bloomRecommendations.data?.recommendations.length ?? 0) === 0 ? (
+                  <EmptyState
+                    title="No bloom recommendations yet"
+                    description={bloomRecommendations.data?.message ?? "Ingest query telemetry to generate bloom-filter candidates."}
+                  />
+                ) : (
+                  <Table
+                    size="small"
+                    rowKey="column"
+                    pagination={false}
+                    dataSource={bloomRecommendations.data?.recommendations ?? []}
+                    columns={[
+                      { title: "Column", dataIndex: "column" },
+                      { title: "Cardinality", dataIndex: "cardinality", width: 120 },
+                      {
+                        title: "Skip rate",
+                        dataIndex: "estimated_skip_rate",
+                        width: 120,
+                        align: "right" as const,
+                        render: (value: number) => `${(value * 100).toFixed(0)}%`
+                      },
+                      {
+                        title: "Equality filters",
+                        dataIndex: "equality_filter_count",
+                        width: 140,
+                        align: "right" as const
+                      }
+                    ]}
+                  />
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      ),
+      forceRender: true
+    },
+    {
+      key: "health-quality",
+      label: (
+        <span>
+          <SafetyOutlined />
+          Health & Quality
+        </span>
+      ),
+      children: (
+        <div className="td-tab-content">
+          {tabsByKey["quality"]?.children}
+          <div style={{ marginTop: 16 }}>{tabsByKey["ai"]?.children}</div>
+        </div>
+      ),
+      forceRender: true
+    },
+    {
+      key: "cost",
+      label: <CostTabLabel />,
+      children: (
+        <div className="td-tab-content">
+          {tabsByKey["cost"]?.children}
+          <div style={{ marginTop: 16 }}>{tabsByKey["candidates"]?.children}</div>
+        </div>
+      ),
+      forceRender: true
+    },
+    {
+      key: "activity",
+      label: (
+        <span>
+          <HistoryOutlined />
+          Activity
+        </span>
+      ),
+      children: (
+        <div className="td-tab-content">
+          {tabsByKey["activity"]?.children}
+          <div style={{ marginTop: 16 }}>{tabsByKey["unionable"]?.children}</div>
+        </div>
+      ),
+      forceRender: true
+    }
+  ];
+  const allowedTabKeys = new Set(consolidatedTabItems.map((tab) => tab.key));
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab && allowedTabKeys.has(requestedTab) ? requestedTab : "overview";
+
+  const handleTabChange = (tabKey: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (tabKey === "overview") {
+      next.delete("tab");
+    } else {
+      next.set("tab", tabKey);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   if (!row && !table.isLoading) {
     return (
       <div className="table-detail">
@@ -1882,6 +2190,7 @@ export const TableDetail = () => {
                     size="small"
                     icon={<CopyOutlined />}
                     className="td-path-copy"
+                    aria-label="Copy table path"
                     onClick={() => {
                       void navigator.clipboard.writeText(row.location ?? "").then(
                         () => message.success("Path copied"),
@@ -1963,8 +2272,8 @@ export const TableDetail = () => {
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span className="td-attribution-label">Partition col</span>
-            <span className="td-attribution-value" title={stats?.partition_col ?? "-"}>
-              {stats?.partition_col ?? "-"}
+            <span className="td-attribution-value" title={partitionColLabel}>
+              {partitionColLabel}
               {stats?.partition_col_type ? (
                 <span className="td-attribution-subtle">
                   ({stats.partition_col_type})
@@ -1983,7 +2292,7 @@ export const TableDetail = () => {
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span className="td-attribution-label">Savings / Mo</span>
             <span className="td-attribution-value td-savings-value">
-              {formatCurrency(savingsUsd)}
+              {savingsDisplay}
               {reclaimableBytes > 0 ? (
                 <span className="td-attribution-subtle">
                   {formatBytesGb(reclaimableBytes)} rec.
@@ -1995,16 +2304,20 @@ export const TableDetail = () => {
         <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
 
         {/* Partitions */}
-        <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
-            <AppstoreOutlined />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <span className="td-attribution-label">Partitions</span>
-            <span className="td-attribution-value">{formatNumber(stats?.total_partitions)}</span>
-          </div>
-        </div>
-        <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+        {!hideSinglePartitionKpi ? (
+          <>
+            <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "6px", backgroundColor: "rgba(92, 102, 122, 0.05)", color: "var(--muted, #5c667a)", fontSize: 13, flexShrink: 0 }}>
+                <AppstoreOutlined />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <span className="td-attribution-label">Partitions</span>
+                <span className="td-attribution-value">{formatNumber(stats?.total_partitions)}</span>
+              </div>
+            </div>
+            <div className="td-attribution-divider" style={{ alignSelf: "center" }} />
+          </>
+        ) : null}
 
         {/* Files */}
         <div className="td-attribution-item" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}>
@@ -2131,7 +2444,7 @@ export const TableDetail = () => {
             />
           ) : null}
 
-          <Tabs defaultActiveKey="overview" items={tabItems} className="td-main-tabs" />
+          <Tabs activeKey={activeTab} onChange={handleTabChange} items={consolidatedTabItems} className="td-main-tabs" />
         </Col>
 
         {/* RIGHT COLUMN: Metadata & Compliance Sidebar (30%) */}
@@ -2246,40 +2559,44 @@ export const TableDetail = () => {
             {/* Card 3: Compliance & Snapshot Protection */}
             <Card className="td-sidebar-card" title="Compliance & Protection" size="small">
               <div className="td-sidebar-compliance-wrap">
-                {compliance.data ? (
-                  <Descriptions size="small" column={1} className="td-meta-desc">
-                    <Descriptions.Item label="Table Ref">
-                      <span className="td-sidebar-desc-val">{compliance.data.table_ref}</span>
-                    </Descriptions.Item>
-                    <Descriptions.Item label="ABAC Count">
-                      <Badge count={compliance.data.abac_policy_count} showZero style={{ backgroundColor: 'var(--primary, #3d6fd4)' }} />
-                    </Descriptions.Item>
-                    <Descriptions.Item label="Deletion delay">
-                      <PendingDeletionTag pending={Boolean(compliance.data.pending_deletion)} />
-                    </Descriptions.Item>
-                    {compliance.data.abac_enforcement_note ? (
-                      <Descriptions.Item label="ABAC Note">
-                        <span className="td-sidebar-desc-val">{compliance.data.abac_enforcement_note}</span>
+                <QueryState
+                  isLoading={compliance.isLoading}
+                  isError={Boolean(compliance.error) && !complianceNotFound}
+                  error={compliance.error}
+                  data={compliance.data}
+                  isEmpty={complianceNotFound || !compliance.data}
+                  emptyTitle="No deletion-tracking data yet"
+                  emptyDescription="This table has no compliance events yet. ABAC and deletion-delay details will appear after governance policies or delete workflows are applied."
+                >
+                  {(complianceData) => (
+                    <Descriptions size="small" column={1} className="td-meta-desc">
+                      <Descriptions.Item label="Table Ref">
+                        <span className="td-sidebar-desc-val">{complianceData.table_ref}</span>
                       </Descriptions.Item>
-                    ) : null}
-                    {compliance.data.pending_deletion ? (
-                      <Descriptions.Item label="Deletion Blocks">
-                        <span className="td-sidebar-desc-val">
-                          {compliance.data.pending_deletion.pending_rows?.toLocaleString() ?? 0} rows blocked
-                          {compliance.data.pending_deletion.blocked_until
-                            ? ` until ${formatTime(compliance.data.pending_deletion.blocked_until)}`
-                            : ""}
-                        </span>
+                      <Descriptions.Item label="ABAC Count">
+                        <Badge count={complianceData.abac_policy_count} showZero style={{ backgroundColor: 'var(--primary, #3d6fd4)' }} />
                       </Descriptions.Item>
-                    ) : null}
-                  </Descriptions>
-                ) : compliance.isLoading ? (
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>Loading compliance status…</Typography.Text>
-                ) : compliance.error ? (
-                  <QueryErrorAlert error={compliance.error} title="Failed to load compliance status" />
-                ) : (
-                  <EmptyState title="Compliance unavailable" description="No compliance data has been recorded for this table yet." />
-                )}
+                      <Descriptions.Item label="Deletion delay">
+                        <PendingDeletionTag pending={Boolean(complianceData.pending_deletion)} />
+                      </Descriptions.Item>
+                      {complianceData.abac_enforcement_note ? (
+                        <Descriptions.Item label="ABAC Note">
+                          <span className="td-sidebar-desc-val">{complianceData.abac_enforcement_note}</span>
+                        </Descriptions.Item>
+                      ) : null}
+                      {complianceData.pending_deletion ? (
+                        <Descriptions.Item label="Deletion Blocks">
+                          <span className="td-sidebar-desc-val">
+                            {complianceData.pending_deletion.pending_rows?.toLocaleString() ?? 0} rows blocked
+                            {complianceData.pending_deletion.blocked_until
+                              ? ` until ${formatTime(complianceData.pending_deletion.blocked_until)}`
+                              : ""}
+                          </span>
+                        </Descriptions.Item>
+                      ) : null}
+                    </Descriptions>
+                  )}
+                </QueryState>
 
                 {(role === "admin" || role === "operator") ? (
                   <div className="td-sidebar-protect-form" style={{ marginTop: 14, paddingTop: 14, borderTop: "1.5px solid var(--line, #e1e6ed)" }}>
@@ -2400,6 +2717,7 @@ export const TableDetail = () => {
                         type="text"
                         size="small"
                         icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                        aria-label={`Remove subscriber ${sub.email}`}
                         loading={removeSubscriber.isPending}
                         onClick={() => removeSubscriber.mutate(sub.id)}
                       />

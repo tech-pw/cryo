@@ -41,7 +41,7 @@ import {
 } from "../api/client";
 import type { TableRead } from "../api/types";
 import { ConfirmAction } from "../components/confirm";
-import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
+import { EmptyState, PageHeader, QueryErrorAlert, TelemetryRequiredNotice } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatCurrency, formatTime } from "../lib/format";
@@ -210,6 +210,14 @@ export const Governance = () => {
         showIcon
         title="Start with urgent signals first: pending approvals, broken tables, and active anomalies."
       />
+      {!anomalies.isLoading &&
+      !maintenanceSignals.isLoading &&
+      !anomalies.error &&
+      !maintenanceSignals.error &&
+      (anomalies.data ?? []).length === 0 &&
+      (maintenanceSignals.data ?? []).length === 0 ? (
+        <TelemetryRequiredNotice surface="Governance insights" />
+      ) : null}
 
       <Row gutter={[12, 12]}>
         <Col xs={24} xl={12}>

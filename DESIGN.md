@@ -2,42 +2,35 @@
 
 ## Visual Strategy
 
-Cryo is a light, dense, restrained operations dashboard. The physical scene is an operator reading table health during a maintenance window under normal office lighting: the UI should be quiet, exact, and fast to scan.
+Cryo is a dense, restrained operations dashboard with a dark, always-on navigation rail and neutral content surfaces. The UI should feel calm and precise: operators should scan health and maintenance posture quickly without decorative noise.
 
-Use pure-white content surfaces, cool neutral structure, and one considered cobalt primary. Color is for action, selection, health, and system state. Avoid decorative brand surfaces; this is an infrastructure tool where design serves the work.
+Use cool neutral surfaces, one cobalt primary, and explicit status colors for health/state transitions. Color is for action, selection, risk, and system state only.
 
 ## Color Tokens
 
-Use OKLCH tokens only. Keep the base UI near-neutral and reserve saturated color for primary actions, selected rows, active navigation, alerts, charts, and health grades.
+Use the shipped Hex token system as canonical (see `web/src/styles.css` and `web/src/lib/theme.ts`). Keep base UI near-neutral and reserve saturated color for primary actions, selected rows, active nav, alerts, charts, and health grades.
 
 ```css
 :root {
-  --color-bg: oklch(1.000 0.000 0);
-  --color-surface: oklch(0.985 0.000 0);
-  --color-surface-raised: oklch(1.000 0.000 0);
-  --color-panel: oklch(0.968 0.004 248);
-  --color-border: oklch(0.895 0.006 248);
-  --color-border-strong: oklch(0.820 0.010 248);
+  --bg: #ffffff;
+  --layout-bg: #f3f5f8;
+  --panel: #f3f5f8;
+  --line: #e1e6ed;
+  --ink: #131b24;
+  --muted: #5c667a;
+  --primary: #3d6fd4;
+  --primary-hover: #3566c8;
+  --primary-soft: #e8effc;
+  --sidebar-bg: #0c121b;
+  --sidebar-text: #c7d2de;
+  --sidebar-text-active: #ffffff;
 
-  --color-ink: oklch(0.205 0.018 248);
-  --color-muted: oklch(0.470 0.017 248);
-  --color-muted-subtle: oklch(0.610 0.014 248);
-
-  --color-primary: oklch(0.541 0.122 248);
-  --color-primary-hover: oklch(0.500 0.132 248);
-  --color-primary-soft: oklch(0.945 0.030 248);
-
-  --color-success: oklch(0.550 0.120 152);
-  --color-warning: oklch(0.680 0.140 75);
-  --color-error: oklch(0.580 0.180 25);
-  --color-info: oklch(0.600 0.130 230);
-
-  --grade-a: oklch(0.570 0.130 152);
-  --grade-b: oklch(0.610 0.105 185);
-  --grade-c: oklch(0.720 0.135 88);
-  --grade-d: oklch(0.670 0.160 55);
-  --grade-e: oklch(0.610 0.175 32);
-  --grade-f: oklch(0.560 0.190 20);
+  --grade-a: #2e9f6b;
+  --grade-b: #2f8fbd;
+  --grade-c: #c08c2d;
+  --grade-d: #c9791e;
+  --grade-e: #c2562b;
+  --grade-f: #b23a2e;
 }
 ```
 
@@ -49,7 +42,7 @@ Contrast rules:
 
 ## Typography
 
-Use Inter when available, then system UI: `Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
+Use IBM Plex Sans for UI copy and IBM Plex Mono for SQL/JSON/IDs. Both are bundled locally (no Google Fonts dependency): `"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
 
 Use a fixed product scale:
 - Page title: 24px / 32px, weight 650.
@@ -105,7 +98,7 @@ Map AntD through the Cryo tokens rather than styling each component ad hoc:
 - `colorText`: `--color-ink`
 - `colorTextSecondary`: `--color-muted`
 - `borderRadius`: 8
-- `fontFamily`: Inter/system stack
+- `fontFamily`: IBM Plex Sans/system stack
 - `controlHeight`: 32, compact 28, large 36
 
 Keep component vocabulary consistent across screens. Use AntD primitives for tables, forms, modals, drawers, tabs, menus, selects, date pickers, tooltips, and notifications.

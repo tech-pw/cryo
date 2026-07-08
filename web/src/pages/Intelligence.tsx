@@ -32,7 +32,7 @@ import {
   searchCopilot
 } from "../api/client";
 import { ConfirmAction } from "../components/confirm";
-import { EmptyState, PageHeader, QueryErrorAlert } from "../components/common";
+import { EmptyState, PageHeader, QueryErrorAlert, TelemetryRequiredNotice } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { formatNumber } from "../lib/format";
 
@@ -174,6 +174,9 @@ export const Intelligence = () => {
       <QueryErrorAlert error={questions.error} title="Failed to load copilot questions" />
       <QueryErrorAlert error={bandit.error} title="Failed to load governor bandit status" />
       <QueryErrorAlert error={costModel.error} title="Failed to load cost model evaluation" />
+      {!questions.isLoading && !questions.error && (questions.data ?? []).length === 0 ? (
+        <TelemetryRequiredNotice surface="Intelligence recommendations" />
+      ) : null}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>

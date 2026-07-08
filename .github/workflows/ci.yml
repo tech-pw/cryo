@@ -405,6 +405,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Enforce global CSS budget
+        run: npm run check:styles-budget
+
       - name: Unit tests
         run: npm test
 
