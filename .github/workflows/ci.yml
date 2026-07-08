@@ -325,19 +325,22 @@ jobs:
 
       - name: Build cryo-engine-go
         working-directory: engine-go
-        run: CGO_ENABLED=0 go build -o bin/cryo-engine-go ./cmd/cryo-engine-go
+        run: |
+          CGO_ENABLED=0 go build -o bin/cryo-engine-go ./cmd/cryo-engine-go
+          CGO_ENABLED=0 go build -o bin/seed-native-fixtures ./cmd/seed-native-fixtures
 
       - name: Seed compaction fixtures
         env:
           CRYO_REST_URI: http://localhost:8181
+          CRYO_SEED_NATIVE_FIXTURES_BINARY: engine-go/bin/seed-native-fixtures
         run: python tests/integration/native/generate_compaction_fixtures.py
 
-      - name: Run native COW compaction e2e (Go engine)
+      - name: Run native COW + MOR compaction e2e (Go engine)
         env:
           CRYO_REST_URI: http://localhost:8181
           CRYO_ENGINE_IMPL: go
           CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
-        run: pytest tests/integration/native/test_native_compaction_e2e.py -v
+        run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py -v
 
   build:
     name: Build Check

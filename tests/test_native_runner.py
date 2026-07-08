@@ -441,7 +441,7 @@ def test_exec_result_maps_snapshots_expired() -> None:
     assert exec_result.snapshots_expired == 4
 
 
-def test_native_render_excludes_compaction_and_manifests() -> None:
+def test_native_render_excludes_compaction_without_go_engine() -> None:
     engine = NativeEngine(config={})
     plan = MaintenancePlan(
         table_ref="rest.demo.orders",
@@ -463,7 +463,33 @@ def test_native_render_excludes_compaction_and_manifests() -> None:
     assert rendered_types == {"expire_snapshots", "remove_orphan_files"}
 
 
-def test_native_supported_operations_excludes_compaction() -> None:
+def test_native_render_includes_cow_optimize_with_go_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    engine = NativeEngine(
+        config={"engine_impl": "go"},
+        table_stats={"total_delete_files": 0},
+    )
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+            Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
+            Operation(OperationType.OPTIMIZE_MANIFESTS, {}),
+        ),
+    )
+    statements = engine.render(plan)
+    payload = statements[0].payload
+    operations = payload.get("operations")
+    assert isinstance(operations, list)
+    rendered_types = {item["type"] for item in operations}
+    assert rendered_types == {"expire_snapshots", "remove_orphan_files", "optimize"}
+
+
+def test_native_supported_operations_excludes_compaction_without_go() -> None:
     plan = MaintenancePlan(
         table_ref="rest.demo.orders",
         mode=Mode.DEEP,
@@ -478,4 +504,30 @@ def test_native_supported_operations_excludes_compaction() -> None:
     assert [operation.type for operation in supported] == [
         OperationType.EXPIRE_SNAPSHOTS,
         OperationType.REMOVE_ORPHAN_FILES,
+    ]
+
+
+def test_native_supported_operations_includes_cow_optimize_with_go(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+            Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
+            Operation(OperationType.OPTIMIZE_MANIFESTS, {}),
+        ),
+    )
+    supported = _supported_operations(
+        plan,
+        {"total_delete_files": 0},
+        {"engine_impl": "go"},
+    )
+    assert [operation.type for operation in supported] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.OPTIMIZE,
     ]

@@ -370,6 +370,17 @@ class Worker:
             engine = self._engine_factory(destination)
             if hasattr(engine, "with_source_config") and table_data.source_config:
                 engine = engine.with_source_config(table_data.source_config)
+            if engine.type is EngineType.NATIVE and hasattr(engine, "with_table_stats"):
+                engine = engine.with_table_stats(table_data.stats)
+
+            native_routing = None
+            if engine.type is EngineType.NATIVE:
+                from cryo.engines.native.routing import resolve_native_routing
+
+                native_routing = resolve_native_routing(
+                    plan, table_data.stats, destination.config
+                )
+
             statements = engine.render(plan)
             safe_publish(
                 self._run_events,
@@ -386,7 +397,7 @@ class Worker:
                     ),
                 ),
             )
-            if not statements:
+            if not statements and (native_routing is None or not native_routing.has_work):
                 final_status = JobStatus.SKIPPED
             elif engine.type is EngineType.NATIVE and hasattr(engine, "execute_plan"):
                 (
@@ -400,6 +411,9 @@ class Worker:
                     plan=plan,
                     job=job,
                     table_ref=table_ref,
+                    routing=native_routing,
+                    destination=destination,
+                    table_data=table_data,
                 )
                 final_status = native_status
                 error = native_error
@@ -705,38 +719,78 @@ class Worker:
         plan: MaintenancePlan,
         job: MaintenanceJobRecord,
         table_ref: str | None,
+        routing: Any | None = None,
+        destination: DestinationConfig | None = None,
+        table_data: TableMaintenanceData | None = None,
     ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
         from cryo.db.session import SessionLocal
-        from cryo.engines.native.engine import (
-            NATIVE_DISCONNECTED_DETAIL,
-            NATIVE_DISCONNECTED_OPERATIONS,
-            NATIVE_SUPPORTED_OPERATIONS,
-        )
+        from cryo.engines.native.routing import NativeRoutingResult, resolve_native_routing
         from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
-        disconnected_types = set(NATIVE_DISCONNECTED_OPERATIONS)
-        disconnected_operations = tuple(
-            operation for operation in plan.operations if operation.type in disconnected_types
-        )
-        supported_operations = tuple(
-            operation
-            for operation in plan.operations
-            if operation.type in NATIVE_SUPPORTED_OPERATIONS
-        )
+        if routing is None:
+            stats = table_data.stats if table_data is not None else None
+            config = destination.config if destination is not None else {}
+            routing = resolve_native_routing(plan, stats, config)
+        assert isinstance(routing, NativeRoutingResult)
+
         had_skip = False
-        for operation in disconnected_operations:
+        for operation, detail in routing.skipped_operations:
             had_skip = True
-            self._store.record_audit(
-                AuditRecord(
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    action=operation.type,
-                    status="SKIPPED",
-                    engine=engine.type,
-                    detail=NATIVE_DISCONNECTED_DETAIL,
-                    duration_ms=0,
-                    actor=job.actor,
-                )
+            self._record_native_skipped(
+                job=job,
+                table_ref=table_ref,
+                engine=engine,
+                operation=operation,
+                detail=detail,
+            )
+
+        supported_operations = routing.native_operations
+        if not supported_operations and not routing.fallback_operations:
+            if had_skip:
+                return JobStatus.SKIPPED, None, None, False, had_skip
+            return JobStatus.SKIPPED, None, None, False, False
+
+        final_status = JobStatus.SUCCEEDED
+        error: str | None = None
+        engine_ref: str | None = None
+        had_success = False
+
+        if supported_operations:
+            self._renew_table_lock(job)
+            try:
+                table_uuid = UUID(job.table_id)
+            except ValueError:
+                table_uuid = None
+            for operation in supported_operations:
+                if table_uuid is not None:
+                    with SessionLocal() as abac_session:
+                        allowed, reason = evaluate_maintenance_allowed(
+                            abac_session,
+                            table_uuid,
+                            None,
+                            operation.type,
+                        )
+                    if not allowed:
+                        detail = reason or "abac_denied"
+                        safe_publish(
+                            self._run_events,
+                            job.run_id,
+                            build_log_line(
+                                run_id=job.run_id,
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                table_ref=table_ref,
+                                operation=operation.type.value,
+                                level="error",
+                                message=detail,
+                            ),
+                        )
+                        return JobStatus.FAILED, detail, None, False, had_skip
+
+            native_plan = MaintenancePlan(
+                table_ref=plan.table_ref,
+                mode=plan.mode,
+                operations=supported_operations,
             )
             safe_publish(
                 self._run_events,
@@ -746,31 +800,81 @@ class Worker:
                     job_id=job.id,
                     table_id=job.table_id,
                     table_ref=table_ref,
-                    operation=operation.type.value,
                     engine=str(engine.type),
-                    level="warning",
-                    message=f"Skipped {operation.type.value}: {NATIVE_DISCONNECTED_DETAIL}",
+                    message=(
+                        f"Executing native plan with {len(supported_operations)} operations "
+                        "in one subprocess"
+                    ),
                 ),
             )
-        if not supported_operations:
-            return JobStatus.SKIPPED, None, None, False, had_skip
-
-        self._renew_table_lock(job)
-        try:
-            table_uuid = UUID(job.table_id)
-        except ValueError:
-            table_uuid = None
-        for operation in supported_operations:
-            if table_uuid is not None:
-                with SessionLocal() as abac_session:
-                    allowed, reason = evaluate_maintenance_allowed(
-                        abac_session,
-                        table_uuid,
-                        None,
-                        operation.type,
+            started = perf_counter()
+            exec_ctx = _to_exec_ctx(
+                ExecContext(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    destination_id=job.destination_id,
+                    statement_index=0,
+                    replica=job.replica,
+                ),
+                run_id=job.run_id,
+                on_progress=_native_progress_callback(
+                    self._run_events,
+                    job=job,
+                    table_ref=table_ref,
+                    engine=engine.type,
+                ),
+            )
+            try:
+                results = engine.execute_plan(native_plan, exec_ctx)
+            except Exception as exc:
+                duration_ms = int((perf_counter() - started) * 1000)
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=supported_operations[0].type,
+                        status="FAILED",
+                        engine=engine.type,
+                        detail=str(exc),
+                        duration_ms=duration_ms,
+                        actor=job.actor,
                     )
-                if not allowed:
-                    detail = reason or "abac_denied"
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        engine=str(engine.type),
+                        level="error",
+                        message=f"Native plan failed: {exc}",
+                    ),
+                )
+                return JobStatus.FAILED, str(exc), None, False, had_skip
+
+            for operation, result in zip(supported_operations, results, strict=False):
+                result_duration_ms = result.duration_ms
+                if result_duration_ms is None:
+                    result_duration_ms = int((perf_counter() - started) * 1000)
+                engine_ref = result.engine_ref or engine_ref
+                if getattr(result, "skipped", False):
+                    had_skip = True
+                    detail = result.detail or result.error or "operation skipped"
+                    self._store.record_audit(
+                        AuditRecord(
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            action=operation.type,
+                            status="SKIPPED",
+                            engine=engine.type,
+                            detail=detail,
+                            duration_ms=result_duration_ms,
+                            actor=job.actor,
+                        )
+                    )
                     safe_publish(
                         self._run_events,
                         job.run_id,
@@ -780,16 +884,143 @@ class Worker:
                             table_id=job.table_id,
                             table_ref=table_ref,
                             operation=operation.type.value,
-                            level="error",
-                            message=detail,
+                            engine=str(engine.type),
+                            level="warning",
+                            message=f"Skipped {operation.type.value}: {detail}",
                         ),
                     )
-                    return JobStatus.FAILED, detail, None, False, False
+                    continue
+                if not getattr(result, "ok", True):
+                    detail = result.error or result.detail or "engine execution failed"
+                    self._store.record_audit(
+                        AuditRecord(
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            action=operation.type,
+                            status="FAILED",
+                            engine=engine.type,
+                            detail=detail,
+                            duration_ms=result_duration_ms,
+                            input_files_count=getattr(result, "input_files_count", None),
+                            output_files_count=getattr(result, "output_files_count", None),
+                            snapshots_expired=getattr(result, "snapshots_expired", None),
+                            manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                            actor=job.actor,
+                        )
+                    )
+                    safe_publish(
+                        self._run_events,
+                        job.run_id,
+                        build_log_line(
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            table_ref=table_ref,
+                            operation=operation.type.value,
+                            engine=str(engine.type),
+                            level="error",
+                            message=f"{operation.type.value} failed: {detail}",
+                        ),
+                    )
+                    return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+                had_success = True
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=operation.type,
+                        status="OK",
+                        engine=engine.type,
+                        detail=result.detail,
+                        duration_ms=result_duration_ms,
+                        input_files_count=getattr(result, "input_files_count", None),
+                        output_files_count=getattr(result, "output_files_count", None),
+                        actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
+                        snapshots_expired=getattr(result, "snapshots_expired", None),
+                        manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                        actor=job.actor,
+                    )
+                )
+                success_message = f"Completed {operation.type.value} in {result_duration_ms}ms"
+                if result.engine_ref:
+                    success_message += f" (ref {result.engine_ref})"
+                snapshots_expired = getattr(result, "snapshots_expired", None)
+                if snapshots_expired:
+                    success_message += f"; expired {snapshots_expired} snapshots"
+                manifests_rewritten = getattr(result, "manifests_rewritten", None)
+                if manifests_rewritten:
+                    success_message += f"; rewrote {manifests_rewritten} manifests"
+                bytes_freed = getattr(result, "actual_bytes_freed", None)
+                if bytes_freed:
+                    success_message += f"; freed {bytes_freed} bytes"
+                input_files = getattr(result, "input_files_count", None)
+                output_files = getattr(result, "output_files_count", None)
+                if input_files is not None and output_files is not None:
+                    success_message += f"; {input_files}→{output_files} files"
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=operation.type.value,
+                        engine=str(engine.type),
+                        message=success_message,
+                    ),
+                )
+        if had_skip and not had_success:
+            final_status = JobStatus.SKIPPED
 
-        native_plan = MaintenancePlan(
-            table_ref=plan.table_ref,
-            mode=plan.mode,
-            operations=supported_operations,
+        if routing.fallback_operations and destination is not None and table_data is not None:
+            (
+                fallback_status,
+                fallback_error,
+                fallback_engine_ref,
+                fallback_had_success,
+                fallback_had_skip,
+            ) = self._run_sql_fallback_operations(
+                operations=routing.fallback_operations,
+                plan=plan,
+                job=job,
+                table_ref=table_ref,
+                destination=destination,
+                table_data=table_data,
+            )
+            if fallback_had_success:
+                had_success = True
+            if fallback_had_skip:
+                had_skip = True
+            if fallback_engine_ref:
+                engine_ref = fallback_engine_ref
+            if fallback_status is JobStatus.FAILED:
+                return fallback_status, fallback_error, engine_ref, had_success, had_skip
+            if fallback_status is JobStatus.SKIPPED and final_status is JobStatus.SUCCEEDED:
+                final_status = JobStatus.SKIPPED
+
+        return final_status, error, engine_ref, had_success, had_skip
+
+    def _record_native_skipped(
+        self,
+        *,
+        job: MaintenanceJobRecord,
+        table_ref: str | None,
+        engine: ExecutableMaintenanceEngine,
+        operation: Operation,
+        detail: str,
+    ) -> None:
+        self._store.record_audit(
+            AuditRecord(
+                job_id=job.id,
+                table_id=job.table_id,
+                action=operation.type,
+                status="SKIPPED",
+                engine=engine.type,
+                detail=detail,
+                duration_ms=0,
+                actor=job.actor,
+            )
         )
         safe_publish(
             self._run_events,
@@ -799,163 +1030,68 @@ class Worker:
                 job_id=job.id,
                 table_id=job.table_id,
                 table_ref=table_ref,
+                operation=operation.type.value,
                 engine=str(engine.type),
-                message=(
-                    f"Executing native plan with {len(supported_operations)} operations "
-                    "in one subprocess"
-                ),
+                level="warning",
+                message=f"Skipped {operation.type.value}: {detail}",
             ),
         )
-        started = perf_counter()
-        exec_ctx = _to_exec_ctx(
-            ExecContext(
-                job_id=job.id,
-                table_id=job.table_id,
-                destination_id=job.destination_id,
-                statement_index=0,
-                replica=job.replica,
-            ),
-            run_id=job.run_id,
-            on_progress=_native_progress_callback(
-                self._run_events,
-                job=job,
-                table_ref=table_ref,
-                engine=engine.type,
-            ),
-        )
-        try:
-            results = engine.execute_plan(native_plan, exec_ctx)
-        except Exception as exc:
-            duration_ms = int((perf_counter() - started) * 1000)
-            self._store.record_audit(
-                AuditRecord(
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    action=supported_operations[0].type,
-                    status="FAILED",
-                    engine=engine.type,
-                    detail=str(exc),
-                    duration_ms=duration_ms,
-                    actor=job.actor,
-                )
-            )
-            safe_publish(
-                self._run_events,
-                job.run_id,
-                build_log_line(
-                    run_id=job.run_id,
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    table_ref=table_ref,
-                    engine=str(engine.type),
-                    level="error",
-                    message=f"Native plan failed: {exc}",
-                ),
-            )
-            return JobStatus.FAILED, str(exc), None, False, False
 
+    def _run_sql_fallback_operations(
+        self,
+        *,
+        operations: Sequence[tuple[Operation, str]],
+        plan: MaintenancePlan,
+        job: MaintenanceJobRecord,
+        table_ref: str | None,
+        destination: DestinationConfig,
+        table_data: TableMaintenanceData,
+    ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
+        fallback_id = destination.config.get("sql_fallback_destination_id")
+        if not isinstance(fallback_id, str) or not fallback_id.strip():
+            fallback_id = destination.config.get("fallback_destination_id")
+        if not isinstance(fallback_id, str) or not fallback_id.strip():
+            return JobStatus.SKIPPED, None, None, False, False
+
+        fallback_destination = _try_get_destination(self._store, fallback_id.strip())
+        if fallback_destination is None:
+            error = f"sql_fallback_destination_id {fallback_id!r} not found"
+            for operation, detail in operations:
+                self._record_native_skipped(
+                    job=job,
+                    table_ref=table_ref,
+                    engine=self._engine_factory(destination),
+                    operation=operation,
+                    detail=f"{detail}; {error}",
+                )
+            return JobStatus.FAILED, error, None, False, True
+
+        fallback_engine = self._engine_factory(fallback_destination)
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
         engine_ref: str | None = None
         had_success = False
-        for operation, result in zip(supported_operations, results, strict=False):
-            result_duration_ms = result.duration_ms
-            if result_duration_ms is None:
-                result_duration_ms = int((perf_counter() - started) * 1000)
-            engine_ref = result.engine_ref or engine_ref
-            if getattr(result, "skipped", False):
+        had_skip = False
+
+        for operation, route_reason in operations:
+            self._renew_table_lock(job)
+            fallback_plan = MaintenancePlan(
+                table_ref=plan.table_ref,
+                mode=plan.mode,
+                operations=(operation,),
+            )
+            statements = fallback_engine.render(fallback_plan)
+            if not statements:
                 had_skip = True
-                detail = result.detail or result.error or "operation skipped"
-                self._store.record_audit(
-                    AuditRecord(
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        action=operation.type,
-                        status="SKIPPED",
-                        engine=engine.type,
-                        detail=detail,
-                        duration_ms=result_duration_ms,
-                        actor=job.actor,
-                    )
-                )
-                safe_publish(
-                    self._run_events,
-                    job.run_id,
-                    build_log_line(
-                        run_id=job.run_id,
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        table_ref=table_ref,
-                        operation=operation.type.value,
-                        engine=str(engine.type),
-                        level="warning",
-                        message=f"Skipped {operation.type.value}: {detail}",
-                    ),
+                self._record_native_skipped(
+                    job=job,
+                    table_ref=table_ref,
+                    engine=fallback_engine,
+                    operation=operation,
+                    detail=route_reason,
                 )
                 continue
-            if not getattr(result, "ok", True):
-                detail = result.error or result.detail or "engine execution failed"
-                self._store.record_audit(
-                    AuditRecord(
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        action=operation.type,
-                        status="FAILED",
-                        engine=engine.type,
-                        detail=detail,
-                        duration_ms=result_duration_ms,
-                        input_files_count=getattr(result, "input_files_count", None),
-                        output_files_count=getattr(result, "output_files_count", None),
-                        snapshots_expired=getattr(result, "snapshots_expired", None),
-                        manifests_rewritten=getattr(result, "manifests_rewritten", None),
-                        actor=job.actor,
-                    )
-                )
-                safe_publish(
-                    self._run_events,
-                    job.run_id,
-                    build_log_line(
-                        run_id=job.run_id,
-                        job_id=job.id,
-                        table_id=job.table_id,
-                        table_ref=table_ref,
-                        operation=operation.type.value,
-                        engine=str(engine.type),
-                        level="error",
-                        message=f"{operation.type.value} failed: {detail}",
-                    ),
-                )
-                return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
-            had_success = True
-            self._store.record_audit(
-                AuditRecord(
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    action=operation.type,
-                    status="OK",
-                    engine=engine.type,
-                    detail=result.detail,
-                    duration_ms=result_duration_ms,
-                    input_files_count=getattr(result, "input_files_count", None),
-                    output_files_count=getattr(result, "output_files_count", None),
-                    actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
-                    snapshots_expired=getattr(result, "snapshots_expired", None),
-                    manifests_rewritten=getattr(result, "manifests_rewritten", None),
-                    actor=job.actor,
-                )
-            )
-            success_message = f"Completed {operation.type.value} in {result_duration_ms}ms"
-            if result.engine_ref:
-                success_message += f" (ref {result.engine_ref})"
-            snapshots_expired = getattr(result, "snapshots_expired", None)
-            if snapshots_expired:
-                success_message += f"; expired {snapshots_expired} snapshots"
-            manifests_rewritten = getattr(result, "manifests_rewritten", None)
-            if manifests_rewritten:
-                success_message += f"; rewrote {manifests_rewritten} manifests"
-            bytes_freed = getattr(result, "actual_bytes_freed", None)
-            if bytes_freed:
-                success_message += f"; freed {bytes_freed} bytes"
+
             safe_publish(
                 self._run_events,
                 job.run_id,
@@ -965,10 +1101,112 @@ class Worker:
                     table_id=job.table_id,
                     table_ref=table_ref,
                     operation=operation.type.value,
-                    engine=str(engine.type),
-                    message=success_message,
+                    engine=str(fallback_engine.type),
+                    level="info",
+                    message=(
+                        f"Routing {operation.type.value} to {fallback_engine.type.value} "
+                        f"({route_reason})"
+                    ),
                 ),
             )
+
+            for statement in statements:
+                started = perf_counter()
+                try:
+                    result = fallback_engine.execute(statement)
+                except Exception as exc:
+                    duration_ms = int((perf_counter() - started) * 1000)
+                    detail = str(exc)
+                    self._store.record_audit(
+                        AuditRecord(
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            action=statement.action,
+                            status="FAILED",
+                            engine=fallback_engine.type,
+                            detail=detail,
+                            duration_ms=duration_ms,
+                            actor=job.actor,
+                        )
+                    )
+                    return JobStatus.FAILED, detail, None, had_success, had_skip
+
+                result_duration_ms = result.duration_ms
+                if result_duration_ms is None:
+                    result_duration_ms = int((perf_counter() - started) * 1000)
+                engine_ref = result.engine_ref or engine_ref
+
+                if getattr(result, "skipped", False):
+                    had_skip = True
+                    detail = result.detail or result.error or route_reason
+                    self._store.record_audit(
+                        AuditRecord(
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            action=statement.action,
+                            status="SKIPPED",
+                            engine=fallback_engine.type,
+                            detail=detail,
+                            duration_ms=result_duration_ms,
+                            actor=job.actor,
+                        )
+                    )
+                    continue
+
+                if not getattr(result, "ok", True):
+                    detail = result.error or result.detail or "engine execution failed"
+                    self._store.record_audit(
+                        AuditRecord(
+                            job_id=job.id,
+                            table_id=job.table_id,
+                            action=statement.action,
+                            status="FAILED",
+                            engine=fallback_engine.type,
+                            detail=detail,
+                            duration_ms=result_duration_ms,
+                            input_files_count=getattr(result, "input_files_count", None),
+                            output_files_count=getattr(result, "output_files_count", None),
+                            actor=job.actor,
+                        )
+                    )
+                    return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+
+                had_success = True
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=statement.action,
+                        status="OK",
+                        engine=fallback_engine.type,
+                        detail=result.detail,
+                        duration_ms=result_duration_ms,
+                        input_files_count=getattr(result, "input_files_count", None),
+                        output_files_count=getattr(result, "output_files_count", None),
+                        actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
+                        snapshots_expired=getattr(result, "snapshots_expired", None),
+                        manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                        actor=job.actor,
+                    )
+                )
+                success_message = (
+                    f"Completed {statement.action.value} via {fallback_engine.type.value} "
+                    f"in {result_duration_ms}ms"
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=statement.action.value,
+                        engine=str(fallback_engine.type),
+                        message=success_message,
+                    ),
+                )
+
         if had_skip and not had_success:
             final_status = JobStatus.SKIPPED
         return final_status, error, engine_ref, had_success, had_skip
