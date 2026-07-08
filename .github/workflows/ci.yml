@@ -305,9 +305,9 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: engine-go/go.sum
 
-      - name: Start MinIO and Iceberg REST
+      - name: Start MinIO, Iceberg REST, and Trino
         run: |
-          docker compose -f docker-compose.dev-datalake.yml up -d minio minio-init iceberg-rest
+          docker compose -f docker-compose.dev-datalake.yml up -d minio minio-init iceberg-rest trino
           for attempt in $(seq 1 30); do
             if curl -fsS http://localhost:8181/v1/config >/dev/null; then
               echo "Iceberg REST is ready"
@@ -316,6 +316,15 @@ jobs:
             sleep 2
           done
           echo "Iceberg REST did not become ready in time" >&2
+          exit 1
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/v1/info >/dev/null 2>&1; then
+              echo "Trino is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Trino did not become ready in time" >&2
           exit 1
 
       - name: Install Python dependencies
@@ -341,6 +350,14 @@ jobs:
           CRYO_ENGINE_IMPL: go
           CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
         run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py -v
+
+      - name: Run differential vs Trino e2e (Go engine)
+        env:
+          CRYO_REST_URI: http://localhost:8181
+          CRYO_ENGINE_IMPL: go
+          CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
+          CRYO_TRINO_URI: http://localhost:8080
+        run: pytest tests/integration/native/test_native_differential_e2e.py -v
 
   build:
     name: Build Check
