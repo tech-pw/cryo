@@ -463,6 +463,43 @@ class ProtectedSnapshot(Base):
     table: Mapped[Table] = relationship(back_populates="protected_snapshots")
 
 
+class DeletionTracking(Base):
+    """Tracks rows pending hard-delete for GDPR/CCPA compliance.
+
+    Soft-deleted rows remain query-visible until the next successful
+    expire_snapshots pass clears them. This table records the
+    soft-delete timestamp, the count, and the projected hard-delete
+    cutoff date the expiry will reach.
+    """
+
+    __tablename__ = "deletion_tracking"
+    __table_args__ = (Index("ix_deletion_tracking_table", "table_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    soft_deleted_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    pending_rows: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    blocked_until: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+
 class TableAlertSubscription(Base):
     """A consumer/watcher who wants SLA or data-quality breach alerts for a table.
 
@@ -1378,6 +1415,7 @@ __all__ = [
     "AWSInventoryObject",
     "AuditLog",
     "ColumnStatsSketch",
+    "DeletionTracking",
     "Destination",
     "GovernorBanditState",
     "LayoutRecommendation",
