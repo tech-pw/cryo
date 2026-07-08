@@ -719,6 +719,24 @@ Tasks:
    (finding #12) — never cite PyO3 tests as evidence the worker path works.
 5. Benchmark suite: large-partition memory (P4), file-count reduction, request-count reduction.
 
+**Phase E progress (updated 2026-07-08):**
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 1 | Live native capacity from queue in-flight | ✅ Done | `probe_native_capacity*`; `LiveCapacityProvider(queue)`; API destination test shows in-flight |
+| 2 | Audit fields end-to-end (#13/#14) | ✅ Done | `tests/test_native_audit_fields.py`; worker already maps to `AuditRecord` |
+| 3 | Docs truth-in-advertising (#15) | ✅ Done | `engine-go/README.md` ops matrix at pinned iceberg-go v0.6.0 |
+| 4 | Split subprocess vs PyO3 naming/tests (#12) | ✅ Done | `test_native_engine.py` class rename + docstring; subprocess tests separated |
+| 5 | Benchmark suite (P2/P4/P5) | 🟡 Partial | `test_native_compaction_perf.py` + `perf_harness.py`; P2 request-count vs Trino pending |
+
+**Exit criteria status:**
+
+| Criterion | Status |
+|-----------|--------|
+| Full §8 suite green ≥N consecutive CI runs | 🔴 Pending |
+| Deep validation O2 over all fixtures | 🔴 Pending |
+| Docs match pinned commit behavior | 🟡 Partial — `engine-go/README.md` + this plan updated |
+
 **Exit criteria / DONE WHEN:** CI runs the full §8 suite (COW + MOR + concurrency + cost/perf +
 differential) green for **≥N consecutive runs** with no flakes; the "deep validation" (O2 over all
 fixtures) passes; docs match implemented behavior for the pinned commit.
@@ -745,6 +763,25 @@ Tasks:
 `optimize_manifests` behavior is documented and correct (routed or natively implemented + tested); the
 Rust engine is removed; the cost report shows net reduction across a full maintenance cycle; docs match
 reality.
+
+**Phase F progress (updated 2026-07-08):**
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 1 | `optimize_manifests` Option 1 (route to SQL) | ✅ Done | `routing.py` `NATIVE_ALWAYS_DISCONNECTED`; Go analyze counts current-snapshot manifests; execute returns routed message |
+| 2 | Optional sort on rewrite (#1157) | ✅ Done | `compaction_sort.go`: honors table sort order on write; validates `strategy=sort` / `sort_columns`; rejects unsorted tables + column mismatch |
+| 3 | z-order / global sort (opt-in) | ✅ Deferred | Explicit rejection in Go + route to Trino/Spark; DataFusion build tag remains out of default image |
+| 4 | Retire Rust `cryo-engine/` | 🟡 Partial | `CRYO_ENGINE_IMPL` default → `go`; Rust crate/CI/Docker stage kept until Phase E §8 gate green |
+
+**Exit criteria status:**
+
+| Criterion | Status |
+|-----------|--------|
+| Native Go default for COW + MOR deep workflow | 🟡 Partial — default `engine_impl=go`; seed preset already uses Go |
+| `optimize_manifests` documented + routed correctly | ✅ Done |
+| Optional sort behavior matches pinned iceberg-go | ✅ Done — table sort-order metadata on write; explicit sort_columns validated |
+| Rust engine removed | 🔴 Pending — blocked on Phase E consecutive CI green |
+| Docs match reality | 🟡 Partial — this plan + `engine-go/README.md` updated |
 
 ---
 

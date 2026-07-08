@@ -1,8 +1,13 @@
-"""Tests for the native Rust compaction engine.
+"""Tests for the native engine Python wrapper.
 
-These tests cover two layers:
-1. Python wrapper layer (always runs — tests fallback behavior)
-2. Actual Rust engine (runs only when cryo_native is compiled and available)
+Two distinct stacks — do not conflate them (rust finding #12):
+
+1. **Worker subprocess path** (`cryo-engine-go` / `cryo-engine`): exercised by
+   ``tests/test_native_runner.py``, ``tests/test_native_audit_fields.py``, and
+   ``tests/integration/native/test_native_*_e2e.py``. This is the production path.
+2. **Optional PyO3 helpers** (`cryo_native`): direct compaction utilities used only by
+   ``compact_files()`` / ``native_binpack()`` helpers. Tests in
+   ``TestCryoNativePyo3Helpers`` below are **not** evidence that worker maintenance works.
 """
 
 from __future__ import annotations
@@ -62,8 +67,8 @@ class TestNativeCompactionConfig:
         assert d["sort_columns"] == ["id"]
 
 
-class TestNativeEngineIntegration:
-    """Integration tests — only run when cryo_native Rust module is available."""
+class TestCryoNativePyo3Helpers:
+    """Optional cryo_native PyO3 compaction helpers — NOT the worker subprocess path."""
 
     @pytest.fixture
     def tmp_parquet_files(self):
@@ -173,8 +178,8 @@ class TestNativeEngineIntegration:
             assert ratio >= 1.0  # At minimum same or fewer files
 
 
-class TestNativeEngineWithMock:
-    """Tests using mocked native module — always run."""
+class TestCryoNativePyo3HelpersWithMock:
+    """Mocked PyO3 helper behavior — always runs."""
 
     def test_engine_uses_fallback_when_unavailable(self):
         """Engine gracefully handles missing Rust module."""

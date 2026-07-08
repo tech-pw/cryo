@@ -157,8 +157,8 @@ def test_unsupported_native_op_maps_to_skipped_exec_result() -> None:
                 operation="rewrite_manifests",
                 success=False,
                 error=(
-                    "rewrite_manifests execute is not available on pinned iceberg-rust "
-                    "(RewriteManifestsAction commit path blocked upstream; issue #2556)"
+                    "rewrite_manifests execute is not available on iceberg-go "
+                    "(not implemented upstream); route optimize_manifests to Trino/Spark"
                 ),
                 duration_ms=3,
             ),

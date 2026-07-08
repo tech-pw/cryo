@@ -75,7 +75,7 @@ def _resolve_engine_impl(config: Mapping[str, Any]) -> str:
     env_value = os.getenv(_ENGINE_IMPL_ENV, "").strip().lower()
     if env_value in {"go", "rust"}:
         return env_value
-    return "rust"
+    return "go"
 
 
 def _binary_names_for_impl(impl: str) -> tuple[str, ...]:
