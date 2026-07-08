@@ -144,8 +144,47 @@ def _quality_breach_reasons(session: Session, table_id: object) -> list[str]:
     return reasons
 
 
+def _effectiveness_breach_reasons(session: Session, table_id: object) -> list[str]:
+    """Alert when compaction effectiveness ratio (input/output file count) drops below 10:1.
+
+    Move 13 surfaces wasted compute early. Workers already write ``input_files_count`` and
+    ``output_files_count`` per OPTIMIZE into ``audit_log`` (see ``job_store.record_audit``
+    and ``worker.py``); ``benefit_score.get_compaction_effectiveness_stats`` aggregates
+    those rows. We surface that here so a sustained ratio below 10:1 -- the "poor"
+    threshold -- becomes a notification instead of an insight you only see by visiting
+    the dashboard.
+    """
+    from cryo.planner.benefit_score import get_compaction_effectiveness_stats
+
+    try:
+        # table_id is `object` here for consistency with the other breach helpers; the
+        # helper expects a real uuid.UUID (see ``_quality_breach_reasons`` for the same
+        # dance). Pass through whatever was handed to us; SQLAlchemy's UUID(as_uuid=True)
+        # bind processor will reject a plain string and surface the ValueError here.
+        stats = get_compaction_effectiveness_stats(session, table_id, lookback_days=30)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return []
+
+    if stats.get("effectiveness") not in {"poor", "fair"}:
+        return []
+    ratio = stats.get("effectiveness_ratio") or 0.0
+    run_count = stats.get("run_count") or 0
+    if run_count == 0:
+        return []
+    severity = "below 10:1" if stats["effectiveness"] == "poor" else "below 20:1"
+    return [
+        f"Compaction effectiveness {severity}: {ratio:.1f}:1 over the last "
+        f"{run_count} OPTIMIZE run(s) — raise min_small_files or cooldown to avoid "
+        "wasted compute."
+    ]
+
+
 def check_table_breach(session: Session, table: Table) -> TableBreach:
-    reasons = _sla_breach_reasons(session, table) + _quality_breach_reasons(session, table.id)
+    reasons = (
+        _sla_breach_reasons(session, table)
+        + _quality_breach_reasons(session, table.id)
+        + _effectiveness_breach_reasons(session, table.id)
+    )
     return TableBreach(
         table_id=str(table.id), table_name=qualified_table_name(table), reasons=reasons
     )
@@ -177,7 +216,7 @@ def _build_email_body(breach: TableBreach) -> str:
         link_html = f'<p><a href="{url}">Open {breach.table_name} in Cryo</a></p>'
     return (
         f"<p><strong>{breach.table_name}</strong> has {len(breach.reasons)} active "
-        f"SLA/data-quality breach(es):</p><ul>{reasons_html}</ul>{link_html}"
+        f"SLA/data-quality/effectiveness breach(es):</p><ul>{reasons_html}</ul>{link_html}"
     )
 
 
@@ -185,7 +224,7 @@ def _dispatch(session: Session, table: Table, breach: TableBreach, recipients: l
     from cryo.integrations.alerts import send_slack_table_breach_alert
     from cryo.reporting.email import send_email
 
-    subject = f"[Cryo] {breach.table_name} breached SLA/quality thresholds"
+    subject = f"[Cryo] {breach.table_name} breached SLA/quality/effectiveness thresholds"
     send_email(subject, _build_email_body(breach), recipients)
     send_slack_table_breach_alert(breach.table_name, breach.reasons)
 
