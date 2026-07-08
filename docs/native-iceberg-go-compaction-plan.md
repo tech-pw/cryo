@@ -604,7 +604,7 @@ Tasks:
 | Criterion | Status |
 |-----------|--------|
 | §8 COW scenario matrix green on MinIO | 🟡 Partial — `f_unpart_small`, `f_part_identity`, `f_part_small`; Go e2e green except day-partition execute (xfail) |
-| Differential test vs Trino (§8.7) | ⏳ Pending |
+| Differential test vs Trino (§8.7) | 🟡 In CI — `test_native_differential_e2e.py` wired in `native-compaction-e2e-go` job; `iceberg_rest.properties` Trino catalog added; needs first green CI run to confirm REST→Trino metadata bridge |
 | All invariants (§5.4) on local MinIO | 🟡 Partial — O1/O3/O4/O5/O6/O8 covered in compaction e2e; day-partition execute blocked upstream |
 | Go unit tests (predicate + protocol) | ✅ `go test ./...` green |
 | `make test-native-compaction-e2e-local-go` | ✅ Green locally (4 pass, 1 xfail day execute, 1 skip Rust staged) |
