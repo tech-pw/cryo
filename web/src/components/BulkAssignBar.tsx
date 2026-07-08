@@ -2,7 +2,12 @@ import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import type { DestinationRead, Mode, PresetRead, UUID } from "../api/types";
 import type { Predicate } from "../lib/predicate";
-import { formatEngineLabel } from "../lib/engines";
+import {
+  formatDestinationLabel,
+  formatEngineLabel,
+  isNativeDestination,
+  nativeUnsupportedOpTooltip
+} from "../lib/engines";
 import { ConfirmAction } from "./confirm";
 
 export type BulkSelection =
@@ -56,10 +61,11 @@ export const BulkAssignBar = ({
     value: preset.id
   }));
   const destinationOptions = destinations.map((destination) => ({
-    label: `${destination.name} · ${formatEngineLabel(destination.engine)}`,
+    label: formatDestinationLabel(destination),
     value: destination.id
   }));
   const runDisabled = !activePresetId || !activeDestinationId;
+  const manifestRewriteDisabled = runDisabled || isNativeDestination(activeDestination);
 
   return (
     <div className="bulk-bar" data-testid="bulk-assign-bar">
@@ -111,7 +117,7 @@ export const BulkAssignBar = ({
           <Tooltip
             title={
               activeDestination
-                ? `${activeDestination.name} runs maintenance through ${formatEngineLabel(activeDestination.engine)}.`
+                ? `${activeDestination.name} runs maintenance through ${formatEngineLabel(activeDestination.engine, activeDestination.config)}.`
                 : "Choose the engine that will run maintenance."
             }
           >
@@ -168,9 +174,15 @@ export const BulkAssignBar = ({
                   : undefined
               }
             >
-              <Tooltip title="Queue manifest rewrite only — no data file compaction.">
+              <Tooltip
+                title={
+                  manifestRewriteDisabled && isNativeDestination(activeDestination)
+                    ? nativeUnsupportedOpTooltip
+                    : "Queue manifest rewrite only — no data file compaction."
+                }
+              >
                 <span>
-                  <Button loading={running} disabled={runDisabled}>
+                  <Button loading={running} disabled={manifestRewriteDisabled}>
                     Manifest rewrite
                   </Button>
                 </span>

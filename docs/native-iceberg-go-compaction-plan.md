@@ -337,6 +337,7 @@ allow-list; pass the map through generically and let iceberg-go consume the keys
 | Cryo request field / property | iceberg-go |
 |---|---|
 | `catalog_uri` | REST `uri` (or SQL/Glue/Hive per `type`) |
+| `catalog_type` | catalog registry key (`rest` / `hive` / `glue`) — see note below |
 | `warehouse` | `warehouse` |
 | `s3_endpoint` / `s3.endpoint` | gocloud S3 endpoint |
 | `s3_access_key` / `s3.access-key-id`, `s3_secret_key` / `s3.secret-access-key` | S3 creds |
@@ -344,6 +345,14 @@ allow-list; pass the map through generically and let iceberg-go consume the keys
 | `s3.path-style-access` | S3 path-style (MinIO **needs** this) |
 | `token` / `credential` / `oauth2-server-uri` / `scope` | REST OAuth2 |
 | `rest.sigv4-enabled` / `rest.signing-name` / `rest.signing-region` | REST SigV4 |
+
+**Catalog type selection (do not hard-code `rest`):** `payload.source_catalog_config` forwards the
+source's `type` as `catalog_type`, and `internal/catalog.ResolveCatalogType` picks the iceberg-go
+registry key. An explicit type wins (aliases like `hms` → `hive` are normalized); otherwise the type is
+inferred from the URI scheme. This matters because a Hive Metastore speaks Thrift (`thrift://host:9083`)
+and iceberg-go registers it under `hive` — **not** the `thrift` scheme — so an unresolved thrift URI
+loaded as REST fails with `unsupported protocol scheme "thrift"`. `internal/catalog` imports the
+`catalog/hive` build tag alongside `catalog/rest` so both clients are registered.
 
 **`native_table_ref` parity:** the Python side already strips the display-catalog prefix
 (`display_catalog.schema.table` → `schema.table`). The Go binary receives the stripped `table_ref` and
@@ -772,6 +781,7 @@ reality.
 | 2 | Optional sort on rewrite (#1157) | ✅ Done | `compaction_sort.go`: honors table sort order on write; validates `strategy=sort` / `sort_columns`; rejects unsorted tables + column mismatch |
 | 3 | z-order / global sort (opt-in) | ✅ Deferred | Explicit rejection in Go + route to Trino/Spark; DataFusion build tag remains out of default image |
 | 4 | Retire Rust `cryo-engine/` | 🟡 Partial | `CRYO_ENGINE_IMPL` default → `go`; Rust crate/CI/Docker stage kept until Phase E §8 gate green |
+| 5 | Web UI engine preset support | ✅ Done | Split Native (iceberg-go/rust) in Connections; `engine_impl` round-trip; preset/bulk labels; grey-out `optimize_manifests` + manifest-only for native |
 
 **Exit criteria status:**
 
@@ -781,7 +791,7 @@ reality.
 | `optimize_manifests` documented + routed correctly | ✅ Done |
 | Optional sort behavior matches pinned iceberg-go | ✅ Done — table sort-order metadata on write; explicit sort_columns validated |
 | Rust engine removed | 🔴 Pending — blocked on Phase E consecutive CI green |
-| Docs match reality | 🟡 Partial — this plan + `engine-go/README.md` updated |
+| Docs match reality | 🟡 Partial — this plan + `engine-go/README.md` + Cryo UI labels updated |
 
 ---
 

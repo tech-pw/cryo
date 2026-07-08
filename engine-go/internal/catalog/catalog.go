@@ -9,6 +9,7 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 
+	_ "github.com/apache/iceberg-go/catalog/hive"
 	_ "github.com/apache/iceberg-go/catalog/rest"
 	_ "github.com/apache/iceberg-go/io/gocloud"
 
@@ -38,7 +39,6 @@ func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catal
 
 func buildProperties(req *protocol.ExecuteRequest) iceberg.Properties {
 	props := iceberg.Properties{
-		"type":      "rest",
 		"uri":       req.CatalogURI,
 		"warehouse": req.Warehouse,
 	}
@@ -56,7 +56,48 @@ func buildProperties(req *protocol.ExecuteRequest) iceberg.Properties {
 			props[key] = value
 		}
 	}
+	// Resolve the iceberg-go registry key last so it wins over any stray "type" in
+	// catalog_properties. Hive Metastore speaks Thrift; iceberg-go registers it under
+	// "hive" (not the "thrift" scheme), so an unresolved thrift:// URI would otherwise
+	// be loaded as a REST catalog and fail with `unsupported protocol scheme "thrift"`.
+	explicitType := req.CatalogType
+	if explicitType == "" {
+		explicitType = props["type"]
+	}
+	props["type"] = ResolveCatalogType(explicitType, req.CatalogURI)
 	return props
+}
+
+// ResolveCatalogType picks the iceberg-go catalog registry key for a request. An explicit
+// catalog type (from Cryo's source config) wins; otherwise it is inferred from the catalog
+// URI scheme (thrift -> hive, http/https -> rest). Unrecognized explicit types are trusted
+// as-is so custom registered catalogs still work; everything else defaults to "rest".
+func ResolveCatalogType(catalogType, uri string) string {
+	if raw := strings.TrimSpace(catalogType); raw != "" {
+		if normalized := normalizeCatalogType(raw); normalized != "" {
+			return normalized
+		}
+		return strings.ToLower(raw)
+	}
+	if scheme, _, ok := strings.Cut(uri, "://"); ok {
+		if normalized := normalizeCatalogType(scheme); normalized != "" {
+			return normalized
+		}
+	}
+	return "rest"
+}
+
+func normalizeCatalogType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "hive", "hms", "hive-metastore", "hive_metastore", "thrift":
+		return "hive"
+	case "glue", "aws-glue", "aws_glue":
+		return "glue"
+	case "rest", "iceberg-rest", "iceberg_rest", "polaris", "nessie", "http", "https":
+		return "rest"
+	default:
+		return ""
+	}
 }
 
 // ParseTableIdent mirrors cryo-engine parse_table_ident.

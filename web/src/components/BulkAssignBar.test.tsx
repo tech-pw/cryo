@@ -94,7 +94,8 @@ describe("BulkAssignBar", () => {
       ...destination,
       id: "dest-native",
       name: "native-datafusion",
-      engine: "native"
+      engine: "native",
+      config: { engine_impl: "go" }
     };
     render(
       <BulkAssignBar
@@ -112,6 +113,34 @@ describe("BulkAssignBar", () => {
     fireEvent.mouseDown(presetSelect);
     fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
 
-    expect(screen.getByText("native-datafusion · Native (iceberg-rust)")).toBeInTheDocument();
+    expect(screen.getByText("native-datafusion · Native (iceberg-go)")).toBeInTheDocument();
+  });
+
+  it("disables manifest rewrite for native destinations", async () => {
+    const nativeDestination: DestinationRead = {
+      ...destination,
+      id: "dest-native",
+      name: "native-datafusion",
+      engine: "native",
+      config: { engine_impl: "go" }
+    };
+    render(
+      <BulkAssignBar
+        selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
+        presets={[{ ...preset, destination_id: "dest-native" }]}
+        destinations={[nativeDestination]}
+        onClear={vi.fn()}
+        onAssign={vi.fn()}
+        onPreview={vi.fn()}
+        onRun={vi.fn()}
+        onManifestRewrite={vi.fn()}
+      />
+    );
+
+    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
+    fireEvent.mouseDown(presetSelect);
+    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
+
+    expect(screen.getByText("Manifest rewrite").closest("button")?.disabled).toBe(true);
   });
 });

@@ -2,14 +2,30 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from cryo.api.redact import redact_sensitive_dict
 from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
 
 JsonDict = dict[str, Any]
+
+_NATIVE_ENGINE_IMPLS = frozenset({"go", "rust"})
+
+
+def validate_native_engine_config(engine: EngineType | str, config: Mapping[str, Any]) -> None:
+    if engine != EngineType.NATIVE:
+        return
+    impl = config.get("engine_impl")
+    if impl is None:
+        return
+    if not isinstance(impl, str):
+        raise ValueError("config.engine_impl must be a string for native engines")
+    normalized = impl.strip().lower()
+    if normalized not in _NATIVE_ENGINE_IMPLS:
+        raise ValueError("config.engine_impl must be 'go' or 'rust' for native engines")
+
 
 
 class OrmModel(BaseModel):
@@ -376,6 +392,11 @@ class DestinationCreate(BaseModel):
     query_log_config: JsonDict | None = None
     query_log_retention_days: int | None = Field(default=None, ge=1, le=365)
 
+    @model_validator(mode="after")
+    def _validate_native_config(self) -> DestinationCreate:
+        validate_native_engine_config(self.engine, self.config)
+        return self
+
 
 class DestinationTestRequest(BaseModel):
     """A not-yet-saved engine config, so the UI can verify it before creating/updating it."""
@@ -385,6 +406,11 @@ class DestinationTestRequest(BaseModel):
     # Same purpose as SourceTestRequest.source_id -- swap "***REDACTED***" placeholders back to
     # the real stored value when testing an edit.
     destination_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _validate_native_config(self) -> DestinationTestRequest:
+        validate_native_engine_config(self.engine, self.config)
+        return self
 
 
 class DestinationTestResponse(BaseModel):

@@ -35,3 +35,29 @@ func TestParseTableIdentMultiLevelNamespace(t *testing.T) {
 		t.Fatalf("unexpected ident: %#v", ident)
 	}
 }
+
+func TestResolveCatalogType(t *testing.T) {
+	cases := []struct {
+		name        string
+		catalogType string
+		uri         string
+		want        string
+	}{
+		{"thrift scheme infers hive", "", "thrift://hms:9083", "hive"},
+		{"http scheme infers rest", "", "http://localhost:8181", "rest"},
+		{"https scheme infers rest", "", "https://catalog:443", "rest"},
+		{"explicit hive alias", "hms", "thrift://hms:9083", "hive"},
+		{"explicit hive wins over http uri", "hive", "http://hms:9083", "hive"},
+		{"explicit rest alias", "iceberg-rest", "http://localhost:8181", "rest"},
+		{"explicit glue", "glue", "", "glue"},
+		{"unknown explicit trusted", "sql", "", "sql"},
+		{"empty defaults rest", "", "localhost:8181", "rest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := catalog.ResolveCatalogType(tc.catalogType, tc.uri); got != tc.want {
+				t.Fatalf("ResolveCatalogType(%q, %q) = %q, want %q", tc.catalogType, tc.uri, got, tc.want)
+			}
+		})
+	}
+}

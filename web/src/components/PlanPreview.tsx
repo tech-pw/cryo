@@ -3,12 +3,12 @@ import { useMutation } from "@tanstack/react-query";
 import { Button, Descriptions, Drawer, Empty, Segmented, Select, Space, Tabs, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { previewMaintenance } from "../api/client";
-import type { EngineType, JsonObject, Mode, SavingsProjectionRead, TableRead } from "../api/types";
+import type { JsonObject, Mode, SavingsProjectionRead, TableRead } from "../api/types";
 import { CostPrecisionBadge } from "./CostPrecisionBadge";
 import { StatStrip } from "./common";
 import { SavingsByOperation } from "./SavingsByOperation";
 import { useAuth } from "../lib/auth";
-import { ENGINE_TYPE_OPTIONS, isNativeStatement } from "../lib/engines";
+import { ENGINE_VIRTUAL_OPTIONS, isNativeStatement, parseEngineVirtual, type EngineVirtualValue } from "../lib/engines";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber } from "../lib/format";
 import type { CostByOperation } from "../api/types";
 
@@ -32,7 +32,7 @@ const savingsToByOperation = (savings?: SavingsProjectionRead | null): CostByOpe
 
 export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   const { api } = useAuth();
-  const [engine, setEngine] = useState<EngineType>("trino");
+  const [engineVirtual, setEngineVirtual] = useState<EngineVirtualValue>("trino");
   const [mode, setMode] = useState<Mode>("deep");
 
   const requestTables = useMemo(
@@ -49,7 +49,13 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
   );
 
   const preview = useMutation({
-    mutationFn: () => previewMaintenance(api, { engine, mode, params, tables: requestTables })
+    mutationFn: () =>
+      previewMaintenance(api, {
+        engine: parseEngineVirtual(engineVirtual).engine,
+        mode,
+        params,
+        tables: requestTables
+      })
   });
 
   const estimate = useMemo(() => {
@@ -74,7 +80,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
 
   useEffect(() => {
     if (open && requestTables.length) preview.mutate();
-  }, [open, engine, mode, requestTables.length]);
+  }, [open, engineVirtual, mode, requestTables.length]);
 
   return (
     <Drawer
@@ -85,9 +91,9 @@ export const PlanPreview = ({ open, tables, onClose, params = {} }: Props) => {
       extra={
         <Space>
           <Segmented
-            value={engine}
-            onChange={(value) => setEngine(value as EngineType)}
-            options={ENGINE_TYPE_OPTIONS}
+            value={engineVirtual}
+            onChange={(value) => setEngineVirtual(value as EngineVirtualValue)}
+            options={[...ENGINE_VIRTUAL_OPTIONS]}
           />
           <Select
             value={mode}

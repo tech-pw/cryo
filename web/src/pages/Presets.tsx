@@ -13,11 +13,12 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
   Alert
 } from "antd";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createPreset,
   createPresetRule,
@@ -49,7 +50,15 @@ import { cronFormValidator } from "../lib/cron";
 import { formatGb, formatNumber } from "../lib/format";
 import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
 import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
-import { formatEngineLabel } from "../lib/engines";
+import {
+  formatDestinationLabel,
+  formatEngineLabel,
+  isNativeDestination,
+  nativeRustOptimizeTooltip,
+  nativeSupportsOperation,
+  nativeUnsupportedOpTooltip,
+  resolveNativeEngineImpl
+} from "../lib/engines";
 
 const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
 type SimulationSample = NonNullable<Awaited<ReturnType<typeof simulatePreset>>["sample"]>[number];
@@ -129,7 +138,7 @@ export const Presets = () => {
             render: (_, row) => {
               const destination = destinations.data?.find((item) => item.id === row.destination_id);
               if (!destination) return row.destination_id;
-              return `${destination.name} · ${formatEngineLabel(destination.engine)}`;
+              return formatDestinationLabel(destination);
             }
           },
           { title: "Priority", dataIndex: "priority", align: "right" },
@@ -199,6 +208,65 @@ const PresetDrawer = ({
   onSave: (body: PresetWrite) => void;
 }) => {
   const [form] = Form.useForm<PresetFormValues>();
+  const destinationId = Form.useWatch("destination_id", form);
+  const selectedDestination = useMemo(
+    () => destinations.find((item) => item.id === destinationId),
+    [destinations, destinationId]
+  );
+  const isNative = isNativeDestination(selectedDestination);
+  const nativeImpl = selectedDestination
+    ? resolveNativeEngineImpl(selectedDestination.config)
+    : undefined;
+
+  useEffect(() => {
+    if (!isNative) return;
+    const currentOps = form.getFieldValue("operations") as string[] | undefined;
+    const nextOps = (currentOps ?? []).filter((op) => nativeSupportsOperation(op, nativeImpl ?? "go"));
+    if (nextOps.length !== (currentOps ?? []).length) {
+      form.setFieldValue("operations", nextOps);
+    }
+    if (form.getFieldValue("mode") === "manifest_only") {
+      form.setFieldValue("mode", "deep");
+    }
+  }, [destinationId, form, isNative, nativeImpl]);
+
+  const operationOptions = operations.map((operation) => {
+    const supported = !isNative || nativeSupportsOperation(operation, nativeImpl ?? "go");
+    const tooltip =
+      operation === "optimize_manifests"
+        ? nativeUnsupportedOpTooltip
+        : operation === "optimize"
+          ? nativeRustOptimizeTooltip
+          : undefined;
+    return {
+      label: supported ? (
+        operation
+      ) : (
+        <Tooltip title={tooltip}>
+          <span>{operation}</span>
+        </Tooltip>
+      ),
+      value: operation,
+      disabled: !supported
+    };
+  });
+
+  const modeOptions = [
+    { label: "Light", value: "light" },
+    { label: "Standard", value: "standard" },
+    { label: "Deep", value: "deep" },
+    {
+      label: isNative ? (
+        <Tooltip title={nativeUnsupportedOpTooltip}>
+          <span>Manifest only</span>
+        </Tooltip>
+      ) : (
+        "Manifest only"
+      ),
+      value: "manifest_only",
+      disabled: isNative
+    }
+  ];
 
   return (
     <Drawer title={preset ? "Edit preset" : "New preset"} size="large" open={open} onClose={onClose} destroyOnHidden>
@@ -219,22 +287,14 @@ const PresetDrawer = ({
         <Form.Item name="destination_id" label="Engine" rules={[{ required: true }]}>
           <Select
             options={destinations.map((item) => ({
-              label: `${item.name} · ${formatEngineLabel(item.engine)}`,
+              label: formatDestinationLabel(item),
               value: item.id
             }))}
           />
         </Form.Item>
         <Space className="full-width" size={12}>
           <Form.Item name="mode" label="Mode" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { label: "Light", value: "light" },
-                { label: "Standard", value: "standard" },
-                { label: "Deep", value: "deep" },
-                { label: "Manifest only", value: "manifest_only" }
-              ]}
-              style={{ width: 160 }}
-            />
+            <Select options={modeOptions} style={{ width: 160 }} />
           </Form.Item>
           <Form.Item name="priority" label="Priority">
             <InputNumber min={0} style={{ width: 120 }} />
@@ -252,7 +312,7 @@ const PresetDrawer = ({
           </Form.Item>
         </Space>
         <Form.Item name="operations" label="Operations">
-          <Checkbox.Group options={operations} />
+          <Checkbox.Group options={operationOptions} />
         </Form.Item>
         <Form.Item name="schedule_cron" label="Schedule cron" rules={[{ validator: cronFormValidator({ allowEmpty: true }) }]}>
           <CronInput allowEmpty />
