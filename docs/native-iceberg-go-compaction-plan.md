@@ -635,6 +635,25 @@ Tasks:
 5. Governor: native capacity from live in-flight subprocess accounting (rust finding #9), not a static
    CPU cap.
 
+**Phase C progress (updated 2026-07-08):**
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 1 | COW-only OPTIMIZE in native routing | ✅ Done | `routing.py`: `native_cow_optimize_enabled()`; MOR → SQL fallback or skip |
+| 2 | Predicates + params end-to-end | ✅ Done | `payload.py` forwards predicates; Go `predicate.BuildRowFilter` honors them; unit tests |
+| 3 | Multi-op subprocess order | ✅ Done | `filter_native_operations()` preserves planner order (expire → orphan → optimize) |
+| 4 | Progress + per-op audit metrics | ✅ Done | `CRYO_PROGRESS` → run console; audit `input_files`/`output_files`/bytes on optimize |
+| 5 | Governor native capacity | ✅ Done | `LiveCapacityProvider._probe_native()` uses `slot_cap`; governor subtracts queue in-flight |
+
+**Exit criteria status:**
+
+| Criterion | Status |
+|-----------|--------|
+| DEEP COW run: expire + orphan + native optimize + Trino manifests | 🟡 Partial — routing + fallback wired; full worker e2e pending |
+| MOR optimize routes to Trino with clear label | ✅ Phase C only — **Phase D** now routes MOR to native; v3-partitioned-DV still falls back |
+| No leaked files after cycle | ⏳ Pending worker e2e |
+| Unit tests green | ✅ `tests/test_native_routing.py` + updated `test_native_runner.py` |
+
 **Exit criteria / DONE WHEN:** a DEEP run on a **COW** table via the worker completes end-to-end
 (expire + orphan + **native COW optimize** + Trino manifests) with correct audit metrics and streamed
 progress; MOR tables in the same run still route optimize to Trino and are clearly labeled; no leaked
@@ -658,6 +677,26 @@ Tasks:
 4. **v3 deletion vectors:** if the pinned iceberg-go supports partitioned-DV write (#1135), enable;
    otherwise **gate** v3-partitioned-DV tables to Trino/Spark and document. v2 pos/eq deletes ship now.
 5. Extend MOR detection in Phase C routing to send MOR OPTIMIZE to native.
+
+**Phase D progress (updated 2026-07-08):**
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 1 | Read path: scan applies deletes + predicate scope | ✅ Done | Existing `planScopedTasks` + `BuildRowFilter`; iceberg-go `ReadTasks` applies pos/eq deletes |
+| 2 | Commit path + invariant #7 guard | ✅ Done | `validate.AssertDeleteFileInvariant`; `CollectDeadEqualityDeletes` via `ExtraDeleteFilesToRemove` |
+| 3 | Conflict validation (`serializable` + `commit.retry.*`) | ✅ Done | `ensureMORCompactionProperties` on MOR txn; app-level retry for non-REST catalogs |
+| 4 | v3 partitioned deletion vectors gate | ✅ Done | Go `AssertPartitionedDeletionVectorsUnsupported`; Python `has_v3_partitioned_deletion_vectors` |
+| 5 | MOR OPTIMIZE routes to native | ✅ Done | `routing.py`: `native_optimize_enabled()` includes MOR; v3-partitioned-DV → SQL fallback |
+| 6 | MOR e2e fixtures + harness (§8) | ✅ Done | Go `seed-native-fixtures` (seed/count/live-column/seed-table); `test_native_mor_compaction_e2e.py`; `make test-native-compaction-e2e-go` |
+
+**Exit criteria status:**
+
+| Criterion | Status |
+|-----------|--------|
+| §8 MOR scenario matrix (pos/eq/mixed/partial) | 🟡 Partial — Go seeder (`seed-table` per test), `mor_inspect.py` Go live-row oracle, `test_native_mor_compaction_e2e.py` green (pos/eq/mixed execute; partial precondition); mixed O7 asserts eq-delete only (pos on `f_mor_pos`) |
+| §8.5 concurrency/fault matrix (C2/C3) | 🔴 Pending |
+| Differential vs Trino/Spark on MOR fixtures | 🔴 Pending |
+| Invariants #1, #2, #7 in-process | 🟡 Partial — #1 + #7 guarded pre-commit; MOR e2e asserts O1/O7 on REST+MinIO |
 
 **Exit criteria / DONE WHEN:** the §8 **MOR scenario matrix** (position-only, equality-only, mixed,
 overlapping deletes, delete-only partitions) **and** the **concurrency/fault matrix**
