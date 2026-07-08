@@ -293,6 +293,23 @@ class Settings(BaseSettings):
         ge=1,
         description="Minimum hours between repeat breach alerts for the same table.",
     )
+    commit_race_alert_lookback_hours: int = Field(
+        default=24,
+        ge=1,
+        description=(
+            "Window scanned for native compaction runs that lost the optimistic-concurrency "
+            "commit race (audit detail tagged 'commit_race_lost'); see "
+            "docs/native-engine-scoping-research.md §3.2."
+        ),
+    )
+    commit_race_alert_min_occurrences: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Number of commit-race losses within the lookback window before a table is flagged "
+            "as 'compaction losing the commit race'. 1 = alert on the first loss."
+        ),
+    )
     s3_log_ingest_interval_hours: int = Field(
         default=24,
         ge=1,

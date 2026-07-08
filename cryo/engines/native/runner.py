@@ -18,8 +18,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BINARY_NAMES = ("cryo-engine-go", "cryo-engine")
 PROGRESS_PREFIX = "CRYO_PROGRESS:"
-_PROGRESS_EVENTS = frozenset({"started", "progress", "completed", "failed"})
+# "checkpoint" marks a durable per-chunk commit emitted by the Go engine's
+# partial-progress path (see engine-go progress.Checkpoint).
+_PROGRESS_EVENTS = frozenset({"started", "progress", "checkpoint", "completed", "failed"})
 _ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
+
+# Stable token the Go engine prefixes onto a rewrite error when compaction repeatedly
+# lost the optimistic-concurrency commit race (see engine-go commitRaceLostToken). The
+# worker/reporting layer matches this to raise a first-class "losing the commit race"
+# alert instead of treating it as a generic failure (scoping doc §3.2 / Scenario B).
+COMMIT_RACE_LOST_TOKEN = "commit_race_lost"
+
+
+def is_commit_race_lost(error: str | None) -> bool:
+    """Return True when a native rewrite failed because it lost the commit race."""
+    return error is not None and COMMIT_RACE_LOST_TOKEN in error
 
 
 @dataclass(frozen=True)
@@ -121,8 +134,10 @@ def verify_cryo_engine_spawnable(config: Mapping[str, Any] | None = None) -> str
         return "cryo-engine did not respond"
     if proc.returncode == 2:
         return None
-    return None if proc.returncode in {0, 1, 2} else (
-        f"cryo-engine returned unexpected exit code {proc.returncode}"
+    return (
+        None
+        if proc.returncode in {0, 1, 2}
+        else (f"cryo-engine returned unexpected exit code {proc.returncode}")
     )
 
 

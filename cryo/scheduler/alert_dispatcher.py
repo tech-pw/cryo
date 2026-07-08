@@ -179,11 +179,47 @@ def _effectiveness_breach_reasons(session: Session, table_id: object) -> list[st
     ]
 
 
+def _commit_race_breach_reasons(session: Session, table_id: object) -> list[str]:
+    """Alert when native compaction keeps losing the optimistic-concurrency commit race.
+
+    The Go engine tags an exhausted commit race with ``commit_race_lost`` in the failure
+    detail (see ``engine-go`` ``commitRaceLostToken`` / ``runner.is_commit_race_lost``), and
+    the worker persists that detail on the FAILED ``audit_log`` row. Repeated losses on a
+    hot table mean compute is wasted and file count grows unchecked, yet each individual run
+    just looks like a generic failure -- so we surface it as a first-class signal here rather
+    than leaving it buried in a silent retry loop (docs/native-engine-scoping-research.md
+    §3.2 / Scenario B).
+    """
+    from cryo.engines.native.runner import COMMIT_RACE_LOST_TOKEN
+
+    settings = get_settings()
+    since = datetime.now(UTC) - timedelta(hours=settings.commit_race_alert_lookback_hours)
+    count = (
+        session.scalar(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.table_id == table_id,
+                AuditLog.ts >= since,
+                AuditLog.detail.contains(COMMIT_RACE_LOST_TOKEN),
+            )
+        )
+        or 0
+    )
+    if count < settings.commit_race_alert_min_occurrences:
+        return []
+    return [
+        f"Compaction losing the commit race: {count} native OPTIMIZE run(s) in the last "
+        f"{settings.commit_race_alert_lookback_hours}h lost the commit race to concurrent "
+        "writes -- widen the off-peak window, reduce ingest concurrency, or enable "
+        "partial-progress checkpointing so each lost attempt forfeits less work."
+    ]
+
+
 def check_table_breach(session: Session, table: Table) -> TableBreach:
     reasons = (
         _sla_breach_reasons(session, table)
         + _quality_breach_reasons(session, table.id)
         + _effectiveness_breach_reasons(session, table.id)
+        + _commit_race_breach_reasons(session, table.id)
     )
     return TableBreach(
         table_id=str(table.id), table_name=qualified_table_name(table), reasons=reasons

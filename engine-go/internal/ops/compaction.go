@@ -102,6 +102,22 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 	}
 
 	groups := toTaskGroups(plan.Groups)
+
+	// Partial-progress: commit each group as its own atomic snapshot with per-group
+	// commit-race resilience and durable checkpoints (see executePartialProgressResumable).
+	if partialProgress {
+		result, runErr := executePartialProgressResumable(
+			ctx, req, tbl, op, cfg, rowFilter, morCompaction, groups, rewrittenPaths,
+		)
+		if runErr != nil {
+			return failRewrite(operation, runErr)
+		}
+		progress.Completed(operation, inputFiles, result.bytesWritten)
+		return rewriteResult(true, inputFiles, result.outputFiles, inputFiles, result.bytesRemoved, result.bytesWritten, "")
+	}
+
+	// Single all-or-nothing commit. MOR on non-REST catalogs retries the whole rewrite
+	// on a lost commit race (reload → re-run) since those catalogs don't wrap ErrCommitFailed.
 	attempts := 1
 	if morCompaction && !isRESTCatalog(req) {
 		attempts = appCommitRetries + 1
@@ -118,17 +134,7 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 			tbl = reloaded
 		}
 
-		result, runErr := executeRewriteOnce(
-			ctx,
-			tbl,
-			op,
-			cfg,
-			partialProgress,
-			rowFilter,
-			groups,
-			rewrittenPaths,
-			morCompaction,
-		)
+		result, runErr := executeRewriteOnce(ctx, tbl, op, cfg, rowFilter, groups, rewrittenPaths, morCompaction)
 		if runErr == nil {
 			progress.Completed(operation, inputFiles, result.bytesWritten)
 			return rewriteResult(
@@ -143,13 +149,19 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		}
 		lastErr = runErr
 		if !isRetryableCommitError(runErr) || attempt == attempts-1 {
-			progress.Failed(operation, runErr.Error())
-			return failResult(operation, runErr)
+			return failRewrite(operation, runErr)
 		}
 	}
 
-	progress.Failed(operation, lastErr.Error())
-	return failResult(operation, lastErr)
+	return failRewrite(operation, lastErr)
+}
+
+// failRewrite emits a failed progress event and a rewrite_data_files OperationResult,
+// tagging commit-race losses so the caller can classify them (commitRaceLostToken).
+func failRewrite(operation string, err error) protocol.OperationResult {
+	msg := rewriteErrorMessage(err)
+	progress.Failed(operation, msg)
+	return rewriteResult(false, 0, 0, 0, 0, 0, msg)
 }
 
 type rewriteOnceResult struct {
@@ -163,7 +175,6 @@ func executeRewriteOnce(
 	tbl *table.Table,
 	op *protocol.OperationRequest,
 	cfg compaction.Config,
-	partialProgress bool,
 	rowFilter iceberg.BooleanExpression,
 	groups []table.CompactionTaskGroup,
 	rewrittenPaths map[string]struct{},
@@ -194,13 +205,6 @@ func executeRewriteOnce(
 		GroupOptions: []table.CompactionGroupOption{
 			table.WithCompactionTargetFileSize(cfg.TargetFileSizeBytes),
 		},
-	}
-
-	if partialProgress {
-		return executePartialProgress(
-			ctx, tbl, op, groups, morCompaction, rewrittenPaths,
-			rewriteOpts, beforeRows, beforeMeta,
-		)
 	}
 
 	if morCompaction {
@@ -243,89 +247,6 @@ func executeRewriteOnce(
 		outputFiles:  uint64(result.AddedDataFiles),
 		bytesRemoved: uint64(result.BytesBefore),
 		bytesWritten: uint64(result.BytesAfter),
-	}, nil
-}
-
-func executePartialProgress(
-	ctx context.Context,
-	tbl *table.Table,
-	op *protocol.OperationRequest,
-	groups []table.CompactionTaskGroup,
-	morCompaction bool,
-	rewrittenPaths map[string]struct{},
-	rewriteOpts table.RewriteDataFilesOptions,
-	beforeRows int64,
-	beforeMeta validate.MetadataSnapshot,
-) (rewriteOnceResult, error) {
-	var zero rewriteOnceResult
-	var totalOutputFiles, totalBytesRemoved, totalBytesWritten uint64
-
-	for i, group := range groups {
-		if err := ctx.Err(); err != nil {
-			return zero, fmt.Errorf("context cancelled before group %d: %w", i, err)
-		}
-
-		groupTxn := tbl.NewTransaction()
-		if err := applyCompactionTestProperties(groupTxn); err != nil {
-			return zero, fmt.Errorf("configure compaction test properties for group %d: %w", i, err)
-		}
-
-		if morCompaction {
-			if err := ensureMORCompactionProperties(groupTxn, tbl.Metadata().Properties()); err != nil {
-				return zero, fmt.Errorf("configure MOR compaction properties for group %d: %w", i, err)
-			}
-
-			groupRewritten := rewrittenPathsForGroup(rewrittenPaths, group)
-			deadEqDeletes, eqErr := collectDeadEqualityDeletesForGroup(ctx, tbl, groupRewritten)
-			if eqErr != nil {
-				return zero, fmt.Errorf("collect dead eq deletes for group %d: %w", i, eqErr)
-			}
-			rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
-		}
-
-		groupResult, err := groupTxn.RewriteDataFiles(ctx, []table.CompactionTaskGroup{group}, rewriteOpts)
-		if err != nil {
-			return zero, fmt.Errorf("rewrite_data_files group %d: %w", i, err)
-		}
-
-		if groupResult != nil && groupResult.RewrittenGroups > 0 {
-			progress.Progress(
-				"rewrite_data_files",
-				uint8(i*100/len(groups)),
-				uint64(len(group.Tasks)),
-				uint64(group.TotalSizeBytes),
-			)
-
-			testhook.BeforeCommit()
-
-			updated, commitErr := groupTxn.Commit(ctx)
-			if commitErr != nil {
-				return zero, fmt.Errorf("commit rewrite_data_files group %d: %w", i, commitErr)
-			}
-
-			if err := validate.AssertMetadataStable(beforeMeta, updated); err != nil {
-				return zero, fmt.Errorf("metadata stable group %d: %w", i, err)
-			}
-
-			totalOutputFiles += uint64(groupResult.AddedDataFiles)
-			totalBytesRemoved += uint64(groupResult.BytesBefore)
-			totalBytesWritten += uint64(groupResult.BytesAfter)
-		}
-
-		if err := tbl.Refresh(ctx); err != nil {
-			return zero, fmt.Errorf("refresh table after group %d: %w", i, err)
-		}
-		progress.Progress("rewrite_data_files", uint8((i+1)*100/len(groups)), 0, 0)
-	}
-
-	if totalOutputFiles == 0 {
-		return zero, nil
-	}
-
-	return rewriteOnceResult{
-		outputFiles:  totalOutputFiles,
-		bytesRemoved: totalBytesRemoved,
-		bytesWritten: totalBytesWritten,
 	}, nil
 }
 

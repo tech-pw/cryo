@@ -32,6 +32,7 @@ from cryo.engines.native.runner import (
     NativeExecuteResult,
     NativeOperationResult,
     execute_request,
+    is_commit_race_lost,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,15 +90,17 @@ def execute_plan_per_chunk(
                 idx,
                 run_id,
             )
-            results.append({
-                "chunk_index": idx,
-                "ok": True,
-                "operation": operation,
-                "native_result": None,
-                "skipped": True,
-                "duration_ms": 0,
-                "error": None,
-            })
+            results.append(
+                {
+                    "chunk_index": idx,
+                    "ok": True,
+                    "operation": operation,
+                    "native_result": None,
+                    "skipped": True,
+                    "duration_ms": 0,
+                    "error": None,
+                }
+            )
             continue
 
         try:
@@ -139,6 +142,19 @@ def execute_plan_per_chunk(
                 error = native_result.error or "cryo-engine returned no results"
                 op_result = None
 
+            if not ok and is_commit_race_lost(error):
+                # First-class signal: compaction keeps losing the optimistic-concurrency
+                # race against a hot writer. Surface it distinctly rather than as a
+                # generic chunk failure so operators/alerts can act (scoping doc §3.2).
+                logger.warning(
+                    "Native compaction is losing the commit race on table %s "
+                    "(chunk %d, run %s): %s",
+                    plan.table_ref,
+                    idx,
+                    run_id,
+                    error,
+                )
+
             if ok:
                 _write_chunk_checkpoint(
                     session_factory=session_factory,
@@ -150,15 +166,17 @@ def execute_plan_per_chunk(
                     native_result=native_result,
                 )
 
-            results.append({
-                "chunk_index": idx,
-                "ok": ok,
-                "operation": operation,
-                "native_result": op_result,
-                "skipped": False,
-                "duration_ms": chunk_duration_ms,
-                "error": error,
-            })
+            results.append(
+                {
+                    "chunk_index": idx,
+                    "ok": ok,
+                    "operation": operation,
+                    "native_result": op_result,
+                    "skipped": False,
+                    "duration_ms": chunk_duration_ms,
+                    "error": error,
+                }
+            )
 
         except Exception as exc:
             chunk_duration_ms = int((time.monotonic() - start) * 1000)
@@ -168,15 +186,17 @@ def execute_plan_per_chunk(
                 run_id,
                 exc,
             )
-            results.append({
-                "chunk_index": idx,
-                "ok": False,
-                "operation": operation,
-                "native_result": None,
-                "skipped": False,
-                "duration_ms": chunk_duration_ms,
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "chunk_index": idx,
+                    "ok": False,
+                    "operation": operation,
+                    "native_result": None,
+                    "skipped": False,
+                    "duration_ms": chunk_duration_ms,
+                    "error": str(exc),
+                }
+            )
 
         total_duration_ms += chunk_duration_ms
 
@@ -214,6 +234,8 @@ def _write_chunk_checkpoint(
                 "table_ref": native_result.table_ref,
                 "ok": native_result.ok,
                 "stdout": native_result.stdout,
-            } if native_result else None,
+            }
+            if native_result
+            else None,
         )
         session.commit()
