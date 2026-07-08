@@ -59,7 +59,7 @@ create disposable lake data.
 | `minio`, `minio-init` | S3-compatible warehouse (`s3://warehouse/`) | `do-not-deploy` |
 | `iceberg-rest` | Iceberg REST catalog on `:8181` | `do-not-deploy` |
 | `hms-postgres`, `hive-metastore` | Hive Metastore + backing Postgres on `:9083` | `do-not-deploy` |
-| `trino` | Local Trino coordinator on `:8080` | `do-not-deploy` |
+| `trino` | Local Trino coordinator on `:8080` (`trinodb/trino:480`, override via `TRINO_VERSION`) | `do-not-deploy` |
 | `spark` (Compose profile `tools`) | Long-lived Spark container for seeding and local Spark SQL | `do-not-deploy` |
 
 Optional local observability (also not in Helm v1):

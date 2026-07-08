@@ -149,7 +149,6 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
         "expire_snapshots",
         "remove_orphan_files",
         "optimize",
-        "optimize_manifests",
     ],
     "params": {
         "min_small_files": 10,
@@ -159,8 +158,8 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
         "file_size_mb": 256,
     },
     "description": (
-        "Native deep maintenance: expire + orphan + COW optimize (iceberg-go); "
-        "MOR optimize and manifests route to sql_fallback_destination_id (Trino)."
+        "Native deep maintenance: expire + orphan + COW/MOR optimize (iceberg-go). "
+        "optimize_manifests is not configured (unsupported natively; never routed to Trino/Spark)."
     ),
     "guardrails": {"cooldown_hours": 24},
     # No preset is seeded as the platform default by design; users must explicitly
