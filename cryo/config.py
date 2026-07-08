@@ -104,6 +104,18 @@ class Settings(BaseSettings):
             "timeout directly, so we patch the requests Session it uses."
         ),
     )
+    scan_table_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        le=1800.0,
+        description=(
+            "Hard wall-clock bound for scanning a single table (catalog load, stats "
+            "analysis, and orphan-file listing). Catalog/S3 clients don't reliably honor "
+            "their own timeouts against a slow or unresponsive Hive Metastore/S3 endpoint, "
+            "so this work runs in a bounded worker and is treated as a failed scan past "
+            "this limit instead of blocking the scanner daemon's single poll loop forever."
+        ),
+    )
     native_engine_enabled: bool = Field(
         default=True,
         description="Enable native cryo-engine maintenance (default workflow).",

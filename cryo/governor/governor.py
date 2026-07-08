@@ -135,7 +135,7 @@ class Governor:
                             job = self._store.get_job(job_id)
                         except KeyError:
                             logger.warning("Purging queue entry for unknown job %s", job_id)
-                            self._queue.cancel_pending(job_id)
+                            self._queue.cancel_pending(job_id, destination_id)
                             orphaned += 1
                             destination_outcomes[destination_id]["orphaned"] += 1
                             continue
@@ -309,7 +309,7 @@ class Governor:
         )
         failed = 0
         for job_id in job_ids:
-            self._queue.cancel_pending(job_id)
+            self._queue.cancel_pending(job_id, destination_id)
             if not _is_valid_job_id(job_id):
                 failed += 1
                 continue

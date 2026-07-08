@@ -33,7 +33,7 @@ class MaintenanceQueue(Protocol):
 
     def defer(self, job_id: str) -> None: ...
 
-    def cancel_pending(self, job_id: str) -> None: ...
+    def cancel_pending(self, job_id: str, destination_id: str | None = None) -> None: ...
 
     def local_in_flight(self, destination_id: str) -> int: ...
 
@@ -100,13 +100,16 @@ class InMemoryMaintenanceQueue:
             self._remove_pending(job_id, entry.destination_id)
         self._statuses[job_id] = JobStatus.DEFERRED
 
-    def cancel_pending(self, job_id: str) -> None:
+    def cancel_pending(self, job_id: str, destination_id: str | None = None) -> None:
+        if destination_id is not None:
+            self._remove_pending(job_id, destination_id)
+            return
         entry = self._entries.get(job_id)
         if entry:
             self._remove_pending(job_id, entry.destination_id)
             return
-        for destination_id in list(self._pending):
-            self._remove_pending(job_id, destination_id)
+        for other_destination_id in list(self._pending):
+            self._remove_pending(job_id, other_destination_id)
 
     def local_in_flight(self, destination_id: str) -> int:
         return sum(
@@ -207,15 +210,31 @@ class RedisMaintenanceQueue:
         pipe.hset(self._job_key(job_id), "status", "deferred")
         pipe.execute()
 
-    def cancel_pending(self, job_id: str) -> None:
-        entry = self._redis.hgetall(self._job_key(job_id))
-        destination_id = _decode(entry.get(b"destination_id") or entry.get("destination_id"))
+    def cancel_pending(self, job_id: str, destination_id: str | None = None) -> None:
+        """Remove a pending queue entry.
+
+        Prefer the explicit `destination_id` when the caller already knows which pending
+        zset the entry lives in (e.g. iterating `pending_by_destination()`). Falling back to
+        the job hash's recorded `destination_id` is unreliable: a corrupt/legacy entry (job
+        hash missing, or pointing at a different destination than the zset it's actually
+        stored under) makes that lookup a no-op, so the entry never gets removed and
+        `purge_stale_queue_entries`/governor orphan-cleanup rediscover -- and re-log -- the
+        same entries forever. Seen in production: 73 stale `job_id="None"` entries surviving
+        every governor wave because their job hash pointed at the wrong destination.
+        """
         pipe = self._redis.pipeline()
         if destination_id:
             pipe.zrem(self._pending_key(destination_id), job_id)
         else:
-            for value in self._redis.smembers(self._destinations_key()):
-                pipe.zrem(self._pending_key(_decode(value)), job_id)
+            entry = self._redis.hgetall(self._job_key(job_id))
+            entry_destination_id = _decode(
+                entry.get(b"destination_id") or entry.get("destination_id")
+            )
+            if entry_destination_id:
+                pipe.zrem(self._pending_key(entry_destination_id), job_id)
+            else:
+                for value in self._redis.smembers(self._destinations_key()):
+                    pipe.zrem(self._pending_key(_decode(value)), job_id)
         pipe.execute()
 
     def local_in_flight(self, destination_id: str) -> int:
