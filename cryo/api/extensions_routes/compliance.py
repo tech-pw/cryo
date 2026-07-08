@@ -12,7 +12,8 @@ from sqlalchemy import select
 from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
 from cryo.compliance.governance import track_pending_deletions
-from cryo.db.models import ProtectedSnapshot, Source, Table, TableStats
+from cryo.db.models import Source, Table, TableStats
+from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
 router = APIRouter(prefix="/api/v1", tags=["compliance"])
@@ -35,6 +36,23 @@ class ProtectSnapshotResponse(BaseModel):
     table_id: uuid.UUID
     snapshot_id: int
     label: str | None = None
+
+
+class ProtectedSnapshotEntry(BaseModel):
+    snapshot_id: int
+    label: str | None = None
+    protected_at: str
+
+
+class ProtectedSnapshotListResponse(BaseModel):
+    table_id: uuid.UUID
+    snapshots: list[ProtectedSnapshotEntry]
+
+
+class UnprotectSnapshotResponse(BaseModel):
+    table_id: uuid.UUID
+    snapshot_id: int
+    removed: bool
 
 
 class CatalogLatencyResponse(BaseModel):
@@ -133,17 +151,67 @@ def protect_snapshot(
 ) -> ProtectSnapshotResponse:
     if session.get(Table, table_id) is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    row = ProtectedSnapshot(
+    repo = ProtectedSnapshotRepository(session)
+    row = repo.protect(
         table_id=table_id,
         snapshot_id=payload.snapshot_id,
         label=payload.label,
     )
-    session.add(row)
-    session.commit()
     return ProtectSnapshotResponse(
         table_id=table_id,
-        snapshot_id=payload.snapshot_id,
-        label=payload.label,
+        snapshot_id=row.snapshot_id,
+        label=row.label,
+    )
+
+
+@router.get(
+    "/tables/{table_id}/protected-snapshots",
+    response_model=ProtectedSnapshotListResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def list_protected_snapshots(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> ProtectedSnapshotListResponse:
+    if session.get(Table, table_id) is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    repo = ProtectedSnapshotRepository(session)
+    rows = repo.list_for_table(table_id)
+    return ProtectedSnapshotListResponse(
+        table_id=table_id,
+        snapshots=[
+            ProtectedSnapshotEntry(
+                snapshot_id=row.snapshot_id,
+                label=row.label,
+                protected_at=row.protected_at.isoformat()
+                if row.protected_at is not None
+                else "",
+            )
+            for row in rows
+        ],
+    )
+
+
+@router.delete(
+    "/tables/{table_id}/protected-snapshots/{snapshot_id}",
+    response_model=UnprotectSnapshotResponse,
+    dependencies=[Depends(require_operator)],
+)
+def unprotect_snapshot(
+    table_id: uuid.UUID,
+    snapshot_id: int,
+    session: SessionDep,
+) -> UnprotectSnapshotResponse:
+    if session.get(Table, table_id) is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    repo = ProtectedSnapshotRepository(session)
+    removed = repo.unprotect(table_id=table_id, snapshot_id=snapshot_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Protected snapshot not found")
+    return UnprotectSnapshotResponse(
+        table_id=table_id,
+        snapshot_id=snapshot_id,
+        removed=True,
     )
 
 

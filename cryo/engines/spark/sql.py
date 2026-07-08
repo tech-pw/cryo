@@ -53,10 +53,20 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
 def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str:
     retain_last = int(params.get("retain_last", 1))
     older_than = _older_than_expr(params)
-    return (
+    protected_ids = sorted({int(s) for s in params.get("protected_snapshot_ids") or []})
+    set_clause = ""
+    if protected_ids:
+        set_clause = (
+            f"CALL {catalog}.system.set_snapshot_ref("
+            f"table => '{table_name}', "
+            f"snapshot_id => {protected_ids[-1]}, "
+            f"ref_name => 'cryo-protected-latest'); "
+        )
+    expire_call = (
         f"CALL {catalog}.system.expire_snapshots("
         f"table => '{table_name}', older_than => {older_than}, retain_last => {retain_last})"
     )
+    return f"{set_clause}{expire_call}"
 
 
 def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str:

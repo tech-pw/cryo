@@ -364,6 +364,7 @@ class Worker:
                 table_data.partitions,
                 job.mode,
                 _execution_plan_params(job.params, destination, table_data.stats),
+                protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
             )
             self._store.save_plan(job.id, plan_to_dict(plan))
 
@@ -1273,6 +1274,28 @@ def _execution_plan_params(
     if schema and table:
         merged["table_ref"] = f"{catalog}.{schema}.{table}"
     return merged
+
+
+def _protected_snapshot_ids(table_id: UUID | None) -> list[int]:
+    """Return snapshot IDs tagged as protected for a table.
+
+    Reads protected_snapshots via the worker session factory. Returns [] on
+    any session failure so a transient DB issue cannot block maintenance.
+    """
+    if table_id is None:
+        return []
+    try:
+        from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
+        from cryo.db.session import SessionLocal
+    except Exception:
+        return []
+    try:
+        with SessionLocal() as session:
+            return sorted(
+                ProtectedSnapshotRepository(session).list_snapshot_ids(table_id)
+            )
+    except Exception:
+        return []
 
 
 def _job_operation_type(job: MaintenanceJobRecord) -> str:
