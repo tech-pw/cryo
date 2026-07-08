@@ -62,6 +62,18 @@ scanner:
       cpu: "2"
       memory: 4Gi
 
+native:
+  enabled: false
+  image:
+    repository: cryo
+    tag: latest
+    pullPolicy: IfNotPresent
+  serviceAccount: default
+  ttlSecondsAfterFinished: 300
+  defaultChunkSizeGb: 100
+  maxCpu: 4000m
+  maxMemory: 16Gi
+
 service:
   type: ClusterIP
   port: 8000

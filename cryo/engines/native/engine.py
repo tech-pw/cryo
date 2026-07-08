@@ -16,6 +16,9 @@ from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.native.job_dispatch import (
+    execute_request_via_job,
+)
 from cryo.engines.native.payload import (
     build_execute_request,
     build_execute_request_for_operations,
@@ -283,12 +286,32 @@ class NativeEngine:
                 source_config=self.source_config,
                 destination_config=self.config,
             )
-            result = execute_request(
-                request,
-                config=self.config,
-                timeout_seconds=int(self.config.get("timeout_seconds", 3600)),
-                on_progress=_progress_callback(ctx),
-            )
+            use_k8s = bool(self.config.get("k8s_dispatch", False))
+            timeout_seconds = int(self.config.get("timeout_seconds", 3600))
+
+            if use_k8s:
+                raw_chunk = next(
+                    (
+                        op.params.get("chunk_size_gb")
+                        for op in operations
+                        if op.params.get("chunk_size_gb") is not None
+                    ),
+                    100.0,
+                )
+                chunk_size_gb = float(raw_chunk) if raw_chunk is not None else 100.0
+                result = execute_request_via_job(
+                    request,
+                    config=self.config,
+                    chunk_size_gb=chunk_size_gb,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                result = execute_request(
+                    request,
+                    config=self.config,
+                    timeout_seconds=timeout_seconds,
+                    on_progress=_progress_callback(ctx),
+                )
         except Exception as exc:
             error = f"Native execution failed: {exc}"
             return [
