@@ -1175,8 +1175,14 @@ class S3RequestCostDaily(TimestampMixin, Base):
     just-pruned day). At 5k tables and a 35-day retention window that's ~175k rows tops,
     not the unbounded-with-all-history alternative.
 
-    Note: ``operation_tier`` matches AWS's Price List API grouping: ``"tier1"`` for
-    PUT/COPY/POST/LIST and ``"tier2"`` for GET/SELECT/HEAD.
+    Note: ``operation_tier`` is one of ``"get"``, ``"put"``, ``"list"``, ``"head"``, ``"other"``
+    -- finer-grained than AWS's own Price List SKU grouping (``Requests-Tier1`` = PUT/COPY/
+    POST/LIST, ``Requests-Tier2`` = GET/SELECT/HEAD) so the rollup onto ``TableCost`` can still
+    split into distinct ``get_requests_30d``/``put_requests_30d``/``list_requests_30d`` counts
+    for the UI (§9.2) -- collapsing GET and LIST into one tier at ingestion time would lose that
+    distinction permanently. Pricing still uses the AWS tier grouping: mapped from this column
+    at cost-computation time, not stored redundantly here (see
+    ``cryo/scanner/s3_request_cost_ingest.py``'s ``_PRICING_TIER``).
     """
 
     __tablename__ = "s3_request_cost_daily"

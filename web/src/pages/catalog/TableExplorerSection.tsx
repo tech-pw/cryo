@@ -2,22 +2,32 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { assignTables, listDestinations, listPresets, listSources, listTables, runMaintenance, runManifestRewrite, triggerScan, unassignTables } from "../api/client";
-import type { Mode, TableRead, UUID } from "../api/types";
-import { BulkAssignBar } from "../components/BulkAssignBar";
-import { FilterBar } from "../components/FilterBar";
-import { EmptyState, HintLabel, PageHeader, Sparkline } from "../components/common";
-import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
-import { PlanPreview } from "../components/PlanPreview";
-import { CompactionTag, GradePill, PriorityTag } from "../components/status";
-import { useAuth } from "../lib/auth";
-import { isOrphanScanStale } from "../lib/costStaleness";
-import { exportCsv } from "../lib/exportCsv";
-import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
-import { tableFiltersToPredicate, type TableFilterState } from "../lib/predicate";
-import { schemaTableName, tableTooltipName } from "../lib/tableLabels";
 import { useEffect, useMemo, useState } from "react";
-import { useTableExplorerSelection } from "./useTableExplorerSelection";
+import {
+  assignTables,
+  listDestinations,
+  listPresets,
+  listSources,
+  listTables,
+  runMaintenance,
+  runManifestRewrite,
+  triggerScan,
+  unassignTables
+} from "../../api/client";
+import type { Mode, TableRead, UUID } from "../../api/types";
+import { BulkAssignBar } from "../../components/BulkAssignBar";
+import { FilterBar } from "../../components/FilterBar";
+import { EmptyState, HintLabel, Sparkline } from "../../components/common";
+import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
+import { PlanPreview } from "../../components/PlanPreview";
+import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
+import { useAuth } from "../../lib/auth";
+import { isOrphanScanStale } from "../../lib/costStaleness";
+import { exportCsv } from "../../lib/exportCsv";
+import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
+import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
+import { useTableExplorerSelection } from "../useTableExplorerSelection";
 
 const pageSize = 50;
 
@@ -29,7 +39,13 @@ const initialFiltersFromSearch = (sourceParam: string | null): TableFilterState 
   return base;
 };
 
-export const TableExplorer = () => {
+/**
+ * Filterable, paginated table explorer section. Lives below CatalogDashboard on the
+ * consolidated Catalog page. Body lifted verbatim from the legacy TableExplorer.tsx --
+ * preserves the URL `?source=` filter so clicking a catalog row in the dashboard
+ * above narrows this section.
+ */
+export const TableExplorerSection = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -45,11 +61,21 @@ export const TableExplorer = () => {
   const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
   const tables = useQuery({
     queryKey: ["tables", token, predicate, sort, page],
-    queryFn: () => listTables(api, { predicate, sort, limit: pageSize, offset: (page - 1) * pageSize })
+    queryFn: () =>
+      listTables(api, { predicate, sort, limit: pageSize, offset: (page - 1) * pageSize })
   });
-  const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
-  const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
-  const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
+  const presets = useQuery({
+    queryKey: ["presets", token],
+    queryFn: () => listPresets(api)
+  });
+  const destinations = useQuery({
+    queryKey: ["destinations", token],
+    queryFn: () => listDestinations(api)
+  });
+  const sources = useQuery({
+    queryKey: ["sources", token],
+    queryFn: () => listSources(api)
+  });
 
   const catalogOptions = useMemo(
     () => (sources.data ?? []).map((source) => ({ label: source.name, value: source.id })),
@@ -152,7 +178,9 @@ export const TableExplorer = () => {
     mutationFn: () => {
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
-        return unassignTables(api, { selection: { mode: "filter", filter: selection.filter } });
+        return unassignTables(api, {
+          selection: { mode: "filter", filter: selection.filter }
+        });
       }
       return unassignTables(api, { selection: { mode: "ids", ids: selectedRowKeys } });
     },
@@ -217,48 +245,46 @@ export const TableExplorer = () => {
       row.stats?.partition_col ?? "",
       row.first_seen_at
     ]);
-    exportCsv(`cryo-tables-page-${page}`, [
-      "catalog",
-      "qualified_table",
-      "table",
-      "grade",
-      "priority",
-      "needs_compaction",
-      "small_files",
-      "total_files",
-      "size_gb",
-      "savings_usd_month",
-      "reclaimable_bytes",
-      "cost_precision",
-      "partition_col",
-      "first_seen_at"
-    ], rows);
+    exportCsv(
+      `cryo-tables-page-${page}`,
+      [
+        "catalog",
+        "qualified_table",
+        "table",
+        "grade",
+        "priority",
+        "needs_compaction",
+        "small_files",
+        "total_files",
+        "size_gb",
+        "savings_usd_month",
+        "reclaimable_bytes",
+        "cost_precision",
+        "partition_col",
+        "first_seen_at"
+      ],
+      rows
+    );
   };
 
   return (
     <>
-      <PageHeader
-        title="Table explorer"
-        subtitle="Filter the datalake, assign presets, and preview maintenance without relying on page-only selections."
-        actions={
-          <Space>
-            <Button
-              type={savingsView ? "primary" : "default"}
-              onClick={() => {
-                const next = !savingsView;
-                setSavingsView(next);
-                if (next) setSort("-projected_savings_usd_month");
-              }}
-            >
-              Savings view
-            </Button>
-            <Button onClick={exportTablesCsv} disabled={!pageItems.length}>
-              Export CSV
-            </Button>
-            <Button onClick={() => tables.refetch()}>Refresh</Button>
-          </Space>
-        }
-      />
+      <Space style={{ marginBottom: 12 }}>
+        <Button
+          type={savingsView ? "primary" : "default"}
+          onClick={() => {
+            const next = !savingsView;
+            setSavingsView(next);
+            if (next) setSort("-projected_savings_usd_month");
+          }}
+        >
+          Savings view
+        </Button>
+        <Button onClick={exportTablesCsv} disabled={!pageItems.length}>
+          Export CSV
+        </Button>
+        <Button onClick={() => void tables.refetch()}>Refresh</Button>
+      </Space>
       <FilterBar
         value={filters}
         catalogOptions={catalogOptions}
@@ -311,7 +337,7 @@ export const TableExplorer = () => {
             width: 280,
             className: "table-name-cell",
             ellipsis: { showTitle: false },
-            render: (_, row) => {
+            render: (_: unknown, row) => {
               const name = schemaTableName(row);
               const tooltip = tableTooltipName(row);
               return (
@@ -328,8 +354,10 @@ export const TableExplorer = () => {
             key: "catalog",
             width: 140,
             ellipsis: { showTitle: false },
-            render: (_, row) => (
-              <Typography.Text ellipsis={{ tooltip: row.catalog_name ?? row.source_name ?? undefined }}>
+            render: (_: unknown, row) => (
+              <Typography.Text
+                ellipsis={{ tooltip: row.catalog_name ?? row.source_name ?? undefined }}
+              >
                 {row.catalog_name ?? row.source_name ?? "-"}
               </Typography.Text>
             )
@@ -341,7 +369,7 @@ export const TableExplorer = () => {
             width: 76,
             align: "center",
             sorter: true,
-            render: (_, row) => <GradePill grade={row.stats?.grade} />
+            render: (_: unknown, row) => <GradePill grade={row.stats?.grade} />
           },
           {
             title: "Priority",
@@ -349,13 +377,15 @@ export const TableExplorer = () => {
             key: "compaction_priority",
             width: 104,
             sorter: true,
-            render: (_, row) => <PriorityTag priority={row.stats?.compaction_priority} />
+            render: (_: unknown, row) => <PriorityTag priority={row.stats?.compaction_priority} />
           },
           {
             title: "Compaction",
             key: "needs",
             width: 142,
-            render: (_, row) => <CompactionTag needsCompaction={row.stats?.needs_compaction} />
+            render: (_: unknown, row) => (
+              <CompactionTag needsCompaction={row.stats?.needs_compaction} />
+            )
           },
           {
             title: "Small files",
@@ -423,7 +453,7 @@ export const TableExplorer = () => {
             ),
             key: "cost_precision",
             width: 150,
-            render: (_, row) => (
+            render: (_: unknown, row) => (
               <CostPrecisionBadge
                 precision={row.stats?.cost_precision}
                 lastFullCostScanAt={row.stats?.cost_last_full_scan_at}
@@ -438,7 +468,7 @@ export const TableExplorer = () => {
             title: "Partition",
             width: 156,
             ellipsis: { showTitle: false },
-            render: (_, row) => (
+            render: (_: unknown, row) => (
               <Typography.Text ellipsis={{ tooltip: row.stats?.partition_col }}>
                 {row.stats?.partition_col ?? "-"}
               </Typography.Text>
@@ -476,7 +506,11 @@ export const TableExplorer = () => {
         onUnassign={() => unassign.mutate()}
         onScan={() => scan.mutate()}
       />
-      <PlanPreview open={previewOpen} tables={selectedTables} onClose={() => setPreviewOpen(false)} />
+      <PlanPreview
+        open={previewOpen}
+        tables={selectedTables}
+        onClose={() => setPreviewOpen(false)}
+      />
     </>
   );
 };
