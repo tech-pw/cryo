@@ -1276,7 +1276,7 @@ def _execution_plan_params(
     return merged
 
 
-def _protected_snapshot_ids(table_id: UUID | None) -> list[int]:
+def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
     """Return snapshot IDs tagged as protected for a table.
 
     Reads protected_snapshots via the worker session factory. Returns [] on
@@ -1289,10 +1289,17 @@ def _protected_snapshot_ids(table_id: UUID | None) -> list[int]:
         from cryo.db.session import SessionLocal
     except Exception:
         return []
+    if isinstance(table_id, str):
+        try:
+            table_uuid = UUID(table_id)
+        except (ValueError, TypeError):
+            return []
+    else:
+        table_uuid = table_id
     try:
         with SessionLocal() as session:
             return sorted(
-                ProtectedSnapshotRepository(session).list_snapshot_ids(table_id)
+                ProtectedSnapshotRepository(session).list_snapshot_ids(table_uuid)
             )
     except Exception:
         return []
