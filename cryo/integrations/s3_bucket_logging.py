@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -25,6 +27,16 @@ from cryo.scanner.orphans import parse_s3_location
 from cryo.security.crypto import decrypt_secret
 
 logger = logging.getLogger(__name__)
+
+# Bounds on the live-catalog fallback in discover_buckets_for_source(): a source with no
+# Table.location rows yet (never scanned, or scanned before that column existed) falls back to
+# enumerating tables directly from the catalog -- but list_tables() and load_table() are both
+# unbounded network calls. Unbounded, this hung indefinitely against a real ~1,850-table
+# catalog. _FALLBACK_MAX_SECONDS bounds a worker thread running the whole enumeration (see
+# _discover_buckets_from_live_catalog); _FALLBACK_MAX_TABLES caps the per-table loop inside
+# that thread once list_tables() does return, so a huge-but-fast catalog doesn't run forever.
+_FALLBACK_MAX_TABLES = 200
+_FALLBACK_MAX_SECONDS = 8.0
 
 
 def credentials_for_config(config: S3BucketLogConfig) -> AWSCredentials | None:
@@ -97,40 +109,7 @@ def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[
             buckets.add(bucket)
 
     if not buckets:
-        # Fallback: enumerate live tables from the catalog and infer the bucket from each
-        # table's location. Failures here (catalog unreachable, missing credentials) are
-        # silent on purpose -- the doc's non-goal is "do not error" when the bucket can't be
-        # inferred; the panel's empty-state copy guides the user. ``list_tables`` returns
-        # ``(schema, table)`` identifiers; we need to ``load_table`` each one to read its
-        # location, which is O(tables) round-trips. Acceptable for a manual-refresh UX;
-        # not a hot path.
-        try:
-            from cryo.sources.factory import source_catalog_for
-            from cryo.db.models import Source as SourceModel
-
-            source = session.get(SourceModel, source_id)
-            if source is not None:
-                catalog = source_catalog_for(source)
-                for identifier in catalog.list_tables():
-                    try:
-                        schema_name, table_name = identifier
-                        table_obj = catalog.load_table(schema_name, table_name)
-                        loc = table_obj.location
-                        if callable(loc):
-                            loc = loc()
-                        if not loc:
-                            continue
-                        bucket, _prefix = parse_s3_location(str(loc))
-                        if bucket:
-                            buckets.add(bucket)
-                    except Exception:
-                        # Per-table failures are logged and skipped; don't let one bad
-                        # table block discovery for the rest of the source.
-                        continue
-        except Exception:
-            # Catalog-level failures (auth, network) silently no-op; the empty-state copy
-            # in the UI is the user-facing signal.
-            pass
+        _discover_buckets_from_live_catalog(session, source_id, buckets)
 
     existing = {
         row.bucket: row
@@ -167,6 +146,102 @@ def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[
     if created:
         session.flush()
     return list(existing.values()) + created
+
+
+def _discover_buckets_from_live_catalog(
+    session: Session, source_id: uuid.UUID, buckets: set[str]
+) -> None:
+    """Fallback for a source with no ``Table.location`` rows yet (never scanned, or scanned
+    before that column existed): enumerate tables directly from the catalog and infer the
+    bucket from each live ``table.location()``.
+
+    ``catalog.list_tables()`` is itself an unbounded network call -- it's O(namespaces)
+    round-trips internally, and its own docstring (``PyIcebergSourceCatalog.list_tables``)
+    warns it "can take minutes against a real Hive Metastore with many databases." A
+    per-table loop bound alone doesn't help if the hang happens before the loop even starts,
+    so the whole enumeration (list + per-table ``load_table()`` calls) runs in a worker
+    thread with a hard ``future.result(timeout=...)`` -- the only way to guarantee this
+    request-serving thread never blocks past ``_FALLBACK_MAX_SECONDS``, regardless of which
+    underlying catalog call turns out to be the slow one. If the deadline is hit, the worker
+    thread is abandoned (Python has no thread-cancel primitive; it keeps running until its
+    blocking call eventually returns, but no longer holds up any request) and its eventual
+    result is discarded, not merged -- avoiding any read/write race with the caller's
+    ``buckets`` set. Every failure mode here (catalog unreachable, timeout, one bad table) is
+    silent by design; the panel's empty-state copy is the user-facing signal, per the design
+    doc's "do not error" non-goal for this path.
+    """
+    from cryo.db.models import Source as SourceModel
+
+    source = session.get(SourceModel, source_id)
+    if source is None:
+        return
+
+    future = _fallback_executor().submit(_enumerate_buckets_via_catalog, source)
+    try:
+        buckets.update(future.result(timeout=_FALLBACK_MAX_SECONDS))
+    except FuturesTimeoutError:
+        logger.warning(
+            "S3 bucket discovery fallback timed out after %.0fs for source %s -- catalog too "
+            "slow to enumerate. Run a scan to populate Table.location for fast discovery.",
+            _FALLBACK_MAX_SECONDS,
+            source_id,
+        )
+    except Exception:
+        # Catalog-level failures (auth, network) silently no-op; the empty-state copy in the
+        # UI is the user-facing signal.
+        pass
+
+
+_FALLBACK_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _fallback_executor() -> ThreadPoolExecutor:
+    """A small, process-lifetime worker pool for the live-catalog fallback.
+
+    Deliberately never shut down and reused across calls -- creating one per request and
+    exiting its context would call ``shutdown(wait=True)``, which blocks until the (possibly
+    stuck) worker finishes, defeating the whole point of the timeout. Bounded to a handful of
+    workers so repeated requests against a slow/stuck catalog saturate a small, fixed pool
+    (after which further attempts time out immediately, which is the correct degraded
+    behavior) rather than spawning an unbounded number of OS threads.
+    """
+    global _FALLBACK_EXECUTOR
+    if _FALLBACK_EXECUTOR is None:
+        _FALLBACK_EXECUTOR = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="s3bucket-fallback"
+        )
+    return _FALLBACK_EXECUTOR
+
+
+def _enumerate_buckets_via_catalog(source: Any) -> set[str]:
+    """Runs entirely inside the fallback worker thread -- see
+    ``_discover_buckets_from_live_catalog`` for why this needs a hard external timeout rather
+    than an internal check-the-clock loop."""
+    from cryo.sources.factory import source_catalog_for
+
+    found: set[str] = set()
+    catalog = source_catalog_for(source)
+    examined = 0
+    for identifier in catalog.list_tables():
+        if examined >= _FALLBACK_MAX_TABLES:
+            break
+        examined += 1
+        try:
+            schema_name, table_name = identifier
+            table_obj = catalog.load_table(schema_name, table_name)
+            loc = table_obj.location
+            if callable(loc):
+                loc = loc()
+            if not loc:
+                continue
+            bucket, _prefix = parse_s3_location(str(loc))
+            if bucket:
+                found.add(bucket)
+        except Exception:
+            # Per-table failures are skipped; don't let one bad table block discovery for
+            # the rest of the source.
+            continue
+    return found
 
 
 def check_bucket_logging(config: S3BucketLogConfig) -> None:
