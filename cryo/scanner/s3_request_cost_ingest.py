@@ -553,3 +553,121 @@ def prune_s3_request_cost_daily(
         delete(S3RequestCostDaily).where(S3RequestCostDaily.day < cutoff)
     )
     return int(result.rowcount or 0)
+
+
+@dataclass(frozen=True)
+class SourceRequestCostByTier:
+    tier1_count: int
+    tier2_count: int
+    tier1_cost_usd: float
+    tier2_cost_usd: float
+
+
+@dataclass(frozen=True)
+class SourceRequestCostByDay:
+    day: date
+    count: int
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class SourceRequestCostRollup:
+    """Cost page's "S3 requests" tab (fleet-wide view, one row per source): the
+    request-count/cost fields are summed across every bucket this source tracks; the
+    identity/status fields (bucket, region, logging_status, enabled, last_ingested_at)
+    describe a single "primary" bucket -- the most recently ingested one, or the first
+    alphabetically if none have ingested yet -- since a source usually maps to one bucket
+    and the fleet view needs a single representative status per row, not a nested table.
+    """
+
+    bucket: str
+    region: str | None
+    enabled: bool
+    logging_status: str
+    last_ingested_at: datetime | None
+    total_request_count_30d: int
+    total_cost_usd_month: float
+    by_tier: SourceRequestCostByTier
+    by_day: list[SourceRequestCostByDay]
+    approximate: bool
+
+
+def compute_source_request_cost_rollup(
+    session: Session,
+    source_id: uuid.UUID,
+    *,
+    lookback_days: int = 30,
+    now: datetime | None = None,
+) -> SourceRequestCostRollup | None:
+    """Fleet-wide rollup for the Cost page's "S3 requests" tab -- aggregates every bucket
+    this source tracks (not just one, unlike the per-table rollup in
+    ``recompute_table_cost_rollup``). Returns ``None`` if the source has no
+    ``S3BucketLogConfig`` rows at all (never discovered/configured), which the API layer
+    turns into a 404 -- distinct from "configured but zero requests measured yet", which
+    returns real zeros here instead.
+    """
+    configs = session.scalars(
+        select(S3BucketLogConfig).where(S3BucketLogConfig.source_id == source_id)
+    ).all()
+    if not configs:
+        return None
+
+    primary = sorted(
+        configs,
+        key=lambda c: (c.last_ingested_at or datetime.min.replace(tzinfo=UTC), c.bucket),
+        reverse=True,
+    )[0]
+
+    now = now or datetime.now(UTC)
+    window_start = now.date() - timedelta(days=lookback_days)
+    rows = session.execute(
+        select(
+            S3RequestCostDaily.day,
+            S3RequestCostDaily.operation_tier,
+            S3RequestCostDaily.request_count,
+            S3RequestCostDaily.cost_usd,
+            S3RequestCostDaily.pricing_source,
+        ).where(
+            S3RequestCostDaily.source_id == source_id,
+            S3RequestCostDaily.day >= window_start,
+        )
+    ).all()
+
+    tier1_count = tier2_count = 0
+    tier1_cost = tier2_cost = 0.0
+    by_day: dict[date, dict[str, float]] = {}
+    approximate = False
+    for day, operation_tier, request_count, cost_usd, pricing_source in rows:
+        tier = _PRICING_TIER.get(operation_tier, "tier1")
+        if tier == "tier2":
+            tier2_count += request_count
+            tier2_cost += cost_usd
+        else:
+            tier1_count += request_count
+            tier1_cost += cost_usd
+        entry = by_day.setdefault(day, {"count": 0, "cost_usd": 0.0})
+        entry["count"] += request_count
+        entry["cost_usd"] += cost_usd
+        if pricing_source != "aws_price_list_api":
+            approximate = True
+
+    return SourceRequestCostRollup(
+        bucket=primary.bucket,
+        region=primary.region,
+        enabled=primary.enabled,
+        logging_status=primary.logging_status,
+        last_ingested_at=primary.last_ingested_at,
+        total_request_count_30d=tier1_count + tier2_count,
+        total_cost_usd_month=round(tier1_cost + tier2_cost, 4),
+        by_tier=SourceRequestCostByTier(
+            tier1_count=tier1_count,
+            tier2_count=tier2_count,
+            tier1_cost_usd=round(tier1_cost, 4),
+            tier2_cost_usd=round(tier2_cost, 4),
+        ),
+        by_day=[
+            SourceRequestCostByDay(day=day, count=int(v["count"]), cost_usd=round(v["cost_usd"], 4))
+            for day, v in sorted(by_day.items())
+        ],
+        approximate=approximate,
+    )
