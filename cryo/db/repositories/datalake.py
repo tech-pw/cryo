@@ -546,6 +546,14 @@ def _table_cost_payload(table_id: uuid.UUID, cost: TableCost) -> dict[str, objec
         "by_operation": by_operation,
         "last_full_cost_scan_at": cost.last_full_cost_scan_at,
         "scan_at": cost.scan_at,
+        # Measured S3 request-cost rollup (docs/s3-request-cost-tracking.md §6.3/§9.2). NULL
+        # (not 0) means no ingestion has run for this table yet -- the frontend must not render
+        # that as $0, see TableCost's docstring.
+        "get_requests_30d": cost.get_requests_30d,
+        "put_requests_30d": cost.put_requests_30d,
+        "list_requests_30d": cost.list_requests_30d,
+        "request_cost_usd_month": cost.request_cost_usd_month,
+        "request_cost_pricing_source": cost.request_cost_pricing_source,
     }
 
 
