@@ -1555,6 +1555,17 @@ textarea.mono-input {
   color: var(--ink, #131b24);
 }
 
+.td-path-value {
+  max-width: 360px;
+  vertical-align: middle;
+  font-size: 12px;
+}
+
+.td-path-copy {
+  vertical-align: middle;
+  color: var(--muted, #5c667a) !important;
+}
+
 .td-hero-actions {
   display: flex;
   align-items: center;
