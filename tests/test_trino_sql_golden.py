@@ -138,3 +138,18 @@ def test_trino_renders_compute_statistics_specific_columns() -> None:
     assert stmts[0].sql == (
         "ANALYZE iceberg.demo.events WITH (columns = ARRAY['user_id', 'event_date'])"
     )
+
+
+def test_trino_convert_deletes_reuses_optimize_sql() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(OperationType.CONVERT_DELETES, {"file_size_mb": 128}),
+        ),
+    )
+    stmts = render(plan)
+    assert len(stmts) == 1
+    assert stmts[0].sql == (
+        "ALTER TABLE iceberg.demo.events EXECUTE optimize(file_size_threshold => '128MB')"
+    )

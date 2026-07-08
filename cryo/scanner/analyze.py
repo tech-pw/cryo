@@ -149,6 +149,8 @@ def analyze_table(
     partitions: dict[str, _PartitionAccum] = {}
     total_files = total_records = total_size_bytes = 0
     delete_files = delete_bytes = health_small_files = 0
+    equality_delete_files = 0
+    position_delete_files = 0
     file_formats: set[str] = set()
     schema = _call_or_attr(table_obj, "schema", default=None)
     quality_accum = ColumnQualityAccumulator(schema)
@@ -169,12 +171,17 @@ def analyze_table(
         file_format = _attr(data_file, "file_format", None)
         if file_format:
             file_formats.add(str(file_format).upper())
-        if _is_delete_file(data_file):
+        delete_kind = _delete_file_kind(data_file)
+        if delete_kind is not None:
             delete_files += 1
             delete_bytes += file_size
+            if delete_kind == "equality":
+                equality_delete_files += 1
+            elif delete_kind == "position":
+                position_delete_files += 1
         if file_size < HEALTH_SMALL_FILE_BYTES:
             health_small_files += 1
-        if not _is_delete_file(data_file):
+        if delete_kind is None:
             quality_accum.add(data_file)
 
         values = data_file_partition_values(data_file, fields)
@@ -338,6 +345,9 @@ def analyze_table(
         **quality_summary,
         "first_snapshot_at": snapshot_info["first_snapshot_at"],
         "last_snapshot_committed_at": snapshot_info["last_snapshot_committed_at"],
+        "current_snapshot_id": snapshot_info["current_snapshot_id"],
+        "equality_delete_files": equality_delete_files,
+        "position_delete_files": position_delete_files,
         "location": table_location(table_obj),
     }
     if manifest_read_errors:
@@ -648,8 +658,22 @@ def _partition_value(partition: object, field_name: str, index: int) -> Any:
 
 
 def _is_delete_file(data_file: object) -> bool:
-    content = str(_attr(data_file, "content", "")).lower()
-    return content.endswith("deletes") or content in {"1", "2"}
+    return _delete_file_kind(data_file) is not None
+
+
+def _delete_file_kind(data_file: object) -> str | None:
+    content = str(_attr(data_file, "content", "")).lower().strip()
+    if "equality" in content:
+        return "equality"
+    if "position" in content:
+        return "position"
+    if content.endswith("deletes"):
+        return "position"
+    if content == "2":
+        return "equality"
+    if content == "1":
+        return "position"
+    return None
 
 
 def _transform_param(transform_raw: str) -> int | None:

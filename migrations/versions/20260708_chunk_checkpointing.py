@@ -61,10 +61,10 @@ def upgrade() -> None:
         sa.Column("bytes_removed", sa.BigInteger(), nullable=True),
         sa.Column("duration_ms", sa.BigInteger(), nullable=True),
         sa.Column("committed_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("raw_result", sa.JSON().as_istype(sa.dialects.postgresql.JSONB), nullable=True),
-        sa.ForeignKeyConstraint(["run_id"], ["cryo.runs.id"], ondelete="CASCADE", schema="cryo"),
-        sa.PrimaryKeyConstraint("id", schema="cryo"),
-        sa.UniqueConstraint("run_id", "chunk_index", name="uq_chunk_checkpoint_run_chunk", schema="cryo"),
+        sa.Column("raw_result", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.ForeignKeyConstraint(["run_id"], ["cryo.runs.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("run_id", "chunk_index", name="uq_chunk_checkpoint_run_chunk"),
         schema="cryo",
     )
     op.create_index("ix_chunk_checkpoints_run", "chunk_checkpoints", ["run_id"], schema="cryo")
@@ -72,6 +72,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("chunk_checkpoints", schema="cryo")
-    op.drop_index("ix_jobs_chunk_index", "jobs", schema="cryo", postgresql_where=sa.text("chunk_index IS NOT NULL"))
-    op.drop_index("ix_jobs_run_chunk", "jobs", schema="cryo")
+    op.drop_index("ix_jobs_chunk_index", table_name="jobs", schema="cryo")
+    op.drop_index("ix_jobs_run_chunk", table_name="jobs", schema="cryo")
     op.drop_column("jobs", "chunk_index", schema="cryo")

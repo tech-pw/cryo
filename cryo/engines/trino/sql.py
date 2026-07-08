@@ -47,6 +47,10 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         sql = _render_orphan(table_ref, operation.params)
     elif operation.type is OperationType.OPTIMIZE:
         sql = _render_optimize(table_ref, operation)
+    elif operation.type is OperationType.CONVERT_DELETES:
+        # Trino does not expose Spark's delete-file-threshold options; OPTIMIZE is the closest
+        # equivalent and rewrites data files to compact delete fragments.
+        sql = _render_optimize(table_ref, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
     elif operation.type is OperationType.COMPUTE_STATISTICS:

@@ -13,6 +13,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
     {
         OperationType.EXPIRE_SNAPSHOTS,
         OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.CONVERT_DELETES,
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE_MANIFESTS,
     }

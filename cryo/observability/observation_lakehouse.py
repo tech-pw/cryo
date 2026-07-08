@@ -6,10 +6,9 @@ the long-term store -- streams evict after a few hundred rows and Postgres keeps
 audit rows, so this file-backed archive is the place where high-cardinality diagnostic history
 lives.
 
-Storage format: one file per UTC hour, named ``_events-YYYYMMDDHH.parquet``. We never actually
-write Parquet (no pyarrow dependency), so each "parquet" file is plain JSONL -- same logical
-shape, one JSON record per line. The naming keeps Iceberg-tooling expectations intact if/when
-the platform is wired to a real Parquet/Arrow writer.
+Storage format: one file per UTC hour, named ``_events-YYYYMMDDHH.jsonl``. Each file is
+plain JSONL -- one JSON record per line. This avoids a pyarrow dependency and any tool that
+reads the extension will get valid JSONL.
 
 Concurrency: appends are serialized through a process-wide ``threading.Lock`` (good enough for
 the FastAPI worker pool) and, when ``fcntl`` is available, an advisory ``flock`` on the file
@@ -97,12 +96,12 @@ class ObservationLakehouse:
     # ----- file naming -----
 
     def _file_for(self, moment: datetime) -> Path:
-        return self._root / f"_events-{moment.strftime('%Y%m%d%H')}.parquet"
+        return self._root / f"_events-{moment.strftime('%Y%m%d%H')}.jsonl"
 
     def _all_files(self) -> list[Path]:
         if not self._root.exists():
             return []
-        return sorted(self._root.glob("_events-*.parquet"))
+        return sorted(self._root.glob("_events-*.jsonl"))
 
     # ----- writers -----
 
@@ -167,12 +166,12 @@ class ObservationLakehouse:
         matches: list[ObservationEvent] = []
         for path in self._all_files():
             since_marker = (
-                f"_events-{since_utc.strftime('%Y%m%d%H')}.parquet"
+                f"_events-{since_utc.strftime('%Y%m%d%H')}.jsonl"
                 if since_utc is not None
                 else None
             )
             until_marker = (
-                f"_events-{until_utc.strftime('%Y%m%d%H')}.parquet"
+                f"_events-{until_utc.strftime('%Y%m%d%H')}.jsonl"
                 if until_utc is not None
                 else None
             )
