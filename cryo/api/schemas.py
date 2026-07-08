@@ -590,6 +590,19 @@ class PaginatedTables(BaseModel):
     total: int
     limit: int
     offset: int
+    # Opaque server-side cursor for fetching the next page; absent when the
+    # current page is the last. Decoded via cryo.api.pagination.PageCursor.
+    cursor: str | None = None
+    has_more: bool = False
+
+
+class PaginatedRuns(BaseModel):
+    items: list[Any]
+    total: int
+    limit: int
+    offset: int
+    cursor: str | None = None
+    has_more: bool = False
 
 
 class TableAlertSubscriptionRead(OrmModel):

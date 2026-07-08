@@ -846,6 +846,7 @@ def list_tables(
     sort: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query()] = None,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -867,12 +868,54 @@ def list_tables(
         count_stmt = count_stmt.where(predicate)
 
     total = session.scalar(count_stmt) or 0
-    items = list(session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(offset).limit(limit)))
+
+    # Server-side cursor takes precedence over offset — clients pass back the
+    # previous page's cursor instead of computing `offset += limit`. The two
+    # compose: cursor pins the start of the page, limit caps its size.
+    actual_offset = offset
+    if cursor:
+        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
+
+        try:
+            decoded = PageCursor.decode(cursor)
+        except Exception as exc:  # noqa: BLE001 - any decode problem ⇒ 400 with the message
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
+        if not decoded.matches_request(
+            filter_repr=make_filter_repr(filter), sort_repr=make_sort_repr(sort)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Cursor was issued for a different filter/sort combination",
+            )
+        actual_offset = decoded.offset_within_key
+
+    items = list(
+        session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(actual_offset).limit(limit))
+    )
+
+    # Emit a next-page cursor only when there might be more rows past this page.
+    # The cheap "fetch limit+1 rows and trim" probe is correct without needing
+    # a second count query — and on a fully-indexed sort the row read is O(1)
+    # with the existing ORDER BY + LIMIT plan.
+    next_cursor = None
+    has_more = actual_offset + len(items) < total
+    if has_more and items:
+        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
+
+        next_cursor = PageCursor(
+            key=str(items[-1].id),
+            offset_within_key=actual_offset + len(items),
+            filter_repr=make_filter_repr(filter),
+            sort_repr=make_sort_repr(sort),
+        ).encode()
+
     return PaginatedTables(
         items=[table_to_read(item) for item in items],
         total=total,
         limit=limit,
-        offset=offset,
+        offset=actual_offset,
+        cursor=next_cursor,
+        has_more=has_more,
     )
 
 
