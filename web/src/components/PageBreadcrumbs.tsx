@@ -10,18 +10,19 @@ export interface Crumb {
 const ROUTE_LABELS: Record<string, string> = {
   "/health": "Health",
   "/catalogs": "Catalogs",
+  // /tables (bare) now redirects to /catalogs (see App.tsx), but /tables/:tableId (Table
+  // Detail) is a live route -- still needed so its breadcrumb reads "Tables / <id>".
   "/tables": "Tables",
   "/scans": "Scanner",
   "/ai": "Intelligence",
   "/governance": "Governance",
   "/queries": "Queries",
-  "/cost": "Savings",
+  "/cost": "Cost",
   "/cost-insights": "Cost insights",
   "/sla": "SLA",
   "/optimize": "Optimize",
   "/presets": "Presets",
   "/runs": "Runs",
-  "/aws": "AWS",
   "/connections": "Connections",
   "/jobs": "Jobs",
   "/attribution": "Attribution",

@@ -337,6 +337,34 @@ class S3LogTeardownResponse(BaseModel):
     error: str | None = None
 
 
+class S3RequestCostByTierRead(BaseModel):
+    tier1_count: int
+    tier2_count: int
+    tier1_cost_usd: float
+    tier2_cost_usd: float
+
+
+class S3RequestCostByDayRead(BaseModel):
+    day: date
+    count: int
+    cost_usd: float
+
+
+class S3RequestCostRollupRead(BaseModel):
+    bucket: str
+    source_id: uuid.UUID
+    source_name: str
+    region: str | None = None
+    enabled: bool
+    logging_status: str
+    last_ingested_at: datetime | None = None
+    total_request_count_30d: int
+    total_cost_usd_month: float
+    by_tier: S3RequestCostByTierRead
+    by_day: list[S3RequestCostByDayRead]
+    approximate: bool
+
+
 class DestinationCreate(BaseModel):
     name: str
     engine: EngineType

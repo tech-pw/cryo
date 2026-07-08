@@ -252,6 +252,52 @@ export interface SourceNamespacesResult {
 export const getSourceNamespaces = (api: ApiOptions, id: UUID) =>
   apiFetch<SourceNamespacesResult>(`/sources/${id}/namespaces`, api);
 
+export interface S3LogConfigBucket {
+  bucket: string;
+  region?: string | null;
+  logging_status: "enabled" | "disabled" | "unknown";
+  log_target_bucket?: string | null;
+  log_target_prefix?: string | null;
+  manual_override: boolean;
+  enabled: boolean;
+  last_checked_at?: string | null;
+  last_ingested_at?: string | null;
+  last_ingested_date?: string | null;
+  last_error?: string | null;
+  last_error_at?: string | null;
+}
+
+export interface S3RequestCostRollup {
+  bucket: string;
+  source_id: UUID;
+  source_name: string;
+  region?: string | null;
+  enabled: boolean;
+  logging_status: string;
+  last_ingested_at?: string | null;
+  total_request_count_30d: number;
+  total_cost_usd_month: number;
+  by_tier: { tier1_count: number; tier2_count: number; tier1_cost_usd: number; tier2_cost_usd: number };
+  by_day: Array<{ day: string; count: number; cost_usd: number }>;
+  approximate: boolean;
+}
+
+// Same endpoint as listS3LogConfigs() below (defined once the S3 log config section of this
+// file is reached) -- this alias exists so the Cost page's fleet-wide "S3 requests" tab has
+// its own narrower return type (S3LogConfigBucket) without a second implementation to drift
+// out of sync with the per-source panel's.
+export const listSourceS3LogConfigs = (api: ApiOptions, sourceId: UUID): Promise<S3LogConfigBucket[]> =>
+  listS3LogConfigs(api, sourceId);
+
+export const getSourceS3RequestCostRollup = (
+  api: ApiOptions,
+  sourceId: UUID,
+  params?: { lookback_days?: number }
+) => {
+  const qs = params?.lookback_days ? `?lookback_days=${params.lookback_days}` : "";
+  return apiFetch<S3RequestCostRollup>(`/sources/${sourceId}/s3-request-cost-rollup${qs}`, api);
+};
+
 export interface SourceNamespaceTablesResult {
   ok: boolean;
   tables: string[];
