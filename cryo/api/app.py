@@ -17,6 +17,7 @@ from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
+from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.config import Settings, get_settings
 from cryo.observability.logging import configure_logging
 from cryo.observability.tracing import init_tracing, instrument_fastapi, shutdown_tracing
@@ -65,6 +66,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "Inventory (CE-grade insight, free — delivered report files only)."
                 ),
             },
+            {
+                "name": "s3-request-cost",
+                "description": (
+                    "Per-table S3 GET/PUT/LIST request-cost tracking from S3 server access logs."
+                ),
+            },
             {"name": "observability", "description": "Prometheus metrics and health checks."},
         ],
     )
@@ -101,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(advanced_router)
     app.include_router(metrics_router)
     app.include_router(cost_insights_router)
+    app.include_router(s3_log_config_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup
