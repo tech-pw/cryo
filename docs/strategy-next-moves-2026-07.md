@@ -104,6 +104,29 @@ require new research to start.
   the Phase E capacity-accounting gap in `cryo/governor/capacity.py`; and the only structural
   axis where Amoro currently out-ships Cryo.
 
+**Implementation log (2026-07-08):**
+- ✅ Added `kubernetes>=30.0.0,<31` to `pyproject.toml` dependencies
+- ✅ Created `cryo/engines/native/job_dispatch.py`:
+  - `compute_job_resources(chunk_size_gb)` — sizes CPU/memory from planner's `chunk_size_gb`
+    using formula from §4.3: `cpu = min(4 cores, 250m + chunk_gb/10 * 100m)`,
+    `mem = min(16Gi, 512Mi + chunk_gb/10 * 128Mi)`
+  - `execute_request_via_job()` — creates K8s Job per chunk, passes payload as base64 env
+    var, polls `.status.succeeded`/`failed`, reads pod logs for result JSON; falls back to
+    subprocess runner when kubernetes client unavailable or not in-cluster
+  - Graceful degradation: `k8s_dispatch=True` in destination config; Worker unchanged for
+    existing subprocess path
+- ✅ Created `deploy/helm/cryo/templates/native-job.yaml` — documented Job manifest template with
+  `native.*` values (image, serviceAccount, ttlSecondsAfterFinished, defaultChunkSizeGb,
+  maxCpu, maxMemory); lints clean
+- ✅ Updated `deploy/helm/cryo/values.yaml` with `native` section (disabled by default)
+- ✅ Updated `cryo/engines/native/engine.py`: `execute_plan()` checks `k8s_dispatch` config flag;
+  calls `execute_request_via_job()` with computed `chunk_size_gb`; subprocess path unchanged for
+  non-K8s environments
+- ⚠️ `kubernetes` package needs to be installed in the Worker container image (not yet in
+  Dockerfile); needs a separate image build step to pick up the new dependency
+- ⚠️ Worker needs a ServiceAccount with `create`, `get`, `list`, `watch`, `delete` on Jobs
+  and `get` on Pods; RBAC not yet wired (defer to operator docs / Helm post-install hook)
+
 ### Move 4 — Chunk-level checkpointing / partial-progress commits
 
 - **Effort:** 1–2 weeks.
