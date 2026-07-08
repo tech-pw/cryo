@@ -3,6 +3,8 @@ package fixtures
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -85,6 +87,10 @@ func commitPositionDeletes(
 	if err := writeParquetFile(ctx, writeFS, posDelPath, table.PositionalDeleteArrowSchema, jsonPayload); err != nil {
 		return nil, err
 	}
+	fileSize, err := fileSizeAt(ctx, writeFS, posDelPath)
+	if err != nil {
+		return nil, err
+	}
 
 	builder, err := iceberg.NewDataFileBuilder(
 		*iceberg.UnpartitionedSpec,
@@ -94,8 +100,8 @@ func commitPositionDeletes(
 		nil,
 		nil,
 		nil,
-		1,
-		128,
+		int64(len(positions)),
+		fileSize,
 	)
 	if err != nil {
 		return nil, err
@@ -175,16 +181,38 @@ func writeParquetFile(
 	if err != nil {
 		return err
 	}
-	defer func() { _ = fw.Close() }()
-
 	arrowTable := array.NewTableFromRecords(schema, []arrow.RecordBatch{rec})
 	defer arrowTable.Release()
 
-	return pqarrow.WriteTable(
-		arrowTable,
-		fw,
-		rec.NumRows(),
-		parquet.NewWriterProperties(parquet.WithStats(true)),
-		pqarrow.DefaultWriterProps(),
+	writerProps := parquet.NewWriterProperties(
+		parquet.WithStats(true),
+		parquet.WithVersion(parquet.V1_0),
+		parquet.WithDataPageVersion(parquet.DataPageV1),
 	)
+	if err := pqarrow.WriteTable(arrowTable, fw, rec.NumRows(), writerProps, pqarrow.DefaultWriterProps()); err != nil {
+		_ = fw.Close()
+		return err
+	}
+	return fw.Close()
+}
+
+func fileSizeAt(ctx context.Context, fs iceio.WriteFileIO, path string) (int64, error) {
+	reader, err := fs.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer reader.Close()
+	if statter, ok := reader.(interface {
+		Stat() (os.FileInfo, error)
+	}); ok {
+		stat, err := statter.Stat()
+		if err == nil {
+			return stat.Size(), nil
+		}
+	}
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		return 0, fmt.Errorf("read %s for size: %w", path, err)
+	}
+	return int64(len(payload)), nil
 }

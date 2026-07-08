@@ -183,3 +183,44 @@ def ensure_rest_fixture() -> NativeRestFixture:
         orphan_bytes=ORPHAN_OBJECT_BYTES,
         snapshot_count=snapshot_count,
     )
+
+
+def trino_uri() -> str | None:
+    value = os.getenv("CRYO_TRINO_URI")
+    return value if value else None
+
+
+def trino_connect(*, catalog: str = "iceberg_rest", schema: str):
+    """Connect to Trino via the PyPI client.
+
+    The repo root has a ``trino/`` catalog-config directory that shadows the
+    installed ``trino`` package on ``sys.path``; import ``trino.dbapi`` directly.
+    """
+    if trino_uri() is None:
+        raise RuntimeError("CRYO_TRINO_URI is not set")
+    import importlib
+
+    dbapi = importlib.import_module("trino.dbapi")
+    parsed = urlparse(trino_uri())
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
+    return dbapi.connect(
+        host=host,
+        port=port,
+        user="cryo-test",
+        catalog=catalog,
+        schema=schema,
+    )
+
+
+def wait_for_trino(*, schema: str, timeout_seconds: float = 90.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            trino_connect(schema=schema).cursor().execute("SELECT 1")
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+        time.sleep(2.0)
+    raise TimeoutError(f"Trino not ready: {last_error}") from last_error

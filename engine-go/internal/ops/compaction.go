@@ -180,6 +180,9 @@ func executeRewriteOnce(
 	snapshotProps := validate.CustomSnapshotProps(tbl)
 
 	txn := tbl.NewTransaction()
+	if err := applyCompactionTestProperties(txn); err != nil {
+		return zero, fmt.Errorf("configure compaction test properties: %w", err)
+	}
 	if morCompaction {
 		if err := ensureMORCompactionProperties(txn, tbl.Metadata().Properties()); err != nil {
 			return zero, fmt.Errorf("configure MOR compaction properties: %w", err)
@@ -208,13 +211,6 @@ func executeRewriteOnce(
 		rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
 	}
 
-	if partialProgress {
-		return executePartialProgress(
-			ctx, tbl, op, groups, morCompaction, rewrittenPaths,
-			rewriteOpts, beforeRows, beforeMeta, snapshotProps,
-		)
-	}
-
 	result, err := txn.RewriteDataFiles(ctx, groups, rewriteOpts)
 	if err != nil {
 		return zero, fmt.Errorf("rewrite_data_files: %w", err)
@@ -232,7 +228,7 @@ func executeRewriteOnce(
 		return zero, err
 	}
 
-	testhook.PauseBeforeCommit()
+	testhook.BeforeCommit()
 
 	updated, err := txn.Commit(ctx)
 	if err != nil {
@@ -270,6 +266,9 @@ func executePartialProgress(
 		}
 
 		groupTxn := tbl.NewTransaction()
+		if err := applyCompactionTestProperties(groupTxn); err != nil {
+			return zero, fmt.Errorf("configure compaction test properties for group %d: %w", i, err)
+		}
 
 		if morCompaction {
 			if err := ensureMORCompactionProperties(groupTxn, tbl.Metadata().Properties()); err != nil {
@@ -290,9 +289,14 @@ func executePartialProgress(
 		}
 
 		if groupResult != nil && groupResult.RewrittenGroups > 0 {
-			progress.Progress("rewrite_data_files", i*100/len(groups), uint64(len(group.Tasks)), uint64(group.TotalSizeBytes))
+			progress.Progress(
+				"rewrite_data_files",
+				uint8(i*100/len(groups)),
+				uint64(len(group.Tasks)),
+				uint64(group.TotalSizeBytes),
+			)
 
-			testhook.PauseBeforeCommit()
+			testhook.BeforeCommit()
 
 			updated, commitErr := groupTxn.Commit(ctx)
 			if commitErr != nil {
@@ -308,12 +312,10 @@ func executePartialProgress(
 			totalBytesWritten += uint64(groupResult.BytesAfter)
 		}
 
-		reloaded, refreshErr := tbl.Refresh(ctx)
-		if refreshErr != nil {
-			progress.Progress("rewrite_data_files", (i+1)*100/len(groups), 0, 0)
-		} else {
-			tbl = reloaded
+		if err := tbl.Refresh(ctx); err != nil {
+			return zero, fmt.Errorf("refresh table after group %d: %w", i, err)
 		}
+		progress.Progress("rewrite_data_files", uint8((i+1)*100/len(groups)), 0, 0)
 	}
 
 	if totalOutputFiles == 0 {
@@ -377,6 +379,19 @@ func compactionConfigForMORParams(cfg compaction.Config, raw json.RawMessage) co
 		cfg.MinInputFiles = 1
 	}
 	return cfg
+}
+
+func applyCompactionTestProperties(txn *table.Transaction) error {
+	retries := testhook.CommitNumRetriesOverride()
+	if retries == "" {
+		return nil
+	}
+	return txn.SetProperties(iceberg.Properties{
+		table.CommitNumRetriesKey:          retries,
+		table.CommitMinRetryWaitMsKey:      "10",
+		table.CommitMaxRetryWaitMsKey:      "100",
+		table.CommitTotalRetryTimeoutMsKey: "5000",
+	})
 }
 
 func compactionCandidates(plan compaction.Plan) (files uint64, bytes uint64) {

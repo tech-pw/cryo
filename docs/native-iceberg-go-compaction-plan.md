@@ -573,7 +573,7 @@ Tasks:
 | `native-e2e` pass with `CRYO_ENGINE_IMPL=go` | ✅ Passed locally (`make test-native-e2e-go` / `test_native_expire_orphan_e2e.py`) |
 | Docker builds Go binary `CGO_ENABLED=0` | ✅ Dockerfile stage added |
 | Byte-level protocol conformance test | ✅ `tests/test_native_protocol_conformance.py` + Go `protocol` unit tests |
-| CI green | ⏳ Pending CI |
+| CI green | 🟡 Pending CI — Trino wait loop fixed in `ci.yml`; differential e2e green locally |
 
 **Exit criteria / DONE WHEN:** with `CRYO_ENGINE_IMPL=go`, the **existing** `native-e2e` test
 (`tests/integration/native/test_native_expire_orphan_e2e.py`, `make test-native-e2e-local`) passes with
@@ -618,7 +618,7 @@ Tasks:
 | 2 | `compaction.go` analyze path | ✅ Done | Scoped `PlanFiles` + `compaction.PlanCompaction`; returns est. input/output/bytes |
 | 3 | `compaction.go` execute path | ✅ Done | `Scan` → `PlanCompaction` → `RewriteDataFiles` → `Commit` via iceberg-go |
 | 4 | Streaming (bounded memory) | ✅ Done | Delegates to iceberg-go rolling writer (`ExecuteCompactionGroup`); no whole-partition buffer |
-| 5 | Pre-commit guard rails (#1, #3, #8) | 🟡 Partial | Row-count + metadata + MOR gate in-process; e2e oracles O1/O3/O6; file-existence helper ready |
+| 5 | Pre-commit guard rails (#1, #3, #8) | 🟡 Partial | Row-count + metadata + MOR gate in-process; partial-progress path fixed (`executePartialProgress`); e2e oracles O1/O3/O6 |
 | 6 | Metrics (`input_files`, `output_files`, bytes) | ✅ Done | Distinct counts in `OperationResult`; `files_rewritten` = candidate input count |
 | 7 | Custom snapshot property preservation | ✅ Done | Non-system parent summary props copied into `RewriteDataFilesOptions.SnapshotProps` |
 
@@ -627,7 +627,7 @@ Tasks:
 | Criterion | Status |
 |-----------|--------|
 | §8 COW scenario matrix green on MinIO | 🟡 Partial — `f_unpart_small`, `f_part_identity`, `f_part_small`; Go e2e green except day-partition execute (xfail) |
-| Differential test vs Trino (§8.7) | 🟡 In CI — `test_native_differential_e2e.py` wired in `native-compaction-e2e-go` job; `iceberg_rest.properties` Trino catalog added; needs first green CI run to confirm REST→Trino metadata bridge |
+| Differential test vs Trino (§8.7) | 🟡 Partial — `test_native_differential_e2e.py` green for unpartitioned + identity; day full-table xpasses; **scoped day execute** still xfail (iceberg-go partition typing) |
 | All invariants (§5.4) on local MinIO | 🟡 Partial — O1/O3/O4/O5/O6/O8 covered in compaction e2e; day-partition execute blocked upstream |
 | Go unit tests (predicate + protocol) | ✅ `go test ./...` green |
 | `make test-native-compaction-e2e-local-go` | ✅ Green locally (4 pass, 1 xfail day execute, 1 skip Rust staged) |
@@ -712,14 +712,16 @@ Tasks:
 | 5 | MOR OPTIMIZE routes to native | ✅ Done | `routing.py`: `native_optimize_enabled()` includes MOR; v3-partitioned-DV → SQL fallback |
 | 6 | MOR e2e fixtures + harness (§8) | ✅ Done | Go `seed-native-fixtures` (seed/count/live-column/seed-table/commit-equality-delete); `test_native_mor_compaction_e2e.py`; `make test-native-compaction-e2e-go` |
 | 7 | MOR concurrency matrix C2/C3 (§8.5) | ✅ Done | `CRYO_TEST_PAUSE_BEFORE_COMMIT` hook; `test_native_mor_concurrency_e2e.py` |
+| 8 | Fault-injection harness C4–C8 (§8.5) | ✅ Done | Go `testhook` (catalog/IO/commit hooks); `fault_injection_harness.py`; `test_native_fault_injection_e2e.py` |
 
 **Exit criteria status:**
 
 | Criterion | Status |
 |-----------|--------|
 | §8 MOR scenario matrix (pos/eq/mixed/partial) | 🟡 Partial — Go seeder (`seed-table` per test), `mor_inspect.py` Go live-row oracle, `test_native_mor_compaction_e2e.py` green (pos/eq/mixed execute; partial precondition); mixed O7 asserts eq-delete only (pos on `f_mor_pos`) |
-| §8.5 concurrency/fault matrix (C2/C3) | 🟡 Partial — `test_native_mor_concurrency_e2e.py` (C2 concurrent delete, C3 dual compaction); C4–C8 pending |
-| Differential vs Trino/Spark on MOR fixtures | 🔴 Pending |
+| §8.5 concurrency/fault matrix (C2/C3) | 🟡 Partial — `test_native_mor_concurrency_e2e.py` (C2 concurrent delete, C3 dual compaction); C1 pending |
+| §8.5 fault-injection matrix (C4–C8) | ✅ Done — `test_native_fault_injection_e2e.py` + Go `internal/testhook` |
+| Differential vs Trino/Spark on MOR fixtures | 🟡 Partial — `test_native_mor_differential_e2e.py`: **eq** full Trino reference; **pos/mixed** Go-oracle baseline (Trino cannot read fixture position-delete Parquet yet) |
 | Invariants #1, #2, #7 in-process | 🟡 Partial — #1 + #7 guarded pre-commit; MOR e2e asserts O1/O7 on REST+MinIO |
 
 **Exit criteria / DONE WHEN:** the §8 **MOR scenario matrix** (position-only, equality-only, mixed,

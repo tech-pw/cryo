@@ -311,12 +311,14 @@ jobs:
           for attempt in $(seq 1 30); do
             if curl -fsS http://localhost:8181/v1/config >/dev/null; then
               echo "Iceberg REST is ready"
-              exit 0
+              break
             fi
             sleep 2
           done
-          echo "Iceberg REST did not become ready in time" >&2
-          exit 1
+          if ! curl -fsS http://localhost:8181/v1/config >/dev/null; then
+            echo "Iceberg REST did not become ready in time" >&2
+            exit 1
+          fi
           for attempt in $(seq 1 30); do
             if curl -fsS http://localhost:8080/v1/info >/dev/null 2>&1; then
               echo "Trino is ready"
@@ -349,7 +351,7 @@ jobs:
           CRYO_REST_URI: http://localhost:8181
           CRYO_ENGINE_IMPL: go
           CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
-        run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py -v
+        run: pytest tests/integration/native/test_native_compaction_e2e.py tests/integration/native/test_native_mor_compaction_e2e.py tests/integration/native/test_native_mor_concurrency_e2e.py tests/integration/native/test_native_fault_injection_e2e.py -v
 
       - name: Run differential vs Trino e2e (Go engine)
         env:
@@ -357,8 +359,8 @@ jobs:
           CRYO_ENGINE_IMPL: go
           CRYO_ENGINE_BINARY: engine-go/bin/cryo-engine-go
           CRYO_TRINO_URI: http://localhost:8080
-        run: pytest tests/integration/native/test_native_differential_e2e.py -v
-
+          CRYO_SEED_NATIVE_FIXTURES_BINARY: engine-go/bin/seed-native-fixtures
+        run: pytest tests/integration/native/test_native_differential_e2e.py tests/integration/native/test_native_mor_differential_e2e.py -v
   build:
     name: Build Check
     runs-on: ubuntu-latest

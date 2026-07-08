@@ -110,6 +110,22 @@ def assert_row_count_unchanged(before: TableSnapshot, after: TableSnapshot) -> N
     )
 
 
+def assert_failure_no_op(before: TableSnapshot, after: TableSnapshot) -> None:
+    """O9: injected failure left the table unchanged."""
+    assert before.snapshot_id == after.snapshot_id, (
+        f"O9 snapshot id changed: {before.snapshot_id} -> {after.snapshot_id}"
+    )
+    assert_row_count_unchanged(before, after)
+    assert before.data_file_paths == after.data_file_paths, (
+        "O9 data file set changed after failed compaction "
+        f"(removed={sorted(before.data_file_paths - after.data_file_paths)[:3]}, "
+        f"added={sorted(after.data_file_paths - before.data_file_paths)[:3]})"
+    )
+    assert before.delete_file_count == after.delete_file_count, (
+        f"O9 delete file count changed: {before.delete_file_count} -> {after.delete_file_count}"
+    )
+
+
 def assert_metadata_stable(before: TableSnapshot, after: TableSnapshot) -> None:
     assert before.schema_id == after.schema_id, (
         f"O6 schema id changed: {before.schema_id} -> {after.schema_id}"

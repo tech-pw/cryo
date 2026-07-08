@@ -25,17 +25,16 @@ func SeedMOR(ctx context.Context, cfg Config) ([]Result, error) {
 	}
 
 	var results []Result
-	seeders := []struct {
+	for _, seeder := range []struct {
 		name string
-		fn   func(context.Context, Config) (*Result, error)
+		fn   func(context.Context, Config, string) (*Result, error)
 	}{
 		{MORPosTable, seedMORPos},
 		{MOREqTable, seedMOREq},
 		{MORMixedTable, seedMORMixed},
 		{MORPartialTable, seedMORPartial},
-	}
-	for _, seeder := range seeders {
-		result, err := seeder.fn(ctx, cfg)
+	} {
+		result, err := seeder.fn(ctx, cfg, seeder.name)
 		if err != nil {
 			return nil, fmt.Errorf("seed %s: %w", seeder.name, err)
 		}
@@ -46,13 +45,7 @@ func SeedMOR(ctx context.Context, cfg Config) ([]Result, error) {
 
 // SeedMORTableByName recreates a single MOR fixture table by name.
 func SeedMORTableByName(ctx context.Context, cfg Config, name string) error {
-	seeders := map[string]func(context.Context, Config) (*Result, error){
-		MORPosTable:     seedMORPos,
-		MOREqTable:      seedMOREq,
-		MORMixedTable:   seedMORMixed,
-		MORPartialTable: seedMORPartial,
-	}
-	seeder, ok := seeders[name]
+	seeder, ok := morSeeders()[name]
 	if !ok {
 		return fmt.Errorf("unknown MOR fixture table %q", name)
 	}
@@ -63,18 +56,37 @@ func SeedMORTableByName(ctx context.Context, cfg Config, name string) error {
 	if err := ensureNamespace(ctx, cat); err != nil {
 		return err
 	}
-	if _, err := seeder(ctx, cfg); err != nil {
+	if _, err := seeder(ctx, cfg, name); err != nil {
 		return err
 	}
 	return nil
 }
 
-func seedMORPos(ctx context.Context, cfg Config) (*Result, error) {
+// SeedMORTableCopy seeds a fresh MOR table using the same deterministic layout as template.
+func SeedMORTableCopy(ctx context.Context, cfg Config, template, dest string) error {
+	seeder, ok := morSeeders()[template]
+	if !ok {
+		return fmt.Errorf("unknown MOR fixture template %q", template)
+	}
+	cat, err := connectCatalog(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := ensureNamespace(ctx, cat); err != nil {
+		return err
+	}
+	if _, err := seeder(ctx, cfg, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedMORPos(ctx context.Context, cfg Config, tableName string) (*Result, error) {
 	cat, err := connectCatalog(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := recreateTable(ctx, cat, MORPosTable)
+	tbl, err := recreateTable(ctx, cat, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +102,15 @@ func seedMORPos(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fixtureResult(MORPosTable, tbl)
+	return fixtureResult(tableName, tbl)
 }
 
-func seedMOREq(ctx context.Context, cfg Config) (*Result, error) {
+func seedMOREq(ctx context.Context, cfg Config, tableName string) (*Result, error) {
 	cat, err := connectCatalog(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := recreateTable(ctx, cat, MOREqTable)
+	tbl, err := recreateTable(ctx, cat, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -110,15 +122,15 @@ func seedMOREq(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fixtureResult(MOREqTable, tbl)
+	return fixtureResult(tableName, tbl)
 }
 
-func seedMORMixed(ctx context.Context, cfg Config) (*Result, error) {
+func seedMORMixed(ctx context.Context, cfg Config, tableName string) (*Result, error) {
 	cat, err := connectCatalog(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := recreateTable(ctx, cat, MORMixedTable)
+	tbl, err := recreateTable(ctx, cat, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -138,15 +150,15 @@ func seedMORMixed(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fixtureResult(MORMixedTable, tbl)
+	return fixtureResult(tableName, tbl)
 }
 
-func seedMORPartial(ctx context.Context, cfg Config) (*Result, error) {
+func seedMORPartial(ctx context.Context, cfg Config, tableName string) (*Result, error) {
 	cat, err := connectCatalog(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	tbl, err := recreateTable(ctx, cat, MORPartialTable)
+	tbl, err := recreateTable(ctx, cat, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +181,16 @@ func seedMORPartial(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fixtureResult(MORPartialTable, tbl)
+	return fixtureResult(tableName, tbl)
+}
+
+func morSeeders() map[string]func(context.Context, Config, string) (*Result, error) {
+	return map[string]func(context.Context, Config, string) (*Result, error){
+		MORPosTable:     seedMORPos,
+		MOREqTable:      seedMOREq,
+		MORMixedTable:   seedMORMixed,
+		MORPartialTable: seedMORPartial,
+	}
 }
 
 func fixtureResult(name string, tbl *table.Table) (*Result, error) {

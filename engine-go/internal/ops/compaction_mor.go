@@ -57,6 +57,28 @@ func rewrittenPathsFromPlan(plan compaction.Plan) map[string]struct{} {
 	return paths
 }
 
+func rewrittenPathsForGroup(
+	rewrittenPaths map[string]struct{},
+	group table.CompactionTaskGroup,
+) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, task := range group.Tasks {
+		path := task.File.FilePath()
+		if _, ok := rewrittenPaths[path]; ok {
+			out[path] = struct{}{}
+		}
+	}
+	return out
+}
+
+func collectDeadEqualityDeletesForGroup(
+	ctx context.Context,
+	tbl *table.Table,
+	groupRewritten map[string]struct{},
+) ([]iceberg.DataFile, error) {
+	return collectDeadEqualityDeletes(ctx, tbl, groupRewritten)
+}
+
 func collectDeadEqualityDeletes(
 	ctx context.Context,
 	tbl *table.Table,
