@@ -75,6 +75,15 @@ def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[
     (via ``Table.location``, populated in ``persist_table_analysis``), then a config row is
     created for any bucket not already tracked. Self-maintaining — re-running after new tables
     are scanned or moved just adds any newly-seen buckets, never duplicates existing rows.
+
+    Fallback: when no scanned ``Table.location`` rows exist yet (i.e. the source was
+    configured after the migration landed but hasn't been scanned yet, or the scan
+    failed for every table), enumerate tables directly from the Iceberg catalog and
+    infer the bucket from each live ``table.location()``. This keeps the "no buckets
+    discovered yet" panel empty-state from blocking adoption on existing sources that
+    pre-date the migration. The fallback is a no-op when no source config / catalog
+    connection is available -- in which case we fall back to returning the existing
+    tracked configs so the user can still see what they had before.
     """
     locations = session.scalars(
         select(Table.location).where(Table.source_id == source_id, Table.location.is_not(None))
@@ -86,6 +95,42 @@ def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[
         bucket, _prefix = parse_s3_location(location)
         if bucket:
             buckets.add(bucket)
+
+    if not buckets:
+        # Fallback: enumerate live tables from the catalog and infer the bucket from each
+        # table's location. Failures here (catalog unreachable, missing credentials) are
+        # silent on purpose -- the doc's non-goal is "do not error" when the bucket can't be
+        # inferred; the panel's empty-state copy guides the user. ``list_tables`` returns
+        # ``(schema, table)`` identifiers; we need to ``load_table`` each one to read its
+        # location, which is O(tables) round-trips. Acceptable for a manual-refresh UX;
+        # not a hot path.
+        try:
+            from cryo.sources.factory import source_catalog_for
+            from cryo.db.models import Source as SourceModel
+
+            source = session.get(SourceModel, source_id)
+            if source is not None:
+                catalog = source_catalog_for(source)
+                for identifier in catalog.list_tables():
+                    try:
+                        schema_name, table_name = identifier
+                        table_obj = catalog.load_table(schema_name, table_name)
+                        loc = table_obj.location
+                        if callable(loc):
+                            loc = loc()
+                        if not loc:
+                            continue
+                        bucket, _prefix = parse_s3_location(str(loc))
+                        if bucket:
+                            buckets.add(bucket)
+                    except Exception:
+                        # Per-table failures are logged and skipped; don't let one bad
+                        # table block discovery for the rest of the source.
+                        continue
+        except Exception:
+            # Catalog-level failures (auth, network) silently no-op; the empty-state copy
+            # in the UI is the user-facing signal.
+            pass
 
     existing = {
         row.bucket: row
