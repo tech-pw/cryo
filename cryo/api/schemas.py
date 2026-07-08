@@ -513,6 +513,11 @@ class TableRead(OrmModel):
     catalog_name: str | None = None
     source_name: str | None = None
     qualified_table_name: str | None = None
+    # Live S3 location of the table's root (e.g. "s3://bucket/warehouse/db/table"), populated
+    # in persist_table_analysis() at scan time. Null until the table's first scan under this
+    # field (docs/s3-request-cost-tracking.md §6.1) -- also the join key S3 request-cost
+    # bucket discovery uses.
+    location: str | None = None
     first_seen_at: datetime
     is_active: bool
     consecutive_scan_failures: int = 0

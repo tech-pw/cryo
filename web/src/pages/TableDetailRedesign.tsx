@@ -25,7 +25,8 @@ import {
   DeleteOutlined,
   SlidersOutlined,
   DownOutlined,
-  RightOutlined
+  RightOutlined,
+  CopyOutlined
 } from "@ant-design/icons";
 import {
   Alert,
@@ -43,6 +44,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   message
 } from "antd";
@@ -1789,6 +1791,28 @@ export const TableDetail = () => {
             {lastSnapshotCommittedAt ? (
               <span>
                 Last commit: <strong>{formatTime(lastSnapshotCommittedAt)}</strong>
+              </span>
+            ) : null}
+            {row?.location ? (
+              <span>
+                Path:{" "}
+                <Typography.Text code className="td-path-value" ellipsis={{ tooltip: row.location }}>
+                  {row.location}
+                </Typography.Text>
+                <Tooltip title="Copy path">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    className="td-path-copy"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(row.location ?? "").then(
+                        () => message.success("Path copied"),
+                        () => message.error("Could not copy to clipboard")
+                      );
+                    }}
+                  />
+                </Tooltip>
               </span>
             ) : null}
           </div>
