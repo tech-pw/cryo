@@ -1,17 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Card,
-  Drawer,
-  Result,
-  Skeleton,
-  Space,
-  Statistic,
-  Tag,
-  Typography,
-  message
-} from "antd";
+import { Alert, Button, Card, Drawer, Result, Skeleton, Space, Statistic, Tag, Typography, message } from "antd";
 import {
   CloudOutlined,
   ExperimentOutlined,
@@ -22,19 +9,20 @@ import {
   ThunderboltOutlined
 } from "@ant-design/icons";
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { getAwsUsage, listSources, testAwsIntegration } from "../api/client";
-import type { AWSUsageResponse, SourceRead, UUID } from "../api/types";
-import { useAuth } from "../lib/auth";
-import { formatBytesGb, formatCurrency } from "../lib/format";
-import { OverviewPage } from "../components/layout/OverviewPage";
-import { EmptyState, HintLabel, StatStrip } from "../components/common";
-import { AwsIntegrationPanel } from "../components/AwsIntegrationPanel";
+import { getAwsUsage, listSources, testAwsIntegration } from "../../api/client";
+import type { AWSUsageResponse, SourceRead, UUID } from "../../api/types";
+import { useAuth } from "../../lib/auth";
+import { formatBytesGb, formatCurrency } from "../../lib/format";
+import { OverviewPage } from "../../components/layout/OverviewPage";
+import { EmptyState, HintLabel, StatStrip } from "../../components/common";
+import { AwsIntegrationPanel } from "../../components/AwsIntegrationPanel";
 import {
   AwsStatusBadge,
   useAwsSourceStatuses,
   type AwsSourceStatus
-} from "../components/AwsStatusBadge";
+} from "../../components/AwsStatusBadge";
 
 interface PerSourceState {
   integrationStatus: AwsSourceStatus;
@@ -135,7 +123,13 @@ const SourceCard = ({
   );
 };
 
-export const AwsIntegrations = () => {
+/**
+ * AWS Integrations tab of the consolidated Cost page. Body lifted verbatim from the
+ * legacy AwsIntegrations page. The legacy AWS integration panel is also mounted in the
+ * Connections drawer (per-source configuration); both back to the same
+ * <AwsIntegrationPanel> component, so the duplication is contained.
+ */
+export const AwsIntegrationsTab = () => {
   const { api, role } = useAuth();
   const queryClient = useQueryClient();
   const [managingSourceId, setManagingSourceId] = useState<UUID | null>(null);
@@ -149,7 +143,6 @@ export const AwsIntegrations = () => {
   const sourceIds = useMemo(() => (sources.data ?? []).map((s) => s.id), [sources.data]);
   const awsStatuses = useAwsSourceStatuses(sourceIds);
 
-  // Fetch usage only for lakehouses whose integration is connected + enabled.
   const usageIds = useMemo(
     () =>
       sourceIds.filter(
@@ -314,10 +307,6 @@ export const AwsIntegrations = () => {
     }
   ];
 
-  const isLoading = sources.isLoading;
-  const error = sources.error;
-  const isViewer = role === "viewer";
-
   return (
     <OverviewPage
       title="AWS integrations"
@@ -336,14 +325,14 @@ export const AwsIntegrations = () => {
             icon={<ThunderboltOutlined />}
             onClick={() => testAll.mutate()}
             loading={testAll.isPending}
-            disabled={connectedSources.length === 0 || isViewer}
+            disabled={connectedSources.length === 0 || role === "viewer"}
           >
             Test all
           </Button>
         </Space>
       }
-      loading={isLoading}
-      error={error}
+      loading={sources.isLoading}
+      error={sources.error}
       errorTitle="Failed to load lakehouses"
       kpis={<StatStrip items={stats} />}
       preContent={
@@ -379,7 +368,7 @@ export const AwsIntegrations = () => {
               </Link>
             }
           />
-        ) : isLoading ? (
+        ) : sources.isLoading ? (
           <Skeleton active paragraph={{ rows: 4 }} />
         ) : (
           <div className="aws-source-grid">

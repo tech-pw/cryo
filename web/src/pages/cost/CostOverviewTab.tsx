@@ -1,8 +1,8 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Tag, Tooltip, Typography, message } from "antd";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+import { Alert, Table, Button, Card, Col, Row, Skeleton, Space, Tag, Tooltip, Typography, message } from "antd";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
 import { useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   assignTables,
   deriveCostDashboard,
@@ -17,24 +17,31 @@ import {
   savingsOpportunityFilter,
   triggerCostScan,
   triggerScan
-} from "../api/client";
-import type { CostDashboard, Mode, TableRead, UUID } from "../api/types";
-import { BulkAssignBar, type BulkSelection } from "../components/BulkAssignBar";
-import { ChartFrame, EmptyState, PageHeader, StatStrip } from "../components/common";
-import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
-import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
-import { PlanPreview } from "../components/PlanPreview";
-import { SavingsByOperation } from "../components/SavingsByOperation";
-import { GradePill } from "../components/status";
-import { useAuth } from "../lib/auth";
-import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../lib/format";
-import { qualifiedTableName } from "../lib/tableLabels";
-import type { Predicate } from "../lib/predicate";
-import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
+} from "../../api/client";
+import type { CostDashboard, Mode, TableRead, UUID } from "../../api/types";
+import { BulkAssignBar, type BulkSelection } from "../../components/BulkAssignBar";
+import { EmptyState, StatStrip } from "../../components/common";
+import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
+import { CostSavingsWaterfall } from "../../components/CostSavingsWaterfall";
+import { PlanPreview } from "../../components/PlanPreview";
+import { SavingsByOperation } from "../../components/SavingsByOperation";
+import { GradePill } from "../../components/status";
+import { useAuth } from "../../lib/auth";
+import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
+import { qualifiedTableName } from "../../lib/tableLabels";
+import type { Predicate } from "../../lib/predicate";
+import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
 
 const OPPORTUNITY_FILTER: Predicate = savingsOpportunityFilter;
 
-export const CostSavings = () => {
+/**
+ * Overview tab of the consolidated Cost page. Wraps the body of the legacy
+ * CostSavings page so the same chart + tables + planner flows live in one tab.
+ *
+ * Returns the inner content of the tab (no PageHeader). The parent adds the tabs +
+ * shared header.
+ */
+export const CostOverviewTab = () => {
   const { api, token } = useAuth();
   const [previewTables, setPreviewTables] = useState<TableRead[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -189,24 +196,10 @@ export const CostSavings = () => {
     setBulkSelection(null);
   };
 
+  const isLoading = cost.isLoading || tables.isLoading;
+
   return (
-    <div>
-      <PageHeader
-        title="Cost & savings"
-        subtitle="Expected storage and monthly cost impact after standard maintenance."
-        actions={
-          <Space>
-            <Link to="/attribution">
-              <Button>Team attribution</Button>
-            </Link>
-            <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
-              <Button loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
-                Run full cost scan
-              </Button>
-            </Tooltip>
-          </Space>
-        }
-      />
+    <>
       {usingFallback ? (
         <Alert
           className="page-alert"
@@ -215,7 +208,7 @@ export const CostSavings = () => {
           title="Cost dashboard endpoint is not available yet; showing a fallback view from /tables."
         />
       ) : null}
-      {cost.isLoading || tables.isLoading ? (
+      {isLoading ? (
         <Skeleton active />
       ) : (
         <>
@@ -287,197 +280,180 @@ export const CostSavings = () => {
               </Card>
             </Col>
             <Col xs={24} lg={14}>
-              <Card
-                title="Cost by schema"
-                extra={
-                  usingFallback ? (
-                    <Typography.Text type="secondary">Derived from /tables</Typography.Text>
-                  ) : null
-                }
-              >
-                <ChartFrame
-                  empty={!data.cost_by_schema.length}
-                  ariaLabel="Current versus projected monthly cost by schema"
-                >
-                  <BarChart data={data.cost_by_schema.slice(0, 12)}>
-                    <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
-                    <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <RechartsTooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
-                    <Legend />
-                    <Bar dataKey="current_usd" name="Now" fill={cryoColors.costCurrent} radius={[4, 4, 0, 0]} />
-                    <Bar
-                      dataKey="projected_usd"
-                      name="After maintenance"
-                      fill={cryoColors.costProjected}
-                      radius={[4, 4, 0, 0]}
+              <Card title="Monthly trend">
+                {hasRealizedTrend ? (
+                  <LineChart
+                    data={data.trend ?? []}
+                    height={220}
+                    margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+                  >
+                    <CartesianGrid stroke={cryoColors.chartGrid} />
+                    <XAxis
+                      dataKey="bucket"
+                      stroke={cryoColors.inkFaint}
+                      tick={chartAxisTick}
+                      interval="preserveStartEnd"
                     />
-                  </BarChart>
-                </ChartFrame>
+                    <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                    <RechartsTooltip {...chartTooltipProps} />
+                    <Line
+                      type="monotone"
+                      dataKey="projected_usd_month"
+                      stroke={cryoColors.primary}
+                      strokeWidth={2}
+                      dot={false}
+                      name="Projected"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="realized_usd_month"
+                      stroke={cryoColors.savings}
+                      strokeWidth={2}
+                      dot={false}
+                      name="Realized"
+                    />
+                  </LineChart>
+                ) : (
+                  <EmptyState
+                    title="No realized savings history yet"
+                    description="Realized savings appear here after maintenance runs complete."
+                  />
+                )}
               </Card>
             </Col>
             <Col xs={24} lg={10}>
-              <Card title="Cost trend">
-                <ChartFrame
-                  empty={!(data.trend ?? []).length}
-                  emptyDescription="Trend appears after repeated cost scans."
-                  ariaLabel="Cost trend showing current cost, available savings, and realized savings over time"
-                >
-                  <LineChart data={data.trend ?? []}>
-                    <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
-                    <XAxis dataKey="scan_at" tickFormatter={(value) => formatTime(String(value))} tick={chartAxisTick} />
-                    <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                    <RechartsTooltip
-                      {...chartTooltipProps}
-                      labelFormatter={(value) => formatTime(String(value))}
-                      formatter={(value) => formatCurrency(Number(value))}
+              <Card title="Cost by schema">
+                {schemaCost.data && schemaCost.data.length ? (
+                  <BarChart
+                    data={(schemaCost.data ?? []).slice(0, 8)}
+                    height={220}
+                    margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
+                  >
+                    <CartesianGrid stroke={cryoColors.chartGrid} />
+                    <XAxis
+                      dataKey="schema_name"
+                      stroke={cryoColors.inkFaint}
+                      tick={chartAxisTick}
+                      angle={-20}
+                      textAnchor="end"
+                      interval={0}
                     />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="current_monthly_cost_usd"
-                      name="Current cost"
-                      stroke={cryoColors.costCurrent}
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="projected_savings_usd_month"
-                      name="Available savings"
-                      stroke={cryoColors.savings}
-                      dot={false}
-                    />
-                    {hasRealizedTrend ? (
-                      <Line
-                        type="monotone"
-                        dataKey="realized_usd_month"
-                        name="Realized savings"
-                        stroke={cryoColors.costProjected}
-                        dot={false}
-                        connectNulls
-                      />
-                    ) : null}
-                  </LineChart>
-                </ChartFrame>
-              </Card>
-            </Col>
-            <Col xs={24}>
-              <Card title="Top opportunities">
-                <Table<TableRead>
-                  size="small"
-                  rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
-                  dataSource={data.top_opportunities}
-                  pagination={false}
-                  rowSelection={{
-                    selectedRowKeys,
-                    onChange: (keys) => {
-                      setBulkSelection(null);
-                      setSelectedRowKeys(keys as UUID[]);
-                    }
-                  }}
-                  columns={[
-                    {
-                      title: "Table",
-                      render: (_, row) => (
-                        <Link to={`/tables/${row.id}`}>
-                          <Typography.Text strong>
-                            {qualifiedTableName(row)}
-                          </Typography.Text>
-                        </Link>
-                      )
-                    },
-                    {
-                      title: "Now",
-                      align: "right",
-                      render: (_, row) => formatCurrency(row.stats?.estimated_monthly_s3_cost_usd)
-                    },
-                    {
-                      title: "After maintenance",
-                      align: "right",
-                      render: (_, row) =>
-                        formatCurrency(
-                          row.stats?.projected_monthly_s3_cost_usd ?? row.stats?.estimated_monthly_s3_cost_usd
-                        )
-                    },
-                    {
-                      title: "Savings / mo",
-                      align: "right",
-                      render: (_, row) => formatCurrency(row.stats?.projected_savings_usd_month)
-                    },
-                    {
-                      title: "Reclaimable",
-                      align: "right",
-                      render: (_, row) => formatBytesGb(row.stats?.reclaimable_bytes)
-                    },
-                    {
-                      title: "Precision",
-                      render: (_, row) => <CostPrecisionBadge precision={row.stats?.cost_precision} />
-                    },
-                    { title: "Grade", render: (_, row) => <GradePill grade={row.stats?.grade} /> },
-                    {
-                      title: "Action",
-                      render: (_, row) => (
-                        <SpaceCompact>
-                          <Button
-                            size="small"
-                            onClick={() => {
-                              setPreviewTables([row]);
-                              setPreviewOpen(true);
-                            }}
-                          >
-                            Preview
-                          </Button>
-                          <Tooltip title="Select tables and choose a preset in the bulk bar to run maintenance.">
-                            <Button size="small" type="primary" disabled>
-                              Run
-                            </Button>
-                          </Tooltip>
-                        </SpaceCompact>
-                      )
-                    }
-                  ]}
-                  locale={{
-                    emptyText: (
-                      <EmptyState
-                        title="No savings opportunities"
-                        description="Run a scanner pass with cost accounting to populate savings."
-                      />
-                    )
-                  }}
-                />
+                    <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                    <RechartsTooltip {...chartTooltipProps} />
+                    <Bar dataKey="monthly_cost_usd" fill={cryoColors.primary} name="$ / mo" />
+                  </BarChart>
+                ) : (
+                  <EmptyState
+                    title="No schema-level cost data yet"
+                    description="Cost-by-schema appears here once a Tier-1 cost scan has run."
+                  />
+                )}
               </Card>
             </Col>
           </Row>
+
+          <Card
+            title="Savings opportunities"
+            extra={
+              <Space>
+                <Tooltip title="Ranked by reclaimable bytes — biggest wins first.">
+                  <Tag color="blue">{matchingTables.data?.total ?? 0} candidates</Tag>
+                </Tooltip>
+                <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
+                  <Button
+                    size="small"
+                    loading={fullCostScan.isPending}
+                    onClick={() => fullCostScan.mutate()}
+                  >
+                    Run full cost scan
+                  </Button>
+                </Tooltip>
+              </Space>
+            }
+            style={{ marginTop: 12 }}
+          >
+            <Table<TableRead>
+              rowKey="id"
+              dataSource={(tables.data?.items ?? [])
+                .slice()
+                .sort((a, b) => (b.stats?.reclaimable_bytes ?? 0) - (a.stats?.reclaimable_bytes ?? 0))
+                .slice(0, 50)}
+              pagination={false}
+              size="small"
+              rowSelection={{
+                selectedRowKeys,
+                onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as UUID[])
+              }}
+              columns={[
+                {
+                  title: "Table",
+                  dataIndex: "schema_name",
+                  key: "table",
+                  render: (_: unknown, record: TableRead) => (
+                    <Space size={6}>
+                      <Link to={`/tables/${record.id}`}>{qualifiedTableName(record)}</Link>
+                      <GradePill grade={record.stats?.grade} />
+                    </Space>
+                  )
+                },
+                {
+                  title: "Size",
+                  dataIndex: "total_size_gb",
+                  key: "size",
+                  render: (value: number | undefined) => (value != null ? formatBytesGb(value) : "—")
+                },
+                {
+                  title: "Reclaimable",
+                  key: "reclaim",
+                  render: (_: unknown, record: TableRead) =>
+                    record.stats?.reclaimable_bytes != null
+                      ? formatBytesGb(record.stats.reclaimable_bytes)
+                      : "—"
+                },
+                {
+                  title: "Last scan",
+                  dataIndex: "scan_at",
+                  key: "scan_at",
+                  render: (value: string | undefined) => (value ? formatTime(value) : "—")
+                }
+              ]}
+            />
+          </Card>
+
           <BulkAssignBar
             selection={selection}
             presets={presets.data ?? []}
             destinations={destinations.data ?? []}
-            assigning={assign.isPending}
-            running={bulkRun.isPending || bulkManifestRewrite.isPending}
-            scanning={bulkScan.isPending}
             onClear={clearSelection}
             onAssign={(presetId) => assign.mutate(presetId)}
-            onPreview={() => {
-              if (selection?.mode === "filter") {
-                setPreviewTables(data.top_opportunities);
-              } else {
-                setPreviewTables(
-                  data.top_opportunities.filter((table) => selectedRowKeys.includes(table.id))
-                );
-              }
+            onRun={({ destinationId, presetId, mode }) =>
+              bulkRun.mutate({ destinationId, presetId, mode })
+            }
+            onManifestRewrite={({ destinationId, presetId }) =>
+              bulkManifestRewrite.mutate({ destinationId, presetId })
+            }
+            onScan={() => bulkScan.mutate()}
+            onPreview={async () => {
+              if (!selection) throw new Error("No tables selected");
+              setPreviewTables(
+                selection.mode === "filter"
+                  ? (tables.data?.items ?? []).slice(0, 25)
+                  : ((await listTables(api, {
+                      predicate: { all: { ids: selection.ids } } as unknown as Predicate,
+                      limit: 25
+                    })).items ?? [])
+              );
               setPreviewOpen(true);
             }}
-            onRun={(args) => bulkRun.mutate(args)}
-            onManifestRewrite={(args) => bulkManifestRewrite.mutate(args)}
-            onScan={() => bulkScan.mutate()}
           />
-          <PlanPreview open={previewOpen} tables={previewTables} onClose={() => setPreviewOpen(false)} />
+
+          <PlanPreview
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+            tables={previewTables}
+          />
         </>
       )}
-    </div>
+    </>
   );
 };
-
-const SpaceCompact = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ display: "flex", gap: 6 }}>{children}</div>
-);
