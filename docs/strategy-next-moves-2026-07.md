@@ -380,6 +380,20 @@ risks corruption per Iceberg's own maintenance docs (`native-engine-scoping-rese
 §3.3). **Unblocks:** closing a real footgun before ad-hoc multi-engine runs become common —
 cheap insurance on the trust story that is risk #1.
 
+**Implementation log (2026-07-08):**
+- ✅ Backend `validate_operation_order` in `cryo/planner/guardrails.py` returns warnings for any
+  operation appearing earlier in execution than an earlier-selected operation of higher
+  canonical rank
+- ✅ API guard: `POST /maintenance/preview` (cryo/api/routes.py:1283) and `POST /maintenance/run`
+  (cryo/api/routes.py:1342) both call `validate_operation_order` on the requested ops and raise
+  `HTTPException(400, detail={"warnings": warnings, "blocking": True})` when out of order
+- ✅ Frontend mirror: `web/src/lib/operationOrder.ts::validateOperationOrder` reproduces the
+  same check in TypeScript so the Presets drawer (web/src/pages/Presets.tsx) shows an `Alert`
+  with the warnings before submit instead of after a server-side 400
+- ✅ Tests: `tests/test_execution_phases.py::test_guardrails_warn_on_out_of_order_ops` (backend)
+  + `web/src/lib/operationOrder.test.ts` (frontend, 6 cases covering canonical / subset /
+  empty / reversed / unknown-op paths)
+
 **Move 16 — Catalog latency monitoring (P50/P99 per catalog operation).** *Effort: days.*
 `cryo/sources/` already wraps REST/HMS/Glue calls; add timing and surface percentiles with a
 *configurable* threshold (the roadmap's verification notes found no sourced industry
