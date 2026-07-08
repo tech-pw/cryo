@@ -753,7 +753,8 @@ def test_destination_config(
         except Exception as exc:
             return DestinationTestResponse(ok=False, message=str(exc))
     if payload.engine == EngineType.NATIVE:
-        return _test_native_destination(dict(config))
+        dest_id = str(payload.destination_id) if payload.destination_id is not None else None
+        return _test_native_destination(dict(config), destination_id=dest_id)
     return DestinationTestResponse(
         ok=True,
         message="Configuration present; live engine probe is implemented in the governor/worker.",
@@ -787,7 +788,10 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
                 "message": str(exc),
             }
     if destination.engine == EngineType.NATIVE.value:
-        result = _test_native_destination(dict(destination.config or {}))
+        result = _test_native_destination(
+            dict(destination.config or {}),
+            destination_id=str(destination_id),
+        )
         return {
             "ok": result.ok and destination.enabled,
             "engine": destination.engine,
@@ -2054,17 +2058,27 @@ def _build_plan_for_table(
     )
 
 
-def _test_native_destination(config: dict[str, object]) -> DestinationTestResponse:
+def _test_native_destination(
+    config: dict[str, object],
+    *,
+    destination_id: str | None = None,
+) -> DestinationTestResponse:
     if not is_native_available(config):
         return DestinationTestResponse(
             ok=False,
             message="cryo-engine binary not found; set binary_path or install cryo-engine on PATH",
         )
-    snapshot = NativeEngine(config).probe_capacity()
+    probe_config = dict(config)
+    if destination_id:
+        probe_config["destination_id"] = destination_id
+    snapshot = NativeEngine(probe_config).probe_capacity()
+    in_flight_note = ""
+    if snapshot.used > 0:
+        in_flight_note = f"; {snapshot.used} subprocess(es) in flight"
     return DestinationTestResponse(
         ok=True,
         capacity=snapshot.capacity,
         used=snapshot.used,
         available=snapshot.available,
-        message="cryo-engine binary found",
+        message=f"cryo-engine binary found{in_flight_note}",
     )

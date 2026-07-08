@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
@@ -57,4 +58,14 @@ func allResultsSuccessful(results []protocol.OperationResult) bool {
 		}
 	}
 	return true
+}
+
+func unsupportedOperation(operation string) protocol.OperationResult {
+	msg := fmt.Sprintf("unsupported operation type: %s", operation)
+	return protocol.OperationResult{
+		Operation:  operation,
+	 Success:    false,
+		Error:      &msg,
+		DurationMS: 0,
+	}
 }

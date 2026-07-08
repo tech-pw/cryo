@@ -198,6 +198,29 @@ def test_native_render_includes_mor_optimize(monkeypatch: pytest.MonkeyPatch) ->
     assert "optimize" in rendered_types
 
 
+def test_resolve_native_routing_zorder_routes_to_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {"file_size_mb": 256, "strategy": "zorder", "zorder_columns": ["user_id"]},
+            ),
+        ),
+    )
+    routing = resolve_native_routing(
+        plan,
+        {"total_delete_files": 0},
+        {"engine_impl": "go", "sql_fallback_destination_id": "trino-1"},
+    )
+    assert not routing.native_operations
+    assert {op.type for op, _ in routing.fallback_operations} == {OperationType.OPTIMIZE}
+
+
 def test_supported_operations_preserves_planner_order(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
     plan = _deep_plan()
