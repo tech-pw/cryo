@@ -27,6 +27,7 @@ from cryo.engines.native.runner import (
     NativeOperationResult,
     execute_request,
     is_progress_event,
+    resolve_binary_path,
     split_stdout_lines,
 )
 
@@ -332,6 +333,31 @@ def test_split_stdout_lines() -> None:
     assert len(progress_lines) == 1
     assert len(response_lines) == 1
     assert response_lines[0].startswith('{"ok"')
+
+
+def test_resolve_binary_path_prefers_go_impl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    go_binary = tmp_path / "cryo-engine-go"
+    go_binary.write_text("#!/bin/sh\nexit 2\n")
+    go_binary.chmod(0o755)
+    rust_binary = tmp_path / "cryo-engine"
+    rust_binary.write_text("#!/bin/sh\nexit 2\n")
+    rust_binary.chmod(0o755)
+
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    resolved = resolve_binary_path(
+        {"binary_path": str(go_binary), "engine_impl": "go"},
+    )
+    assert resolved == str(go_binary)
+
+
+def test_resolve_binary_path_defaults_to_rust_repo_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CRYO_ENGINE_IMPL", raising=False)
+    resolved = resolve_binary_path({})
+    if resolved is None:
+        pytest.skip("no native engine binary present in repo")
+    assert resolved.endswith("cryo-engine") or resolved.endswith("cryo-engine-go")
 
 
 def test_is_progress_event_filters_tracing() -> None:

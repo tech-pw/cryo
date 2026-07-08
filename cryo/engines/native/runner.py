@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -15,9 +16,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BINARY_NAMES = ("cryo-engine",)
+DEFAULT_BINARY_NAMES = ("cryo-engine-go", "cryo-engine")
 PROGRESS_PREFIX = "CRYO_PROGRESS:"
 _PROGRESS_EVENTS = frozenset({"started", "progress", "completed", "failed"})
+_ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 
 
 @dataclass(frozen=True)
@@ -51,18 +53,50 @@ def resolve_binary_path(config: Mapping[str, Any]) -> str | None:
         path = Path(configured).expanduser()
         if path.is_file():
             return str(path)
-    for name in DEFAULT_BINARY_NAMES:
+
+    impl = _resolve_engine_impl(config)
+    names = _binary_names_for_impl(impl)
+    for name in names:
         found = shutil.which(name)
         if found:
             return found
+
     repo_root = Path(__file__).resolve().parents[3]
-    repo_candidate = repo_root / "cryo-engine" / "target" / "release" / "cryo-engine"
-    if repo_candidate.is_file():
-        return str(repo_candidate)
-    debug_candidate = repo_candidate.parent.parent / "debug" / "cryo-engine"
-    if debug_candidate.is_file():
-        return str(debug_candidate)
+    for candidate in _repo_binary_candidates(repo_root, impl):
+        if candidate.is_file():
+            return str(candidate)
     return None
+
+
+def _resolve_engine_impl(config: Mapping[str, Any]) -> str:
+    configured = config.get("engine_impl")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip().lower()
+    env_value = os.getenv(_ENGINE_IMPL_ENV, "").strip().lower()
+    if env_value in {"go", "rust"}:
+        return env_value
+    return "rust"
+
+
+def _binary_names_for_impl(impl: str) -> tuple[str, ...]:
+    if impl == "go":
+        return ("cryo-engine-go", "cryo-engine")
+    return ("cryo-engine", "cryo-engine-go")
+
+
+def _repo_binary_candidates(repo_root: Path, impl: str) -> tuple[Path, ...]:
+    if impl == "go":
+        return (
+            repo_root / "engine-go" / "bin" / "cryo-engine-go",
+            repo_root / "engine-go" / "bin" / "cryo-engine",
+            repo_root / "cryo-engine" / "target" / "release" / "cryo-engine",
+            repo_root / "cryo-engine" / "target" / "debug" / "cryo-engine",
+        )
+    return (
+        repo_root / "cryo-engine" / "target" / "release" / "cryo-engine",
+        repo_root / "cryo-engine" / "target" / "debug" / "cryo-engine",
+        repo_root / "engine-go" / "bin" / "cryo-engine-go",
+    )
 
 
 def is_cryo_engine_available(config: Mapping[str, Any] | None = None) -> bool:
