@@ -1124,7 +1124,7 @@ export const TableDetail = () => {
                       Active: <strong>{effectivePreset.data.preset_name}</strong>{" "}
                       ({provenanceLabel(effectivePreset.data?.provenance)})
                       {effectiveDestination
-                        ? ` · ${effectiveDestination.name} (${formatEngineLabel(effectiveDestination.engine)})`
+                        ? ` · ${effectiveDestination.name} (${formatEngineLabel(effectiveDestination.engine, effectiveDestination.config)})`
                         : ""}
                     </span>
                   ) : null}

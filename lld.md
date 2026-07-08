@@ -336,9 +336,10 @@ enabled rule** that matches its latest stats, else none (`provenance = "none"`).
 platform-default fallback; users must explicitly assign a preset (or match a rule) before
 maintenance can run.
 
-Bootstrap (migration `20260706_0011`, updated `20260707_0020`): destination `native-datafusion`
-(`engine = native`) and preset `default-native-deep` (`mode = deep`, `is_default = false`,
-manual runs only when explicitly selected).
+Bootstrap (migration `20260706_0011`, updated `20260707_0020`, `20260708_0022`): destination
+`native-datafusion` (`engine = native`, `config.engine_impl = go` after backfill) and preset
+`default-native-deep` (`mode = deep`, `is_default = false`, manual runs only when explicitly
+selected).
 
 ### 3.4 Runs, jobs, audit (write side)
 

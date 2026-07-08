@@ -95,6 +95,7 @@ from cryo.api.schemas import (
     TablePreviewRead,
     TableRead,
     TableStatsHistoryResponse,
+    validate_native_engine_config,
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
@@ -677,6 +678,12 @@ def patch_destination(
         # See patch_source's comment: the client only ever sees a redacted config, so an edit
         # that didn't touch a secret field must not persist the literal placeholder over it.
         values["config"] = unredact_merge(values["config"], dict(destination.config or {}))
+    effective_engine = values.get("engine", destination.engine)
+    effective_config = values.get("config", destination.config or {})
+    try:
+        validate_native_engine_config(effective_engine, effective_config)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _apply_patch(destination, values)
     session.commit()
     session.refresh(destination)
