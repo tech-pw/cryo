@@ -32,3 +32,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: {{ include "cryo.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- define "cryo.nodeSelector" -}}
+{{/*
+This cluster mixes amd64 and arm64 (Graviton) nodes. The Cryo image is built amd64-only
+(the Rust/Go native-engine cross-compile isn't wired up for arm64 yet), so every pod must
+be pinned to amd64 nodes or it lands on arm64 and fails with "exec format error".
+*/}}
+nodeSelector:
+  kubernetes.io/arch: amd64
+{{- end }}
+
+{{- define "cryo.imagePullSecrets" -}}
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}

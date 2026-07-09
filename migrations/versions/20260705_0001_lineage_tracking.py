@@ -45,48 +45,53 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["source_table_id"],
-            ["tables.id"],
+            ["cryo.tables.id"],
             name=op.f("fk_lineage_edges_source_table_id_tables"),
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["target_table_id"],
-            ["tables.id"],
+            ["cryo.tables.id"],
             name=op.f("fk_lineage_edges_target_table_id_tables"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_lineage_edges")),
+        schema="cryo",
     )
-    
+
     # Create indexes for lineage queries
     op.create_index(
         op.f("ix_lineage_edges_source_table_id"),
         "lineage_edges",
         ["source_table_id"],
+        schema="cryo",
     )
     op.create_index(
         op.f("ix_lineage_edges_target_table_id"),
         "lineage_edges",
         ["target_table_id"],
+        schema="cryo",
     )
     op.create_index(
         op.f("ix_lineage_edges_edge_type"),
         "lineage_edges",
         ["edge_type"],
+        schema="cryo",
     )
-    
+
     # Create unique constraint to prevent duplicate edges
     op.create_index(
         op.f("ix_lineage_edges_unique"),
         "lineage_edges",
         ["source_table_id", "target_table_id", "edge_type"],
         unique=True,
+        schema="cryo",
     )
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_lineage_edges_unique"), table_name="lineage_edges")
-    op.drop_index(op.f("ix_lineage_edges_edge_type"), table_name="lineage_edges")
-    op.drop_index(op.f("ix_lineage_edges_target_table_id"), table_name="lineage_edges")
-    op.drop_index(op.f("ix_lineage_edges_source_table_id"), table_name="lineage_edges")
-    op.drop_table("lineage_edges")
+    op.drop_index(op.f("ix_lineage_edges_unique"), table_name="lineage_edges", schema="cryo")
+    op.drop_index(op.f("ix_lineage_edges_edge_type"), table_name="lineage_edges", schema="cryo")
+    op.drop_index(op.f("ix_lineage_edges_target_table_id"), table_name="lineage_edges", schema="cryo")
+    op.drop_index(op.f("ix_lineage_edges_source_table_id"), table_name="lineage_edges", schema="cryo")
+    op.drop_table("lineage_edges", schema="cryo")

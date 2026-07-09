@@ -1,0 +1,37 @@
+# Runs Alembic migrations to head before any app Deployment is created/updated. Helm hook
+# (not a normal resource) so it re-runs and blocks the release on every install/upgrade,
+# rather than racing the API/worker/governor pods against a database that isn't ready yet.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cryo.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "cryo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            {{- range $k, $v := .Values.global.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            {{- include "cryo.envFrom" . | nindent 12 }}

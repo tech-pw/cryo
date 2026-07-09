@@ -28,6 +28,8 @@ spec:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api
     spec:
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
