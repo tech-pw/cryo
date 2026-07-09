@@ -10,6 +10,7 @@ imagePullSecrets: []
 global:
   env:
     CRYO_ENVIRONMENT: prod
+    CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
   envFromSecret: ""
   envFromConfigMap: ""
 
@@ -55,14 +56,14 @@ scheduler:
       memory: 512Mi
 
 scannerWorker:
-  replicas: 1
+  replicas: 8
   resources:
     requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
       cpu: 500m
       memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
 
 scanner:
   schedule: "0 */6 * * *"

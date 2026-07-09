@@ -91,18 +91,22 @@ REDACTED_PLACEHOLDER = "***REDACTED***"
 
 def unredact_merge(new_config: dict[str, Any], stored_config: dict[str, Any]) -> dict[str, Any]:
     """Replace any literal REDACTED_PLACEHOLDER leaf in `new_config` with the corresponding real
-    value from `stored_config`, recursively.
+    value from `stored_config`, recursively, and preserve any key present in `stored_config` but
+    absent from `new_config`.
 
     `redact_sensitive_dict` is what a client ever *sees* for a saved Source/Destination config
-    (real secrets are masked before being sent to the browser). Without this, submitting an edit
-    form without retyping an untouched password field would silently persist the literal string
-    "***REDACTED***" as the new password, permanently destroying the real one -- since the config
-    column is a single JSON blob overwritten wholesale on PATCH, not a per-field update.
+    (real secrets are masked before being sent to the browser). Without the placeholder swap,
+    submitting an edit form without retyping an untouched password field would silently persist
+    the literal string "***REDACTED***" as the new password, permanently destroying the real one.
+    Without the base-from-stored-config merge, a caller submitting a partial config (e.g. adding
+    one new key) would silently wipe every other key -- the config column is a single JSON blob
+    overwritten wholesale on PATCH, not a per-field update, so a partial payload used to mean
+    "delete everything else."
     """
     if not isinstance(new_config, dict):
         return new_config
 
-    merged: dict[str, Any] = {}
+    merged: dict[str, Any] = dict(stored_config) if isinstance(stored_config, dict) else {}
     for key, value in new_config.items():
         stored_value = stored_config.get(key) if isinstance(stored_config, dict) else None
         if value == REDACTED_PLACEHOLDER:
