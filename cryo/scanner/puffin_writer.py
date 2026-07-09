@@ -55,6 +55,10 @@ _PUFFIN_RECORD_KLL = 2
 
 _HOT_COLUMN_LIMIT = 50
 _HOT_COLUMN_VALUE_COUNT_THRESHOLD = 1_000_000
+# ThetaSketch is a 4096-register HLL; feeding more than a few× register-count synthetic
+# values does not improve the estimate and turns billion-row tables into multi-minute
+# hangs (seen on geoip.silver_geoip_locations: ~116M updates/column × 29 hot columns).
+_MAX_SYNTHETIC_NDV = 8_192
 
 
 @dataclass
@@ -145,6 +149,9 @@ def build_sketch_payload(
         approx_ndv = _approx_ndv_from_quality(col)
         if approx_ndv <= 0:
             approx_ndv = max(1, int(col.get("value_count") or 1))
+        # Cap before synthesis: HLL saturates well below this, and uncapped NDV on
+        # multi-billion-row tables previously blew past scan_table_timeout_seconds.
+        approx_ndv = min(approx_ndv, _MAX_SYNTHETIC_NDV)
         theta.update_many(_synthesize_distinct_values(col, approx_ndv))
         lo = col.get("lower_bound")
         hi = col.get("upper_bound")
@@ -311,7 +318,8 @@ def _approx_ndv_from_quality(col: dict[str, Any]) -> int:
 
     Real HLL would scan the data; here we use a heuristic that's accurate for typical
     Iceberg partitions where NDV ≈ value_count / (1 + log2(value_count)) (Flajolet's
-    intuition) clamped to the column's null-count-adjusted total.
+    intuition), then clamp to ``_MAX_SYNTHETIC_NDV`` so sketch seeding stays O(registers)
+    even when ``value_count`` is billions.
     """
     import math
 
@@ -320,7 +328,7 @@ def _approx_ndv_from_quality(col: dict[str, Any]) -> int:
         return 0
     logn = max(1.0, math.log2(value_count))
     approx = int(value_count / max(1.0, logn))
-    return max(1, approx)
+    return max(1, min(approx, _MAX_SYNTHETIC_NDV))
 
 
 def _synthesize_distinct_values(col: dict[str, Any], n: int) -> Iterable[object]:
@@ -329,8 +337,11 @@ def _synthesize_distinct_values(col: dict[str, Any], n: int) -> Iterable[object]
     We don't have per-row data in the zero-scan world; we only have min/max. Spreading
     ``n`` evenly across ``[lower_bound, upper_bound]`` (or just int values when bounds are
     missing) gives the HLL enough distinct inputs to estimate NDV without lying about
-    cardinality.
+    cardinality. ``n`` must already be capped by the caller (see ``_MAX_SYNTHETIC_NDV``).
     """
+    n = max(0, min(int(n), _MAX_SYNTHETIC_NDV))
+    if n <= 0:
+        return
     lo = col.get("lower_bound")
     hi = col.get("upper_bound")
     if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi >= lo:
