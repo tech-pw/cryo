@@ -220,3 +220,56 @@ def test_effectiveness_breach_silent_at_or_above_20_to_1(session):
     breach = check_table_breach(session, table)
 
     assert not any("Compaction effectiveness" in r for r in breach.reasons)
+
+
+def _seed_commit_race_audit_rows(
+    session, table: Table, *, count: int, hours_ago: int = 1
+) -> None:
+    """Write ``count`` FAILED optimize rows whose detail carries the commit-race token."""
+    from cryo.engines.native.runner import COMMIT_RACE_LOST_TOKEN
+
+    now = datetime.now(UTC)
+    for offset in range(count):
+        session.add(
+            AuditLog(
+                table_id=table.id,
+                action="optimize",
+                status="FAILED",
+                engine="native",
+                ts=now - timedelta(hours=hours_ago + offset),
+                detail=(
+                    f"{COMMIT_RACE_LOST_TOKEN}: rewrite_data_files exhausted 5 checkpoint rounds"
+                ),
+            )
+        )
+    session.commit()
+
+
+def test_commit_race_breach_alerts_after_repeated_losses(session):
+    """Scoping doc §3.2: repeated commit-race losses surface as a first-class breach reason."""
+    table = _seed_table(session)
+    _seed_commit_race_audit_rows(session, table, count=3)
+
+    breach = check_table_breach(session, table)
+
+    assert any("losing the commit race" in r for r in breach.reasons), breach.reasons
+
+
+def test_commit_race_breach_silent_below_min_occurrences(session):
+    """A single loss (below the default min of 2) must not alert -- avoids noise on flukes."""
+    table = _seed_table(session)
+    _seed_commit_race_audit_rows(session, table, count=1)
+
+    breach = check_table_breach(session, table)
+
+    assert not any("losing the commit race" in r for r in breach.reasons)
+
+
+def test_commit_race_breach_ignores_stale_losses(session):
+    """Losses older than the lookback window don't keep a since-recovered table flagged."""
+    table = _seed_table(session)
+    _seed_commit_race_audit_rows(session, table, count=3, hours_ago=24 * 30)
+
+    breach = check_table_breach(session, table)
+
+    assert not any("losing the commit race" in r for r in breach.reasons)
