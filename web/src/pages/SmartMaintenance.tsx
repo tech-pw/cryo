@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Drawer, Empty, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Descriptions, Drawer, Empty, Popover, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { InfoCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -17,6 +18,57 @@ import {
 } from "../api/client";
 import { useCommitEventStream } from "../hooks/useCommitEventStream";
 import { useAuth } from "../lib/auth";
+
+const TIERING_HELP_CONTENT = (
+  <Space direction="vertical" size={10} style={{ maxWidth: 360 }}>
+    <Typography.Paragraph style={{ marginBottom: 0 }}>
+      Every scanned table gets one of four tiers so maintenance effort goes where it matters:
+    </Typography.Paragraph>
+    <ul style={{ margin: 0, paddingLeft: 18 }}>
+      <li>
+        <Typography.Text strong>HOT</Typography.Text> — heavy recent write or read churn;
+        maintenance pays off immediately.
+      </li>
+      <li>
+        <Typography.Text strong>WARM</Typography.Text> — moderate activity; worth scheduling
+        regular maintenance.
+      </li>
+      <li>
+        <Typography.Text strong>COLD</Typography.Text> — low activity; safe to deprioritize
+        routine maintenance.
+      </li>
+      <li>
+        <Typography.Text strong>DORMANT</Typography.Text> — no recent commits or queries and a
+        stale scan history.
+      </li>
+    </ul>
+    <Typography.Paragraph style={{ marginBottom: 0 }}>
+      The tier comes from a score built from commits in the last 24h/7d, query volume over the
+      last 7 days, small-file count, and delete-file percentage.
+    </Typography.Paragraph>
+    <Typography.Paragraph type="warning" style={{ marginBottom: 0 }}>
+      A table&apos;s <em>first</em> scan always lands in COLD, even for a genuinely busy table —
+      commit velocity is measured by diffing snapshots across scans, and query volume needs a
+      history window to build up, so there&apos;s no signal yet on scan one. It re-tiers on later
+      scans once that history exists; no separate action needed, just time and another scan pass.
+    </Typography.Paragraph>
+    <Typography.Paragraph style={{ marginBottom: 0 }}>
+      Click a row in Detection Tiers (or use Inspect ROI) to see the exact reason and score behind
+      a specific table&apos;s tier.
+    </Typography.Paragraph>
+  </Space>
+);
+
+const TieringHelpButton = () => (
+  <Popover
+    trigger="click"
+    placement="bottomLeft"
+    title="How tiering works"
+    content={TIERING_HELP_CONTENT}
+  >
+    <Button type="text" icon={<InfoCircleOutlined />} aria-label="How tiering works" />
+  </Popover>
+);
 
 const tierColor: Record<string, string> = {
   hot: "red",
@@ -215,9 +267,12 @@ export function SmartMaintenance() {
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       {contextHolder}
-      <Typography.Title level={3} style={{ margin: 0 }}>
-        Smart Maintenance
-      </Typography.Title>
+      <Space size={8} align="center">
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Smart Maintenance
+        </Typography.Title>
+        <TieringHelpButton />
+      </Space>
       <Tabs
         items={[
           {
