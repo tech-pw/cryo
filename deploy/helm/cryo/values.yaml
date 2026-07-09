@@ -3,7 +3,15 @@
 image:
   repository: cryo
   tag: latest
-  pullPolicy: IfNotPresent
+  # Always, not IfNotPresent: without a CI pipeline minting immutable per-build tags, "latest"
+  # is a mutable tag most self-hosted deployments will reuse across rebuilds. IfNotPresent skips
+  # re-pulling whenever a node already has *any* image cached under that tag string (it doesn't
+  # compare digests), so a redeploy after rebuilding the image can silently keep running the old
+  # code with no error -- `helm upgrade` reports success either way. Always avoids that trap; the
+  # extra registry round-trip per pod start is worth it for a self-hosted app without a mature
+  # release pipeline. Switch to IfNotPresent (and give every build its own tag, e.g. a git SHA)
+  # once you have one.
+  pullPolicy: Always
 
 imagePullSecrets: []
 
@@ -80,7 +88,7 @@ native:
   image:
     repository: cryo
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always # see the comment on image.pullPolicy above
   serviceAccount: default
   ttlSecondsAfterFinished: 300
   defaultChunkSizeGb: 100
@@ -105,7 +113,7 @@ migration:
   image:
     repository: cryo
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always # see the comment on image.pullPolicy above
 
 web:
   enabled: false
@@ -113,7 +121,7 @@ web:
   image:
     repository: cryo-web
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always # see the comment on image.pullPolicy above
   resources:
     requests:
       cpu: 100m

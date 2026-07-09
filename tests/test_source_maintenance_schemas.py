@@ -100,7 +100,7 @@ def test_discover_candidates_honors_source_allowlist(session) -> None:
     session.flush()
     catalog = _FakeCatalog({"analytics": ["events"], "staging": ["raw"]})
 
-    candidates = _discover_candidates(
+    candidates, _errors = _discover_candidates(
         session,
         source_id=source.id,
         source_factory=lambda _source: catalog,
@@ -123,7 +123,7 @@ def test_discover_candidates_intersects_explicit_scan_scope(session) -> None:
     session.flush()
     catalog = _FakeCatalog({"analytics": ["events"], "staging": ["raw"]})
 
-    candidates = _discover_candidates(
+    candidates, _errors = _discover_candidates(
         session,
         source_id=source.id,
         schema_names=["staging"],

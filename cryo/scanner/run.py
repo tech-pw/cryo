@@ -155,7 +155,7 @@ def run_scan(
     if scan_at.tzinfo is None:
         scan_at = scan_at.replace(tzinfo=UTC)
 
-    candidates = _discover_candidates(
+    candidates, discovery_errors = _discover_candidates(
         session,
         source_id=source_id,
         table_ids=table_ids,
@@ -163,6 +163,13 @@ def run_scan(
         schema_names=schema_names,
         source_factory=source_factory,
     )
+    if source_id is not None and not candidates and discovery_errors:
+        # A source-scoped chunk (every queued scan chunk is) that discovers zero tables
+        # because the catalog connection itself failed (bad credentials, bad uri, metastore
+        # down, ...) must not be reported as a successful empty scan -- that swallowed the
+        # real error and let a broken source silently "succeed" with 0 tables. Raising here
+        # routes it through the caller's existing failure handling instead.
+        raise RuntimeError("; ".join(discovery_errors))
     assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
 
     logger.info(
@@ -597,7 +604,7 @@ def _discover_candidates(
     table_names: Sequence[tuple[str, str]] | None = None,
     schema_names: Sequence[str] | None = None,
     source_factory: Any,
-) -> list[ScanCandidate]:
+) -> tuple[list[ScanCandidate], list[str]]:
     stmt = select(Source).where(Source.enabled.is_(True)).order_by(Source.name)
     if source_id is not None:
         stmt = stmt.where(Source.id == source_id)
@@ -627,6 +634,7 @@ def _discover_candidates(
         requested_schemas = {schema_name for _, schema_name, _ in requested_tables}
 
     candidates: list[ScanCandidate] = []
+    discovery_errors: list[str] = []
     for source in session.scalars(stmt):
         try:
             allowed = source_allowed_schemas(source)
@@ -663,10 +671,12 @@ def _discover_candidates(
                         table_name=table_name,
                     )
                 )
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to discover tables for source %s", source.name)
-    return sorted(
-        candidates, key=lambda item: (item.source.name, item.schema_name, item.table_name)
+            discovery_errors.append(f"{source.name}: {exc}")
+    return (
+        sorted(candidates, key=lambda item: (item.source.name, item.schema_name, item.table_name)),
+        discovery_errors,
     )
 
 

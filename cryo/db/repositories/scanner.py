@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -213,6 +213,7 @@ def record_scan_chunk_started(
         chunk = _chunk(summary, chunk_id)
         chunk["status"] = "running"
         chunk.setdefault("started_at", datetime.now(UTC).isoformat())
+        chunk["heartbeat_at"] = datetime.now(UTC).isoformat()
         summary["queued"] = False
         summary.setdefault("started_at", datetime.now(UTC).isoformat())
         _recompute_chunk_totals(summary)
@@ -235,6 +236,7 @@ def record_scan_progress(
             return
         summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
         chunk = _chunk(summary, chunk_id)
+        chunk["heartbeat_at"] = datetime.now(UTC).isoformat()
         event_type = str(event.get("event") or "")
         table_ref = event.get("table_ref")
         if event_type == "assigned":
@@ -413,3 +415,121 @@ def _append_failed_table(
 
 def _cancel_requested(summary: dict[str, Any]) -> bool:
     return bool(summary.get("cancel_requested"))
+
+
+def _parse_heartbeat(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+class StaleScanChunk:
+    """A chunk claimed by a worker that hasn't reported progress in too long -- most likely the
+    worker pod died mid-chunk (redeploy, OOM, node eviction, ...). Nothing else in the scanner
+    subsystem reclaims an orphaned chunk, so without this the run just stalls forever with no
+    active consumer and no visible error."""
+
+    __slots__ = ("run_id", "chunk_id", "num_chunks", "payload", "last_heartbeat_at")
+
+    def __init__(
+        self,
+        *,
+        run_id: uuid.UUID,
+        chunk_id: int,
+        num_chunks: int,
+        payload: dict[str, Any],
+        last_heartbeat_at: datetime | None,
+    ) -> None:
+        self.run_id = run_id
+        self.chunk_id = chunk_id
+        self.num_chunks = num_chunks
+        self.payload = payload
+        self.last_heartbeat_at = last_heartbeat_at
+
+
+def find_stale_running_chunks(
+    session: Session,
+    *,
+    stale_after_seconds: float,
+    now: datetime | None = None,
+) -> list[StaleScanChunk]:
+    """Read-only scan for chunks stuck in status='running' with no heartbeat in
+    `stale_after_seconds`. Callers are expected to re-queue the returned chunks and then call
+    `mark_chunk_requeued` for each -- this function only finds them."""
+    current = now or datetime.now(UTC)
+    threshold = current - timedelta(seconds=stale_after_seconds)
+    stale: list[StaleScanChunk] = []
+    runs = session.scalars(
+        select(MaintenanceRun).where(
+            MaintenanceRun.kind == "scan",
+            MaintenanceRun.status == "running",
+        )
+    ).all()
+    for run in runs:
+        summary = dict(run.summary or {})
+        chunks = summary.get("chunks") or {}
+        num_chunks = int(summary.get("chunks_total") or len(chunks) or 1)
+        if not isinstance(chunks, dict):
+            continue
+        for chunk_id_str, chunk in chunks.items():
+            if not isinstance(chunk, dict) or chunk.get("status") != "running":
+                continue
+            heartbeat_at = _parse_heartbeat(chunk.get("heartbeat_at") or chunk.get("started_at"))
+            if heartbeat_at is not None and heartbeat_at > threshold:
+                continue
+            try:
+                chunk_id = int(chunk_id_str)
+            except ValueError:
+                continue
+            stale.append(
+                StaleScanChunk(
+                    run_id=run.id,
+                    chunk_id=chunk_id,
+                    num_chunks=num_chunks,
+                    payload={
+                        "scope": summary.get("scope"),
+                        "source_id": summary.get("source_id"),
+                        "table_ids": summary.get("table_ids") or [],
+                        "table_names": summary.get("table_names") or [],
+                        "schema_names": summary.get("schema_names") or [],
+                        "cost_full_scan": bool(summary.get("cost_full_scan")),
+                        "full_scan": bool(summary.get("full_scan", True)),
+                        "trigger": "reconcile-stale-chunk",
+                    },
+                    last_heartbeat_at=heartbeat_at,
+                )
+            )
+    return stale
+
+
+def mark_chunk_requeued(
+    session_factory: Any,
+    run_id: uuid.UUID,
+    *,
+    chunk_id: int,
+    num_chunks: int,
+) -> None:
+    """Flip a stale chunk back to 'queued' after re-pushing it onto the scan queue, so the run
+    summary reflects reality instead of a worker that no longer exists."""
+    with session_factory() as session:
+        run = _locked_run(session, run_id)
+        if run is None:
+            return
+        summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
+        chunk = _chunk(summary, chunk_id)
+        if chunk.get("status") != "running":
+            # Someone else already reconciled or finished this chunk; don't clobber it.
+            return
+        chunk["status"] = "queued"
+        chunk.pop("current_table", None)
+        chunk.pop("heartbeat_at", None)
+        summary["queued"] = True
+        _recompute_chunk_totals(summary)
+        # Run status stays "running" (its current value) -- we just found an incomplete chunk,
+        # so the run is by definition not finished yet.
+        run.summary = summary
+        session.commit()
