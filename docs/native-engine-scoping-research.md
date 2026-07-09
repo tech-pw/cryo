@@ -269,7 +269,11 @@ race (Adobe's ~15 commits/min ceiling; Ryft's "2-hour job rejected seconds befor
 pattern). Compute is wasted repeatedly, file count grows unchecked, and the operator sees Cryo
 "running constantly but not helping." **Gap hit**: §3.2. **Mitigation**: chunk-level checkpointing
 (§6) so a lost race only forfeits the current chunk's work, plus surfacing "compaction is losing
-the commit race on table X" as a first-class alert rather than a silent retry loop.
+the commit race on table X" as a first-class alert rather than a silent retry loop. **Covered
+end-to-end** by the MinIO/REST concurrency e2e `test_native_checkpoint_resume_e2e.py` (C9/C10),
+which injects catalog commit conflicts to prove (C9) a transient loss re-plans from the current
+snapshot and completes every group, and (C10) a sustained loss exhausts the bounded checkpoint
+rounds, emits `commit_race_lost`, and leaves the table byte-for-byte unchanged.
 
 ### Scenario C — An operator's retention config deletes live data
 An operator sets an aggressive orphan-file retention window (or the table has an unusually
@@ -369,8 +373,17 @@ actually being asked to be scoped in now vs. deferred.
   (closes Scenario A/D) — scaffolding done 2026-07-08; needs in-cluster testing + RBAC + kubernetes image dependency.
 - Resource-sizing formula seeded from Planner's existing `total_size_gb`/`chunk_size_gb`/file
   counts (closes Scenario A; feeds Phase E's capacity-accounting gap) — wired into job_dispatch.py.
-- Chunk-level checkpointing / partial-progress commits (closes Scenario B/F; prerequisite for
-  everything else being safe).
+- 🟡 Chunk-level checkpointing / partial-progress commits (closes Scenario B/F; prerequisite for
+  everything else being safe) — Python per-chunk `ChunkCheckpoint` resume **and** Go-engine
+  per-group resumable partial-progress with commit-race-tolerant re-planning + `checkpoint`
+  progress events landed 2026-07-08; commit-race loss is now surfaced as a first-class
+  `commit_race_lost` signal (`runner.is_commit_race_lost`) rather than a silent retry loop, and
+  is **wired into the breach-alert layer** (`_commit_race_breach_reasons` →
+  owner/subscriber email + Slack, cooldown-gated) so a hot table repeatedly losing the race
+  raises a real notification. Both the resumable-recovery and exhausted-race paths are now
+  exercised end-to-end against REST + MinIO with injected commit conflicts
+  (`test_native_checkpoint_resume_e2e.py`, C9/C10). Remaining: cross-process resume across a
+  killed subprocess relies on the Python `ChunkCheckpoint` layer.
 - Governor live-capacity accounting from real Job resource state (closes the Phase E gap with
   actual data instead of a static slot count).
 - Surface maintenance-run S3-request-cost estimates before large orphan scans, cross-linked to
@@ -401,9 +414,10 @@ correctness risks) with the orchestration/deployment/community risks this docume
 |---|---|---|---|
 | Native subprocess confined to fixed Worker pod resources | Large-table jobs OOM or silently fall back to expensive engines | K8s Job-based dispatch, sized per job (§6.1–3) | 🟡 In progress — scaffolding done; needs in-cluster testing, RBAC, and kubernetes in Worker image |
 | No live resource accounting for native jobs | Governor can't distinguish "5 small jobs" from "1 huge job" when admitting work | Extend capacity model with real Job state (§6.6) | Planned (Phase E), not started |
-| No job checkpointing | Any interruption (commit-race loss, spot reclaim, node failure) forfeits the entire job | Chunk-level partial-progress commits (§6.4) | Not started |
+| No job checkpointing | Any interruption (commit-race loss, spot reclaim, node failure) forfeits the entire job | Chunk-level partial-progress commits (§6.4) | 🟡 In progress — Python per-chunk `ChunkCheckpoint` resume (`checkpoint.py`) + **Go engine per-group resumable partial-progress** (`engine-go` `executePartialProgressResumable`, 2026-07-08): each group commits atomically, a lost commit race re-plans from the current snapshot (idempotent resume) and only forfeits the current group, and a `checkpoint` progress event is emitted per committed group. **Injected-conflict e2e** (`test_native_checkpoint_resume_e2e.py` C9/C10) proves transient losses resume to completion and sustained losses no-op |
 | Differential/concurrency tests not in CI | A correctness incident (data loss, table corruption) ships before it's caught | Hard CI gate before wide promotion (§7) | ✅ Wired in CI (2026-07-08) |
 | Manifest bloat outside the fast path | `optimize_manifests` always routes to Trino/Spark; native speed gains don't cover this cost center | Accept as scoped-out (Go plan Phase F option 1); monitor manifest counts | Accepted, documented |
+| Compaction silently loses commit race on hot tables | Wasted compute, unbounded file growth, operator sees "running but not helping" | Surface as first-class signal, not silent retry loop | ✅ Done (2026-07-08) — Go engine tags exhausted commit-race losses with `commit_race_lost:`; Python `is_commit_race_lost()` + distinct dispatch-layer warning; **wired into the breach-alert layer** (`_commit_race_breach_reasons` in `scheduler/alert_dispatcher.py` → owner/subscriber email + Slack, cooldown-gated) once losses in the lookback window cross `commit_race_alert_min_occurrences` |
 | Aggressive retention config deletes live data | Table corruption / data loss, OSS trust incident | Conservative defaults + active warning on short retention windows; differential testing | Partially addressed (correctness invariants exist), needs CI gate |
 | Spot usage on uncheckpointed large jobs | Wasted multi-hour compute repeatedly | Gate spot on size/duration + checkpointing (§6.5) | Not started |
 | OSS adoption outpaces elastic-sizing fix | Wave of "crashes on my biggest table" issues defines early reputation | Sequence: ship §7 scope-in items before wide promotion | Sequencing decision, not yet made |

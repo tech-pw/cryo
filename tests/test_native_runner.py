@@ -25,9 +25,11 @@ from cryo.engines.native.payload import (
     source_catalog_config,
 )
 from cryo.engines.native.runner import (
+    COMMIT_RACE_LOST_TOKEN,
     NativeExecuteResult,
     NativeOperationResult,
     execute_request,
+    is_commit_race_lost,
     is_progress_event,
     resolve_binary_path,
     split_stdout_lines,
@@ -389,6 +391,20 @@ def test_resolve_binary_path_defaults_to_rust_repo_candidate(
 def test_is_progress_event_filters_tracing() -> None:
     assert is_progress_event({"event": "progress", "operation": "expire_snapshots"})
     assert not is_progress_event({"level": "INFO", "message": "starting maintenance execution"})
+
+
+def test_checkpoint_is_a_recognized_progress_event() -> None:
+    assert is_progress_event(
+        {"event": "checkpoint", "operation": "rewrite_data_files", "committed_groups": 2}
+    )
+
+
+def test_is_commit_race_lost_detects_engine_token() -> None:
+    assert is_commit_race_lost(
+        f"{COMMIT_RACE_LOST_TOKEN}: rewrite_data_files exhausted 5 checkpoint rounds"
+    )
+    assert not is_commit_race_lost("output file missing before commit")
+    assert not is_commit_race_lost(None)
 
 
 def test_execute_request_honest_failure_when_operation_not_successful(tmp_path: Path) -> None:
