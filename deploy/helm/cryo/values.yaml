@@ -63,7 +63,11 @@ scheduler:
       cpu: 100m
       memory: 512Mi
     limits:
-      cpu: 500m
+      # S3LogIngestRunner reads log objects with s3_log_ingest_concurrency (default 16)
+      # concurrent threads -- 500m throttled that work to a crawl in practice against a real
+      # bucket's log volume. 1 full core keeps that concurrency genuinely concurrent instead
+      # of CPU-starved.
+      cpu: "1"
       # The periodic benefit-score updater loads every table's partitions into memory in one
       # pass -- 512Mi OOMs well before a catalog reaches tens of thousands of partitions. Bump
       # proportionally to your own partition count if this still isn't enough.
