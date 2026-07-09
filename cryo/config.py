@@ -167,6 +167,36 @@ class Settings(BaseSettings):
             "silently starves a feature of data it still needs."
         ),
     )
+    query_log_iceberg_window_hours: int = Field(
+        default=6,
+        gt=0,
+        description=(
+            "Time-window size for the iceberg_table read-through query-log path "
+            "(cryo/telemetry/iceberg_source.py). Each window is scanned and watermarked "
+            "independently so a busy Trino cluster's query-event-listener table (which can log "
+            "millions of rows over the default 7-day first-run lookback, and whose raw SQL text "
+            "can be large per row) never has to be materialized into memory as one unbounded scan."
+        ),
+    )
+    query_log_iceberg_max_windows_per_tick: int = Field(
+        default=8,
+        gt=0,
+        description=(
+            "Max number of query_log_iceberg_window_hours windows processed per aggregation "
+            "call. Bounds how much a large backlog (first-ever run, or catch-up after an outage) "
+            "can do in one tick; the rest is picked up on the next scheduled tick."
+        ),
+    )
+    query_log_iceberg_max_rows_per_window: int = Field(
+        default=100_000,
+        gt=0,
+        description=(
+            "Last-resort per-window row cap for the iceberg_table read-through query-log path. "
+            "Only triggers if a single window still has an extreme row count; excess rows in "
+            "that window are dropped (logged as a warning) rather than blocking the watermark "
+            "from advancing past that window."
+        ),
+    )
     telemetry_duckdb_enabled: bool = Field(
         default=False,
         description="Enable DuckDB query-log ingestion (dev-only).",

@@ -102,9 +102,20 @@ def _read_query_texts(
     config: IcebergQueryLogConfig,
     *,
     since: datetime,
-) -> list[str]:
-    """Scan the query-log Iceberg table for query text, pushing the time filter down."""
-    from pyiceberg.expressions import GreaterThan
+    until: datetime,
+    max_rows: int,
+) -> tuple[list[str], bool]:
+    """Scan the query-log Iceberg table for query text within a bounded half-open time window.
+
+    Reads batch-by-batch (``to_arrow_batch_reader``) rather than materializing the whole window
+    with ``to_arrow()``, and stops at ``max_rows`` as a last-resort safety valve. The caller is
+    responsible for keeping each window itself small (see ``aggregate_from_iceberg_query_log``)
+    -- a busy Trino cluster's query-event-listener table can log millions of rows with large raw
+    SQL text per row, and an unbounded scan of that over a multi-day lookback is what previously
+    OOM'd the process reading it. Returns ``(texts, truncated)``; ``truncated`` is True if
+    ``max_rows`` was hit, so the caller can log that rows were dropped for this window.
+    """
+    from pyiceberg.expressions import And, GreaterThan, LessThanOrEqual
 
     from cryo.sources.factory import source_catalog_for
 
@@ -113,12 +124,21 @@ def _read_query_texts(
     iceberg_table = catalog.load_table(namespace, table_name)
 
     scan = iceberg_table.scan(
-        row_filter=GreaterThan(config.executed_at_column, since),  # type: ignore[misc,call-arg,arg-type]
+        row_filter=And(
+            GreaterThan(config.executed_at_column, since),  # type: ignore[misc,call-arg,arg-type]
+            LessThanOrEqual(config.executed_at_column, until),  # type: ignore[misc,call-arg,arg-type]
+        ),
         selected_fields=(config.query_text_column, config.executed_at_column),
     )
-    arrow_table = scan.to_arrow()
-    column = arrow_table.column(config.query_text_column)
-    return [str(value) for value in column.to_pylist() if value]
+
+    texts: list[str] = []
+    for batch in scan.to_arrow_batch_reader():
+        for value in batch.column(config.query_text_column).to_pylist():
+            if value:
+                texts.append(str(value))
+            if len(texts) >= max_rows:
+                return texts, True
+    return texts, False
 
 
 def aggregate_from_iceberg_query_log(
@@ -130,30 +150,26 @@ def aggregate_from_iceberg_query_log(
     """Read new rows from the source's configured Iceberg query-log table and aggregate them
     straight into query_patterns -- no query_logs rows are written for this source.
 
-    Returns the number of query_patterns rows updated. Advances and persists a watermark on
-    `Source.config["query_log"]["last_aggregated_at"]` so repeat calls only scan new rows.
+    Processes the backlog in fixed time windows (``settings.query_log_iceberg_window_hours``),
+    persisting the watermark after each window completes so the range up to that point is never
+    silently skipped even if a later window in the same call fails or the per-call window budget
+    (``settings.query_log_iceberg_max_windows_per_tick``) runs out -- the rest is picked up on the
+    next scheduled tick. This bounds memory to one window's volume instead of the whole lookback
+    range (previously up to 7 days, unbounded), which OOM'd on a busy Trino cluster's
+    query-event-listener table.
+
+    Returns the number of query_patterns rows updated.
     """
     config = parse_iceberg_query_log_config(source.config or {})
     if config is None:
         return 0
 
+    from cryo.config import get_settings
+
+    settings = get_settings()
     now = now or datetime.now(UTC)
     since = config.last_aggregated_at or (now - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
-
-    try:
-        query_texts = _read_query_texts(source, config, since=since)
-    except Exception as exc:
-        logger.warning(
-            "Failed to read Iceberg query log table %r for source %s: %s",
-            config.table_identifier,
-            source.id,
-            exc,
-        )
-        return 0
-
-    if not query_texts:
-        _persist_watermark(session, source, now)
-        return 0
+    window = timedelta(hours=settings.query_log_iceberg_window_hours)
 
     tables = (
         session.query(Table).filter(Table.source_id == source.id, Table.is_active.is_(True)).all()
@@ -161,26 +177,69 @@ def aggregate_from_iceberg_query_log(
     table_lookup: dict[str, Table] = {f"{t.schema_name}.{t.table_name}".lower(): t for t in tables}
 
     table_stats: defaultdict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(dict)
-    matched = 0
-    for query_text in query_texts:
-        schema_name, table_name = extract_table_from_query(query_text)
-        if not schema_name or not table_name:
-            continue
-        table = table_lookup.get(f"{schema_name}.{table_name}".lower())
-        if table is None:
-            continue
-        matched += 1
-        predicate_info = parse_query_predicates(query_text)
-        _accumulate(table_stats[table.id], predicate_info)
+    total_read = 0
+    total_matched = 0
+    windows_processed = 0
+    cursor = since
+
+    while cursor < now and windows_processed < settings.query_log_iceberg_max_windows_per_tick:
+        window_end = min(cursor + window, now)
+        try:
+            query_texts, truncated = _read_query_texts(
+                source,
+                config,
+                since=cursor,
+                until=window_end,
+                max_rows=settings.query_log_iceberg_max_rows_per_window,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to read Iceberg query log table %r for source %s, window [%s, %s]: %s",
+                config.table_identifier,
+                source.id,
+                cursor,
+                window_end,
+                exc,
+            )
+            break
+
+        if truncated:
+            logger.warning(
+                "Iceberg query log window [%s, %s] for source %s exceeded %s rows; excess rows "
+                "in this window were dropped",
+                cursor,
+                window_end,
+                source.id,
+                settings.query_log_iceberg_max_rows_per_window,
+            )
+
+        total_read += len(query_texts)
+        for query_text in query_texts:
+            schema_name, table_name = extract_table_from_query(query_text)
+            if not schema_name or not table_name:
+                continue
+            table = table_lookup.get(f"{schema_name}.{table_name}".lower())
+            if table is None:
+                continue
+            total_matched += 1
+            predicate_info = parse_query_predicates(query_text)
+            _accumulate(table_stats[table.id], predicate_info)
+
+        # This window is fully read and accumulated -- safe to advance the watermark past it
+        # even if a later window in this call fails or the windows-per-tick budget runs out.
+        _persist_watermark(session, source, window_end)
+        cursor = window_end
+        windows_processed += 1
 
     updated = _upsert_query_patterns(session, table_stats)
-    _persist_watermark(session, source, now)
     logger.info(
-        "Iceberg query log read-through: %s query rows read, %s matched to known tables, "
-        "%s patterns updated",
-        len(query_texts),
-        matched,
+        "Iceberg query log read-through: %s window(s), %s query rows read, %s matched to known "
+        "tables, %s patterns updated, watermark now %s",
+        windows_processed,
+        total_read,
+        total_matched,
         updated,
+        cursor,
     )
     return updated
 
