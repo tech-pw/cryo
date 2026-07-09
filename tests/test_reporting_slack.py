@@ -38,3 +38,13 @@ def test_table_block_preserves_row_order_and_content() -> None:
 def test_table_block_with_only_header_has_one_row() -> None:
     block = table_block(["Metric", "Value"], [])
     assert len(block.to_dict()["rows"]) == 1
+
+
+def test_table_block_replaces_empty_cell_with_space() -> None:
+    """Regression test: Slack's live API rejects a rich_text `text` element with an empty
+    string (400 invalid_blocks), hit in production via an empty-string header cell."""
+    block = table_block(["", "Issue"], [["", "something"]])
+    rows = block.to_dict()["rows"]
+
+    assert rows[0][0]["elements"][0]["elements"][0]["text"] == " "
+    assert rows[1][0]["elements"][0]["elements"][0]["text"] == " "

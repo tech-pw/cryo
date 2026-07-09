@@ -55,7 +55,10 @@ def fields_block(fields: list[tuple[str, str]]) -> SlackBlock:
 
 
 def _table_cell(text: str, *, bold: bool = False) -> dict[str, Any]:
-    element: dict[str, Any] = {"type": "text", "text": text}
+    # Slack rejects a rich_text `text` element with an empty string (400 invalid_blocks, no
+    # field-level detail) -- observed against the live webhook. A single space renders as an
+    # empty-looking cell without tripping that validation.
+    element: dict[str, Any] = {"type": "text", "text": text or " "}
     if bold:
         element["style"] = {"bold": True}
     return {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [element]}]}

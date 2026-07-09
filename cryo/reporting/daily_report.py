@@ -450,7 +450,7 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
         blocks.append(section_block("*Action Items*"))
         blocks.append(
             table_block(
-                ["", "Issue", "Owner"],
+                ["Severity", "Issue", "Owner"],
                 [
                     [severity_emoji.get(item["severity"], "🟡"), item["text"], item["owner"]]
                     for item in data.action_items
