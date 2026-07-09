@@ -250,6 +250,46 @@ def test_normalize_optimize_params_maps_file_size_mb() -> None:
     # Memory cap follows the configured output target (not a fixed 32 MiB).
     assert params["max_bytes_per_group"] == 512 * 1024 * 1024
     assert params["partial_progress"] is True
+    assert params["group_concurrency"] == 2
+    assert params["read_batch_size"] == 16_384
+    assert params["memory_expansion_factor"] == 96
+    assert params["metrics_mode"] == "truncate(16)"
+    assert params["compression_codec"] == "zstd"
+    assert params["compression_level"] == 3
+
+
+def test_optimize_params_forward_speedup_knobs_when_set() -> None:
+    from cryo.domain.enums import Mode, OperationType
+    from cryo.domain.models import MaintenancePlan, Operation
+    from cryo.engines.native.payload import build_execute_request
+
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    "file_size_mb": 256,
+                    "group_concurrency": 2,
+                    "read_batch_size": 16384,
+                    "metrics_mode": "counts",
+                    "compression_level": 1,
+                },
+            ),
+        ),
+    )
+    request = build_execute_request(
+        plan=plan,
+        operation=plan.operations[0],
+        source_config={"uri": "http://localhost:8181", "warehouse": "s3://warehouse/"},
+        destination_config={"operation_mode": "execute"},
+    )
+    params = request["operations"][0]["params"]
+    assert params["group_concurrency"] == 2
+    assert params["read_batch_size"] == 16384
+    assert params["metrics_mode"] == "counts"
+    assert params["compression_level"] == 1
 
 
 def test_optimize_params_preserve_explicit_memory_overrides() -> None:

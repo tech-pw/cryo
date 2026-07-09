@@ -21,7 +21,19 @@ PROGRESS_PREFIX = "CRYO_PROGRESS:"
 # "checkpoint" marks a durable per-chunk commit emitted by the Go engine's
 # partial-progress path (see engine-go progress.Checkpoint).
 _PROGRESS_EVENTS = frozenset(
-    {"started", "progress", "group_started", "checkpoint", "completed", "failed"}
+    {
+        "started",
+        "progress",
+        "group_started",
+        "checkpoint",
+        "completed",
+        "failed",
+        # Fine-grained phase events from the Go parallel coordinator / group executor.
+        "read_write_started",
+        "read_write_done",
+        "commit_started",
+        "commit_done",
+    }
 )
 _ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 

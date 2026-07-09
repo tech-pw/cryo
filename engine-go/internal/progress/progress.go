@@ -120,6 +120,23 @@ func Failed(operation, message string) {
 	})
 }
 
+// Phase emits a fine-grained progress event for profiling (read/write/commit).
+// eventName should be a stable token such as "read_write_started" or "commit_done".
+func Phase(operation, eventName string, groupIndex, totalGroups int, files, bytes uint64) {
+	idx := groupIndex
+	total := totalGroups
+	msg := eventName
+	emit(Event{
+		Event:          eventName,
+		Operation:      operation,
+		FilesProcessed: &files,
+		BytesProcessed: &bytes,
+		Message:        &msg,
+		GroupIndex:     &idx,
+		TotalGroups:    &total,
+	})
+}
+
 func emit(event Event) {
 	payload, err := json.Marshal(event)
 	if err != nil {
