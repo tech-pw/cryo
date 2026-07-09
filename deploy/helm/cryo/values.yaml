@@ -28,10 +28,13 @@ api:
   resources:
     requests:
       cpu: 250m
-      memory: 512Mi
+      memory: 768Mi
     limits:
       cpu: "1"
-      memory: 1Gi
+      # 1Gi was sized for a small catalog; endpoints that aggregate across all tables (health,
+      # smart-maintenance overview, ...) OOM well before that on a catalog with thousands of
+      # tables. Bump proportionally to your own table count if this still isn't enough.
+      memory: 3Gi
 
 worker:
   replicas: 2
@@ -58,10 +61,13 @@ scheduler:
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 512Mi
     limits:
       cpu: 500m
-      memory: 512Mi
+      # The periodic benefit-score updater loads every table's partitions into memory in one
+      # pass -- 512Mi OOMs well before a catalog reaches tens of thousands of partitions. Bump
+      # proportionally to your own partition count if this still isn't enough.
+      memory: 2Gi
 
 scannerWorker:
   replicas: 8
