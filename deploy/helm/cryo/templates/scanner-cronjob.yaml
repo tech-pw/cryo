@@ -16,6 +16,8 @@ spec:
             app.kubernetes.io/component: scanner
         spec:
           restartPolicy: OnFailure
+          {{- include "cryo.imagePullSecrets" . | nindent 10 }}
+          {{- include "cryo.nodeSelector" . | nindent 10 }}
           containers:
             - name: scanner
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

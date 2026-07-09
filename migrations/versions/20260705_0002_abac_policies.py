@@ -46,36 +46,40 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["table_id"],
-            ["tables.id"],
+            ["cryo.tables.id"],
             name=op.f("fk_abac_policies_table_id_tables"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_abac_policies")),
+        schema="cryo",
     )
-    
+
     # Create indexes for policy lookups
     op.create_index(
         op.f("ix_abac_policies_table_id"),
         "abac_policies",
         ["table_id"],
+        schema="cryo",
     )
     op.create_index(
         op.f("ix_abac_policies_role"),
         "abac_policies",
         ["role"],
+        schema="cryo",
     )
-    
+
     # Create unique constraint for table+role combination
     op.create_index(
         op.f("ix_abac_policies_unique"),
         "abac_policies",
         ["table_id", "role"],
         unique=True,
+        schema="cryo",
     )
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_abac_policies_unique"), table_name="abac_policies")
-    op.drop_index(op.f("ix_abac_policies_role"), table_name="abac_policies")
-    op.drop_index(op.f("ix_abac_policies_table_id"), table_name="abac_policies")
-    op.drop_table("abac_policies")
+    op.drop_index(op.f("ix_abac_policies_unique"), table_name="abac_policies", schema="cryo")
+    op.drop_index(op.f("ix_abac_policies_role"), table_name="abac_policies", schema="cryo")
+    op.drop_index(op.f("ix_abac_policies_table_id"), table_name="abac_policies", schema="cryo")
+    op.drop_table("abac_policies", schema="cryo")

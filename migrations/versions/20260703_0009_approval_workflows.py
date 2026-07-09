@@ -47,26 +47,31 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.ForeignKeyConstraint(["table_id"], ["tables.id"], name=op.f("fk_approval_requests_table_id_tables")),
+        sa.ForeignKeyConstraint(
+            ["table_id"], ["cryo.tables.id"], name=op.f("fk_approval_requests_table_id_tables")
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_approval_requests")),
+        schema="cryo",
     )
-    
+
     # Create index on status for pending approvals
     op.create_index(
         op.f("ix_approval_requests_status"),
         "approval_requests",
         ["status"],
+        schema="cryo",
     )
-    
+
     # Create index on table_id for filtering
     op.create_index(
         op.f("ix_approval_requests_table_id"),
         "approval_requests",
         ["table_id"],
+        schema="cryo",
     )
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_approval_requests_table_id"), table_name="approval_requests")
-    op.drop_index(op.f("ix_approval_requests_status"), table_name="approval_requests")
-    op.drop_table("approval_requests")
+    op.drop_index(op.f("ix_approval_requests_table_id"), table_name="approval_requests", schema="cryo")
+    op.drop_index(op.f("ix_approval_requests_status"), table_name="approval_requests", schema="cryo")
+    op.drop_table("approval_requests", schema="cryo")

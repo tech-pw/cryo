@@ -5,6 +5,8 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+imagePullSecrets: []
+
 global:
   env:
     CRYO_ENVIRONMENT: prod
@@ -73,6 +75,26 @@ native:
   defaultChunkSizeGb: 100
   maxCpu: 4000m
   maxMemory: 16Gi
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+migration:
+  image:
+    repository: cryo
+    tag: latest
+    pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP

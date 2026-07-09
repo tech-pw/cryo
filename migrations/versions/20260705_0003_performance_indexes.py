@@ -38,6 +38,7 @@ def upgrade() -> None:
         op.f("ix_query_logs_engine"),
         "query_logs",
         ["engine"],
+        schema="cryo",
     )
 
     # Add index for table stats history (health trends). ix_table_stats_history_table_scan
@@ -47,6 +48,7 @@ def upgrade() -> None:
         op.f("ix_table_stats_history_scan_at"),
         "table_stats_history",
         ["scan_at"],
+        schema="cryo",
     )
 
     # Add index for audit log (job detail page). See module docstring points 3-4.
@@ -54,6 +56,7 @@ def upgrade() -> None:
         op.f("ix_audit_log_job_id"),
         "audit_log",
         ["job_id"],
+        schema="cryo",
     )
 
     # Add index for query patterns (partition evolution). See module docstring point 5.
@@ -61,6 +64,7 @@ def upgrade() -> None:
         op.f("ix_query_patterns_table_id_filter_count"),
         "query_patterns",
         ["table_id", "filter_count"],
+        schema="cryo",
     )
 
     # table_partitions.compaction_benefit_score / query_frequency and their index already exist
@@ -68,7 +72,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_query_patterns_table_id_filter_count"), table_name="query_patterns")
-    op.drop_index(op.f("ix_audit_log_job_id"), table_name="audit_log")
-    op.drop_index(op.f("ix_table_stats_history_scan_at"), table_name="table_stats_history")
-    op.drop_index(op.f("ix_query_logs_engine"), table_name="query_logs")
+    op.drop_index(op.f("ix_query_patterns_table_id_filter_count"), table_name="query_patterns", schema="cryo")
+    op.drop_index(op.f("ix_audit_log_job_id"), table_name="audit_log", schema="cryo")
+    op.drop_index(op.f("ix_table_stats_history_scan_at"), table_name="table_stats_history", schema="cryo")
+    op.drop_index(op.f("ix_query_logs_engine"), table_name="query_logs", schema="cryo")

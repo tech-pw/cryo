@@ -36,6 +36,7 @@ envFrom:
   {{- include "cryo.envFrom" $root | nindent 2 }}
 {{- end -}}
 
+{{- if .Values.native.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -76,3 +77,4 @@ spec:
             limits:
               cpu: "2"
               memory: "4Gi"
+{{- end }}
