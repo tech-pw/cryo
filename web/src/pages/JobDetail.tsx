@@ -30,6 +30,7 @@ import {
 import { Link, useParams, useNavigate } from "react-router-dom";
 import {
   diagnoseRunFailure,
+  getLatestRunDiagnosis,
   getJob,
   getJobDetailDashboard,
   getResourcePrediction,
@@ -73,13 +74,23 @@ export const JobDetail = () => {
     enabled: Boolean(data?.table_id),
     retry: false
   });
+  const latestDiagnosis = useQuery({
+    queryKey: ["run-diagnosis-latest", data?.run_id],
+    queryFn: () => getLatestRunDiagnosis(api, data!.run_id),
+    enabled: Boolean(data?.run_id),
+    retry: false
+  });
   const diagnose = useMutation({
-    mutationFn: () => diagnoseRunFailure(api, data!.run_id),
+    mutationFn: () => diagnoseRunFailure(api, data!.run_id, { force: true }),
+    onSuccess: () => {
+      void latestDiagnosis.refetch();
+    },
     onError: (err) => message.error((err as Error).message)
   });
+  const diagnosisRecord = latestDiagnosis.data ?? diagnose.data ?? null;
   const diagnosisFeedback = useMutation({
     mutationFn: (feedback: "up" | "down") =>
-      submitDiagnosisFeedback(api, diagnose.data!.id, { feedback }),
+      submitDiagnosisFeedback(api, diagnosisRecord!.id, { feedback }),
     onSuccess: () => message.success("Diagnosis feedback recorded"),
     onError: (err) => message.error((err as Error).message)
   });
@@ -146,20 +157,20 @@ export const JobDetail = () => {
             </Button>
           }
         >
-          {diagnose.data ? (
+          {diagnosisRecord ? (
             <Space direction="vertical" style={{ width: "100%" }}>
               <Typography.Text strong>
-                {diagnose.data.diagnosis_class.replaceAll("_", " ")} ({Math.round(diagnose.data.confidence * 100)}% confidence)
+                {diagnosisRecord.diagnosis_class.replaceAll("_", " ")} ({Math.round(diagnosisRecord.confidence * 100)}% confidence)
               </Typography.Text>
-              {diagnose.data.summary ? (
-                <Typography.Text>{diagnose.data.summary}</Typography.Text>
+              {diagnosisRecord.summary ? (
+                <Typography.Text>{diagnosisRecord.summary}</Typography.Text>
               ) : null}
-              {diagnose.data.runbook_step ? (
-                <Alert type="info" showIcon title="Runbook step" description={diagnose.data.runbook_step} />
+              {diagnosisRecord.runbook_step ? (
+                <Alert type="info" showIcon title="Runbook step" description={diagnosisRecord.runbook_step} />
               ) : null}
-              {diagnose.data.evidence.length ? (
+              {diagnosisRecord.evidence.length ? (
                 <ul style={{ margin: 0, paddingInlineStart: 16 }}>
-                  {diagnose.data.evidence.map((line, idx) => (
+                  {diagnosisRecord.evidence.map((line, idx) => (
                     <li key={`${idx}-${line}`}>
                       <Typography.Text type="secondary">{line}</Typography.Text>
                     </li>
@@ -170,6 +181,7 @@ export const JobDetail = () => {
                 <Button
                   size="small"
                   icon={<LikeOutlined />}
+                  disabled={!diagnosisRecord}
                   loading={diagnosisFeedback.isPending}
                   onClick={() => diagnosisFeedback.mutate("up")}
                 >
@@ -178,6 +190,7 @@ export const JobDetail = () => {
                 <Button
                   size="small"
                   icon={<DislikeOutlined />}
+                  disabled={!diagnosisRecord}
                   loading={diagnosisFeedback.isPending}
                   onClick={() => diagnosisFeedback.mutate("down")}
                 >

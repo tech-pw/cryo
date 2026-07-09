@@ -18,8 +18,8 @@ from cryo.ai.copilot import (
 from cryo.ai.embedding_cache import find_similar_tables_cached
 from cryo.ai.explain import explain_health_change
 from cryo.ai.llm import SUPPORTED_PROVIDERS, create_llm_client
-from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.ai.pii import classify_table_columns
+from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.extensions_helpers import (
     build_mcp_server,
@@ -29,8 +29,8 @@ from cryo.api.extensions_helpers import (
     stats_snapshot,
     table_stats_dict,
 )
-from cryo.api.extensions_routes.benefit import router as benefit_router
 from cryo.api.extensions_routes.ai_features import router as ai_features_router
+from cryo.api.extensions_routes.benefit import router as benefit_router
 from cryo.api.extensions_routes.compliance import router as compliance_router
 from cryo.api.extensions_routes.qpp import router as qpp_router
 from cryo.api.extensions_routes.triggers import router as triggers_router
@@ -604,7 +604,7 @@ async def copilot_natural_language(
     if payload.include_context:
         context = _gather_copilot_context(session)
 
-    response, _observation = await complete_with_budget_and_observation(
+    response, observation = await complete_with_budget_and_observation(
         session,
         payload.question,
         invoke=LLMInvokeContext(
@@ -616,6 +616,11 @@ async def copilot_natural_language(
         max_tokens=600,
     )
     if response is None:
+        if observation.status == "budget_denied_reject":
+            raise HTTPException(
+                status_code=429,
+                detail="LLM budget policy rejected this copilot request.",
+            )
         fallback = answer_question(payload.question, session)
         fallback_answer = str(
             fallback.get("answer")
@@ -909,7 +914,7 @@ async def test_ai_provider_config(
 )
 async def ai_chat(payload: AIChatRequest, session: SessionDep) -> AIChatResponse:
     """Chat with the default AI provider."""
-    response, _observation = await complete_with_budget_and_observation(
+    response, observation = await complete_with_budget_and_observation(
         session,
         payload.prompt,
         invoke=LLMInvokeContext(feature="ai_chat", prompt_name="ai_chat"),
@@ -917,9 +922,16 @@ async def ai_chat(payload: AIChatRequest, session: SessionDep) -> AIChatResponse
         max_tokens=800,
     )
     if response is None:
+        if observation.status == "budget_denied_reject":
+            raise HTTPException(
+                status_code=429,
+                detail="LLM budget policy rejected this request.",
+            )
         raise HTTPException(
             status_code=503,
-            detail="No LLM provider available (or budget denied). Configure provider or retry later.",
+            detail=(
+                "No LLM provider available (or budget denied). Configure provider or retry later."
+            ),
         )
     return AIChatResponse(
         response=response.content,

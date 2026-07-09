@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
@@ -58,6 +58,36 @@ class ResourcePredictionRead(BaseModel):
     shadow_mode: bool
 
 
+def _diagnosis_observation_id(row: RunFailureDiagnosis) -> uuid.UUID | None:
+    raw = row.raw_response if isinstance(row.raw_response, dict) else {}
+    value = raw.get("observation_id")
+    if isinstance(value, str):
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _to_diagnosis_read(row: RunFailureDiagnosis) -> RunFailureDiagnosisRead:
+    return RunFailureDiagnosisRead(
+        id=row.id,
+        run_id=row.run_id,
+        job_id=row.job_id,
+        table_id=row.table_id,
+        diagnosis_class=row.diagnosis_class,
+        confidence=float(row.confidence),
+        summary=row.summary,
+        runbook_step=row.runbook_step,
+        evidence=[str(line) for line in (row.evidence or [])],
+        feedback=row.feedback,
+        feedback_note=row.feedback_note,
+        diagnosed_at=row.diagnosed_at,
+        skillset_id=row.skillset_id,
+        observation_id=_diagnosis_observation_id(row),
+    )
+
+
 def _build_deterministic_plan_summary(payload: PlanNarrationRequest) -> str:
     op_order = ", ".join(payload.operations) if payload.operations else "no maintenance operations"
     notes = "; ".join(payload.notes[:3]) if payload.notes else "no planner notes were emitted"
@@ -66,6 +96,27 @@ def _build_deterministic_plan_summary(payload: PlanNarrationRequest) -> str:
         f"Planner notes: {notes}. "
         "Verifier output and rendered SQL remain the source of truth."
     )
+
+
+@router.get(
+    "/ai/runs/{run_id}/diagnosis-latest",
+    response_model=RunFailureDiagnosisRead | None,
+    dependencies=[Depends(require_viewer)],
+)
+def get_latest_run_diagnosis(
+    run_id: uuid.UUID,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> RunFailureDiagnosisRead | None:
+    row = session.scalar(
+        select(RunFailureDiagnosis)
+        .where(RunFailureDiagnosis.run_id == run_id)
+        .order_by(desc(RunFailureDiagnosis.diagnosed_at))
+        .limit(1)
+    )
+    if row is None:
+        return None
+    return _to_diagnosis_read(row)
 
 
 @router.post(
@@ -77,6 +128,7 @@ async def diagnose_run_failure(
     run_id: uuid.UUID,
     session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
+    force: bool = Query(False, description="Re-run diagnosis even when a cached one exists."),
 ) -> RunFailureDiagnosisRead:
     settings = get_settings()
     if not settings.ai_feature_diagnosis_enabled:
@@ -85,18 +137,30 @@ async def diagnose_run_failure(
     run = session.get(MaintenanceRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if not force:
+        existing = session.scalar(
+            select(RunFailureDiagnosis)
+            .where(RunFailureDiagnosis.run_id == run_id)
+            .order_by(desc(RunFailureDiagnosis.diagnosed_at))
+            .limit(1)
+        )
+        if existing is not None:
+            return _to_diagnosis_read(existing)
 
     jobs = list(
         session.scalars(
-            select(MaintenanceJob).where(MaintenanceJob.run_id == run_id).order_by(desc(MaintenanceJob.started_at))
+            select(MaintenanceJob)
+            .where(MaintenanceJob.run_id == run_id)
+            .order_by(desc(MaintenanceJob.started_at))
         )
     )
     if not jobs:
         raise HTTPException(status_code=404, detail="No jobs found for run")
 
-    failed_jobs = [job for job in jobs if (job.status or "").lower() in {"failed", "partial_failed"}]
+    failed_jobs = [
+        job for job in jobs if (job.status or "").lower() in {"failed", "partial_failed"}
+    ]
     job = failed_jobs[0] if failed_jobs else jobs[0]
-    table = session.get(Table, job.table_id)
 
     evidence: list[str] = []
     if run.summary:
@@ -118,7 +182,7 @@ async def diagnose_run_failure(
     audits = list(
         session.scalars(
             select(AuditLog)
-            .where(AuditLog.job_id.in_(job_ids))  # type: ignore[arg-type]
+            .where(AuditLog.job_id.in_(job_ids))
             .order_by(desc(AuditLog.ts))
             .limit(10)
         )
@@ -157,27 +221,16 @@ async def diagnose_run_failure(
         summary=diagnosis.summary,
         runbook_step=diagnosis.runbook_step,
         evidence=diagnosis.evidence_lines,
-        raw_response={"used_llm": diagnosis.used_llm},
+        raw_response={
+            "used_llm": diagnosis.used_llm,
+            "observation_id": str(observation_id) if observation_id else None,
+        },
     )
     session.add(row)
     session.commit()
     session.refresh(row)
-    return RunFailureDiagnosisRead(
-        id=row.id,
-        run_id=row.run_id,
-        job_id=row.job_id,
-        table_id=row.table_id,
-        diagnosis_class=row.diagnosis_class,
-        confidence=float(row.confidence),
-        summary=row.summary,
-        runbook_step=row.runbook_step,
-        evidence=[str(line) for line in (row.evidence or [])],
-        feedback=row.feedback,
-        feedback_note=row.feedback_note,
-        diagnosed_at=row.diagnosed_at,
-        skillset_id=row.skillset_id,
-        observation_id=observation_id,
-    )
+    out = _to_diagnosis_read(row)
+    return out.model_copy(update={"observation_id": observation_id})
 
 
 @router.post(
@@ -214,21 +267,7 @@ def submit_diagnosis_feedback(
         session.commit()
 
     session.refresh(row)
-    return RunFailureDiagnosisRead(
-        id=row.id,
-        run_id=row.run_id,
-        job_id=row.job_id,
-        table_id=row.table_id,
-        diagnosis_class=row.diagnosis_class,
-        confidence=float(row.confidence),
-        summary=row.summary,
-        runbook_step=row.runbook_step,
-        evidence=[str(line) for line in (row.evidence or [])],
-        feedback=row.feedback,
-        feedback_note=row.feedback_note,
-        diagnosed_at=row.diagnosed_at,
-        skillset_id=row.skillset_id,
-    )
+    return _to_diagnosis_read(row)
 
 
 @router.post(

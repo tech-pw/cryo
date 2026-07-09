@@ -1893,11 +1893,19 @@ export const listLlmObservations = (
 
 export const diagnoseRunFailure = (
   api: ApiOptions,
-  runId: UUID
+  runId: UUID,
+  options: { force?: boolean } = {}
 ): Promise<RunFailureDiagnosisRead> =>
   apiFetch<RunFailureDiagnosisRead>(`/ai/runs/${runId}/diagnose`, api, {
+    query: { force: options.force ?? false },
     method: "POST"
   });
+
+export const getLatestRunDiagnosis = (
+  api: ApiOptions,
+  runId: UUID
+): Promise<RunFailureDiagnosisRead | null> =>
+  apiFetch<RunFailureDiagnosisRead | null>(`/ai/runs/${runId}/diagnosis-latest`, api);
 
 export const submitDiagnosisFeedback = (
   api: ApiOptions,
