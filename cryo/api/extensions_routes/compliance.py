@@ -13,7 +13,7 @@ from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
 from cryo.api.security import Principal, Role
 from cryo.compliance.governance import track_pending_deletions
-from cryo.db.models import AuditLog, ProtectedSnapshot, Source, Table, TableStats
+from cryo.db.models import AuditLog, Source, Table, TableStats
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
@@ -91,9 +91,25 @@ def mcp_call_tool(
     session: SessionDep,
     principal: Annotated[Principal, Depends(require_viewer)],
 ) -> McpToolCallResponse:
-    required_role = Role.OPERATOR if payload.name == "run_preset" else Role.VIEWER
+    required_roles: dict[str, Role] = {
+        "get_table_health": Role.VIEWER,
+        "list_stale_tables": Role.VIEWER,
+        "list_compaction_backlog": Role.VIEWER,
+        "explain_health_change": Role.VIEWER,
+        "simulate_preset": Role.VIEWER,
+        "filter_translation": Role.VIEWER,
+        "get_table_schema": Role.VIEWER,
+        "get_snapshot_history": Role.VIEWER,
+        "run_preset": Role.OPERATOR,
+    }
+    required_role = required_roles.get(payload.name)
+    if required_role is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported tool: {payload.name}")
     if not principal.can(required_role):
-        raise HTTPException(status_code=403, detail=f"Tool {payload.name} requires {required_role.value} role")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tool {payload.name} requires {required_role.value} role",
+        )
 
     server = build_mcp_server(session)
     table_id = None
@@ -138,7 +154,7 @@ def mcp_call_tool(
             action=f"mcp.{payload.name}",
             status="OK",
             engine="mcp",
-            detail=f"arguments={payload.arguments}",
+            detail=f"argument_keys={sorted(payload.arguments.keys())}",
             actor=principal.subject,
         )
     )

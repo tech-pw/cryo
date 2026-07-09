@@ -72,7 +72,7 @@ def _provider_budget(provider: AIProvider) -> dict[str, Any]:
         "daily_cost_cap_usd": float(
             budget.get("daily_cost_cap_usd", settings.llm_daily_cost_cap_usd_default)
         ),
-        "mode": str(budget.get("over_budget_mode", settings.llm_over_budget_mode)),
+        "mode": str(budget.get("over_budget_mode", settings.llm_over_budget_mode)).lower(),
     }
 
 
@@ -107,7 +107,8 @@ def _estimate_cost_usd(
     output_per_1k = pricing.get("output_per_1k_usd")
     if input_per_1k is None or output_per_1k is None:
         return None
-    return round((float(input_per_1k) * input_tokens + float(output_per_1k) * output_tokens) / 1000.0, 8)
+    cost = float(input_per_1k) * input_tokens + float(output_per_1k) * output_tokens
+    return round(cost / 1000.0, 8)
 
 
 def _write_observation(
@@ -197,7 +198,7 @@ async def complete_with_budget_and_observation(
             model_id=provider.model,
             prompt_hash=hashed,
             context=invoke,
-            status="budget_denied",
+            status=f"budget_denied_{budget['mode']}",
             budget_denied=True,
             error=reason,
         )
@@ -207,21 +208,28 @@ async def complete_with_budget_and_observation(
     daily_token_cap = max(1, int(budget["daily_token_cap"]))
     if used_tokens + max_tokens > daily_token_cap:
         reason = f"{budget['mode']}: daily token cap exceeded: {used_tokens}/{daily_token_cap}"
-        llm_budget_denials_total.labels(provider=provider.provider_type, reason="daily_tokens").inc()
+        llm_budget_denials_total.labels(
+            provider=provider.provider_type, reason="daily_tokens"
+        ).inc()
         row = _write_observation(
             session,
             provider=provider,
             model_id=provider.model,
             prompt_hash=hashed,
             context=invoke,
-            status="budget_denied",
+            status=f"budget_denied_{budget['mode']}",
             budget_denied=True,
             error=reason,
         )
         session.commit()
         return None, row
 
-    api_key = decrypt_secret(provider.api_key_encrypted or "") if provider.api_key_encrypted else ""
+    api_key = ""
+    if provider.api_key_encrypted:
+        try:
+            api_key = decrypt_secret(provider.api_key_encrypted) or ""
+        except Exception:
+            api_key = ""
     if not api_key:
         row = _write_observation(
             session,
@@ -258,14 +266,16 @@ async def complete_with_budget_and_observation(
         daily_cost_cap = float(budget["daily_cost_cap_usd"])
         projected_cost = used_cost + (estimated_cost or 0.0)
         if estimated_cost is not None and projected_cost > daily_cost_cap:
-            llm_budget_denials_total.labels(provider=provider.provider_type, reason="daily_cost").inc()
+            llm_budget_denials_total.labels(
+                provider=provider.provider_type, reason="daily_cost"
+            ).inc()
             row = _write_observation(
                 session,
                 provider=provider,
                 model_id=response.model,
                 prompt_hash=hashed,
                 context=invoke,
-                status="budget_denied",
+                status=f"budget_denied_{budget['mode']}",
                 budget_denied=True,
                 error=(
                     f"{budget['mode']}: daily cost cap exceeded: "
