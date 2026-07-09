@@ -127,7 +127,7 @@ class _FakeBotoSession:
     def __init__(self, client):
         self._client = client
 
-    def client(self, name):
+    def client(self, name, **kwargs):
         return self._client
 
 
