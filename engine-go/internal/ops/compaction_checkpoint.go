@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
@@ -82,9 +83,12 @@ func executePartialProgressResumable(
 	beforeMeta := validate.CaptureMetadataSnapshot(tbl)
 	rewriteOpts := table.RewriteDataFilesOptions{
 		SnapshotProps: validate.CustomSnapshotProps(tbl),
-		GroupOptions: []table.CompactionGroupOption{
-			table.WithCompactionTargetFileSize(cfg.TargetFileSizeBytes),
-		},
+		GroupOptions:  rewriteGroupOptions(cfg.TargetFileSizeBytes, op.Params),
+	}
+	ioProps := rewriteIOProperties(op.Params)
+	stageTbl, cloneErr := cloneTableWithProperties(tbl, ioProps)
+	if cloneErr != nil {
+		return totals, fmt.Errorf("clone table for rewrite IO props: %w", cloneErr)
 	}
 
 	maxRounds := appCommitRetries + 1
@@ -98,8 +102,14 @@ func executePartialProgressResumable(
 				return totals, fmt.Errorf("reload table before checkpoint round %d: %w", round, err)
 			}
 			tbl = reloaded
+			stageTbl, err = cloneTableWithProperties(tbl, ioProps)
+			if err != nil {
+				return totals, err
+			}
 
-			replanned, replannedPaths, err := planCheckpointGroups(ctx, tbl, cfg, rowFilter, op.Predicates)
+			replanned, replannedPaths, err := planCheckpointGroups(
+				ctx, tbl, cfg, rowFilter, op.Predicates, groupSplitLimitsFromParams(op.Params),
+			)
 			if err != nil {
 				return totals, err
 			}
@@ -121,10 +131,22 @@ func executePartialProgressResumable(
 			return totals, nil
 		}
 
+		limits := groupSplitLimitsFromParams(op.Params)
 		conflicted := false
 		for i := range groups {
+			group := groups[i]
+			progress.GroupStarted(
+				operation,
+				group.PartitionKey,
+				len(group.Tasks),
+				uint64(groupCompressedBytes(group)),
+				limits.maxFiles,
+				uint64(limits.maxBytes),
+				i,
+				len(groups),
+			)
 			outcome, err := commitCheckpointGroup(
-				ctx, tbl, groups[i], morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
+				ctx, tbl, stageTbl, group, morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
 			)
 			if err != nil {
 				if isRetryableCommitError(err) {
@@ -140,8 +162,15 @@ func executePartialProgressResumable(
 				progress.Checkpoint(operation, committedGroups, len(groups), totals.outputFiles, totals.bytesWritten)
 			}
 			progress.Progress(operation, uint8((i+1)*100/len(groups)), totals.outputFiles, totals.bytesWritten)
+			// Release Arrow/Parquet buffers between groups so RSS does not ratchet
+			// across a long partial-progress run on dense partitions.
+			runtime.GC()
 			if err := tbl.Refresh(ctx); err != nil {
 				return totals, fmt.Errorf("refresh table after group %d: %w", i, err)
+			}
+			stageTbl, err = cloneTableWithProperties(tbl, ioProps)
+			if err != nil {
+				return totals, err
 			}
 		}
 
@@ -159,10 +188,12 @@ func executePartialProgressResumable(
 }
 
 // commitCheckpointGroup rewrites and atomically commits a single compaction group.
-// An empty group (all inputs already gone after a reload) is an idempotent no-op.
+// stageTbl is an in-memory props-augmented view used for ExecuteCompactionGroup;
+// tbl is the live catalog table used for the commit. An empty group is a no-op.
 func commitCheckpointGroup(
 	ctx context.Context,
 	tbl *table.Table,
+	stageTbl *table.Table,
 	group table.CompactionTaskGroup,
 	morCompaction bool,
 	rewrittenPaths map[string]struct{},
@@ -177,6 +208,19 @@ func commitCheckpointGroup(
 		return zero, fmt.Errorf("context cancelled before group commit: %w", err)
 	}
 
+	progress.Phase("rewrite_data_files", "read_write_started", 0, 0,
+		uint64(len(group.Tasks)), uint64(groupCompressedBytes(group)))
+
+	gr, err := table.ExecuteCompactionGroup(ctx, stageTbl, group, rewriteOpts.GroupOptions...)
+	if err != nil {
+		return zero, fmt.Errorf("rewrite_data_files group: %w", err)
+	}
+	if len(gr.OldDataFiles) == 0 && len(gr.NewDataFiles) == 0 {
+		return zero, nil
+	}
+	progress.Phase("rewrite_data_files", "read_write_done", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
+
 	groupTxn := tbl.NewTransaction()
 	if err := applyCompactionTestProperties(groupTxn); err != nil {
 		return zero, fmt.Errorf("configure compaction test properties: %w", err)
@@ -185,20 +229,25 @@ func commitCheckpointGroup(
 		if err := ensureMORCompactionProperties(groupTxn, tbl.Metadata().Properties()); err != nil {
 			return zero, fmt.Errorf("configure MOR compaction properties: %w", err)
 		}
+	}
+
+	progress.Phase("rewrite_data_files", "commit_started", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
+
+	rewrite := groupTxn.NewRewrite(rewriteOpts.SnapshotProps)
+	rewrite.ApplyResult(gr)
+	if morCompaction {
 		groupRewritten := rewrittenPathsForGroup(rewrittenPaths, group)
 		deadEqDeletes, eqErr := collectDeadEqualityDeletesForGroup(ctx, tbl, groupRewritten)
 		if eqErr != nil {
 			return zero, fmt.Errorf("collect dead eq deletes: %w", eqErr)
 		}
-		rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
+		for _, df := range deadEqDeletes {
+			rewrite.DeleteFile(df)
+		}
 	}
-
-	groupResult, err := groupTxn.RewriteDataFiles(ctx, []table.CompactionTaskGroup{group}, rewriteOpts)
-	if err != nil {
-		return zero, fmt.Errorf("rewrite_data_files group: %w", err)
-	}
-	if groupResult == nil || groupResult.RewrittenGroups == 0 {
-		return zero, nil
+	if err := rewrite.Commit(ctx); err != nil {
+		return zero, fmt.Errorf("stage rewrite snapshot: %w", err)
 	}
 
 	testhook.BeforeCommit()
@@ -210,12 +259,14 @@ func commitCheckpointGroup(
 	if err := validate.AssertMetadataStable(beforeMeta, updated); err != nil {
 		return zero, err
 	}
+	progress.Phase("rewrite_data_files", "commit_done", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
 
 	return groupCommitOutcome{
 		committed:    true,
-		outputFiles:  uint64(groupResult.AddedDataFiles),
-		bytesRemoved: uint64(groupResult.BytesBefore),
-		bytesWritten: uint64(groupResult.BytesAfter),
+		outputFiles:  uint64(len(gr.NewDataFiles)),
+		bytesRemoved: uint64(gr.BytesBefore),
+		bytesWritten: uint64(gr.BytesAfter),
 	}, nil
 }
 
@@ -228,6 +279,7 @@ func planCheckpointGroups(
 	cfg compaction.Config,
 	rowFilter iceberg.BooleanExpression,
 	predicates []protocol.PredicateRequest,
+	limits groupSplitLimits,
 ) ([]table.CompactionTaskGroup, map[string]struct{}, error) {
 	tasks, err := planScopedTasks(ctx, tbl, rowFilter, predicates)
 	if err != nil {
@@ -240,7 +292,8 @@ func planCheckpointGroups(
 	if err != nil {
 		return nil, nil, fmt.Errorf("re-plan compaction: %w", err)
 	}
-	return toTaskGroups(plan.Groups), rewrittenPathsFromPlan(plan), nil
+	groups := finalizeRewriteGroups(toTaskGroups(plan.Groups), limits, int(cfg.MinInputFiles))
+	return groups, rewrittenPathsFromPlan(plan), nil
 }
 
 func collectGroupTasks(groups []table.CompactionTaskGroup) []table.FileScanTask {

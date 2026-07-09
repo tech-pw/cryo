@@ -854,6 +854,70 @@ def _operation_result_to_exec_result(
     )
 
 
+def _native_batch_failure_index(operations: tuple[Operation, ...]) -> int:
+    """Index to attribute a silent subprocess death to.
+
+    When cryo-engine is OOM-killed mid-batch it returns no per-op results. The
+    worker audits the first ``ok=False`` result, so blaming index 0 mislabels
+    the failure as ``expire_snapshots``. Prefer OPTIMIZE (rewrite) when present.
+    """
+    for index, operation in enumerate(operations):
+        if operation.type is OperationType.OPTIMIZE:
+            return index
+    return max(0, len(operations) - 1)
+
+
+def _exec_results_from_empty_native_batch(
+    operations: tuple[Operation, ...],
+    *,
+    error: str,
+    duration_ms: int,
+) -> list[ExecResult]:
+    """Map a dead/empty subprocess response onto per-op ExecResults.
+
+    Only the attributed operation is FAILED; earlier ops are SKIPPED (status
+    unknown) and later ops are SKIPPED (not executed) so audit/logs do not
+    pin an OOM on expire/orphan.
+    """
+    if not operations:
+        return []
+    fail_idx = _native_batch_failure_index(operations)
+    failed_name = operations[fail_idx].type.value
+    exec_results: list[ExecResult] = []
+    for index, operation in enumerate(operations):
+        if index < fail_idx:
+            exec_results.append(
+                ExecResult(
+                    ok=True,
+                    skipped=True,
+                    detail=(
+                        f"native subprocess exited before results; "
+                        f"{operation.type.value} status unknown"
+                    ),
+                    duration_ms=duration_ms,
+                )
+            )
+        elif index == fail_idx:
+            exec_results.append(
+                ExecResult(
+                    ok=False,
+                    detail=operation.type.value,
+                    error=error,
+                    duration_ms=duration_ms,
+                )
+            )
+        else:
+            exec_results.append(
+                ExecResult(
+                    ok=True,
+                    skipped=True,
+                    detail=f"not executed; native subprocess failed on {failed_name}",
+                    duration_ms=0,
+                )
+            )
+    return exec_results
+
+
 def _exec_results_from_native_batch(
     operations: tuple[Operation, ...],
     result: NativeExecuteResult,
@@ -861,15 +925,9 @@ def _exec_results_from_native_batch(
 ) -> list[ExecResult]:
     if not result.results:
         error = result.error or "cryo-engine returned no operation results"
-        return [
-            ExecResult(
-                ok=False,
-                detail=operation.type.value,
-                error=error,
-                duration_ms=duration_ms,
-            )
-            for operation in operations
-        ]
+        return _exec_results_from_empty_native_batch(
+            operations, error=error, duration_ms=duration_ms
+        )
 
     results_by_operation = {item.operation: item for item in result.results}
     exec_results: list[ExecResult] = []

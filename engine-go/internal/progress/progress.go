@@ -22,6 +22,13 @@ type Event struct {
 	// checkpoint only forfeits work done since the last committed group.
 	CommittedGroups *int `json:"committed_groups,omitempty"`
 	TotalGroups     *int `json:"total_groups,omitempty"`
+	// GroupIndex / PartitionKey / MaxFiles / MaxBytes are set on "group_started"
+	// events so operators can see which rewrite group was in flight when an OOM
+	// killed the subprocess (dense-partition diagnosis).
+	GroupIndex    *int    `json:"group_index,omitempty"`
+	PartitionKey  *string `json:"partition_key,omitempty"`
+	MaxFiles      *int    `json:"max_files_per_group,omitempty"`
+	MaxBytes      *uint64 `json:"max_bytes_per_group,omitempty"`
 }
 
 func Started(operation string) {
@@ -39,6 +46,39 @@ func Progress(operation string, pct uint8, files, bytes uint64) {
 		ProgressPct:    &pct,
 		FilesProcessed: &files,
 		BytesProcessed: &bytes,
+	})
+}
+
+// GroupStarted marks the start of a single compaction-group rewrite under
+// partial_progress. files/bytes are the compressed input size of this group;
+// maxFiles/maxBytes are the active split caps (for log diagnosis after OOM).
+func GroupStarted(
+	operation, partitionKey string,
+	files int,
+	bytes uint64,
+	maxFiles int,
+	maxBytes uint64,
+	groupIndex, totalGroups int,
+) {
+	filesU := uint64(files)
+	idx := groupIndex
+	total := totalGroups
+	maxF := maxFiles
+	msg := fmt.Sprintf(
+		"group %d/%d partition=%q files=%d bytes=%d max_files=%d max_bytes=%d",
+		groupIndex+1, totalGroups, partitionKey, files, bytes, maxFiles, maxBytes,
+	)
+	emit(Event{
+		Event:           "group_started",
+		Operation:       operation,
+		FilesProcessed:  &filesU,
+		BytesProcessed:  &bytes,
+		Message:         &msg,
+		GroupIndex:      &idx,
+		TotalGroups:     &total,
+		PartitionKey:    &partitionKey,
+		MaxFiles:        &maxF,
+		MaxBytes:        &maxBytes,
 	})
 }
 
@@ -77,6 +117,23 @@ func Failed(operation, message string) {
 		Event:     "failed",
 		Operation: operation,
 		Message:   &message,
+	})
+}
+
+// Phase emits a fine-grained progress event for profiling (read/write/commit).
+// eventName should be a stable token such as "read_write_started" or "commit_done".
+func Phase(operation, eventName string, groupIndex, totalGroups int, files, bytes uint64) {
+	idx := groupIndex
+	total := totalGroups
+	msg := eventName
+	emit(Event{
+		Event:          eventName,
+		Operation:      operation,
+		FilesProcessed: &files,
+		BytesProcessed: &bytes,
+		Message:        &msg,
+		GroupIndex:     &idx,
+		TotalGroups:    &total,
 	})
 }
 

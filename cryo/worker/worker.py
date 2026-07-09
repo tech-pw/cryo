@@ -840,11 +840,19 @@ class Worker:
                 results = engine.execute_plan(native_plan, exec_ctx)
             except Exception as exc:
                 duration_ms = int((perf_counter() - started) * 1000)
+                fail_action = next(
+                    (
+                        op.type
+                        for op in supported_operations
+                        if op.type is OperationType.OPTIMIZE
+                    ),
+                    supported_operations[0].type,
+                )
                 self._store.record_audit(
                     AuditRecord(
                         job_id=job.id,
                         table_id=job.table_id,
-                        action=supported_operations[0].type,
+                        action=fail_action,
                         status="FAILED",
                         engine=engine.type,
                         detail=str(exc),

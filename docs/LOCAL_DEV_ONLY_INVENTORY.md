@@ -38,11 +38,13 @@ artifacts themselves are permanent.
 | `tests/integration/native/test_native_mor_compaction_e2e.py` | Opt-in native MOR compaction e2e (REST + MinIO + cryo-engine-go) |
 | `tests/integration/native/test_native_mor_concurrency_e2e.py` | Opt-in MOR concurrency e2e (§8.5 C2/C3) |
 | `tests/integration/native/generate_compaction_fixtures.py` | Seed COW + MOR compaction fixture tables |
+| `tests/integration/native/generate_perf_compaction_fixture.py` | Seed GB-scale dense MinIO fixture for throughput loop |
+| `tests/integration/native/test_native_compaction_throughput.py` | Opt-in wall-time/RSS throughput SLO (`CRYO_RUN_PERF_THROUGHPUT=1`) |
 | `engine-go/bin/seed-native-fixtures` | Go CLI: seed MOR tables, `count-live-rows`, `live-int-column`, `seed-table`, `commit-equality-delete` |
 | `tests/integration/hms/smoke_hms_trino.py` | Smoke test: Trino can read HMS fixture tables |
 | `scripts/smoke_file_counts.py` | Smoke test: file counts / local Spark compaction |
 | `scripts/smoke_cryo_e2e.py` | Smoke test: scan → plan → execute path |
-| `make test`, `make smoke-*`, `make test-hms-integration`, `make test-native-e2e`, `make test-native-e2e-local`, `make test-native-compaction-e2e`, `make test-native-compaction-e2e-local-go` | Makefile entrypoints for the above |
+| `make test`, `make smoke-*`, `make test-hms-integration`, `make test-native-e2e`, `make test-native-e2e-local`, `make test-native-compaction-e2e`, `make test-native-compaction-e2e-local-go`, `make seed-native-compaction-perf-fixture`, `make test-native-compaction-throughput-go` | Makefile entrypoints for the above |
 | `.github/workflows/ci.yml` | CI lint, typecheck, unit tests; `native-e2e` job (REST + MinIO + cryo-engine) |
 
 **Fixture generators** (below) write data to local MinIO only; they are inventoried under
@@ -107,7 +109,7 @@ repo; do not run or package them as part of a production deployment.
 | [`scripts/create_partition_fixture_tables.py`](../scripts/create_partition_fixture_tables.py) | Partition-rich fragmented fixtures in `fixtures` namespace | `gate` |
 | [`scripts/load_test_data.py`](../scripts/load_test_data.py) | On-demand fragmented snapshots for maintenance load testing | `gate` |
 | [`scripts/seed_local_config.py`](../scripts/seed_local_config.py) | Upsert DB rows pointing at `localhost` REST/HMS/Trino | `gate` (never run in prod bootstrap) |
-| [`scripts/spark_session.py`](../scripts/spark_session.py) | PySpark session wired to local REST + MinIO defaults | `gate` |
+| [`scripts/validate_dense_compaction_memory.sh`](../scripts/validate_dense_compaction_memory.sh) | Docker `--memory=1g` compaction of `f_part_dense` (GeoIP OOM class) | `gate` |
 | [`tests/integration/hms/generate_hms_fixture_tables.py`](../tests/integration/hms/generate_hms_fixture_tables.py) | Large HMS fixture tables in `hms_issues` namespace (MinIO only) | `gate` |
 | [`tests/integration/hms/spark_hms_session.py`](../tests/integration/hms/spark_hms_session.py) | PySpark session wired to local HMS + MinIO (used by fixture generator) | `gate` |
 
