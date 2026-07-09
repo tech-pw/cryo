@@ -30,6 +30,26 @@ With `CRYO_ENGINE_IMPL=go` (or `destination.config.engine_impl=go`) — **the de
 Rust `cryo-engine` remains available via `CRYO_ENGINE_IMPL=rust` for expire/orphan parity during
 transition; compaction is not supported on Rust.
 
+## Partial-progress checkpointing (`params.partial_progress`)
+
+When `rewrite_data_files` params set `partial_progress: true`, each compaction group is committed as
+its own atomic Iceberg snapshot (Iceberg's `PARTIAL_PROGRESS_ENABLED` precedent) instead of one
+all-or-nothing commit. This makes the run **resumable and commit-race-tolerant**:
+
+- Each committed group emits a `CRYO_PROGRESS:{"event":"checkpoint",...}` line carrying
+  `committed_groups` / `total_groups` — durable progress the worker records.
+- On a retryable commit conflict (lost optimistic-concurrency race), the engine reloads the table
+  and **re-plans from the current snapshot**. Groups already committed (by us or a concurrent
+  writer) are no longer selected, so a lost race only forfeits the current group's attempt — not the
+  whole run. Rounds are bounded by `appCommitRetries`.
+- If a group still cannot land after the bounded rounds, the operation fails with a
+  `commit_race_lost: …` error (`errCommitRaceLost`). The Python side (`runner.is_commit_race_lost`)
+  turns this into a first-class "compaction is losing the commit race on table X" signal rather than
+  a silent retry loop.
+
+The single-commit path (default) is unchanged; MOR on non-REST catalogs still retries the whole
+rewrite on conflict.
+
 ## Optional PyO3 stack (out of scope here)
 
 `cryo-native/` / `cryo_native` is a **separate** Rust+DataFusion PyO3 module for direct
