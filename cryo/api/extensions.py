@@ -1249,13 +1249,15 @@ async def test_slack_config_values(
 
 class DailyReportResponse(BaseModel):
     report_date: str
+    status: str = "CLEAR"
     summary: JsonDict
     grade_distribution: JsonDict
     maintenance_stats: JsonDict
     top_issues: list[JsonDict]
     critical_anomalies: list[JsonDict]
+    action_items: list[JsonDict] = []
     cost: JsonDict
-    ai_summary: str | None = None
+    bottom_line: str | None = None
     slack_sent: bool = False
 
 

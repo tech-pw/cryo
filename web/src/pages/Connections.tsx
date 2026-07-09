@@ -601,9 +601,9 @@ export const Connections = () => {
                           showIcon
                           title={`Report for ${dailyReportResult.report_date}${dailyReportResult.slack_sent ? " · posted to Slack" : ""}`}
                           description={
-                            dailyReportResult.ai_summary ? (
+                            dailyReportResult.bottom_line ? (
                               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
-                                {dailyReportResult.ai_summary}
+                                {dailyReportResult.bottom_line}
                               </Typography.Paragraph>
                             ) : (
                               <pre className="inline-json">{JSON.stringify(dailyReportResult.summary, null, 2)}</pre>
