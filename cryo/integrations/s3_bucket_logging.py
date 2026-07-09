@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +27,15 @@ from cryo.scanner.orphans import parse_s3_location
 from cryo.security.crypto import decrypt_secret
 
 logger = logging.getLogger(__name__)
+
+# botocore's default connection pool (10) is smaller than this codebase's own concurrent S3
+# reader (cryo/scanner/s3_request_cost_ingest.py's default 16-thread ingest) -- with more
+# concurrent callers than pool slots, boto3 discards and reopens connections on every request
+# past the limit instead of reusing them (visible as "Connection pool is full, discarding
+# connection" warnings), turning TCP/TLS handshake overhead into the bottleneck. Sized with
+# headroom above the current default concurrency; single-threaded callers are unaffected.
+_S3_CLIENT_CONFIG = Config(max_pool_connections=20)
+
 
 def credentials_for_config(config: S3BucketLogConfig) -> AWSCredentials | None:
     """Resolve a bucket's own credentials.
@@ -65,7 +75,7 @@ def boto_session_for_config(config: S3BucketLogConfig) -> Any | None:
 def s3_client_for_config(config: S3BucketLogConfig) -> Any | None:
     """Build a boto3 S3 client from a bucket's own credentials, or ``None`` if it has none."""
     session = boto_session_for_config(config)
-    return session.client("s3") if session is not None else None
+    return session.client("s3", config=_S3_CLIENT_CONFIG) if session is not None else None
 
 
 def discover_buckets_for_source(session: Session, source_id: uuid.UUID) -> list[S3BucketLogConfig]:
