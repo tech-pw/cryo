@@ -103,6 +103,8 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "min_small_files",
         "delete_ratio_trigger",
         "partition_write_idle_hours",
+        # 0 = unlimited (bytes-only split); positive = optional soft file ceiling.
+        "max_files_per_group",
     )
     positive_keys = (
         "chunk_size_gb",
@@ -119,7 +121,6 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "parquet_row_group_limit",
         "parquet_row_group_bytes",
         "scan_concurrency",
-        "max_files_per_group",
         "max_bytes_per_group",
         "min_input_files",
         "target_file_size_bytes",

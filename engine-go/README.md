@@ -55,7 +55,9 @@ planner only scopes **partitions**):
 
 1. iceberg-go `PlanCompaction` bin-packs candidates toward `target_file_size_bytes`, requiring
    `min_input_files` per bin (default **2**).
-2. Cryo may split oversized bins for memory (`max_files_per_group` / `max_bytes_per_group`).
+2. Cryo may split oversized bins by compressed bytes (`max_bytes_per_group`). An optional
+   `max_files_per_group` soft ceiling is available for FD/reader limits but is **unset by
+   default** so tiny-file storms can pack toward the output target.
 3. After split, groups with fewer than `min_input_files` are **dropped** — never rewritten 1→1.
 
 | Param | Default | Effect |
@@ -63,8 +65,8 @@ planner only scopes **partitions**):
 | `target_file_size_bytes` | `256 MiB` | Bin-pack / writer target output size |
 | `min_input_files` | `2` | Spark-style floor: skip groups with fewer files (distinct from planner `min_small_files`) |
 | `scan_concurrency` | `1` | Caps parallel Parquet→Arrow readers (`WithCompactionScanConcurrency`) |
-| `max_files_per_group` | `8` | Splits oversized bin-pack groups so each rewrite/commit processes ≤ N input files |
-| `max_bytes_per_group` | `= target_file_size_bytes` | Compressed-byte memory cap; defaults to the output target so splits do not shred bin-pack groups. Lower for dense tables; sub-min groups are then skipped |
+| `max_files_per_group` | unset (unlimited) | Optional soft file-count ceiling; omit so byte packing is not shredded |
+| `max_bytes_per_group` | `= target_file_size_bytes` | Primary memory/split cap; defaults to the output target so splits do not shred bin-pack groups. Lower for dense tables; sub-min groups are then skipped |
 | `partial_progress` | `true` | Commits each (split) group independently so an OOM mid-run keeps prior groups |
 | `group_concurrency` | `2` | Parallel `ExecuteCompactionGroup` workers; commits stay serial. Memory-budgeted |
 | `compaction_memory_budget_bytes` | `3 GiB` | Admission cap for in-flight group footprint estimates |
