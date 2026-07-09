@@ -19,7 +19,7 @@ from cryo.governor.admission import AdmissionJob
 from cryo.governor.roi_gate import ROIGate
 from cryo.scheduler.forecaster import WorkloadForecaster
 
-router = APIRouter(prefix="/smart-maintenance", tags=["smart-maintenance"])
+router = APIRouter(prefix="/api/v1/smart-maintenance", tags=["smart-maintenance"])
 
 
 class TierSummary(BaseModel):
