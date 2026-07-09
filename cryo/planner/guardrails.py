@@ -112,6 +112,17 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "retain_last",
         "orphan_retention_days",
         "file_size_mb",
+        "group_concurrency",
+        "compaction_memory_budget_bytes",
+        "memory_expansion_factor",
+        "read_batch_size",
+        "parquet_row_group_limit",
+        "parquet_row_group_bytes",
+        "scan_concurrency",
+        "max_files_per_group",
+        "max_bytes_per_group",
+        "min_input_files",
+        "target_file_size_bytes",
     )
     for key in non_negative_keys:
         if key not in params:
@@ -121,13 +132,19 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         if key not in params:
             continue
         _validate_positive_number(errors, f"params.{key}", params[key])
+    if "compression_level" in params:
+        _validate_non_negative_number(errors, "params.compression_level", params["compression_level"])
     if "delete_ratio_trigger" in params and _is_number(params["delete_ratio_trigger"]):
         ratio = float(params["delete_ratio_trigger"])
         if ratio > 100:
             errors.append("params.delete_ratio_trigger must be at most 100")
-    for key in ("compute_statistics", "stats_compute_ndv"):
+    for key in ("compute_statistics", "stats_compute_ndv", "partial_progress"):
         if key in params and not isinstance(params[key], bool):
             errors.append(f"params.{key} must be a boolean")
+    if "metrics_mode" in params and not isinstance(params["metrics_mode"], str):
+        errors.append("params.metrics_mode must be a string")
+    if "compression_codec" in params and not isinstance(params["compression_codec"], str):
+        errors.append("params.compression_codec must be a string")
     _validate_string_list(errors, "params.stats_columns", params.get("stats_columns"))
     _validate_string_list(errors, "params.bloom_filter_columns", params.get("bloom_filter_columns"))
     return errors
