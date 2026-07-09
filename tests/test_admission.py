@@ -27,6 +27,25 @@ def test_heavy_modes_are_blocked_outside_offpeak_but_light_is_allowed() -> None:
     assert decide_job_admission(light, config, now=midday_utc).admissible
 
 
+def test_unset_or_zero_zero_offpeak_allows_heavy_modes_anytime() -> None:
+    """No engine window (missing → AdmissionConfig 0/0) or explicit 0/0 = anytime."""
+    midday_utc = datetime(2026, 6, 30, 8, 0, tzinfo=UTC)
+    deep = AdmissionJob("job-1", "table-1", "dest", Mode.DEEP)
+
+    assert decide_job_admission(deep, AdmissionConfig(), now=midday_utc).admissible
+    assert decide_job_admission(
+        deep,
+        AdmissionConfig(offpeak_start_ist=0, offpeak_end_ist=0),
+        now=midday_utc,
+    ).admissible
+    # Equal non-zero hours also disable the gate (full-day window).
+    assert decide_job_admission(
+        deep,
+        AdmissionConfig(offpeak_start_ist=15, offpeak_end_ist=15),
+        now=midday_utc,
+    ).admissible
+
+
 def test_budget_uses_max_of_live_and_local_inflight_per_replica() -> None:
     budget = compute_admission_budget(
         {"r1": CapacitySnapshot(capacity=5, used=2), "r2": CapacitySnapshot(capacity=5, used=4)},
