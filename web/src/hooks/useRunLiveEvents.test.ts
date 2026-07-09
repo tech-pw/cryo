@@ -82,4 +82,34 @@ describe("useRunLiveEvents", () => {
     expect(result.current.reconnectAttempt).toBe(0);
     expect(MockWebSocket.instances).toHaveLength(1);
   });
+
+  it("does not render both scan_progress and log_line for the same table event", async () => {
+    // The scanner worker publishes a "scan_progress" event alongside every "log_line" for the
+    // same table event, carrying the same message -- rendering both doubled every line in the
+    // live scan log. Regression test for that.
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+
+    const { result } = renderHook(() => useRunLiveEvents("run-1", "token"));
+
+    await waitFor(() => {
+      expect(result.current.wsOpen).toBe(true);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0]?.emit({
+        type: "scan_progress",
+        ts: "2026-07-06T00:00:00Z",
+        event: "table_result",
+        message: "Scanned cdp.central.silver_bookmarks"
+      });
+      MockWebSocket.instances[0]?.emit({
+        type: "log_line",
+        ts: "2026-07-06T00:00:00Z",
+        message: "Scanned cdp.central.silver_bookmarks"
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]?.type).toBe("log_line");
+  });
 });

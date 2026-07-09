@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { wsRunUrl } from "../api/client";
 import type { JobRead, RunRead, UUID } from "../api/types";
 
@@ -43,8 +43,12 @@ export interface RunLiveSnapshot {
   jobs?: JobRead[];
 }
 
+// "scan_progress" is deliberately excluded: the scanner worker publishes it alongside a
+// "log_line" for the same table event, carrying the same message -- keeping both here doubled
+// every line rendered in the live scan log. "log_line" alone is sufficient for display; nothing
+// in the frontend reads the "scan_progress"-specific fields (event sub-type) separately.
 const isLiveLogEvent = (event: RunLiveEvent): boolean =>
-  event.type === "log_line" || event.type === "scan_progress" || event.type === "job_status";
+  event.type === "log_line" || event.type === "job_status";
 
 const eventKey = (event: RunLiveEvent): string =>
   JSON.stringify({
@@ -168,10 +172,10 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     };
   }, [runId, token, manualReconnectKey, clearRetryTimer, scheduleReconnect, ingestEvent]);
 
-  const logMessages = useMemo(
-    () => messages.filter((item) => item.type === "log_line" || item.type === "scan_progress"),
-    [messages]
-  );
+  // messages already only ever contains "log_line"/"job_status" events -- ingestEvent filters
+  // via isLiveLogEvent before anything is added to state -- so no further filtering is needed
+  // here.
+  const logMessages = messages;
 
   return {
     messages: logMessages,
