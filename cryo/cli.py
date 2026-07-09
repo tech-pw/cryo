@@ -429,12 +429,17 @@ class EventsRunner(DaemonRunner):
 class ScannerRunner(DaemonRunner):
     """Runs queued ad-hoc scanner requests."""
 
+    _RECONCILE_INTERVAL_SECONDS = 60
+    _STALE_CHUNK_SECONDS = 900
+
     def __init__(self, interval: int = 5, wiring: Any = None) -> None:
         super().__init__("scanner", interval)
         self._wiring: Any = wiring
         self._worker: Any = None
+        self._last_reconcile_at: float = 0.0
 
     def _tick(self) -> None:
+        self._maybe_reconcile_stale_chunks()
         worker = self._get_worker()
         if worker is None:
             self._logger.warning("Scanner worker not available")
@@ -442,6 +447,30 @@ class ScannerRunner(DaemonRunner):
         result = worker.process_next()
         if result is not None and result.run_id:
             self._logger.info("Processed scan run %s: %s", result.run_id[:8], result.status)
+
+    def _maybe_reconcile_stale_chunks(self) -> None:
+        """Runs at most once every _RECONCILE_INTERVAL_SECONDS, not on every 5s poll tick --
+        this is a periodic sweep, not per-tick work, so it shouldn't add DB load to every
+        replica's tight poll loop."""
+        now = time.monotonic()
+        if now - self._last_reconcile_at < self._RECONCILE_INTERVAL_SECONDS:
+            return
+        self._last_reconcile_at = now
+        try:
+            from cryo.db.session import SessionLocal
+            from cryo.queue.scan_queue import RedisScanQueue
+            from cryo.scanner.control import reconcile_stale_scan_chunks
+
+            wiring = self._get_wiring()
+            reconciled = reconcile_stale_scan_chunks(
+                SessionLocal,
+                RedisScanQueue(wiring.redis_client),
+                stale_after_seconds=self._STALE_CHUNK_SECONDS,
+            )
+            if reconciled:
+                self._logger.warning("Re-queued %d stale scan chunk(s)", reconciled)
+        except Exception:
+            self._logger.exception("Failed to reconcile stale scan chunks")
 
     def _get_wiring(self) -> Any:
         if self._wiring is not None:
