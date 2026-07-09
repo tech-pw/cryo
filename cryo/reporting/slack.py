@@ -20,6 +20,7 @@ class SlackBlock:
     elements: list[dict[str, Any]] | None = None
     fields: list[dict[str, Any]] | None = None
     accessory: dict[str, Any] | None = None
+    rows: list[list[dict[str, Any]]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"type": self.type}
@@ -31,6 +32,8 @@ class SlackBlock:
             result["fields"] = self.fields
         if self.accessory:
             result["accessory"] = self.accessory
+        if self.rows:
+            result["rows"] = self.rows
         return result
 
 
@@ -48,6 +51,27 @@ def fields_block(fields: list[tuple[str, str]]) -> SlackBlock:
     return SlackBlock(
         type="section",
         fields=[{"type": "mrkdwn", "text": f"*{label}*\n{value}"} for label, value in fields],
+    )
+
+
+def _table_cell(text: str, *, bold: bool = False) -> dict[str, Any]:
+    element: dict[str, Any] = {"type": "text", "text": text}
+    if bold:
+        element["style"] = {"bold": True}
+    return {"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [element]}]}
+
+
+def table_block(header: list[str], rows: list[list[str]]) -> SlackBlock:
+    """A real Slack table block -- native rows/columns rendering, not a fields-grid
+    approximation. Every cell is plain rich-text; callers pre-format numbers/emoji into strings
+    before calling this (mirrors fields_block's contract)."""
+    all_rows = [header, *rows]
+    return SlackBlock(
+        type="table",
+        rows=[
+            [_table_cell(cell, bold=(row_index == 0)) for cell in row]
+            for row_index, row in enumerate(all_rows)
+        ],
     )
 
 
