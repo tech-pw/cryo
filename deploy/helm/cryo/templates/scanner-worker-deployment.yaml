@@ -1,0 +1,40 @@
+# Continuous ad-hoc scan-queue consumer (`cryo scanner` CLI subcommand -- ScannerRunner,
+# polls every 5s by default). Distinct from scanner-cronjob.yaml, which runs
+# `python -m cryo.scanner.run` as a one-shot full-fleet scan on a cron schedule. Without
+# this Deployment, scans triggered ad-hoc from the web UI ("Trigger scan") or API queue
+# and never get picked up -- there's no long-running process consuming that queue.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cryo.fullname" . }}-scanner-worker
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scanner-worker
+spec:
+  replicas: {{ .Values.scannerWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scanner-worker
+  template:
+    metadata:
+      labels:
+        {{- include "cryo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scanner-worker
+    spec:
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: scanner-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["cryo", "scanner"]
+          env:
+            {{- range $k, $v := .Values.global.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            {{- include "cryo.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.scannerWorker.resources | nindent 12 }}
