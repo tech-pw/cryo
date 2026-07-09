@@ -77,7 +77,6 @@ plan = MaintenancePlan(
                 "min_file_size_bytes": 512 * 1024,
                 "min_input_files": 3,
                 "scan_concurrency": 1,
-                "max_files_per_group": 8,
                 "max_bytes_per_group": 32 * 1024 * 1024,
                 "partial_progress": True,
             },
