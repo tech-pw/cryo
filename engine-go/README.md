@@ -32,7 +32,8 @@ transition; compaction is not supported on Rust.
 
 ## Partial-progress checkpointing (`params.partial_progress`)
 
-When `rewrite_data_files` params set `partial_progress: true`, each compaction group is committed as
+When `rewrite_data_files` params set `partial_progress: true` (the Python payload
+normalizer now defaults this on for OPTIMIZE), each compaction group is committed as
 its own atomic Iceberg snapshot (Iceberg's `PARTIAL_PROGRESS_ENABLED` precedent) instead of one
 all-or-nothing commit. This makes the run **resumable and commit-race-tolerant**:
 
@@ -47,8 +48,55 @@ all-or-nothing commit. This makes the run **resumable and commit-race-tolerant**
   turns this into a first-class "compaction is losing the commit race on table X" signal rather than
   a silent retry loop.
 
-The single-commit path (default) is unchanged; MOR on non-REST catalogs still retries the whole
-rewrite on conflict.
+### File-group planning + memory bounds
+
+File grouping matches Spark/Iceberg `rewrite_data_files` semantics (engine-side; Cryo's Python
+planner only scopes **partitions**):
+
+1. iceberg-go `PlanCompaction` bin-packs candidates toward `target_file_size_bytes`, requiring
+   `min_input_files` per bin (default **2**).
+2. Cryo may split oversized bins for memory (`max_files_per_group` / `max_bytes_per_group`).
+3. After split, groups with fewer than `min_input_files` are **dropped** — never rewritten 1→1.
+
+| Param | Default | Effect |
+|-------|---------|--------|
+| `target_file_size_bytes` | `256 MiB` | Bin-pack / writer target output size |
+| `min_input_files` | `2` | Spark-style floor: skip groups with fewer files (distinct from planner `min_small_files`) |
+| `scan_concurrency` | `1` | Caps parallel Parquet→Arrow readers (`WithCompactionScanConcurrency`) |
+| `max_files_per_group` | `8` | Splits oversized bin-pack groups so each rewrite/commit processes ≤ N input files |
+| `max_bytes_per_group` | `= target_file_size_bytes` | Compressed-byte memory cap; defaults to the output target so splits do not shred bin-pack groups. Lower for dense tables; sub-min groups are then skipped |
+| `partial_progress` | `true` | Commits each (split) group independently so an OOM mid-run keeps prior groups |
+| `group_concurrency` | `2` | Parallel `ExecuteCompactionGroup` workers; commits stay serial. Memory-budgeted |
+| `compaction_memory_budget_bytes` | `3 GiB` | Admission cap for in-flight group footprint estimates |
+| `memory_expansion_factor` | `96` | Estimated RSS ≈ compressed_group_bytes × factor (dense string calibration; may serialize large groups under budget) |
+| `read_batch_size` | `16384` | In-memory `read.parquet.batch-size` override (never persisted) |
+| `parquet_row_group_limit` | `65536` | In-memory `write.parquet.row-group-limit` |
+| `parquet_row_group_bytes` | `32 MiB` | In-memory `write.parquet.row-group-size-bytes` |
+| `compression_codec` | `zstd` | In-memory `write.parquet.compression-codec` |
+| `compression_level` | `3` | In-memory `write.parquet.compression-level` (balanced write vs size/reads) |
+| `metrics_mode` | `truncate(16)` | In-memory `write.metadata.metrics.default` (auditable; lowers ByteArrayStatistics cost) |
+
+When `group_concurrency > 1`, Cryo stages groups via iceberg-go's exported
+`table.ExecuteCompactionGroup` under a memory-budget gate, then commits each staged
+result with `Transaction.NewRewrite` → `ApplyResult` → `Commit` (serialized). IO
+tuning props are applied on an **in-memory table view** only (MetadataBuilder +
+`table.New`); they are never written to the catalog.
+
+**Profiling:** set `CRYO_ENGINE_PPROF_DIR=/tmp/cryo-pprof` to write `cpu-*.pprof` and
+`heap-*.pprof` from `cryo-engine-go`. Progress also emits `read_write_*` / `commit_*`
+phase events for wall-time attribution.
+
+**Throughput loop (local MinIO):**
+
+```bash
+make seed-native-compaction-perf-fixture   # ~2 GB dense GeoIP-shaped table
+CRYO_PERF_LABEL=baseline make test-native-compaction-throughput-go
+CRYO_PERF_LABEL=tuned CRYO_PERF_GROUP_CONCURRENCY=2 make test-native-compaction-throughput-go
+# results → tmp/native-compaction-perf/{results.jsonl,results.csv}
+```
+
+The single-commit path remains available by setting `partial_progress: false`; MOR on non-REST
+catalogs still retries the whole rewrite on conflict when that path is used.
 
 ## Optional PyO3 stack (out of scope here)
 

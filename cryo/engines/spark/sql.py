@@ -85,9 +85,9 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         operation.params.get("target_file_size_bytes")
         or int(operation.params.get("file_size_mb", 256)) * 1024 * 1024
     )
-    min_input_files = int(
-        operation.params.get("min_input_files", operation.params.get("min_small_files", 128))
-    )
+    # Per-group rewrite floor (Iceberg procedure). Distinct from planner
+    # min_small_files (table-level "should we schedule OPTIMIZE?").
+    min_input_files = int(operation.params.get("min_input_files", 2))
     args = [f"table => '{table_name}'"]
 
     # Strategy (binpack, sort)
