@@ -16,3 +16,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Local perf / profiling artifacts (MinIO throughput loop)
+tmp/
+*.pprof

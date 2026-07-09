@@ -120,6 +120,19 @@ def normalize_native_operation_params(operation: Operation) -> dict[str, Any]:
         # Commit each (possibly split) group as its own snapshot so an OOM
         # mid-rewrite does not discard already-written groups.
         params.setdefault("partial_progress", True)
+        # Validated on local MinIO (docs/native-go-compaction-throughput.md):
+        # group_concurrency=2 + IO/metrics tuning beats serial baseline wall
+        # while staying ≤ baseline peak RSS when expansion_factor≈64.
+        params.setdefault("group_concurrency", 2)
+        params.setdefault("compaction_memory_budget_bytes", 3 * 1024 * 1024 * 1024)
+        params.setdefault("memory_expansion_factor", 96)
+        params.setdefault("read_batch_size", 16_384)
+        params.setdefault("parquet_row_group_limit", 65_536)
+        params.setdefault("parquet_row_group_bytes", 32 * 1024 * 1024)
+        # zstd level 3: middle ground for compaction write CPU vs output size / reads.
+        params.setdefault("compression_codec", "zstd")
+        params.setdefault("compression_level", 3)
+        params.setdefault("metrics_mode", "truncate(16)")
     return params
 
 

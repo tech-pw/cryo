@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 TRINO_VERSION ?= 480
@@ -106,6 +106,10 @@ seed-native-compaction-fixtures: build-engine-go build-seed-native-fixtures
 	CRYO_SEED_NATIVE_FIXTURES_BINARY=engine-go/bin/seed-native-fixtures \
 	  $(PYTHON) tests/integration/native/generate_compaction_fixtures.py
 
+seed-native-compaction-perf-fixture: up-datalake-native
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	  $(PYTHON) tests/integration/native/generate_perf_compaction_fixture.py
+
 build-seed-native-fixtures:
 	cd engine-go && CGO_ENABLED=0 go build -o bin/seed-native-fixtures ./cmd/seed-native-fixtures
 
@@ -158,6 +162,16 @@ test-native-compaction-perf-go: build-engine-go
 	CRYO_ENGINE_IMPL=go \
 	CRYO_ENGINE_BINARY=$${CRYO_ENGINE_BINARY:-engine-go/bin/cryo-engine-go} \
 	pytest tests/integration/native/test_native_compaction_perf.py -m integration
+
+# GB-scale local-MinIO throughput loop (≤20 min target). Seeds fixture if missing.
+test-native-compaction-throughput-go: build-engine-go seed-native-compaction-perf-fixture
+	CRYO_REST_URI=$${CRYO_REST_URI:-http://localhost:8181} \
+	CRYO_ENGINE_IMPL=go \
+	CRYO_ENGINE_BINARY=$${CRYO_ENGINE_BINARY:-engine-go/bin/cryo-engine-go} \
+	CRYO_RUN_PERF_THROUGHPUT=1 \
+	CRYO_PERF_LABEL=$${CRYO_PERF_LABEL:-tuned} \
+	CRYO_PERF_RESULTS_DIR=$${CRYO_PERF_RESULTS_DIR:-tmp/native-compaction-perf} \
+	pytest tests/integration/native/test_native_compaction_throughput.py -m integration -v
 
 validate-dense-compaction-memory: build-engine-go-linux
 	./scripts/validate_dense_compaction_memory.sh

@@ -62,6 +62,10 @@ The authoritative architecture / contract docs live at the repo root:
 ### Local development
 
 - [`developer-guide.md`](./developer-guide.md) — dev workflow.
+- [`native-go-compaction-throughput.md`](./native-go-compaction-throughput.md) —
+  local-MinIO compaction speedup loop (≤20 min / RAM-neutral).
+- [`LOCAL_DEV_ONLY_INVENTORY.md`](./LOCAL_DEV_ONLY_INVENTORY.md) — also listed under
+  Operations; keep in sync when adding seed/perf Makefile targets.
 
 ## Conventions for docs in this directory
 

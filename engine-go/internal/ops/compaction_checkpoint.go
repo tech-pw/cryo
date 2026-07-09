@@ -85,6 +85,11 @@ func executePartialProgressResumable(
 		SnapshotProps: validate.CustomSnapshotProps(tbl),
 		GroupOptions:  rewriteGroupOptions(cfg.TargetFileSizeBytes, op.Params),
 	}
+	ioProps := rewriteIOProperties(op.Params)
+	stageTbl, cloneErr := cloneTableWithProperties(tbl, ioProps)
+	if cloneErr != nil {
+		return totals, fmt.Errorf("clone table for rewrite IO props: %w", cloneErr)
+	}
 
 	maxRounds := appCommitRetries + 1
 	committedGroups := 0
@@ -97,6 +102,10 @@ func executePartialProgressResumable(
 				return totals, fmt.Errorf("reload table before checkpoint round %d: %w", round, err)
 			}
 			tbl = reloaded
+			stageTbl, err = cloneTableWithProperties(tbl, ioProps)
+			if err != nil {
+				return totals, err
+			}
 
 			replanned, replannedPaths, err := planCheckpointGroups(
 				ctx, tbl, cfg, rowFilter, op.Predicates, groupSplitLimitsFromParams(op.Params),
@@ -137,7 +146,7 @@ func executePartialProgressResumable(
 				len(groups),
 			)
 			outcome, err := commitCheckpointGroup(
-				ctx, tbl, group, morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
+				ctx, tbl, stageTbl, group, morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
 			)
 			if err != nil {
 				if isRetryableCommitError(err) {
@@ -159,6 +168,10 @@ func executePartialProgressResumable(
 			if err := tbl.Refresh(ctx); err != nil {
 				return totals, fmt.Errorf("refresh table after group %d: %w", i, err)
 			}
+			stageTbl, err = cloneTableWithProperties(tbl, ioProps)
+			if err != nil {
+				return totals, err
+			}
 		}
 
 		if !conflicted {
@@ -175,10 +188,12 @@ func executePartialProgressResumable(
 }
 
 // commitCheckpointGroup rewrites and atomically commits a single compaction group.
-// An empty group (all inputs already gone after a reload) is an idempotent no-op.
+// stageTbl is an in-memory props-augmented view used for ExecuteCompactionGroup;
+// tbl is the live catalog table used for the commit. An empty group is a no-op.
 func commitCheckpointGroup(
 	ctx context.Context,
 	tbl *table.Table,
+	stageTbl *table.Table,
 	group table.CompactionTaskGroup,
 	morCompaction bool,
 	rewrittenPaths map[string]struct{},
@@ -193,6 +208,19 @@ func commitCheckpointGroup(
 		return zero, fmt.Errorf("context cancelled before group commit: %w", err)
 	}
 
+	progress.Phase("rewrite_data_files", "read_write_started", 0, 0,
+		uint64(len(group.Tasks)), uint64(groupCompressedBytes(group)))
+
+	gr, err := table.ExecuteCompactionGroup(ctx, stageTbl, group, rewriteOpts.GroupOptions...)
+	if err != nil {
+		return zero, fmt.Errorf("rewrite_data_files group: %w", err)
+	}
+	if len(gr.OldDataFiles) == 0 && len(gr.NewDataFiles) == 0 {
+		return zero, nil
+	}
+	progress.Phase("rewrite_data_files", "read_write_done", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
+
 	groupTxn := tbl.NewTransaction()
 	if err := applyCompactionTestProperties(groupTxn); err != nil {
 		return zero, fmt.Errorf("configure compaction test properties: %w", err)
@@ -201,20 +229,25 @@ func commitCheckpointGroup(
 		if err := ensureMORCompactionProperties(groupTxn, tbl.Metadata().Properties()); err != nil {
 			return zero, fmt.Errorf("configure MOR compaction properties: %w", err)
 		}
+	}
+
+	progress.Phase("rewrite_data_files", "commit_started", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
+
+	rewrite := groupTxn.NewRewrite(rewriteOpts.SnapshotProps)
+	rewrite.ApplyResult(gr)
+	if morCompaction {
 		groupRewritten := rewrittenPathsForGroup(rewrittenPaths, group)
 		deadEqDeletes, eqErr := collectDeadEqualityDeletesForGroup(ctx, tbl, groupRewritten)
 		if eqErr != nil {
 			return zero, fmt.Errorf("collect dead eq deletes: %w", eqErr)
 		}
-		rewriteOpts.ExtraDeleteFilesToRemove = deadEqDeletes
+		for _, df := range deadEqDeletes {
+			rewrite.DeleteFile(df)
+		}
 	}
-
-	groupResult, err := groupTxn.RewriteDataFiles(ctx, []table.CompactionTaskGroup{group}, rewriteOpts)
-	if err != nil {
-		return zero, fmt.Errorf("rewrite_data_files group: %w", err)
-	}
-	if groupResult == nil || groupResult.RewrittenGroups == 0 {
-		return zero, nil
+	if err := rewrite.Commit(ctx); err != nil {
+		return zero, fmt.Errorf("stage rewrite snapshot: %w", err)
 	}
 
 	testhook.BeforeCommit()
@@ -226,12 +259,14 @@ func commitCheckpointGroup(
 	if err := validate.AssertMetadataStable(beforeMeta, updated); err != nil {
 		return zero, err
 	}
+	progress.Phase("rewrite_data_files", "commit_done", 0, 0,
+		uint64(len(gr.NewDataFiles)), uint64(gr.BytesAfter))
 
 	return groupCommitOutcome{
 		committed:    true,
-		outputFiles:  uint64(groupResult.AddedDataFiles),
-		bytesRemoved: uint64(groupResult.BytesBefore),
-		bytesWritten: uint64(groupResult.BytesAfter),
+		outputFiles:  uint64(len(gr.NewDataFiles)),
+		bytesRemoved: uint64(gr.BytesBefore),
+		bytesWritten: uint64(gr.BytesAfter),
 	}, nil
 }
 
