@@ -14,7 +14,9 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.scheduler import alert_dispatcher
 from cryo.scheduler.alert_dispatcher import (
+    _ai_summary_for_breach,
     check_table_breach,
     run_alert_dispatch_tick,
 )
@@ -222,9 +224,7 @@ def test_effectiveness_breach_silent_at_or_above_20_to_1(session):
     assert not any("Compaction effectiveness" in r for r in breach.reasons)
 
 
-def _seed_commit_race_audit_rows(
-    session, table: Table, *, count: int, hours_ago: int = 1
-) -> None:
+def _seed_commit_race_audit_rows(session, table: Table, *, count: int, hours_ago: int = 1) -> None:
     """Write ``count`` FAILED optimize rows whose detail carries the commit-race token."""
     from cryo.engines.native.runner import COMMIT_RACE_LOST_TOKEN
 
@@ -273,3 +273,79 @@ def test_commit_race_breach_ignores_stale_losses(session):
     breach = check_table_breach(session, table)
 
     assert not any("losing the commit race" in r for r in breach.reasons)
+
+
+# ---------------------------------------------------------------------------
+# AI root-cause summary attached to Slack breach alerts
+# ---------------------------------------------------------------------------
+
+
+def test_ai_summary_is_none_when_feature_disabled(session, monkeypatch):
+    table = _seed_table(session)
+    monkeypatch.setattr(
+        alert_dispatcher,
+        "get_settings",
+        lambda: type("FakeSettings", (), {"ai_feature_diagnosis_enabled": False})(),
+    )
+
+    summary = _ai_summary_for_breach(session, table.id)
+
+    assert summary is None
+
+
+def test_ai_summary_swallows_exceptions_and_returns_none(session, monkeypatch):
+    table = _seed_table(session)
+
+    async def _boom(session, table_id):
+        raise RuntimeError("LLM provider unreachable")
+
+    monkeypatch.setattr("cryo.ai.anomaly_brief.compose_root_cause_brief", _boom)
+
+    summary = _ai_summary_for_breach(session, table.id)
+
+    assert summary is None
+
+
+def test_ai_summary_returns_top_hypothesis_text(session, monkeypatch):
+    table = _seed_table(session)
+
+    class _FakeHypothesis:
+        title = "Writer produced many small files"
+        because = "Small-file count rose sharply between recent scans."
+
+    class _FakeBrief:
+        hypotheses = [_FakeHypothesis()]
+
+    async def _fake_compose(session, table_id):
+        return _FakeBrief()
+
+    monkeypatch.setattr("cryo.ai.anomaly_brief.compose_root_cause_brief", _fake_compose)
+
+    summary = _ai_summary_for_breach(session, table.id)
+
+    assert summary == (
+        "Writer produced many small files (Small-file count rose sharply between recent scans.)"
+    )
+
+
+def test_dispatch_passes_ai_summary_through_to_slack(session, monkeypatch):
+    table = _seed_table(session, owner_email="owner@example.com")
+    _seed_breached_stats(session, table, scan_at=datetime.now(UTC))
+
+    monkeypatch.setattr(
+        alert_dispatcher, "_ai_summary_for_breach", lambda session, tid: "root cause X"
+    )
+    captured: dict = {}
+
+    def _fake_send_slack(table_name, reasons, *, webhook_url=None, ai_summary=None):
+        captured["table_name"] = table_name
+        captured["ai_summary"] = ai_summary
+        return True
+
+    monkeypatch.setattr("cryo.integrations.alerts.send_slack_table_breach_alert", _fake_send_slack)
+    monkeypatch.setattr("cryo.reporting.email.send_email", lambda *a, **k: None)
+
+    sent = run_alert_dispatch_tick(session)
+
+    assert sent == 1
+    assert captured["ai_summary"] == "root cause X"
