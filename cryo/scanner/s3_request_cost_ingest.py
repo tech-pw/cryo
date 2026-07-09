@@ -1,15 +1,25 @@
 """S3 server access-log ingestion pipeline (``docs/s3-request-cost-tracking.md`` §5).
 
-Registers the log-target bucket as an external Trino table, aggregates the trailing 2-3 day
-window with a longest-prefix match against ``Table.location``, and UPSERTs the result into
-``S3RequestCostDaily`` before rolling the trailing 30 days up onto ``TableCost`` (§6.3).
+Reads and aggregates the log-target bucket's access-log objects natively (boto3 + in-process
+parsing) over the trailing 2-3 day reconciliation window, longest-prefix-matches each request
+key against ``Table.location``, and UPSERTs the result into ``S3RequestCostDaily`` before rolling
+the trailing 30 days up onto ``TableCost`` (§6.3).
 
-**Validation status**: the SQL/DDL here is written to the design doc's spec and unit-tested
-against a mocked Trino cursor (same pattern as ``tests/test_trino_engine.py``), but has not been
-benchmarked against a real Trino cluster with realistic S3 access-log volume -- §5 of the design
-doc explicitly calls that out as required before this ships to real buckets. Treat the join
-strategy below (a two-segment equi-join prefilter before the STARTS_WITH longest-match) as a
-reasonable first cut, not a validated-at-scale implementation.
+**Not a Trino/Hive-connector dependency.** An earlier version of this pipeline registered the
+log-target bucket as an external Trino Hive-connector table and ran the aggregation as SQL --
+that turned out to be fragile in practice: it requires a Trino catalog that is *both*
+Hive-connector-backed (supports ``external_location``) *and* writable by whatever credentials are
+configured, which real deployments don't reliably have (Iceberg-only catalogs reject
+``external_location``; write access and catalog topology vary independently). The design doc's
+own rationale for choosing Trino ("Cryo already owns a Trino cluster capable of doing the
+aggregation") treated Trino as a given rather than an evaluated choice, and never actually
+compared it against in-process aggregation -- doc §3's options table has no such row. Reading
+access-log objects directly (the same boto3-client pattern already used for orphan-file scanning,
+``cryo/scanner/orphans.py``) and aggregating in Python removes that dependency entirely and works
+identically regardless of which maintenance engine (native or Trino) a deployment uses elsewhere.
+``cryo/integrations/s3_bucket_provisioning.py`` still uses the small Trino-teardown helpers below
+(``_coordinator``/``_fq_table``/``_log_table_name``) to clean up an external table from an older
+Trino-based run, if one exists -- that's the only remaining Trino touchpoint in this feature.
 """
 
 from __future__ import annotations
@@ -17,6 +27,8 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -30,7 +42,7 @@ from trino.auth import BasicAuthentication
 
 from cryo.config import Settings, get_settings
 from cryo.db.models import S3BucketLogConfig, S3RequestCostDaily, Table, TableCost
-from cryo.engines.trino.client import TrinoCoordinator, connect
+from cryo.engines.trino.client import TrinoCoordinator
 from cryo.integrations import s3_bucket_logging
 from cryo.integrations.aws_s3_metrics import S3RequestPriceInfo, fetch_s3_request_prices
 from cryo.scanner.orphans import parse_s3_location
@@ -46,21 +58,7 @@ S3_LOG_LINE_PATTERN = (
     r"(\"[^\"]*\"|-) ([^ ]*)(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?"
     r"(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?$"
 )
-
-# Maps a log `operation` string to this pipeline's finer-than-AWS operation_tier (see the
-# S3RequestCostDaily docstring). Matched by prefix since AWS's operation names are consistent
-# (REST.GET.OBJECT, REST.GET.OBJECT_TAGGING, etc. all start with REST.GET).
-_OPERATION_TIER_CASE = """
-CASE
-  WHEN operation LIKE 'REST.GET%' OR operation LIKE 'REST.SELECT%' THEN 'get'
-  WHEN operation LIKE 'REST.HEAD%' THEN 'head'
-  WHEN operation LIKE 'REST.LIST%' OR operation LIKE 'BATCH.DELETE%'
-    OR operation LIKE 'REST.DELETE%' THEN 'list'
-  WHEN operation LIKE 'REST.PUT%' OR operation LIKE 'REST.POST%' OR operation LIKE 'REST.COPY%'
-    THEN 'put'
-  ELSE 'other'
-END
-""".strip()
+_S3_LOG_LINE_RE = re.compile(S3_LOG_LINE_PATTERN)
 
 # Which AWS Price List tier prices a given operation_tier value (see fetch_s3_request_prices):
 # Tier1 = PUT/COPY/POST/LIST/DELETE, Tier2 = GET/SELECT/HEAD.
@@ -116,106 +114,137 @@ def _log_table_name(bucket: str) -> str:
     return f"s3logs_{safe}"
 
 
-def register_log_table_ddl(
-    *, catalog: str, schema: str, bucket: str, log_target_bucket: str
-) -> str:
-    """§5 step 1 -- one Hive-external table per log-target bucket, one time.
-
-    A single ``log_line`` column (whole raw line); fields are parsed at query time via
-    ``regexp_extract`` rather than a Hive RegexSerDe, since Trino's own ``CREATE TABLE`` syntax
-    for the Hive connector has no ``ROW FORMAT SERDE`` clause -- registering a plain-text table
-    and parsing in SQL avoids needing a separate Hive Metastore DDL path alongside Trino's.
-    Individual day partitions are registered separately via ``register_partition`` (see
-    ``register_partition_sql``) since S3's partitioned log delivery uses plain value-only
-    directories, not Hive's ``key=value`` convention that ``partitioned_by`` auto-discovery
-    expects.
-    """
-    table = _log_table_name(bucket)
-    return (
-        f"CREATE TABLE IF NOT EXISTS {_fq_table(catalog, schema, table)} "
-        "(log_line VARCHAR, log_date VARCHAR) "
-        f"WITH (external_location = 's3a://{log_target_bucket}/', "
-        "format = 'TEXTFILE', partitioned_by = ARRAY['log_date'])"
-    )
+def _parse_log_line(line: str) -> tuple[str, str] | None:
+    """Extract ``(operation, key)`` from one raw S3 access-log line, or ``None`` if the line
+    doesn't match the expected format (partial writes, truncated lines) or carries no usable
+    operation/key (``-`` is AWS's placeholder for "not applicable")."""
+    match = _S3_LOG_LINE_RE.match(line)
+    if not match:
+        return None
+    operation, key = match.group(7), match.group(8)
+    if not operation or not key or operation == "-" or key == "-":
+        return None
+    return operation, key
 
 
-def register_partition_sql(
-    *, catalog: str, schema: str, bucket: str, log_date: date, location: str
-) -> str:
-    table = _log_table_name(bucket)
-    return (
-        f"CALL {catalog}.system.register_partition("
-        f"schema_name => '{schema}', table_name => '{table}', "
-        "partition_columns => ARRAY['log_date'], "
-        f"partition_values => ARRAY['{log_date.isoformat()}'], "
-        f"location => '{location}')"
-    )
+def _operation_tier(operation: str) -> str:
+    """Python equivalent of the SQL ``CASE`` this pipeline used to run in Trino -- maps a log
+    ``operation`` string to this pipeline's finer-than-AWS operation_tier (see the
+    S3RequestCostDaily docstring). Matched by prefix since AWS's operation names are consistent
+    (REST.GET.OBJECT, REST.GET.OBJECT_TAGGING, etc. all start with REST.GET)."""
+    if operation.startswith("REST.GET") or operation.startswith("REST.SELECT"):
+        return "get"
+    if operation.startswith("REST.HEAD"):
+        return "head"
+    if (
+        operation.startswith("REST.LIST")
+        or operation.startswith("BATCH.DELETE")
+        or operation.startswith("REST.DELETE")
+    ):
+        return "list"
+    if (
+        operation.startswith("REST.PUT")
+        or operation.startswith("REST.POST")
+        or operation.startswith("REST.COPY")
+    ):
+        return "put"
+    return "other"
 
 
-def _join_key_expr(column: str) -> str:
-    """First two path segments of a key/prefix -- the equi-join prefilter (§5's "broadcast join
-    instead of nested-loop" direction). Narrows candidates before the residual STARTS_WITH
-    longest-match, without needing a UDF or precomputed index."""
-    return f"array_join(slice(split({column}, '/'), 1, 2), '/')"
+def _prefix_join_key(path: str) -> str:
+    """First two path segments -- narrows candidates before the residual longest-prefix scan,
+    the same idea the Trino-based version expressed as a SQL equi-join prefilter."""
+    return "/".join(path.split("/")[:2])
 
 
-def build_aggregation_sql(
+def _build_prefix_index(table_prefixes: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
+    """Group ``(table_id, prefix)`` by their first-two-path-segments join key, longest-prefix
+    first within each group, so matching a log key is a dict lookup plus a short linear scan
+    instead of checking every table's prefix against every key."""
+    index: dict[str, list[tuple[str, str]]] = {}
+    for table_id, prefix in table_prefixes:
+        index.setdefault(_prefix_join_key(prefix), []).append((table_id, prefix))
+    for group in index.values():
+        group.sort(key=lambda item: len(item[1]), reverse=True)
+    return index
+
+
+def _match_table_prefix(key: str, index: dict[str, list[tuple[str, str]]]) -> str | None:
+    """Longest real prefix match for one request key. Unmatched keys (no table's prefix covers
+    this request) return ``None`` and are kept as unmatched volume, not dropped -- see
+    ``IngestResult.unmatched_requests``."""
+    for table_id, prefix in index.get(_prefix_join_key(key), ()):
+        if key.startswith(prefix):
+            return table_id
+    return None
+
+
+@dataclass(frozen=True)
+class _AggregationOutcome:
+    counts: dict[tuple[str | None, date, str], int]
+    truncated_dates: list[date]
+
+
+def _aggregate_log_objects(
+    s3_client: Any,
     *,
-    catalog: str,
-    schema: str,
-    bucket: str,
-    log_dates: list[date],
+    log_target_bucket: str,
+    located: dict[date, str],
     table_prefixes: list[tuple[str, str]],
-) -> str:
-    """§5 step 4 -- one query per bucket per run over the trailing reconciliation window.
-
-    ``table_prefixes`` is ``[(table_id, bucket_relative_prefix), ...]`` for every table this
-    source has a known ``Table.location`` for. Matching is a two-stage longest-prefix match:
-    an equi-join on the first two path segments narrows candidates (broadcast-hash-joinable),
-    then ``STARTS_WITH`` + ``ROW_NUMBER() ... ORDER BY length(prefix) DESC`` picks the single
-    longest real match per key -- see the module docstring's cross-table-prefix-collision note.
-    Rows matching no table's prefix (``table_id IS NULL``) are kept, not dropped, so unmatched
-    request volume is still visible rather than silently discarded.
+    max_objects_per_day: int,
+    max_workers: int,
+) -> _AggregationOutcome:
+    """Read every log object under each located date-partition, parse each line, and aggregate
+    into ``(table_id_or_None, log_date, operation_tier) -> request_count`` -- the same grouping
+    the Trino-based aggregation used to produce. Bounded by ``max_objects_per_day`` per
+    date-partition as a safety valve (mirrors ``cost_scan_max_list_keys``'s role in
+    ``cryo/scanner/orphans.py``); objects are fetched concurrently (bounded by ``max_workers``)
+    since a busy bucket delivers many small per-flush log files rather than a few large ones.
+    Memory stays bounded regardless of log volume: only the aggregated counts are retained, not
+    raw log lines -- each object's parsed lines are folded into the running counts and discarded.
     """
-    table = _log_table_name(bucket)
-    date_list = ", ".join(f"'{d.isoformat()}'" for d in log_dates)
-    values = (
-        ", ".join(f"('{tid}', '{prefix}')" for tid, prefix in table_prefixes)
-        if table_prefixes
-        else "(CAST(NULL AS VARCHAR), CAST(NULL AS VARCHAR))"
-    )
-    return f"""
-WITH parsed AS (
-  SELECT
-    regexp_extract(log_line, '{S3_LOG_LINE_PATTERN}', 7) AS operation,
-    regexp_extract(log_line, '{S3_LOG_LINE_PATTERN}', 8) AS key,
-    log_date
-  FROM {_fq_table(catalog, schema, table)}
-  WHERE log_date IN ({date_list})
-),
-tables(table_id, prefix) AS (VALUES {values}),
-candidates AS (
-  SELECT p.key, p.operation, p.log_date, t.table_id, length(t.prefix) AS prefix_len
-  FROM parsed p
-  LEFT JOIN tables t
-    ON {_join_key_expr("t.prefix")} = {_join_key_expr("p.key")}
-   AND STARTS_WITH(p.key, t.prefix)
-),
-ranked AS (
-  SELECT *, ROW_NUMBER() OVER (
-    PARTITION BY key, log_date ORDER BY prefix_len DESC NULLS LAST
-  ) AS rn
-  FROM candidates
-)
-SELECT
-  table_id,
-  log_date,
-  {_OPERATION_TIER_CASE} AS operation_tier,
-  COUNT(*) AS request_count
-FROM ranked
-WHERE rn = 1
-GROUP BY table_id, log_date, {_OPERATION_TIER_CASE}
-""".strip()
+    index = _build_prefix_index(table_prefixes)
+    counts: Counter[tuple[str | None, date, str]] = Counter()
+    truncated_dates: list[date] = []
+    location_prefix = f"s3a://{log_target_bucket}/"
+
+    def _read_and_parse(object_key: str) -> list[tuple[str, str]]:
+        body = s3_client.get_object(Bucket=log_target_bucket, Key=object_key)["Body"].read()
+        results = []
+        for line in body.decode("utf-8", errors="replace").splitlines():
+            parsed = _parse_log_line(line)
+            if parsed:
+                results.append(parsed)
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for log_date, location in located.items():
+            prefix = (
+                location[len(location_prefix) :]
+                if location.startswith(location_prefix)
+                else location
+            )
+            object_keys: list[str] = []
+            truncated = False
+            for page in s3_client.get_paginator("list_objects_v2").paginate(
+                Bucket=log_target_bucket, Prefix=prefix
+            ):
+                for obj in page.get("Contents", []):
+                    object_keys.append(obj["Key"])
+                    if len(object_keys) >= max_objects_per_day:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+            if truncated:
+                truncated_dates.append(log_date)
+
+            for parsed_lines in executor.map(_read_and_parse, object_keys):
+                for operation, request_key in parsed_lines:
+                    table_id = _match_table_prefix(request_key, index)
+                    counts[(table_id, log_date, _operation_tier(operation))] += 1
+
+    return _AggregationOutcome(counts=dict(counts), truncated_dates=truncated_dates)
 
 
 def locate_date_partition(
@@ -308,28 +337,19 @@ def ingest_bucket(
     config: S3BucketLogConfig,
     *,
     settings: Settings | None = None,
-    connector: Any = None,
     now: datetime | None = None,
 ) -> IngestResult:
-    """Run one ingestion pass for a single enabled bucket (§5, manual-trigger or scheduled)."""
+    """Run one ingestion pass for a single enabled bucket (§5, manual-trigger or scheduled).
+
+    Reads and aggregates the bucket's access-log objects natively -- see the module docstring
+    for why this doesn't go through Trino.
+    """
     settings = settings or get_settings()
     now = now or datetime.now(UTC)
     today = now.date()
 
     if not config.log_target_bucket:
         return IngestResult(0, 0, 0, error="No log target configured for this bucket")
-
-    catalog = settings.s3_log_trino_catalog
-    schema = settings.s3_log_trino_schema
-    coordinator = _coordinator(settings, catalog=catalog, schema=schema)
-    if coordinator is None:
-        return IngestResult(
-            0, 0, 0, error="No Trino coordinator configured (CRYO_TELEMETRY_TRINO_URL)"
-        )
-
-    connector = connector or connect
-    conn = connector(coordinator)
-    cursor = conn.cursor()
 
     start_date = config.last_ingested_date or (today - timedelta(days=_RECONCILE_WINDOW_DAYS))
     window_start = min(start_date, today - timedelta(days=_RECONCILE_WINDOW_DAYS - 1))
@@ -339,8 +359,6 @@ def ingest_bucket(
 
     s3_client = s3_bucket_logging.s3_client_for_config(config)
     if s3_client is None:
-        cursor.close()
-        conn.close()
         return IngestResult(0, 0, 0, error="No AWS credentials configured for this bucket")
 
     located: dict[date, str] = {}
@@ -356,8 +374,6 @@ def ingest_bucket(
             located[candidate_date] = f"s3a://{config.log_target_bucket}/{location}"
 
     if not located:
-        cursor.close()
-        conn.close()
         return IngestResult(
             0,
             0,
@@ -369,81 +385,52 @@ def ingest_bucket(
             ),
         )
 
+    table_locations = session.execute(
+        select(Table.id, Table.location).where(
+            Table.source_id == config.source_id, Table.location.is_not(None)
+        )
+    ).all()
+    table_prefixes: list[tuple[str, str]] = []
+    for table_id, location in table_locations:
+        row_bucket, prefix = parse_s3_location(location)
+        if row_bucket == config.bucket:
+            table_prefixes.append((str(table_id), prefix))
+
     try:
-        cursor.execute(
-            register_log_table_ddl(
-                catalog=catalog,
-                schema=schema,
-                bucket=config.bucket,
-                log_target_bucket=config.log_target_bucket,
-            )
-        )
-        for log_date, location in located.items():
-            try:
-                cursor.execute(
-                    register_partition_sql(
-                        catalog=catalog,
-                        schema=schema,
-                        bucket=config.bucket,
-                        log_date=log_date,
-                        location=location,
-                    )
-                )
-            except Exception as exc:
-                if "already exists" not in str(exc).lower():
-                    raise
-
-        table_locations = session.execute(
-            select(Table.id, Table.location).where(
-                Table.source_id == config.source_id, Table.location.is_not(None)
-            )
-        ).all()
-        table_prefixes: list[tuple[str, str]] = []
-        for table_id, location in table_locations:
-            row_bucket, prefix = parse_s3_location(location)
-            if row_bucket == config.bucket:
-                table_prefixes.append((str(table_id), prefix))
-
-        sql = build_aggregation_sql(
-            catalog=catalog,
-            schema=schema,
-            bucket=config.bucket,
-            log_dates=list(located.keys()),
+        outcome = _aggregate_log_objects(
+            s3_client,
+            log_target_bucket=config.log_target_bucket,
+            located=located,
             table_prefixes=table_prefixes,
+            max_objects_per_day=settings.s3_log_ingest_max_objects_per_day,
+            max_workers=settings.s3_log_ingest_concurrency,
         )
-        cursor.execute(sql)
-        rows = cursor.fetchall()
     except Exception as exc:
         logger.exception("S3 request-cost ingestion failed for bucket %s", config.bucket)
         return IngestResult(0, 0, 0, error=str(exc))
-    finally:
-        cursor.close()
-        conn.close()
+
+    if outcome.truncated_dates:
+        logger.warning(
+            "S3 request-cost ingestion for bucket %s hit the %s-object cap on %s date(s); "
+            "counts for those days are a lower bound, not exact",
+            config.bucket,
+            settings.s3_log_ingest_max_objects_per_day,
+            ", ".join(d.isoformat() for d in outcome.truncated_dates),
+        )
 
     price_info = _resolve_request_prices(config, settings)
     matched_table_ids: set[uuid.UUID] = set()
     unmatched = 0
     upserted = 0
 
-    for row in rows:
-        table_id_raw, log_date_raw, operation_tier, request_count = (
-            row[0],
-            row[1],
-            row[2],
-            int(row[3]),
-        )
-        log_date = (
-            log_date_raw
-            if isinstance(log_date_raw, date)
-            else date.fromisoformat(str(log_date_raw))
-        )
+    for (table_id_raw, log_date, operation_tier), request_count in outcome.counts.items():
         tier = _PRICING_TIER.get(operation_tier, "tier1")
         price_per_1k = (
             price_info.price_per_1k_get if tier == "tier2" else price_info.price_per_1k_put
         )
         cost_usd = (request_count / 1000.0) * price_per_1k
 
-        table_id = uuid.UUID(str(table_id_raw)) if table_id_raw is not None else None
+        table_id = uuid.UUID(table_id_raw) if table_id_raw is not None else None
         if table_id is None:
             unmatched += request_count
         else:
