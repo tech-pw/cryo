@@ -103,3 +103,54 @@ def test_batch_deep_run_maps_per_operation_audit_fields() -> None:
     assert orphan.actual_bytes_freed == 50_000
     assert optimize.input_files_count == 12
     assert optimize.output_files_count == 2
+
+
+def test_empty_batch_attributes_failure_to_optimize_not_expire() -> None:
+    """OOM-killed subprocess must not audit as expire_snapshots (run 113f6da3)."""
+    plan = MaintenancePlan(
+        table_ref="hive.geoip.silver_geoip_locations",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 168}),
+            Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
+        ),
+    )
+    native_result = NativeExecuteResult(
+        ok=False,
+        table_ref="geoip.silver_geoip_locations",
+        results=(),
+        error="cryo-engine produced no JSON response on stdout",
+    )
+    exec_results = _exec_results_from_native_batch(
+        plan.operations, native_result, duration_ms=121_000
+    )
+
+    assert len(exec_results) == 3
+    expire, orphan, optimize = exec_results
+    assert expire.ok and expire.skipped
+    assert orphan.ok and orphan.skipped
+    assert not optimize.ok and not optimize.skipped
+    assert optimize.error == "cryo-engine produced no JSON response on stdout"
+    assert optimize.detail == "optimize"
+
+
+def test_empty_batch_without_optimize_fails_last_op() -> None:
+    plan = MaintenancePlan(
+        table_ref="demo.orders",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+        ),
+    )
+    native_result = NativeExecuteResult(
+        ok=False,
+        table_ref="demo.orders",
+        results=(),
+        error="cryo-engine exited with code -9",
+    )
+    exec_results = _exec_results_from_native_batch(plan.operations, native_result, duration_ms=50)
+    assert exec_results[0].ok and exec_results[0].skipped
+    assert not exec_results[1].ok
+    assert exec_results[1].detail == "remove_orphan_files"

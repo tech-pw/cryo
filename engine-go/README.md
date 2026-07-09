@@ -32,7 +32,8 @@ transition; compaction is not supported on Rust.
 
 ## Partial-progress checkpointing (`params.partial_progress`)
 
-When `rewrite_data_files` params set `partial_progress: true`, each compaction group is committed as
+When `rewrite_data_files` params set `partial_progress: true` (the Python payload
+normalizer now defaults this on for OPTIMIZE), each compaction group is committed as
 its own atomic Iceberg snapshot (Iceberg's `PARTIAL_PROGRESS_ENABLED` precedent) instead of one
 all-or-nothing commit. This makes the run **resumable and commit-race-tolerant**:
 
@@ -47,8 +48,27 @@ all-or-nothing commit. This makes the run **resumable and commit-race-tolerant**
   turns this into a first-class "compaction is losing the commit race on table X" signal rather than
   a silent retry loop.
 
-The single-commit path (default) is unchanged; MOR on non-REST catalogs still retries the whole
-rewrite on conflict.
+### File-group planning + memory bounds
+
+File grouping matches Spark/Iceberg `rewrite_data_files` semantics (engine-side; Cryo's Python
+planner only scopes **partitions**):
+
+1. iceberg-go `PlanCompaction` bin-packs candidates toward `target_file_size_bytes`, requiring
+   `min_input_files` per bin (default **2**).
+2. Cryo may split oversized bins for memory (`max_files_per_group` / `max_bytes_per_group`).
+3. After split, groups with fewer than `min_input_files` are **dropped** — never rewritten 1→1.
+
+| Param | Default | Effect |
+|-------|---------|--------|
+| `target_file_size_bytes` | `256 MiB` | Bin-pack / writer target output size |
+| `min_input_files` | `2` | Spark-style floor: skip groups with fewer files (distinct from planner `min_small_files`) |
+| `scan_concurrency` | `1` | Caps parallel Parquet→Arrow readers (`WithCompactionScanConcurrency`) |
+| `max_files_per_group` | `8` | Splits oversized bin-pack groups so each rewrite/commit processes ≤ N input files |
+| `max_bytes_per_group` | `= target_file_size_bytes` | Compressed-byte memory cap; defaults to the output target so splits do not shred bin-pack groups. Lower for dense tables; sub-min groups are then skipped |
+| `partial_progress` | `true` | Commits each (split) group independently so an OOM mid-run keeps prior groups |
+
+The single-commit path remains available by setting `partial_progress: false`; MOR on non-REST
+catalogs still retries the whole rewrite on conflict when that path is used.
 
 ## Optional PyO3 stack (out of scope here)
 
