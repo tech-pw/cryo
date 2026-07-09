@@ -101,6 +101,38 @@ def normalize_native_operation_params(operation: Operation) -> dict[str, Any]:
             file_size_mb = params.get("file_size_mb")
             if file_size_mb is not None:
                 params["target_file_size_bytes"] = int(file_size_mb) * 1024 * 1024
+        # Bound Parquet→Arrow decode parallelism and rewrite group size so
+        # high row-density tables cannot OOM a single ExecuteCompactionGroup.
+        params.setdefault("scan_concurrency", 1)
+        params.setdefault("max_files_per_group", 8)
+        # Spark/Iceberg rewrite floor: never rewrite fewer than N input files
+        # (stops wasteful 1→1 after a tight memory split). Distinct from planner
+        # min_small_files (table-level schedule gate).
+        params.setdefault("min_input_files", 2)
+        # Compressed-byte cap defaults to the output target so memory splitting
+        # does not shred bin-pack groups that were packed toward target size.
+        # Operators may lower this for dense tables; Go then drops sub-min groups.
+        target_bytes = int(
+            params.get("target_file_size_bytes")
+            or int(params.get("file_size_mb", 256)) * 1024 * 1024
+        )
+        params.setdefault("max_bytes_per_group", target_bytes)
+        # Commit each (possibly split) group as its own snapshot so an OOM
+        # mid-rewrite does not discard already-written groups.
+        params.setdefault("partial_progress", True)
+        # Validated on local MinIO (docs/native-go-compaction-throughput.md):
+        # group_concurrency=2 + IO/metrics tuning beats serial baseline wall
+        # while staying ≤ baseline peak RSS when expansion_factor≈64.
+        params.setdefault("group_concurrency", 2)
+        params.setdefault("compaction_memory_budget_bytes", 3 * 1024 * 1024 * 1024)
+        params.setdefault("memory_expansion_factor", 96)
+        params.setdefault("read_batch_size", 16_384)
+        params.setdefault("parquet_row_group_limit", 65_536)
+        params.setdefault("parquet_row_group_bytes", 32 * 1024 * 1024)
+        # zstd level 3: middle ground for compaction write CPU vs output size / reads.
+        params.setdefault("compression_codec", "zstd")
+        params.setdefault("compression_level", 3)
+        params.setdefault("metrics_mode", "truncate(16)")
     return params
 
 
