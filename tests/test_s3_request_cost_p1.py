@@ -342,6 +342,58 @@ def test_locate_date_partition_returns_none_for_flat_layout() -> None:
     assert location is None
 
 
+def test_locate_date_partition_finds_source_bucket_among_many_siblings() -> None:
+    """Regression test: a shared, org-wide logging bucket receives deliveries for many source
+    buckets under the same account/region prefix (AWS's documented "Partitioned" key format:
+    [prefix][account]/[region]/[source-bucket]/[yyyy]/[mm]/[dd]/...). Before this fix,
+    locate_date_partition only handled a *single* non-date-shaped child at a branch point --
+    with dozens/hundreds of sibling source-bucket folders (the common real-world case), it gave
+    up immediately and reported no logs found at all, for every bucket."""
+    client = _FakeListClient(
+        {
+            "logs/": ["logs/123456789012/"],
+            "logs/123456789012/": ["logs/123456789012/us-east-1/"],
+            "logs/123456789012/us-east-1/": [
+                "logs/123456789012/us-east-1/acme-etl-staging/",
+                "logs/123456789012/us-east-1/acme-backup-archive/",
+                "logs/123456789012/us-east-1/acme-lake-gold/",
+                "logs/123456789012/us-east-1/acme-lake-silver/",
+            ],
+            "logs/123456789012/us-east-1/acme-lake-gold/": [
+                "logs/123456789012/us-east-1/acme-lake-gold/2026/"
+            ],
+            "logs/123456789012/us-east-1/acme-lake-gold/2026/": [
+                "logs/123456789012/us-east-1/acme-lake-gold/2026/07/"
+            ],
+            "logs/123456789012/us-east-1/acme-lake-gold/2026/07/": [
+                "logs/123456789012/us-east-1/acme-lake-gold/2026/07/07/"
+            ],
+        }
+    )
+    location = ingest_mod.locate_date_partition(
+        client,
+        bucket="log-bucket",
+        prefix="logs/",
+        target_date=date(2026, 7, 7),
+        source_bucket="acme-lake-gold",
+    )
+    assert location == "logs/123456789012/us-east-1/acme-lake-gold/2026/07/07/"
+
+
+def test_locate_date_partition_without_source_bucket_still_fails_on_many_siblings() -> None:
+    """Without source_bucket, behavior for a many-sibling branch is unchanged (returns None) --
+    confirms the fix is additive, not a silent behavior change for callers that don't pass it."""
+    client = _FakeListClient(
+        {
+            "logs/": ["logs/a/", "logs/b/", "logs/c/"],
+        }
+    )
+    location = ingest_mod.locate_date_partition(
+        client, bucket="log-bucket", prefix="logs/", target_date=date(2026, 7, 7)
+    )
+    assert location is None
+
+
 # ---------------------------------------------------------------------------
 # §5 end-to-end ingest_bucket + §6.3 rollup
 # ---------------------------------------------------------------------------
