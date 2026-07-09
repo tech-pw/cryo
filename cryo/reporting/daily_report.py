@@ -25,9 +25,9 @@ from cryo.reporting.slack import (
     SlackClient,
     context_block,
     divider_block,
-    fields_block,
     header_block,
     section_block,
+    table_block,
 )
 
 logger = logging.getLogger(__name__)
@@ -398,41 +398,65 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
         arrow = "↑" if data.total_size_tb_delta >= 0 else "↓"
         size_delta_str = f" {arrow}{abs(data.total_size_tb_delta):.2f}"
     blocks.append(
-        fields_block(
+        table_block(
+            ["Metric", "Value"],
             [
-                ("Total Tables", str(data.total_tables)),
-                ("Health", f"{data.healthy_tables} ✓ / {data.unhealthy_tables} ✗"),
-                ("Needing Compaction", str(data.tables_needing_compaction)),
-                (
-                    "Anomalies",
+                ["📊 Total Tables", str(data.total_tables)],
+                ["💚 Health", f"{data.healthy_tables} ✓ / {data.unhealthy_tables} ✗"],
+                ["🔧 Needing Compaction", str(data.tables_needing_compaction)],
+                [
+                    "⚠️ Anomalies",
                     f"{data.total_anomalies} ({len(data.critical_anomalies)} flagged)",
-                ),
-                ("Total Size", f"{data.total_size_tb:.2f} TB{size_delta_str}"),
-                ("Monthly S3 Cost", f"${data.total_cost_usd:,.2f}"),
-                ("Projected Savings", f"${data.projected_savings_usd:,.2f}/mo"),
-            ]
+                ],
+                ["💾 Total Size", f"{data.total_size_tb:.2f} TB{size_delta_str}"],
+                ["💰 Monthly S3 Cost", f"${data.total_cost_usd:,.2f}"],
+                ["💵 Projected Savings", f"${data.projected_savings_usd:,.2f}/mo"],
+            ],
         )
     )
 
     if data.grade_distribution:
-        grade_str = " | ".join(
-            f"{grade}: {count}" for grade, count in sorted(data.grade_distribution.items())
+        blocks.append(divider_block())
+        blocks.append(section_block("*Grade Distribution*"))
+        blocks.append(
+            table_block(
+                ["Grade", "Tables"],
+                [[grade, str(count)] for grade, count in sorted(data.grade_distribution.items())],
+            )
         )
-        blocks.append(section_block(f"*Grade Distribution:* {grade_str}"))
+
+    if data.top_issues:
+        blocks.append(divider_block())
+        blocks.append(section_block("*Top Unhealthy Tables*"))
+        blocks.append(
+            table_block(
+                ["Table", "Grade", "Score", "Small Files"],
+                [
+                    [issue["table"], issue["grade"], str(issue["score"]), str(issue["small_files"])]
+                    for issue in data.top_issues[:5]
+                ],
+            )
+        )
 
     if data.maintenance_stats:
         succeeded = sum(v for k, v in data.maintenance_stats.items() if "succeeded" in k)
         failed = sum(v for k, v in data.maintenance_stats.items() if "failed" in k)
+        blocks.append(divider_block())
         blocks.append(section_block(f"*Maintenance (24h):* {succeeded} succeeded, {failed} failed"))
 
     blocks.append(divider_block())
     if data.action_items:
         severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}
-        lines = [
-            f"• {severity_emoji.get(item['severity'], '🟡')} {item['text']} {item['owner']} (today)"
-            for item in data.action_items
-        ]
-        blocks.append(section_block("*Action Items*\n" + "\n".join(lines)))
+        blocks.append(section_block("*Action Items*"))
+        blocks.append(
+            table_block(
+                ["", "Issue", "Owner"],
+                [
+                    [severity_emoji.get(item["severity"], "🟡"), item["text"], item["owner"]]
+                    for item in data.action_items
+                ],
+            )
+        )
     else:
         blocks.append(section_block("*Action Items*\nNo action required."))
 
