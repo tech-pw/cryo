@@ -395,9 +395,8 @@ def test_build_slack_blocks_critical_status_lists_action_items() -> None:
 
     status_block = next(b for b in rendered if b["type"] == "section" and "CRITICAL" in str(b))
     assert "🔴" in status_block["text"]["text"]
-    action_block = next(b for b in rendered if "Action Items" in str(b))
-    assert "null-rate spike" in action_block["text"]["text"]
-    assert "@owner@example.com" in action_block["text"]["text"]
+    action_table = next(b for b in rendered if b["type"] == "table" and "null-rate spike" in str(b))
+    assert "@owner@example.com" in str(action_table)
 
 
 def test_build_slack_blocks_always_includes_fallback_footer() -> None:
