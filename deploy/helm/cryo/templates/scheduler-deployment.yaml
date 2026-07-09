@@ -17,11 +17,13 @@ spec:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: scheduler
     spec:
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: scheduler
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "-m", "cryo.scheduler.run"]
+          command: ["cryo", "scheduler"]
           env:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}

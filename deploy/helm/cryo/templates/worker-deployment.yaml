@@ -31,7 +31,9 @@ spec:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
     spec:
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: worker
-          command: ["python", "-m", "cryo.worker.run"]
+          command: ["cryo", "worker"]
           {{- include "cryo.workerPod" (dict "root" . "resources" .Values.worker.resources) | nindent 10 }}
