@@ -107,7 +107,7 @@ repo; do not run or package them as part of a production deployment.
 | [`scripts/create_partition_fixture_tables.py`](../scripts/create_partition_fixture_tables.py) | Partition-rich fragmented fixtures in `fixtures` namespace | `gate` |
 | [`scripts/load_test_data.py`](../scripts/load_test_data.py) | On-demand fragmented snapshots for maintenance load testing | `gate` |
 | [`scripts/seed_local_config.py`](../scripts/seed_local_config.py) | Upsert DB rows pointing at `localhost` REST/HMS/Trino | `gate` (never run in prod bootstrap) |
-| [`scripts/spark_session.py`](../scripts/spark_session.py) | PySpark session wired to local REST + MinIO defaults | `gate` |
+| [`scripts/validate_dense_compaction_memory.sh`](../scripts/validate_dense_compaction_memory.sh) | Docker `--memory=1g` compaction of `f_part_dense` (GeoIP OOM class) | `gate` |
 | [`tests/integration/hms/generate_hms_fixture_tables.py`](../tests/integration/hms/generate_hms_fixture_tables.py) | Large HMS fixture tables in `hms_issues` namespace (MinIO only) | `gate` |
 | [`tests/integration/hms/spark_hms_session.py`](../tests/integration/hms/spark_hms_session.py) | PySpark session wired to local HMS + MinIO (used by fixture generator) | `gate` |
 

@@ -9,6 +9,8 @@ dist/
 build/
 target/
 engine-go/bin/
+engine-go/cryo-engine-go
+engine-go/cryo-engine-go-linux
 node_modules/
 *.so
 .env
