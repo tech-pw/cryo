@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 from cryo.engines.trino.client import TrinoCoordinator, connect, coordinators_from_config
 from cryo.engines.trino.load import probe_capacity as probe_trino_capacity
 from cryo.engines.trino.sql import render, session_setup
+
+logger = logging.getLogger(__name__)
+
+_SQL_LOG_TRUNCATE = 200
 
 
 @dataclass
@@ -58,12 +63,31 @@ class TrinoEngine:
         connection: Any = self.connector(coordinator)
         cursor: Any = connection.cursor()
         engine_ref: str | None = None
+        table_id = getattr(ctx, "table_id", None)
+        # cursor.execute() below blocks synchronously until Trino finishes the statement --
+        # for a large OPTIMIZE that can be many minutes with zero output otherwise, making a
+        # genuinely in-progress query indistinguishable from a hung one from Cryo's side.
+        logger.info(
+            "Submitting %s to Trino coordinator=%s table_id=%s sql=%s",
+            stmt.action.value,
+            coordinator.label,
+            table_id,
+            stmt.sql[:_SQL_LOG_TRUNCATE],
+        )
         try:
             for setup_sql in self.session_setup():
                 cursor.execute(setup_sql)
             cursor.execute(stmt.sql)
             rows = tuple(tuple(row) for row in (cursor.fetchall() or ()))
             engine_ref = _query_id(cursor)
+            logger.info(
+                "Trino %s finished coordinator=%s table_id=%s query_id=%s duration_ms=%d",
+                stmt.action.value,
+                coordinator.label,
+                table_id,
+                engine_ref,
+                _elapsed_ms(start),
+            )
 
             # Extract file counts for OPTIMIZE operations
             input_files = None
@@ -90,6 +114,15 @@ class TrinoEngine:
             )
         except Exception as exc:
             engine_ref = _query_id(cursor)
+            logger.warning(
+                "Trino %s failed coordinator=%s table_id=%s query_id=%s duration_ms=%d error=%s",
+                stmt.action.value,
+                coordinator.label,
+                table_id,
+                engine_ref,
+                _elapsed_ms(start),
+                exc,
+            )
             return ExecResult(
                 ok=False,
                 engine_ref=engine_ref,

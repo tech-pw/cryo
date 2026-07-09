@@ -119,3 +119,48 @@ def test_trino_engine_captures_execution_errors() -> None:
     assert result.ok is False
     assert result.engine_ref == "query_123"
     assert result.error == "boom"
+
+
+def test_trino_engine_logs_submission_and_completion(caplog) -> None:
+    """A long-running OPTIMIZE blocks synchronously on cursor.execute() with no other output --
+    without these log lines, a genuinely in-progress query is indistinguishable from a hung one
+    from Cryo's side. Regression test for that observability gap."""
+    cursor = FakeCursor([(1,)])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    with caplog.at_level("INFO", logger="cryo.engines.trino.engine"):
+        engine.execute(
+            RenderedStatement(
+                action=OperationType.OPTIMIZE,
+                sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+                engine=EngineType.TRINO,
+            ),
+            ExecCtx(replica="localhost", table_id="table-1"),
+        )
+
+    messages = [record.message for record in caplog.records]
+    assert any("Submitting optimize to Trino" in m and "table-1" in m for m in messages)
+    assert any("Trino optimize finished" in m and "query_123" in m for m in messages)
+
+
+def test_trino_engine_logs_failure(caplog) -> None:
+    cursor = FakeCursor(fail_on="optimize")
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost"}, connector=connector)
+    with caplog.at_level("INFO", logger="cryo.engines.trino.engine"):
+        engine.execute(
+            RenderedStatement(
+                action=OperationType.OPTIMIZE,
+                sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+                engine=EngineType.TRINO,
+            )
+        )
+
+    messages = [record.message for record in caplog.records]
+    assert any("Trino optimize failed" in m and "boom" in m for m in messages)
