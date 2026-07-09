@@ -3513,6 +3513,11 @@ export interface components {
         DailyReportResponse: {
             /** Report Date */
             report_date: string;
+            /**
+             * Status
+             * @default CLEAR
+             */
+            status: string;
             /** Summary */
             summary: {
                 [key: string]: unknown;
@@ -3533,12 +3538,19 @@ export interface components {
             critical_anomalies: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Action Items
+             * @default []
+             */
+            action_items: {
+                [key: string]: unknown;
+            }[];
             /** Cost */
             cost: {
                 [key: string]: unknown;
             };
-            /** Ai Summary */
-            ai_summary?: string | null;
+            /** Bottom Line */
+            bottom_line?: string | null;
             /**
              * Slack Sent
              * @default false
