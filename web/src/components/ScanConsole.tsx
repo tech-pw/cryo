@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Descriptions, Progress, Space, Typography } from "antd";
-import { useMemo } from "react";
 import { getRun } from "../api/client";
 import type { JsonObject, RunRead, UUID } from "../api/types";
 import { useRunLiveEvents, isTerminalRunStatus } from "../hooks/useRunLiveEvents";
@@ -53,14 +52,6 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
   const queueError = stringValue(summary, "queue_error");
   const lastError = stringValue(summary, "last_error");
   const failures = failedTables(runData);
-  const liveMessages = useMemo(
-    () =>
-      messages.filter(
-        (item) => item.type === "log_line" || item.type === "scan_progress"
-      ),
-    [messages]
-  );
-
   return (
     <Space orientation="vertical" size={12} className="full-width">
       {runData?.status === "accepted" || runData?.status === "queued" ? (
@@ -107,7 +98,7 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
 
       <LogList
         title="Live scan log"
-        items={liveMessages}
+        items={messages}
         emptyText="No live scan events yet."
         wsOpen={wsOpen}
         wsExhausted={wsExhausted}
