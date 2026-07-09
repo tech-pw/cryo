@@ -31,6 +31,38 @@ func ExecuteOperation(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 	return result
 }
 
+// safeExecuteOperation recovers a panic in the underlying iceberg-go scan/rewrite path (seen in
+// practice: a malformed timestamptz value in a table's own manifest metadata crashes the parser)
+// so one corrupted table can't take the whole subprocess down with it. Without this, a panic in
+// ExecuteOperation propagates through Execute's loop to main() and kills the process outright --
+// every other operation in the same job (even ones with no relation to the failing code path,
+// e.g. expire_snapshots after a panicking optimize) gets reported as "subprocess exited before
+// results" instead of actually running.
+func safeExecuteOperation(ctx context.Context, req *protocol.ExecuteRequest, op *protocol.OperationRequest) protocol.OperationResult {
+	return recoverOperation(op.OperationType, func() protocol.OperationResult {
+		return ExecuteOperation(ctx, req, op)
+	})
+}
+
+// recoverOperation runs fn and converts any panic into a failed OperationResult instead of
+// letting it propagate. Factored out from safeExecuteOperation so the recover mechanism itself
+// is unit-testable without needing real iceberg-go fixtures to trigger a panic.
+func recoverOperation(operationType string, fn func() protocol.OperationResult) (result protocol.OperationResult) {
+	started := time.Now()
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("panic in %s: %v", operationType, r)
+			result = protocol.OperationResult{
+				Operation:  operationType,
+				Success:    false,
+				Error:      &msg,
+				DurationMS: uint64(time.Since(started).Milliseconds()),
+			}
+		}
+	}()
+	return fn()
+}
+
 // Execute runs all operations in the request and returns the aggregate response.
 func Execute(ctx context.Context, req *protocol.ExecuteRequest) protocol.ExecuteResponse {
 	// Seed the context with the source's static S3 credentials so the commit write path
@@ -42,7 +74,7 @@ func Execute(ctx context.Context, req *protocol.ExecuteRequest) protocol.Execute
 	allOK := true
 
 	for i := range req.Operations {
-		result := ExecuteOperation(ctx, req, &req.Operations[i])
+		result := safeExecuteOperation(ctx, req, &req.Operations[i])
 		results = append(results, result)
 		if !result.Success {
 			allOK = false
