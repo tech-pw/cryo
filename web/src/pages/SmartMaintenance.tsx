@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, Col, Descriptions, Drawer, Empty, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Descriptions, Drawer, Empty, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -225,6 +225,21 @@ export function SmartMaintenance() {
             label: "Overview",
             children: (
               <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                {overview.isError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="Couldn't load Smart Maintenance overview"
+                    description={
+                      overview.error instanceof Error ? overview.error.message : "Unknown error"
+                    }
+                    action={
+                      <Button size="small" onClick={() => void overview.refetch()}>
+                        Retry
+                      </Button>
+                    }
+                  />
+                ) : null}
                 <Row gutter={[12, 12]}>
                   <Col xs={24} md={8}>
                     <Card>
@@ -263,15 +278,33 @@ export function SmartMaintenance() {
                     <Descriptions.Item label="UNKNOWN">{overview.data.tiers.unknown}</Descriptions.Item>
                   </Descriptions>
                 ) : null}
-                <Card title="Layout Recommendations">
-                  <Table
-                    rowKey="id"
-                    loading={recommendations.isLoading}
-                    dataSource={recommendationItems}
-                    columns={recColumns}
-                    pagination={{ pageSize: 10 }}
+                {recommendations.isError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="Couldn't load layout recommendations"
+                    description={
+                      recommendations.error instanceof Error
+                        ? recommendations.error.message
+                        : "Unknown error"
+                    }
+                    action={
+                      <Button size="small" onClick={() => void recommendations.refetch()}>
+                        Retry
+                      </Button>
+                    }
                   />
-                </Card>
+                ) : (
+                  <Card title="Layout Recommendations">
+                    <Table
+                      rowKey="id"
+                      loading={recommendations.isLoading}
+                      dataSource={recommendationItems}
+                      columns={recColumns}
+                      pagination={{ pageSize: 10 }}
+                    />
+                  </Card>
+                )}
               </Space>
             )
           },
@@ -280,10 +313,25 @@ export function SmartMaintenance() {
             label: "Detection Tiers",
             children: (
               <Card>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  Click a row, or use Inspect ROI, to see the ROI decision and workload forecast
-                  behind a table&apos;s tier without leaving this list.
-                </Typography.Paragraph>
+                {tiers.isError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="Couldn't load detection tiers"
+                    description={tiers.error instanceof Error ? tiers.error.message : "Unknown error"}
+                    action={
+                      <Button size="small" onClick={() => void tiers.refetch()}>
+                        Retry
+                      </Button>
+                    }
+                    style={{ marginBottom: 12 }}
+                  />
+                ) : (
+                  <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                    Click a row, or use Inspect ROI, to see the ROI decision and workload forecast
+                    behind a table&apos;s tier without leaving this list.
+                  </Typography.Paragraph>
+                )}
                 <Table
                   rowKey="table_id"
                   loading={tiers.isLoading}
