@@ -617,7 +617,7 @@ Tasks:
 | 1 | `internal/predicate/` Cryo → iceberg-go filter | ✅ Done | OR-of-AND terms; identity/day/month/year; bucket/truncate rejected |
 | 2 | `compaction.go` analyze path | ✅ Done | Scoped `PlanFiles` + `compaction.PlanCompaction`; returns est. input/output/bytes |
 | 3 | `compaction.go` execute path | ✅ Done | `Scan` → `PlanCompaction` → `RewriteDataFiles` → `Commit` via iceberg-go |
-| 4 | Streaming (bounded memory) | ✅ Done | Delegates to iceberg-go rolling writer (`ExecuteCompactionGroup`); no whole-partition buffer |
+| 4 | Streaming (bounded memory) | ✅ Done | Delegates to iceberg-go rolling writer; caps `scan_concurrency` (default 1), splits at `max_files_per_group` (8) / `max_bytes_per_group` (defaults to `target_file_size_bytes`), then **re-applies `min_input_files` (default 2)** so memory splits cannot produce 1→1 rewrites; `partial_progress` commits each group |
 | 5 | Pre-commit guard rails (#1, #3, #8) | 🟡 Partial | Row-count + metadata + MOR gate in-process; partial-progress path fixed (`executePartialProgress`); e2e oracles O1/O3/O6 |
 | 6 | Metrics (`input_files`, `output_files`, bytes) | ✅ Done | Distinct counts in `OperationResult`; `files_rewritten` = candidate input count |
 | 7 | Custom snapshot property preservation | ✅ Done | Non-system parent summary props copied into `RewriteDataFilesOptions.SnapshotProps` |
@@ -957,8 +957,12 @@ at the Python e2e level by interleaving Trino/PyIceberg writes with the native r
 - **P3 No storage growth after cycle:** stored bytes **decrease** after compaction → expire → orphan (the
   storage-transient rule §6). Measuring without the cycle is expected to show a transient increase; assert
   net decrease only after the full cycle.
-- **P4 Bounded memory:** compacting `f_part_skew`'s large partition keeps `cryo-engine-go` RSS under a cap
-  (e.g. < 1 GB) — proves streaming, not whole-partition buffering.
+- **P4 Bounded memory:** compacting `f_part_dense` (high row-density single partition; GeoIP-shaped)
+  keeps `cryo-engine-go` RSS under a 1 GiB cap via optional tight `max_bytes_per_group` +
+  `scan_concurrency=1` (default `max_bytes_per_group` follows `target_file_size_bytes`; sub-
+  `min_input_files` groups are skipped, not rewritten 1→1). Docker validation:
+  `scripts/validate_dense_compaction_memory.sh` (`--memory=1g`). Exemplar failure: run
+  `858ad9eb` on `geoip.silver_geoip_locations`.
 - **P5 No write amplification:** the idempotence run (§8.4.18) writes ~0 new bytes and removes ~0 files.
 
 ### 8.7 Differential testing vs Trino/Spark (ground truth)

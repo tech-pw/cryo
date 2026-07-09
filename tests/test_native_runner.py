@@ -244,9 +244,46 @@ def test_normalize_optimize_params_maps_file_size_mb() -> None:
     )
     params = request["operations"][0]["params"]
     assert params["target_file_size_bytes"] == 512 * 1024 * 1024
+    assert params["scan_concurrency"] == 1
+    assert params["max_files_per_group"] == 8
+    assert params["min_input_files"] == 2
+    # Memory cap follows the configured output target (not a fixed 32 MiB).
+    assert params["max_bytes_per_group"] == 512 * 1024 * 1024
+    assert params["partial_progress"] is True
 
 
-def test_build_execute_request_forwards_compaction_execute_flag() -> None:
+def test_optimize_params_preserve_explicit_memory_overrides() -> None:
+    from cryo.domain.enums import Mode, OperationType
+    from cryo.domain.models import MaintenancePlan, Operation
+    from cryo.engines.native.payload import build_execute_request
+
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    "file_size_mb": 256,
+                    "scan_concurrency": 4,
+                    "max_files_per_group": 16,
+                    "max_bytes_per_group": 64 * 1024 * 1024,
+                    "partial_progress": False,
+                },
+            ),
+        ),
+    )
+    request = build_execute_request(
+        plan=plan,
+        operation=plan.operations[0],
+        source_config={"uri": "http://localhost:8181", "warehouse": "s3://warehouse/"},
+        destination_config={"operation_mode": "execute"},
+    )
+    params = request["operations"][0]["params"]
+    assert params["scan_concurrency"] == 4
+    assert params["max_files_per_group"] == 16
+    assert params["max_bytes_per_group"] == 64 * 1024 * 1024
+    assert params["partial_progress"] is False
     from cryo.domain.enums import Mode, OperationType
     from cryo.domain.models import MaintenancePlan, Operation
     from cryo.engines.native.payload import build_execute_request_for_operations
@@ -292,6 +329,42 @@ def test_execute_request_parses_successful_stdout(tmp_path: Path) -> None:
     )
     assert result.ok
     assert result.results[0].snapshots_expired == 2
+
+
+def test_execute_request_maps_oom_exit_codes(tmp_path: Path) -> None:
+    """SIGKILL (-9) / Docker OOM (137) with empty stdout must be explicit OOM."""
+    from cryo.engines.native.runner import is_oom_exit
+
+    assert is_oom_exit(-9)
+    assert is_oom_exit(137)
+    assert not is_oom_exit(1)
+
+    for code, script_body in (
+        (
+            -9,
+            "#!/bin/sh\ncat >/dev/null\nkill -9 $$\n",
+        ),
+        (
+            137,
+            "#!/bin/sh\ncat >/dev/null\nexit 137\n",
+        ),
+    ):
+        script = tmp_path / f"fake-oom-{abs(code)}"
+        script.write_text(script_body)
+        script.chmod(0o755)
+        result = execute_request(
+            {
+                "table_ref": "demo.orders",
+                "catalog_uri": "http://localhost:8181",
+                "warehouse": "s3://warehouse/",
+                "mode": "execute",
+                "operations": [],
+            },
+            config={"binary_path": str(script)},
+        )
+        assert not result.ok
+        assert result.error is not None
+        assert "OOM-killed" in result.error, (code, result.error)
 
 
 def test_native_engine_execute_uses_subprocess() -> None:

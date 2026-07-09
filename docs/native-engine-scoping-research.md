@@ -263,6 +263,16 @@ falls back to Trino/Spark at much higher cost than the "fast native engine" pitc
 **Gap hit**: §1's fixed-pod-ceiling finding. **Mitigation**: §6's Job-based elastic dispatch,
 sized from Planner-known `total_size_gb`.
 
+**Related (row density, not just chunk GB):** even a planner-sized ~1–3 GB chunk can OOM when
+Parquet is extremely dense (GeoIP exemplar run `858ad9eb` —
+`geoip.silver_geoip_locations` / `ingest_date=2025-02-13`: ~2.7 GB / 47 files / 3.7B rows).
+Bin-pack's ~256 MB groups still expand far past Arrow RAM. Engine-side mitigation (landed):
+`scan_concurrency=1` + `partial_progress` + optional `max_bytes_per_group` (defaults to
+`target_file_size_bytes` so memory splits do not force Spark-illegal 1→1 rewrites; after split,
+groups below `min_input_files` are skipped). Dense fixture validation:
+`f_part_dense` under `scripts/validate_dense_compaction_memory.sh` (`--memory=1g`).
+Elastic Job sizing remains complementary for truly huge tables.
+
 ### Scenario B — The hot table compaction never wins
 A high-ingest-rate streaming table's compaction job repeatedly loses the optimistic-concurrency
 race (Adobe's ~15 commits/min ceiling; Ryft's "2-hour job rejected seconds before completion"

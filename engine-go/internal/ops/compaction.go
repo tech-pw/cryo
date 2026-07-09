@@ -101,10 +101,21 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return failResult(operation, err)
 	}
 
-	groups := toTaskGroups(plan.Groups)
+	// Memory/file caps may split bin-pack groups; re-apply min_input_files so we
+	// never execute Spark-illegal 1→1 rewrites after a tight max_bytes_per_group.
+	groups := finalizeRewriteGroups(
+		toTaskGroups(plan.Groups),
+		groupSplitLimitsFromParams(op.Params),
+		int(cfg.MinInputFiles),
+	)
+	if len(groups) == 0 {
+		progress.Completed(operation, 0, 0)
+		return rewriteResult(true, 0, 0, 0, 0, 0, "")
+	}
 
 	// Partial-progress: commit each group as its own atomic snapshot with per-group
 	// commit-race resilience and durable checkpoints (see executePartialProgressResumable).
+	// Oversized groups are split above so each commit rewrites a bounded file set.
 	if partialProgress {
 		result, runErr := executePartialProgressResumable(
 			ctx, req, tbl, op, cfg, rowFilter, morCompaction, groups, rewrittenPaths,
@@ -202,9 +213,7 @@ func executeRewriteOnce(
 
 	rewriteOpts := table.RewriteDataFilesOptions{
 		SnapshotProps: snapshotProps,
-		GroupOptions: []table.CompactionGroupOption{
-			table.WithCompactionTargetFileSize(cfg.TargetFileSizeBytes),
-		},
+		GroupOptions:  rewriteGroupOptions(cfg.TargetFileSizeBytes, op.Params),
 	}
 
 	if morCompaction {
@@ -287,9 +296,9 @@ func compactionConfigFromParams(raw json.RawMessage) (compaction.Config, bool) {
 	if cfg.MaxFileSizeBytes <= cfg.MinFileSizeBytes {
 		cfg.MaxFileSizeBytes = target * 9 / 5
 	}
-	if minInput := intParam(raw, "min_input_files", 0); minInput > 0 {
-		cfg.MinInputFiles = uint(minInput)
-	}
+	// Always set MinInputFiles (Spark rewrite_data_files / Iceberg semantics).
+	// Default 2: pack at least two undersized files toward target_file_size_bytes.
+	cfg.MinInputFiles = uint(minInputFilesFromParams(raw))
 	partialProgress := boolParam(raw, "partial_progress", false)
 	return cfg, partialProgress
 }

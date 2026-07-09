@@ -56,9 +56,6 @@ def execute_request_with_peak_rss(
         stderr=subprocess.PIPE,
         text=True,
     )
-    assert proc.stdin is not None
-    proc.stdin.write(payload)
-    proc.stdin.close()
 
     peak_rss = 0
     stop = threading.Event()
@@ -68,28 +65,34 @@ def execute_request_with_peak_rss(
         while not stop.is_set():
             if proc.poll() is not None:
                 return
-            peak_rss = max(peak_rss, peak_rss_bytes(proc.pid))
+            if proc.pid:
+                peak_rss = max(peak_rss, peak_rss_bytes(proc.pid))
             time.sleep(0.1)
 
     poll_thread = threading.Thread(target=_poll_rss, daemon=True)
     poll_thread.start()
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+        # Pass input via communicate so stdin is closed exactly once (writing
+        # then closing before communicate() raises "I/O operation on closed file").
+        stdout, stderr = proc.communicate(input=payload, timeout=timeout_seconds)
     finally:
         stop.set()
         poll_thread.join(timeout=1)
-        peak_rss = max(peak_rss, peak_rss_bytes(proc.pid))
+        if proc.pid:
+            peak_rss = max(peak_rss, peak_rss_bytes(proc.pid))
 
     stderr_text = (stderr or "").strip() or None
     returncode = proc.returncode or 0
     _, response_lines = split_stdout_lines(stdout or "")
     if not response_lines:
+        from cryo.engines.native.runner import _empty_stdout_error
+
         return (
             NativeExecuteResult(
                 ok=False,
                 table_ref=str(request.get("table_ref", "")),
                 results=(),
-                error="cryo-engine produced no JSON response on stdout",
+                error=_empty_stdout_error(returncode, stderr_text),
                 stdout=stdout,
                 stderr=stderr_text,
             ),

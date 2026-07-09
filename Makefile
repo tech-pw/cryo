@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go build-engine-go build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 TRINO_VERSION ?= 480
@@ -158,6 +158,14 @@ test-native-compaction-perf-go: build-engine-go
 	CRYO_ENGINE_IMPL=go \
 	CRYO_ENGINE_BINARY=$${CRYO_ENGINE_BINARY:-engine-go/bin/cryo-engine-go} \
 	pytest tests/integration/native/test_native_compaction_perf.py -m integration
+
+validate-dense-compaction-memory: build-engine-go-linux
+	./scripts/validate_dense_compaction_memory.sh
+
+# Cross-compile cryo-engine-go for Linux containers (docker memory validation).
+build-engine-go-linux:
+	cd engine-go && CGO_ENABLED=0 GOOS=linux GOARCH=$${CRYO_GOARCH:-$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')} \
+	  go build -o bin/cryo-engine-go-linux ./cmd/cryo-engine-go
 
 up-datalake-native:
 	$(COMPOSE_DATALAKE) up -d minio minio-init iceberg-rest

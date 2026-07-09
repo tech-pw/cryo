@@ -20,7 +20,9 @@ DEFAULT_BINARY_NAMES = ("cryo-engine-go", "cryo-engine")
 PROGRESS_PREFIX = "CRYO_PROGRESS:"
 # "checkpoint" marks a durable per-chunk commit emitted by the Go engine's
 # partial-progress path (see engine-go progress.Checkpoint).
-_PROGRESS_EVENTS = frozenset({"started", "progress", "checkpoint", "completed", "failed"})
+_PROGRESS_EVENTS = frozenset(
+    {"started", "progress", "group_started", "checkpoint", "completed", "failed"}
+)
 _ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 
 # Stable token the Go engine prefixes onto a rewrite error when compaction repeatedly
@@ -29,10 +31,36 @@ _ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 # alert instead of treating it as a generic failure (scoping doc §3.2 / Scenario B).
 COMMIT_RACE_LOST_TOKEN = "commit_race_lost"
 
+# Subprocess exit codes that indicate the OS/cgroup OOM-killed the engine
+# (SIGKILL=-9 on Unix; 128+9=137 in Docker/K8s). Empty stdout + these codes
+# must not be reported as a generic "no JSON response".
+_OOM_EXIT_CODES = frozenset({-9, 137})
+_OOM_ERROR = (
+    "cryo-engine OOM-killed during native compaction "
+    "(exit signal SIGKILL / code 137); reduce max_bytes_per_group "
+    "or raise the worker/job memory limit"
+)
+
 
 def is_commit_race_lost(error: str | None) -> bool:
     """Return True when a native rewrite failed because it lost the commit race."""
     return error is not None and COMMIT_RACE_LOST_TOKEN in error
+
+
+def is_oom_exit(returncode: int | None) -> bool:
+    """Return True when the subprocess exit code indicates an OOM kill."""
+    return returncode is not None and returncode in _OOM_EXIT_CODES
+
+
+def _empty_stdout_error(returncode: int | None, stderr_text: str | None) -> str:
+    """Prefer an explicit OOM message over a generic empty-stdout failure."""
+    if is_oom_exit(returncode):
+        return _OOM_ERROR
+    if stderr_text:
+        return stderr_text
+    if returncode not in (None, 0):
+        return f"cryo-engine exited with code {returncode}"
+    return "cryo-engine produced no JSON response on stdout"
 
 
 @dataclass(frozen=True)
@@ -223,7 +251,7 @@ def execute_request(
             ok=False,
             table_ref=str(request.get("table_ref", "")),
             results=(),
-            error=stderr_text or f"cryo-engine exited with code {returncode}",
+            error=_empty_stdout_error(returncode, stderr_text),
             stderr=stderr_text,
         )
 
@@ -233,7 +261,7 @@ def execute_request(
             ok=False,
             table_ref=str(request.get("table_ref", "")),
             results=(),
-            error="cryo-engine produced no JSON response on stdout",
+            error=_empty_stdout_error(returncode, stderr_text),
             stdout=stdout_text,
             stderr=stderr_text,
         )

@@ -18,11 +18,18 @@ COMPACTION_NAMESPACE = "native_compaction"
 UNPARTITIONED_TABLE = "f_unpart_small"
 PARTITIONED_TABLE = "f_part_small"
 PARTITIONED_IDENTITY_TABLE = "f_part_identity"
+# High row-density single partition (GeoIP-shaped): many small, highly compressible
+# files so Arrow expansion dwarfs on-disk size. Used by P4 RSS + docker memory tests.
+DENSE_PARTITION_TABLE = "f_part_dense"
 MOR_POS_TABLE = "f_mor_pos"
 MOR_EQ_TABLE = "f_mor_eq"
 MOR_MIXED_TABLE = "f_mor_mixed"
 MOR_PARTIAL_TABLE = "f_mor_partial"
 TINY_APPEND_COUNT = 16
+# Dense fixture: enough files that a 256 MB bin-pack group would otherwise hold
+# them all; byte-cap splitting must break them into many rewrite groups.
+DENSE_FILE_COUNT = 12
+DENSE_ROWS_PER_FILE = 20_000
 
 
 @dataclass(frozen=True)
@@ -44,6 +51,7 @@ def ensure_compaction_fixtures() -> dict[str, CompactionFixture]:
         UNPARTITIONED_TABLE: _ensure_unpartitioned_small(catalog),
         PARTITIONED_TABLE: _ensure_partitioned_small(catalog),
         PARTITIONED_IDENTITY_TABLE: _ensure_partitioned_identity(catalog),
+        DENSE_PARTITION_TABLE: _ensure_dense_partition(catalog),
     }
     return fixtures
 
@@ -182,6 +190,71 @@ def _ensure_partitioned_identity(catalog: object) -> CompactionFixture:
     return CompactionFixture(
         name=PARTITIONED_IDENTITY_TABLE,
         table_ref=f"{COMPACTION_NAMESPACE}.{PARTITIONED_IDENTITY_TABLE}",
+        location=normalize_uri(table.location()),
+        initial_snapshot=snapshot,
+    )
+
+
+def _ensure_dense_partition(catalog: object) -> CompactionFixture:
+    """One partition, many highly compressible small files (GeoIP-shaped density).
+
+    Repeated short strings compress tightly on disk but expand in Arrow — the
+    failure mode behind run 858ad9eb. Byte-cap group splitting must keep each
+    ExecuteCompactionGroup under a 1 GiB cgroup limit.
+    """
+    identifier = (COMPACTION_NAMESPACE, DENSE_PARTITION_TABLE)
+    _drop_if_exists(catalog, identifier)
+
+    schema = Schema(
+        NestedField(1, "id", LongType(), required=True),
+        NestedField(2, "ingest_date", StringType(), required=True),
+        NestedField(3, "country", StringType(), required=True),
+        NestedField(4, "city", StringType(), required=True),
+        NestedField(5, "isp", StringType(), required=True),
+    )
+    catalog.create_table(identifier, schema=schema)  # type: ignore[attr-defined]
+    table = catalog.load_table(identifier)  # type: ignore[attr-defined]
+    with table.update_spec() as update:
+        update.add_field("ingest_date", IdentityTransform(), "ingest_date")
+    table = catalog.load_table(identifier)  # type: ignore[attr-defined]
+
+    arrow_schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("ingest_date", pa.string(), nullable=False),
+            pa.field("country", pa.string(), nullable=False),
+            pa.field("city", pa.string(), nullable=False),
+            pa.field("isp", pa.string(), nullable=False),
+        ]
+    )
+    ingest_date = "2025-02-13"
+    # Highly compressible: tiny cardinality across string columns.
+    countries = ("IN",) * DENSE_ROWS_PER_FILE
+    cities = ("delhi",) * DENSE_ROWS_PER_FILE
+    isps = ("airtel",) * DENSE_ROWS_PER_FILE
+    dates = (ingest_date,) * DENSE_ROWS_PER_FILE
+
+    row_id = 0
+    for _batch in range(DENSE_FILE_COUNT):
+        ids = list(range(row_id, row_id + DENSE_ROWS_PER_FILE))
+        arrow = pa.Table.from_arrays(
+            [
+                pa.array(ids, type=pa.int64()),
+                pa.array(dates, type=pa.string()),
+                pa.array(countries, type=pa.string()),
+                pa.array(cities, type=pa.string()),
+                pa.array(isps, type=pa.string()),
+            ],
+            schema=arrow_schema,
+        )
+        table.append(arrow)
+        row_id += DENSE_ROWS_PER_FILE
+        table = catalog.load_table(identifier)  # type: ignore[attr-defined]
+
+    snapshot = capture_table_snapshot(table)
+    return CompactionFixture(
+        name=DENSE_PARTITION_TABLE,
+        table_ref=f"{COMPACTION_NAMESPACE}.{DENSE_PARTITION_TABLE}",
         location=normalize_uri(table.location()),
         initial_snapshot=snapshot,
     )

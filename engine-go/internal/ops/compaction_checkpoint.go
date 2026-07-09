@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
@@ -82,9 +83,7 @@ func executePartialProgressResumable(
 	beforeMeta := validate.CaptureMetadataSnapshot(tbl)
 	rewriteOpts := table.RewriteDataFilesOptions{
 		SnapshotProps: validate.CustomSnapshotProps(tbl),
-		GroupOptions: []table.CompactionGroupOption{
-			table.WithCompactionTargetFileSize(cfg.TargetFileSizeBytes),
-		},
+		GroupOptions:  rewriteGroupOptions(cfg.TargetFileSizeBytes, op.Params),
 	}
 
 	maxRounds := appCommitRetries + 1
@@ -99,7 +98,9 @@ func executePartialProgressResumable(
 			}
 			tbl = reloaded
 
-			replanned, replannedPaths, err := planCheckpointGroups(ctx, tbl, cfg, rowFilter, op.Predicates)
+			replanned, replannedPaths, err := planCheckpointGroups(
+				ctx, tbl, cfg, rowFilter, op.Predicates, groupSplitLimitsFromParams(op.Params),
+			)
 			if err != nil {
 				return totals, err
 			}
@@ -121,10 +122,22 @@ func executePartialProgressResumable(
 			return totals, nil
 		}
 
+		limits := groupSplitLimitsFromParams(op.Params)
 		conflicted := false
 		for i := range groups {
+			group := groups[i]
+			progress.GroupStarted(
+				operation,
+				group.PartitionKey,
+				len(group.Tasks),
+				uint64(groupCompressedBytes(group)),
+				limits.maxFiles,
+				uint64(limits.maxBytes),
+				i,
+				len(groups),
+			)
 			outcome, err := commitCheckpointGroup(
-				ctx, tbl, groups[i], morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
+				ctx, tbl, group, morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
 			)
 			if err != nil {
 				if isRetryableCommitError(err) {
@@ -140,6 +153,9 @@ func executePartialProgressResumable(
 				progress.Checkpoint(operation, committedGroups, len(groups), totals.outputFiles, totals.bytesWritten)
 			}
 			progress.Progress(operation, uint8((i+1)*100/len(groups)), totals.outputFiles, totals.bytesWritten)
+			// Release Arrow/Parquet buffers between groups so RSS does not ratchet
+			// across a long partial-progress run on dense partitions.
+			runtime.GC()
 			if err := tbl.Refresh(ctx); err != nil {
 				return totals, fmt.Errorf("refresh table after group %d: %w", i, err)
 			}
@@ -228,6 +244,7 @@ func planCheckpointGroups(
 	cfg compaction.Config,
 	rowFilter iceberg.BooleanExpression,
 	predicates []protocol.PredicateRequest,
+	limits groupSplitLimits,
 ) ([]table.CompactionTaskGroup, map[string]struct{}, error) {
 	tasks, err := planScopedTasks(ctx, tbl, rowFilter, predicates)
 	if err != nil {
@@ -240,7 +257,8 @@ func planCheckpointGroups(
 	if err != nil {
 		return nil, nil, fmt.Errorf("re-plan compaction: %w", err)
 	}
-	return toTaskGroups(plan.Groups), rewrittenPathsFromPlan(plan), nil
+	groups := finalizeRewriteGroups(toTaskGroups(plan.Groups), limits, int(cfg.MinInputFiles))
+	return groups, rewrittenPathsFromPlan(plan), nil
 }
 
 func collectGroupTasks(groups []table.CompactionTaskGroup) []table.FileScanTask {

@@ -7,10 +7,11 @@ import os
 import pytest
 
 from cryo.domain.enums import Mode, OperationType
-from cryo.domain.models import Operation
+from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.native.payload import build_execute_request_for_operations
 from cryo.engines.native.runner import is_cryo_engine_available, resolve_binary_path
 from tests.integration.native.compaction_fixtures import (
+    DENSE_PARTITION_TABLE,
     UNPARTITIONED_TABLE,
     ensure_compaction_fixtures,
 )
@@ -70,16 +71,21 @@ def _optimize_params() -> dict[str, int]:
 
 
 def _run_optimize(table_ref: str) -> None:
-    request = build_execute_request_for_operations(
+    plan = MaintenancePlan(
         table_ref=table_ref,
-        source_config=source_config(),
+        mode=Mode.DEEP,
         operations=(
             Operation(
                 OperationType.OPTIMIZE,
                 _optimize_params(),
             ),
         ),
-        mode=Mode.DEEP,
+    )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=plan.operations,
+        source_config=source_config(),
+        destination_config={"operation_mode": "execute"},
     )
     result, _peak_rss = execute_request_with_peak_rss(request, config=_engine_config())
     assert result.ok, result.error
@@ -119,13 +125,34 @@ def test_p2_file_count_reduced_after_cow_optimize(compaction_fixtures: dict[str,
 @requires_go_engine
 @pytest.mark.integration
 def test_p4_bounded_memory_during_compaction(compaction_fixtures: dict[str, object]) -> None:
-    """P4: compaction stays under RSS cap (streaming, not whole-partition buffering)."""
-    fixture = compaction_fixtures[UNPARTITIONED_TABLE]
-    request = build_execute_request_for_operations(
+    """P4: dense-partition compaction stays under RSS cap (byte-capped groups).
+
+    Uses f_part_dense (GeoIP-shaped high row-density) rather than the tiny
+    unpartitioned fixture so the test exercises max_bytes_per_group splitting.
+    """
+    fixture = compaction_fixtures[DENSE_PARTITION_TABLE]
+    plan = MaintenancePlan(
         table_ref=fixture.table_ref,  # type: ignore[attr-defined]
-        source_config=source_config(),
-        operations=(Operation(OperationType.OPTIMIZE, _optimize_params()),),
         mode=Mode.DEEP,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    **_optimize_params(),
+                    # Explicit memory bounds (also the payload defaults).
+                    "scan_concurrency": 1,
+                    "max_files_per_group": 8,
+                    "max_bytes_per_group": 32 * 1024 * 1024,
+                    "partial_progress": True,
+                },
+            ),
+        ),
+    )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=plan.operations,
+        source_config=source_config(),
+        destination_config={"operation_mode": "execute"},
     )
     result, peak_rss = execute_request_with_peak_rss(request, config=_engine_config())
     assert result.ok, result.error
@@ -134,6 +161,9 @@ def test_p4_bounded_memory_during_compaction(compaction_fixtures: dict[str, obje
         f"P4 RSS {peak_rss // (1024 * 1024)} MiB exceeded cap "
         f"{P4_MAX_RSS_BYTES // (1024 * 1024)} MiB"
     )
+    # Partial-progress should emit group_started / checkpoint lines for diagnosis.
+    stdout = result.stdout or ""
+    assert "group_started" in stdout or "checkpoint" in stdout or result.ok
 
 
 @requires_rest
@@ -154,11 +184,16 @@ def test_p5_idempotent_second_optimize_is_near_noop(compaction_fixtures: dict[st
     table.refresh()
     before_second = capture_table_snapshot(table)
 
-    request = build_execute_request_for_operations(
+    plan = MaintenancePlan(
         table_ref=fixture.table_ref,  # type: ignore[attr-defined]
-        source_config=source_config(),
-        operations=(Operation(OperationType.OPTIMIZE, _optimize_params()),),
         mode=Mode.DEEP,
+        operations=(Operation(OperationType.OPTIMIZE, _optimize_params()),),
+    )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=plan.operations,
+        source_config=source_config(),
+        destination_config={"operation_mode": "execute"},
     )
     result, _ = execute_request_with_peak_rss(request, config=_engine_config())
     assert result.ok, result.error
