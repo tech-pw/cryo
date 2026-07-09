@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
@@ -234,57 +233,80 @@ def test_probe_manual_target_reports_files_found(session, monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# §5 SQL/DDL generation (golden-string tests, no live Trino)
+# Native log-line parsing, operation-tier mapping, and longest-prefix matching
 # ---------------------------------------------------------------------------
 
 
-def test_register_log_table_ddl_is_idempotent_and_partitioned() -> None:
-    sql = ingest_mod.register_log_table_ddl(
-        catalog="hive", schema="cryo_s3_logs", bucket="lake-bucket", log_target_bucket="log-bucket"
+_SAMPLE_LOG_LINE = (
+    "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be bucket-name "
+    "[06/Jul/2026:12:00:00 +0000] 192.0.2.1 arn:aws:iam::123456789012:user/test "
+    "3E57427F3EXAMPLE {operation} {key} "
+    '"GET /bucket-name/{key} HTTP/1.1" 200 - 2662992 2662992 70 10 "-" "S3Console/0.4" - '
+    "tx00000000000000000001-00000000-1234abcd-us-east-1"
+)
+
+
+def _log_line(operation: str, key: str) -> str:
+    return _SAMPLE_LOG_LINE.format(operation=operation, key=key)
+
+
+def test_parse_log_line_extracts_operation_and_key() -> None:
+    line = _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/data/file1.parquet")
+    assert ingest_mod._parse_log_line(line) == (
+        "REST.GET.OBJECT",
+        "warehouse/db1/table_a/data/file1.parquet",
     )
-    assert "CREATE TABLE IF NOT EXISTS" in sql
-    assert "s3logs_lake_bucket" in sql
-    assert "partitioned_by = ARRAY['log_date']" in sql
-    assert "s3a://log-bucket/" in sql
 
 
-def test_register_partition_sql_calls_system_register_partition() -> None:
-    sql = ingest_mod.register_partition_sql(
-        catalog="hive",
-        schema="cryo_s3_logs",
-        bucket="lake-bucket",
-        log_date=date(2026, 7, 7),
-        location="s3a://log-bucket/logs/2026/07/07/",
+def test_parse_log_line_returns_none_for_malformed_line() -> None:
+    assert ingest_mod._parse_log_line("this is not a valid s3 log line at all") is None
+
+
+def test_parse_log_line_returns_none_for_dash_placeholders() -> None:
+    line = _log_line("-", "-")
+    assert ingest_mod._parse_log_line(line) is None
+
+
+def test_operation_tier_maps_get_and_select_to_get() -> None:
+    assert ingest_mod._operation_tier("REST.GET.OBJECT") == "get"
+    assert ingest_mod._operation_tier("REST.SELECT.OBJECT") == "get"
+
+
+def test_operation_tier_maps_head() -> None:
+    assert ingest_mod._operation_tier("REST.HEAD.OBJECT") == "head"
+
+
+def test_operation_tier_maps_list_and_delete() -> None:
+    assert ingest_mod._operation_tier("REST.LIST.OBJECTS") == "list"
+    assert ingest_mod._operation_tier("REST.DELETE.OBJECT") == "list"
+    assert ingest_mod._operation_tier("BATCH.DELETE.OBJECT") == "list"
+
+
+def test_operation_tier_maps_put_post_copy() -> None:
+    assert ingest_mod._operation_tier("REST.PUT.OBJECT") == "put"
+    assert ingest_mod._operation_tier("REST.POST.OBJECT") == "put"
+    assert ingest_mod._operation_tier("REST.COPY.OBJECT") == "put"
+
+
+def test_operation_tier_falls_back_to_other() -> None:
+    assert ingest_mod._operation_tier("WEBSITE.GET.OBJECT") == "other"
+
+
+def test_match_table_prefix_picks_longest_match_among_siblings() -> None:
+    index = ingest_mod._build_prefix_index(
+        [
+            ("t-short", "warehouse/db1/"),
+            ("t-long", "warehouse/db1/table_a/"),
+        ]
     )
-    assert "hive.system.register_partition" in sql
-    assert "'2026-07-07'" in sql
-    assert "s3a://log-bucket/logs/2026/07/07/" in sql
-
-
-def test_build_aggregation_sql_includes_longest_prefix_match() -> None:
-    sql = ingest_mod.build_aggregation_sql(
-        catalog="hive",
-        schema="cryo_s3_logs",
-        bucket="lake-bucket",
-        log_dates=[date(2026, 7, 7)],
-        table_prefixes=[("t1", "warehouse/db1/table_a/"), ("t2", "warehouse/db1/table_b/")],
+    assert (
+        ingest_mod._match_table_prefix("warehouse/db1/table_a/data/f1.parquet", index) == "t-long"
     )
-    assert "STARTS_WITH(p.key, t.prefix)" in sql
-    assert "ROW_NUMBER() OVER" in sql
-    assert "ORDER BY prefix_len DESC" in sql
-    assert "warehouse/db1/table_a/" in sql
-    assert "warehouse/db1/table_b/" in sql
 
 
-def test_build_aggregation_sql_handles_no_known_tables() -> None:
-    sql = ingest_mod.build_aggregation_sql(
-        catalog="hive",
-        schema="cryo_s3_logs",
-        bucket="lake-bucket",
-        log_dates=[date(2026, 7, 7)],
-        table_prefixes=[],
-    )
-    assert "CAST(NULL AS VARCHAR)" in sql
+def test_match_table_prefix_returns_none_when_no_prefix_covers_key() -> None:
+    index = ingest_mod._build_prefix_index([("t1", "warehouse/db1/table_a/")])
+    assert ingest_mod._match_table_prefix("warehouse/other_db/table_z/f.parquet", index) is None
 
 
 # ---------------------------------------------------------------------------
@@ -395,38 +417,132 @@ def test_locate_date_partition_without_source_bucket_still_fails_on_many_sibling
 
 
 # ---------------------------------------------------------------------------
-# §5 end-to-end ingest_bucket + §6.3 rollup
+# _aggregate_log_objects -- native read + parse + longest-prefix match + aggregate
 # ---------------------------------------------------------------------------
 
 
-class _FakeCursor:
-    def __init__(self, rows):
-        self.rows = rows
-        self.executed: list[str] = []
+class _FakeBody:
+    def __init__(self, data: bytes):
+        self._data = data
 
-    def execute(self, sql):
-        self.executed.append(sql)
-
-    def fetchall(self):
-        return self.rows
-
-    def close(self):
-        pass
+    def read(self) -> bytes:
+        return self._data
 
 
-class _FakeConnection:
-    def __init__(self, cursor):
-        self._cursor = cursor
+class _FakePaginator:
+    def __init__(self, client: _FakeLogBucketClient):
+        self._client = client
 
-    def cursor(self):
-        return self._cursor
-
-    def close(self):
-        pass
+    def paginate(self, *, Bucket, Prefix):  # noqa: N803
+        yield self._client.list_objects_v2(Bucket=Bucket, Prefix=Prefix)
 
 
-def _settings_with_trino() -> Settings:
-    return Settings(telemetry_trino_url="http://trino.local:8080")
+class _FakeLogBucketClient:
+    """Combines the S3 call shapes ingest_bucket's native path needs: list_objects_v2 with
+    Delimiter='/' for locate_date_partition's tree walk, list_objects_v2 without a delimiter
+    (via get_paginator) for listing objects under a partition, and get_object for bodies."""
+
+    def __init__(
+        self,
+        *,
+        tree: dict[str, list[str]] | None = None,
+        objects: dict[str, list[str]] | None = None,
+        bodies: dict[str, bytes] | None = None,
+    ):
+        self._tree = tree or {}
+        self._objects = objects or {}
+        self._bodies = bodies or {}
+
+    def list_objects_v2(self, *, Bucket, Prefix, Delimiter=None):  # noqa: N803
+        if Delimiter:
+            children = self._tree.get(Prefix, [])
+            return {"CommonPrefixes": [{"Prefix": c} for c in children]}
+        keys = self._objects.get(Prefix, [])
+        return {"Contents": [{"Key": k} for k in keys]}
+
+    def get_paginator(self, name: str) -> _FakePaginator:
+        assert name == "list_objects_v2"
+        return _FakePaginator(self)
+
+    def get_object(self, *, Bucket, Key):  # noqa: N803
+        return {"Body": _FakeBody(self._bodies.get(Key, b""))}
+
+
+def test_aggregate_log_objects_matches_and_counts_by_table_date_tier() -> None:
+    log_date = date(2026, 7, 7)
+    body = "\n".join(
+        [
+            _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/data/f1.parquet"),
+            _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/data/f2.parquet"),
+            _log_line("REST.PUT.OBJECT", "warehouse/other/unmatched.parquet"),
+        ]
+    ).encode()
+    client = _FakeLogBucketClient(
+        objects={"logs/2026/07/07/": ["logs/2026/07/07/log1.txt"]},
+        bodies={"logs/2026/07/07/log1.txt": body},
+    )
+
+    outcome = ingest_mod._aggregate_log_objects(
+        client,
+        log_target_bucket="log-bucket",
+        located={log_date: "s3a://log-bucket/logs/2026/07/07/"},
+        table_prefixes=[("table-a-id", "warehouse/db1/table_a/")],
+        max_objects_per_day=100,
+        max_workers=4,
+    )
+
+    assert outcome.truncated_dates == []
+    assert outcome.counts[("table-a-id", log_date, "get")] == 2
+    assert outcome.counts[(None, log_date, "put")] == 1
+
+
+def test_aggregate_log_objects_skips_unparseable_lines() -> None:
+    log_date = date(2026, 7, 7)
+    body = (
+        b"not a valid log line\n"
+        + _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/f.parquet").encode()
+    )
+    client = _FakeLogBucketClient(
+        objects={"logs/2026/07/07/": ["logs/2026/07/07/log1.txt"]},
+        bodies={"logs/2026/07/07/log1.txt": body},
+    )
+
+    outcome = ingest_mod._aggregate_log_objects(
+        client,
+        log_target_bucket="log-bucket",
+        located={log_date: "s3a://log-bucket/logs/2026/07/07/"},
+        table_prefixes=[],
+        max_objects_per_day=100,
+        max_workers=4,
+    )
+
+    assert sum(outcome.counts.values()) == 1
+
+
+def test_aggregate_log_objects_truncates_at_max_objects_per_day() -> None:
+    log_date = date(2026, 7, 7)
+    keys = [f"logs/2026/07/07/log{i}.txt" for i in range(5)]
+    bodies = {
+        k: _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/f.parquet").encode() for k in keys
+    }
+    client = _FakeLogBucketClient(objects={"logs/2026/07/07/": keys}, bodies=bodies)
+
+    outcome = ingest_mod._aggregate_log_objects(
+        client,
+        log_target_bucket="log-bucket",
+        located={log_date: "s3a://log-bucket/logs/2026/07/07/"},
+        table_prefixes=[],
+        max_objects_per_day=2,
+        max_workers=4,
+    )
+
+    assert outcome.truncated_dates == [log_date]
+    assert sum(outcome.counts.values()) == 2
+
+
+# ---------------------------------------------------------------------------
+# §5 end-to-end ingest_bucket + §6.3 rollup
+# ---------------------------------------------------------------------------
 
 
 def test_coordinator_has_no_auth_when_password_unset() -> None:
@@ -486,16 +602,23 @@ def test_ingest_bucket_upserts_daily_rows_and_rolls_up_table_cost(session, monke
     session.commit()
 
     today = date(2026, 7, 7)
-    fake_list_client = _FakeListClient(
-        {
+    prefix = f"logs/{today.year}/{today.month:02d}/{today.day:02d}/"
+    # 5,000 matched GETs so the resulting cost survives round(..., 4) as a non-zero value.
+    get_lines = [
+        _log_line("REST.GET.OBJECT", f"warehouse/db/a/data/f{i}.parquet") for i in range(5_000)
+    ]
+    unmatched_line = _log_line("REST.LIST.OBJECTS", "warehouse/unmatched/prefix/")
+    body = "\n".join([*get_lines, unmatched_line]).encode()
+    fake_client = _FakeLogBucketClient(
+        tree={
             "logs/": [f"logs/{today.year}/"],
             f"logs/{today.year}/": [f"logs/{today.year}/{today.month:02d}/"],
-            f"logs/{today.year}/{today.month:02d}/": [
-                f"logs/{today.year}/{today.month:02d}/{today.day:02d}/"
-            ],
-        }
+            f"logs/{today.year}/{today.month:02d}/": [prefix],
+        },
+        objects={prefix: [f"{prefix}log1.txt"]},
+        bodies={f"{prefix}log1.txt": body},
     )
-    monkeypatch.setattr(s3_bucket_logging, "s3_client_for_config", lambda cfg: fake_list_client)
+    monkeypatch.setattr(s3_bucket_logging, "s3_client_for_config", lambda cfg: fake_client)
     monkeypatch.setattr(
         ingest_mod,
         "fetch_s3_request_prices",
@@ -508,39 +631,23 @@ def test_ingest_bucket_upserts_daily_rows_and_rolls_up_table_cost(session, monke
         ),
     )
 
-    cursor = _FakeCursor(
-        rows=[
-            (str(table.id), today.isoformat(), "get", 30_000),
-            (None, today.isoformat(), "list", 5),
-        ]
-    )
-
-    def fake_connector(coordinator):
-        return _FakeConnection(cursor)
-
-    result = ingest_mod.ingest_bucket(
-        session,
-        config,
-        settings=_settings_with_trino(),
-        connector=fake_connector,
-        now=datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
-    )
+    result = ingest_mod.ingest_bucket(session, config, now=datetime(2026, 7, 7, 12, 0, tzinfo=UTC))
 
     assert result.error is None
     assert result.rows_ingested == 2
     assert result.tables_matched == 1
-    assert result.unmatched_requests == 5
+    assert result.unmatched_requests == 1
 
     session.flush()
     daily_rows = session.query(S3RequestCostDaily).all()
     assert len(daily_rows) == 2
     matched = next(r for r in daily_rows if r.table_id == table.id)
-    assert matched.request_count == 30_000
+    assert matched.request_count == 5_000
     assert matched.operation_tier == "get"
 
     session.refresh(table)
     cost = session.get(TableCost, table.id)
-    assert cost.get_requests_30d == 30_000
+    assert cost.get_requests_30d == 5_000
     assert cost.put_requests_30d == 0
     assert cost.request_cost_usd_month is not None
     assert cost.request_cost_usd_month > 0
@@ -549,17 +656,18 @@ def test_ingest_bucket_upserts_daily_rows_and_rolls_up_table_cost(session, monke
     assert config.last_error is None
 
 
-def test_ingest_bucket_without_trino_configured_returns_error(session) -> None:
+def test_ingest_bucket_without_credentials_returns_error(session) -> None:
     source = _seed_source(session)
-    config = _config_with_creds(session, source)
+    config = S3BucketLogConfig(source_id=source.id, bucket="lake-bucket")
     config.log_target_bucket = "log-bucket"
     config.enabled = True
+    session.add(config)
     session.commit()
 
-    result = ingest_mod.ingest_bucket(session, config, settings=Settings(telemetry_trino_url=None))
+    result = ingest_mod.ingest_bucket(session, config)
 
     assert result.error is not None
-    assert "Trino" in result.error
+    assert "credentials" in result.error
 
 
 def test_ingest_bucket_without_located_partitions_returns_error(session, monkeypatch) -> None:
@@ -574,7 +682,7 @@ def test_ingest_bucket_without_located_partitions_returns_error(session, monkeyp
         s3_bucket_logging, "s3_client_for_config", lambda cfg: _FakeListClient({"logs/": []})
     )
 
-    result = ingest_mod.ingest_bucket(session, config, settings=_settings_with_trino())
+    result = ingest_mod.ingest_bucket(session, config)
 
     assert result.error is not None
     assert "partitioned" in result.error

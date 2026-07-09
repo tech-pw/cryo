@@ -162,13 +162,15 @@ class Settings(BaseSettings):
     s3_log_trino_catalog: str = Field(
         default="hive",
         description=(
-            "Trino Hive-connector catalog used to register S3 access-log external tables "
-            "for request-cost ingestion (docs/s3-request-cost-tracking.md §5)."
+            "Trino Hive-connector catalog/schema used only to clean up an external log table "
+            "from an older Trino-based ingestion run when tearing down S3 request-cost "
+            "tracking for a bucket (cryo/integrations/s3_bucket_provisioning.py). Ingestion "
+            "itself reads and aggregates S3 access logs natively -- no Trino dependency."
         ),
     )
     s3_log_trino_schema: str = Field(
         default="cryo_s3_logs",
-        description="Schema within s3_log_trino_catalog that request-cost log tables live in.",
+        description="Schema within s3_log_trino_catalog for the legacy teardown path above.",
     )
     query_log_retention_days: int = Field(
         default=90,
@@ -365,7 +367,26 @@ class Settings(BaseSettings):
         ge=1,
         description=(
             "Hours between S3 request-cost ingestion runs (docs/s3-request-cost-tracking.md "
-            "§10) -- one query per enabled bucket per run."
+            "§10) -- reads and aggregates every enabled bucket's log objects natively "
+            "(no Trino/Hive-connector dependency)."
+        ),
+    )
+    s3_log_ingest_max_objects_per_day: int = Field(
+        default=20_000,
+        ge=1,
+        description=(
+            "Safety cap on how many S3 access-log objects are read per date-partition per "
+            "ingestion run. A busy bucket can deliver many small per-flush log files; this "
+            "bounds S3 API call volume per run rather than unbounded object-count growth. "
+            "Days that hit the cap are logged as a lower-bound (not exact) count, not an error."
+        ),
+    )
+    s3_log_ingest_concurrency: int = Field(
+        default=16,
+        ge=1,
+        description=(
+            "Max concurrent S3 GetObject calls when reading log objects for a single bucket's "
+            "ingestion run -- I/O-bound work, so higher than a typical CPU-bound worker pool."
         ),
     )
     s3_request_cost_retention_days: int = Field(
