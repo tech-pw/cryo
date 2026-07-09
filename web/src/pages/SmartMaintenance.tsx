@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Empty, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
+import { useState } from "react";
+import { Button, Card, Col, Descriptions, Drawer, Empty, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -30,7 +30,7 @@ export function SmartMaintenance() {
   const { api, token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [inspectTable, setInspectTable] = useState<DetectionTierRowRead | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   useCommitEventStream({
@@ -55,16 +55,18 @@ export function SmartMaintenance() {
     queryFn: () => listSmartLayoutRecommendations(api)
   });
 
+  const inspectTableId = inspectTable?.table_id ?? null;
+
   const roi = useQuery({
-    queryKey: ["smart-maintenance-roi", selectedTableId],
-    queryFn: () => getTableRoiBreakdown(api, selectedTableId as string),
-    enabled: Boolean(selectedTableId)
+    queryKey: ["smart-maintenance-roi", inspectTableId],
+    queryFn: () => getTableRoiBreakdown(api, inspectTableId as string),
+    enabled: Boolean(inspectTableId)
   });
 
   const forecast = useQuery({
-    queryKey: ["smart-maintenance-forecast", selectedTableId],
-    queryFn: () => getTableWorkloadForecast(api, selectedTableId as string, 24),
-    enabled: Boolean(selectedTableId)
+    queryKey: ["smart-maintenance-forecast", inspectTableId],
+    queryFn: () => getTableWorkloadForecast(api, inspectTableId as string, 24),
+    enabled: Boolean(inspectTableId)
   });
 
   const refreshQueries = async () => {
@@ -107,17 +109,16 @@ export function SmartMaintenance() {
 
   const tierItems = tiers.data?.items ?? [];
   const recommendationItems = recommendations.data?.items ?? [];
-  const selectedTier = useMemo(
-    () => tierItems.find((row) => row.table_id === selectedTableId) ?? null,
-    [tierItems, selectedTableId]
-  );
 
   const tierColumns = [
     {
       title: "Table",
       key: "table",
       render: (_: unknown, row: DetectionTierRowRead) => (
-        <Button type="link" onClick={() => navigate(`/tables/${row.table_id}`)}>
+        <Button type="link" style={{ padding: 0 }} onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/tables/${row.table_id}`);
+        }}>
           {row.schema_name}.{row.table_name}
         </Button>
       )
@@ -129,11 +130,29 @@ export function SmartMaintenance() {
         <Tag color={tierColor[row.tier] ?? "default"}>{row.tier.toUpperCase()}</Tag>
       )
     },
-    { title: "Score", dataIndex: "score", key: "score" },
+    {
+      title: "Score",
+      dataIndex: "score",
+      key: "score",
+      render: (score: number | null) => (score == null ? <Typography.Text type="secondary">Not scored</Typography.Text> : score)
+    },
     { title: "Commits (24h)", dataIndex: "commits_24h", key: "commits_24h" },
     { title: "Commits (7d)", dataIndex: "commits_7d", key: "commits_7d" },
     { title: "Delete %", dataIndex: "delete_file_pct", key: "delete_file_pct" },
-    { title: "Queries (30d)", dataIndex: "query_count_30d", key: "query_count_30d" }
+    { title: "Queries (30d)", dataIndex: "query_count_30d", key: "query_count_30d" },
+    {
+      title: "",
+      key: "inspect",
+      width: 96,
+      render: (_: unknown, row: DetectionTierRowRead) => (
+        <Button size="small" onClick={(e) => {
+          e.stopPropagation();
+          setInspectTable(row);
+        }}>
+          Inspect ROI
+        </Button>
+      )
+    }
   ];
 
   const recColumns = [
@@ -261,78 +280,85 @@ export function SmartMaintenance() {
             label: "Detection Tiers",
             children: (
               <Card>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                  Click a row, or use Inspect ROI, to see the ROI decision and workload forecast
+                  behind a table&apos;s tier without leaving this list.
+                </Typography.Paragraph>
                 <Table
                   rowKey="table_id"
                   loading={tiers.isLoading}
                   dataSource={tierItems}
                   columns={tierColumns}
                   onRow={(record) => ({
-                    onClick: () => setSelectedTableId(record.table_id)
+                    onClick: () => setInspectTable(record),
+                    style: { cursor: "pointer" }
                   })}
                   pagination={{ pageSize: 20 }}
                 />
               </Card>
             )
-          },
-          {
-            key: "roi",
-            label: "ROI Decisions",
-            children: selectedTableId ? (
-              <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                {selectedTier ? (
-                  <Alert
-                    type="info"
-                    showIcon
-                    message={`Selected table: ${selectedTier.schema_name}.${selectedTier.table_name}`}
-                  />
-                ) : null}
-                <Card loading={roi.isLoading} title="ROI Breakdown">
-                  {roi.data ? (
-                    <Descriptions bordered size="small" column={2}>
-                      <Descriptions.Item label="Action">{roi.data.decision.action}</Descriptions.Item>
-                      <Descriptions.Item label="Reason">{roi.data.decision.reason}</Descriptions.Item>
-                      <Descriptions.Item label="BCR">{roi.data.decision.bcr.toFixed(3)}</Descriptions.Item>
-                      <Descriptions.Item label="Threshold">
-                        {roi.data.decision.threshold.toFixed(3)}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Benefit (USD/month)">
-                        {roi.data.monthly_benefit_usd.toFixed(2)}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Cost (USD/month)">
-                        {roi.data.monthly_cost_usd.toFixed(2)}
-                      </Descriptions.Item>
-                    </Descriptions>
-                  ) : (
-                    <Empty description="No ROI data available" />
-                  )}
-                </Card>
-                <Card loading={forecast.isLoading} title="Workload Forecast (next 24h)">
-                  {forecast.data?.points?.length ? (
-                    <Table
-                      rowKey="hour_start"
-                      dataSource={forecast.data.points}
-                      size="small"
-                      pagination={false}
-                      columns={[
-                        { title: "Hour", dataIndex: "hour_start", key: "hour_start" },
-                        {
-                          title: "Expected Queries",
-                          dataIndex: "expected_queries",
-                          key: "expected_queries"
-                        }
-                      ]}
-                    />
-                  ) : (
-                    <Empty description="No forecast available" />
-                  )}
-                </Card>
-              </Space>
-            ) : (
-              <Empty description="Select a table from Detection Tiers tab to inspect ROI decisions." />
-            )
           }
         ]}
       />
+      <Drawer
+        title={inspectTable ? `ROI decision · ${inspectTable.schema_name}.${inspectTable.table_name}` : "ROI decision"}
+        width={560}
+        open={inspectTable !== null}
+        onClose={() => setInspectTable(null)}
+        destroyOnClose
+      >
+        {inspectTable ? (
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Button
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() => navigate(`/tables/${inspectTable.table_id}`)}
+            >
+              Open table detail
+            </Button>
+            <Card loading={roi.isLoading} title="ROI Breakdown" size="small">
+              {roi.data ? (
+                <Descriptions bordered size="small" column={1}>
+                  <Descriptions.Item label="Action">{roi.data.decision.action}</Descriptions.Item>
+                  <Descriptions.Item label="Reason">{roi.data.decision.reason}</Descriptions.Item>
+                  <Descriptions.Item label="BCR">{roi.data.decision.bcr.toFixed(3)}</Descriptions.Item>
+                  <Descriptions.Item label="Threshold">
+                    {roi.data.decision.threshold.toFixed(3)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Benefit (USD/month)">
+                    {roi.data.monthly_benefit_usd.toFixed(2)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Cost (USD/month)">
+                    {roi.data.monthly_cost_usd.toFixed(2)}
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : (
+                <Empty description="No ROI data available for this table yet." />
+              )}
+            </Card>
+            <Card loading={forecast.isLoading} title="Workload Forecast (next 24h)" size="small">
+              {forecast.data?.points?.length ? (
+                <Table
+                  rowKey="hour_start"
+                  dataSource={forecast.data.points}
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    { title: "Hour", dataIndex: "hour_start", key: "hour_start" },
+                    {
+                      title: "Expected Queries",
+                      dataIndex: "expected_queries",
+                      key: "expected_queries"
+                    }
+                  ]}
+                />
+              ) : (
+                <Empty description="No forecast available for this table yet." />
+              )}
+            </Card>
+          </Space>
+        ) : null}
+      </Drawer>
     </Space>
   );
 }

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from cryo.db.models import Source, Table
-from cryo.scanner.run import _discover_candidates, _list_candidate_tables
+from cryo.scanner.run import _discover_candidates, _list_candidate_tables, run_scan
 
 
 class _FakeCatalog:
@@ -54,7 +56,7 @@ def test_table_names_targets_a_table_with_no_prior_scan(session) -> None:
     source = _seed_source(session)
     catalog = _FakeCatalog({"ai_grader": ["gold_tests", "gold_submissions"], "other_schema": ["x"]})
 
-    candidates = _discover_candidates(
+    candidates, errors = _discover_candidates(
         session,
         source_id=source.id,
         table_names=[("ai_grader", "gold_tests")],
@@ -62,6 +64,7 @@ def test_table_names_targets_a_table_with_no_prior_scan(session) -> None:
     )
 
     assert [(c.schema_name, c.table_name) for c in candidates] == [("ai_grader", "gold_tests")]
+    assert errors == []
 
 
 def test_table_names_uses_narrow_per_namespace_listing_not_full_walk(session) -> None:
@@ -92,7 +95,7 @@ def test_table_names_and_table_ids_can_combine(session) -> None:
     session.flush()
     catalog = _FakeCatalog({"ai_grader": ["already_scanned", "gold_tests"], "other_schema": ["x"]})
 
-    candidates = _discover_candidates(
+    candidates, _errors = _discover_candidates(
         session,
         source_id=source.id,
         table_ids=[table.id],
@@ -119,3 +122,61 @@ def test_list_candidate_tables_falls_back_to_full_walk_without_schema_hint() -> 
     result = _list_candidate_tables(catalog, set())
     assert catalog.list_tables_calls == 1
     assert set(result) == {("a", "t1"), ("b", "t2")}
+
+
+class _FailingCatalog:
+    """Simulates a broken catalog connection (bad credentials, bad uri, metastore down, ...)."""
+
+    def list_tables(self) -> list[tuple[str, str]]:
+        raise KeyError("uri")
+
+
+def test_discover_candidates_reports_errors_instead_of_swallowing_them(session) -> None:
+    source = _seed_source(session)
+
+    candidates, errors = _discover_candidates(
+        session,
+        source_id=source.id,
+        source_factory=lambda _source: _FailingCatalog(),
+    )
+
+    assert candidates == []
+    assert len(errors) == 1
+    assert "uri" in errors[0]
+
+
+def test_run_scan_raises_when_source_scoped_discovery_fails(session) -> None:
+    """A source-scoped scan chunk (every queued scan chunk is) that hits a total catalog
+    connection failure must surface as a failure, not silently report "0 tables, succeeded" --
+    this is the exact bug that let a broken cdp source config look like a clean scan."""
+    source = _seed_source(session)
+
+    with pytest.raises(RuntimeError, match="uri"):
+        run_scan(
+            session,
+            source_id=source.id,
+            chunk_id=0,
+            num_chunks=1,
+            source_factory=lambda _source: _FailingCatalog(),
+        )
+
+
+def test_run_scan_all_sources_tolerates_one_broken_source(session) -> None:
+    """Without an explicit source_id (scanning every source), one broken source shouldn't abort
+    discovery for the others -- only a source-scoped chunk request should hard-fail."""
+    healthy = _seed_source(session)
+    broken = _seed_source(session)
+    catalogs = {
+        healthy.id: _FakeCatalog({"ns": ["t1"]}),
+        broken.id: _FailingCatalog(),
+    }
+
+    summary = run_scan(
+        session,
+        source_id=None,
+        chunk_id=0,
+        num_chunks=1,
+        source_factory=lambda source: catalogs[source.id],
+    )
+
+    assert summary.discovered == 1
