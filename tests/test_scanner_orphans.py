@@ -5,7 +5,12 @@ from unittest.mock import MagicMock, patch
 
 from cryo.config import Settings
 from cryo.db.models import TableCost
-from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
+from cryo.scanner.orphans import (
+    carry_forward_orphans,
+    parse_s3_location,
+    scan_orphans,
+    should_run_orphan_scan,
+)
 
 
 def test_should_run_orphan_scan_when_forced() -> None:
@@ -60,6 +65,34 @@ def test_carry_forward_orphans_returns_previous_values() -> None:
     assert carry_forward_orphans(previous) == (123, 456, previous.last_full_cost_scan_at)
 
 
+def test_parse_s3_location_accepts_s3a_scheme() -> None:
+    """Regression test: s3a:// is the Hadoop/Spark-ecosystem convention for the exact same
+    bucket/key structure as s3:// -- common for Hive Metastore-backed tables written via Spark.
+    Rejecting it silently broke bucket discovery and orphan-file scanning for every table on
+    such a source, with skipped_reason="unsupported_location" and no error surfaced anywhere."""
+    bucket, prefix = parse_s3_location("s3a://acme-lake-gold/gold/revenue/t")
+    assert bucket == "acme-lake-gold"
+    assert prefix == "gold/revenue/t/data/"
+
+
+def test_parse_s3_location_accepts_s3n_scheme() -> None:
+    bucket, prefix = parse_s3_location("s3n://legacy-bucket/db/table")
+    assert bucket == "legacy-bucket"
+    assert prefix == "db/table/data/"
+
+
+def test_parse_s3_location_still_accepts_plain_s3_scheme() -> None:
+    bucket, prefix = parse_s3_location("s3://bucket/warehouse/db/table")
+    assert bucket == "bucket"
+    assert prefix == "warehouse/db/table/data/"
+
+
+def test_parse_s3_location_rejects_unrelated_schemes() -> None:
+    bucket, prefix = parse_s3_location("hdfs://namenode/warehouse/db/table")
+    assert bucket is None
+    assert prefix == ""
+
+
 @patch("cryo.scanner.orphans.boto3.client")
 def test_scan_orphans_counts_unreferenced_keys(mock_client: MagicMock) -> None:
     scan_at = datetime(2026, 7, 3, tzinfo=UTC)
@@ -105,3 +138,44 @@ def test_scan_orphans_counts_unreferenced_keys(mock_client: MagicMock) -> None:
     assert result.listed_bytes == 150
     assert result.listed_keys == 2
     assert result.last_full_cost_scan_at == scan_at
+
+
+@patch("cryo.scanner.orphans.boto3.client")
+def test_scan_orphans_does_not_skip_s3a_locations(mock_client: MagicMock) -> None:
+    """Before the s3a fix, this table would bail out immediately with
+    skipped_reason="unsupported_location" and never actually scan anything."""
+    scan_at = datetime(2026, 7, 3, tzinfo=UTC)
+    s3 = MagicMock()
+    mock_client.return_value = s3
+    paginator = MagicMock()
+    s3.get_paginator.return_value = paginator
+    paginator.paginate.return_value = [
+        {
+            "Contents": [
+                {
+                    "Key": "gold/revenue/t/data/orphan.parquet",
+                    "Size": 50,
+                    "LastModified": scan_at - timedelta(days=5),
+                }
+            ]
+        }
+    ]
+
+    class FakeTable:
+        def location(self) -> str:
+            return "s3a://acme-lake-gold/gold/revenue/t"
+
+    result = scan_orphans(
+        FakeTable(),
+        source_config={
+            "s3.endpoint": "http://localhost:9000",
+            "s3.access-key-id": "minioadmin",
+            "s3.secret-access-key": "minioadmin",
+        },
+        referenced_file_paths={},
+        scan_at=scan_at,
+        settings=Settings(),
+    )
+
+    assert result.skipped_reason is None
+    assert result.orphan_bytes == 50

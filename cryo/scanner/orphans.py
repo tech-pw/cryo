@@ -196,9 +196,21 @@ def table_location(table_obj: object) -> str | None:
     return None
 
 
+_S3_SCHEMES = {"s3", "s3a", "s3n"}
+
+
 def parse_s3_location(location: str) -> tuple[str | None, str]:
+    """Bucket + data-prefix from a table location URI.
+
+    Accepts "s3://", "s3a://", and "s3n://" as equivalent -- they address the same bucket/key
+    structure and differ only in which client library historically used the scheme (s3a/s3n are
+    the Hadoop/Spark-ecosystem conventions, common for Hive Metastore-backed tables written via
+    Spark rather than AWS-native tooling). Treating only "s3" as valid silently broke bucket
+    discovery (S3LogConfigPanel) and orphan-file scanning (skipped_reason="unsupported_location"
+    for every table) on any source using s3a://, with no error surfaced anywhere.
+    """
     parsed = urlparse(location)
-    if parsed.scheme == "s3":
+    if parsed.scheme in _S3_SCHEMES:
         bucket = parsed.netloc
         prefix = parsed.path.lstrip("/")
         if prefix and not prefix.endswith("/"):
