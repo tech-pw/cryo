@@ -219,17 +219,32 @@ GROUP BY table_id, log_date, {_OPERATION_TIER_CASE}
 
 
 def locate_date_partition(
-    client: Any, *, bucket: str, prefix: str, target_date: date, max_depth: int = 5
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    target_date: date,
+    source_bucket: str | None = None,
+    max_depth: int = 7,
 ) -> str | None:
     """Walk the log-target prefix tree looking for a date-shaped subpath for ``target_date``.
 
     S3's partitioned log-delivery format inserts account/region/bucket segments before the
     ``YYYY/MM/DD`` directories in a way that isn't fully fixed across delivery configurations --
     rather than hardcode an assumed depth, this discovers the actual layout by listing common
-    prefixes and descending into whichever child matches the next wanted date segment (or, if
-    none match yet, the single non-date-shaped child, e.g. an account-id folder). Returns
-    ``None`` if no such path is found within ``max_depth`` levels -- either an unpartitioned
-    ("flat") log-delivery format, or no logs delivered for that date yet.
+    prefixes and descending into whichever child matches the next wanted date segment. Before a
+    date segment appears, a branch point can have *many* non-date-shaped children, not just one
+    -- the common case is a shared, org-wide logging bucket receiving deliveries for many source
+    buckets at once. AWS's documented "Partitioned" key format is
+    ``[prefix][account-id]/[region]/[source-bucket]/[yyyy]/[mm]/[dd]/...``, so every other
+    bucket logging to the same target shows up as a sibling folder at that depth. When
+    ``source_bucket`` is given, an exact match on it is tried first; a lone non-date child is
+    still used as a fallback for delivery configs that don't literally embed the bucket name at
+    that depth (or when ``source_bucket`` isn't known). Returns ``None`` if no such path is
+    found within ``max_depth`` levels -- either an unpartitioned ("flat") log-delivery format,
+    or no logs delivered for that date yet. Default ``max_depth=7`` covers the deepest
+    documented AWS layout (account-id, region, source-bucket, then year/month/day = 6 levels)
+    with one level of slack.
     """
     wanted = [f"{target_date.year:04d}", f"{target_date.month:02d}", f"{target_date.day:02d}"]
     current = prefix
@@ -251,6 +266,13 @@ def locate_date_partition(
         non_date_children = [
             c for c in children if not _DATE_SEGMENT_RE.match(c.rstrip("/").rsplit("/", 1)[-1])
         ]
+        if source_bucket:
+            bucket_matches = [
+                c for c in non_date_children if c.rstrip("/").rsplit("/", 1)[-1] == source_bucket
+            ]
+            if bucket_matches:
+                current = bucket_matches[0]
+                continue
         if len(non_date_children) == 1:
             current = non_date_children[0]
             continue
@@ -328,6 +350,7 @@ def ingest_bucket(
             bucket=config.log_target_bucket,
             prefix=config.log_target_prefix or "",
             target_date=candidate_date,
+            source_bucket=config.bucket,
         )
         if location:
             located[candidate_date] = f"s3a://{config.log_target_bucket}/{location}"
