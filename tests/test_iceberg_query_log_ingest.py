@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from cryo.config import get_settings
 from cryo.db.models import Source, Table
 from cryo.telemetry import iceberg_source
 from cryo.telemetry.iceberg_source import (
@@ -20,6 +21,12 @@ from cryo.telemetry.iceberg_source import (
     _read_query_texts,
     aggregate_from_iceberg_query_log,
 )
+
+
+def _patch_window_hours(monkeypatch, hours: int) -> None:
+    """Pin query_log_iceberg_window_hours for a test, independent of the tuned default."""
+    settings = get_settings().model_copy(update={"query_log_iceberg_window_hours": hours})
+    monkeypatch.setattr("cryo.config.get_settings", lambda: settings)
 
 
 def _seed_source_and_table(
@@ -171,6 +178,7 @@ def test_aggregate_chunks_backlog_into_windows_and_advances_watermark(session, m
 
 
 def test_aggregate_resumes_from_watermark_on_next_call(session, monkeypatch) -> None:
+    _patch_window_hours(monkeypatch, 6)
     source, table = _seed_source_and_table(session, schema_name="s", table_name="t")
     now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     last_aggregated = now - timedelta(hours=3)
@@ -201,6 +209,7 @@ def test_aggregate_resumes_from_watermark_on_next_call(session, monkeypatch) -> 
 
 
 def test_aggregate_matches_queries_to_tables_across_windows(session, monkeypatch) -> None:
+    _patch_window_hours(monkeypatch, 6)
     source, table = _seed_source_and_table(session, schema_name="s", table_name="t")
     now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     source.config = {
@@ -242,6 +251,7 @@ def test_aggregate_matches_queries_to_tables_across_windows(session, monkeypatch
 def test_aggregate_stops_early_on_read_failure_without_losing_watermark_progress(
     session, monkeypatch
 ) -> None:
+    _patch_window_hours(monkeypatch, 6)
     source, table = _seed_source_and_table(session, schema_name="s", table_name="t")
     now = datetime(2026, 1, 1, 18, 0, tzinfo=UTC)
     source.config = {
