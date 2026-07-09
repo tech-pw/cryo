@@ -168,18 +168,23 @@ class Settings(BaseSettings):
         ),
     )
     query_log_iceberg_window_hours: int = Field(
-        default=6,
+        default=1,
         gt=0,
         description=(
             "Time-window size for the iceberg_table read-through query-log path "
             "(cryo/telemetry/iceberg_source.py). Each window is scanned and watermarked "
             "independently so a busy Trino cluster's query-event-listener table (which can log "
             "millions of rows over the default 7-day first-run lookback, and whose raw SQL text "
-            "can be large per row) never has to be materialized into memory as one unbounded scan."
+            "can be large per row) never has to be materialized into memory as one unbounded scan. "
+            "Default is deliberately small (1h): measured against a real busy cluster, a single "
+            "call processing 8 x 6h windows peaked at ~2.3GB, which exceeds the scheduler "
+            "deployment's default 2Gi memory limit (the process that runs this automatically) "
+            "even though it stayed under the API pod's 3Gi. 1h keeps per-call peak memory well "
+            "under either limit; tune upward only if profiled safe for your own query volume."
         ),
     )
     query_log_iceberg_max_windows_per_tick: int = Field(
-        default=8,
+        default=4,
         gt=0,
         description=(
             "Max number of query_log_iceberg_window_hours windows processed per aggregation "
@@ -188,7 +193,7 @@ class Settings(BaseSettings):
         ),
     )
     query_log_iceberg_max_rows_per_window: int = Field(
-        default=100_000,
+        default=25_000,
         gt=0,
         description=(
             "Last-resort per-window row cap for the iceberg_table read-through query-log path. "
