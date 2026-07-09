@@ -390,7 +390,9 @@ Log exploration (Loki via Grafana Explore):
    Query Trino: `SELECT state, count(*) FROM system.runtime.queries GROUP BY 1`
 3. Redis leader lock — multiple Governor pods; only the leader admits:
    `redis-cli GET cryo:leader:governor`
-4. Off-peak window — admissions may defer outside configured IST off-peak hours.
+4. Off-peak window — admissions may defer heavy (standard/deep) jobs outside a configured IST
+   window. If the engine has no off-peak set, or start and end are both `0` (or equal), there is
+   no gate and maintenance may run anytime.
 5. Per-replica caps — `default_per_replica_optimize_cap` may be saturated.
 
 **Remediation:**

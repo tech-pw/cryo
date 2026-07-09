@@ -88,8 +88,9 @@ class Settings(BaseSettings):
     s3_put_usd_per_1k: float = Field(default=0.005, ge=0)
     query_gets_per_file: float = Field(default=1.0, ge=0)
 
+    # Equal start/end disables the off-peak gate (heavy modes may run anytime).
     offpeak_start_ist: int = Field(default=0, ge=0, le=23)
-    offpeak_end_ist: int = Field(default=7, ge=0, le=23)
+    offpeak_end_ist: int = Field(default=0, ge=0, le=23)
     default_per_replica_optimize_cap: int = Field(default=5, gt=0)
     default_emr_slot_cap: int = Field(default=10, gt=0)
     default_native_slot_cap: int = Field(default=5, gt=0)
