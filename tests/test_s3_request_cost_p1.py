@@ -377,6 +377,39 @@ def _settings_with_trino() -> Settings:
     return Settings(telemetry_trino_url="http://trino.local:8080")
 
 
+def test_coordinator_has_no_auth_when_password_unset() -> None:
+    settings = Settings(telemetry_trino_url="https://trino.local:443")
+    coordinator = ingest_mod._coordinator(settings, catalog="hive", schema="cryo_s3_logs")
+    assert coordinator is not None
+    assert coordinator.auth is None
+
+
+def test_coordinator_attaches_basic_auth_when_password_set() -> None:
+    settings = Settings(
+        telemetry_trino_url="https://trino.local:443",
+        telemetry_trino_user="phoenix_user",
+        telemetry_trino_password="secret123",  # noqa: S106 - test fixture, not a real credential
+    )
+    coordinator = ingest_mod._coordinator(settings, catalog="hive", schema="cryo_s3_logs")
+    assert coordinator is not None
+    assert coordinator.user == "phoenix_user"
+    assert coordinator.auth is not None
+    assert coordinator.auth._username == "phoenix_user"
+    assert coordinator.auth._password == "secret123"  # noqa: S105 - assertion against test fixture
+
+
+def test_coordinator_defaults_user_to_cryo_when_only_password_set() -> None:
+    settings = Settings(
+        telemetry_trino_url="https://trino.local:443",
+        telemetry_trino_password="secret123",  # noqa: S106 - test fixture, not a real credential
+    )
+    coordinator = ingest_mod._coordinator(settings, catalog="hive", schema="cryo_s3_logs")
+    assert coordinator is not None
+    assert coordinator.user == "cryo"
+    assert coordinator.auth is not None
+    assert coordinator.auth._username == "cryo"
+
+
 def test_ingest_bucket_upserts_daily_rows_and_rolls_up_table_cost(session, monkeypatch) -> None:
     source = _seed_source(session)
     table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")

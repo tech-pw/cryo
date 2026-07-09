@@ -140,6 +140,21 @@ class Settings(BaseSettings):
             "Trino coordinator URL for scheduled query-log ingestion (CRYO_TELEMETRY_TRINO_URL)."
         ),
     )
+    telemetry_trino_user: str | None = Field(
+        default=None,
+        description=(
+            "Username for telemetry_trino_url, if the coordinator requires auth "
+            "(CRYO_TELEMETRY_TRINO_USER). Defaults to 'cryo' if a password is set but no "
+            "username is given."
+        ),
+    )
+    telemetry_trino_password: str | None = Field(
+        default=None,
+        description=(
+            "Password for telemetry_trino_url, if the coordinator requires auth "
+            "(CRYO_TELEMETRY_TRINO_PASSWORD). Unset means no BasicAuthentication is attempted."
+        ),
+    )
     telemetry_athena_workgroup: str | None = Field(
         default=None,
         description="Optional Athena workgroup filter for query-log ingestion.",

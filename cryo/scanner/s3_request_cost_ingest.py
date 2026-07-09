@@ -26,6 +26,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
+from trino.auth import BasicAuthentication
 
 from cryo.config import Settings, get_settings
 from cryo.db.models import S3BucketLogConfig, S3RequestCostDaily, Table, TableCost
@@ -89,12 +90,19 @@ def _coordinator(settings: Settings, *, catalog: str, schema: str) -> TrinoCoord
     if not url:
         return None
     parsed = urlparse(url)
+    auth = None
+    if settings.telemetry_trino_password:
+        auth = BasicAuthentication(
+            settings.telemetry_trino_user or "cryo", settings.telemetry_trino_password
+        )
     return TrinoCoordinator(
         host=parsed.hostname or "localhost",
         port=parsed.port or (443 if parsed.scheme == "https" else 8080),
         http_scheme=parsed.scheme or "http",
+        user=settings.telemetry_trino_user or "cryo",
         catalog=catalog,
         schema=schema,
+        auth=auth,
     )
 
 
