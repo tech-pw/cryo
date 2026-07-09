@@ -509,6 +509,7 @@ def run_worker(args: argparse.Namespace) -> NoReturn:
 
 
 def run_scheduler(args: argparse.Namespace) -> NoReturn:
+    from cryo.reporting.scheduler import ReportScheduler
     from cryo.scheduler.benefit_score_updater import benefit_score_updater_loop_sync
 
     updater_stop = Event()
@@ -527,6 +528,14 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     s3_log_ingest = S3LogIngestRunner()
     s3_log_ingest_thread = Thread(target=s3_log_ingest.run, name="s3-log-ingest", daemon=True)
     s3_log_ingest_thread.start()
+
+    # Fires SlackConfig rows' daily_report_cron (per-config, DB-driven -- distinct from the
+    # AlertDispatcherRunner above, which is real-time per-table breach alerts). Previously only
+    # reachable via a standalone `python -m cryo.reporting.scheduler` process that no deployment
+    # path actually started.
+    report_scheduler = ReportScheduler()
+    report_thread = Thread(target=report_scheduler.run, name=report_scheduler.name, daemon=True)
+    report_thread.start()
     try:
         runner = SchedulerRunner(interval=args.check_interval)
         _run_with_signal(runner, service_name="scheduler")
@@ -537,6 +546,8 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         alert_thread.join(timeout=5)
         s3_log_ingest.stop()
         s3_log_ingest_thread.join(timeout=5)
+        report_scheduler.stop()
+        report_thread.join(timeout=5)
 
 
 def run_events(args: argparse.Namespace) -> NoReturn:
@@ -563,16 +574,25 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         ("scheduler", settings.health_port + 2),
         ("scanner", settings.health_port + 3),
     )
-    runners = [
+    from cryo.reporting.scheduler import ReportScheduler
+
+    # Split so the health-check wiring below keeps precise DaemonRunner typing (it reaches into
+    # runner._stop) -- ReportScheduler duck-types .run()/.stop()/.name but isn't a DaemonRunner
+    # (its lifecycle is an async loop, not the sync _tick()/wait() shape the others share).
+    core_runners: list[DaemonRunner] = [
         GovernorRunner(interval=args.wave_interval, wiring=wiring),
         WorkerRunner(interval=args.poll_interval, wiring=wiring),
         SchedulerRunner(interval=args.check_interval, wiring=wiring),
         ScannerRunner(interval=args.poll_interval, wiring=wiring),
+    ]
+    other_runners: list[DaemonRunner | ReportScheduler] = [
         BenefitScoreUpdaterRunner(),
         AlertDispatcherRunner(),
         S3LogIngestRunner(),
+        ReportScheduler(),
     ]
-    for runner, (service_name, port) in zip(runners[:4], health_services, strict=True):
+    runners: list[DaemonRunner | ReportScheduler] = [*core_runners, *other_runners]
+    for runner, (service_name, port) in zip(core_runners, health_services, strict=True):
 
         def _readiness(r: DaemonRunner = runner) -> bool:
             return not r._stop.is_set()
@@ -584,8 +604,8 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         )
 
     threads: list[Thread] = []
-    for runner in runners:
-        thread = Thread(target=runner.run, name=runner.name, daemon=True)
+    for bg_runner in runners:
+        thread = Thread(target=bg_runner.run, name=bg_runner.name, daemon=True)
         thread.start()
         threads.append(thread)
 
@@ -593,8 +613,8 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
 
     def handle_signal(signum: int, frame: object) -> None:
         logger.info("Received signal %d, shutting down...", signum)
-        for runner in runners:
-            runner.stop()
+        for bg_runner in runners:
+            bg_runner.stop()
         stop.set()
 
     signal.signal(signal.SIGINT, handle_signal)

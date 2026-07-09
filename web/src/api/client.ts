@@ -1603,13 +1603,15 @@ export const resetBandit = (api: ApiOptions) =>
 
 export interface DailyReportResponse {
   report_date: string;
+  status: "CLEAR" | "WATCH" | "CRITICAL";
   summary: JsonObject;
   grade_distribution: JsonObject;
   maintenance_stats: JsonObject;
   top_issues: JsonObject[];
   critical_anomalies: JsonObject[];
+  action_items: JsonObject[];
   cost: JsonObject;
-  ai_summary: string | null;
+  bottom_line: string | null;
   slack_sent: boolean;
 }
 

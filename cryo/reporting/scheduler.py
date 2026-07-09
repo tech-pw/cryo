@@ -24,6 +24,8 @@ def _slack_webhook_url(stored: str | None) -> str | None:
 class ReportScheduler:
     """Scheduler for periodic reports (e.g., daily anomaly report)."""
 
+    name = "report-scheduler"
+
     def __init__(self) -> None:
         self._last_runs: dict[str, datetime] = {}  # config_id -> last_run
         self._running = False
@@ -40,6 +42,12 @@ class ReportScheduler:
                 logger.exception("Report scheduler tick failed")
 
             await asyncio.sleep(poll_interval_sec)
+
+    def run(self) -> None:
+        """Sync entry point matching DaemonRunner's ``.run()`` shape (cryo/cli.py), so this
+        drops into the same Thread(target=runner.run)/runner.stop() wiring as the other
+        background daemons without special-casing its async start() there."""
+        asyncio.run(self.start())
 
     def stop(self) -> None:
         """Stop the scheduler."""
