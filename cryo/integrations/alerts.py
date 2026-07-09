@@ -184,11 +184,17 @@ def send_slack_table_breach_alert(
     reasons: list[str],
     *,
     webhook_url: str | None = None,
+    ai_summary: str | None = None,
 ) -> bool:
     """Post a single table's SLA/data-quality breach summary to the ops Slack channel.
 
     Unlike email, a Slack incoming webhook can't target a specific person -- this is a
     best-effort heads-up to the shared channel, not the primary owner/subscriber notification.
+
+    ``ai_summary``, if given, is the top hypothesis from
+    ``cryo.ai.anomaly_brief.compose_root_cause_brief`` (best-effort; the caller is responsible
+    for generating it and must not let a failure there block this alert -- a breach still needs
+    to notify even when the AI summary can't be produced).
     """
     if not reasons:
         return False
@@ -199,19 +205,28 @@ def send_slack_table_breach_alert(
         logger.debug("Slack webhook not configured; skipping table breach alert")
         return False
 
-    payload: dict[str, Any] = {
-        "text": f"Cryo: {table_name} breached SLA/data-quality thresholds",
-        "blocks": [
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":red_circle: *{table_name}*\n" + "\n".join(f"• {r}" for r in reasons[:10])
+                ),
+            },
+        }
+    ]
+    if ai_summary:
+        blocks.append(
             {
                 "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        f":red_circle: *{table_name}*\n" + "\n".join(f"• {r}" for r in reasons[:10])
-                    ),
-                },
+                "text": {"type": "mrkdwn", "text": f":brain: *Likely cause:* {ai_summary}"},
             }
-        ],
+        )
+
+    payload: dict[str, Any] = {
+        "text": f"Cryo: {table_name} breached SLA/data-quality thresholds",
+        "blocks": blocks,
     }
     if settings.slack_channel:
         payload["channel"] = settings.slack_channel

@@ -16,6 +16,7 @@ passed since its last dispatch, so a sustained breach doesn't spam an inbox ever
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -256,13 +257,40 @@ def _build_email_body(breach: TableBreach) -> str:
     )
 
 
+def _ai_summary_for_breach(session: Session, table_id: uuid.UUID) -> str | None:
+    """Best-effort root-cause hypothesis for a Slack breach alert.
+
+    Never raises and never blocks the alert it's attached to -- a table breach must still
+    notify even when LLM generation fails, is disabled, or times out. Returns the top-ranked
+    hypothesis's ``because`` text (the deterministic-evidence explanation, whether or not an
+    LLM actually ranked it -- ``compose_root_cause_brief`` falls back to deterministic
+    hypotheses on its own when no LLM provider is configured or evidence is empty).
+    """
+    if not get_settings().ai_feature_diagnosis_enabled:
+        return None
+    try:
+        import asyncio
+
+        from cryo.ai.anomaly_brief import compose_root_cause_brief
+
+        brief = asyncio.run(compose_root_cause_brief(session, table_id))
+        if not brief.hypotheses:
+            return None
+        top = brief.hypotheses[0]
+        return f"{top.title} ({top.because})"
+    except Exception:
+        logger.warning("AI root-cause summary failed for table %s", table_id, exc_info=True)
+        return None
+
+
 def _dispatch(session: Session, table: Table, breach: TableBreach, recipients: list[str]) -> None:
     from cryo.integrations.alerts import send_slack_table_breach_alert
     from cryo.reporting.email import send_email
 
     subject = f"[Cryo] {breach.table_name} breached SLA/quality/effectiveness thresholds"
     send_email(subject, _build_email_body(breach), recipients)
-    send_slack_table_breach_alert(breach.table_name, breach.reasons)
+    ai_summary = _ai_summary_for_breach(session, table.id)
+    send_slack_table_breach_alert(breach.table_name, breach.reasons, ai_summary=ai_summary)
 
     session.add(
         TableAlertDispatch(table_id=table.id, reasons=breach.reasons, recipients=recipients)
