@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from cryo.domain.enums import Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
     MaintenancePlan,
@@ -12,6 +14,50 @@ from cryo.engines.spark.sql import render, render_predicate
 
 def _predicate(*terms: PartitionPredicateTerm) -> PartitionPredicate:
     return PartitionPredicate(terms=terms)
+
+
+def test_spark_renders_identity_date_epoch_day() -> None:
+    """Identity date partitions store days-since-epoch; must not call fromisoformat."""
+    epoch_day = (date(2026, 7, 9) - date(1970, 1, 1)).days
+    assert epoch_day == 20643
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm("event_date", PartitionTransform.IDENTITY, epoch_day, "date")
+            )
+        )
+        == "(event_date = DATE '2026-07-09')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_date", PartitionTransform.IDENTITY, str(epoch_day), "date"
+                )
+            )
+        )
+        == "(event_date = DATE '2026-07-09')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_ts", PartitionTransform.IDENTITY, epoch_day, "timestamp"
+                )
+            )
+        )
+        == "(event_ts = TIMESTAMP '2026-07-09 00:00:00')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_ts", PartitionTransform.IDENTITY, str(epoch_day), "timestamp"
+                )
+            )
+        )
+        == "(event_ts = TIMESTAMP '2026-07-09 00:00:00')"
+    )
 
 
 def test_spark_renders_date_timestamp_month_and_year_predicates() -> None:
