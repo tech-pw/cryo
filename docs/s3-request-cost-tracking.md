@@ -1,8 +1,74 @@
 # S3 request-cost tracking (GET/PUT attribution per table)
 
-**Status:** design, not yet implemented. **Owner:** TBD. **Depends on:** an AWS source with S3
-server access logging enabled on its buckets (see [§4](#4-discovery--onboarding-flow)) — though
-onboarding a source with no prior logging setup is itself a first-class path, see §4.3.
+**Status:** implemented and running in production (P0/P0a/P1 below; P2's auto-provision/teardown
+UI and Storage Lens alternate path are not built). **Owner:** TBD. **Depends on:** an AWS source
+with S3 server access logging enabled on its buckets (see [§4](#4-discovery--onboarding-flow)) —
+though onboarding a source with no prior logging setup is itself a first-class path, see §4.3.
+
+**Read [§0](#0-current-status-2026-07-10) first if you're picking this up** — it has the real
+operational state, a bug found and fixed today that silently zeroed out every measurement, and
+what still needs attention. The rest of this doc is the original design; §5 in particular
+describes an approach (Trino) that shipped differently than planned — see §5's note.
+
+## 0. Current status (2026-07-10)
+
+**What's live:** `cryo/scanner/s3_request_cost_ingest.py` runs as a background daemon
+(`S3LogIngestRunner` in `cryo/cli.py`, started inside the `cryo-scheduler` deployment's
+`run_scheduler()`), once per `s3_log_ingest_interval_hours` (default 24h — see
+`cryo/config.py`). It reads S3 server access log objects **natively in Python** (no Trino/Hive
+dependency — §5's original design assumed Trino; that was ripped out, see §5's note for why),
+aggregates GET/PUT/LIST counts per table per day, upserts into `S3RequestCostDaily`, and rolls
+that up into `TableCost`'s request-cost fields (§6.3) via `recompute_table_cost_rollup`.
+
+**Bug found and fixed 2026-07-10 (commit `10ff718`): every log line was silently failing to
+parse.** `S3_LOG_LINE_PATTERN`'s old version tried to model every trailing log field (referrer,
+user-agent, version-id, host-id, signature-version, ..., through the newest access-point-arn/
+acl-required fields) with a fixed count of optional regex groups, anchored at end-of-line. AWS's
+user-agent field is quoted but routinely contains spaces (Hadoop's S3A client — this platform's
+own primary write path — emits e.g. `"Hadoop 3.3.6-amzn-3, aws-sdk-java/2.23.18 ..."`), which
+broke the *entire* line match, and the fixed trailing-group count would have broken again the
+next time AWS extended the format regardless. The daemon logged a clean "S3 request-cost tick:
+ingested 1 bucket(s)" every single run — `ingest_bucket()` doesn't treat "zero log lines parsed"
+as an error — while `s3_request_cost_daily` silently stayed at zero rows. **If you're auditing
+whether this feature has ever produced real numbers before this date: it hasn't.** The fix
+(`_parse_log_line` only ever needs the operation and key fields, so the pattern now only matches
+through those and ignores everything after) is covered by
+`test_parse_log_line_handles_multi_word_quoted_user_agent` in `tests/test_s3_request_cost_p1.py`
+— a real captured production line, values scrubbed. **Lesson for whoever extends this next:** the
+old test fixture's user-agent (`"S3Console/0.4"`) never had a space in it, so it never exercised
+the bug. Any new fixture touching this regex should use a multi-word quoted field somewhere.
+
+**Config state as of this writing:** 11 `S3BucketLogConfig` rows exist for the one source in this
+deployment; only **1 is `enabled = true`** (bucket `example-lake-prod-temp`, log target
+`server-access-logging-main`). The other 10 are configured (have a `log_target_bucket`) but
+disabled — worth checking with whoever owns this deployment whether that's intentional (e.g.
+low-value buckets not worth tracking) or just never got turned on. Toggling is
+`PATCH /sources/{id}/s3-log-configs/{bucket}` with `{"enabled": true}` (§8).
+
+**Known live issues, not yet fixed:**
+- **`pricing:GetProducts` is denied** for the IAM identity currently in use
+  (`airbyte-prod-user`) — cost figures fall back to the hardcoded default rate (§6.4) rather than
+  the account's live regional rate. Request *counts* are still accurate; dollar costs derived
+  from them are approximate. Grant the permission (§11) to close this gap, or confirm the
+  fallback default is close enough for this deployment's region/storage class.
+- **The enabled bucket hits its daily object cap.** `s3_log_ingest_max_objects_per_day` (default
+  20,000, `cryo/config.py`) was exceeded on both days checked in the last run — logged as a
+  `WARNING`, and those days' counts are a lower bound, not exact. If this bucket's log volume is
+  consistently above 20k objects/day, either raise the cap (more memory/time per run) or raise
+  `s3_log_ingest_concurrency` (default 16) so more objects get read per run without raising the
+  cap itself.
+- **`cryo-scheduler` OOM-crash-loops roughly every 30-40 minutes** (see the memory comment on
+  `scheduler.resources` in `deploy/helm/cryo/values.yaml`) — caused by the benefit-score updater
+  loading the whole fleet's partitions into memory in one pass, an unrelated daemon that happens
+  to share this process. `S3LogIngestRunner` runs in a separate thread in the same process, so an
+  OOM kill mid-ingest silently discards that run's in-progress work (each bucket's writes commit
+  individually inside `run_s3_ingest_tick`'s loop, so a completed bucket's data survives, but a
+  bucket still mid-read does not). With only 1 bucket enabled and each run apparently completing
+  within the crash window (confirmed via the `last_ingested_at` timestamp advancing cleanly), this
+  hasn't been observed to actually lose a run yet — but it's a real risk if more buckets get
+  enabled and the combined per-tick runtime grows past the crash interval. Worth fixing the
+  benefit-score updater's memory footprint (own issue, out of scope here) before scaling this
+  feature to more buckets.
 
 ## 1. Problem
 
@@ -60,12 +126,14 @@ AWS request count. This doc adds the real thing alongside it.
 | CloudTrail S3 data events | Yes, per key | ~$1 / million events — expensive fast | No — cost scales linearly with request volume | Ruled out on cost |
 | CloudWatch Request Metrics (per-prefix filter) | Yes, per prefix | $0.30/filter/month, capped at 1,000 filters/bucket | No — one filter per table hits the cap immediately | Ruled out on the filter cap |
 | S3 Storage Lens (Advanced, prefix aggregation) | Yes, per prefix, "expanded prefixes" report | Priced per object monitored (~$0.20–0.30/million objects/mo) | Yes — built for billions of prefixes | Good AWS-native alternative if the team doesn't want to own log SQL |
-| **S3 Server Access Logs + Trino** | Yes, per key → per table via prefix match | **Free to enable**; only log storage + query-engine scan cost, which we bound to near-zero (§5) | Yes | **Chosen** |
+| **S3 Server Access Logs, aggregated** | Yes, per key → per table via prefix match | **Free to enable**; only log storage + read cost, which we bound to near-zero (§5) | Yes | **Chosen** |
 
-Access logs win primarily because they're free to turn on and Cryo already owns a Trino cluster
-capable of doing the aggregation without new infrastructure. Storage Lens is the fallback worth
-revisiting if a team would rather pay a small fixed AWS fee than manage the Trino table
-definition below.
+Access logs win primarily because they're free to turn on and don't need a new AWS-billed
+service. The aggregation engine originally planned here was Trino (Cryo already ran one); §5
+explains why that got replaced with native Python aggregation before this shipped — the
+access-logs choice itself didn't change, only what reads and groups them. Storage Lens is the
+fallback worth revisiting if a team would rather pay a small fixed AWS fee than own any
+aggregation logic at all.
 
 ## 4. Discovery & onboarding flow
 
@@ -168,68 +236,80 @@ the path") rather than accepting it blind.
 
 ## 5. Ingestion pipeline
 
-The scale/cost constraint drives every choice here: **cost of measuring cost must stay flat**,
-regardless of fleet size or how much log history has piled up in S3.
+**This section originally specced a Trino-based pipeline (register the log bucket as a
+Hive-partitioned external table, `GROUP BY` query per run). That's not what shipped.** Getting a
+Hive-connector catalog willing to accept an `external_location`/`TEXTFILE` table definition turned
+out to be its own unresolved fight (the available Trino catalogs were Iceberg-connector, which
+rejects that table property outright; the Hive-connector catalogs available denied
+schema-creation to every credential tried) — and once that was being debugged, it became clear
+Trino was never actually *load-bearing* for this feature: the real work is "list some S3 objects,
+regex out two fields per line, group and count." Removed in commit `e609987` in favor of
+**native Python aggregation**, which needs nothing beyond the AWS credentials this feature already
+required for `s3:GetObject`/`s3:ListBucket`. If you're extending this and reach for Trino again,
+re-read that commit message first — the catalog/permission problems it hit are almost certainly
+still there.
 
-1. **Register the log target bucket as a Hive-partitioned external table in Trino**, one time per
-   log-target-bucket (note: multiple source buckets often share one log-target-bucket, each under
-   its own subfolder — register once, not once per source bucket). S3 access logs are already
-   laid out as `.../<bucket>/<year>/<month>/<day>/...`, which maps directly onto Hive partition
-   columns. This is what makes partition pruning possible in step 3.
-2. **Checkpoint the last-ingested date per bucket.** Each run only touches new partitions.
-3. **Re-aggregate a small trailing window (last 2–3 days), not just "yesterday."** Access log
-   delivery is best-effort and can straggle in late (§7) — a strict "touch day D exactly once"
-   design would silently under-count on any day with late arrivals. Re-scanning 2–3 partitioned
-   days is still cheap (partition pruning means Trino never reads outside that window), and the
-   aggregation is naturally idempotent (`COUNT(*)` over the same partition twice gives the same
-   answer), so this also absorbs AWS's documented possibility of duplicate log records for free.
-4. **One Trino query per bucket per run**: `GROUP BY table_prefix, operation, date` over just
-   that trailing window, matching `key` to `table_id` by longest-prefix match against `Table
-   .location`. Output is a few thousand rows per bucket per run, not millions of raw log lines.
+The scale/cost constraint still drives every choice: **cost of measuring cost must stay flat**,
+regardless of fleet size or how much log history has piled up in S3. As implemented
+(`cryo/scanner/s3_request_cost_ingest.py`):
 
-   **This longest-prefix match is the algorithmic core of the whole feature, and the rest of this
-   list is easy by comparison — it deserves more than one bullet.** A naive `WHERE key LIKE
-   location || '%'` join against every known table forces, per log row, a scan of all N table
-   locations for that bucket to find the longest match; at 1,000+ tables and millions of log rows
-   per partition this either needs the right join strategy or it becomes the slow part of an
-   otherwise cheap design. Two directions worth benchmarking before this ships, not after:
-   broadcast the (small) table-location list to every worker via `CROSS JOIN` against a values
-   list rather than a row-by-row subquery, so the CBO treats it as a broadcast join instead of a
-   nested-loop; or precompute a location-prefix index (sorted, so a range/binary-search style
-   lookup replaces "check every location") and expose it as a small lookup table or UDF rather
-   than a raw string match per row. Whichever wins, **benchmark with realistic row counts (the
-   fleet's actual table count × a busy bucket's actual daily log-row count) before shipping §5's
-   P1 implementation** — this is not something to discover is slow after it's already the thing
-   every ingestion run waits on.
+1. **Locate each date's log partition** (`locate_date_partition`) under the configured
+   `log_target_bucket`/`log_target_prefix`. AWS's "partitioned" log-key layout is
+   `[prefix][account-id]/[region]/[source-bucket]/[yyyy]/[mm]/[dd]/...`; this walks that layout
+   and, critically, **matches the exact source-bucket name** rather than assuming "the one
+   non-date-shaped sibling folder" — a shared/multi-tenant logging bucket (one bucket receiving
+   log deliveries for many source buckets) can have 100+ sibling folders at that branch point.
+2. **Checkpoint the last-ingested date per bucket** (`S3BucketLogConfig.last_ingested_date`).
+   Each run re-processes a trailing reconciliation window (`_RECONCILE_WINDOW_DAYS`), not just
+   "yesterday" — access log delivery is best-effort and can straggle in late (§7); re-reading a
+   few days is cheap and the aggregation is naturally idempotent (a day's counts get fully
+   recomputed and upserted, not incremented), so this also absorbs AWS's documented possibility
+   of duplicate log records for free.
+3. **Read and aggregate log objects natively** (`_aggregate_log_objects`): a bounded
+   `ThreadPoolExecutor` (`s3_log_ingest_concurrency`, default 16 — I/O-bound work, so higher than
+   a typical CPU-bound pool) does concurrent `GetObject` calls, each line matched against
+   `S3_LOG_LINE_PATTERN` (`_parse_log_line` — **see §0 for the parsing bug found and fixed
+   2026-07-10**; the pattern only extracts `operation` and `key`, nothing past that) and mapped to
+   a coarser `operation_tier` (`_operation_tier` — `get`/`head`/`put`/`list`, a Python port of what
+   used to be a SQL `CASE`). **Bounded per day**: `s3_log_ingest_max_objects_per_day` (default
+   20,000) caps how many log objects get read for any single day, logging a `WARNING` with the
+   specific date(s) truncated so an operator can tell a "lower bound" day from an exact one,
+   rather than the cap silently producing a wrong-looking-exact number.
+4. **Longest-prefix match against `Table.location`** (`_match_table_prefix`), same requirement as
+   the original design: two tables sharing a common parent prefix
+   (`warehouse/db1/table_a/...`, `warehouse/db1/table_b/...`) must each get their own requests,
+   not have everything misattributed to whichever sorts first. Implemented via
+   `_build_prefix_index` — table locations grouped by their first two path segments (mirrors the
+   old SQL's equi-join prefilter) so matching a log key doesn't mean scanning every known table
+   location per line.
+5. **UPSERT into `S3RequestCostDaily`** (§6.3) — a plain select-then-update-or-insert per
+   `(source_id, bucket, table_id, day, operation_tier)` key (not a Postgres `ON CONFLICT`, since
+   Postgres treats every `NULL` `table_id` as distinct for uniqueness purposes, which would defeat
+   dedup for unmatched-request rows; see the `S3RequestCostDaily` docstring). Then
+   `recompute_table_cost_rollup` re-derives `TableCost`'s four request-cost fields from a fresh
+   `SUM(...) WHERE day >= now() - 30d` read of what was just written.
+6. **Never store raw log lines.** Each log object is read, aggregated in-memory, and discarded —
+   Postgres only ever sees the small grouped result (one row per table/day/tier, not per request).
 
-   **Back-of-envelope, so this isn't just an abstract "keep it cheap" — a rough working number:**
-   a 10 TB bucket doing ~50M requests/month is roughly 1.7M requests/day; each S3 access log line
-   is ~250–300 bytes, so that's very roughly ~500 MB/day of raw log text for that one bucket. A
-   single Trino query over a 3-day partition-pruned
-   window at that scale should be a low-tens-of-seconds job on a modest cluster, not minutes —
-   if a real benchmark comes back an order of magnitude slower than that, the join strategy above
-   needs fixing before this ships, not after. Treat "single query, single bucket, single day,
-   roughly 30s" as the sanity-check number to hold P1's actual benchmark against.
-   **Cross-table prefix collision — do not simplify this away.** Iceberg tables in the same
-   bucket routinely share a common parent prefix (`warehouse/db1/table_a/...` and
-   `warehouse/db1/table_b/...` both sit under `warehouse/db1/`). A log entry for
-   `warehouse/db1/table_b/2024-12-30/part-00000.parquet` must match `table_b`'s location, not
-   `table_a`'s and not the shared `warehouse/db1/` parent as if it were its own table. The
-   longest-prefix match against `Table.location` handles this correctly by construction — a
-   future "simplification" that swaps it for a bare `STARTS_WITH()`/first-match check would
-   silently misattribute every table's request cost to whichever sibling table happens to sort
-   first, and the bug would be invisible in aggregate (total request count across the bucket
-   stays right, only the per-table split is wrong) — exactly the kind of regression that survives
-   code review. Keep the "longest match wins" requirement explicit in the implementation, not
-   just implied by "prefix match."
-5. **UPSERT the result into a small rolling table** (§6.2) — overwrite each day's row for that
-   table rather than appending, so re-aggregating the trailing window never duplicates counts.
-6. **Never pull raw log rows into Cryo's own process, and never store them in Postgres.**
-   Aggregation happens entirely inside Trino; Cryo only ever sees the small grouped result.
+**Operational safeguards added after real production runs, not in the original design:**
+- `botocore`/`boto3`/`s3transfer` are explicitly suppressed to `WARNING` even when the app's own
+  log level is `DEBUG` (`cryo/observability/logging.py`) — left at default verbosity, boto3 logs
+  ~15-20 lines per S3 request, which was the actual throughput bottleneck on first production run,
+  not network or CPU.
+- The shared boto3 client's connection pool is explicitly sized
+  (`Config(max_pool_connections=20)`, `cryo/integrations/s3_bucket_logging.py`) to comfortably
+  exceed `s3_log_ingest_concurrency` — boto3's default pool (10) is smaller than this feature's
+  own default concurrency (16), which under-pool-sized silently serializes requests that should
+  be concurrent.
 
-This bounds Cryo's own AWS/Trino spend on this feature to "a few days of one bucket's logs, per
-bucket, per day" — forever, independent of how many months of log history exist in S3 or how many
-tables the fleet grows to.
+This bounds Cryo's own AWS spend on this feature to "at most `s3_log_ingest_max_objects_per_day`
+objects read, per enabled bucket, per run" — forever, independent of how many months of log
+history exist in S3 or how many tables the fleet grows to. It does not scale sub-linearly with
+request volume the way the original Trino partition-pruning design would have for a bucket doing
+tens of millions of requests/day; if that becomes the actual bottleneck (watch for
+`s3_log_ingest_max_objects_per_day` truncation warnings becoming routine on a bucket, per §0),
+raising concurrency is the first lever, and revisiting a query-engine-based approach is the
+fallback if raising concurrency and the cap stops being enough.
 
 ## 6. Data model changes
 
@@ -342,21 +422,28 @@ all, and occasionally duplicated. Practical implications for this design:
   GET/PUT visibility on a *specific* hot table comes up, that's CloudWatch Request Metrics scoped
   to that one table, not a fleet-wide mechanism — see the cap discussion in §3.
 
-## 8. API surface (new)
+## 8. API surface
 
-Following the existing `cost_insights_routes.py` pattern (manual-trigger POST endpoints, not
-cron-only):
+Implemented in `cryo/api/s3_log_config_routes.py`, following the existing
+`cost_insights_routes.py` pattern (manual-trigger POST endpoints, not cron-only):
 
-- `GET /sources/{id}/s3-log-configs` — list discovered buckets + their logging status.
-- `PATCH /sources/{id}/s3-log-configs/{bucket}` — set manual `log_target_bucket`/`prefix`,
+- `GET /sources/{source_id}/s3-log-configs` — list discovered buckets + their logging status.
+- `PATCH /sources/{source_id}/s3-log-configs/{bucket}` — set manual `log_target_bucket`/`prefix`,
   toggle `enabled`.
-- `POST /sources/{id}/s3-log-configs/{bucket}/check-logging` — re-run the `GetBucketLogging`
-  check on demand.
-- `POST /sources/{id}/s3-log-configs/{bucket}/ingest` — manually trigger an ingestion run
-  (same as what the scheduled job calls).
-- `POST /sources/{id}/s3-log-configs/{bucket}/teardown` — the destructive cleanup path (§9.4),
-  distinct from `PATCH ... {enabled: false}`: removes the config row and, only for policy/bucket
-  state Cryo itself created in §4.3.1, offers to revert it.
+- `POST /sources/{source_id}/s3-log-configs/{bucket}/check-logging` — re-run the
+  `GetBucketLogging` check on demand.
+- `POST /sources/{source_id}/s3-log-configs/{bucket}/probe` — validate a manually-entered
+  target/prefix (§4.4) against a live `ListObjectsV2` call.
+- `POST /sources/{source_id}/s3-log-configs/{bucket}/ingest` — manually trigger an ingestion run
+  for one bucket (same `ingest_bucket()` the scheduled `S3LogIngestRunner` calls for every
+  enabled bucket).
+- `POST /sources/{source_id}/s3-log-configs/{bucket}/provision` — the §4.3 one-click
+  auto-provision path.
+- `POST /sources/{source_id}/s3-log-configs/{bucket}/teardown` — the destructive cleanup path
+  (§9.4), distinct from `PATCH ... {enabled: false}`: removes the config row and, only for
+  policy/bucket state Cryo itself created in §4.3.1, offers to revert it.
+- `GET /sources/{source_id}/s3-request-cost-rollup` — the fleet-wide rollup consumed by the cost
+  dashboard.
 
 ## 9. Frontend changes
 
@@ -439,17 +526,27 @@ this is aimed at any OSS adopter, not just teams that already run FinOps tooling
 
 ## 10. Scheduling
 
-Opt-in per bucket, matching how CUR/inventory ingestion works today (manually triggered via POST,
-no cron yet). A `DaemonRunner` subclass (same pattern as `AlertDispatcherRunner` /
-`BenefitScoreUpdaterRunner` in `cryo/cli.py`) is the natural fast-follow once the manual path has
-been validated against a handful of real buckets — not part of the first cut.
+**Implemented** as `S3LogIngestRunner` (`cryo/cli.py`), a `DaemonRunner` subclass matching the
+`AlertDispatcherRunner`/`BenefitScoreUpdaterRunner` pattern it originally planned to follow.
+Started as a background thread inside `run_scheduler()` — i.e. it lives in the `cryo-scheduler`
+k8s deployment, not a dedicated one (see §0's note on the OOM-crash-loop interaction risk that
+comes with sharing that process). Each tick (`_tick()` → `run_s3_ingest_tick`) loops every
+`enabled=true` `S3BucketLogConfig` row and calls `ingest_bucket()` for each, then prunes stale
+`S3RequestCostDaily` rows older than `s3_request_cost_retention_days` (default 35).
 
-Plan capacity around: **one query per enabled source bucket per day**, each expected to land in
-the low tens of seconds per §5's back-of-envelope estimate, against a log target that grows by
-roughly single-digit GB/day per busy bucket. That's the number to hold a real `DaemonRunner`
-rollout's cluster capacity against — if actual measured runs come in meaningfully above that once
-P1 ships, treat it as a signal the §5 join strategy needs revisiting before scheduling more
-buckets onto it, not as a reason to just widen the cron interval.
+**Interval:** `s3_log_ingest_interval_hours` (`cryo/config.py`, default 24h) — but note
+`DaemonRunner.run()` fires its first tick immediately on thread start, before waiting out the
+interval, so every process restart (including an OOM-triggered one) effectively resets the clock
+and re-triggers a run right away. That's a feature, not a bug, given the crash-loop reality in
+§0 — it's the reason the enabled bucket has been getting ingested roughly every 30-40 minutes in
+practice despite a 24h configured interval, not once a day as the config alone would suggest.
+
+Manual trigger (`POST .../ingest`, §8) calls the same `ingest_bucket()` the scheduled job does,
+useful for testing a newly-enabled bucket without waiting for the next tick.
+
+Plan capacity around **`s3_log_ingest_max_objects_per_day` objects read per enabled bucket per
+run** (§5) — watch for the truncation `WARNING` (§0) as the signal that either the cap or
+`s3_log_ingest_concurrency` needs raising for a specific bucket's actual traffic volume.
 
 ## 11. Required IAM permissions
 
@@ -483,6 +580,15 @@ button — never a degraded or partially-broken experience.
 
 ## 12. Rollout phases
 
+**All of P0a/P0/P1 are implemented and live. P2 is mostly implemented** (the auto-provision and
+teardown API endpoints and the `S3LogConfigPanel.tsx`/`S3RequestsTab.tsx` frontend both exist) —
+what's *not* confirmed is whether §4.3.1's policy-merge step (`GetBucketPolicy` → merge → `Put`,
+never overwrite) has been exercised against a real bucket with pre-existing unrelated policy
+statements, versus just an empty-policy happy path. Worth a real test before trusting it on a
+production bucket that already has other statements. Storage Lens as an alternate path was never
+built (Trino wasn't either, in the end — see §5's note; native Python aggregation replaced both
+candidates).
+
 - **P0a — extract live pricing, ship it alone, first.** Just `fetch_s3_request_prices()` (or
   whatever it ends up named): the Price List API call for GET/PUT/LIST rates, the
   per-(region, storage class) cache, and the empty-response `WARNING` log (§6.4) — nothing else
@@ -508,15 +614,14 @@ button — never a degraded or partially-broken experience.
   discovery + manual-entry UI (§4.1, §4.2, §4.4), consuming `fetch_s3_request_prices()` from P0a
   rather than building its own pricing call. This alone is a complete, usable feature for any org
   with the required (read-only) permission tier.
-- **P1** — Trino external table registration + the partition-pruned, reconciling ingestion query
-  (§5, including the longest-prefix-match benchmarking and the cross-table-prefix guard called
-  out there); manual-trigger API endpoints; `TableCost` request-cost fields wired into the
-  existing cost breakdown UI as a cost-share ratio, not just a raw number (§9).
-- **P2** — One-click auto-provision (§4.3/§4.3.1) — the minimal-config convenience path for orgs
-  that grant the optional write-permission tier, including the target-bucket-policy verification
-  step and the teardown flow (§9); `DaemonRunner`-based scheduling once P1 has been validated
-  against real buckets; Storage Lens as an alternate ingestion path for teams who'd rather not
-  manage the Trino table.
+- **P1** — the native ingestion pipeline (§5's actual shipped version, not the originally-specced
+  Trino query — see §5's note); manual-trigger API endpoints; `TableCost` request-cost fields
+  wired into the existing cost breakdown UI as a cost-share ratio, not just a raw number (§9).
+- **P2** — One-click auto-provision (§4.3/§4.3.1) and the teardown flow (§9) — implemented, policy-
+  merge correctness against a real pre-existing policy not yet independently verified (see above);
+  `S3LogIngestRunner` scheduling (§10) — implemented; Storage Lens as an alternate ingestion path
+  — not built, and no longer likely needed now that native aggregation (§5) removed the reason to
+  want a query-engine-free alternative in the first place.
 
 ## 13. Open questions
 
