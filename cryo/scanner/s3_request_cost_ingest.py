@@ -52,12 +52,16 @@ logger = logging.getLogger(__name__)
 # AWS's documented S3 server access log line format -- space-delimited, quoted where a field
 # may itself contain spaces. Group 7 is `operation` (e.g. REST.GET.OBJECT), group 8 is `key`
 # (bucket-relative object path) -- the only two fields this pipeline needs per log line.
-S3_LOG_LINE_PATTERN = (
-    r"([^ ]*) ([^ ]*) \[(.*?)\] ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) "
-    r"(\"[^\"]*\"|-) (-|[0-9]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) "
-    r"(\"[^\"]*\"|-) ([^ ]*)(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?"
-    r"(?: ([^ ]*))?(?: ([^ ]*))?(?: ([^ ]*))?$"
-)
+#
+# Deliberately doesn't model anything past group 8: an earlier version tried to match every
+# trailing field (request-URI, referrer, user-agent, ..., through the newest access-point-arn/
+# acl-required fields) with a fixed count of optional groups, anchored at end-of-line. That
+# broke on every real line in production -- the user-agent field is quoted but frequently
+# contains spaces (e.g. Hadoop's S3A client: `"Hadoop 3.3.6-amzn-3, aws-sdk-java/2.23.18 ..."`),
+# and AWS has added new trailing fields over time (region was added after this pattern was
+# written), so a fixed trailing-group count silently breaks again whenever AWS extends the
+# format. Matching only through the key field sidesteps both failure modes entirely.
+S3_LOG_LINE_PATTERN = r"^([^ ]*) ([^ ]*) \[(.*?)\] ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) "
 _S3_LOG_LINE_RE = re.compile(S3_LOG_LINE_PATTERN)
 
 # Which AWS Price List tier prices a given operation_tier value (see fetch_s3_request_prices):
