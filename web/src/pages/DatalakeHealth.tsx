@@ -111,7 +111,8 @@ export const DatalakeHealth = () => {
               {
                 label: "Reclaimable storage",
                 value: formatBytesGb(data.totals?.reclaimable_bytes),
-                tooltip: "Disk space maintenance would free up — dead/expired data, orphan files, and metadata bloat."
+                tooltip:
+                  "Dead/expired snapshots, orphan files, and metadata bloat accumulated across each table's full unexpired history — not bounded by Total data size (which is current live data only). A number larger than Total data size means expire_snapshots/remove_orphan_files maintenance has been neglected for a long time, not a calculation error."
               }
             ]}
           />
