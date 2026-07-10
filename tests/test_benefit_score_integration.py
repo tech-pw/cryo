@@ -10,6 +10,7 @@ from cryo.planner.benefit_score import (
     compute_benefit_score,
     get_compaction_effectiveness_stats,
     get_top_compaction_candidates,
+    update_all_benefit_scores,
     update_partition_benefit_scores,
 )
 
@@ -139,6 +140,74 @@ def test_update_partition_benefit_scores(session):
         assert partition.compaction_benefit_score is not None
         assert partition.compaction_benefit_score > 0
         assert partition.query_frequency is not None
+
+
+def test_update_all_benefit_scores_covers_every_active_table(session):
+    """update_all_benefit_scores was rewritten to loop over plain table ids and expunge the
+    session's identity map after each table (see its docstring) -- this pins the actual
+    functional contract (every active table's partitions get scored) that refactor must not
+    break, independent of the memory-management mechanics."""
+    table_a = _seed_table(session, schema_name="test", table_name="table_a")
+    table_b = _seed_table(session, schema_name="test", table_name="table_b")
+    scan_at = datetime.now(UTC)
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table_a.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            ),
+            TablePartition(
+                table_id=table_b.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=5.0,
+                small_files_in_partition_count=50,
+                scan_at=scan_at,
+            ),
+        ]
+    )
+    session.commit()
+
+    total = update_all_benefit_scores(session)
+
+    assert total == 2
+    partitions = session.scalars(select(TablePartition)).all()
+    assert len(partitions) == 2
+    for partition in partitions:
+        assert partition.compaction_benefit_score is not None
+
+
+def test_update_all_benefit_scores_expunges_session_after_each_table(session):
+    """Regression test for the OOM that was killing the scheduler process every ~20-40min in
+    production: the old version looped over Table ORM objects held in the session's identity
+    map for the entire run, and commit() doesn't clear that map -- across a large fleet (13k+
+    tables, up to 10k partitions each) that unbounded accumulation, not any single table's own
+    work, was the actual memory growth. Confirms objects are genuinely detached, not just that
+    the function still returns the right count."""
+    table = _seed_table(session, schema_name="test", table_name="expunge_check")
+    scan_at = datetime.now(UTC)
+    partition = TablePartition(
+        table_id=table.id,
+        partition_values={"dt": "2024-01-01"},
+        partition_fields=[],
+        partition_value="2024-01-01",
+        partition_size_gb=10.0,
+        small_files_in_partition_count=100,
+        scan_at=scan_at,
+    )
+    session.add(partition)
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    assert table not in session
+    assert partition not in session
 
 
 def test_get_top_compaction_candidates(session):

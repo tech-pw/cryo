@@ -235,10 +235,22 @@ def update_all_benefit_scores(session: Session) -> int:
     (e.g., every 4 hours) after query log ingestion.
     """
     tables = session.scalars(select(Table).where(Table.is_active.is_(True))).all()
+    # Extract just the ids and expunge immediately -- looping over Table ORM objects held in
+    # `session`'s identity map for the rest of this function would keep every one of them (and,
+    # via update_partition_benefit_scores below, every TablePartition object it loads too) alive
+    # for the entire run. commit() doesn't clear the identity map, only expires attributes, so
+    # across a large fleet (13k+ tables, up to 10k partitions each -- 1.27M partitions observed
+    # in one production run) that accumulation is what was OOM-killing the scheduler process
+    # every ~20-40 minutes, not any single table's own work.
+    table_ids = [table.id for table in tables]
+    session.expunge_all()
 
     total = 0
-    for table in tables:
-        total += update_partition_benefit_scores(session, table.id)
+    for table_id in table_ids:
+        total += update_partition_benefit_scores(session, table_id)
+        # update_partition_benefit_scores already commits its own partitions before returning;
+        # expunge right after so this table's (and its partitions') objects don't linger either.
+        session.expunge_all()
     return total
 
 
