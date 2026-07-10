@@ -11,7 +11,4 @@ web/node_modules
 web/dist
 
 cryo-native/target
-cryo-engine/target/*
-!cryo-engine/target/release
-cryo-engine/target/release/*
-!cryo-engine/target/release/cryo-engine
+cryo-engine/target
