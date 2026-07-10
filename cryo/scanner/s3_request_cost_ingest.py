@@ -538,19 +538,38 @@ def recompute_table_cost_rollup(
     cost.request_cost_pricing_source = "fallback_default" if any_fallback else "live"
 
 
-def run_s3_ingest_tick(session: Session, *, settings: Settings | None = None) -> int:
-    """§10 -- one scheduled pass: ingest every enabled bucket, one Trino query per bucket.
+def run_s3_ingest_tick(
+    session: Session, *, settings: Settings | None = None, now: datetime | None = None
+) -> int:
+    """§10 -- one scheduled pass: ingest every enabled bucket that hasn't already succeeded
+    today, one Trino query per bucket.
+
+    Two things work together to stop one bucket from starving the rest of the fleet forever:
+    every tick skips a bucket whose ``last_ingested_date`` is already today (no wasted re-work
+    within the reconciliation window's own tolerance -- see §7's latency discussion), and the
+    remaining candidates are ordered oldest-first (``NULLS FIRST``) so a bucket that's never
+    ingested, or gone longest without success, always gets first crack at a tick's time budget.
+    Without this, a single slow bucket (one hit the 20k-object cap on 2 consecutive days) could
+    consume an entire tick every time, and every *other* enabled bucket would never get a turn
+    -- observed live: 6 newly-enabled buckets sat at last_ingested_at=None for 30+ minutes and
+    multiple scheduler restarts while bucket #1 alone kept re-running from scratch each time.
 
     ``ingest_bucket`` never raises (every failure path returns an ``IngestResult`` with
     ``.error`` set) so a single bucket's Trino/AWS trouble doesn't block the rest of the fleet's
     buckets from ingesting in the same tick. Returns the count of buckets successfully ingested.
     """
+    now = now or datetime.now(UTC)
+    today = now.date()
     configs = session.scalars(
-        select(S3BucketLogConfig).where(S3BucketLogConfig.enabled.is_(True))
+        select(S3BucketLogConfig)
+        .where(S3BucketLogConfig.enabled.is_(True))
+        .order_by(S3BucketLogConfig.last_ingested_date.asc().nulls_first())
     ).all()
     succeeded = 0
     for config in configs:
-        result = ingest_bucket(session, config, settings=settings)
+        if config.last_ingested_date == today:
+            continue
+        result = ingest_bucket(session, config, settings=settings, now=now)
         if result.error is not None:
             config.last_error = result.error
             config.last_error_at = datetime.now(UTC)
