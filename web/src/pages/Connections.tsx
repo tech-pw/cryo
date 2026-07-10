@@ -1464,8 +1464,9 @@ const DestinationDrawer = ({
           engine_virtual: initialEngineVirtual,
           secret_ref: isEditing ? value.secret_ref : null,
           enabled: isEditing ? value.enabled : true,
+          // 0/0 (or cleared) means no off-peak gate — heavy maintenance anytime.
           offpeak_start: isEditing ? value.offpeak_start : 0,
-          offpeak_end: isEditing ? value.offpeak_end : 7,
+          offpeak_end: isEditing ? value.offpeak_end : 0,
           ...existingConfig
         }}
         onValuesChange={(changed) => {
@@ -1729,11 +1730,24 @@ const DestinationDrawer = ({
         <Space size={12}>
           <Form.Item
             name="offpeak_start"
-            label={<HintLabel label="Off-peak start (hr)" tooltip="Hour of day, in this engine's local time, when low-priority maintenance is allowed to start." />}
+            label={
+              <HintLabel
+                label="Off-peak start (hr)"
+                tooltip="IST hour when heavy (standard/deep) maintenance may start. Leave start and end both 0 (or equal) to allow maintenance at any time."
+              />
+            }
           >
             <InputNumber min={0} max={23} />
           </Form.Item>
-          <Form.Item name="offpeak_end" label="Off-peak end (hr)">
+          <Form.Item
+            name="offpeak_end"
+            label={
+              <HintLabel
+                label="Off-peak end (hr)"
+                tooltip="IST hour when the off-peak window ends (exclusive). Equal to start (including 0/0) disables the gate."
+              />
+            }
+          >
             <InputNumber min={0} max={23} />
           </Form.Item>
         </Space>

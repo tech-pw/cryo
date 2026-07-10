@@ -134,7 +134,7 @@ def _admission_config(destination: DestinationConfig, admission_config: type[Any
     per_replica_cap = config.get("per_replica_cap", config.get("slot_cap", 5))
     return admission_config(
         offpeak_start_ist=int(config.get("offpeak_start_ist", 0)),
-        offpeak_end_ist=int(config.get("offpeak_end_ist", 7)),
+        offpeak_end_ist=int(config.get("offpeak_end_ist", 0)),
         per_replica_cap=int(per_replica_cap),
         wave_wait_sec=int(config.get("wave_wait_sec", 300)),
         adaptive_budget=bool(config.get("adaptive_budget", True)),

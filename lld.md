@@ -117,8 +117,9 @@ class Settings(BaseSettings):
     s3_list_usd_per_1k: float = 0.005
     query_gets_per_file: float = 1.0          # GETs per data file per query (calibratable)
     # governor defaults (overridable per engine/preset)
+    # Equal start/end (default 0/0) disables the off-peak gate — heavy modes anytime.
     offpeak_start_ist: int = 0
-    offpeak_end_ist: int = 7
+    offpeak_end_ist: int = 0
     default_per_replica_optimize_cap: int = 5
     wave_wait_sec: int = 300
 ```
@@ -667,7 +668,8 @@ finalize run summary
 ```
 - **Per-table lock** (Redis) acquired at admission, released on completion → no double maintenance.
 - **Off-peak**: heavy modes (standard/deep `optimize`,`remove_orphan_files`) blocked outside the
-  destination/preset off-peak window; `light` allowed anytime.
+  destination off-peak window (IST hours); `light` allowed anytime. Missing engine off-peak, or
+  equal start/end (including `0`/`0`), means no window — heavy modes may run at any hour.
 - **Cooldown / deadline / adaptive budget / round-robin**: all preserved from today.
 
 ---

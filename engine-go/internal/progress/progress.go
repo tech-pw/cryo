@@ -51,7 +51,7 @@ func Progress(operation string, pct uint8, files, bytes uint64) {
 
 // GroupStarted marks the start of a single compaction-group rewrite under
 // partial_progress. files/bytes are the compressed input size of this group;
-// maxFiles/maxBytes are the active split caps (for log diagnosis after OOM).
+// maxFiles/maxBytes are the active split caps (maxFiles 0 = unlimited file count).
 func GroupStarted(
 	operation, partitionKey string,
 	files int,

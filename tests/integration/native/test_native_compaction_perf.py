@@ -139,9 +139,8 @@ def test_p4_bounded_memory_during_compaction(compaction_fixtures: dict[str, obje
                 OperationType.OPTIMIZE,
                 {
                     **_optimize_params(),
-                    # Explicit memory bounds (also the payload defaults).
+                    # Explicit memory bounds (bytes-primary; no hard file-count cap).
                     "scan_concurrency": 1,
-                    "max_files_per_group": 8,
                     "max_bytes_per_group": 32 * 1024 * 1024,
                     "partial_progress": True,
                 },
