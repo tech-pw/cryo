@@ -342,11 +342,64 @@ class SchedulerService:
                 patterns_updated,
                 curators_run,
             )
+            if patterns_updated > 0:
+                self._generate_layout_recommendations(settings)
             self._last_telemetry_ingest = current
         except Exception as exc:
             import logging
 
             logging.getLogger(__name__).warning("Telemetry tick failed: %s", exc)
+
+    def _generate_layout_recommendations(self, settings: Any) -> None:
+        """Turn freshly-updated query_patterns into LayoutRecommendation rows.
+
+        generate_layout_recommendation() was fully implemented (column-stats analysis, bloom-
+        filter candidates, confidence scoring) but had no caller anywhere in the app -- the
+        Optimize page's telemetry existed (query_patterns) but recommendations never did. This
+        is the only place that calls it. Ordered so tables with no recommendation yet (NULL
+        updated_at) always sort first -- without that, an unordered `LIMIT` could let the same
+        already-covered tables win every tick while new ones never get a first pass.
+        """
+        import logging
+
+        from sqlalchemy import select
+
+        from cryo.db.models import LayoutRecommendation, QueryPattern
+        from cryo.optimizer.layout_analyzer import generate_layout_recommendation
+
+        logger = logging.getLogger(__name__)
+        with SessionLocal() as session:
+            distinct_tables = select(QueryPattern.table_id).distinct().subquery()
+            table_ids = (
+                session.execute(
+                    select(distinct_tables.c.table_id)
+                    .outerjoin(
+                        LayoutRecommendation,
+                        LayoutRecommendation.table_id == distinct_tables.c.table_id,
+                    )
+                    .order_by(LayoutRecommendation.updated_at.asc().nulls_first())
+                    .limit(settings.layout_recommendation_max_tables_per_tick)
+                )
+                .scalars()
+                .all()
+            )
+            generated = 0
+            for table_id in table_ids:
+                try:
+                    generate_layout_recommendation(session, table_id)
+                    generated += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Layout recommendation generation failed for table %s: %s",
+                        table_id,
+                        exc,
+                    )
+            if generated:
+                logger.info(
+                    "Layout recommendations: refreshed %s of %s candidate table(s)",
+                    generated,
+                    len(table_ids),
+                )
 
     def _maybe_purge_query_logs(self, current: datetime) -> None:
         from datetime import timedelta
