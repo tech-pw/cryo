@@ -14,6 +14,8 @@ import type {
   OperationType,
   PaginatedTables,
   PartitionRead,
+  TableGroupByField,
+  TableGroupByResponse,
   PresetRead,
   PresetRuleRead,
   PresetSimulationResponse,
@@ -184,6 +186,15 @@ export const listTables = (
       offset: args.offset ?? 0,
       cursor: args.cursor
     },
+    signal: args.signal
+  });
+
+export const groupTables = (
+  api: ApiOptions,
+  args: { field: TableGroupByField; predicate?: Predicate | null; signal?: AbortSignal }
+) =>
+  apiFetch<TableGroupByResponse>("/tables/group-by", api, {
+    query: { field: args.field, filter: serializePredicate(args.predicate) },
     signal: args.signal
   });
 
