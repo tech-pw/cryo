@@ -23,8 +23,14 @@ func TestScanConcurrencyFromParams(t *testing.T) {
 
 func TestMaxFilesPerGroupFromParams(t *testing.T) {
 	t.Parallel()
-	if got := maxFilesPerGroupFromParams(nil); got != defaultMaxFilesPerGroup {
-		t.Fatalf("nil params: got %d want %d", got, defaultMaxFilesPerGroup)
+	if got := maxFilesPerGroupFromParams(nil); got != 0 {
+		t.Fatalf("nil params: got %d want 0 (unlimited)", got)
+	}
+	if got := maxFilesPerGroupFromParams([]byte(`{}`)); got != 0 {
+		t.Fatalf("unset: got %d want 0 (unlimited)", got)
+	}
+	if got := maxFilesPerGroupFromParams([]byte(`{"max_files_per_group": 0}`)); got != 0 {
+		t.Fatalf("explicit zero: got %d want 0 (unlimited)", got)
 	}
 	if got := maxFilesPerGroupFromParams([]byte(`{"max_files_per_group": 4}`)); got != 4 {
 		t.Fatalf("explicit: got %d want 4", got)
@@ -93,7 +99,7 @@ func TestSplitOversizedGroupsByCount(t *testing.T) {
 		TotalSizeBytes: 150,
 	}
 
-	// File-count split with a high byte cap so only the file limit applies.
+	// Optional file-count split with a high byte cap so only the file limit applies.
 	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
 		maxFiles: 2,
 		maxBytes: 1 << 30,
@@ -113,12 +119,13 @@ func TestSplitOversizedGroupsByCount(t *testing.T) {
 		}
 	}
 
+	// maxFiles <= 0: no file-count split; under byte cap → intact.
 	unchanged := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: 1 << 30,
 	})
 	if len(unchanged) != 1 {
-		t.Fatalf("under-limit group should stay intact, got %d", len(unchanged))
+		t.Fatalf("unlimited file count under byte cap should stay intact, got %d", len(unchanged))
 	}
 }
 
@@ -139,7 +146,7 @@ func TestSplitOversizedGroupsByBytes(t *testing.T) {
 	}
 
 	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: 32 * 1024 * 1024,
 	})
 	if len(split) != 4 {
@@ -159,7 +166,7 @@ func TestSplitOversizedGroupsByBytes(t *testing.T) {
 
 	// Spark/Iceberg: do not rewrite 1→1 after a memory split that cannot keep ≥2 files.
 	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: 32 * 1024 * 1024,
 	}, 2)
 	if len(final) != 0 {
@@ -169,8 +176,8 @@ func TestSplitOversizedGroupsByBytes(t *testing.T) {
 
 func TestFinalizeRewriteGroupsPacksTowardTarget(t *testing.T) {
 	t.Parallel()
-	// Default-aligned: max_bytes == target (256 MiB). Five ~50 MiB files stay one
-	// bin-pack-sized group (≥2 files) — the GeoIP shape that previously 1→1'd under 32 MiB.
+	// Default-aligned: max_bytes == target (256 MiB), no file-count cap. Five ~50 MiB
+	// files stay one bin-pack-sized group (≥2 files).
 	const fileBytes = 50 * 1024 * 1024
 	group := table.CompactionTaskGroup{
 		PartitionKey: "ingest_date=2025-02-13",
@@ -184,7 +191,7 @@ func TestFinalizeRewriteGroupsPacksTowardTarget(t *testing.T) {
 		TotalSizeBytes: 5 * fileBytes,
 	}
 	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: defaultTargetFileSizeBytes, // 256 MiB
 	}, 2)
 	if len(final) != 1 {
@@ -192,6 +199,33 @@ func TestFinalizeRewriteGroupsPacksTowardTarget(t *testing.T) {
 	}
 	if len(final[0].Tasks) != 5 {
 		t.Fatalf("expected 5 input files kept together, got %d", len(final[0].Tasks))
+	}
+}
+
+func TestFinalizeRewriteGroupsTinyFilesNoFileCap(t *testing.T) {
+	t.Parallel()
+	// 1000 × 1 KiB under a 256 MiB byte budget must stay one group — the old
+	// max_files=8 default would shred this into ~125 undersized rewrite groups.
+	const n = 1000
+	const fileBytes int64 = 1024
+	tasks := make([]table.FileScanTask, n)
+	for i := range tasks {
+		tasks[i] = makeTask(t, fmt.Sprintf("s3://b/%d.parquet", i), fileBytes)
+	}
+	group := table.CompactionTaskGroup{
+		PartitionKey:   "p=1",
+		Tasks:          tasks,
+		TotalSizeBytes: int64(n) * fileBytes,
+	}
+	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: defaultTargetFileSizeBytes,
+	}, 2)
+	if len(final) != 1 {
+		t.Fatalf("expected 1 group for tiny-file storm, got %d", len(final))
+	}
+	if len(final[0].Tasks) != n {
+		t.Fatalf("expected %d input files kept together, got %d", n, len(final[0].Tasks))
 	}
 }
 
@@ -212,7 +246,7 @@ func TestFinalizeRewriteGroupsKeepsMultiFileChunksUnderTightCap(t *testing.T) {
 		TotalSizeBytes: 6 * fileBytes,
 	}
 	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: 32 * 1024 * 1024,
 	}, 2)
 	if len(final) != 2 {
@@ -250,7 +284,7 @@ func TestSplitOversizedGroupsSingleFileLargerThanCap(t *testing.T) {
 		TotalSizeBytes: 100 * 1024 * 1024,
 	}
 	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
-		maxFiles: 8,
+		maxFiles: 0,
 		maxBytes: 32 * 1024 * 1024,
 	})
 	if len(split) != 1 {
@@ -263,7 +297,7 @@ func TestSplitOversizedGroupsSingleFileLargerThanCap(t *testing.T) {
 
 func TestSplitOversizedGroupsBothCapsInteract(t *testing.T) {
 	t.Parallel()
-	// Small files: byte cap allows many, but file-count cap of 2 forces splits.
+	// Small files: byte cap allows many, but optional file-count cap of 2 forces splits.
 	group := table.CompactionTaskGroup{
 		PartitionKey: "p=1",
 		Tasks: []table.FileScanTask{

@@ -76,3 +76,31 @@ def test_destination_config_offpeak_columns_drive_governor_admission() -> None:
     )
 
     assert decision.admissible is True
+
+
+def test_destination_without_offpeak_allows_deep_anytime() -> None:
+    destination = _destination()
+    destination_config = _destination_config(destination)
+    admission_config = _admission_config_from_destination(
+        destination_config, AdmissionConfig()
+    )
+
+    assert "offpeak_start_ist" not in destination_config.config
+    assert "offpeak_end_ist" not in destination_config.config
+    assert admission_config.offpeak_start_ist == 0
+    assert admission_config.offpeak_end_ist == 0
+
+    decision = decide_job_admission(
+        AdmissionJob(
+            job_id="job-1",
+            table_id="table-1",
+            destination_id=destination_config.id,
+            mode=Mode.DEEP,
+        ),
+        admission_config,
+        now=__import__("datetime").datetime(
+            2026, 6, 30, 8, 0, tzinfo=__import__("datetime").UTC
+        ),
+    )
+
+    assert decision.admissible is True

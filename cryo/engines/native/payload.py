@@ -101,10 +101,12 @@ def normalize_native_operation_params(operation: Operation) -> dict[str, Any]:
             file_size_mb = params.get("file_size_mb")
             if file_size_mb is not None:
                 params["target_file_size_bytes"] = int(file_size_mb) * 1024 * 1024
-        # Bound Parquet→Arrow decode parallelism and rewrite group size so
-        # high row-density tables cannot OOM a single ExecuteCompactionGroup.
+        # Bound Parquet→Arrow decode parallelism so high row-density tables
+        # cannot OOM a single ExecuteCompactionGroup. Group size is bounded by
+        # max_bytes_per_group (below), not a fixed file-count cap — a hard
+        # max_files_per_group shreds tiny-file bin-packs into undersized outputs.
+        # Operators may still set max_files_per_group as an optional soft ceiling.
         params.setdefault("scan_concurrency", 1)
-        params.setdefault("max_files_per_group", 8)
         # Spark/Iceberg rewrite floor: never rewrite fewer than N input files
         # (stops wasteful 1→1 after a tight memory split). Distinct from planner
         # min_small_files (table-level schedule gate).

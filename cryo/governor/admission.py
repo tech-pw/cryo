@@ -26,8 +26,10 @@ class AdmissionJob:
 
 @dataclass(frozen=True)
 class AdmissionConfig:
+    # Equal start/end (including the 0/0 default) means no window — heavy modes
+    # may run at any hour. Only a non-empty IST range gates standard/deep jobs.
     offpeak_start_ist: int = 0
-    offpeak_end_ist: int = 7
+    offpeak_end_ist: int = 0
     per_replica_cap: int = 5
     wave_wait_sec: int = 300
     adaptive_budget: bool = True
@@ -136,6 +138,11 @@ def is_heavy_mode(mode: Mode | str) -> bool:
 
 
 def is_offpeak(now: datetime, start_hour_ist: int, end_hour_ist: int) -> bool:
+    """Return True when *now* is inside the IST off-peak window.
+
+    Equal ``start_hour_ist`` / ``end_hour_ist`` (including both unset → 0/0)
+    disables the gate so heavy maintenance may run at any hour.
+    """
     hour = _ensure_aware(now).astimezone(IST).hour
     if start_hour_ist == end_hour_ist:
         return True
