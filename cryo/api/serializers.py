@@ -4,11 +4,25 @@ from cryo.api.schemas import TableRead
 from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import Table
 from cryo.domain.enums import CostPrecision
+from cryo.scanner.failure_classifier import (
+    classify_scan_failure,
+    failure_category_actionable_from_cryo,
+    failure_category_guidance,
+    failure_category_label,
+)
 
 
 def table_to_read(table: Table) -> TableRead:
     read = TableRead.model_validate(table)
     updates: dict[str, object] = {}
+    if table.last_scan_error:
+        category = classify_scan_failure(table.last_scan_error)
+        updates["failure_category"] = category
+        updates["failure_category_label"] = failure_category_label(category)
+        updates["failure_category_guidance"] = failure_category_guidance(category)
+        updates["failure_category_actionable_from_cryo"] = failure_category_actionable_from_cryo(
+            category
+        )
     if table.source is not None:
         updates["catalog_name"] = catalog_name_for_table(table)
         updates["source_name"] = table.source.name

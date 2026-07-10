@@ -15,6 +15,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message
 } from "antd";
@@ -54,6 +55,14 @@ type TierPolicyFormValues = TierPolicyWrite;
 // tables that have failed to scan at least this many times *in a row*, e.g. a stale dbt
 // __dbt_tmp pointer whose metadata.json was deleted and will never come back on its own.
 const BROKEN_TABLE_FAILURE_THRESHOLD = 2;
+
+// Neither category is a one-click fix from Cryo today (see failure_category_actionable_from_cryo
+// on the API response) -- colors distinguish cause, not severity or fixability.
+const FAILURE_CATEGORY_COLORS: Record<string, string> = {
+  permission_denied: "gold",
+  metadata_not_found: "volcano",
+  other: "default"
+};
 
 export const Governance = () => {
   const { api, subject, role } = useAuth();
@@ -355,6 +364,21 @@ export const Governance = () => {
                   width: 160,
                   align: "right" as const,
                   render: (value: number | undefined) => <Tag color="red">{value ?? 0}</Tag>
+                },
+                {
+                  title: "Category",
+                  dataIndex: "failure_category",
+                  width: 170,
+                  render: (_: string | null, row) =>
+                    row.failure_category_label ? (
+                      <Tooltip title={row.failure_category_guidance}>
+                        <Tag color={FAILURE_CATEGORY_COLORS[row.failure_category ?? ""] ?? "default"}>
+                          {row.failure_category_label}
+                        </Tag>
+                      </Tooltip>
+                    ) : (
+                      "-"
+                    )
                 },
                 {
                   title: "Last error",

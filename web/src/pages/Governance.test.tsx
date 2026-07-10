@@ -41,7 +41,25 @@ vi.mock("../api/client", () => ({
     }
   ]),
   listSources: vi.fn().mockResolvedValue([{ id: "source-1", name: "demo", type: "rest", enabled: true }]),
-  listTables: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  listTables: vi.fn().mockResolvedValue({
+    items: [
+      {
+        id: "table-1",
+        source_id: "source-1",
+        schema_name: "demo",
+        table_name: "broken_orders",
+        first_seen_at: "2026-07-01T00:00:00Z",
+        is_active: true,
+        consecutive_scan_failures: 3,
+        last_scan_error: "AWS Error ACCESS_DENIED during HeadObject operation",
+        failure_category: "permission_denied",
+        failure_category_label: "Permission denied",
+        failure_category_guidance: "Check the IAM policy attached to the source's credentials.",
+        failure_category_actionable_from_cryo: false
+      }
+    ],
+    total: 1
+  }),
   getTableLineage: vi.fn(),
   getS3TieringRecommendations: vi.fn().mockResolvedValue({
     recommendations: [],
@@ -68,5 +86,18 @@ describe("Governance page", () => {
     expect(await screen.findByText("Governance")).toBeInTheDocument();
     expect(await screen.findByText("Tier policies")).toBeInTheDocument();
     expect(await screen.findByText("Cold after 30d")).toBeInTheDocument();
+  });
+
+  it("shows the failure category for broken tables", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Governance />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    expect(await screen.findByText("demo.broken_orders")).toBeInTheDocument();
+    expect(await screen.findByText("Permission denied")).toBeInTheDocument();
   });
 });

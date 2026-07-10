@@ -85,3 +85,63 @@ def test_table_serializer_exposes_cost_precision_context() -> None:
     assert read.stats is not None
     assert read.stats.cost_precision == CostPrecision.STORAGE_TRUTH
     assert read.stats.cost_last_full_scan_at == last_full_scan_at
+
+
+def test_table_serializer_classifies_permission_denied_failure() -> None:
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        schema_name="demo",
+        table_name="orders",
+        first_seen_at=datetime(2026, 7, 3, tzinfo=UTC),
+        is_active=True,
+        consecutive_scan_failures=3,
+        last_scan_error=(
+            "When reading information for key 'bronze/demo/orders/metadata/00000-x.json' in "
+            "bucket 'lake': AWS Error ACCESS_DENIED during HeadObject operation: No response body."
+        ),
+    )
+
+    read = table_to_read(table)
+
+    assert read.failure_category == "permission_denied"
+    assert read.failure_category_label == "Permission denied"
+    assert read.failure_category_actionable_from_cryo is False
+    assert read.failure_category_guidance is not None
+
+
+def test_table_serializer_classifies_metadata_not_found_failure() -> None:
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        schema_name="demo",
+        table_name="orders",
+        first_seen_at=datetime(2026, 7, 3, tzinfo=UTC),
+        is_active=True,
+        consecutive_scan_failures=1,
+        last_scan_error=(
+            "[Errno 2] Path does not exist 'lake/bronze/demo/orders/metadata/00000-x.json'. "
+            "Detail: [errno 2] No such file or directory"
+        ),
+    )
+
+    read = table_to_read(table)
+
+    assert read.failure_category == "metadata_not_found"
+
+
+def test_table_serializer_leaves_failure_category_none_without_error() -> None:
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        schema_name="demo",
+        table_name="orders",
+        first_seen_at=datetime(2026, 7, 3, tzinfo=UTC),
+        is_active=True,
+        consecutive_scan_failures=0,
+    )
+
+    read = table_to_read(table)
+
+    assert read.failure_category is None
+    assert read.failure_category_actionable_from_cryo is False

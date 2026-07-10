@@ -583,6 +583,12 @@ class TableRead(OrmModel):
     consecutive_scan_failures: int = 0
     last_scan_error: str | None = None
     last_scan_error_at: datetime | None = None
+    # Derived from last_scan_error at serialization time (cryo/scanner/failure_classifier.py),
+    # not stored -- lets the taxonomy evolve without a migration/backfill.
+    failure_category: str | None = None
+    failure_category_label: str | None = None
+    failure_category_guidance: str | None = None
+    failure_category_actionable_from_cryo: bool = False
     owner_email: str | None = None
     stats: TableStatsRead | None = None
 

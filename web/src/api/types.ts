@@ -152,6 +152,10 @@ export interface TableRead {
   consecutive_scan_failures?: number;
   last_scan_error?: string | null;
   last_scan_error_at?: string | null;
+  failure_category?: string | null;
+  failure_category_label?: string | null;
+  failure_category_guidance?: string | null;
+  failure_category_actionable_from_cryo?: boolean;
   owner_email?: string | null;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
