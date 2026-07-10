@@ -156,6 +156,7 @@ router = APIRouter(prefix="/api/v1")
 SORT_FIELDS = {
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
+    "consecutive_scan_failures": Table.consecutive_scan_failures,
     "total_size_gb": TableStats.total_size_gb,
     "small_files_count": TableStats.small_files_count,
     "total_files": TableStats.total_files,

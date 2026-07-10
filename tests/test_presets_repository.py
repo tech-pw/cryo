@@ -88,6 +88,17 @@ def test_sort_clauses_reject_unknown_fields() -> None:
         raise AssertionError("unknown sort field should fail")
 
 
+def test_sort_clauses_accepts_consecutive_scan_failures() -> None:
+    """Regression test: consecutive_scan_failures was already in the filter allowlist
+    (FIELD_MAP, cryo/api/predicates.py) but missing from SORT_FIELDS -- the Governance page's
+    "Broken tables" panel filters and sorts by this same field in one request, so the sort half
+    failed with a 400 even though the filter half worked, which read as "Failed to load broken
+    tables" with no obvious cause."""
+    clauses = _sort_clauses("-consecutive_scan_failures")
+
+    assert len(clauses) == 1
+
+
 def test_resolve_selection_translates_repository_errors_to_http() -> None:
     session = SimpleNamespace()
     selection = AssignmentSelection(mode="ids", ids=[], filter=None)
