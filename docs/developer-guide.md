@@ -106,6 +106,18 @@ Planner changes require unit tests around:
 
 Renderer changes require golden tests for Trino and Spark. Keep SQL dialects separate.
 
+**Identity / day date partitions:** Iceberg stores identity-partitioned `date` values (and
+day-transform values) as days-since-1970-01-01 (e.g. `20643`). Scanner stats keep that raw
+int/digit string. All three engines must accept epoch-day ints **and** digit strings:
+
+| Engine | Path | Handling |
+|--------|------|----------|
+| Trino | `engines/trino/sql.py` `_parse_date` / `_timestamp_string` | epoch-day → `DATE`/`TIMESTAMP` literal |
+| Spark | `engines/spark/sql.py` (same helpers) | same |
+| iceberg-go | `engine-go/internal/predicate` `dayStart` + identity date/ts | epoch-day → `iceberg.Date`/`Timestamp` |
+
+Calling `date.fromisoformat('20643')` (or emitting `TIMESTAMP '20643'`) is the failure mode.
+
 ## Orchestration Development
 
 The current scheduler/governor/worker implementation includes in-memory test stores and Redis-backed
