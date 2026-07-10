@@ -856,6 +856,100 @@ def test_run_s3_ingest_tick_records_error_without_stopping_other_buckets(
     assert ok.last_error is None
 
 
+def test_run_s3_ingest_tick_skips_bucket_already_ingested_today(session, monkeypatch) -> None:
+    """Regression test for the bucket-starvation bug: a bucket whose last_ingested_date is
+    already today should be skipped so it can't monopolize every tick's time budget and starve
+    every other enabled bucket. Observed live: one slow bucket kept re-running from scratch on
+    every scheduler restart while 6 newly-enabled buckets never got a single turn."""
+    source = _seed_source(session)
+    already_done = S3BucketLogConfig(
+        source_id=source.id,
+        bucket="already-done-today",
+        enabled=True,
+        last_ingested_date=date(2026, 7, 10),
+    )
+    never_done = S3BucketLogConfig(
+        source_id=source.id, bucket="never-done", enabled=True, last_ingested_date=None
+    )
+    session.add_all([already_done, never_done])
+    session.commit()
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ingest_mod,
+        "ingest_bucket",
+        lambda session, config, **kwargs: (
+            calls.append(config.bucket) or ingest_mod.IngestResult(0, 0, 0)
+        ),
+    )
+
+    succeeded = ingest_mod.run_s3_ingest_tick(
+        session, now=datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
+
+    assert calls == ["never-done"]
+    assert succeeded == 1
+
+
+def test_run_s3_ingest_tick_processes_stale_bucket_again_next_day(session, monkeypatch) -> None:
+    source = _seed_source(session)
+    config = S3BucketLogConfig(
+        source_id=source.id,
+        bucket="daily-bucket",
+        enabled=True,
+        last_ingested_date=date(2026, 7, 9),
+    )
+    session.add(config)
+    session.commit()
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ingest_mod,
+        "ingest_bucket",
+        lambda session, config, **kwargs: (
+            calls.append(config.bucket) or ingest_mod.IngestResult(0, 0, 0)
+        ),
+    )
+
+    succeeded = ingest_mod.run_s3_ingest_tick(
+        session, now=datetime(2026, 7, 10, 0, 5, tzinfo=UTC)
+    )
+
+    assert calls == ["daily-bucket"]
+    assert succeeded == 1
+
+
+def test_run_s3_ingest_tick_orders_never_ingested_buckets_first(session, monkeypatch) -> None:
+    """Even among buckets that all still need work, the ones furthest behind (NULL, then
+    oldest last_ingested_date) must be tried first -- otherwise an unordered scan could let an
+    arbitrary bucket keep winning a tick's limited time budget while a never-ingested bucket
+    waits indefinitely."""
+    source = _seed_source(session)
+    stale = S3BucketLogConfig(
+        source_id=source.id,
+        bucket="stale-bucket",
+        enabled=True,
+        last_ingested_date=date(2026, 6, 1),
+    )
+    never = S3BucketLogConfig(
+        source_id=source.id, bucket="never-bucket", enabled=True, last_ingested_date=None
+    )
+    session.add_all([stale, never])
+    session.commit()
+
+    calls: list[str] = []
+
+    def fake_ingest(session, config, **kwargs):
+        calls.append(config.bucket)
+        return ingest_mod.IngestResult(0, 0, 0)
+
+    monkeypatch.setattr(ingest_mod, "ingest_bucket", fake_ingest)
+
+    ingest_mod.run_s3_ingest_tick(session, now=datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+
+    assert calls == ["never-bucket", "stale-bucket"]
+
+
 def test_prune_s3_request_cost_daily_deletes_only_stale_rows(session) -> None:
     source = _seed_source(session)
     table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
