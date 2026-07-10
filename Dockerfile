@@ -1,10 +1,3 @@
-FROM rust:1-bookworm AS cryo-engine-builder
-
-WORKDIR /build
-COPY cryo-engine/Cargo.toml cryo-engine/Cargo.lock* ./
-COPY cryo-engine/src ./src
-RUN cargo build --release
-
 FROM golang:1.25-bookworm AS cryo-engine-go-builder
 
 WORKDIR /build
@@ -31,12 +24,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Native maintenance binaries built in the stages above.
-COPY --from=cryo-engine-builder /build/target/release/cryo-engine /app/cryo-engine/target/release/cryo-engine
+# Native maintenance binary built in the stage above.
 COPY --from=cryo-engine-go-builder /build/cryo-engine-go /app/engine-go/bin/cryo-engine-go
 RUN ln -sf /app/engine-go/bin/cryo-engine-go /app/engine-go/bin/cryo-engine
-ENV PATH="/app/engine-go/bin:/app/cryo-engine/target/release:${PATH}"
-RUN chmod +x /app/cryo-engine/target/release/cryo-engine /app/engine-go/bin/cryo-engine-go
+ENV PATH="/app/engine-go/bin:${PATH}"
+RUN chmod +x /app/engine-go/bin/cryo-engine-go
 
 # Install Cryo in development mode
 RUN pip install -e .
