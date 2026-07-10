@@ -602,6 +602,21 @@ class PaginatedTables(BaseModel):
     has_more: bool = False
 
 
+class TableGroupByRow(BaseModel):
+    # None for a group whose tables have no TableStats row yet (not scanned) or, for
+    # "catalog", a table whose source was removed but the row survives an orphan FK.
+    group_value: str | None
+    count: int
+    total_size_gb: float
+    total_small_files: int
+    total_savings_usd_month: float
+
+
+class TableGroupByResponse(BaseModel):
+    field: str
+    rows: list[TableGroupByRow]
+
+
 class PaginatedRuns(BaseModel):
     items: list[Any]
     total: int
