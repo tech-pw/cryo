@@ -7,7 +7,6 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from cryo.db.session import SessionLocal
-from cryo.planner.benefit_score import update_all_benefit_scores
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
 from cryo.scheduler.cron import cron_is_due
@@ -48,13 +47,10 @@ class SchedulerService:
         queue: MaintenanceQueue,
         *,
         leader_check: Callable[[], bool] | None = None,
-        benefit_score_update_interval_hours: int = 4,
     ) -> None:
         self._store = store
         self._queue = queue
         self._leader_check = leader_check or (lambda: True)
-        self._benefit_score_interval_hours = benefit_score_update_interval_hours
-        self._last_benefit_score_update: datetime | None = None
         self._last_ml_drift_check: datetime | None = None
         self._last_telemetry_ingest: datetime | None = None
         self._last_query_log_purge: datetime | None = None
@@ -68,8 +64,6 @@ class SchedulerService:
 
         self._expire_stale_approval_requests()
 
-        # Update benefit scores periodically (helps AutoComp prioritization)
-        self._maybe_update_benefit_scores(current)
         self._maybe_check_ml_drift(current)
         self._maybe_ingest_telemetry(current)
         self._maybe_purge_query_logs(current)
@@ -135,31 +129,6 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Failed to expire stale approval requests: %s", e)
-
-    def _maybe_update_benefit_scores(self, current: datetime) -> None:
-        """Update partition benefit scores periodically for AutoComp prioritization."""
-        from datetime import timedelta
-
-        if self._last_benefit_score_update is None:
-            should_update = True
-        else:
-            elapsed = current - self._last_benefit_score_update
-            should_update = elapsed >= timedelta(hours=self._benefit_score_interval_hours)
-
-        if should_update:
-            try:
-                with SessionLocal() as session:
-                    updated = update_all_benefit_scores(session)
-                    import logging
-
-                    logging.getLogger(__name__).info(
-                        f"Updated benefit scores for {updated} partitions"
-                    )
-                self._last_benefit_score_update = current
-            except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).warning(f"Failed to update benefit scores: {e}")
 
     def _maybe_check_ml_drift(self, current: datetime) -> None:
         from datetime import timedelta
