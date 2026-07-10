@@ -227,19 +227,24 @@ def persist_table_analysis(
         for key, value in stats_values.items():
             setattr(existing_stats, key, value)
 
-    session.execute(
-        delete(TablePartition).where(
-            TablePartition.table_id == table_id,
-            TablePartition.scan_at == analysis.scan_at,
-        )
-    )
+    # Deletes *all* of this table's existing partition rows, not just ones matching this
+    # scan_at -- table_partitions should only ever hold the latest scan's layout per table.
+    # Scoping the delete to scan_at == analysis.scan_at (idempotent re-run of the same scan)
+    # left every prior day's rows in place forever: unbounded growth, ~1.5GB/day in prod.
+    session.execute(delete(TablePartition).where(TablePartition.table_id == table_id))
     session.execute(
         delete(TableStatsHistory).where(
             TableStatsHistory.table_id == table_id,
             TableStatsHistory.scan_at == analysis.scan_at,
         )
     )
-    session.add_all(_partition_rows(table_id, analysis))
+    from cryo.config import get_settings
+
+    session.add_all(
+        _partition_rows(
+            table_id, analysis, max_partitions=get_settings().scanner_max_partitions_per_table
+        )
+    )
     session.add(
         TableStatsHistory(
             table_id=table_id,
@@ -433,7 +438,19 @@ def _cost_values(table_id: uuid.UUID, cost: Any) -> dict[str, Any]:
     }
 
 
-def _partition_rows(table_id: uuid.UUID, analysis: TableAnalysis) -> list[TablePartition]:
+def _partition_rows(
+    table_id: uuid.UUID, analysis: TableAnalysis, *, max_partitions: int = 5000
+) -> list[TablePartition]:
+    partitions = analysis.partitions
+    if len(partitions) > max_partitions:
+        # Keep the partitions that actually matter for compaction decisions (most small files
+        # first) rather than an arbitrary scan-order prefix -- real catalogs have a long tail of
+        # tables partitioned far more finely than any compaction decision needs.
+        partitions = sorted(
+            partitions,
+            key=lambda p: (p.small_files_in_partition_count, p.partition_size_gb),
+            reverse=True,
+        )[:max_partitions]
     return [
         TablePartition(
             table_id=table_id,
@@ -453,7 +470,7 @@ def _partition_rows(table_id: uuid.UUID, analysis: TableAnalysis) -> list[TableP
             compaction_status=partition.compaction_status,
             raw=_json_safe(partition.raw),
         )
-        for partition in analysis.partitions
+        for partition in partitions
     ]
 
 
