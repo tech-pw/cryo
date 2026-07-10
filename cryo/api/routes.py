@@ -181,7 +181,9 @@ def get_datalake_dashboard(
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> dict[str, object]:
-    return datalake.dashboard_datalake(session, top_limit=top_limit, drift_limit=drift_limit)
+    return datalake.dashboard_datalake(
+        session, top_limit=top_limit, drift_limit=drift_limit, settings=Settings()
+    )
 
 
 @router.get(

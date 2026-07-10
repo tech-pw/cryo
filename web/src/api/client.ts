@@ -513,6 +513,12 @@ interface RawDatalakeDashboard {
     estimated_monthly_s3_cost_usd?: number | null;
   }>;
   drift: Array<Record<string, unknown>>;
+  cost_by_schema?: Array<{
+    schema_name: string;
+    current_usd: number;
+    projected_usd: number;
+    savings_usd: number;
+  }>;
 }
 
 interface RawSchemaCost {
@@ -551,7 +557,13 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
       estimated_monthly_s3_cost_usd: item.estimated_monthly_s3_cost_usd ?? undefined
     }
   })),
-  drift: payload.drift
+  drift: payload.drift,
+  cost_by_schema: payload.cost_by_schema?.map((item) => ({
+    schema_name: item.schema_name,
+    cost_usd: item.current_usd,
+    projected_usd: item.projected_usd,
+    savings_usd: item.savings_usd
+  }))
 });
 
 export const getCostDashboard = (api: ApiOptions) =>

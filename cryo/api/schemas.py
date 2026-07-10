@@ -757,6 +757,7 @@ class DatalakeDashboardResponse(BaseModel):
     grade_distribution: list[GradeDistributionItem]
     top_offenders: list[DashboardTopOffender]
     drift: list[DashboardDriftPoint]
+    cost_by_schema: list[CostSchemaItem] = Field(default_factory=list)
 
 
 class SchemaCostItem(BaseModel):

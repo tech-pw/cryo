@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -40,7 +40,9 @@ def dashboard_datalake(
     *,
     top_limit: int = 10,
     drift_limit: int = 30,
+    settings: Settings | None = None,
 ) -> dict[str, object]:
+    settings = settings or Settings()
     total_tables = int(session.scalar(select(func.count(Table.id))) or 0)
     active_row = session.execute(
         select(
@@ -48,9 +50,6 @@ def dashboard_datalake(
             func.coalesce(func.sum(TableStats.total_size_gb), 0.0),
             func.coalesce(func.sum(TableStats.total_files), 0),
             func.coalesce(func.sum(TableStats.small_files_count), 0),
-            func.coalesce(func.sum(TableStats.estimated_monthly_s3_cost_usd), 0.0),
-            func.coalesce(func.sum(TableStats.projected_monthly_s3_cost_usd), 0.0),
-            func.coalesce(func.sum(TableStats.projected_savings_usd_month), 0.0),
             func.coalesce(func.sum(TableStats.reclaimable_bytes), 0),
             func.coalesce(func.sum(TableStats.query_count_30d), 0),
             func.coalesce(func.sum(case((TableStats.needs_compaction.is_(True), 1), else_=0)), 0),
@@ -59,6 +58,26 @@ def dashboard_datalake(
         .outerjoin(TableStats)
         .where(Table.is_active.is_(True))
     ).one()
+
+    # Reuse dashboard_cost's aggregation (TableCost when a deep-tier scan has run, falling back
+    # to TableStats only for tables that haven't had one yet) instead of the plain TableStats
+    # sums this used to use. Those sums mixed estimated_monthly_s3_cost_usd (a cheap size-only
+    # heuristic, refreshed on every scan) with projected_savings_usd_month (computed by
+    # project_savings() against a *different*, more complete deep-tier cost baseline that was
+    # never itself surfaced) -- the two were never designed to net against each other, so
+    # "Monthly savings" could legitimately show larger than "S3 monthly now" itself. TableCost's
+    # three fields are computed together and reconcile by construction (cryo/cost/model.py).
+    cost_rows = list(
+        session.execute(
+            select(Table, TableStats, TableCost)
+            .select_from(Table)
+            .outerjoin(TableStats)
+            .outerjoin(TableCost)
+            .where(Table.is_active.is_(True))
+        )
+    )
+    cost_totals = _aggregate_cost_totals(cost_rows, settings=settings)
+    cost_by_schema = _aggregate_cost_by_schema(cost_rows)
 
     grade_distribution = [
         {"grade": grade or "unknown", "count": int(count)}
@@ -148,16 +167,21 @@ def dashboard_datalake(
             "total_size_gb": float(active_row[1] or 0),
             "total_files": int(active_row[2] or 0),
             "small_files_count": int(active_row[3] or 0),
-            "estimated_monthly_s3_cost_usd": float(active_row[4] or 0),
-            "projected_monthly_s3_cost_usd": float(active_row[5] or 0),
-            "projected_savings_usd_month": float(active_row[6] or 0),
-            "reclaimable_bytes": int(active_row[7] or 0),
-            "query_count_30d": int(active_row[8] or 0),
-            "needs_compaction_count": int(active_row[9] or 0),
+            "estimated_monthly_s3_cost_usd": cast(float, cost_totals["current_monthly_cost_usd"]),
+            "projected_monthly_s3_cost_usd": cast(
+                float, cost_totals["projected_monthly_cost_usd"]
+            ),
+            "projected_savings_usd_month": cast(
+                float, cost_totals["projected_savings_usd_month"]
+            ),
+            "reclaimable_bytes": int(active_row[4] or 0),
+            "query_count_30d": int(active_row[5] or 0),
+            "needs_compaction_count": int(active_row[6] or 0),
         },
         "grade_distribution": grade_distribution,
         "top_offenders": top_offenders,
         "drift": drift,
+        "cost_by_schema": cost_by_schema,
     }
 
 
