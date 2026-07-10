@@ -31,10 +31,12 @@ api:
       memory: 768Mi
     limits:
       cpu: "1"
-      # 1Gi was sized for a small catalog; endpoints that aggregate across all tables (health,
-      # smart-maintenance overview, ...) OOM well before that on a catalog with thousands of
-      # tables. Bump proportionally to your own table count if this still isn't enough.
-      memory: 3Gi
+      # 1Gi, then 3Gi, both OOM'd on a catalog with thousands of tables: smart-maintenance
+      # overview materialized every TableStats row (incl. its raw JSONB blob) into Python just
+      # to count tiers in a loop. Fixed to aggregate in SQL instead (see
+      # routes_smart_maintenance.py::smart_maintenance_overview) -- 6Gi is now a safety margin,
+      # not the load-bearing fix. Bump proportionally to your own table count if it's still tight.
+      memory: 6Gi
 
 worker:
   replicas: 2
