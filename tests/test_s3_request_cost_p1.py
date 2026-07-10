@@ -267,6 +267,32 @@ def test_parse_log_line_returns_none_for_dash_placeholders() -> None:
     assert ingest_mod._parse_log_line(line) is None
 
 
+def test_parse_log_line_handles_multi_word_quoted_user_agent() -> None:
+    """Regression test: a prior version of S3_LOG_LINE_PATTERN modeled every trailing field
+    (referrer, user-agent, version-id, host-id, ...) with a fixed count of optional groups
+    anchored at end-of-line. AWS's user-agent field is quoted but frequently contains spaces
+    (Hadoop's S3A client, this platform's own primary write path, is a real-world example) --
+    that broke the *entire* match for every such line in production, silently producing zero
+    parsed rows despite the ingest tick logging success. This is a real captured production
+    line (values scrubbed) that reproduced the bug."""
+    line = (
+        '09de0c77906a1cbd51835983b81c08a5f3250ebe2c378c46d3d2d1ef3b992c21 acme-lake-temp '
+        "[09/Jul/2026:21:47:39 +0000] 10.0.0.2 arn:aws:iam::123456789012:user/etl-user "
+        "W6KMHGY9G70R8BXD REST.GET.OBJECT warehouse/db1/table_a/data/file1.parquet "
+        '"GET /warehouse/db1/table_a/data/file1.parquet HTTP/1.1" 200 - - 12370 14 - '
+        '"https://audit.example.org/hadoop/1/op_is_file" '
+        '"Hadoop 3.3.6-amzn-3, aws-sdk-java/2.23.18 Linux/6.12.79 '
+        'OpenJDK_64-Bit_Server_VM/17.0.19+10-LTS Java/17.0.19 scala/2.12.17 '
+        'vendor/Amazon.com_Inc. io/sync http/Apache cfg/retry-mode/legacy ft/s3-transfer" '
+        "- hostid123 SigV4 TLS_AES_128_GCM_SHA256 AuthHeader "
+        "acme-lake-temp.s3.ap-south-1.amazonaws.com TLSv1.3 - - ap-south-1"
+    )
+    assert ingest_mod._parse_log_line(line) == (
+        "REST.GET.OBJECT",
+        "warehouse/db1/table_a/data/file1.parquet",
+    )
+
+
 def test_operation_tier_maps_get_and_select_to_get() -> None:
     assert ingest_mod._operation_tier("REST.GET.OBJECT") == "get"
     assert ingest_mod._operation_tier("REST.SELECT.OBJECT") == "get"
