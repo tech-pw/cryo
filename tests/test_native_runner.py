@@ -245,7 +245,8 @@ def test_normalize_optimize_params_maps_file_size_mb() -> None:
     params = request["operations"][0]["params"]
     assert params["target_file_size_bytes"] == 512 * 1024 * 1024
     assert params["scan_concurrency"] == 1
-    assert params["max_files_per_group"] == 8
+    # No hard max_files_per_group default — bytes-only split packs toward target.
+    assert "max_files_per_group" not in params
     assert params["min_input_files"] == 2
     # Memory cap follows the configured output target (not a fixed 32 MiB).
     assert params["max_bytes_per_group"] == 512 * 1024 * 1024

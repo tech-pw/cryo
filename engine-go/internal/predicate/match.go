@@ -136,6 +136,17 @@ func identityLiteralMatches(actual any, expected json.RawMessage) bool {
 		if actualString, ok := actual.(string); ok {
 			return actualString == expectedString
 		}
+		// Digit strings are Iceberg epoch-days for identity date partitions.
+		if n, ok := jsonAsInt64(json.RawMessage(expectedString)); ok {
+			switch v := actual.(type) {
+			case int32:
+				return int64(v) == n
+			case int64:
+				return v == n
+			case iceberg.Date:
+				return int64(v) == n
+			}
+		}
 	}
 	if expectedNum, ok := jsonAsInt64(expected); ok {
 		switch v := actual.(type) {
@@ -158,7 +169,14 @@ func identityLiteralMatches(actual any, expected json.RawMessage) bool {
 func numericLiteralMatches(actual any, expected json.RawMessage) bool {
 	expectedNum, ok := jsonAsInt64(expected)
 	if !ok {
-		return false
+		var asString string
+		if err := json.Unmarshal(expected, &asString); err != nil {
+			return false
+		}
+		expectedNum, ok = jsonAsInt64(json.RawMessage(asString))
+		if !ok {
+			return false
+		}
 	}
 	switch v := actual.(type) {
 	case int32:

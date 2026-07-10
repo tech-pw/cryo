@@ -13,11 +13,6 @@ const (
 	// would suggest.
 	defaultScanConcurrency = 1
 
-	// defaultMaxFilesPerGroup splits oversized bin-pack groups so each rewrite
-	// processes a bounded number of input files (and commits separately when
-	// partial_progress is enabled).
-	defaultMaxFilesPerGroup = 8
-
 	// defaultMaxBytesPerGroup caps compressed input bytes per rewrite group.
 	// Matches defaultTargetFileSizeBytes so the memory split does not shred
 	// iceberg-go's bin-pack groups that were packed toward the output target.
@@ -32,8 +27,10 @@ const (
 	defaultMinInputFiles = 2
 )
 
-// groupSplitLimits holds the file-count and compressed-byte caps applied after
-// iceberg-go bin-pack planning.
+// groupSplitLimits holds optional file-count and compressed-byte caps applied
+// after iceberg-go bin-pack planning. maxFiles <= 0 means no file-count split
+// (bytes-only); packing toward target_file_size_bytes must not be shredded by a
+// small fixed file cap (e.g. thousands of 1 KiB files filling one target bin).
 type groupSplitLimits struct {
 	maxFiles int
 	maxBytes int64
@@ -55,10 +52,13 @@ func scanConcurrencyFromParams(raw json.RawMessage) int {
 	return n
 }
 
+// maxFilesPerGroupFromParams returns an optional soft file-count ceiling.
+// 0 (default / unset / non-positive) means unlimited — split only on
+// max_bytes_per_group so tiny-file storms can pack toward the output target.
 func maxFilesPerGroupFromParams(raw json.RawMessage) int {
-	n := intParam(raw, "max_files_per_group", defaultMaxFilesPerGroup)
+	n := intParam(raw, "max_files_per_group", 0)
 	if n < 1 {
-		return defaultMaxFilesPerGroup
+		return 0
 	}
 	return n
 }
@@ -119,18 +119,15 @@ func filterGroupsByMinInputFiles(groups []table.CompactionTaskGroup, minInputFil
 	return out
 }
 
-// splitOversizedGroups breaks planned compaction groups that exceed maxFiles or
-// maxBytes into smaller groups that share the same partition key. A single file
-// larger than maxBytes still forms its own group (cannot split mid-file); callers
-// must run filterGroupsByMinInputFiles afterward so such groups are skipped when
-// min_input_files > 1.
+// splitOversizedGroups breaks planned compaction groups that exceed maxBytes
+// (and optionally maxFiles when > 0) into smaller groups that share the same
+// partition key. A single file larger than maxBytes still forms its own group
+// (cannot split mid-file); callers must run filterGroupsByMinInputFiles afterward
+// so such groups are skipped when min_input_files > 1.
 // Preserves task order within each original group.
 func splitOversizedGroups(groups []table.CompactionTaskGroup, limits groupSplitLimits) []table.CompactionTaskGroup {
-	maxFiles := limits.maxFiles
+	maxFiles := limits.maxFiles // <= 0 → no file-count split
 	maxBytes := limits.maxBytes
-	if maxFiles < 1 {
-		maxFiles = defaultMaxFilesPerGroup
-	}
 	if maxBytes < 1 {
 		maxBytes = defaultMaxBytesPerGroup
 	}
@@ -147,7 +144,7 @@ func splitOversizedGroups(groups []table.CompactionTaskGroup, limits groupSplitL
 }
 
 func groupNeedsSplit(group table.CompactionTaskGroup, maxFiles int, maxBytes int64) bool {
-	if len(group.Tasks) > maxFiles {
+	if maxFiles >= 1 && len(group.Tasks) > maxFiles {
 		return true
 	}
 	if len(group.Tasks) <= 1 {
@@ -176,9 +173,10 @@ func splitGroupByLimits(group table.CompactionTaskGroup, maxFiles int, maxBytes 
 
 	for _, task := range group.Tasks {
 		fileBytes := task.File.FileSizeBytes()
-		// Start a new chunk if adding this file would exceed either cap
-		// (unless the chunk is empty — a single oversized file stays alone).
-		wouldExceedFiles := len(chunk) >= maxFiles
+		// Start a new chunk if adding this file would exceed the byte cap
+		// (or an optional file-count ceiling). An empty chunk always accepts
+		// the next file — a single oversized file stays alone.
+		wouldExceedFiles := maxFiles >= 1 && len(chunk) >= maxFiles
 		wouldExceedBytes := len(chunk) > 0 && size+fileBytes > maxBytes
 		if wouldExceedFiles || wouldExceedBytes {
 			flush()

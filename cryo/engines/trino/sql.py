@@ -72,11 +72,7 @@ def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
     if not protected_ids:
         return expire_sql
     keep_list = ", ".join(str(sid) for sid in sorted(set(protected_ids)))
-    set_sql = (
-        f"ALTER TABLE {table_ref} "
-        "EXECUTE set_snapshots("
-        f"snapshot_ids => ARRAY[{keep_list}])"
-    )
+    set_sql = f"ALTER TABLE {table_ref} EXECUTE set_snapshots(snapshot_ids => ARRAY[{keep_list}])"
     return f"{set_sql}; {expire_sql}"
 
 
@@ -145,10 +141,6 @@ def _temporal_literal(value: date, col_type: str) -> str:
 
 
 def _day_start(value: Any) -> date:
-    if isinstance(value, int):
-        return date(1970, 1, 1) + timedelta(days=value)
-    if isinstance(value, str) and _looks_like_int(value):
-        return date(1970, 1, 1) + timedelta(days=int(value))
     return _parse_date(value)
 
 
@@ -177,11 +169,23 @@ def _add_month(value: date) -> date:
 
 
 def _parse_date(value: Any) -> date:
+    """Parse a date from ISO text or Iceberg epoch-day (int / digit string).
+
+    Identity-partitioned date columns store raw days-since-1970-01-01 in scan
+    stats; day-transform values use the same encoding. Accept both that form and
+    ``YYYY-MM-DD`` so predicate rendering does not call ``date.fromisoformat`` on
+    values like ``'20643'``.
+    """
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
-    return date.fromisoformat(str(value)[:10])
+    if isinstance(value, int):
+        return date(1970, 1, 1) + timedelta(days=value)
+    text = str(value).strip()
+    if _looks_like_int(text):
+        return date(1970, 1, 1) + timedelta(days=int(text))
+    return date.fromisoformat(text[:10])
 
 
 def _date_string(value: Any) -> str:
@@ -191,7 +195,12 @@ def _date_string(value: Any) -> str:
 def _timestamp_string(value: Any) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
-    text = str(value)
+    if isinstance(value, date):
+        return f"{value.isoformat()} 00:00:00"
+    # Epoch-day ints / digit strings (same encoding as identity date partitions).
+    if isinstance(value, int) or (isinstance(value, str) and _looks_like_int(value.strip())):
+        return f"{_parse_date(value).isoformat()} 00:00:00"
+    text = str(value).strip()
     if len(text) == 10:
         return f"{text} 00:00:00"
     return text.replace("T", " ")[:19]

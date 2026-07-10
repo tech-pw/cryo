@@ -73,7 +73,6 @@ def _optimize_params(*, tuned: bool) -> dict[str, object]:
         # Spark-style: rewrite files smaller than ~75% of target.
         "min_file_size_bytes": int(target * 0.75),
         "min_input_files": 2,
-        "max_files_per_group": 8,
         "partial_progress": True,
         "scan_concurrency": 1,
     }
