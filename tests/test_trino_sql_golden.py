@@ -71,6 +71,48 @@ def test_trino_renders_month_year_and_identity_date() -> None:
         == "(event_date = DATE '2025-05-18')"
     )
 
+    # Identity date partitions store Iceberg epoch-days (scanner raw values).
+    epoch_day = (date(2026, 7, 9) - date(1970, 1, 1)).days
+    assert epoch_day == 20643
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm("event_date", PartitionTransform.IDENTITY, epoch_day, "date")
+            )
+        )
+        == "(event_date = DATE '2026-07-09')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_date", PartitionTransform.IDENTITY, str(epoch_day), "date"
+                )
+            )
+        )
+        == "(event_date = DATE '2026-07-09')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_ts", PartitionTransform.IDENTITY, epoch_day, "timestamp"
+                )
+            )
+        )
+        == "(event_ts = TIMESTAMP '2026-07-09 00:00:00')"
+    )
+    assert (
+        render_predicate(
+            _predicate(
+                PartitionPredicateTerm(
+                    "event_ts", PartitionTransform.IDENTITY, str(epoch_day), "timestamp"
+                )
+            )
+        )
+        == "(event_ts = TIMESTAMP '2026-07-09 00:00:00')"
+    )
+
 
 def test_trino_render_golden_operation_sql_and_session_setup() -> None:
     plan = MaintenancePlan(
@@ -144,9 +186,7 @@ def test_trino_convert_deletes_reuses_optimize_sql() -> None:
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.STANDARD,
-        operations=(
-            Operation(OperationType.CONVERT_DELETES, {"file_size_mb": 128}),
-        ),
+        operations=(Operation(OperationType.CONVERT_DELETES, {"file_size_mb": 128}),),
     )
     stmts = render(plan)
     assert len(stmts) == 1

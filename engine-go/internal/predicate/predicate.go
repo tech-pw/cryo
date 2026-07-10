@@ -122,6 +122,22 @@ func buildIdentityExpr(ref iceberg.Reference, value json.RawMessage, colType str
 		}
 		return iceberg.EqualTo(ref, asBool), nil
 	}
+	// Iceberg date/timestamp identity partitions store epoch-day (or ISO) values.
+	// Convert via dayStart so digit strings like "20643" become Date/Timestamp literals.
+	if lowered == "date" || strings.HasPrefix(lowered, "date") || strings.Contains(lowered, "timestamp") {
+		start, err := dayStart(value)
+		if err != nil {
+			return nil, err
+		}
+		switch lit := temporalLiteral(start, colType).(type) {
+		case iceberg.Date:
+			return iceberg.EqualTo(ref, lit), nil
+		case iceberg.Timestamp:
+			return iceberg.EqualTo(ref, lit), nil
+		default:
+			return nil, fmt.Errorf("unsupported identity temporal literal type %T", lit)
+		}
+	}
 	if isNumericType(lowered) {
 		if n, ok := jsonAsInt64(value); ok {
 			if strings.Contains(lowered, "long") {

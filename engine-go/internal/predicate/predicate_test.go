@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/apache/iceberg-go"
+
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
 
@@ -55,6 +57,54 @@ func TestDayRangeBuildsAndExpression(t *testing.T) {
 	}
 	if expr.String() == "" {
 		t.Fatal("expected non-empty expression")
+	}
+}
+
+func TestIdentityDateEpochDayBuildsExpression(t *testing.T) {
+	colType := "date"
+	for _, raw := range []string{`20643`, `"20643"`} {
+		term := protocol.PredicateTermRequest{
+			BaseColumn: "report_date",
+			Transform:  "identity",
+			Value:      json.RawMessage(raw),
+			ColType:    &colType,
+		}
+		expr, err := buildTermExpr(term)
+		if err != nil {
+			t.Fatalf("identity date epoch %s: %v", raw, err)
+		}
+		if expr.String() == "" {
+			t.Fatalf("expected non-empty expression for %s", raw)
+		}
+	}
+}
+
+func TestIdentityTimestampEpochDayBuildsExpression(t *testing.T) {
+	colType := "timestamp"
+	for _, raw := range []string{`20643`, `"20643"`} {
+		term := protocol.PredicateTermRequest{
+			BaseColumn: "event_ts",
+			Transform:  "identity",
+			Value:      json.RawMessage(raw),
+			ColType:    &colType,
+		}
+		expr, err := buildTermExpr(term)
+		if err != nil {
+			t.Fatalf("identity timestamp epoch %s: %v", raw, err)
+		}
+		if expr.String() == "" {
+			t.Fatalf("expected non-empty expression for %s", raw)
+		}
+	}
+}
+
+func TestIdentityLiteralMatchesEpochDayString(t *testing.T) {
+	actual := iceberg.Date(20643)
+	if !identityLiteralMatches(actual, json.RawMessage(`20643`)) {
+		t.Fatal("expected numeric epoch day to match Date")
+	}
+	if !identityLiteralMatches(actual, json.RawMessage(`"20643"`)) {
+		t.Fatal("expected string epoch day to match Date")
 	}
 }
 
