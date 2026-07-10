@@ -401,6 +401,18 @@ class Settings(BaseSettings):
             "ingestion run -- I/O-bound work, so higher than a typical CPU-bound worker pool."
         ),
     )
+    layout_recommendation_max_tables_per_tick: int = Field(
+        default=200,
+        ge=1,
+        description=(
+            "Cap on how many tables get a layout-recommendation (re)generated per telemetry "
+            "tick. generate_layout_recommendation() skips tables refreshed within the last 24h "
+            "on its own, so this only bounds the cost of the *first* pass over a large backlog "
+            "-- keeps a single tick from doing thousands of analyses (each with its own bloom-"
+            "filter/column-stats work) in the same process that already runs the memory-heavy "
+            "benefit-score updater."
+        ),
+    )
     s3_request_cost_retention_days: int = Field(
         default=35,
         ge=1,

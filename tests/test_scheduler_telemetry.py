@@ -17,7 +17,7 @@ from uuid import uuid4
 from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
-from cryo.db.models import QueryLog, Source, Table
+from cryo.db.models import LayoutRecommendation, QueryLog, QueryPattern, Source, Table
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.scheduler.service import SchedulerService
 from cryo.telemetry.patterns import purge_old_query_logs
@@ -230,6 +230,76 @@ def test_ingest_telemetry_covers_every_enabled_source(session, monkeypatch) -> N
     # iceberg config) now just buffers and lets the curator aggregate. aggregate_calls
     # should be empty here because the fixture has no iceberg-configured sources.
     assert aggregate_calls == []
+
+
+def test_generate_layout_recommendations_covers_tables_with_patterns(session, monkeypatch) -> None:
+    """Regression test: generate_layout_recommendation() was fully implemented but had no
+    caller anywhere in the app -- query_patterns could have thousands of real rows while
+    layout_recommendations stayed permanently empty. This is the wiring that closes that gap."""
+    session_factory = _bound_session_factory(session)
+    monkeypatch.setattr("cryo.scheduler.service.SessionLocal", session_factory)
+
+    source = _seed_source(session)
+    table_a = _seed_table(session, source, table_name="orders")
+    table_b = _seed_table(session, source, table_name="shipments")
+    session.add_all(
+        [
+            QueryPattern(table_id=table_a.id, column_name="order_id", filter_count=5),
+            QueryPattern(table_id=table_b.id, column_name="region", filter_count=3),
+        ]
+    )
+    session.flush()
+
+    generated_for: list[object] = []
+    monkeypatch.setattr(
+        "cryo.optimizer.layout_analyzer.generate_layout_recommendation",
+        lambda session, table_id, force_refresh=False: generated_for.append(table_id),
+    )
+
+    fake_settings = type("FakeSettings", (), {"layout_recommendation_max_tables_per_tick": 200})()
+
+    service = _make_service()
+    service._generate_layout_recommendations(fake_settings)
+
+    assert set(generated_for) == {table_a.id, table_b.id}
+
+
+def test_generate_layout_recommendations_prioritizes_uncovered(session, monkeypatch) -> None:
+    """Tables with no LayoutRecommendation yet (NULL updated_at) must sort before tables that
+    already have one -- otherwise an unbounded backlog could let the same already-covered
+    tables win the per-tick cap every time, starving tables that never got a first pass."""
+    session_factory = _bound_session_factory(session)
+    monkeypatch.setattr("cryo.scheduler.service.SessionLocal", session_factory)
+
+    source = _seed_source(session)
+    covered = _seed_table(session, source, table_name="covered")
+    uncovered = _seed_table(session, source, table_name="uncovered")
+    session.add_all(
+        [
+            QueryPattern(table_id=covered.id, column_name="id", filter_count=1),
+            QueryPattern(table_id=uncovered.id, column_name="id", filter_count=1),
+            LayoutRecommendation(
+                id=uuid4(),
+                table_id=covered.id,
+                recommended_strategy="none",
+                recommended_columns=[],
+            ),
+        ]
+    )
+    session.flush()
+
+    generated_for: list[object] = []
+    monkeypatch.setattr(
+        "cryo.optimizer.layout_analyzer.generate_layout_recommendation",
+        lambda session, table_id, force_refresh=False: generated_for.append(table_id),
+    )
+
+    fake_settings = type("FakeSettings", (), {"layout_recommendation_max_tables_per_tick": 1})()
+
+    service = _make_service()
+    service._generate_layout_recommendations(fake_settings)
+
+    assert generated_for == [uncovered.id]
 
 
 def test_purge_query_logs_removes_only_stale_rows(session) -> None:
