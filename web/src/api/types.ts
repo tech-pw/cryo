@@ -499,6 +499,27 @@ export interface PaginatedTables {
   offset: number;
 }
 
+export type TableGroupByField =
+  | "catalog"
+  | "schema_name"
+  | "grade"
+  | "compaction_priority"
+  | "needs_compaction"
+  | "size_bucket";
+
+export interface TableGroupByRow {
+  group_value: string | null;
+  count: number;
+  total_size_gb: number;
+  total_small_files: number;
+  total_savings_usd_month: number;
+}
+
+export interface TableGroupByResponse {
+  field: string;
+  rows: TableGroupByRow[];
+}
+
 export interface PartitionRead {
   id?: number | string;
   partition_value?: string | null;

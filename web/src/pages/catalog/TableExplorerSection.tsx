@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Input, Space, Table, Typography, message as antdMessage } from "antd";
+import { Alert, Button, Input, Select, Space, Table, Typography, message as antdMessage } from "antd";
 import type { TablePaginationConfig } from "antd/es/table";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import {
   assignTables,
+  groupTables,
   listDestinations,
   listPresets,
   listSources,
@@ -15,7 +16,7 @@ import {
   triggerScan,
   unassignTables
 } from "../../api/client";
-import type { Mode, TableRead, UUID } from "../../api/types";
+import type { Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
 import { EmptyState, HintLabel, Sparkline } from "../../components/common";
@@ -70,6 +71,17 @@ const initialFiltersFromSearch = (sourceParam: string | null): TableFilterState 
   return base;
 };
 
+const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
+  catalog: "Catalog",
+  schema_name: "Schema",
+  grade: "Grade",
+  compaction_priority: "Priority",
+  needs_compaction: "Needs compaction",
+  size_bucket: "Size"
+};
+
+const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
+
 /**
  * Filterable, paginated table explorer section. Lives below CatalogDashboard on the
  * consolidated Catalog page. Body lifted verbatim from the legacy TableExplorer.tsx --
@@ -89,12 +101,19 @@ export const TableExplorerSection = () => {
   const [savingsView, setSavingsView] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [nlQuery, setNlQuery] = useState("");
+  const [groupByField, setGroupByField] = useState<TableGroupByField | null>(null);
 
   const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
   const tables = useQuery({
     queryKey: ["tables", token, predicate, sort, page],
     queryFn: () =>
-      listTables(api, { predicate, sort, limit: pageSize, offset: (page - 1) * pageSize })
+      listTables(api, { predicate, sort, limit: pageSize, offset: (page - 1) * pageSize }),
+    enabled: !groupByField
+  });
+  const grouped = useQuery({
+    queryKey: ["tables-group-by", token, groupByField, predicate],
+    queryFn: () => groupTables(api, { field: groupByField as TableGroupByField, predicate }),
+    enabled: Boolean(groupByField)
   });
   const presets = useQuery({
     queryKey: ["presets", token],
@@ -324,10 +343,26 @@ export const TableExplorerSection = () => {
         >
           Savings view
         </Button>
-        <Button onClick={exportTablesCsv} disabled={!pageItems.length}>
+        <Button onClick={exportTablesCsv} disabled={!pageItems.length || Boolean(groupByField)}>
           Export CSV
         </Button>
-        <Button onClick={() => void tables.refetch()}>Refresh</Button>
+        <Button onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
+          Refresh
+        </Button>
+        <Select<TableGroupByField | "">
+          value={groupByField ?? ""}
+          style={{ width: 200 }}
+          onChange={(value) => setGroupByField(value ? (value as TableGroupByField) : null)}
+          options={[
+            { label: "No grouping", value: "" },
+            { label: "Group by catalog", value: "catalog" },
+            { label: "Group by schema", value: "schema_name" },
+            { label: "Group by grade", value: "grade" },
+            { label: "Group by priority", value: "compaction_priority" },
+            { label: "Group by compaction", value: "needs_compaction" },
+            { label: "Group by size", value: "size_bucket" }
+          ]}
+        />
       </Space>
       <Space direction="vertical" style={{ width: "100%", marginBottom: 10 }} size={6}>
         <Input.Search
@@ -371,6 +406,60 @@ export const TableExplorerSection = () => {
           resetSelectionForFilterChange();
         }}
       />
+      {groupByField ? (
+        <Table
+          className="datalake-table"
+          size="small"
+          rowKey="group_value"
+          loading={grouped.isLoading}
+          dataSource={grouped.data?.rows ?? []}
+          pagination={false}
+          columns={[
+            {
+              title: groupByLabel(groupByField),
+              dataIndex: "group_value",
+              render: (value: string | null) => value ?? "(not scanned)"
+            },
+            {
+              title: "Tables",
+              dataIndex: "count",
+              align: "right",
+              sorter: (a, b) => a.count - b.count,
+              render: (value: number) => formatNumber(value)
+            },
+            {
+              title: "Total Size",
+              dataIndex: "total_size_gb",
+              align: "right",
+              sorter: (a, b) => a.total_size_gb - b.total_size_gb,
+              render: (value: number) => formatGb(value)
+            },
+            {
+              title: "Small Files",
+              dataIndex: "total_small_files",
+              align: "right",
+              sorter: (a, b) => a.total_small_files - b.total_small_files,
+              render: (value: number) => formatNumber(value)
+            },
+            {
+              title: "Savings/mo",
+              dataIndex: "total_savings_usd_month",
+              align: "right",
+              sorter: (a, b) => a.total_savings_usd_month - b.total_savings_usd_month,
+              render: (value: number) => formatCurrency(value)
+            }
+          ]}
+          locale={{
+            emptyText: (
+              <EmptyState
+                title="No tables match this view"
+                description="Run a scan or clear filters to browse the datalake."
+              />
+            )
+          }}
+        />
+      ) : (
+        <>
       <Table<TableRead>
         className="datalake-table"
         size="small"
@@ -583,6 +672,8 @@ export const TableExplorerSection = () => {
         tables={selectedTables}
         onClose={() => setPreviewOpen(false)}
       />
+        </>
+      )}
     </>
   );
 };

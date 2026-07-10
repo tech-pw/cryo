@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -93,6 +93,8 @@ from cryo.api.schemas import (
     TableAlertSubscriptionRead,
     TableAuditResponse,
     TableCostRead,
+    TableGroupByResponse,
+    TableGroupByRow,
     TablePartitionsResponse,
     TablePatch,
     TablePreviewRead,
@@ -908,6 +910,95 @@ def list_tables(
         offset=actual_offset,
         cursor=next_cursor,
         has_more=has_more,
+    )
+
+
+_SIZE_BUCKET_EXPR = case(
+    (TableStats.total_size_gb.is_(None), "Not scanned"),
+    (TableStats.total_size_gb < 1, "< 1 GB"),
+    (TableStats.total_size_gb < 10, "1-10 GB"),
+    (TableStats.total_size_gb < 100, "10-100 GB"),
+    (TableStats.total_size_gb < 1024, "100 GB - 1 TB"),
+    else_="> 1 TB",
+)
+
+# Same predicate-friendly fields the /tables filter/sort already exposes, plus a computed
+# size_bucket -- deliberately a small, curated set (not every FIELD_MAP column) since not every
+# field makes sense to group by (e.g. grouping by total_files would produce ~one group per row).
+# Untyped to match FIELD_MAP's own convention in cryo/api/predicates.py: mypy sees each
+# InstrumentedAttribute's specific column type (str, bool, ...) rather than the common
+# ColumnElement base, and typing this dict explicitly fights that rather than working with it.
+_GROUP_BY_FIELDS = {
+    "catalog": Source.name,
+    "schema_name": Table.schema_name,
+    "grade": TableStats.grade,
+    "compaction_priority": TableStats.compaction_priority,
+    "needs_compaction": TableStats.needs_compaction,
+    "size_bucket": _SIZE_BUCKET_EXPR,
+}
+
+
+@router.get(
+    "/tables/group-by",
+    response_model=TableGroupByResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def group_tables(
+    session: SessionDep,
+    field: Annotated[str, Query()],
+    filter: Annotated[str | None, Query()] = None,
+) -> TableGroupByResponse:
+    """Collective counts/totals per distinct value of ``field`` -- the Tables page's "group by"
+    view. Reuses the same filter predicate as ``GET /tables`` so a group-by respects whatever
+    the user has already filtered down to."""
+    raw_group_col = _GROUP_BY_FIELDS.get(field)
+    if raw_group_col is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported group-by field: {field!r}. Choose one of "
+            f"{sorted(_GROUP_BY_FIELDS)}.",
+        )
+    group_col = cast("ColumnElement[Any]", raw_group_col)
+
+    predicate = _parse_filter(filter)
+    tenant_id = require_tenant(session)
+    # "table_count", not "count" -- sqlalchemy.engine.Row inherits tuple.count(), and while Row
+    # correctly prefers a labeled column over that method at runtime, mypy's stub resolves
+    # row.count to the inherited bound method's type. Avoid the ambiguity outright.
+    stmt = (
+        select(
+            group_col.label("group_value"),
+            func.count(func.distinct(Table.id)).label("table_count"),
+            func.coalesce(func.sum(TableStats.total_size_gb), 0).label("total_size_gb"),
+            func.coalesce(func.sum(TableStats.small_files_count), 0).label("total_small_files"),
+            func.coalesce(func.sum(TableStats.projected_savings_usd_month), 0).label(
+                "total_savings_usd_month"
+            ),
+        )
+        .select_from(Table)
+        .outerjoin(TableStats)
+        .outerjoin(TableCost)
+    )
+    if field == "catalog":
+        stmt = stmt.join(Source, Source.id == Table.source_id)
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    stmt = stmt.group_by(group_col).order_by(func.count(func.distinct(Table.id)).desc())
+
+    rows = session.execute(stmt).all()
+    return TableGroupByResponse(
+        field=field,
+        rows=[
+            TableGroupByRow(
+                group_value=str(row.group_value) if row.group_value is not None else None,
+                count=row.table_count,
+                total_size_gb=float(row.total_size_gb),
+                total_small_files=int(row.total_small_files),
+                total_savings_usd_month=float(row.total_savings_usd_month),
+            )
+            for row in rows
+        ],
     )
 
 
