@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import create_engine, event, text
@@ -12,10 +13,14 @@ from cryo.config import Settings
 from cryo.db.base import Base
 from cryo.db.models import Source, Table, TablePartition, TableStats, TableStatsHistory
 from cryo.domain.enums import CostPrecision
-from cryo.scanner.analyze import analyze_table
+from cryo.scanner.analyze import PartitionAnalysis, analyze_table
 from cryo.scanner.cost import GB, estimate_storage_cost
 from cryo.scanner.health import compute_health_score
-from cryo.scanner.persistence import persist_table_analysis, record_table_scan_outcome
+from cryo.scanner.persistence import (
+    _partition_rows,
+    persist_table_analysis,
+    record_table_scan_outcome,
+)
 from cryo.scanner.run import _rebuild_cost_analysis, deterministic_chunk, parse_args
 from tests.test_presets_api_db import (
     _assign_missing_uuid_primary_keys,
@@ -259,6 +264,50 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     assert stats.total_files == 2
     assert stats.raw["partition_fields"][0]["base_column"] == "event_date"
     assert len(session.executed) == 3
+
+
+def _fake_partition(small_files: int, size_gb: float = 1.0) -> PartitionAnalysis:
+    return PartitionAnalysis(
+        partition_value=f"v={small_files}",
+        partition_values={"v": small_files},
+        partition_fields=[],
+        partition_spec_id=0,
+        partition_path=None,
+        partition_key="v",
+        base_column="v",
+        base_column_type="int",
+        transform=None,
+        files_per_partition=small_files + 1,
+        small_files_in_partition_count=small_files,
+        partition_size_gb=size_gb,
+        compaction_status="needs_compaction",
+        raw={},
+    )
+
+
+def test_partition_rows_caps_and_keeps_worst_offenders_by_small_files() -> None:
+    """Regression test for the table_partitions retention fix: a real production table had
+    397k partitions (median table: 8) and alone accounted for ~10% of the table's total row
+    count, because every partition from every scan was persisted forever with no cap. Capping
+    must keep the partitions that matter for compaction decisions, not an arbitrary slice."""
+    table_id = uuid.uuid4()
+    partitions = [_fake_partition(small_files=i) for i in range(10)]
+    analysis = SimpleNamespace(partitions=partitions, scan_at=datetime(2026, 6, 30, tzinfo=UTC))
+
+    rows = _partition_rows(table_id, analysis, max_partitions=3)
+
+    assert len(rows) == 3
+    assert [row.small_files_in_partition_count for row in rows] == [9, 8, 7]
+
+
+def test_partition_rows_under_cap_keeps_all_partitions() -> None:
+    table_id = uuid.uuid4()
+    partitions = [_fake_partition(small_files=i) for i in range(3)]
+    analysis = SimpleNamespace(partitions=partitions, scan_at=datetime(2026, 6, 30, tzinfo=UTC))
+
+    rows = _partition_rows(table_id, analysis, max_partitions=5000)
+
+    assert len(rows) == 3
 
 
 def test_persist_table_analysis_strips_nul_bytes_from_history_column_quality() -> None:

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import joinedload
 
 from cryo.api.deps import SessionDep, require_editor, require_operator, require_viewer
@@ -124,26 +124,41 @@ def smart_maintenance_overview(
     session: SessionDep,
     _principal: Principal = Depends(require_viewer),
 ) -> SmartMaintenanceOverview:
-    rows = session.scalars(select(TableStats)).all()
+    # Aggregated in SQL rather than `select(TableStats)).all()` -- materializing every table's
+    # full row (including the `raw` JSONB blob) into Python OOM'd the api pod once the catalog
+    # grew past a few thousand tables (see the memory comment on api.resources in values.yaml).
+    tier_col = func.lower(func.coalesce(TableStats.detection_tier, "unknown"))
+    tier_counts = session.execute(select(tier_col, func.count()).group_by(tier_col)).all()
     tiers = TierSummary()
-    roi_shadow = 0
-    for row in rows:
-        tier = (row.detection_tier or "unknown").lower()
+    tables_with_stats = 0
+    for tier, count in tier_counts:
+        tables_with_stats += count
         if tier == "hot":
-            tiers.hot += 1
+            tiers.hot = count
         elif tier == "warm":
-            tiers.warm += 1
+            tiers.warm = count
         elif tier == "cold":
-            tiers.cold += 1
+            tiers.cold = count
         elif tier == "dormant":
-            tiers.dormant += 1
+            tiers.dormant = count
         else:
-            tiers.unknown += 1
-        raw = dict(row.raw or {})
-        smart = dict(raw.get("smart_maintenance") or {})
-        decisions = smart.get("roi_decisions")
-        if isinstance(decisions, list):
-            roi_shadow += sum(1 for d in decisions if isinstance(d, dict) and d.get("shadow"))
+            tiers.unknown += count
+
+    roi_shadow = (
+        session.scalar(
+            text(
+                """
+                select count(*)
+                from cryo.table_stats ts,
+                     jsonb_array_elements(
+                         coalesce(ts.raw #> '{smart_maintenance,roi_decisions}', '[]'::jsonb)
+                     ) as decision
+                where (decision ->> 'shadow')::boolean is true
+                """
+            )
+        )
+        or 0
+    )
 
     pending_layout = session.scalar(
         select(func.count(LayoutRecommendation.id)).where(
@@ -158,7 +173,7 @@ def smart_maintenance_overview(
     settings = get_settings()
     return SmartMaintenanceOverview(
         generated_at=datetime.now(UTC),
-        tables_with_stats=len(rows),
+        tables_with_stats=tables_with_stats,
         tiers=tiers,
         roi_shadow_decisions_30d=int(roi_shadow),
         roi_enforced=settings.roi_gate_enabled and not settings.roi_gate_shadow_mode,

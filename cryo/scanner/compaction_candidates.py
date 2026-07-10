@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from cryo.config import get_settings
@@ -88,6 +88,14 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> list[TableParti
             .where(
                 TablePartition.table_id == table_id,
                 TablePartition.scan_at == latest_scan,
+            )
+            # Without this, a table with more partitions than the limit had an arbitrary
+            # (effectively scan-order) slice truncated in -- not necessarily the worst
+            # offenders. Rank by small-file pressure first, same signal used to cap what
+            # gets persisted in the first place (see scanner/persistence.py::_partition_rows).
+            .order_by(
+                desc(TablePartition.small_files_in_partition_count),
+                desc(TablePartition.partition_size_gb),
             )
             .limit(10000)
         )

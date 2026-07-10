@@ -116,6 +116,17 @@ class Settings(BaseSettings):
             "this limit instead of blocking the scanner daemon's single poll loop forever."
         ),
     )
+    scanner_max_partitions_per_table: int = Field(
+        default=5000,
+        gt=0,
+        description=(
+            "Cap on how many partition rows a single scan persists to table_partitions per "
+            "table, keeping the ones with the most small files (the actual compaction signal). "
+            "Real catalogs have a long tail of tables partitioned far more finely than any "
+            "compaction decision needs -- one observed table had 397k partitions (median "
+            "table: 8) and alone accounted for ~10% of table_partitions' total row count."
+        ),
+    )
     native_engine_enabled: bool = Field(
         default=True,
         description="Enable native cryo-engine maintenance (default workflow).",
