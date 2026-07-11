@@ -1,6 +1,7 @@
 package scanstats
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
@@ -105,5 +106,60 @@ func TestAggregateCapsPartitions(t *testing.T) {
 	resp := AggregateFromRecords(records, fields, Options{MaxPartitions: 5})
 	if len(resp.Partitions) != 5 {
 		t.Fatalf("capped partitions=%d", len(resp.Partitions))
+	}
+}
+
+func TestReadDataFileMapsRecoversFromNullValueCountsPanic(t *testing.T) {
+	nulls, vals, values, note := readDataFileMaps(
+		func() map[int]int64 {
+			panic("interface conversion: interface {} is nil, not int32")
+		},
+		func() map[int]int64 {
+			t.Fatal("ValueCounts should not run after NullValueCounts panic")
+			return nil
+		},
+		func() map[string]any {
+			t.Fatal("Partition should not run after NullValueCounts panic")
+			return nil
+		},
+	)
+	if nulls != nil || vals != nil {
+		t.Fatalf("expected nil column maps after panic, got nulls=%v vals=%v", nulls, vals)
+	}
+	if len(values) != 0 {
+		t.Fatalf("expected empty partition values (_unpartitioned), got %v", values)
+	}
+	if note == "" || !strings.Contains(note, "iceberg-go map init panic") || !strings.Contains(note, "nil, not int32") {
+		t.Fatalf("expected degraded-stats note, got %q", note)
+	}
+	if partitionKey(values) != "_unpartitioned" {
+		t.Fatalf("partition key=%q", partitionKey(values))
+	}
+}
+
+func TestReadDataFileMapsPassesThrough(t *testing.T) {
+	wantNulls := map[int]int64{1: 2}
+	wantVals := map[int]int64{1: 10}
+	wantPart := map[string]any{"d": int32(20000)}
+	nulls, vals, values, note := readDataFileMaps(
+		func() map[int]int64 { return wantNulls },
+		func() map[int]int64 { return wantVals },
+		func() map[string]any { return wantPart },
+	)
+	if note != "" {
+		t.Fatalf("unexpected note: %q", note)
+	}
+	if nulls[1] != 2 || vals[1] != 10 || values["d"] != int32(20000) {
+		t.Fatalf("passthrough mismatch: nulls=%v vals=%v values=%v", nulls, vals, values)
+	}
+}
+
+func TestNoteManifestErrorDedupes(t *testing.T) {
+	acc := newAccumulator(nil, Options{}.withDefaults())
+	acc.noteManifestError("same")
+	acc.noteManifestError("same")
+	acc.noteManifestError("other")
+	if len(acc.manifestErrors) != 2 {
+		t.Fatalf("manifestErrors=%v", acc.manifestErrors)
 	}
 }
