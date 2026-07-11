@@ -15,6 +15,7 @@ import (
 
 	"github.com/cryo-lake/cryo/engine-go/internal/ops"
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
+	"github.com/cryo-lake/cryo/engine-go/internal/scanstats"
 )
 
 func main() {
@@ -22,18 +23,38 @@ func main() {
 	log.SetFlags(0)
 
 	args := os.Args[1:]
-	if len(args) == 0 || args[0] != "execute" {
-		fmt.Fprintln(os.Stderr, "usage: cryo-engine-go execute < request.json")
+	if len(args) == 0 {
+		usage()
 		os.Exit(2)
 	}
 
-	// os.Exit skips deferred cleanup — stop profiles explicitly before exit.
 	stopProfiles := startProfiles()
 
+	switch args[0] {
+	case "execute":
+		runExecute(stopProfiles)
+	case "scan-stats":
+		runScanStats(stopProfiles)
+	case "aggregate-fixture":
+		runAggregateFixture(stopProfiles)
+	default:
+		stopProfiles()
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: cryo-engine-go execute < request.json")
+	fmt.Fprintln(os.Stderr, "       cryo-engine-go scan-stats < request.json")
+	fmt.Fprintln(os.Stderr, "       cryo-engine-go aggregate-fixture < fixture.json")
+}
+
+func runExecute(stopProfiles func()) {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		stopProfiles()
-		writeResponse(protocol.ExecuteResponse{
+		writeExecuteResponse(protocol.ExecuteResponse{
 			OK:    false,
 			Error: strPtr(fmt.Sprintf("failed to read stdin: %v", err)),
 		}, 1)
@@ -43,7 +64,7 @@ func main() {
 	var request protocol.ExecuteRequest
 	if err := json.Unmarshal(input, &request); err != nil {
 		stopProfiles()
-		writeResponse(protocol.ExecuteResponse{
+		writeExecuteResponse(protocol.ExecuteResponse{
 			OK:    false,
 			Error: strPtr(fmt.Sprintf("failed to parse request: %v", err)),
 		}, 1)
@@ -52,11 +73,59 @@ func main() {
 
 	response := ops.Execute(context.Background(), &request)
 	stopProfiles()
-	writeResponse(response, exitCode(response))
+	writeExecuteResponse(response, exitCode(response.OK))
 }
 
-// startProfiles enables CPU + heap profiling when CRYO_ENGINE_PPROF_DIR is set.
-// Writes cpu-*.pprof and heap-*.pprof into that directory for go tool pprof.
+func runScanStats(stopProfiles func()) {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		stopProfiles()
+		writeScanStatsResponse(protocol.ScanStatsResponse{
+			OK:    false,
+			Error: strPtr(fmt.Sprintf("failed to read stdin: %v", err)),
+		}, 1)
+		return
+	}
+
+	var request protocol.ScanStatsRequest
+	if err := json.Unmarshal(input, &request); err != nil {
+		stopProfiles()
+		writeScanStatsResponse(protocol.ScanStatsResponse{
+			OK:    false,
+			Error: strPtr(fmt.Sprintf("failed to parse request: %v", err)),
+		}, 1)
+		return
+	}
+
+	response := scanstats.Run(context.Background(), &request)
+	stopProfiles()
+	writeScanStatsResponse(response, exitCode(response.OK))
+}
+
+func runAggregateFixture(stopProfiles func()) {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		stopProfiles()
+		writeScanStatsResponse(protocol.ScanStatsResponse{
+			OK:    false,
+			Error: strPtr(fmt.Sprintf("failed to read stdin: %v", err)),
+		}, 1)
+		return
+	}
+	var request protocol.AggregateFixtureRequest
+	if err := json.Unmarshal(input, &request); err != nil {
+		stopProfiles()
+		writeScanStatsResponse(protocol.ScanStatsResponse{
+			OK:    false,
+			Error: strPtr(fmt.Sprintf("failed to parse fixture: %v", err)),
+		}, 1)
+		return
+	}
+	response := scanstats.AggregateFromFixture(&request)
+	stopProfiles()
+	writeScanStatsResponse(response, exitCode(response.OK))
+}
+
 func startProfiles() func() {
 	dir := strings.TrimSpace(os.Getenv("CRYO_ENGINE_PPROF_DIR"))
 	if dir == "" {
@@ -101,7 +170,7 @@ func startProfiles() func() {
 	}
 }
 
-func writeResponse(response protocol.ExecuteResponse, code int) {
+func writeExecuteResponse(response protocol.ExecuteResponse, code int) {
 	payload, err := json.Marshal(response)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to marshal response: %v\n", err)
@@ -111,8 +180,18 @@ func writeResponse(response protocol.ExecuteResponse, code int) {
 	os.Exit(code)
 }
 
-func exitCode(response protocol.ExecuteResponse) int {
-	if response.OK {
+func writeScanStatsResponse(response protocol.ScanStatsResponse, code int) {
+	payload, err := json.Marshal(response)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(payload))
+	os.Exit(code)
+}
+
+func exitCode(ok bool) int {
+	if ok {
 		return 0
 	}
 	return 1
@@ -122,7 +201,6 @@ func strPtr(value string) *string {
 	return &value
 }
 
-// Ensure binary name compatibility when invoked as cryo-engine.
 func init() {
 	if strings.HasSuffix(os.Args[0], "cryo-engine") && !strings.Contains(os.Args[0], "cryo-engine-go") {
 		log.Printf("running cryo-engine-go via %s alias", os.Args[0])
