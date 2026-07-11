@@ -72,8 +72,12 @@ scheduler:
       cpu: "1"
       # The periodic benefit-score updater loads every table's partitions into memory in one
       # pass -- 512Mi OOMs well before a catalog reaches tens of thousands of partitions. Bump
-      # proportionally to your own partition count if this still isn't enough.
-      memory: 2Gi
+      # proportionally to your own partition count if this still isn't enough. This pod also
+      # runs several other daemon threads in the same process (table-alert-dispatcher,
+      # s3-log-ingest, report-scheduler) that all fire their first pass on startup, so restarts
+      # briefly stack multiple heavy jobs concurrently -- 2Gi wasn't enough headroom for that
+      # burst even after fixing the benefit-score updater's own memory leak.
+      memory: 4Gi
 
 scannerWorker:
   replicas: 8
