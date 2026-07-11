@@ -95,9 +95,19 @@ func Run(ctx context.Context, req *protocol.ScanStatsRequest) protocol.ScanStats
 }
 
 // ScanTable walks the current snapshot of an already-loaded table.
-func ScanTable(ctx context.Context, tbl *table.Table, opts Options) protocol.ScanStatsResponse {
+// Panics from iceberg-go (seen in practice on nil date/timestamp partition values
+// during NullValueCounts → initializeMapData) are recovered into a failed response
+// so the subprocess exits cleanly instead of exit=2 with no JSON.
+func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protocol.ScanStatsResponse) {
 	opts = opts.withDefaults()
 	schemaName, tableName := splitIdent(tbl.Identifier())
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("panic in scan-stats: %v", r)
+			resp = protocol.ScanStatsResponse{OK: false, Error: &msg, SchemaName: schemaName, TableName: tableName}
+		}
+	}()
+
 	fields := partitionFields(tbl)
 	acc := newAccumulator(fields, opts)
 
@@ -138,7 +148,7 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) protocol.Sca
 	meta := snapshotMeta(tbl)
 	props := tableProps(tbl)
 	formatVersion := detectFormatVersion(tbl)
-	resp := acc.finish(schemaName, tableName, &meta)
+	resp = acc.finish(schemaName, tableName, &meta)
 	resp.OK = true
 	resp.Location = tbl.Location()
 	resp.WriteDistributionMode = props.writeDistributionMode
@@ -413,10 +423,20 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	if size < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
 	}
-	if kind == "" {
-		a.addColumnStats(df.NullValueCounts(), df.ValueCounts())
+	// NullValueCounts/ValueCounts/Partition all call iceberg-go initializeMapData,
+	// which panics on nil date/timestamp partition values (v0.6.0). Recover per file
+	// so totals still land; column_quality / partition key may be degraded for that file.
+	nulls, vals, values, note := readDataFileMaps(
+		df.NullValueCounts,
+		df.ValueCounts,
+		func() map[string]any { return partitionValues(df, fields) },
+	)
+	if note != "" {
+		a.noteManifestError(note)
 	}
-	values := partitionValues(df, fields)
+	if kind == "" {
+		a.addColumnStats(nulls, vals)
+	}
 	key := partitionKey(values)
 	acc := a.partitions[key]
 	if acc == nil {
@@ -429,6 +449,36 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	if float64(size) < a.opts.SmallFileMB*float64(mb) {
 		acc.small++
 	}
+}
+
+// readDataFileMaps loads column count maps and partition values, recovering from
+// iceberg-go panics inside initializeMapData (nil logical-type partition values).
+// On panic: returns nil column maps, empty partition values (_unpartitioned), and a note.
+func readDataFileMaps(
+	loadNulls func() map[int]int64,
+	loadVals func() map[int]int64,
+	loadPartition func() map[string]any,
+) (nulls map[int]int64, vals map[int]int64, values map[string]any, note string) {
+	defer func() {
+		if r := recover(); r != nil {
+			nulls, vals = nil, nil
+			values = map[string]any{}
+			note = fmt.Sprintf("iceberg-go map init panic (column/partition stats degraded): %v", r)
+		}
+	}()
+	nulls = loadNulls()
+	vals = loadVals()
+	values = loadPartition()
+	return
+}
+
+func (a *accumulator) noteManifestError(msg string) {
+	for _, existing := range a.manifestErrors {
+		if existing == msg {
+			return
+		}
+	}
+	a.manifestErrors = append(a.manifestErrors, msg)
 }
 
 func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) protocol.ScanStatsResponse {
