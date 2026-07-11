@@ -179,8 +179,9 @@ Implemented per `research-and-roadmap.md` Part 1 §1.2, plus memory work for lar
 - **Cost Tier-1 gate:** skip all-snapshot path-map accounting when current-snapshot file/manifest
   counts exceed `CRYO_COST_METADATA_MAX_FILES_ESTIMATE` /
   `CRYO_COST_METADATA_MAX_MANIFESTS_CURRENT` (heuristic Tier-0 still runs).
-- **Go `scan-stats`:** `cryo-engine-go scan-stats` streams manifests via iceberg-go; enable with
-  `CRYO_SCAN_ENGINE=go`. Field contract: [`docs/scanner-data-points.md`](./scanner-data-points.md).
+- **Go `scan-stats`:** `cryo-engine-go scan-stats` streams manifests via iceberg-go. Helm
+  `global.env.CRYO_SCAN_ENGINE` defaults to **`go`** for EKS; override to `pyiceberg` to fall
+  back. Field contract: [`docs/scanner-data-points.md`](./scanner-data-points.md).
   Parity tests: `tests/test_scanner_parity.py` + `engine-go/internal/scanstats`.
 - Helm `scannerWorker.replicas` default reduced 8 → 3 after the memory fixes.
 
