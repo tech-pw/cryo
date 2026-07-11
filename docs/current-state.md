@@ -183,6 +183,10 @@ Implemented per `research-and-roadmap.md` Part 1 §1.2, plus memory work for lar
   `global.env.CRYO_SCAN_ENGINE` defaults to **`go`** for EKS; override to `pyiceberg` to fall
   back. Field contract: [`docs/scanner-data-points.md`](./scanner-data-points.md).
   Parity tests: `tests/test_scanner_parity.py` + `engine-go/internal/scanstats`.
+  iceberg-go v0.6.0 can panic in `NullValueCounts`→`initializeMapData` on nil date/timestamp
+  partition values; scan-stats recovers per file (file totals kept; column/partition maps
+  degraded + noted in `manifest_read_errors`) and wraps `ScanTable` so a leftover panic
+  becomes `ok=false` JSON instead of subprocess exit=2.
 - Helm `scannerWorker.replicas` default reduced 8 → 3 after the memory fixes.
 
 ### Native Rust engines — worker subprocess + optional PyO3 helpers
