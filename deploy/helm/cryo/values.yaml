@@ -67,17 +67,18 @@ scheduler:
     limits:
       # S3LogIngestRunner reads log objects with s3_log_ingest_concurrency (default 16)
       # concurrent threads -- 500m throttled that work to a crawl in practice against a real
-      # bucket's log volume. 1 full core keeps that concurrency genuinely concurrent instead
-      # of CPU-starved.
-      cpu: "1"
-      # The periodic benefit-score updater loads every table's partitions into memory in one
-      # pass -- 512Mi OOMs well before a catalog reaches tens of thousands of partitions. Bump
-      # proportionally to your own partition count if this still isn't enough. This pod also
-      # runs several other daemon threads in the same process (table-alert-dispatcher,
-      # s3-log-ingest, report-scheduler) that all fire their first pass on startup, so restarts
-      # briefly stack multiple heavy jobs concurrently -- 2Gi wasn't enough headroom for that
-      # burst even after fixing the benefit-score updater's own memory leak.
-      memory: 4Gi
+      # bucket's log volume. 2 full cores keep that concurrency genuinely concurrent alongside
+      # the benefit-score-updater and report-scheduler threads sharing the same process.
+      cpu: "2"
+      # The periodic benefit-score updater loads one table's partitions into memory at a time --
+      # fine for the median table, but a real catalog's partition-count distribution is
+      # extremely long-tailed (observed: p50=4, p99=2.7k, max=397k partitions on one table), so
+      # sizing must cover the outlier, not the median. This pod also runs several other daemon
+      # threads in the same process (table-alert-dispatcher, s3-log-ingest, report-scheduler)
+      # that all fire their first pass on startup, so restarts briefly stack multiple heavy jobs
+      # concurrently -- 2Gi, then 4Gi, both proved insufficient headroom for that burst even
+      # after fixing the benefit-score updater's own memory leak.
+      memory: 6Gi
 
 scannerWorker:
   replicas: 8
@@ -87,7 +88,13 @@ scannerWorker:
       memory: 512Mi
     limits:
       cpu: "2"
-      memory: 2Gi
+      # Scanning a table materializes all of its partitions in memory before
+      # scanner_max_partitions_per_table (default 5000) trims them down for storage -- on a
+      # fleet with a long-tailed partition-count distribution (max observed: 397k partitions on
+      # one table), that pre-trim working set can spike well past a table with the median (4)
+      # or even p99 (2.7k) partition count. 2Gi had no observed crash yet, but no real margin
+      # for that outlier either.
+      memory: 3Gi
 
 scanner:
   schedule: "0 */6 * * *"
