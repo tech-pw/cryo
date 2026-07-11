@@ -510,7 +510,7 @@ class FakeSnapshotMeta:
 class FakeDataFile:
     file_size_in_bytes: int
     record_count: int
-    partition: tuple[str]
+    partition: tuple[Any, ...]
     content: str = "DATA"
     file_format: str = "PARQUET"
     spec_id: int = 0

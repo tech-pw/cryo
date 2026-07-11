@@ -62,9 +62,42 @@ class Settings(BaseSettings):
         description="Tables to scan in parallel per chunk (0=serial).",
     )
     scan_parallel_manifests: int = Field(
-        default=8,
+        default=4,
         ge=1,
-        description="Max threads for parallel manifest fetching within a table.",
+        description=(
+            "Max threads for parallel manifest fetching within a table. "
+            "Kept modest under typical 2Gi scanner-worker limits: each in-flight "
+            "manifest still materializes its entry list."
+        ),
+    )
+    scan_engine: Literal["pyiceberg", "go"] = Field(
+        default="pyiceberg",
+        description=(
+            "Metadata walk implementation for current-snapshot stats. "
+            "'go' shells out to cryo-engine-go scan-stats (streaming manifests); "
+            "'pyiceberg' uses the in-process path."
+        ),
+    )
+    scan_go_binary: str | None = Field(
+        default=None,
+        description="Optional path to cryo-engine-go; otherwise resolve like native runner.",
+    )
+    cost_metadata_max_files_estimate: int = Field(
+        default=200_000,
+        gt=0,
+        description=(
+            "Skip Tier-1 metadata cost accounting (all-snapshot path map) when the "
+            "current-snapshot file count meets or exceeds this threshold; fall back "
+            "to heuristic cost to avoid OOM on huge tables."
+        ),
+    )
+    cost_metadata_max_manifests_current: int = Field(
+        default=500,
+        gt=0,
+        description=(
+            "Skip Tier-1 metadata cost when current-snapshot manifest count meets "
+            "or exceeds this threshold."
+        ),
     )
 
     cost_price_per_gb_month: float = Field(default=0.023, gt=0)

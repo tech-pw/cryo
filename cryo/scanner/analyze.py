@@ -109,10 +109,25 @@ def analyze_catalog_table(
     settings: Settings | None = None,
     parallel_manifests: bool = True,
     stats_history: Sequence[Mapping[str, Any]] | None = None,
+    source_config: Mapping[str, Any] | None = None,
 ) -> TableAnalysis:
     del file_size_threshold_mb
-    table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     effective_settings = settings or Settings(scan_small_file_mb=small_file_mb)
+    if effective_settings.scan_engine == "go":
+        if source_config is None:
+            raise ValueError("source_config is required when CRYO_SCAN_ENGINE=go")
+        from cryo.scanner.go_scan import analyze_catalog_table_go
+
+        return analyze_catalog_table_go(
+            source_config=source_config,
+            schema_name=schema_name,
+            table_name=table_name,
+            scan_at=scan_at,
+            settings=effective_settings,
+            stats_history=stats_history,
+            table_obj=None,
+        )
+    table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     result = analyze_table(
         table_obj,
         schema_name,
@@ -203,6 +218,7 @@ def analyze_table(
         partition_row(key, accum)
         for key, accum in sorted(partitions.items(), key=lambda item: item[0])
     ]
+    total_partitions = len(partition_rows)
     files_per_partition = [row.files_per_partition for row in partition_rows]
     max_files_per_partition = max(files_per_partition, default=0)
     avg_files_per_partition = (
@@ -218,6 +234,16 @@ def analyze_table(
     small_file_bytes = sum(
         accum.size_bytes for accum in partitions.values() if accum.small > 1 and accum.files > 1
     )
+    # Cap retained partition rows the same way persistence / Go scan-stats do — totals above
+    # still use the full map so small_files_count / skew stay correct.
+    max_partitions_kept = settings.scanner_max_partitions_per_table
+    if len(partition_rows) > max_partitions_kept:
+        partition_rows = sorted(
+            partition_rows,
+            key=lambda p: (p.small_files_in_partition_count, p.partition_size_gb),
+            reverse=True,
+        )[:max_partitions_kept]
+        partition_rows = sorted(partition_rows, key=lambda p: p.partition_key)
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
     props = _table_properties(table_obj)
@@ -240,7 +266,7 @@ def analyze_table(
         "first_updated_at": snapshot_info["last_snapshot_committed_at"],
         "manifest_count": len(manifests),
         "avg_file_size_mb": avg_file_size_mb,
-        "total_partitions": len(partition_rows),
+        "total_partitions": total_partitions,
         "partition_skew_ratio": skew,
         "avg_files_per_partition": avg_files_per_partition,
         "write_distribution_mode": props["write_distribution_mode"],
@@ -252,7 +278,19 @@ def analyze_table(
     primary = fields[0] if fields else {}
     cost_analysis: TableCostAnalysis | None = None
     metadata_accounting: MetadataCostAccounting | None = None
-    if settings.cost_scan_tier in {"metadata", "storage_truth"}:
+    run_metadata_cost = settings.cost_scan_tier in {"metadata", "storage_truth"} and (
+        total_files < settings.cost_metadata_max_files_estimate
+        and len(manifests) < settings.cost_metadata_max_manifests_current
+    )
+    if settings.cost_scan_tier in {"metadata", "storage_truth"} and not run_metadata_cost:
+        logger.info(
+            "Skipping Tier-1 metadata cost for %s.%s (files=%s manifests=%s); using heuristic",
+            schema_name,
+            table_name,
+            total_files,
+            len(manifests),
+        )
+    if run_metadata_cost:
         metadata_accounting = account_metadata_cost(
             table_obj,
             scan_at=scan_time,
@@ -290,6 +328,7 @@ def analyze_table(
     )
     column_quality = quality_accum.finish()
     quality_summary = summarize_column_quality(column_quality)
+    partitions_for_raw = partition_rows
     puffin_blobs: list[dict[str, Any]] = []
     try:
         from cryo.scanner.puffin_writer import build_sketch_payload, write_puffin_blob
@@ -308,7 +347,7 @@ def analyze_table(
             }
             for stat in column_quality
         ]
-        partition_dicts = [partition.__dict__ for partition in partition_rows]
+        partition_dicts = [partition.__dict__ for partition in partitions_for_raw]
         payload = build_sketch_payload(
             column_quality_dicts,
             partitions=partition_dicts,
@@ -325,7 +364,7 @@ def analyze_table(
         logger.warning("Puffin sketch write failed: %s", exc)
     raw = {
         "partition_fields": fields,
-        "partitions_to_rewrite": [partition.__dict__ for partition in partition_rows],
+        "partitions_to_rewrite": [partition.__dict__ for partition in partitions_for_raw],
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,
@@ -350,6 +389,15 @@ def analyze_table(
         "position_delete_files": position_delete_files,
         "location": table_location(table_obj),
     }
+    for signal_key in (
+        "format_version",
+        "v3_upgrade_candidate",
+        "metadata_to_data_ratio",
+        "is_streaming",
+        "commits_per_day",
+    ):
+        if signal_key in stats_for_health:
+            raw[signal_key] = stats_for_health[signal_key]
     if manifest_read_errors:
         raw["manifest_read_errors"] = manifest_read_errors
     if puffin_blobs:
@@ -369,7 +417,7 @@ def analyze_table(
         "overall_score": score,
         "total_files": total_files,
         "small_files_count": small_files_count,
-        "total_partitions": len(partition_rows),
+        "total_partitions": total_partitions,
         "max_files_per_partition": max_files_per_partition,
         "avg_files_per_partition": avg_files_per_partition,
         "partition_skew_ratio": skew,
@@ -412,20 +460,18 @@ def iter_data_files(
     max_workers: int = 8,
     manifest_errors: list[str] | None = None,
 ) -> Iterable[object]:
-    """Iterate over data files from a table's manifests.
+    """Iterate over data files from a table's current-snapshot manifests.
 
-    When parallel=True (default), manifest entries are fetched concurrently
-    using a thread pool. This significantly speeds up scanning for tables
-    with many manifests by overlapping I/O-bound S3/catalog calls.
+    Intentionally does **not** use ``table.scan().plan_files()``: that path
+    materializes the full FileScanTask graph (including delete associations) and
+    dominates RSS on large tables. Stats only need per-file size/records/partition
+    from manifest entries.
+
+    When parallel=True, manifests are fetched concurrently with a bounded worker
+    pool. Entries from each completed manifest are yielded immediately so at most
+    ``max_workers`` entry-lists are retained at once (not the whole snapshot).
     """
-    scan = _call_or_attr(table_obj, "scan", default=None)
-    if scan is not None:
-        plan_files = _call_or_attr(scan, "plan_files", default=None)
-        if plan_files is not None:
-            for task in plan_files:
-                yield _attr(task, "file", task)
-            return
-
+    # Do not call scan().plan_files() — see docstring.
     manifest_list = list(manifests) if manifests is not None else _manifests(table_obj)
     io = _attr(table_obj, "io", None)
 
@@ -434,7 +480,8 @@ def iter_data_files(
             yield from _iter_manifest_data_files(manifest, io, manifest_errors=manifest_errors)
         return
 
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(manifest_list))) as executor:
+    workers = max(1, min(max_workers, len(manifest_list)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(_read_manifest_entries, manifest, io): manifest
             for manifest in manifest_list
