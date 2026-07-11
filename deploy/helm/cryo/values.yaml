@@ -19,6 +19,8 @@ global:
   env:
     CRYO_ENVIRONMENT: prod
     CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
+    # pyiceberg (default) or go — Go uses cryo-engine-go scan-stats (streaming manifests).
+    # CRYO_SCAN_ENGINE: go
   envFromSecret: ""
   envFromConfigMap: ""
 
@@ -76,7 +78,7 @@ scheduler:
       memory: 2Gi
 
 scannerWorker:
-  replicas: 8
+  replicas: 3
   resources:
     requests:
       cpu: 500m
@@ -84,6 +86,9 @@ scannerWorker:
     limits:
       cpu: "2"
       memory: 2Gi
+  # After Go scan-stats + PyIceberg plan_files removal, peak RSS drops enough that
+  # 8 replicas are no longer required to avoid OOM. Start at 3; raise if scan lag grows.
+  # Set CRYO_SCAN_ENGINE=go on scanner workers once parity is verified in the target env.
 
 scanner:
   schedule: "0 */6 * * *"
