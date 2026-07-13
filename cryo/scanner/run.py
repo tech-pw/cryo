@@ -280,6 +280,7 @@ def _run_scan_serial(
                     file_size_threshold_mb=settings.scan_needs_compaction_threshold,
                     settings=settings,
                     stats_history=history,
+                    source_config=candidate.source.config,
                 )
 
             analysis = _run_bounded(
@@ -404,6 +405,7 @@ def _run_scan_parallel(
                         file_size_threshold_mb=settings.scan_needs_compaction_threshold,
                         settings=settings,
                         stats_history=history,
+                        source_config=candidate.source.config,
                     ),
                     timeout_seconds=settings.scan_table_timeout_seconds,
                     description=f"analyze_catalog_table({table_ref})",

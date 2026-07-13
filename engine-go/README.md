@@ -1,10 +1,22 @@
 # cryo-engine-go
 
-Go subprocess for Cryo worker native maintenance. Speaks the same JSON stdin/stdout
-protocol as the legacy Rust `cryo-engine` (`ExecuteRequest` / `ExecuteResponse`,
-`CRYO_PROGRESS:` lines on stdout).
+Go subprocess for Cryo worker native maintenance **and** streaming metadata scan-stats.
+Maintenance speaks the same JSON stdin/stdout protocol as the legacy Rust `cryo-engine`
+(`ExecuteRequest` / `ExecuteResponse`, `CRYO_PROGRESS:` lines on stdout).
 
 **Default build:** `CGO_ENABLED=0` (pure Go + gocloud FileIO). No DataFusion on the critical path.
+
+## Commands
+
+```bash
+cryo-engine-go execute < request.json      # maintenance (compaction / expire / orphan)
+cryo-engine-go scan-stats < request.json   # current-snapshot manifest aggregates
+```
+
+`scan-stats` streams `ManifestFile.Entries` (never `PlanFiles`), emits partition/file
+aggregates matching [`docs/scanner-data-points.md`](../docs/scanner-data-points.md).
+Python maps the JSON into `TableAnalysis` and still owns health/cost/persistence.
+Enable with `CRYO_SCAN_ENGINE=go` on scanner workers.
 
 ## Pinned dependency
 
