@@ -51,6 +51,15 @@ class Settings(BaseSettings):
         default=None,
         description="OAuth redirect URI registered with the IdP (UI callback).",
     )
+    allow_dev_token_in_prod: bool = Field(
+        default=False,
+        description=(
+            "Explicit opt-in to keep POST /api/v1/auth/token (self-declared role, no real "
+            "identity check) enabled even when environment=='prod'. Only for bridging the gap "
+            "before OIDC is configured -- anyone who can reach the API can self-grant any role "
+            "while this is true. Turn off once oidc_issuer_url is set."
+        ),
+    )
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     scan_num_chunks: int = Field(default=4, gt=0)
