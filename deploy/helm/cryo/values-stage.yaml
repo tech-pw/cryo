@@ -12,17 +12,28 @@
 # (database `cryo` doesn't exist yet on staging-psql-cluster -- the migration Job's
 # pre-install hook will fail until it's created; `CREATE DATABASE cryo;` as the postgres user
 # is sufficient, same as was done for dev.)
-# Also needs an imagePullSecret named `cryo-registry` in this namespace (same registry as
-# dev/prod) -- create with:
-#   kubectl create secret docker-registry cryo-registry -n <stage-namespace> \
-#     --docker-server=registry.gitlab.com --docker-username=<user> --docker-password=<token>
+#
+# Image: platform-ops builds their own image from this repo's root Dockerfile and pushes it to
+# their own ECR repository, rather than pulling the GitLab-registry image used by dev/prod.
+# Uncomment and fill in below once that ECR repo exists -- without this override the chart
+# falls back to its placeholder image (repository: cryo, tag: latest) and pods will fail to
+# pull. cryo.imagePullSecrets (_helpers.tpl) expects a plain list of strings, e.g.
+# `imagePullSecrets: [my-ecr-pull-secret]` -- NOT the `- name: ...` k8s object form. Most EKS
+# setups don't need an explicit pull secret for ECR at all if the node/service account already
+# has IAM pull access (IRSA or node role) -- only add one if that's not the case here.
+#
+# image:
+#   repository: <account-id>.dkr.ecr.<region>.amazonaws.com/<your-ecr-repo>
+#   tag: <your-tag>
+# migration:
+#   image:
+#     repository: <account-id>.dkr.ecr.<region>.amazonaws.com/<your-ecr-repo>
+#     tag: <your-tag>
+# imagePullSecrets: []   # only if ECR pulls need an explicit secret -- see note above
 
 global:
   env:
     CRYO_ENVIRONMENT: stage
-
-imagePullSecrets:
-  - cryo-registry
 
 api:
   replicas: 1
