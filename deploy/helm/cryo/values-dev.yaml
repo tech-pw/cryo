@@ -1,0 +1,34 @@
+# Dev overrides for the Cryo Helm chart. Applied on top of values.yaml:
+#   helm upgrade --install cryo deploy/helm/cryo -n cryo -f deploy/helm/cryo/values.yaml -f deploy/helm/cryo/values-dev.yaml
+#
+# This is the existing `cryo` namespace/release on data-dev-eks. It was mistakenly pointed at
+# the *prod* source (cdp / trino-prod-metastore) for several days before this three-environment
+# split -- see #devops-data thread, 2026-07-13. That means its metadata DB currently holds real
+# prod-scale data (12,938 tables). Per the agreed split, prod data/DB stays exclusively on the
+# prod deployment (data-platform-cluster) -- this file assumes dev has since been repointed at
+# a genuinely separate database and the cdp_dev source, not the one still holding prod data.
+#
+# development-postgres-cluster.cluster-csyovxehdcd2.ap-south-1.rds.amazonaws.com is reachable
+# from data-dev-eks (verified) and already has a `cryo` database with the full schema migrated
+# (alembic upgrade head run 2026-07-13). Needs a `cryo-secrets` Secret in this namespace with:
+#   CRYO_DATABASE_URL=postgresql+psycopg://postgres:<password>@development-postgres-cluster.cluster-csyovxehdcd2.ap-south-1.rds.amazonaws.com:5432/cryo
+# (username confirmed as `postgres`, same as prod's convention.)
+#
+# NOT done yet, intentionally deferred: creating/fixing the `cdp_dev` Source row itself. Its
+# existing config reused prod's S3 access keys (a bug found 2026-07-13) and its HMS URI
+# (internal.example.com) doesn't match the real dev HMS given by platform-ops
+# (internal.example.com, confirmed reachable from data-dev-eks). Needs fresh
+# dev-scoped S3 keys before that source can be corrected -- see open thread.
+#
+# Resource sizing here inherits the base chart's defaults as-is (already tuned for prod's
+# fleet scale earlier this session). Dev's real scan scope under cdp_dev is currently unknown
+# -- likely much smaller than prod's 12,938 tables -- so these limits are almost certainly
+# oversized for dev's actual needs. Revisit once dev is scanning real data and its own usage
+# pattern is observable, rather than guessing a trim now.
+
+global:
+  env:
+    CRYO_ENVIRONMENT: dev
+
+imagePullSecrets:
+  - name: cryo-registry

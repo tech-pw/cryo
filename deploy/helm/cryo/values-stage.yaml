@@ -1,0 +1,67 @@
+# Stage overrides for the Cryo Helm chart. Applied on top of values.yaml:
+#   helm upgrade --install cryo deploy/helm/cryo -n cryo -f deploy/helm/cryo/values.yaml -f deploy/helm/cryo/values-stage.yaml
+#
+# Stage has no real Iceberg data to scan (see #devops-data thread, 2026-07-13) -- its only
+# purpose is to satisfy the dev -> stage -> prod promotion gate platform-ops requires before
+# touching prod. So this intentionally runs api + web only: enough to prove the chart deploys
+# cleanly against a real cluster/DB, with the scanning/maintenance write-path (scheduler,
+# scanner-worker, governor, worker) disabled since there's nothing for it to do.
+#
+# Needs a `cryo-secrets` Secret in this namespace, NOT included here, with at minimum:
+#   CRYO_DATABASE_URL=postgresql+psycopg://postgres:<password>@staging-psql-cluster.cluster-cezqiyjp2jmw.ap-south-1.rds.amazonaws.com:5432/cryo
+# (database `cryo` doesn't exist yet on staging-psql-cluster -- the migration Job's
+# pre-install hook will fail until it's created; `CREATE DATABASE cryo;` as the postgres user
+# is sufficient, same as was done for dev.)
+# Also needs an imagePullSecret named `cryo-registry` in this namespace (same registry as
+# dev/prod) -- create with:
+#   kubectl create secret docker-registry cryo-registry -n <stage-namespace> \
+#     --docker-server=registry.gitlab.com --docker-username=<user> --docker-password=<token>
+
+global:
+  env:
+    CRYO_ENVIRONMENT: stage
+
+imagePullSecrets:
+  - name: cryo-registry
+
+api:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+web:
+  enabled: true
+  replicas: 1
+
+# No scanning/maintenance write-path on stage -- nothing for it to do without real sources,
+# and running it would just be idle daemons burning cluster resources.
+worker:
+  replicas: 0
+
+governor:
+  replicas: 0
+
+scheduler:
+  replicas: 0
+
+scannerWorker:
+  replicas: 0
+
+scanner:
+  schedule: "0 */6 * * *"
+  suspend: true
+
+redis:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

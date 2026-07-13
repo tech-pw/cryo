@@ -1,0 +1,86 @@
+# Prod overrides for the Cryo Helm chart. Applied on top of values.yaml:
+#   helm upgrade --install cryo deploy/helm/cryo -n cryo -f deploy/helm/cryo/values.yaml -f deploy/helm/cryo/values-prod.yaml
+#
+# This targets the EXISTING `cryo` release/namespace on data-platform-cluster -- the cluster
+# already verified reachable to internal.example.com:9083 (prod HMS) and the
+# existing RDS `cryo` schema (data-engineering-db...), which already holds all 12,938 real
+# tables scanned under the `cdp` source. Per the agreed three-environment split (#devops-data,
+# 2026-07-13), this DB stays exclusively prod's -- nothing else should write to it.
+#
+# CRYO_ENVIRONMENT was live-set to "dev" on this deployment before the split was identified --
+# this file corrects that.
+#
+# governor/scheduler/scannerWorker/worker are currently scaled to 0 replicas on the live
+# deployment (imperative `kubectl scale`, done mid-migration to data-dev-eks -- see prior
+# session notes) even though Helm's own values still say 1/1/8/2. This file's replica counts
+# below are the INTENDED state once revived -- applying this file will bring those daemons back
+# up. Do not apply until explicitly confirmed; reviving the write-path here means real
+# maintenance jobs will start firing against the real fleet again.
+#
+# Resource limits bumped from what's live today, matching what data-dev-eks needed at the same
+# fleet scale (12,938 tables, 3.18M partitions, one outlier table at 397k partitions) earlier
+# this session -- api 3Gi->6Gi (OOM history), scheduler 2Gi->6Gi + 1->2 cpu (OOM history, runs
+# several daemon threads concurrently), scannerWorker 2Gi->3Gi (outlier-table headroom).
+# scannerWorker replica count intentionally NOT dropped to 3 the way data-dev-eks's was --
+# that reduction was justified by the new Go scan-stats engine (CRYO_SCAN_ENGINE=go) landing
+# and needs its own verification against this cluster's real scan cadence before trusting fewer
+# replicas here too.
+
+global:
+  env:
+    CRYO_ENVIRONMENT: prod
+    CRYO_SCAN_ENGINE: go
+
+api:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: "1"
+      memory: 6Gi
+
+worker:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+governor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 6Gi
+
+scannerWorker:
+  replicas: 8
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+
+web:
+  enabled: true
+  replicas: 2
