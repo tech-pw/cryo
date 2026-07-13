@@ -101,6 +101,7 @@ scannerWorker:
 
 scanner:
   schedule: "0 */6 * * *"
+  suspend: false
   resources:
     requests:
       cpu: 500m

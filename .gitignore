@@ -20,3 +20,8 @@ node_modules/
 # Local perf / profiling artifacts (MinIO throughput loop)
 tmp/
 *.pprof
+
+# Environment-specific Helm value overlays contain real internal hostnames/bucket names --
+# keep these out of git entirely (hand off directly for deploys instead of committing).
+# The generic deploy/helm/cryo/values.yaml base chart is not affected by this rule.
+deploy/helm/cryo/values-*.yaml
