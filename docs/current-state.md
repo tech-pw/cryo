@@ -169,16 +169,25 @@ React/TypeScript frontend per `research-and-roadmap.md` Part 6:
 
 ### Scanner Concurrency Optimizations ✅
 
-Implemented per `research-and-roadmap.md` Part 1 §1.2:
+Implemented per `research-and-roadmap.md` Part 1 §1.2, plus memory work for large tables:
 
-- **Parallel manifest fetching:** `cryo/scanner/analyze.py::iter_data_files()` uses a thread pool
-  to fetch manifest entries concurrently (default 8 workers, configurable via
+- **Manifest walk (not `plan_files`):** stats path streams current-snapshot manifests only;
+  `scan().plan_files()` is intentionally unused (it materializes the full FileScanTask graph).
+- **Parallel manifest fetching:** bounded thread pool (default **4** workers under 2Gi limits,
   `CRYO_SCAN_PARALLEL_MANIFESTS`).
-- **Parallel table scanning:** `cryo/scanner/run.py::run_scan()` can scan multiple tables
-  concurrently within a chunk (configurable via `CRYO_SCAN_PARALLEL_TABLES` or
-  `--parallel-tables` CLI flag).
-- **Configuration:** `cryo/config.py` Settings now include `scan_parallel_tables` and
-  `scan_parallel_manifests`.
+- **Parallel table scanning:** `CRYO_SCAN_PARALLEL_TABLES` / `--parallel-tables`.
+- **Cost Tier-1 gate:** skip all-snapshot path-map accounting when current-snapshot file/manifest
+  counts exceed `CRYO_COST_METADATA_MAX_FILES_ESTIMATE` /
+  `CRYO_COST_METADATA_MAX_MANIFESTS_CURRENT` (heuristic Tier-0 still runs).
+- **Go `scan-stats`:** `cryo-engine-go scan-stats` streams manifests via iceberg-go. Helm
+  `global.env.CRYO_SCAN_ENGINE` defaults to **`go`** for EKS; override to `pyiceberg` to fall
+  back. Field contract: [`docs/scanner-data-points.md`](./scanner-data-points.md).
+  Parity tests: `tests/test_scanner_parity.py` + `engine-go/internal/scanstats`.
+  iceberg-go v0.6.0 can panic in `NullValueCounts`→`initializeMapData` on nil date/timestamp
+  partition values; scan-stats recovers per file (file totals kept; column/partition maps
+  degraded + noted in `manifest_read_errors`) and wraps `ScanTable` so a leftover panic
+  becomes `ok=false` JSON instead of subprocess exit=2.
+- Helm `scannerWorker.replicas` default reduced 8 → 3 after the memory fixes.
 
 ### Native Rust engines — worker subprocess + optional PyO3 helpers
 
