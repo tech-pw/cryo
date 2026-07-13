@@ -26,6 +26,18 @@
 # and needs its own verification against this cluster's real scan cadence before trusting fewer
 # replicas here too.
 
+image:
+  repository: registry.example.com/cryo
+  tag: latest
+
+imagePullSecrets:
+  - cryo-registry
+
+migration:
+  image:
+    repository: registry.example.com/cryo
+    tag: latest
+
 global:
   env:
     CRYO_ENVIRONMENT: prod
@@ -84,3 +96,6 @@ scannerWorker:
 web:
   enabled: true
   replicas: 2
+  image:
+    repository: registry.example.com/cryo
+    tag: web-latest

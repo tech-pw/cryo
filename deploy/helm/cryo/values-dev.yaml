@@ -31,4 +31,4 @@ global:
     CRYO_ENVIRONMENT: dev
 
 imagePullSecrets:
-  - name: cryo-registry
+  - cryo-registry

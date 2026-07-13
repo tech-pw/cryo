@@ -22,7 +22,7 @@ global:
     CRYO_ENVIRONMENT: stage
 
 imagePullSecrets:
-  - name: cryo-registry
+  - cryo-registry
 
 api:
   replicas: 1
