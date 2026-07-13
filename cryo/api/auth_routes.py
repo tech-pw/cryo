@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from cryo.api.deps import require_admin
-from cryo.config import get_settings
+from cryo.config import Settings, get_settings
 from cryo.db.session import SessionLocal
 from cryo.governor.bandit_store import save_bandit
 from cryo.security.jwt_tokens import issue_access_token
@@ -58,11 +58,15 @@ class OidcExchangeRequest(BaseModel):
     redirect_uri: str
 
 
+def _dev_token_enabled(settings: Settings) -> bool:
+    return settings.environment != "prod" or settings.allow_dev_token_in_prod
+
+
 @router.get("/config", response_model=AuthConfigResponse)
 def auth_config() -> AuthConfigResponse:
     """Expose auth mode for the UI (dev JWT vs production OIDC)."""
     settings = get_settings()
-    dev_token_enabled = settings.environment != "prod"
+    dev_token_enabled = _dev_token_enabled(settings)
     if oidc_enabled():
         endpoints = discover_oidc_endpoints()
         if endpoints is None:
@@ -141,10 +145,11 @@ def refresh_oidc_access_token(payload: OidcRefreshRequest) -> TokenResponse:
 def issue_dev_token(payload: TokenRequest) -> TokenResponse:
     """Issue a signed JWT for dev/test UI and integration tests.
 
-    Disabled in production — use your identity provider instead.
+    Disabled in production unless allow_dev_token_in_prod is explicitly set -- use your
+    identity provider instead.
     """
     settings = get_settings()
-    if settings.environment == "prod":
+    if not _dev_token_enabled(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Token issuance is disabled in production",
