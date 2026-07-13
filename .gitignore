@@ -22,6 +22,11 @@ tmp/
 *.pprof
 
 # Environment-specific Helm value overlays contain real internal hostnames/bucket names --
-# keep these out of git entirely (hand off directly for deploys instead of committing).
+# keep these out of the public GitHub repo (this rule is only meant to apply on `main`).
+# On gitlab-main specifically, values-dev.yaml/values-stage.yaml/values-prod.yaml are
+# deliberately tracked (org-internal repo only) -- see the negations below.
 # The generic deploy/helm/cryo/values.yaml base chart is not affected by this rule.
 deploy/helm/cryo/values-*.yaml
+!deploy/helm/cryo/values-dev.yaml
+!deploy/helm/cryo/values-stage.yaml
+!deploy/helm/cryo/values-prod.yaml
