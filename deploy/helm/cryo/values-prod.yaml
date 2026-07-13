@@ -39,9 +39,11 @@ migration:
     tag: latest
 
 global:
+  envFromSecret: cryo-secrets
   env:
     CRYO_ENVIRONMENT: prod
     CRYO_SCAN_ENGINE: go
+    CRYO_S3_LOG_TRINO_CATALOG: cdp
 
 api:
   replicas: 2
