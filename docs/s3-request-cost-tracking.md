@@ -39,15 +39,15 @@ old test fixture's user-agent (`"S3Console/0.4"`) never had a space in it, so it
 the bug. Any new fixture touching this regex should use a multi-word quoted field somewhere.
 
 **Config state as of this writing:** 11 `S3BucketLogConfig` rows exist for the one source in this
-deployment; only **1 is `enabled = true`** (bucket `<redacted-bucket-name>`, log target
-`<redacted-log-target>`). The other 10 are configured (have a `log_target_bucket`) but
+deployment; only **1 is `enabled = true`** (bucket `pw-data-cdp-prod-temp`, log target
+`server-access-logging-main`). The other 10 are configured (have a `log_target_bucket`) but
 disabled — worth checking with whoever owns this deployment whether that's intentional (e.g.
 low-value buckets not worth tracking) or just never got turned on. Toggling is
 `PATCH /sources/{id}/s3-log-configs/{bucket}` with `{"enabled": true}` (§8).
 
 **Known live issues, not yet fixed:**
 - **`pricing:GetProducts` is denied** for the IAM identity currently in use
-  (see your deployment's own IAM identity) — cost figures fall back to the hardcoded default rate (§6.4) rather than
+  (`airbyte-prod-user`) — cost figures fall back to the hardcoded default rate (§6.4) rather than
   the account's live regional rate. Request *counts* are still accurate; dollar costs derived
   from them are approximate. Grant the permission (§11) to close this gap, or confirm the
   fallback default is close enough for this deployment's region/storage class.
