@@ -19,6 +19,8 @@ global:
   env:
     CRYO_ENVIRONMENT: prod
     CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
+    # Go scan-stats (streaming manifests). Override to "pyiceberg" to fall back.
+    CRYO_SCAN_ENGINE: go
   envFromSecret: ""
   envFromConfigMap: ""
 
@@ -81,20 +83,21 @@ scheduler:
       memory: 6Gi
 
 scannerWorker:
-  replicas: 8
+  replicas: 3
   resources:
     requests:
       cpu: 500m
       memory: 512Mi
     limits:
       cpu: "2"
-      # Scanning a table materializes all of its partitions in memory before
-      # scanner_max_partitions_per_table (default 5000) trims them down for storage -- on a
-      # fleet with a long-tailed partition-count distribution (max observed: 397k partitions on
-      # one table), that pre-trim working set can spike well past a table with the median (4)
-      # or even p99 (2.7k) partition count. 2Gi had no observed crash yet, but no real margin
-      # for that outlier either.
+      # After Go scan-stats + PyIceberg plan_files removal, peak RSS drops enough that
+      # 8 replicas are no longer required to avoid OOM (see docs/scanner-data-points.md) --
+      # dropped to 3, raise if scan lag grows. On top of that, keep memory at 3Gi rather than
+      # reverting to 2Gi: this fleet's partition-count distribution is extremely long-tailed
+      # (p50=4, p99=2.7k, max=397k partitions on one table), so even a leaner engine benefits
+      # from headroom against that outlier rather than the median table.
       memory: 3Gi
+  # Scanner engine is set via global.env.CRYO_SCAN_ENGINE (default: go).
 
 scanner:
   schedule: "0 */6 * * *"

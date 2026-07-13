@@ -1,0 +1,8 @@
+---
+description: Prefer Cursor Grok 4.5 High (non-fast) when launching subagents
+alwaysApply: true
+---
+
+# Subagents
+
+When launching subagents, use **Cursor Grok 4.5 High** (non-fast).
