@@ -252,7 +252,12 @@ class SchedulerService:
                             ingest_trino_query_log,
                         )
 
-                        ingester = TrinoQueryIngester(settings.telemetry_trino_url)
+                        ingester = TrinoQueryIngester(
+                            settings.telemetry_trino_url,
+                            user=settings.telemetry_trino_user or "cryo",
+                            password=settings.telemetry_trino_password,
+                            verify_ssl=settings.telemetry_trino_ssl_verify,
+                        )
                         total_buffered += await ingest_trino_query_log(
                             session,
                             source,
