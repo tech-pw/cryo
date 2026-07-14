@@ -191,11 +191,139 @@ def initialize_scan_chunks(
         "chunks_running": 0,
         "chunks_done": 0,
         "chunks_failed": 0,
+        "chunks_remaining": num_chunks if queued else 0,
         "chunks": chunks,
     }
     session.commit()
     session.refresh(run)
     return run
+
+
+_CLAIMABLE_CHUNK_STATUSES = frozenset({"queued", "accepted"})
+
+
+def _apply_chunk_claim(
+    run: MaintenanceRun,
+    *,
+    chunk_id: int,
+    num_chunks: int,
+) -> bool:
+    """Mutate a locked run to claim ``chunk_id``. Caller must hold the row lock and commit."""
+    if run.status == "cancelled" or _cancel_requested(dict(run.summary or {})):
+        return False
+    summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
+    chunk = _chunk(summary, chunk_id)
+    status = str(chunk.get("status") or "queued")
+    if status not in _CLAIMABLE_CHUNK_STATUSES:
+        return False
+
+    now = datetime.now(UTC).isoformat()
+    chunk.update(
+        {
+            "status": "running",
+            "discovered": 0,
+            "assigned": 0,
+            "scanned": 0,
+            "skipped": 0,
+            "failed": 0,
+            "started_at": now,
+            "heartbeat_at": now,
+        }
+    )
+    chunk.pop("finished_at", None)
+    chunk.pop("error", None)
+    chunk.pop("current_table", None)
+    summary["queued"] = False
+    summary.setdefault("started_at", now)
+    _recompute_chunk_totals(summary)
+    run.status = "running"
+    run.summary = summary
+    return True
+
+
+def try_claim_scan_chunk(
+    session_factory: Any,
+    run_id: uuid.UUID,
+    *,
+    chunk_id: int,
+    num_chunks: int,
+) -> bool:
+    """Atomically claim a scan chunk under row lock.
+
+    Returns True only when this caller becomes the sole owner. Resets per-chunk
+    counters so a re-queued attempt cannot accumulate on top of a previous pass.
+    Refuses chunks that are already running or terminal (prevents Redis+DB
+    double-claim from inflating scanned/chunk totals).
+    """
+    with session_factory() as session:
+        run = _locked_run(session, run_id)
+        if run is None:
+            return False
+        if not _apply_chunk_claim(run, chunk_id=chunk_id, num_chunks=num_chunks):
+            return False
+        session.commit()
+        return True
+
+
+def claim_next_stranded_scan_chunk(session_factory: Any) -> dict[str, Any] | None:
+    """Atomically claim the next queued/accepted chunk from an active scan run.
+
+    Used as the Redis-empty DB fallback. Claiming happens under ``FOR UPDATE`` so two
+    idle workers cannot both observe the same queued chunk and later double-count.
+    """
+    with session_factory() as session:
+        run_ids = list(
+            session.scalars(
+                select(MaintenanceRun.id)
+                .where(
+                    MaintenanceRun.kind == "scan",
+                    MaintenanceRun.status.in_(ACTIVE_SCAN_STATUSES),
+                )
+                .order_by(MaintenanceRun.created_at)
+                .limit(10)
+            )
+        )
+        for run_id in run_ids:
+            run = _locked_run(session, run_id)
+            if run is None or run.status == "cancelled":
+                continue
+            summary = dict(run.summary or {})
+            chunks = summary.get("chunks")
+            chunk_id: int | None = None
+            if isinstance(chunks, dict):
+                sorted_chunks = sorted(
+                    chunks.items(),
+                    key=lambda item: int(item[0]) if str(item[0]).isdigit() else 10**9,
+                )
+                for raw_chunk_id, chunk in sorted_chunks:
+                    if isinstance(chunk, dict) and chunk.get("status") in _CLAIMABLE_CHUNK_STATUSES:
+                        chunk_id = int(raw_chunk_id)
+                        break
+            elif run.status == "accepted":
+                chunk_id = 0
+            if chunk_id is None:
+                continue
+
+            num_chunks = int(summary.get("chunks_total") or 1)
+            if not _apply_chunk_claim(run, chunk_id=chunk_id, num_chunks=num_chunks):
+                continue
+            session.commit()
+            summary = dict(run.summary or {})
+            return {
+                "run_id": str(run.id),
+                "scope": summary.get("scope", "all"),
+                "source_id": summary.get("source_id"),
+                "table_ids": summary.get("table_ids", []),
+                "table_names": summary.get("table_names", []),
+                "schema_names": summary.get("schema_names", []),
+                "cost_full_scan": bool(summary.get("cost_full_scan")),
+                "full_scan": bool(summary.get("full_scan", True)),
+                "chunk_id": chunk_id,
+                "num_chunks": num_chunks,
+                "trigger": run.trigger,
+                "_already_claimed": True,
+            }
+        return None
 
 
 def record_scan_chunk_started(
@@ -204,22 +332,14 @@ def record_scan_chunk_started(
     *,
     chunk_id: int,
     num_chunks: int,
-) -> None:
-    with session_factory() as session:
-        run = _locked_run(session, run_id)
-        if run is None:
-            return
-        summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
-        chunk = _chunk(summary, chunk_id)
-        chunk["status"] = "running"
-        chunk.setdefault("started_at", datetime.now(UTC).isoformat())
-        chunk["heartbeat_at"] = datetime.now(UTC).isoformat()
-        summary["queued"] = False
-        summary.setdefault("started_at", datetime.now(UTC).isoformat())
-        _recompute_chunk_totals(summary)
-        run.status = "running"
-        run.summary = summary
-        session.commit()
+) -> bool:
+    """Backward-compatible alias for :func:`try_claim_scan_chunk`."""
+    return try_claim_scan_chunk(
+        session_factory,
+        run_id,
+        chunk_id=chunk_id,
+        num_chunks=num_chunks,
+    )
 
 
 def record_scan_progress(
@@ -236,19 +356,39 @@ def record_scan_progress(
             return
         summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
         chunk = _chunk(summary, chunk_id)
+        # Ignore late/duplicate workers: only the owning running claim may mutate counters.
+        if chunk.get("status") != "running":
+            return
         chunk["heartbeat_at"] = datetime.now(UTC).isoformat()
         event_type = str(event.get("event") or "")
         table_ref = event.get("table_ref")
         if event_type == "assigned":
             chunk["discovered"] = int(event.get("discovered") or 0)
             chunk["assigned"] = int(event.get("assigned") or 0)
+            # Fresh assignment owns the outcome counters for this attempt.
+            chunk["scanned"] = 0
+            chunk["skipped"] = 0
+            chunk["failed"] = 0
         elif event_type == "start_table":
             chunk["current_table"] = table_ref
             summary["current_table"] = table_ref
         elif event_type == "table_result":
             outcome = str(event.get("outcome") or "")
             if outcome in {"scanned", "skipped", "failed"}:
-                chunk[outcome] = int(chunk.get(outcome) or 0) + 1
+                next_count = int(chunk.get(outcome) or 0) + 1
+                assigned = int(chunk.get("assigned") or 0)
+                completed = (
+                    int(chunk.get("scanned") or 0)
+                    + int(chunk.get("skipped") or 0)
+                    + int(chunk.get("failed") or 0)
+                )
+                # Hard cap: never let outcome totals exceed tables assigned to this chunk.
+                if assigned > 0 and completed >= assigned:
+                    _recompute_chunk_totals(summary)
+                    run.summary = summary
+                    session.commit()
+                    return
+                chunk[outcome] = next_count
             if outcome == "failed":
                 error = str(event.get("error") or "scan failed")
                 summary["last_error"] = error
@@ -274,17 +414,39 @@ def record_scan_chunk_finished(
             return
         summary = _chunk_summary(run, chunk_id=chunk_id, num_chunks=num_chunks)
         chunk = _chunk(summary, chunk_id)
+        # Duplicate finish from a lost race must not clobber the owner's counters/status.
+        if chunk.get("status") != "running":
+            return
+
+        assigned = int(summary_update.get("assigned", int(chunk.get("assigned") or 0)) or 0)
+        scanned = int(summary_update.get("scanned", int(chunk.get("scanned") or 0)) or 0)
+        skipped = int(summary_update.get("skipped", int(chunk.get("skipped") or 0)) or 0)
+        failed = int(summary_update.get("failed", int(chunk.get("failed") or 0)) or 0)
+        if assigned > 0:
+            # Keep finished counters self-consistent even if a buggy worker over-reports.
+            overflow = max(0, scanned + skipped + failed - assigned)
+            if overflow:
+                # Prefer trimming scanned first (most likely double-count path).
+                trim = min(scanned, overflow)
+                scanned -= trim
+                overflow -= trim
+                trim = min(skipped, overflow)
+                skipped -= trim
+                overflow -= trim
+                failed = max(0, failed - overflow)
+
         chunk.update(
             {
                 "status": status,
                 "finished_at": datetime.now(UTC).isoformat(),
                 "discovered": summary_update.get("discovered", int(chunk.get("discovered") or 0)),
-                "assigned": summary_update.get("assigned", int(chunk.get("assigned") or 0)),
-                "scanned": summary_update.get("scanned", int(chunk.get("scanned") or 0)),
-                "skipped": summary_update.get("skipped", int(chunk.get("skipped") or 0)),
-                "failed": summary_update.get("failed", int(chunk.get("failed") or 0)),
+                "assigned": assigned,
+                "scanned": scanned,
+                "skipped": skipped,
+                "failed": failed,
             }
         )
+        chunk.pop("current_table", None)
         if error:
             chunk["error"] = error
             summary["last_error"] = error
@@ -309,9 +471,24 @@ def record_scan_chunk_finished(
 
 
 def request_scan_cancel(session: Session, run: MaintenanceRun) -> None:
+    summary = dict(run.summary or {})
+    summary["cancel_requested"] = True
+    summary["queued"] = False
+    chunks = summary.get("chunks")
+    if isinstance(chunks, dict):
+        finished_at = datetime.now(UTC).isoformat()
+        for chunk in chunks.values():
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("status") in _CLAIMABLE_CHUNK_STATUSES | {"running"}:
+                chunk["status"] = "cancelled"
+                chunk.setdefault("finished_at", finished_at)
+                chunk.pop("current_table", None)
+                chunk.pop("heartbeat_at", None)
+    _recompute_chunk_totals(summary)
     run.status = "cancelled"
     run.finished_at = datetime.now(UTC)
-    run.summary = {**dict(run.summary or {}), "cancel_requested": True, "queued": False}
+    run.summary = summary
 
 
 def scan_cancel_requested(session_factory: Any, run_id: uuid.UUID) -> bool:
@@ -349,7 +526,13 @@ def _locked_run(session: Session, run_id: uuid.UUID) -> MaintenanceRun | None:
 def _chunk_summary(run: MaintenanceRun, *, chunk_id: int, num_chunks: int) -> dict[str, Any]:
     summary = dict(run.summary or {})
     chunks = dict(summary.get("chunks") or {})
-    for index in range(num_chunks):
+    # Prefer the run's established chunk count so a stale/wrong payload cannot invent
+    # extra "queued" phantom chunks (which leave chunks_pending stuck at 1 forever).
+    established = int(summary.get("chunks_total") or 0)
+    if established <= 0 and chunks:
+        established = len(chunks)
+    total = established if established > 0 else max(num_chunks, 1)
+    for index in range(total):
         chunks.setdefault(
             str(index),
             {
@@ -362,7 +545,8 @@ def _chunk_summary(run: MaintenanceRun, *, chunk_id: int, num_chunks: int) -> di
             },
         )
     summary["chunks"] = chunks
-    summary["chunks_total"] = num_chunks
+    summary["chunks_total"] = total
+    # Only materialize out-of-range chunk_ids as empty dicts for the caller; never grow total.
     _chunk(summary, chunk_id)
     return summary
 
@@ -378,12 +562,28 @@ def _chunk(summary: dict[str, Any], chunk_id: int) -> dict[str, Any]:
 
 def _recompute_chunk_totals(summary: dict[str, Any]) -> None:
     chunks = summary.get("chunks") or {}
-    chunk_values = [chunk for chunk in chunks.values() if isinstance(chunk, dict)]
-    summary["chunks_total"] = len(chunk_values)
-    summary["chunks_pending"] = sum(1 for chunk in chunk_values if chunk.get("status") == "queued")
+    established = int(summary.get("chunks_total") or 0)
+    chunk_values: list[dict[str, Any]] = []
+    for key, chunk in chunks.items():
+        if not isinstance(chunk, dict):
+            continue
+        # Ignore accidental out-of-range keys so they cannot inflate pending/running.
+        if established > 0:
+            try:
+                if int(key) < 0 or int(key) >= established:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        chunk_values.append(chunk)
+    summary["chunks_total"] = established if established > 0 else len(chunk_values)
+    summary["chunks_pending"] = sum(
+        1 for chunk in chunk_values if chunk.get("status") in _CLAIMABLE_CHUNK_STATUSES
+    )
     summary["chunks_running"] = sum(1 for chunk in chunk_values if chunk.get("status") == "running")
     summary["chunks_done"] = sum(
-        1 for chunk in chunk_values if chunk.get("status") in {"succeeded", "partial_failed"}
+        1
+        for chunk in chunk_values
+        if chunk.get("status") in {"succeeded", "partial_failed", "cancelled"}
     )
     summary["chunks_failed"] = sum(1 for chunk in chunk_values if chunk.get("status") == "failed")
     summary["discovered"] = max(
@@ -392,6 +592,8 @@ def _recompute_chunk_totals(summary: dict[str, Any]) -> None:
     )
     for key in ("assigned", "scanned", "skipped", "failed"):
         summary[key] = sum(int(chunk.get(key) or 0) for chunk in chunk_values)
+    # Surface remaining work for the UI (pending + still running).
+    summary["chunks_remaining"] = int(summary["chunks_pending"]) + int(summary["chunks_running"])
 
 
 def _append_failed_table(
@@ -524,9 +726,21 @@ def mark_chunk_requeued(
         if chunk.get("status") != "running":
             # Someone else already reconciled or finished this chunk; don't clobber it.
             return
-        chunk["status"] = "queued"
+        # Reset counters on requeue so a retry cannot accumulate on the orphaned pass.
+        chunk.update(
+            {
+                "status": "queued",
+                "discovered": 0,
+                "assigned": 0,
+                "scanned": 0,
+                "skipped": 0,
+                "failed": 0,
+            }
+        )
         chunk.pop("current_table", None)
         chunk.pop("heartbeat_at", None)
+        chunk.pop("finished_at", None)
+        chunk.pop("error", None)
         summary["queued"] = True
         _recompute_chunk_totals(summary)
         # Run status stays "running" (its current value) -- we just found an incomplete chunk,

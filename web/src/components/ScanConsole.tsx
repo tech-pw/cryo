@@ -46,9 +46,16 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
   const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
   const summary = runData?.summary;
   const assigned = numberValue(summary, "assigned");
+  const discovered = numberValue(summary, "discovered");
   const completed =
     numberValue(summary, "scanned") + numberValue(summary, "skipped") + numberValue(summary, "failed");
-  const percent = assigned > 0 ? Math.min(100, Math.round((completed / assigned) * 100)) : 0;
+  // Prefer discovered while chunks are still reporting assigned; otherwise a late chunk
+  // makes the bar hit 100% with chunks_remaining > 0.
+  const denominator = Math.max(assigned, discovered);
+  const percent = denominator > 0 ? Math.min(100, Math.round((completed / denominator) * 100)) : 0;
+  const chunksRemaining =
+    numberValue(summary, "chunks_remaining") ||
+    numberValue(summary, "chunks_pending") + numberValue(summary, "chunks_running");
   const queueError = stringValue(summary, "queue_error");
   const lastError = stringValue(summary, "last_error");
   const failures = failedTables(runData);
@@ -78,12 +85,12 @@ export const ScanConsole = ({ runId }: { runId: UUID }) => {
       />
       <StatStrip
         items={[
-          { label: "Discovered", value: formatNumber(numberValue(summary, "discovered")) },
+          { label: "Discovered", value: formatNumber(discovered) },
           { label: "Assigned", value: formatNumber(assigned) },
           { label: "Scanned", value: formatNumber(numberValue(summary, "scanned")) },
           { label: "Skipped", value: formatNumber(numberValue(summary, "skipped")) },
           { label: "Failed", value: formatNumber(numberValue(summary, "failed")) },
-          { label: "Chunks running", value: formatNumber(numberValue(summary, "chunks_running")) }
+          { label: "Chunks remaining", value: formatNumber(chunksRemaining) }
         ]}
       />
 
