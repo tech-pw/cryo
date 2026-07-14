@@ -44,6 +44,8 @@ global:
     CRYO_ENVIRONMENT: prod
     CRYO_SCAN_ENGINE: go
     CRYO_S3_LOG_TRINO_CATALOG: cdp
+    # internal.example.com uses a self-signed/internal-CA cert.
+    CRYO_TELEMETRY_TRINO_SSL_VERIFY: "false"
 
 api:
   replicas: 2
