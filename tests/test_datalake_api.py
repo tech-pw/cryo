@@ -23,6 +23,9 @@ class FakeSession:
     def expire_all(self) -> None:
         return None
 
+    def expunge_all(self) -> None:
+        return None
+
 
 def _client() -> TestClient:
     ensure_test_jwt_secret()
@@ -432,6 +435,54 @@ def test_run_jobs_endpoint_and_websocket_snapshot(monkeypatch: Any) -> None:
     assert payload["type"] == "run_snapshot"
     assert payload["run"]["id"] == str(run_id)
     assert payload["jobs"][0]["destination_name"] == "trino"
+
+
+def test_send_run_snapshot_expunges_session_not_just_expires(monkeypatch: Any) -> None:
+    """Real production incident (2026-07-14): watch_run's websocket polls _send_run_snapshot
+    in a loop for as long as a browser tab stays open on a non-terminal run -- which, under
+    Governor's admission pacing, can be a long time. run_jobs_snapshot's selectinload()s pull
+    in the run's full job/table/destination graph on every poll. expire_all() only expires
+    attribute state, it doesn't remove objects from the identity map, so that graph
+    accumulated every poll instead of being replaced -- confirmed live: cryo-api climbed to
+    1.7GB+ within 17 minutes and OOMKilled. Must call expunge_all(), not expire_all()."""
+    import asyncio
+
+    from cryo.api.routes import _send_run_snapshot
+
+    run_id = uuid.uuid4()
+    calls: list[str] = []
+
+    class SpySession:
+        def expire_all(self) -> None:
+            calls.append("expire_all")
+
+        def expunge_all(self) -> None:
+            calls.append("expunge_all")
+
+    fake_snapshot = {
+        "run": {
+            "id": run_id,
+            "kind": "adhoc",
+            "status": "running",
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        },
+        "jobs": [],
+    }
+    monkeypatch.setattr(
+        routes.datalake, "run_jobs_snapshot", lambda *args, **kwargs: fake_snapshot
+    )
+
+    sent: list[object] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload: object) -> None:
+            sent.append(payload)
+
+    asyncio.run(_send_run_snapshot(FakeWebSocket(), SpySession(), run_id))  # type: ignore[arg-type]
+
+    assert "expunge_all" in calls
+    assert "expire_all" not in calls
+    assert sent
 
 
 def test_websocket_replays_log_line_events(monkeypatch: Any) -> None:
