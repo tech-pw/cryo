@@ -222,6 +222,9 @@ class InMemoryJobStore:
     def list_deferred_jobs(self) -> list[MaintenanceJobRecord]:
         return [job for job in self.jobs.values() if job.status is JobStatus.DEFERRED]
 
+    def list_running_jobs(self) -> list[MaintenanceJobRecord]:
+        return [job for job in self.jobs.values() if job.status is JobStatus.RUNNING]
+
     def destination_exists(self, destination_id: str) -> bool:
         destination = self.destinations.get(destination_id)
         return destination is not None
