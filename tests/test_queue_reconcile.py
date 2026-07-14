@@ -6,7 +6,11 @@ from cryo.domain.enums import JobStatus, Mode
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
 from cryo.queue.locks import InMemoryLockStore
-from cryo.queue.reconcile import purge_stale_queue_entries, reconcile_queued_jobs
+from cryo.queue.reconcile import (
+    purge_stale_queue_entries,
+    reconcile_queued_jobs,
+    reconcile_stale_running_jobs,
+)
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore, MaintenanceJobRecord
 
@@ -77,6 +81,76 @@ def test_purge_keeps_pending_entries_for_jobs_still_active_in_db() -> None:
     assert queue.pending("dest") == ["job-1"]
 
 
+def test_reconcile_reaps_running_job_whose_worker_never_came_back() -> None:
+    # Mirrors a worker dying mid-job (OOM, node eviction, rollout): the job's DB row is
+    # stuck RUNNING forever since nothing else ever transitions it out, silently pinning a
+    # destination concurrency slot and a table lock. Seen in production: 5 jobs stuck
+    # RUNNING for hours across two worker restarts.
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 7, 13, 17, 15, tzinfo=UTC),
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", replica="r1")
+    queue.mark_running("job-1")
+    assert locks.acquire_table_lock("table-1", "job-1", ttl_seconds=6 * 60 * 60)
+    assert queue.local_in_flight_by_replica("dest") == {"r1": 1}
+
+    reaped = reconcile_stale_running_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC),
+        stale_after_seconds=6 * 60 * 60,
+    )
+
+    assert reaped == 1
+    assert store.get_job("job-1").status is JobStatus.FAILED
+    assert store.get_job("job-1").error == "stale_running_reaped"
+    assert queue.local_in_flight_by_replica("dest") == {}
+    # The table lock must be released too, or the "zombie" just moves from blocking
+    # admission slots to blocking every other job that wants this table.
+    assert not locks.is_table_locked("table-1")
+
+
+def test_reconcile_keeps_running_job_still_within_staleness_window() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 7, 14, 12, 0, tzinfo=UTC),
+        )
+    )
+
+    reaped = reconcile_stale_running_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC),
+        stale_after_seconds=6 * 60 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
 def test_governor_re_enqueues_and_admits_db_queued_jobs() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
@@ -110,3 +184,33 @@ def test_governor_re_enqueues_and_admits_db_queued_jobs() -> None:
     assert result.re_enqueued == 1
     assert result.admitted == 1
     assert store.get_job("job-1").status is JobStatus.ADMITTED
+
+
+def test_governor_wave_reaps_stale_running_jobs() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig("dest", config={"replicas": ["r1"]}))
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 7, 13, 17, 15, tzinfo=UTC),
+        )
+    )
+
+    governor = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+        lock_ttl_seconds=6 * 60 * 60,
+    )
+    result = governor.run_wave(now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC))
+
+    assert result.reaped == 1
+    assert store.get_job("job-1").status is JobStatus.FAILED

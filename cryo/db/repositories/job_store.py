@@ -178,6 +178,15 @@ class SQLJobStore:
             )
             return [_job_record(session, job) for job in jobs]
 
+    def list_running_jobs(self) -> list[MaintenanceJobRecord]:
+        with self._session_factory() as session:
+            jobs = session.scalars(
+                select(MaintenanceJob)
+                .where(MaintenanceJob.status == JobStatus.RUNNING.value)
+                .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
+            )
+            return [_job_record(session, job) for job in jobs]
+
     def destination_exists(self, destination_id: str) -> bool:
         with self._session_factory() as session:
             destination = session.get(Destination, uuid.UUID(destination_id))
