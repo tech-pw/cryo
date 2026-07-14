@@ -179,7 +179,11 @@ def test_go_payload_mapper_mor_deletes() -> None:
     assert analysis.total_delete_files == 2
     assert analysis.raw["equality_delete_files"] == 1
     assert analysis.raw["position_delete_files"] == 1
-    assert analysis.partition_col == "_unpartitioned"
+    # partition_col is None, not the "_unpartitioned" display label -- see analyze.py's comment
+    # on this field. A truthy partition_col gets treated by the planner as a real, bindable
+    # column name, and the literal string "_unpartitioned" panics the Go engine's row-filter
+    # binder when a job for this table's single pseudo-partition tries to bind it.
+    assert analysis.partition_col is None
     assert analysis.delete_file_pct == pytest.approx(66.67)
 
 
@@ -230,7 +234,7 @@ def test_python_scenarios_matrix() -> None:
         snapshots=[FakeSnapshotMeta(scan_at)],
     )
     u = analyze_table(unpartitioned, "demo", "plain", scan_at=scan_at, settings=settings)
-    assert u.partition_col == "_unpartitioned"
+    assert u.partition_col is None
     assert u.partitions[0].partition_key == "_unpartitioned"
 
     mor = FakeTable(
