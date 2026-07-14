@@ -209,6 +209,14 @@ class Settings(BaseSettings):
             "(CRYO_TELEMETRY_TRINO_PASSWORD). Unset means no BasicAuthentication is attempted."
         ),
     )
+    telemetry_trino_ssl_verify: bool = Field(
+        default=True,
+        description=(
+            "Verify TLS certificates when connecting to telemetry_trino_url "
+            "(CRYO_TELEMETRY_TRINO_SSL_VERIFY). Only disable for coordinators with "
+            "self-signed/internal-CA certs you've already verified out of band."
+        ),
+    )
     telemetry_athena_workgroup: str | None = Field(
         default=None,
         description="Optional Athena workgroup filter for query-log ingestion.",
