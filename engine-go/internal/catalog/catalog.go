@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -21,10 +22,25 @@ import (
 	"github.com/cryo-lake/cryo/engine-go/internal/testhook"
 )
 
+// catalogLoadAttempts/catalogLoadBackoff: real production data (data-platform-cluster,
+// 2026-07-11 through 2026-07-14) showed catalog.Load failing ~85-90% of the time with "connect:
+// connection timed out" against a Hive Metastore, while raw TCP connectivity to the same host
+// tested 100% reliable under both sequential and concurrent load from the same pods -- the
+// failure isn't network/DNS, it's the metastore's own Thrift server-side thread pool
+// intermittently saturated (shared with other consumers outside Cryo). Since each independent
+// attempt has real, roughly constant odds of success, a few retries meaningfully raise the
+// end-to-end success rate without needing the metastore itself fixed.
+const catalogLoadAttempts = 4
+
+var catalogLoadBackoff = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+
 // LoadTable opens the REST (or configured) catalog and loads the target table.
 func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catalog, *table.Table, error) {
 	props := buildProperties(req)
-	cat, err := catalog.Load(ctx, "cryo", props)
+	loader := func(ctx context.Context) (catalog.Catalog, error) {
+		return catalog.Load(ctx, "cryo", props)
+	}
+	cat, err := loadCatalogWithRetry(ctx, loader, catalogLoadAttempts, catalogLoadBackoff)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to catalog: %w", err)
 	}
@@ -41,6 +57,32 @@ func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catal
 	}
 
 	return cat, tbl, nil
+}
+
+// loadCatalogWithRetry retries a catalog-connect function on failure. loader is injected so the
+// retry/backoff behavior itself is unit-testable without a real catalog endpoint.
+func loadCatalogWithRetry(
+	ctx context.Context,
+	loader func(context.Context) (catalog.Catalog, error),
+	attempts int,
+	backoff []time.Duration,
+) (catalog.Catalog, error) {
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff[attempt-1]):
+			}
+		}
+		cat, err := loader(ctx)
+		if err == nil {
+			return cat, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("after %d attempts: %w", attempts, lastErr)
 }
 
 // WithSourceAWSConfig attaches an explicit static-credential aws.Config to ctx when the request
