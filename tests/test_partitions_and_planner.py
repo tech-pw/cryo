@@ -2,8 +2,32 @@ from __future__ import annotations
 
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
 from cryo.engines.trino.sql import UnsupportedPredicateError, render_predicate
-from cryo.planner.partitions import PartitionFieldSpec, build_predicate
+from cryo.planner.partitions import PartitionFieldSpec, build_predicate, partition_fields_from_stats
 from cryo.planner.planner import build_plan
+
+
+def test_unpartitioned_table_produces_no_partition_fields() -> None:
+    """Real production panic (2026-07-14): the scanner used to store partition_col as the
+    literal string "_unpartitioned" for genuinely unpartitioned tables (a display-label
+    sentinel, not a real column). This function treats any truthy partition_col as a real,
+    bindable column name -- so that string flowed all the way to the Go engine's row-filter
+    binder, which panicked trying to resolve a column called "_unpartitioned" against the
+    table's actual schema. The scanner now stores None instead; this must produce zero
+    partition fields, matching a table with no partition_col at all."""
+    fields = partition_fields_from_stats({"partition_col": None})
+
+    assert fields == ()
+
+
+def test_unpartitioned_sentinel_string_would_have_produced_a_bogus_field() -> None:
+    """Documents the exact failure mode the fix avoids -- if partition_col is ever the
+    "_unpartitioned" string again (e.g. a future regression reintroducing it), this function
+    would treat it as a real column and build_predicate would bind an unreal field. Not
+    asserting this is *desired* behavior -- asserting what would go wrong, as a tripwire."""
+    fields = partition_fields_from_stats({"partition_col": "_unpartitioned"})
+
+    assert len(fields) == 1
+    assert fields[0].partition_field == "_unpartitioned"
 
 
 def test_build_predicate_supports_multi_field_conjunction() -> None:
