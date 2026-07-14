@@ -442,6 +442,28 @@ Log exploration (Loki via Grafana Explore):
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
 | Full cost scan overload | Disable `cost_full_scan` until off-peak |
 
+### API memory / OOM (cryo-api)
+
+**Symptoms:**
+- `cryo-api` pods OOMKilled despite light request volume
+- RSS climbs to multi-GiB within minutes of UI use; Helm limit historically raised to 6Gi as a bandage
+- Readiness/liveness timeouts while a dashboard request is in flight
+
+**Root cause (fixed in code):** fleet-wide ORM loads that pulled every active `TableStats` /
+`TableCost` row — including large `raw` JSONB blobs — into Python:
+
+- `GET /api/v1/dashboards/datalake` and `GET /api/v1/dashboards/cost` (now SQL aggregates)
+- Earlier: `GET /api/v1/smart-maintenance/overview` (already SQL-aggregated)
+- Long-lived `WS /api/v1/ws/runs/{id}` without `session.expunge_all()` (identity-map leak; fixed)
+
+With ~13k tables these paths must never `select(Table, TableStats, TableCost)` for the whole
+catalog. Default API memory limit is 1Gi after the SQL rewrite.
+
+**Diagnosis:**
+1. `kubectl top pod -n cryo -l app.kubernetes.io/component=api`
+2. Access logs around the spike — look for `/dashboards/datalake` or long-lived run websockets
+3. `kubectl describe pod` → `Last State: OOMKilled`
+
 ### Approval workflows
 
 Cryo can require human approval before destructive or high-impact maintenance.

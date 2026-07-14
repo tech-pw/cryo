@@ -1020,7 +1020,6 @@ def get_table(table_id: uuid.UUID, session: SessionDep) -> TableRead:
         .options(
             selectinload(Table.source),
             selectinload(Table.stats),
-            selectinload(Table.partitions),
             selectinload(Table.cost),
         )
     )
