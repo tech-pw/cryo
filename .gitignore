@@ -1,5 +1,9 @@
 .venv/
 .local/
+
+# Local Cursor agent rules
+.cursor/rules/subagents.mdc
+
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
