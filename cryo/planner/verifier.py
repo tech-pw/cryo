@@ -206,7 +206,15 @@ class PlanVerifier:
         ctx = InvariantContext(
             plan=plan, session=self.session, settings=self.settings, verifier=self
         )
-        ctx = self._load_catalog_context(ctx)
+        # Catalog preload must never 500 the enqueue path: multi-catalog fleets often have
+        # the same schema.table in more than one source, and name resolution can be ambiguous.
+        try:
+            ctx = self._load_catalog_context(ctx)
+        except Exception:
+            logger.exception(
+                "Plan verifier catalog preload failed for %s; continuing without scan context",
+                plan.table_ref,
+            )
         for name, fn in self.registry.invariants():
             try:
                 fn(ctx)
@@ -489,21 +497,48 @@ _DEFAULT_REGISTRY.register("compaction_budget", _invariant_compaction_budget)
 
 
 def _resolve_table(session: Session, table_ref: str) -> Any:
+    from cryo.db.model_utils import catalog_name_for_table
     from cryo.db.models import Table
 
     if not table_ref:
         return None
     # table_ref is conventionally "schema.table" or "catalog.schema.table"; the Planner also
     # stores it that way. We try to find a row by name first, then by id-as-string.
+    #
+    # Multi-catalog deployments (e.g. cdp + cdp_dev) routinely share the same schema.table
+    # across sources. Never use scalar_one_or_none() here — MultipleResultsFound becomes an
+    # unhandled 500 on POST /maintenance/run.
     parts = table_ref.split(".")
     if len(parts) >= 2:
         schema_name = parts[-2]
         table_name = parts[-1]
-        row = session.execute(
-            select(Table).where(Table.schema_name == schema_name, Table.table_name == table_name)
-        ).scalar_one_or_none()
-        if row is not None:
-            return row
+        catalog = parts[0] if len(parts) >= 3 else None
+        rows = list(
+            session.execute(
+                select(Table).where(
+                    Table.schema_name == schema_name, Table.table_name == table_name
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(rows) == 1:
+            return rows[0]
+        if len(rows) > 1 and catalog is not None:
+            for row in rows:
+                try:
+                    if catalog_name_for_table(row) == catalog:
+                        return row
+                except Exception:
+                    continue
+            return None
+        if len(rows) > 1:
+            logger.warning(
+                "Ambiguous table_ref %r matches %d rows; pass catalog.schema.table",
+                table_ref,
+                len(rows),
+            )
+            return None
     try:
         from uuid import UUID
 
