@@ -193,6 +193,9 @@ def test_ingest_telemetry_covers_every_enabled_source(session, monkeypatch) -> N
         (),
         {
             "telemetry_trino_url": "http://trino:8080",
+            "telemetry_trino_user": None,
+            "telemetry_trino_password": None,
+            "telemetry_trino_ssl_verify": True,
             "telemetry_ingest_on_startup": True,
             "query_log_retention_days": 90,
         },
