@@ -1738,8 +1738,17 @@ async def _send_run_snapshot(
     session: Session,
     run_id: uuid.UUID,
 ) -> dict[str, object] | None:
-    if hasattr(session, "expire_all"):
-        session.expire_all()
+    # expunge_all(), not expire_all(): this session is polled in a loop for as long as a
+    # browser tab stays open on a run that hasn't reached a terminal status -- which, given
+    # jobs can sit `queued` for a long time under Governor's admission pacing, can be a very
+    # long time. expire_all() only expires attribute state; it doesn't remove objects from the
+    # identity map, so the run/job/table/destination graph loaded via run_jobs_snapshot's
+    # selectinload()s accumulates every poll instead of being replaced. Same identity-map leak
+    # class fixed elsewhere this session (benefit_score.py, smart_maintenance_overview) --
+    # confirmed live: cryo-api climbed to 1.7GB+ within 17 minutes and OOMKilled on a repeat
+    # cycle, tracing back to a long-lived watch_run websocket connection.
+    if hasattr(session, "expunge_all"):
+        session.expunge_all()
     snapshot = datalake.run_jobs_snapshot(session, run_id)
     if snapshot is None:
         return None
