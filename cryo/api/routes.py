@@ -2038,7 +2038,15 @@ def _build_plan_for_table(
     table = session.get(Table, table_id)
     if table is None:
         return None
-    table_ref = f"{table.schema_name}.{table.table_name}"
+    # Include catalog so the plan verifier can disambiguate schema.table pairs that exist in
+    # more than one source (cdp vs cdp_dev, etc.). Bare schema.table makes _resolve_table
+    # hit MultipleResultsFound and 500 the enqueue path.
+    from cryo.db.model_utils import qualified_table_name
+
+    try:
+        table_ref = qualified_table_name(table)
+    except Exception:
+        table_ref = f"{table.schema_name}.{table.table_name}"
     return MaintenancePlan(
         table_ref=table_ref,
         mode=mode,
