@@ -46,6 +46,12 @@ global:
     CRYO_S3_LOG_TRINO_CATALOG: cdp
     # internal.example.com uses a self-signed/internal-CA cert.
     CRYO_TELEMETRY_TRINO_SSL_VERIFY: "false"
+    # Explicit, deliberate bridge until real OIDC (CRYO_OIDC_ISSUER_URL/CLIENT_ID) is
+    # configured -- re-enables the dev sign-in form (self-declared role, no real identity
+    # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.
+    # Anyone reaching the UI can self-grant any role while this is true -- turn off once OIDC
+    # is set up.
+    CRYO_ALLOW_DEV_TOKEN_IN_PROD: "true"
 
 api:
   replicas: 2
