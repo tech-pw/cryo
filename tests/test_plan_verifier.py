@@ -224,7 +224,9 @@ class TestResolveTableDisambiguation:
         ]
         assert _resolve_table(session, "user_experience.gold_test_student_mappings") is None
 
-    def test_catalog_schema_table_picks_matching_catalog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_catalog_schema_table_picks_matching_catalog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from cryo.planner import verifier as verifier_mod
 
         cdp = MagicMock()
@@ -255,8 +257,10 @@ class TestResolveTableDisambiguation:
 
         monkeypatch.setattr(model_utils, "catalog_name_for_table", _catalog_for)
 
-        assert verifier_mod._resolve_table(session, "hive.user_experience.gold_test_student_mappings") is cdp_dev
-        assert verifier_mod._resolve_table(session, "cdp.user_experience.gold_test_student_mappings") is cdp
+        hive_ref = "hive.user_experience.gold_test_student_mappings"
+        cdp_ref = "cdp.user_experience.gold_test_student_mappings"
+        assert verifier_mod._resolve_table(session, hive_ref) is cdp_dev
+        assert verifier_mod._resolve_table(session, cdp_ref) is cdp
 
     def test_load_catalog_context_exception_does_not_raise(self) -> None:
         verifier = PlanVerifier(
