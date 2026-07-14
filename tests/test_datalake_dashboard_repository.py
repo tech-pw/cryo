@@ -5,9 +5,12 @@ show larger than "S3 monthly now" itself, because the totals mixed TableStats.
 estimated_monthly_s3_cost_usd (a cheap size-only heuristic refreshed on every scan) with
 TableStats.projected_savings_usd_month (computed by project_savings() against a *different*,
 more complete deep-tier cost baseline that was never itself surfaced). dashboard_datalake now
-reuses dashboard_cost's TableCost-based aggregation, which reconciles by construction. This
-also covers the "Cost by schema" panel, which was always empty because dashboard_datalake never
-returned a cost_by_schema key at all.
+aggregates TableCost-preferred totals in SQL (falling back to TableStats columns only when no
+TableCost row exists), which reconciles by construction and avoids materializing every
+TableStats.raw / TableCost.raw JSONB blob into the api process -- that fleet-wide ORM load
+OOMKilled cryo-api at 6Gi on a ~13k-table catalog. This also covers the "Cost by schema"
+panel, which was always empty because dashboard_datalake never returned a cost_by_schema key
+at all.
 """
 
 from __future__ import annotations
@@ -181,3 +184,151 @@ def test_dashboard_datalake_falls_back_to_table_stats_without_table_cost(session
     result = dashboard_datalake(session)
 
     assert result["totals"]["estimated_monthly_s3_cost_usd"] == 12.0
+
+
+def test_dashboard_datalake_response_matches_api_schema(session) -> None:
+    """Web/client normalizeDashboard + DatalakeDashboardResponse must accept SQL output."""
+    from cryo.api.schemas import DatalakeDashboardResponse
+
+    source = _seed_source(session)
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 7, 10, tzinfo=UTC)
+    session.add(
+        Table(
+            id=table_id,
+            source_id=source.id,
+            schema_name="analytics",
+            table_name="events",
+            first_seen_at=scan_at,
+            is_active=True,
+        )
+    )
+    session.add(
+        TableStats(
+            table_id=table_id,
+            scan_at=scan_at,
+            needs_compaction=True,
+            compaction_priority="HIGH",
+            grade="C",
+            overall_score=60,
+            total_files=100,
+            small_files_count=40,
+            total_size_gb=12.0,
+            query_count_30d=3,
+            estimated_monthly_s3_cost_usd=9.0,
+            projected_monthly_s3_cost_usd=5.0,
+            projected_savings_usd_month=4.0,
+            reclaimable_bytes=100,
+        )
+    )
+    session.add(
+        TableCost(
+            table_id=table_id,
+            scan_at=scan_at,
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=1000,
+            dead_bytes=100,
+            metadata_bytes=10,
+            orphan_bytes=0,
+            listed_bytes=1110,
+            reclaim_expire_bytes=50,
+            reclaim_orphan_bytes=0,
+            reclaim_optimize_bytes=25,
+            reclaim_manifests_bytes=0,
+            current_monthly_cost_usd=20.0,
+            projected_monthly_cost_usd=12.0,
+            projected_savings_usd_month=8.0,
+            query_request_savings_usd_month=0.0,
+        )
+    )
+    session.commit()
+
+    payload = dashboard_datalake(session, top_limit=5, drift_limit=5)
+    DatalakeDashboardResponse.model_validate(payload)
+    assert payload["totals"]["estimated_monthly_s3_cost_usd"] == 20.0
+    assert payload["cost_by_schema"][0]["schema_name"] == "analytics"
+
+
+def test_dashboard_cost_response_matches_api_schema(session, monkeypatch) -> None:
+    """Cost page + CostDashboardResponse must accept SQL-aggregated dashboard_cost output."""
+    from cryo.api.schemas import CostDashboardResponse
+    from cryo.db.repositories import datalake as datalake_repo
+    from cryo.db.repositories.datalake import dashboard_cost
+    from cryo.domain.enums import OperationType
+
+    # date_trunc is Postgres-only; unit tests use SQLite. Trend is unchanged by this fix.
+    monkeypatch.setattr(datalake_repo, "_cost_trend", lambda *args, **kwargs: [])
+
+    source = _seed_source(session)
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 7, 10, tzinfo=UTC)
+    session.add(
+        Table(
+            id=table_id,
+            source_id=source.id,
+            schema_name="billing",
+            table_name="invoices",
+            first_seen_at=scan_at,
+            is_active=True,
+        )
+    )
+    session.add(
+        TableStats(
+            table_id=table_id,
+            scan_at=scan_at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="B",
+            overall_score=80,
+            total_files=20,
+            small_files_count=2,
+            total_size_gb=3.0,
+            query_count_30d=1,
+            estimated_monthly_s3_cost_usd=1.0,
+            projected_savings_usd_month=0.0,
+            reclaimable_bytes=0,
+        )
+    )
+    session.add(
+        TableCost(
+            table_id=table_id,
+            scan_at=scan_at,
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=2000,
+            dead_bytes=500,
+            metadata_bytes=20,
+            orphan_bytes=0,
+            listed_bytes=2520,
+            reclaim_expire_bytes=400,
+            reclaim_orphan_bytes=0,
+            reclaim_optimize_bytes=100,
+            reclaim_manifests_bytes=0,
+            current_monthly_cost_usd=30.0,
+            projected_monthly_cost_usd=18.0,
+            projected_savings_usd_month=12.0,
+            query_request_savings_usd_month=0.0,
+        )
+    )
+    session.commit()
+
+    payload = dashboard_cost(session, top_limit=5, trend_limit=5)
+    CostDashboardResponse.model_validate(payload)
+    assert payload["totals"]["current_monthly_cost_usd"] == 30.0
+    assert payload["totals"]["projected_savings_usd_month"] == 12.0
+    assert payload["cost_by_schema"][0]["schema_name"] == "billing"
+    assert len(payload["top_opportunities"]) == 1
+    top = payload["top_opportunities"][0]
+    top_id = top.id if hasattr(top, "id") else top["id"]
+    assert top_id == table_id
+    ops = {
+        item["operation"] if isinstance(item, dict) else item.operation
+        for item in payload["savings_by_operation"]
+    }
+    assert ops <= {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.OPTIMIZE,
+        OperationType.OPTIMIZE_MANIFESTS,
+    }
