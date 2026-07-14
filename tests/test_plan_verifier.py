@@ -201,3 +201,77 @@ class TestPlanVerifier:
             assert "test_checked" in verdict.invariants_checked
         finally:
             registry.deregister("test_checked")
+
+
+class TestResolveTableDisambiguation:
+    """Multi-catalog fleets share schema.table across sources; resolve must not raise."""
+
+    def test_schema_table_unique_match(self) -> None:
+        from cryo.planner.verifier import _resolve_table
+
+        row = MagicMock()
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [row]
+        assert _resolve_table(session, "user_experience.gold_test_student_mappings") is row
+
+    def test_schema_table_ambiguous_returns_none(self) -> None:
+        from cryo.planner.verifier import _resolve_table
+
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [
+            MagicMock(),
+            MagicMock(),
+        ]
+        assert _resolve_table(session, "user_experience.gold_test_student_mappings") is None
+
+    def test_catalog_schema_table_picks_matching_catalog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cryo.planner import verifier as verifier_mod
+
+        cdp = MagicMock()
+        cdp_dev = MagicMock()
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [cdp, cdp_dev]
+
+        def _catalog_for(table: object) -> str:
+            if table is cdp:
+                return "cdp"
+            if table is cdp_dev:
+                return "hive"
+            return "unknown"
+
+        monkeypatch.setattr(
+            "cryo.db.model_utils.catalog_name_for_table",
+            _catalog_for,
+        )
+        # Import path used inside _resolve_table
+        monkeypatch.setattr(
+            verifier_mod,
+            "catalog_name_for_table",
+            _catalog_for,
+            raising=False,
+        )
+        # _resolve_table imports catalog_name_for_table from model_utils inside the function
+        import cryo.db.model_utils as model_utils
+
+        monkeypatch.setattr(model_utils, "catalog_name_for_table", _catalog_for)
+
+        assert verifier_mod._resolve_table(session, "hive.user_experience.gold_test_student_mappings") is cdp_dev
+        assert verifier_mod._resolve_table(session, "cdp.user_experience.gold_test_student_mappings") is cdp
+
+    def test_load_catalog_context_exception_does_not_raise(self) -> None:
+        verifier = PlanVerifier(
+            session=MagicMock(),
+            settings=MagicMock(
+                max_partitions_per_chunk=DEFAULT_MAX_PARTITIONS_PER_CHUNK,
+                compaction_budget_bytes=8 * 1024**3,
+            ),
+        )
+        verifier._load_catalog_context = MagicMock(side_effect=RuntimeError("ambiguous"))  # type: ignore[method-assign]
+        plan = MaintenancePlan(
+            table_ref="user_experience.gold_test_student_mappings",
+            mode=Mode.STANDARD,
+            operations=(Operation(type=OperationType.OPTIMIZE),),
+        )
+        verdict = verifier.verify(plan)
+        assert isinstance(verdict, PlanVerdict)
+        assert len(verdict.plan_hash) == 64
