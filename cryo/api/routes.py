@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict
@@ -152,6 +153,7 @@ from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config, source_catalog_for
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
 
 SORT_FIELDS = {
     "schema_name": Table.schema_name,
@@ -1892,7 +1894,9 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
         return RunRead.model_validate(presets.run_summary(run))
     run.status = "cancelled"
     run.finished_at = datetime.now(UTC)
-    jobs = session.scalars(select(MaintenanceJob).where(MaintenanceJob.run_id == run_id))
+    jobs = list(session.scalars(select(MaintenanceJob).where(MaintenanceJob.run_id == run_id)))
+    # (job_id, destination_id, prior_status) for Redis release after commit.
+    release: list[tuple[str, str, str]] = []
     for job in jobs:
         cancellable = {
             JobStatus.QUEUED.value,
@@ -1900,10 +1904,27 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
             JobStatus.RUNNING.value,
         }
         if job.status in cancellable:
+            release.append((str(job.id), str(job.destination_id), job.status))
             job.status = JobStatus.SKIPPED.value
             job.error = "cancelled"
             job.finished_at = run.finished_at
     session.commit()
+    # Release Redis queue / in-flight slots. Without this, cancel leaves
+    # cryo:inflight:{destination} counters elevated and the governor admits nothing
+    # even though no worker is running (seen after bulk cancel of the 800+ cron backlog).
+    if release:
+        try:
+            wiring = build_runtime_wiring()
+            for job_id, destination_id, prior_status in release:
+                if prior_status == JobStatus.QUEUED.value:
+                    wiring.queue.cancel_pending(job_id, destination_id)
+                else:
+                    # ADMITTED / RUNNING held an in-flight slot via queue.admit().
+                    wiring.queue.complete(job_id, JobStatus.SKIPPED)
+        except Exception:
+            logger.exception(
+                "Failed to release Redis queue state while cancelling run %s", run_id
+            )
     session.refresh(run)
     return RunRead.model_validate(presets.run_summary(run))
 
