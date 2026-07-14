@@ -24,15 +24,23 @@ class TrinoQueryIngester:
         trino_url: str,
         *,
         user: str = "cryo",
+        password: str | None = None,
         catalog: str = "system",
         schema: str = "runtime",
         headers: dict[str, str] | None = None,
+        verify_ssl: bool = True,
     ):
         self.trino_url = trino_url.rstrip("/")
         self.user = user
+        # X-Trino-User alone only authenticates against a coordinator with no auth enabled
+        # (trusted-network mode). A coordinator with password/LDAP auth enabled (this call site's
+        # original bug: telemetry_trino_user/password were documented and Field()-defined in
+        # config.py but never actually passed to this class) needs real HTTP Basic Auth too.
+        self.auth = (user, password) if password else None
         self.catalog = catalog
         self.schema = schema
         self.headers = headers or {}
+        self.verify_ssl = verify_ssl
 
     async def fetch_recent_queries(
         self,
@@ -86,7 +94,9 @@ class TrinoQueryIngester:
         LIMIT {limit}
         """
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(
+            timeout=60.0, auth=self.auth, verify=self.verify_ssl
+        ) as client:
             response = await client.post(
                 f"{self.trino_url}/v1/statement",
                 headers={
@@ -126,7 +136,9 @@ class TrinoQueryIngester:
 
         This uses the query info API to get file-level statistics.
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, auth=self.auth, verify=self.verify_ssl
+        ) as client:
             try:
                 response = await client.get(
                     f"{self.trino_url}/v1/query/{query_id}",
