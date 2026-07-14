@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from cryo.domain.enums import JobStatus
+from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.worker.worker import DestinationConfig, JobStore, MaintenanceJobRecord
 
@@ -85,6 +86,51 @@ def reconcile_deferred_jobs(
     if requeued:
         logger.info("Re-queued %d deferred job(s)", requeued)
     return requeued
+
+
+def reconcile_stale_running_jobs(
+    store: JobStore,
+    queue: MaintenanceQueue,
+    lock_store: LockStore,
+    *,
+    now: datetime | None = None,
+    stale_after_seconds: int = 6 * 60 * 60,
+) -> int:
+    """Fail jobs stuck in RUNNING past `stale_after_seconds` and free their slot.
+
+    A worker that dies mid-job (OOM, node eviction, rollout) never gets to call
+    `store.mark_status(..., FAILED)` or `queue.complete(...)`, so the job's DB row stays
+    RUNNING and its Redis in-flight/table-lock ownership is never released -- forever,
+    since nothing else transitions a RUNNING job out of that state. Seen in production:
+    5 jobs stuck RUNNING for hours (oldest ~20h) across two worker restarts, silently
+    eating destination concurrency slots that never got reclaimed.
+    """
+    list_running = getattr(store, "list_running_jobs", None)
+    if not callable(list_running):
+        return 0
+
+    current = now or datetime.now(UTC)
+    reaped = 0
+    for job in list_running():
+        if job.started_at is None:
+            continue
+        started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=UTC)
+        if (current - started_at).total_seconds() <= stale_after_seconds:
+            continue
+        store.mark_status(job.id, JobStatus.FAILED, error="stale_running_reaped")
+        queue.complete(job.id, JobStatus.FAILED)
+        lock_store.release_table_lock(job.table_id, job.id)
+        reaped += 1
+        logger.warning(
+            "Reaped stale RUNNING job %s (table %s): running since %s with no owning worker",
+            job.id,
+            job.table_id,
+            started_at.isoformat(),
+        )
+
+    if reaped:
+        logger.warning("Reaped %d stale RUNNING job(s)", reaped)
+    return reaped
 
 
 def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:

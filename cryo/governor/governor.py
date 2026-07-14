@@ -41,6 +41,7 @@ from cryo.queue.reconcile import (
     purge_stale_queue_entries,
     reconcile_deferred_jobs,
     reconcile_queued_jobs,
+    reconcile_stale_running_jobs,
 )
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.triggers.evaluator import TriggerEvaluator
@@ -70,6 +71,7 @@ class WaveResult:
     blocked: int = 0
     orphaned: int = 0
     re_enqueued: int = 0
+    reaped: int = 0
 
 
 class Governor:
@@ -109,6 +111,13 @@ class Governor:
             re_enqueued = reconcile_queued_jobs(self._store, self._queue)
             re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
             orphaned = purge_stale_queue_entries(self._store, self._queue)
+            reaped = reconcile_stale_running_jobs(
+                self._store,
+                self._queue,
+                self._lock_store,
+                now=current,
+                stale_after_seconds=self._lock_ttl_seconds,
+            )
             admitted = 0
             deferred = 0
             blocked = 0
@@ -380,6 +389,7 @@ class Governor:
                 blocked=blocked,
                 orphaned=orphaned,
                 re_enqueued=re_enqueued,
+                reaped=reaped,
             )
         finally:
             for destination_id, outcomes in destination_outcomes.items():
