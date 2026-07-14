@@ -4,8 +4,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import case, desc, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import case, desc, func, literal, select
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from cryo.api.schemas import TableRead
 from cryo.api.serializers import table_to_read
@@ -59,25 +59,13 @@ def dashboard_datalake(
         .where(Table.is_active.is_(True))
     ).one()
 
-    # Reuse dashboard_cost's aggregation (TableCost when a deep-tier scan has run, falling back
-    # to TableStats only for tables that haven't had one yet) instead of the plain TableStats
-    # sums this used to use. Those sums mixed estimated_monthly_s3_cost_usd (a cheap size-only
-    # heuristic, refreshed on every scan) with projected_savings_usd_month (computed by
-    # project_savings() against a *different*, more complete deep-tier cost baseline that was
-    # never itself surfaced) -- the two were never designed to net against each other, so
-    # "Monthly savings" could legitimately show larger than "S3 monthly now" itself. TableCost's
-    # three fields are computed together and reconcile by construction (cryo/cost/model.py).
-    cost_rows = list(
-        session.execute(
-            select(Table, TableStats, TableCost)
-            .select_from(Table)
-            .outerjoin(TableStats)
-            .outerjoin(TableCost)
-            .where(Table.is_active.is_(True))
-        )
-    )
-    cost_totals = _aggregate_cost_totals(cost_rows, settings=settings)
-    cost_by_schema = _aggregate_cost_by_schema(cost_rows)
+    # Aggregate in SQL -- never `select(Table, TableStats, TableCost)` for the whole fleet.
+    # Materializing every active table's ORM row (including TableStats.raw / TableCost.raw
+    # JSONB) OOMs cryo-api once the catalog reaches ~10k tables: observed VmPeak ~7.8Gi and
+    # OOMKill at the 6Gi limit on a single GET /dashboards/datalake. Same class of bug as
+    # smart_maintenance_overview (see values.yaml api.resources comment).
+    cost_totals = _sql_aggregate_cost_totals(session, settings=settings)
+    cost_by_schema = _sql_aggregate_cost_by_schema(session)
 
     grade_distribution = [
         {"grade": grade or "unknown", "count": int(count)}
@@ -168,12 +156,8 @@ def dashboard_datalake(
             "total_files": int(active_row[2] or 0),
             "small_files_count": int(active_row[3] or 0),
             "estimated_monthly_s3_cost_usd": cast(float, cost_totals["current_monthly_cost_usd"]),
-            "projected_monthly_s3_cost_usd": cast(
-                float, cost_totals["projected_monthly_cost_usd"]
-            ),
-            "projected_savings_usd_month": cast(
-                float, cost_totals["projected_savings_usd_month"]
-            ),
+            "projected_monthly_s3_cost_usd": cast(float, cost_totals["projected_monthly_cost_usd"]),
+            "projected_savings_usd_month": cast(float, cost_totals["projected_savings_usd_month"]),
             "reclaimable_bytes": int(active_row[4] or 0),
             "query_count_30d": int(active_row[5] or 0),
             "needs_compaction_count": int(active_row[6] or 0),
@@ -234,18 +218,11 @@ def dashboard_cost(
     settings: Settings | None = None,
 ) -> dict[str, object]:
     settings = settings or Settings()
-    active_tables = (
-        select(Table, TableStats, TableCost)
-        .select_from(Table)
-        .outerjoin(TableStats)
-        .outerjoin(TableCost)
-        .where(Table.is_active.is_(True))
-    )
-    rows = list(session.execute(active_tables))
-
-    totals = _aggregate_cost_totals(rows, settings=settings)
-    savings_by_operation = _aggregate_savings_by_operation(rows)
-    cost_by_schema = _aggregate_cost_by_schema(rows)
+    # Same fleet-wide materialization trap as dashboard_datalake -- aggregate in SQL / load
+    # only the reclaim columns needed for savings_by_operation (never TableStats.raw).
+    totals = _sql_aggregate_cost_totals(session, settings=settings)
+    savings_by_operation = _sql_aggregate_savings_by_operation(session, settings=settings)
+    cost_by_schema = _sql_aggregate_cost_by_schema(session)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
     trend = _cost_trend(session, limit=trend_limit, settings=settings)
 
@@ -275,85 +252,180 @@ def table_cost(session: Session, table_id: uuid.UUID) -> dict[str, object] | Non
     return _table_cost_payload_from_stats(table_id, stats)
 
 
-def _aggregate_cost_totals(
-    rows: list[Any],
-    *,
-    settings: Settings,
-) -> dict[str, object]:
-    current_cost = 0.0
-    projected_cost = 0.0
-    savings = 0.0
-    reclaimable = 0
-    storage_bytes = 0
-    precision_coverage: dict[str, int] = {}
-    last_full_scan: datetime | None = None
-    orphan_scan_stale = False
-    stale_after = timedelta(hours=settings.cost_full_scan_every_hours)
+def _prefer_cost_expr(cost_col: Any, stats_col: Any, *, stats_fallback: Any | None = None) -> Any:
+    """Prefer TableCost column; else TableStats (with optional coalesce fallback)."""
+    stats_value = stats_col if stats_fallback is None else func.coalesce(stats_col, stats_fallback)
+    return case((TableCost.table_id.isnot(None), cost_col), else_=stats_value)
 
-    for _table, stats, cost in rows:
-        if cost is not None:
-            current_cost += float(cost.current_monthly_cost_usd or 0)
-            projected_cost += float(cost.projected_monthly_cost_usd or 0)
-            savings += float(cost.projected_savings_usd_month or 0)
-            reclaimable += int(
-                cost.reclaim_expire_bytes
-                + cost.reclaim_orphan_bytes
-                + cost.reclaim_optimize_bytes
-                + cost.reclaim_manifests_bytes
+
+def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[str, object]:
+    """Fleet cost totals without materializing ORM rows (or their raw JSONB)."""
+    stale_after = timedelta(hours=settings.cost_full_scan_every_hours)
+    stats_cur = func.coalesce(TableStats.estimated_monthly_s3_cost_usd, 0.0)
+    stats_proj = func.coalesce(TableStats.projected_monthly_s3_cost_usd, stats_cur)
+    stats_gap = stats_cur - stats_proj
+    # case() instead of greatest() -- SQLite (unit tests) has no GREATEST.
+    stats_sav = func.coalesce(
+        TableStats.projected_savings_usd_month,
+        case((stats_gap > 0, stats_gap), else_=literal(0.0)),
+    )
+
+    current_expr = _prefer_cost_expr(TableCost.current_monthly_cost_usd, stats_cur)
+    projected_expr = _prefer_cost_expr(TableCost.projected_monthly_cost_usd, stats_proj)
+    savings_expr = _prefer_cost_expr(TableCost.projected_savings_usd_month, stats_sav)
+    reclaim_expr = case(
+        (
+            TableCost.table_id.isnot(None),
+            TableCost.reclaim_expire_bytes
+            + TableCost.reclaim_orphan_bytes
+            + TableCost.reclaim_optimize_bytes
+            + TableCost.reclaim_manifests_bytes,
+        ),
+        else_=func.coalesce(TableStats.reclaimable_bytes, 0),
+    )
+    storage_expr = case(
+        (
+            TableCost.table_id.isnot(None),
+            TableCost.live_bytes
+            + TableCost.dead_bytes
+            + TableCost.metadata_bytes
+            + func.coalesce(TableCost.orphan_bytes, 0),
+        ),
+        else_=func.coalesce(TableStats.total_size_gb, 0.0) * (1024**3),
+    )
+
+    row = session.execute(
+        select(
+            func.coalesce(func.sum(current_expr), 0.0),
+            func.coalesce(func.sum(projected_expr), 0.0),
+            func.coalesce(func.sum(savings_expr), 0.0),
+            func.coalesce(func.sum(reclaim_expr), 0),
+            func.coalesce(func.sum(storage_expr), 0),
+        )
+        .select_from(Table)
+        .outerjoin(TableStats, TableStats.table_id == Table.id)
+        .outerjoin(TableCost, TableCost.table_id == Table.id)
+        .where(Table.is_active.is_(True))
+    ).one()
+
+    precision_coverage: dict[str, int] = {
+        str(precision or CostPrecision.HEURISTIC.value): int(count)
+        for precision, count in session.execute(
+            select(
+                func.coalesce(TableCost.precision, CostPrecision.HEURISTIC.value),
+                func.count(),
             )
-            storage_bytes += int(
-                cost.live_bytes + cost.dead_bytes + cost.metadata_bytes + (cost.orphan_bytes or 0)
+            .select_from(Table)
+            .join(TableCost, TableCost.table_id == Table.id)
+            .where(Table.is_active.is_(True))
+            .group_by(func.coalesce(TableCost.precision, CostPrecision.HEURISTIC.value))
+        )
+    }
+    last_full_scan = session.scalar(
+        select(func.max(TableCost.last_full_cost_scan_at))
+        .select_from(Table)
+        .join(TableCost, TableCost.table_id == Table.id)
+        .where(Table.is_active.is_(True))
+    )
+    orphan_scan_stale = bool(
+        session.scalar(
+            select(func.count())
+            .select_from(Table)
+            .join(TableCost, TableCost.table_id == Table.id)
+            .where(
+                Table.is_active.is_(True),
+                TableCost.precision == CostPrecision.STORAGE_TRUTH.value,
+                TableCost.last_full_cost_scan_at.isnot(None),
+                TableCost.last_full_cost_scan_at < datetime.now(UTC) - stale_after,
             )
-            precision = cost.precision or CostPrecision.HEURISTIC.value
-            precision_coverage[precision] = precision_coverage.get(precision, 0) + 1
-            if cost.last_full_cost_scan_at is not None:
-                if last_full_scan is None or cost.last_full_cost_scan_at > last_full_scan:
-                    last_full_scan = cost.last_full_cost_scan_at
-                if (
-                    cost.precision == CostPrecision.STORAGE_TRUTH.value
-                    and cost.last_full_cost_scan_at < datetime.now(UTC) - stale_after
-                ):
-                    orphan_scan_stale = True
-        elif stats is not None:
-            cur = float(stats.estimated_monthly_s3_cost_usd or 0)
-            proj = float(stats.projected_monthly_s3_cost_usd or cur)
-            sav = float(stats.projected_savings_usd_month or max(0.0, cur - proj))
-            current_cost += cur
-            projected_cost += proj
-            savings += sav
-            reclaimable += int(stats.reclaimable_bytes or 0)
-            storage_bytes += int((stats.total_size_gb or 0) * 1024**3)
+        )
+    )
 
     return {
-        "current_monthly_cost_usd": round(current_cost, 4),
-        "projected_monthly_cost_usd": round(projected_cost, 4),
-        "projected_savings_usd_month": round(savings, 4),
-        "current_storage_bytes": storage_bytes,
-        "reclaimable_bytes": reclaimable,
+        "current_monthly_cost_usd": round(float(row[0] or 0), 4),
+        "projected_monthly_cost_usd": round(float(row[1] or 0), 4),
+        "projected_savings_usd_month": round(float(row[2] or 0), 4),
+        "current_storage_bytes": int(row[4] or 0),
+        "reclaimable_bytes": int(row[3] or 0),
         "precision_coverage": precision_coverage,
         "orphan_scan_stale": orphan_scan_stale,
         "last_full_cost_scan_at": last_full_scan,
     }
 
 
-def _aggregate_savings_by_operation(rows: list[Any]) -> list[dict[str, object]]:
+def _sql_aggregate_cost_by_schema(session: Session) -> list[dict[str, Any]]:
+    stats_cur = func.coalesce(TableStats.estimated_monthly_s3_cost_usd, 0.0)
+    stats_proj = func.coalesce(TableStats.projected_monthly_s3_cost_usd, stats_cur)
+    stats_gap = stats_cur - stats_proj
+    # case() instead of greatest() -- SQLite (unit tests) has no GREATEST.
+    stats_sav = func.coalesce(
+        TableStats.projected_savings_usd_month,
+        case((stats_gap > 0, stats_gap), else_=literal(0.0)),
+    )
+    current_expr = _prefer_cost_expr(TableCost.current_monthly_cost_usd, stats_cur)
+    projected_expr = _prefer_cost_expr(TableCost.projected_monthly_cost_usd, stats_proj)
+    savings_expr = _prefer_cost_expr(TableCost.projected_savings_usd_month, stats_sav)
+
+    rows = session.execute(
+        select(
+            Table.schema_name,
+            func.coalesce(func.sum(current_expr), 0.0),
+            func.coalesce(func.sum(projected_expr), 0.0),
+            func.coalesce(func.sum(savings_expr), 0.0),
+        )
+        .select_from(Table)
+        .outerjoin(TableStats, TableStats.table_id == Table.id)
+        .outerjoin(TableCost, TableCost.table_id == Table.id)
+        .where(Table.is_active.is_(True))
+        .group_by(Table.schema_name)
+    ).all()
+
+    items = [
+        {
+            "schema_name": schema_name,
+            "current_usd": float(current or 0),
+            "projected_usd": float(projected or 0),
+            "savings_usd": float(savings or 0),
+        }
+        for schema_name, current, projected, savings in rows
+        if schema_name is not None
+    ]
+    return sorted(items, key=lambda item: float(item["savings_usd"]), reverse=True)
+
+
+def _sql_aggregate_savings_by_operation(
+    session: Session, *, settings: Settings
+) -> list[dict[str, object]]:
+    """Per-operation savings from TableCost reclaim columns only (no raw JSONB)."""
     totals: dict[OperationType, dict[str, float | int]] = {
         operation: {"savings_usd_month": 0.0, "reclaimable_bytes": 0}
         for operation, _field in _OPERATION_RECLAIM_FIELDS
     }
-    for _table, _stats, cost in rows:
-        if cost is None:
-            continue
-        raw_ops = (cost.raw or {}).get("by_operation", {})
+    # load_only the reclaim + price columns -- never TableCost.raw (can be large fleet-wide).
+    costs = session.scalars(
+        select(TableCost)
+        .join(Table, Table.id == TableCost.table_id)
+        .where(Table.is_active.is_(True))
+        .options(
+            load_only(
+                TableCost.price_per_gb_month,
+                TableCost.reclaim_expire_bytes,
+                TableCost.reclaim_orphan_bytes,
+                TableCost.reclaim_optimize_bytes,
+                TableCost.reclaim_manifests_bytes,
+            )
+        )
+    )
+    for cost in costs:
         for operation, field_name in _OPERATION_RECLAIM_FIELDS:
             reclaim_bytes = int(getattr(cost, field_name) or 0)
-            usd = float(raw_ops.get(operation.value, 0) or 0)
-            if usd <= 0 and reclaim_bytes > 0:
-                usd = bytes_to_usd(
-                    reclaim_bytes,
-                    price_per_gb_month=cost.price_per_gb_month,
-                    use_gib=Settings().cost_use_gib,
-                )
+            if reclaim_bytes <= 0:
+                continue
+            usd = bytes_to_usd(
+                reclaim_bytes,
+                price_per_gb_month=cost.price_per_gb_month,
+                use_gib=settings.cost_use_gib,
+            )
             bucket = totals[operation]
             bucket["savings_usd_month"] = float(bucket["savings_usd_month"]) + usd
             bucket["reclaimable_bytes"] = int(bucket["reclaimable_bytes"]) + reclaim_bytes
@@ -368,31 +440,6 @@ def _aggregate_savings_by_operation(rows: list[Any]) -> list[dict[str, object]]:
     ]
 
 
-def _aggregate_cost_by_schema(rows: list[Any]) -> list[dict[str, Any]]:
-    by_schema: dict[str, dict[str, Any]] = {}
-    for table, stats, cost in rows:
-        schema = table.schema_name
-        row = by_schema.setdefault(
-            schema,
-            {"schema_name": schema, "current_usd": 0.0, "projected_usd": 0.0, "savings_usd": 0.0},
-        )
-        if cost is not None:
-            current = float(cost.current_monthly_cost_usd or 0)
-            projected = float(cost.projected_monthly_cost_usd or 0)
-            savings = float(cost.projected_savings_usd_month or 0)
-        elif stats is not None:
-            current = float(stats.estimated_monthly_s3_cost_usd or 0)
-            projected = float(stats.projected_monthly_s3_cost_usd or current)
-            savings = float(stats.projected_savings_usd_month or max(0.0, current - projected))
-        else:
-            continue
-        row["current_usd"] += current
-        row["projected_usd"] += projected
-        row["savings_usd"] += savings
-    items: list[dict[str, Any]] = list(by_schema.values())
-    return sorted(items, key=lambda item: float(item["savings_usd"]), reverse=True)
-
-
 def _top_cost_opportunities(session: Session, *, limit: int) -> list[TableRead]:
     tables = list(
         session.scalars(
@@ -400,7 +447,10 @@ def _top_cost_opportunities(session: Session, *, limit: int) -> list[TableRead]:
             .join(TableStats)
             .outerjoin(TableCost)
             .where(Table.is_active.is_(True))
-            .options(selectinload(Table.stats), selectinload(Table.cost))
+            .options(
+                selectinload(Table.stats).defer(TableStats.raw),
+                selectinload(Table.cost).defer(TableCost.raw),
+            )
             .order_by(
                 TableStats.projected_savings_usd_month.desc().nulls_last(),
                 TableStats.estimated_monthly_s3_cost_usd.desc().nulls_last(),
