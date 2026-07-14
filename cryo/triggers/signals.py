@@ -245,7 +245,7 @@ class AnomalySignal:
         warning = [a for a in alerts if str(a.severity).lower() in {"medium", "low"}]
         triggered = bool(critical) or len(warning) >= self.medium_severity_threshold
         if critical:
-            reason = critical[0].reason
+            reason = critical[0].description
             severity = "critical"
             metric = float(len(critical))
         else:

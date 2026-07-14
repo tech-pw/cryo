@@ -88,7 +88,17 @@ def reconcile_deferred_jobs(
 
 
 def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:
-    """Remove Redis pending entries that reference missing jobs or destinations."""
+    """Remove Redis pending entries that reference missing jobs, missing destinations,
+    or jobs whose DB status has already gone terminal.
+
+    The DB row for a job can reach a terminal status (skipped/cancelled/failed/succeeded)
+    without ever calling `queue.cancel_pending()` or `queue.complete()` -- e.g. a direct
+    status update outside the normal admit/complete path. `store.get_job(job_id)` still
+    succeeds for those rows, so without this check they survive every wave forever,
+    forcing `pending_by_destination()` to keep re-fetching and re-evaluating them ahead of
+    genuinely queued work. Seen in production: a bulk cancellation issued as a direct SQL
+    UPDATE left ~22k terminal jobs in the Redis pending zset, drowning out 27 real ones.
+    """
     destination_exists = getattr(store, "destination_exists", None)
     purged = 0
 
@@ -105,8 +115,12 @@ def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:
                 purged += 1
                 continue
             try:
-                store.get_job(job_id)
+                job = store.get_job(job_id)
             except KeyError:
+                queue.cancel_pending(job_id, destination_id)
+                purged += 1
+                continue
+            if job.status not in _ACTIVE_QUEUE_STATUSES and job.status != JobStatus.DEFERRED:
                 queue.cancel_pending(job_id, destination_id)
                 purged += 1
 

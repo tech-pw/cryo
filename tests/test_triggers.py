@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cryo.ml.anomaly_detector import AnomalyAlert
 from cryo.triggers.evaluator import TriggerEvaluator, TriggerType
 from cryo.triggers.signals import (
+    AnomalySignal,
     CostAnomalySignal,
     FileDegradationSignal,
     QueryLatencySignal,
@@ -220,3 +223,37 @@ def test_cost_anomaly_handles_no_data() -> None:
     result = signal.evaluate(session, _table_id())
     assert result.triggered is False
     assert "No cost data" in result.reason
+
+
+def _anomaly_alert(table_id: uuid.UUID, severity: str) -> AnomalyAlert:
+    return AnomalyAlert(
+        table_id=str(table_id),
+        table_name="lms.gold_banners",
+        metric_name="file_count",
+        current_value=9000.0,
+        expected_value=1200.0,
+        deviation_sigma=6.0,
+        severity=severity,
+        description="file_count is 6.0 sigma above expected",
+        detected_at=datetime.now(UTC),
+    )
+
+
+def test_anomaly_signal_triggers_on_high_severity_alert() -> None:
+    table_id = _table_id()
+    alert = _anomaly_alert(table_id, "high")
+    with patch(
+        "cryo.ml.anomaly_detector.detect_table_anomalies", return_value=[alert]
+    ):
+        signal = AnomalySignal()
+        result = signal.evaluate(MagicMock(), table_id)
+    assert result.triggered is True
+    assert result.reason == alert.description
+
+
+def test_anomaly_signal_handles_no_alerts() -> None:
+    table_id = _table_id()
+    with patch("cryo.ml.anomaly_detector.detect_table_anomalies", return_value=[]):
+        signal = AnomalySignal()
+        result = signal.evaluate(MagicMock(), table_id)
+    assert result.triggered is False
