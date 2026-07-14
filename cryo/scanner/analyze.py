@@ -428,7 +428,14 @@ def analyze_table(
         "total_delete_files": delete_files,
         "delete_file_pct": stats_for_health["delete_file_pct"],
         "manifest_count": len(manifests),
-        "partition_col": primary.get("base_column") if primary else "_unpartitioned",
+        # None (not the "_unpartitioned" scan-time display label used elsewhere for humans/UI)
+        # -- planner.partitions.derive_partition_fields() treats any truthy partition_col as a
+        # real, bindable column name and builds a row-filter term from it. The literal string
+        # "_unpartitioned" doesn't exist as a column on any real table, so a job for an
+        # unpartitioned table's single pseudo-partition would panic in the Go engine's
+        # BuildRowFilter trying to bind it: "invalid schema: could not bind reference
+        # '_unpartitioned'".
+        "partition_col": primary.get("base_column") if primary else None,
         "partition_col_type": primary.get("col_type") if primary else "",
         "write_distribution_mode": props["write_distribution_mode"],
         "has_sort_order": props["has_sort_order"],
