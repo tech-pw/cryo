@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Button,
   Card,
+  Input,
   Table,
   Tag,
   Typography,
@@ -19,15 +20,26 @@ import {
   CheckCircleOutlined,
   WarningOutlined,
   ExclamationCircleOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import { useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Link } from "react-router-dom";
 import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
 import { OverviewPage } from "../components/layout/OverviewPage";
 import { StatStrip } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { formatSlaDays as formatDays, formatSlaHours as formatHours } from "../lib/format";
-import { cryoColors } from "../lib/theme";
+import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 
 const { Text } = Typography;
 
@@ -54,9 +66,29 @@ interface SchemaMatrixRow {
   compliancePercent: number;
 }
 
+// Fixed, meaningful freshness buckets rather than an auto-binned histogram -- "how many
+// tables are more than a day stale" is the actual operator question, not an arbitrary
+// bin width that shifts every time the data changes.
+export const FRESHNESS_BUCKETS: Array<{ key: string; label: string; min: number; max: number }> = [
+  { key: "lt1h", label: "< 1h", min: 0, max: 1 },
+  { key: "1to6h", label: "1–6h", min: 1, max: 6 },
+  { key: "6to24h", label: "6–24h", min: 6, max: 24 },
+  { key: "1to3d", label: "1–3d", min: 24, max: 72 },
+  { key: "3to7d", label: "3–7d", min: 72, max: 168 },
+  { key: "gt7d", label: "> 7d", min: 168, max: Infinity },
+];
+
+export const bucketForFreshness = (hours: number | null): string | null => {
+  if (hours === null) return null;
+  const bucket = FRESHNESS_BUCKETS.find((b) => hours >= b.min && hours < b.max);
+  return bucket?.key ?? null;
+};
+
 export const SLAStatus = () => {
   const { api } = useAuth();
   const [breachedOnly, setBreachedOnly] = useState(false);
+  const [tableSearch, setTableSearch] = useState("");
+  const [freshnessBucket, setFreshnessBucket] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<SLAResponse>({
     queryKey: ["sla-status", api.token, breachedOnly],
@@ -65,6 +97,30 @@ export const SLAStatus = () => {
   });
 
   const slas = data?.slas ?? [];
+
+  const freshnessHistogram = useMemo(
+    () =>
+      FRESHNESS_BUCKETS.map((bucket) => ({
+        key: bucket.key,
+        label: bucket.label,
+        count: slas.filter((row) => bucketForFreshness(row.freshness_hours) === bucket.key)
+          .length,
+      })),
+    [slas]
+  );
+
+  const visibleRows = useMemo(() => {
+    const query = tableSearch.trim().toLowerCase();
+    return slas.filter((row) => {
+      if (freshnessBucket && bucketForFreshness(row.freshness_hours) !== freshnessBucket) {
+        return false;
+      }
+      if (query && !row.table_name.toLowerCase().includes(query)) {
+        return false;
+      }
+      return true;
+    });
+  }, [slas, tableSearch, freshnessBucket]);
 
   const breachByType = useMemo(
     () => ({
@@ -365,9 +421,64 @@ export const SLAStatus = () => {
       ) : null}
 
       <Card
+        title="Freshness distribution"
+        extra={
+          freshnessBucket ? (
+            <Button size="small" onClick={() => setFreshnessBucket(null)}>
+              Clear filter
+            </Button>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Click a bar to filter the table below
+            </Text>
+          )
+        }
+        style={{ marginBottom: 8 }}
+      >
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={freshnessHistogram} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+            <CartesianGrid stroke={cryoColors.chartGrid} />
+            <XAxis dataKey="label" stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+            <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} allowDecimals={false} />
+            <RechartsTooltip {...chartTooltipProps} />
+            <Bar
+              dataKey="count"
+              name="Tables"
+              cursor="pointer"
+              onClick={(point) => {
+                const key = (point?.payload as { key?: string } | undefined)?.key;
+                if (!key) return;
+                setFreshnessBucket((current) => (current === key ? null : key));
+              }}
+            >
+              {freshnessHistogram.map((bucket) => (
+                <Cell
+                  key={bucket.key}
+                  fill={
+                    freshnessBucket === null || freshnessBucket === bucket.key
+                      ? cryoColors.primary
+                      : cryoColors.chartGrid
+                  }
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <Card
         title="SLA status by table"
         extra={
           <Space>
+            <Input
+              placeholder="Search table name"
+              prefix={<SearchOutlined />}
+              value={tableSearch}
+              onChange={(e) => setTableSearch(e.target.value)}
+              allowClear
+              size="small"
+              style={{ width: 200 }}
+            />
             <Tooltip title="Last Iceberg snapshot commit vs SLA threshold">
               <ClockCircleOutlined />
               <Text type="secondary" style={{ marginLeft: 4 }}>
@@ -392,7 +503,7 @@ export const SLAStatus = () => {
         <Table
           scroll={{ x: 1080 }}
           columns={columns}
-          dataSource={slas}
+          dataSource={visibleRows}
           rowKey="table_id"
           pagination={{
             pageSize: 20,
