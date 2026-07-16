@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import { SLAStatus } from "./SLAStatus";
+import { bucketForFreshness, SLAStatus } from "./SLAStatus";
 import type { SLAResponse } from "../api/client";
 
 vi.mock("../lib/auth", () => ({
@@ -52,6 +52,28 @@ const row = (overrides: Partial<SLAResponse["slas"][number]>): SLAResponse["slas
   p95_latency_breached: false,
   has_preset: true,
   ...overrides
+});
+
+describe("bucketForFreshness", () => {
+  it("returns null for a null freshness value", () => {
+    expect(bucketForFreshness(null)).toBeNull();
+  });
+
+  it("buckets boundary values into the correct bucket, not the adjacent one", () => {
+    expect(bucketForFreshness(0)).toBe("lt1h");
+    expect(bucketForFreshness(0.99)).toBe("lt1h");
+    expect(bucketForFreshness(1)).toBe("1to6h"); // exactly 1h rolls into the next bucket
+    expect(bucketForFreshness(6)).toBe("6to24h");
+    expect(bucketForFreshness(24)).toBe("1to3d");
+    expect(bucketForFreshness(72)).toBe("3to7d");
+    expect(bucketForFreshness(168)).toBe("gt7d");
+  });
+
+  it("has no gaps or overlaps -- every non-negative value lands in exactly one bucket", () => {
+    for (const hours of [0, 0.5, 1, 5.9, 6, 23.9, 24, 71.9, 72, 167.9, 168, 1000]) {
+      expect(bucketForFreshness(hours)).not.toBeNull();
+    }
+  });
 });
 
 describe("SLAStatus page", () => {
@@ -146,5 +168,63 @@ describe("SLAStatus page", () => {
 
     await screen.findByRole("switch", { checked: true });
     expect(screen.queryByText("SLA matrix by schema")).not.toBeInTheDocument();
+  });
+
+  it("renders the freshness distribution card", async () => {
+    // recharts' ResponsiveContainer reports zero width/height under jsdom, so axis ticks
+    // and bars never actually paint here -- this only verifies the section mounts and the
+    // click-to-filter affordance is present, not the chart's internal SVG output.
+    vi.mocked(getSlaStatusDashboard).mockResolvedValue({
+      slas: [
+        row({ table_id: "t-1", table_name: "lms.fresh", freshness_hours: 0.5 }),
+        row({ table_id: "t-2", table_name: "lms.stale", freshness_hours: 200 })
+      ],
+      total_breached: 0,
+      total_monitored: 2
+    } satisfies SLAResponse);
+    renderPage();
+
+    expect(await screen.findByText("Freshness distribution")).toBeInTheDocument();
+    expect(screen.getByText("Click a bar to filter the table below")).toBeInTheDocument();
+  });
+
+  it("filters the table by search text on the table name", async () => {
+    vi.mocked(getSlaStatusDashboard).mockResolvedValue({
+      slas: [
+        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
+        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+      ],
+      total_breached: 0,
+      total_monitored: 2
+    } satisfies SLAResponse);
+    renderPage();
+
+    expect(await screen.findByText("lms.gold_banners")).toBeInTheDocument();
+    expect(screen.getByText("cdp_revenue.silver_x")).toBeInTheDocument();
+
+    const search = screen.getByPlaceholderText("Search table name");
+    fireEvent.change(search, { target: { value: "gold_banners" } });
+
+    expect(await screen.findByText("lms.gold_banners")).toBeInTheDocument();
+    expect(screen.queryByText("cdp_revenue.silver_x")).not.toBeInTheDocument();
+  });
+
+  it("search is case-insensitive and matches on partial table name", async () => {
+    vi.mocked(getSlaStatusDashboard).mockResolvedValue({
+      slas: [
+        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
+        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+      ],
+      total_breached: 0,
+      total_monitored: 2
+    } satisfies SLAResponse);
+    renderPage();
+    await screen.findByText("lms.gold_banners");
+
+    const search = screen.getByPlaceholderText("Search table name");
+    fireEvent.change(search, { target: { value: "REVENUE" } });
+
+    expect(await screen.findByText("cdp_revenue.silver_x")).toBeInTheDocument();
+    expect(screen.queryByText("lms.gold_banners")).not.toBeInTheDocument();
   });
 });
