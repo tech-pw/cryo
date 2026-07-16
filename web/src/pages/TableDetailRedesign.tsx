@@ -147,7 +147,7 @@ import {
 } from "../lib/format";
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
-import { formatEngineLabel } from "../lib/engines";
+import { formatEngineLabel, nativeGoDeleteFilesRewriteError, resolveNativeEngineImpl } from "../lib/engines";
 import { formatPartitionColumnLabel, provenanceLabel } from "../components/table-detail/helpers";
 
 const isNotFoundError = (error: unknown): boolean => {
@@ -201,9 +201,20 @@ export const TableDetail = () => {
         if (cancelled) return;
         const notes = jobs.flatMap((job) => {
           const raw = (job.plan as { notes?: unknown } | null | undefined)?.notes;
-          return Array.isArray(raw) ? raw.filter((note): note is string => typeof note === "string") : [];
+          const planNotes = Array.isArray(raw)
+            ? raw.filter((note): note is string => typeof note === "string")
+            : [];
+          if (typeof job.error === "string" && job.error.includes("total_delete_files")) {
+            return [...planNotes, job.error];
+          }
+          return planNotes;
         });
-        setLastRunSkipNotes(notes.filter((note) => note.toLowerCase().startsWith("skipped")));
+        setLastRunSkipNotes(
+          notes.filter((note) => {
+            const lower = note.toLowerCase();
+            return lower.startsWith("skipped") || lower.includes("total_delete_files");
+          })
+        );
       })
       .catch(() => {
         // Best-effort: if we can't fetch the job breakdown, just show no skip banner rather
@@ -418,7 +429,20 @@ export const TableDetail = () => {
       });
     },
     onSuccess: (result) => {
-      message.success(`Run queued: ${result.run_id}`);
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+      const mode = preset?.mode ?? "standard";
+      const destination = destinations.data?.find((item) => item.id === preset?.destination_id);
+      const deleteFiles = table.data?.stats?.total_delete_files ?? 0;
+      const rewriteBlocked =
+        destination?.engine === "native" &&
+        resolveNativeEngineImpl(destination.config) === "go" &&
+        deleteFiles > 0 &&
+        (mode === "standard" || mode === "deep");
+      if (rewriteBlocked) {
+        message.error(`${nativeGoDeleteFilesRewriteError} Run queued: ${result.run_id}`);
+      } else {
+        message.success(`Run queued: ${result.run_id}`);
+      }
       setQueuedMaintenanceRunId(result.run_id);
       setTrackedRunId(result.run_id);
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -448,7 +472,20 @@ export const TableDetail = () => {
       });
     },
     onSuccess: (result) => {
-      message.success(`Run scheduled: ${result.run_id}`);
+      const preset = presets.data?.find((item) => item.id === effectivePreset.data?.preset_id);
+      const mode = preset?.mode ?? "standard";
+      const destination = destinations.data?.find((item) => item.id === preset?.destination_id);
+      const deleteFiles = table.data?.stats?.total_delete_files ?? 0;
+      const rewriteBlocked =
+        destination?.engine === "native" &&
+        resolveNativeEngineImpl(destination.config) === "go" &&
+        deleteFiles > 0 &&
+        (mode === "standard" || mode === "deep");
+      if (rewriteBlocked) {
+        message.error(`${nativeGoDeleteFilesRewriteError} Run scheduled: ${result.run_id}`);
+      } else {
+        message.success(`Run scheduled: ${result.run_id}`);
+      }
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
     onError: (error) => message.error((error as Error).message)

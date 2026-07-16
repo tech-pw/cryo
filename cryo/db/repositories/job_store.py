@@ -302,6 +302,7 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "small_files_count": stats.small_files_count,
         "total_partitions": stats.total_partitions,
         "total_size_gb": stats.total_size_gb,
+        "total_delete_files": stats.total_delete_files,
         "delete_file_pct": stats.delete_file_pct,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
