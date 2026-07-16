@@ -24,7 +24,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as SessionCls
 
 from cryo.config import Settings
-from cryo.db.models import Source, Table, TableCost, TableStats
+from cryo.db.models import AuditLog, Source, Table, TableCost, TableStats
 from cryo.db.repositories.datalake import _sql_aggregate_cost_totals, dashboard_datalake
 
 _PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
@@ -431,3 +431,55 @@ def test_dashboard_cost_response_matches_api_schema(session, monkeypatch) -> Non
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE_MANIFESTS,
     }
+
+
+def test_dashboard_cost_total_realized_savings_is_all_time_not_trend_bounded(
+    session, monkeypatch
+) -> None:
+    from cryo.config import Settings
+    from cryo.db.repositories import datalake as datalake_repo
+    from cryo.db.repositories.datalake import dashboard_cost
+
+    # date_trunc is Postgres-only -- _cost_trend (and its trend_limit bound) is unrelated
+    # to what this test checks, so it's stubbed out same as the schema-compat test above.
+    monkeypatch.setattr(datalake_repo, "_cost_trend", lambda *args, **kwargs: [])
+
+    source = _seed_source(session)
+    table_id = uuid.uuid4()
+    session.add(
+        Table(
+            id=table_id,
+            source_id=source.id,
+            schema_name="billing",
+            table_name="invoices",
+            first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+            is_active=True,
+        )
+    )
+    # One row inside a typical trend window, one row 200 days back -- well outside any
+    # trend_limit that would ever be requested. total_realized_savings_usd must include both.
+    session.add_all(
+        [
+            AuditLog(
+                table_id=table_id,
+                ts=datetime(2026, 7, 10, tzinfo=UTC),
+                action="optimize",
+                status="OK",
+                actual_bytes_freed=1024**3,  # 1 GiB
+            ),
+            AuditLog(
+                table_id=table_id,
+                ts=datetime(2026, 1, 5, tzinfo=UTC),
+                action="optimize",
+                status="OK",
+                actual_bytes_freed=2 * 1024**3,  # 2 GiB
+            ),
+        ]
+    )
+    session.commit()
+
+    settings = Settings(_env_file=None)
+    payload = dashboard_cost(session, trend_limit=5, settings=settings)
+
+    expected_usd = round(3 * settings.cost_price_per_gb_month, 4)
+    assert payload["totals"]["total_realized_savings_usd"] == expected_usd
