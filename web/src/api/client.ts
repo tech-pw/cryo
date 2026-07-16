@@ -297,6 +297,17 @@ export interface S3LogConfigBucket {
   last_error_at?: string | null;
 }
 
+export interface S3RequestCostByBucket {
+  bucket: string;
+  region?: string | null;
+  enabled: boolean;
+  logging_status: string;
+  last_ingested_at?: string | null;
+  total_request_count_30d: number;
+  total_cost_usd_month: number;
+  by_tier: { tier1_count: number; tier2_count: number; tier1_cost_usd: number; tier2_cost_usd: number };
+}
+
 export interface S3RequestCostRollup {
   bucket: string;
   source_id: UUID;
@@ -309,6 +320,7 @@ export interface S3RequestCostRollup {
   total_cost_usd_month: number;
   by_tier: { tier1_count: number; tier2_count: number; tier1_cost_usd: number; tier2_cost_usd: number };
   by_day: Array<{ day: string; count: number; cost_usd: number }>;
+  by_bucket: S3RequestCostByBucket[];
   approximate: boolean;
 }
 
@@ -1346,6 +1358,7 @@ export interface SLAResponse {
   slas: Array<{
     table_id: string;
     table_name: string;
+    schema_name: string;
     freshness_hours: number | null;
     freshness_sla_hours: number | null;
     freshness_breached: boolean;
@@ -1356,6 +1369,7 @@ export interface SLAResponse {
     p95_latency_ms: number | null;
     p95_latency_sla_ms: number | null;
     p95_latency_breached: boolean;
+    has_preset: boolean;
   }>;
   total_breached: number;
   total_monitored: number;

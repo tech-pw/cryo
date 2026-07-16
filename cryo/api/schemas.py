@@ -28,7 +28,6 @@ def validate_native_engine_config(engine: EngineType | str, config: Mapping[str,
         raise ValueError("config.engine_impl must be 'go' or 'rust' for native engines")
 
 
-
 class OrmModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -367,6 +366,17 @@ class S3RequestCostByDayRead(BaseModel):
     cost_usd: float
 
 
+class S3RequestCostByBucketRead(BaseModel):
+    bucket: str
+    region: str | None = None
+    enabled: bool
+    logging_status: str
+    last_ingested_at: datetime | None = None
+    total_request_count_30d: int
+    total_cost_usd_month: float
+    by_tier: S3RequestCostByTierRead
+
+
 class S3RequestCostRollupRead(BaseModel):
     bucket: str
     source_id: uuid.UUID
@@ -379,6 +389,7 @@ class S3RequestCostRollupRead(BaseModel):
     total_cost_usd_month: float
     by_tier: S3RequestCostByTierRead
     by_day: list[S3RequestCostByDayRead]
+    by_bucket: list[S3RequestCostByBucketRead] = Field(default_factory=list)
     approximate: bool
 
 
@@ -796,6 +807,9 @@ class CostDashboardTotals(BaseModel):
     precision_coverage: dict[str, int] = Field(default_factory=dict)
     orphan_scan_stale: bool = False
     last_full_cost_scan_at: datetime | None = None
+    # All-time cumulative $ saved from completed maintenance runs -- "saved to date," not
+    # bounded to the trend chart's recent window.
+    total_realized_savings_usd: float = 0.0
 
 
 class CostSchemaItem(BaseModel):

@@ -221,6 +221,7 @@ def dashboard_cost(
     # Same fleet-wide materialization trap as dashboard_datalake -- aggregate in SQL / load
     # only the reclaim columns needed for savings_by_operation (never TableStats.raw).
     totals = _sql_aggregate_cost_totals(session, settings=settings)
+    totals["total_realized_savings_usd"] = _total_realized_savings(session, settings=settings)
     savings_by_operation = _sql_aggregate_savings_by_operation(session, settings=settings)
     cost_by_schema = _sql_aggregate_cost_by_schema(session)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
@@ -233,6 +234,22 @@ def dashboard_cost(
         "top_opportunities": top_opportunities,
         "trend": trend,
     }
+
+
+def _total_realized_savings(session: Session, *, settings: Settings) -> float:
+    """All-time cumulative $ saved from completed maintenance runs -- distinct from
+    _realized_savings_by_day's trend, which is bounded to the last `limit` days. This is
+    "cost saved to date," not "cost saved recently"."""
+    total_bytes = session.scalar(
+        select(func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0)).where(
+            AuditLog.actual_bytes_freed.isnot(None)
+        )
+    )
+    return bytes_to_usd(
+        int(total_bytes or 0),
+        price_per_gb_month=settings.cost_price_per_gb_month,
+        use_gib=settings.cost_use_gib,
+    )
 
 
 def table_cost(session: Session, table_id: uuid.UUID) -> dict[str, object] | None:
@@ -308,17 +325,23 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
         .where(Table.is_active.is_(True))
     ).one()
 
+    # Reuse one expression object for both the select list and GROUP BY: two separately
+    # constructed func.coalesce(...) calls bind the same literal to two different
+    # parameters, and Postgres then can't verify the select expression is functionally
+    # dependent on the GROUP BY expression -- "column must appear in the GROUP BY clause
+    # or be used in an aggregate function" even though they're semantically identical.
+    precision_expr = func.coalesce(TableCost.precision, CostPrecision.HEURISTIC.value)
     precision_coverage: dict[str, int] = {
         str(precision or CostPrecision.HEURISTIC.value): int(count)
         for precision, count in session.execute(
             select(
-                func.coalesce(TableCost.precision, CostPrecision.HEURISTIC.value),
+                precision_expr,
                 func.count(),
             )
             .select_from(Table)
             .join(TableCost, TableCost.table_id == Table.id)
             .where(Table.is_active.is_(True))
-            .group_by(func.coalesce(TableCost.precision, CostPrecision.HEURISTIC.value))
+            .group_by(precision_expr)
         )
     }
     last_full_scan = session.scalar(

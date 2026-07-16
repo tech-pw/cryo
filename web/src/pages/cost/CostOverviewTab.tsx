@@ -234,6 +234,11 @@ export const CostOverviewTab = () => {
               },
               { label: "Monthly savings", value: formatCurrency(data.totals.projected_savings_usd_month) },
               {
+                label: "Saved to date",
+                value: formatCurrency(data.totals.total_realized_savings_usd ?? 0),
+                tooltip: "Cumulative $ actually saved from completed maintenance runs, all-time — not a projection."
+              },
+              {
                 label: "Reclaimable storage",
                 value: formatBytesGb(data.totals.reclaimable_bytes),
                 tooltip: "Disk space maintenance would free up — dead/expired data, orphan files, and metadata bloat."
