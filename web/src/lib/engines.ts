@@ -34,6 +34,9 @@ export const nativeUnsupportedOpTooltip =
 export const nativeRustOptimizeTooltip =
   "Compaction is not available on iceberg-rust; use Native (iceberg-go) or Trino/Spark.";
 
+export const nativeGoDeleteFilesRewriteError =
+  "Rewrite is blocked on iceberg-go for tables with delete files (iceberg-go bug). Snapshot expiry and orphan removal will still run.";
+
 const ENGINE_TAG_COLORS: Record<EngineType, string> = {
   trino: "blue",
   spark_emr: "orange",

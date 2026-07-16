@@ -730,7 +730,11 @@ class Worker:
         table_data: TableMaintenanceData | None = None,
     ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
         from cryo.db.session import SessionLocal
-        from cryo.engines.native.routing import NativeRoutingResult, resolve_native_routing
+        from cryo.engines.native.routing import (
+            NATIVE_DELETE_FILES_DETAIL,
+            NativeRoutingResult,
+            resolve_native_routing,
+        )
         from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
         if routing is None:
@@ -740,7 +744,42 @@ class Worker:
         assert isinstance(routing, NativeRoutingResult)
 
         had_skip = False
+        had_failure = False
+        first_error: str | None = None
         for operation, detail in routing.skipped_operations:
+            # iceberg-go delete-file rewrite bug: surface as a hard error on OPTIMIZE while
+            # still allowing expire_snapshots / remove_orphan_files on the same plan.
+            if detail == NATIVE_DELETE_FILES_DETAIL and operation.type is OperationType.OPTIMIZE:
+                had_failure = True
+                if first_error is None:
+                    first_error = detail
+                self._store.record_audit(
+                    AuditRecord(
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        action=operation.type,
+                        status="FAILED",
+                        engine=engine.type,
+                        detail=detail,
+                        duration_ms=0,
+                        actor=job.actor,
+                    )
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        operation=operation.type.value,
+                        engine=str(engine.type),
+                        level="error",
+                        message=f"optimize failed: {detail}",
+                    ),
+                )
+                continue
             had_skip = True
             self._record_native_skipped(
                 job=job,
@@ -752,12 +791,14 @@ class Worker:
 
         supported_operations = routing.native_operations
         if not supported_operations and not routing.fallback_operations:
+            if had_failure and not had_skip:
+                return JobStatus.FAILED, first_error, None, False, False
             if had_skip:
                 return JobStatus.SKIPPED, None, None, False, had_skip
             return JobStatus.SKIPPED, None, None, False, False
 
         final_status = JobStatus.SUCCEEDED
-        error: str | None = None
+        error: str | None = first_error
         engine_ref: str | None = None
         had_success = False
 
@@ -878,8 +919,6 @@ class Worker:
                 )
                 return JobStatus.FAILED, str(exc), None, False, had_skip
 
-            had_failure = False
-            first_error: str | None = None
             for operation, result in zip(supported_operations, results, strict=False):
                 result_duration_ms = result.duration_ms
                 if result_duration_ms is None:
