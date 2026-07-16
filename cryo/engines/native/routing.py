@@ -51,6 +51,12 @@ NATIVE_V3_PARTITIONED_DV_DETAIL = (
     "route OPTIMIZE to Trino/Spark"
 )
 
+NATIVE_DELETE_FILES_DETAIL = (
+    "rewrite (optimize) is blocked on iceberg-go when cryo.table_stats.total_delete_files > 0 "
+    "(iceberg-go bug rewriting tables with delete files); "
+    "expire_snapshots and remove_orphan_files still run; route OPTIMIZE to Trino/Spark"
+)
+
 NATIVE_RUST_OPTIMIZE_DETAIL = (
     "native compaction blocked upstream on iceberg-rust (EPIC #2269); "
     "set CRYO_ENGINE_IMPL=go or destination.config.engine_impl=go"
@@ -89,21 +95,32 @@ def is_go_engine_impl(config: Mapping[str, Any] | None = None) -> bool:
     return env_value == "go"
 
 
-def is_mor_table(stats: Mapping[str, Any] | None) -> bool:
-    """Detect merge-on-read tables from scanner stats (position/equality delete files)."""
+def has_nonzero_delete_files(stats: Mapping[str, Any] | None) -> bool:
+    """True when scanner stats report total_delete_files > 0 (column or raw blob)."""
     if not stats:
         return False
     total_delete_files = stats.get("total_delete_files")
     if total_delete_files is not None and int(total_delete_files) > 0:
-        return True
-    delete_file_pct = stats.get("delete_file_pct")
-    if delete_file_pct is not None and float(delete_file_pct) > 0:
         return True
     raw = stats.get("raw")
     if isinstance(raw, Mapping):
         raw_total = raw.get("total_delete_files")
         if raw_total is not None and int(raw_total) > 0:
             return True
+    return False
+
+
+def is_mor_table(stats: Mapping[str, Any] | None) -> bool:
+    """Detect merge-on-read tables from scanner stats (position/equality delete files)."""
+    if not stats:
+        return False
+    if has_nonzero_delete_files(stats):
+        return True
+    delete_file_pct = stats.get("delete_file_pct")
+    if delete_file_pct is not None and float(delete_file_pct) > 0:
+        return True
+    raw = stats.get("raw")
+    if isinstance(raw, Mapping):
         raw_pct = raw.get("delete_file_pct")
         if raw_pct is not None and float(raw_pct) > 0:
             return True
@@ -172,8 +189,14 @@ def native_optimize_enabled(
     stats: Mapping[str, Any] | None,
     config: Mapping[str, Any] | None = None,
 ) -> bool:
-    """OPTIMIZE is native-supported on the Go engine (COW + MOR, except gated v3-partitioned DV)."""
+    """OPTIMIZE is native-supported on the Go engine for COW tables only.
+
+    Tables with total_delete_files > 0 are blocked: iceberg-go cannot reliably rewrite
+    tables that have delete files. expire_snapshots / remove_orphan_files stay native.
+    """
     if not is_go_engine_impl(config):
+        return False
+    if has_nonzero_delete_files(stats):
         return False
     return not has_v3_partitioned_deletion_vectors(stats)
 
@@ -199,7 +222,9 @@ def native_supported_operation_types(
     return frozenset(supported)
 
 
-def _optimize_requires_sql_fallback(operation: Operation, stats: Mapping[str, Any] | None) -> str | None:
+def _optimize_requires_sql_fallback(
+    operation: Operation, stats: Mapping[str, Any] | None
+) -> str | None:
     """Return a fallback detail when OPTIMIZE must not run on the Go subprocess."""
     params = operation.params or {}
     strategy = str(params.get("strategy", "")).strip().lower()
@@ -208,6 +233,8 @@ def _optimize_requires_sql_fallback(operation: Operation, stats: Mapping[str, An
         return NATIVE_ZORDER_DETAIL
     if has_v3_partitioned_deletion_vectors(stats):
         return NATIVE_V3_PARTITIONED_DV_DETAIL
+    if has_nonzero_delete_files(stats):
+        return NATIVE_DELETE_FILES_DETAIL
     return None
 
 
@@ -241,6 +268,8 @@ def resolve_native_routing(
                 continue
             if has_v3_partitioned_deletion_vectors(stats):
                 detail = NATIVE_V3_PARTITIONED_DV_DETAIL
+            elif has_nonzero_delete_files(stats):
+                detail = NATIVE_DELETE_FILES_DETAIL
             elif not is_go_engine_impl(cfg):
                 detail = NATIVE_RUST_OPTIMIZE_DETAIL
             else:
