@@ -118,6 +118,13 @@ int/digit string. All three engines must accept epoch-day ints **and** digit str
 
 Calling `date.fromisoformat('20643')` (or emitting `TIMESTAMP '20643'`) is the failure mode.
 
+**iceberg-go + delete files:** `cryo/engines/native/routing.py` blocks native `OPTIMIZE` when
+`cryo.table_stats.total_delete_files > 0` (iceberg-go cannot reliably rewrite tables that have
+delete files). `expire_snapshots` and `remove_orphan_files` still run on the native engine.
+OPTIMIZE is routed to a SQL fallback destination when configured, otherwise recorded as a failed
+optimize with a clear error. The table detail UI surfaces the same message when starting a
+standard/deep run against a go destination.
+
 ## Orchestration Development
 
 The current scheduler/governor/worker implementation includes in-memory test stores and Redis-backed
