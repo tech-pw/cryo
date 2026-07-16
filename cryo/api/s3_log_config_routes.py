@@ -32,6 +32,7 @@ from cryo.api.schemas import (
     S3LogProvisionResponse,
     S3LogTeardownRequest,
     S3LogTeardownResponse,
+    S3RequestCostByBucketRead,
     S3RequestCostByDayRead,
     S3RequestCostByTierRead,
     S3RequestCostRollupRead,
@@ -261,6 +262,24 @@ def get_source_s3_request_cost_rollup(
         by_day=[
             S3RequestCostByDayRead(day=d.day, count=d.count, cost_usd=d.cost_usd)
             for d in result.by_day
+        ],
+        by_bucket=[
+            S3RequestCostByBucketRead(
+                bucket=b.bucket,
+                region=b.region,
+                enabled=b.enabled,
+                logging_status=b.logging_status,
+                last_ingested_at=b.last_ingested_at,
+                total_request_count_30d=b.total_request_count_30d,
+                total_cost_usd_month=b.total_cost_usd_month,
+                by_tier=S3RequestCostByTierRead(
+                    tier1_count=b.by_tier.tier1_count,
+                    tier2_count=b.by_tier.tier2_count,
+                    tier1_cost_usd=b.by_tier.tier1_cost_usd,
+                    tier2_cost_usd=b.by_tier.tier2_cost_usd,
+                ),
+            )
+            for b in result.by_bucket
         ],
         approximate=result.approximate,
     )

@@ -276,13 +276,13 @@ def test_parse_log_line_handles_multi_word_quoted_user_agent() -> None:
     parsed rows despite the ingest tick logging success. This is a real captured production
     line (values scrubbed) that reproduced the bug."""
     line = (
-        '09de0c77906a1cbd51835983b81c08a5f3250ebe2c378c46d3d2d1ef3b992c21 acme-lake-temp '
+        "09de0c77906a1cbd51835983b81c08a5f3250ebe2c378c46d3d2d1ef3b992c21 acme-lake-temp "
         "[09/Jul/2026:21:47:39 +0000] 172.30.145.127 arn:aws:iam::123456789012:user/etl-user "
         "W6KMHGY9G70R8BXD REST.GET.OBJECT warehouse/db1/table_a/data/file1.parquet "
         '"GET /warehouse/db1/table_a/data/file1.parquet HTTP/1.1" 200 - - 12370 14 - '
         '"https://audit.example.org/hadoop/1/op_is_file" '
         '"Hadoop 3.3.6-amzn-3, aws-sdk-java/2.23.18 Linux/6.12.79 '
-        'OpenJDK_64-Bit_Server_VM/17.0.19+10-LTS Java/17.0.19 scala/2.12.17 '
+        "OpenJDK_64-Bit_Server_VM/17.0.19+10-LTS Java/17.0.19 scala/2.12.17 "
         'vendor/Amazon.com_Inc. io/sync http/Apache cfg/retry-mode/legacy ft/s3-transfer" '
         "- hostid123 SigV4 TLS_AES_128_GCM_SHA256 AuthHeader "
         "acme-lake-temp.s3.ap-south-1.amazonaws.com TLSv1.3 - - ap-south-1"
@@ -883,9 +883,7 @@ def test_run_s3_ingest_tick_skips_bucket_already_ingested_today(session, monkeyp
         ),
     )
 
-    succeeded = ingest_mod.run_s3_ingest_tick(
-        session, now=datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
-    )
+    succeeded = ingest_mod.run_s3_ingest_tick(session, now=datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
 
     assert calls == ["never-done"]
     assert succeeded == 1
@@ -911,9 +909,7 @@ def test_run_s3_ingest_tick_processes_stale_bucket_again_next_day(session, monke
         ),
     )
 
-    succeeded = ingest_mod.run_s3_ingest_tick(
-        session, now=datetime(2026, 7, 10, 0, 5, tzinfo=UTC)
-    )
+    succeeded = ingest_mod.run_s3_ingest_tick(session, now=datetime(2026, 7, 10, 0, 5, tzinfo=UTC))
 
     assert calls == ["daily-bucket"]
     assert succeeded == 1
@@ -1146,3 +1142,97 @@ def test_compute_source_rollup_picks_most_recently_ingested_bucket_as_primary(se
 
     assert result is not None
     assert result.bucket == "fresh-bucket"
+
+
+def test_compute_source_rollup_by_bucket_breaks_down_cost_per_bucket(session) -> None:
+    # Regression test: the "Per-bucket status" UI used to render one row per *source*,
+    # summing all of a source's buckets into a single number labeled with just the
+    # most-recently-ingested bucket's name -- the individual contribution of each bucket
+    # (e.g. which of 8 tracked buckets is actually driving cost) was invisible. by_bucket
+    # is the real per-bucket breakdown behind that single summed total.
+    source = _seed_source(session)
+    table_a = _seed_table(session, source, name="a", location="s3://bucket-a/warehouse/db/a")
+    table_b = _seed_table(session, source, name="b", location="s3://bucket-b/warehouse/db/b")
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add_all(
+        [
+            S3BucketLogConfig(
+                source_id=source.id,
+                bucket="bucket-a",
+                region="ap-south-1",
+                logging_status="enabled",
+                enabled=True,
+                last_ingested_at=now,
+            ),
+            S3BucketLogConfig(
+                source_id=source.id,
+                bucket="bucket-b",
+                region="us-east-1",
+                logging_status="enabled",
+                enabled=True,
+                last_ingested_at=now - timedelta(days=1),
+            ),
+            # Configured and enabled, but no S3RequestCostDaily rows yet -- must still
+            # appear as a real zero row, not be silently dropped.
+            S3BucketLogConfig(
+                source_id=source.id,
+                bucket="bucket-c-not-yet-ingested",
+                enabled=True,
+                logging_status="unknown",
+            ),
+        ]
+    )
+    session.add_all(
+        [
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="bucket-a",
+                table_id=table_a.id,
+                day=now.date(),
+                operation_tier="get",
+                request_count=1000,
+                cost_usd=4.0,
+                pricing_source="aws_price_list_api",
+            ),
+            S3RequestCostDaily(
+                source_id=source.id,
+                bucket="bucket-b",
+                table_id=table_b.id,
+                day=now.date(),
+                operation_tier="put",
+                request_count=100,
+                cost_usd=1.0,
+                pricing_source="aws_price_list_api",
+            ),
+        ]
+    )
+    session.commit()
+
+    result = ingest_mod.compute_source_request_cost_rollup(session, source.id, now=now)
+
+    assert result is not None
+    # Top-level totals are the true sum across every bucket, not just the primary one.
+    assert result.total_request_count_30d == 1100
+    assert result.total_cost_usd_month == 5.0
+
+    assert len(result.by_bucket) == 3
+    by_name = {b.bucket: b for b in result.by_bucket}
+
+    assert by_name["bucket-a"].total_cost_usd_month == 4.0
+    assert by_name["bucket-a"].total_request_count_30d == 1000
+    assert by_name["bucket-a"].region == "ap-south-1"
+
+    assert by_name["bucket-b"].total_cost_usd_month == 1.0
+    assert by_name["bucket-b"].total_request_count_30d == 100
+
+    # Never-ingested bucket still shows up, with real zeros rather than being omitted.
+    assert by_name["bucket-c-not-yet-ingested"].total_cost_usd_month == 0.0
+    assert by_name["bucket-c-not-yet-ingested"].total_request_count_30d == 0
+    assert by_name["bucket-c-not-yet-ingested"].logging_status == "unknown"
+
+    # Sorted by cost descending -- highest-cost bucket first, for "top buckets" chart use.
+    assert [b.bucket for b in result.by_bucket] == [
+        "bucket-a",
+        "bucket-b",
+        "bucket-c-not-yet-ingested",
+    ]
