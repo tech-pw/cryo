@@ -10,14 +10,17 @@ describe("buildFilterChips", () => {
         grades: ["B"],
         priorities: ["MEDIUM"],
         needsCompaction: true,
-        sourceIds: ["catalog-1"]
+        sourceIds: ["catalog-1"],
+        presetFilter: ["__none__", "preset-1"]
       },
       [{ label: "Prod", value: "catalog-1" }],
-      onPatch
+      onPatch,
+      [{ label: "Nightly", value: "preset-1" }]
     );
 
     expect(chips.map((chip) => chip.label)).toEqual([
       "Catalog: Prod",
+      "Preset: No preset, Nightly",
       "Grade: B",
       "Priority: Medium",
       "Needs compaction"

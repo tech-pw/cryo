@@ -53,7 +53,7 @@ export const DatalakeHealth = () => {
         subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
           <Space>
-            <Link to="/tables?view=savings">
+            <Link to="/catalogs">
               <Button type="primary">Fix top offenders</Button>
             </Link>
             <Link to="/ai">

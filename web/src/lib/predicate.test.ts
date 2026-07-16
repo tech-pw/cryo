@@ -65,6 +65,37 @@ describe("tableFiltersToPredicate", () => {
     });
   });
 
+  it("maps preset assignment filters to assigned_preset_id predicates", () => {
+    expect(
+      tableFiltersToPredicate({
+        presetFilter: ["__none__", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]
+      })
+    ).toEqual({
+      all: [
+        { field: "is_active", op: "=", value: true },
+        {
+          any: [
+            { field: "assigned_preset_id", op: "=", value: null },
+            {
+              field: "assigned_preset_id",
+              op: "in",
+              value: ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]
+            }
+          ]
+        }
+      ]
+    });
+  });
+
+  it("maps no-preset-only filter", () => {
+    expect(tableFiltersToPredicate({ presetFilter: ["__none__"] })).toEqual({
+      all: [
+        { field: "is_active", op: "=", value: true },
+        { field: "assigned_preset_id", op: "=", value: null }
+      ]
+    });
+  });
+
   it("serializes empty filters as undefined", () => {
     expect(serializePredicate(null)).toBeUndefined();
   });
