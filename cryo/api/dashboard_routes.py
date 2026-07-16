@@ -263,6 +263,7 @@ class SLAStatusRead(BaseModel):
 
     table_id: UUID
     table_name: str
+    schema_name: str
     freshness_hours: float | None  # Hours since last Iceberg snapshot commit
     freshness_sla_hours: int | None
     freshness_breached: bool
@@ -273,6 +274,10 @@ class SLAStatusRead(BaseModel):
     p95_latency_ms: float | None
     p95_latency_sla_ms: int | None
     p95_latency_breached: bool
+    # False when no preset assignment/rule matches this table (see effective_preset()) --
+    # its SLA guardrails are only ever the hardcoded defaults, and its maintenance SLA can
+    # never actually be met since nothing will ever run against it automatically.
+    has_preset: bool
 
 
 class SLAResponse(BaseModel):
@@ -652,6 +657,7 @@ def get_sla_status(
             SLAStatusRead(
                 table_id=table.id,
                 table_name=qualified_table_name(table),
+                schema_name=table.schema_name,
                 freshness_hours=freshness_hours,
                 freshness_sla_hours=freshness_sla_hours,
                 freshness_breached=freshness_breached,
@@ -662,6 +668,7 @@ def get_sla_status(
                 p95_latency_ms=p95_latency_ms,
                 p95_latency_sla_ms=p95_latency_sla_ms,
                 p95_latency_breached=p95_breached,
+                has_preset=effective is not None,
             )
         )
 

@@ -24,7 +24,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SessionCls
 
 from cryo.api.dashboard_routes import get_sla_status
-from cryo.db.models import AuditLog, QueryLog, Source, Table, TableStats
+from cryo.db.models import (
+    AuditLog,
+    Destination,
+    Preset,
+    QueryLog,
+    Source,
+    Table,
+    TableAssignment,
+    TableStats,
+)
 
 _PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
 
@@ -55,13 +64,15 @@ def _seed_source(session: Session) -> Source:
     return source
 
 
-def _seed_table(session: Session, source: Source, *, scan_at: datetime) -> Table:
+def _seed_table(
+    session: Session, source: Source, *, scan_at: datetime, schema_name: str = "analytics"
+) -> Table:
     table_id = uuid.uuid4()
     session.add(
         Table(
             id=table_id,
             source_id=source.id,
-            schema_name="analytics",
+            schema_name=schema_name,
             table_name=f"t_{table_id.hex[:8]}",
             first_seen_at=scan_at,
             is_active=True,
@@ -188,3 +199,46 @@ def test_sla_status_reports_maintenance_recency_and_p95_latency_per_table(
     assert stale_row.maintenance_days > 30
     assert stale_row.maintenance_breached is True
     assert stale_row.p95_latency_ms is None  # no QueryLog rows seeded for this table
+
+
+def test_sla_status_reports_schema_name_and_preset_coverage(postgres_session) -> None:
+    # 99.7% of the real fleet has no preset assignment or matching rule -- their
+    # maintenance SLA can never be met since nothing will ever run against them
+    # automatically. has_preset is what lets the UI surface that distinction instead of
+    # just showing an unexplained breach.
+    session = postgres_session
+    source = _seed_source(session)
+    now = datetime.now(UTC)
+
+    covered = _seed_table(session, source, scan_at=now - timedelta(hours=1), schema_name="lms")
+    uncovered = _seed_table(
+        session, source, scan_at=now - timedelta(hours=1), schema_name="cdp_revenue"
+    )
+
+    destination = Destination(
+        id=uuid.uuid4(), name=f"dest-{uuid.uuid4()}", engine="native", config={}
+    )
+    session.add(destination)
+    session.flush()
+    preset = Preset(
+        id=uuid.uuid4(),
+        name=f"preset-{uuid.uuid4()}",
+        destination_id=destination.id,
+        mode="standard",
+        operations=["optimize"],
+    )
+    session.add(preset)
+    session.flush()
+    session.add(TableAssignment(table_id=covered.id, preset_id=preset.id, pinned=True))
+    session.flush()
+
+    result = _call(session)
+    by_table = {row.table_id: row for row in result.slas}
+
+    covered_row = by_table[covered.id]
+    assert covered_row.schema_name == "lms"
+    assert covered_row.has_preset is True
+
+    uncovered_row = by_table[uncovered.id]
+    assert uncovered_row.schema_name == "cdp_revenue"
+    assert uncovered_row.has_preset is False

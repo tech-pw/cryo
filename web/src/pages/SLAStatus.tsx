@@ -20,7 +20,7 @@ import {
   WarningOutlined,
   ExclamationCircleOutlined,
 } from "@ant-design/icons";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
 import { OverviewPage } from "../components/layout/OverviewPage";
@@ -44,6 +44,16 @@ const getCompliancePercent = (actual: number | null, sla: number | null): number
   return Math.min(100, Math.max(0, 100 - (actual / sla) * 100));
 };
 
+const isRowBreached = (row: SLAStatusRow) =>
+  row.freshness_breached || row.maintenance_breached || row.p95_latency_breached;
+
+interface SchemaMatrixRow {
+  schema_name: string;
+  tables: number;
+  breached: number;
+  compliancePercent: number;
+}
+
 export const SLAStatus = () => {
   const { api } = useAuth();
   const [breachedOnly, setBreachedOnly] = useState(false);
@@ -54,12 +64,50 @@ export const SLAStatus = () => {
     refetchInterval: 60000
   });
 
+  const slas = data?.slas ?? [];
+
+  const breachByType = useMemo(
+    () => ({
+      freshness: slas.filter((s) => s.freshness_breached).length,
+      maintenance: slas.filter((s) => s.maintenance_breached).length,
+      latency: slas.filter((s) => s.p95_latency_breached).length,
+    }),
+    [slas]
+  );
+
+  const breachedWithoutPreset = useMemo(
+    () => slas.filter((s) => !s.has_preset && isRowBreached(s)).length,
+    [slas]
+  );
+
+  // Only meaningful against the full, unfiltered fleet -- in breached-only mode, "tables"
+  // per schema would silently mean "breached tables per schema" instead of the true
+  // denominator, making the compliance % wrong.
+  const schemaMatrix: SchemaMatrixRow[] = useMemo(() => {
+    if (breachedOnly) return [];
+    const bySchema = new Map<string, { tables: number; breached: number }>();
+    for (const row of slas) {
+      const entry = bySchema.get(row.schema_name) ?? { tables: 0, breached: 0 };
+      entry.tables += 1;
+      if (isRowBreached(row)) entry.breached += 1;
+      bySchema.set(row.schema_name, entry);
+    }
+    return Array.from(bySchema.entries())
+      .map(([schema_name, v]) => ({
+        schema_name,
+        tables: v.tables,
+        breached: v.breached,
+        compliancePercent: ((v.tables - v.breached) / Math.max(1, v.tables)) * 100,
+      }))
+      .sort((a, b) => a.compliancePercent - b.compliancePercent);
+  }, [slas, breachedOnly]);
+
   const columns: TableColumnsType<SLAStatusRow> = [
     {
       title: "Table",
       dataIndex: "table_name",
       key: "table_name",
-      width: "25%",
+      width: "22%",
       ellipsis: true,
       fixed: "left" as const,
       render: (name: string, record: SLAStatusRow) => (
@@ -69,8 +117,11 @@ export const SLAStatus = () => {
     {
       title: "Data freshness",
       key: "freshness",
-      width: "22%",
+      width: "20%",
       responsive: ["md"],
+      sorter: (a, b) =>
+        getCompliancePercent(a.freshness_hours, a.freshness_sla_hours) -
+        getCompliancePercent(b.freshness_hours, b.freshness_sla_hours),
       render: (_: any, record: SLAStatusRow) => {
         const breached = record.freshness_breached;
         const percent = getCompliancePercent(record.freshness_hours, record.freshness_sla_hours);
@@ -109,8 +160,11 @@ export const SLAStatus = () => {
     {
       title: "Maintenance",
       key: "maintenance",
-      width: "20%",
+      width: "18%",
       responsive: ["lg"],
+      sorter: (a, b) =>
+        getCompliancePercent(a.maintenance_days, a.maintenance_sla_days) -
+        getCompliancePercent(b.maintenance_days, b.maintenance_sla_days),
       render: (_: any, record: SLAStatusRow) => {
         const breached = record.maintenance_breached;
         const percent = getCompliancePercent(record.maintenance_days, record.maintenance_sla_days);
@@ -139,8 +193,11 @@ export const SLAStatus = () => {
     {
       title: "P95 Latency",
       key: "latency",
-      width: "20%",
+      width: "18%",
       responsive: ["xl"],
+      sorter: (a, b) =>
+        getCompliancePercent(a.p95_latency_ms, a.p95_latency_sla_ms) -
+        getCompliancePercent(b.p95_latency_ms, b.p95_latency_sla_ms),
       render: (_: any, record: SLAStatusRow) => {
         const breached = record.p95_latency_breached;
         const percent = getCompliancePercent(record.p95_latency_ms, record.p95_latency_sla_ms);
@@ -167,9 +224,28 @@ export const SLAStatus = () => {
       },
     },
     {
+      title: "Coverage",
+      key: "coverage",
+      width: "10%",
+      responsive: ["lg"],
+      filters: [
+        { text: "Preset assigned", value: true },
+        { text: "No preset", value: false },
+      ],
+      onFilter: (value, record) => record.has_preset === value,
+      render: (_: any, record: SLAStatusRow) =>
+        record.has_preset ? (
+          <Tag>Assigned</Tag>
+        ) : (
+          <Tooltip title="No preset assignment or matching rule -- maintenance SLA can never be met until one is configured.">
+            <Tag color="warning">No preset</Tag>
+          </Tooltip>
+        ),
+    },
+    {
       title: "Status",
       key: "status",
-      width: "15%",
+      width: "12%",
       render: (_: any, record: SLAStatusRow) => {
         const breachedCount = [
           record.freshness_breached,
@@ -185,6 +261,33 @@ export const SLAStatus = () => {
         }
         return <Tag color="error" icon={<WarningOutlined />}>CRITICAL</Tag>;
       },
+    },
+  ];
+
+  const schemaMatrixColumns: TableColumnsType<SchemaMatrixRow> = [
+    { title: "Schema", dataIndex: "schema_name", key: "schema_name" },
+    { title: "Tables", dataIndex: "tables", key: "tables", align: "right" as const },
+    { title: "Breached", dataIndex: "breached", key: "breached", align: "right" as const },
+    {
+      title: "Compliance",
+      key: "compliance",
+      align: "right" as const,
+      sorter: (a, b) => a.compliancePercent - b.compliancePercent,
+      defaultSortOrder: "ascend" as const,
+      render: (_: any, row: SchemaMatrixRow) => (
+        <Space>
+          <Text type={row.compliancePercent < 50 ? "danger" : undefined}>
+            {row.compliancePercent.toFixed(1)}%
+          </Text>
+          <Progress
+            percent={row.compliancePercent}
+            strokeColor={row.compliancePercent < 50 ? cryoColors.gradeF : cryoColors.gradeA}
+            showInfo={false}
+            size="small"
+            style={{ width: 80 }}
+          />
+        </Space>
+      ),
     },
   ];
 
@@ -225,12 +328,40 @@ export const SLAStatus = () => {
       {(data?.total_breached || 0) > 0 && !breachedOnly ? (
         <Alert
           title="SLA breaches detected"
-          description={`${data?.total_breached} table(s) currently breach SLA thresholds. Use breached-only mode for focused triage.`}
+          description={`${data?.total_breached} table(s) currently breach SLA thresholds (${breachByType.freshness} freshness, ${breachByType.maintenance} maintenance, ${breachByType.latency} latency). Use breached-only mode for focused triage.`}
           type="warning"
           showIcon
           icon={<ExclamationCircleOutlined />}
           style={{ marginBottom: 8 }}
         />
+      ) : null}
+
+      {breachedWithoutPreset > 0 ? (
+        <Alert
+          title="Missing maintenance coverage"
+          description={
+            <>
+              {breachedWithoutPreset} breached table(s) have no preset assigned or matching
+              rule — their maintenance SLA can never be met until one is configured.{" "}
+              <Link to="/presets">Open Presets</Link>
+            </>
+          }
+          type="info"
+          showIcon
+          style={{ marginBottom: 8 }}
+        />
+      ) : null}
+
+      {schemaMatrix.length > 0 ? (
+        <Card title="SLA matrix by schema" style={{ marginBottom: 8 }}>
+          <Table<SchemaMatrixRow>
+            columns={schemaMatrixColumns}
+            dataSource={schemaMatrix}
+            rowKey="schema_name"
+            size="small"
+            pagination={{ pageSize: 10, showTotal: (total) => `${total} schemas` }}
+          />
+        </Card>
       ) : null}
 
       <Card
@@ -259,9 +390,9 @@ export const SLAStatus = () => {
         }
       >
         <Table
-          scroll={{ x: 960 }}
+          scroll={{ x: 1080 }}
           columns={columns}
-          dataSource={data?.slas || []}
+          dataSource={slas}
           rowKey="table_id"
           pagination={{
             pageSize: 20,
