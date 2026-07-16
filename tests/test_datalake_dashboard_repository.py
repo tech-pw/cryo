@@ -18,8 +18,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session as SessionCls
+
+from cryo.config import Settings
 from cryo.db.models import Source, Table, TableCost, TableStats
-from cryo.db.repositories.datalake import dashboard_datalake
+from cryo.db.repositories.datalake import _sql_aggregate_cost_totals, dashboard_datalake
+
+_PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
 
 
 def _seed_source(session) -> Source:
@@ -27,6 +35,97 @@ def _seed_source(session) -> Source:
     session.add(source)
     session.flush()
     return source
+
+
+def _seed_table_with_cost(session, *, schema_name: str, precision: str) -> uuid.UUID:
+    source = _seed_source(session)
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 7, 10, tzinfo=UTC)
+    session.add(
+        Table(
+            id=table_id,
+            source_id=source.id,
+            schema_name=schema_name,
+            table_name="t",
+            first_seen_at=scan_at,
+            is_active=True,
+        )
+    )
+    session.add(
+        TableStats(
+            table_id=table_id,
+            scan_at=scan_at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="B",
+            overall_score=80,
+            total_files=10,
+            small_files_count=1,
+            total_size_gb=1.0,
+            query_count_30d=0,
+            estimated_monthly_s3_cost_usd=1.0,
+        )
+    )
+    session.add(
+        TableCost(
+            table_id=table_id,
+            scan_at=scan_at,
+            precision=precision,
+            price_per_gb_month=0.023,
+            live_bytes=100,
+            dead_bytes=0,
+            metadata_bytes=1,
+            orphan_bytes=0,
+            listed_bytes=101,
+            current_monthly_cost_usd=1.0,
+            projected_monthly_cost_usd=1.0,
+            projected_savings_usd_month=0.0,
+            query_request_savings_usd_month=0.0,
+        )
+    )
+    return table_id
+
+
+@pytest.fixture()
+def postgres_session():
+    """Real Postgres session -- SQLite doesn't enforce strict GROUP BY validation, so
+    Postgres-only bugs (e.g. a SELECT expression Postgres can't prove matches a GROUP BY
+    expression) are invisible to the rest of this suite, which runs on in-memory SQLite.
+    Skips cleanly if no local Postgres is available (e.g. `docker compose up -d postgres`
+    + `alembic upgrade head`, per the Makefile's `migrate` target).
+    """
+    try:
+        engine = create_engine(_PG_URL)
+        connection = engine.connect()
+    except OperationalError:
+        pytest.skip("local Postgres not available at localhost:5432 (see Makefile: migrate)")
+    transaction = connection.begin()
+    session = SessionCls(bind=connection, autoflush=False, expire_on_commit=False)
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+        engine.dispose()
+
+
+def test_precision_coverage_group_by_matches_select_on_postgres(postgres_session) -> None:
+    # Regression test: _sql_aggregate_cost_totals built func.coalesce(TableCost.precision,
+    # HEURISTIC) as two separately-constructed expressions (once in the SELECT list, once in
+    # GROUP BY). Postgres rejected this with "column table_cost.precision must appear in the
+    # GROUP BY clause or be used in an aggregate function" on any catalog with a TableCost
+    # row -- a real production 500 on GET /dashboards/datalake. SQLite never enforces this.
+    session = postgres_session
+    session.execute(text("SET search_path TO cryo, public"))
+    _seed_table_with_cost(session, schema_name="analytics", precision="metadata")
+    _seed_table_with_cost(session, schema_name="analytics", precision="heuristic")
+    session.flush()
+
+    totals = _sql_aggregate_cost_totals(session, settings=Settings())
+
+    coverage = totals["precision_coverage"]
+    assert coverage == {"metadata": 1, "heuristic": 1}
 
 
 def test_dashboard_datalake_cost_totals_reconcile_when_table_cost_exists(session) -> None:
