@@ -745,6 +745,7 @@ export interface CostDashboard {
     precision_coverage?: Partial<Record<CostPrecision, number>>;
     orphan_scan_stale?: boolean;
     last_full_cost_scan_at?: string | null;
+    total_realized_savings_usd?: number;
   };
   savings_by_operation: CostByOperation[];
   cost_by_schema: Array<{
