@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import case, desc, func, select
+from sqlalchemy.orm import contains_eager, selectinload
 
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.api.sla import sla_from_guardrails
@@ -26,6 +27,7 @@ from cryo.db.models import (
 from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
 from cryo.domain.enums import JobStatus
+from cryo.scheduler.rules import effective_preset
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
 router = APIRouter(prefix="/api/v1", tags=["dashboard"])
@@ -552,7 +554,22 @@ def get_sla_status(
     now = datetime.now(UTC)
     tenant_id = require_tenant(session)
 
-    base_stmt = select(Table, TableStats).join(TableStats).where(Table.first_seen_at.isnot(None))
+    # contains_eager(Table.stats) reuses the TableStats row this query already joins and
+    # fetches instead of lazy-loading table.stats again per table; selectinload(Table.source)
+    # and selectinload(Table.cost) batch those lookups (needed by qualified_table_name() and
+    # table_to_candidate() respectively) into one query each instead of one per table. Without
+    # these, the loop below re-triggers exactly the per-table query pattern this function is
+    # meant to fix.
+    base_stmt = (
+        select(Table)
+        .join(TableStats)
+        .where(Table.first_seen_at.isnot(None))
+        .options(
+            contains_eager(Table.stats),
+            selectinload(Table.source),
+            selectinload(Table.cost),
+        )
+    )
     if table_id is not None:
         base_stmt = base_stmt.where(Table.id == table_id)
     stmt: Any = (
@@ -563,10 +580,43 @@ def get_sla_status(
 
     results = session.execute(stmt).all()
 
+    # Aggregate in SQL, once, instead of once per table -- the per-table version of this
+    # loop (resolve_effective_preset() re-querying all presets/rules/assignments, plus a
+    # MAX(AuditLog.ts) and a percentile_cont(QueryLog) each) issued ~5 queries per table,
+    # ~65k queries for the full fleet on every page load (and this page polls every 60s).
+    # Same class of bug as dashboard_datalake's fleet-wide cost totals.
+    presets, rules, assignments = preset_repo.load_resolution_inputs(session)
+
+    last_maintenance_by_table: dict[UUID, datetime] = {
+        table_id: ts
+        for table_id, ts in session.execute(
+            select(AuditLog.table_id, func.max(AuditLog.ts))
+            .where(AuditLog.status == "succeeded")
+            .group_by(AuditLog.table_id)
+        )
+        if table_id is not None and ts is not None
+    }
+    p95_by_table: dict[UUID, float] = {
+        table_id: p95
+        for table_id, p95 in session.execute(
+            select(
+                QueryLog.table_id,
+                func.percentile_cont(0.95).within_group(QueryLog.duration_ms),
+            )
+            .where(QueryLog.executed_at >= now - timedelta(days=1))
+            .group_by(QueryLog.table_id)
+        )
+        if table_id is not None and p95 is not None
+    }
+
     slas: list[SLAStatusRead] = []
 
-    for table, stats in results:
-        effective = preset_repo.resolve_effective_preset(session, table)
+    for (table,) in results:
+        stats = table.stats
+        assert stats is not None  # guaranteed by the inner join in base_stmt
+        effective = effective_preset(
+            preset_repo.table_to_candidate(table), presets, rules, assignments
+        )
         guardrails = dict(effective.preset.guardrails) if effective and effective.preset else {}
         sla = sla_from_guardrails(guardrails)
         freshness_sla_hours = sla.freshness_hours
@@ -582,21 +632,11 @@ def get_sla_status(
 
         # Calculate maintenance recency
         maintenance_days = None
-        last_maintenance = session.scalar(
-            select(func.max(AuditLog.ts)).where(
-                AuditLog.table_id == table.id,
-                AuditLog.status == "succeeded",
-            )
-        )
+        last_maintenance = last_maintenance_by_table.get(table.id)
         if last_maintenance:
             maintenance_days = (now - last_maintenance).total_seconds() / 86400
 
-        # Get P95 latency from query logs
-        p95_stmt = select(func.percentile_cont(0.95).within_group(QueryLog.duration_ms)).where(
-            QueryLog.table_id == table.id,
-            QueryLog.executed_at >= now - timedelta(days=1),
-        )
-        p95_latency_ms = session.execute(p95_stmt).scalar()
+        p95_latency_ms = p95_by_table.get(table.id)
 
         # Check breaches
         freshness_breached = freshness_hours is not None and freshness_hours > freshness_sla_hours
