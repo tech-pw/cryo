@@ -536,7 +536,7 @@ export const Scans = () => {
         subtitle="Schedule catalog scans, trigger ad-hoc refreshes, and inspect scan progress."
         actions={
           <Space>
-            <Link to="/tables">
+            <Link to="/catalogs">
               <Button>Open table explorer</Button>
             </Link>
             <Link to="/runs">

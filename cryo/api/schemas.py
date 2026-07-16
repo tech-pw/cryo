@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_valid
 
 from cryo.api.redact import redact_sensitive_dict
 from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
+from cryo.engines.trino.catalog_bindings import parse_catalog_bindings, validate_catalog_bindings
 
 JsonDict = dict[str, Any]
 
@@ -26,6 +27,12 @@ def validate_native_engine_config(engine: EngineType | str, config: Mapping[str,
     normalized = impl.strip().lower()
     if normalized not in _NATIVE_ENGINE_IMPLS:
         raise ValueError("config.engine_impl must be 'go' or 'rust' for native engines")
+
+
+def validate_destination_config(engine: EngineType | str, config: Mapping[str, Any]) -> None:
+    """Validate engine-specific destination config (native impl + Trino catalog bindings)."""
+    validate_native_engine_config(engine, config)
+    validate_catalog_bindings(engine, config)
 
 
 class OrmModel(BaseModel):
@@ -405,8 +412,8 @@ class DestinationCreate(BaseModel):
     query_log_retention_days: int | None = Field(default=None, ge=1, le=365)
 
     @model_validator(mode="after")
-    def _validate_native_config(self) -> DestinationCreate:
-        validate_native_engine_config(self.engine, self.config)
+    def _validate_destination_config(self) -> DestinationCreate:
+        validate_destination_config(self.engine, self.config)
         return self
 
 
@@ -420,8 +427,8 @@ class DestinationTestRequest(BaseModel):
     destination_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def _validate_native_config(self) -> DestinationTestRequest:
-        validate_native_engine_config(self.engine, self.config)
+    def _validate_destination_config(self) -> DestinationTestRequest:
+        validate_destination_config(self.engine, self.config)
         return self
 
 
@@ -465,6 +472,16 @@ class DestinationPatch(BaseModel):
     enabled: bool | None = None
     query_log_config: JsonDict | None = None
     query_log_retention_days: int | None = Field(default=None, ge=1, le=365)
+
+    @model_validator(mode="after")
+    def _validate_destination_config(self) -> DestinationPatch:
+        # Full validation (engine + config together) runs in the route after merge.
+        if self.engine is not None and self.config is not None:
+            validate_destination_config(self.engine, self.config)
+        elif self.config is not None and "catalog_bindings" in self.config:
+            # Shape-check only; route rejects bindings on non-Trino after merge.
+            parse_catalog_bindings(self.config)
+        return self
 
 
 class PresetCreate(BaseModel):

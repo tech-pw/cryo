@@ -239,8 +239,27 @@ def main() -> None:
     with SessionLocal() as session:
         source = upsert_source(session, LOCAL_SOURCE)
         hms_source = upsert_source(session, LOCAL_HMS_SOURCE)
-        trino = upsert_destination(session, LOCAL_TRINO_DESTINATION)
-        trino_hms = upsert_destination(session, LOCAL_TRINO_HMS_DESTINATION)
+        trino_payload = {
+            **LOCAL_TRINO_DESTINATION,
+            "config": {
+                **LOCAL_TRINO_DESTINATION["config"],
+                # Local Trino registers the REST catalog as "iceberg" (≠ source catalog_name "rest").
+                "catalog_bindings": [
+                    {"source_id": str(source.id), "trino_catalog": "iceberg"},
+                ],
+            },
+        }
+        trino_hms_payload = {
+            **LOCAL_TRINO_HMS_DESTINATION,
+            "config": {
+                **LOCAL_TRINO_HMS_DESTINATION["config"],
+                "catalog_bindings": [
+                    {"source_id": str(hms_source.id), "trino_catalog": "iceberg_hms"},
+                ],
+            },
+        }
+        trino = upsert_destination(session, trino_payload)
+        trino_hms = upsert_destination(session, trino_hms_payload)
         spark = upsert_destination(session, LOCAL_SPARK_DESTINATION)
         native_payload = {
             **LOCAL_NATIVE_DESTINATION,

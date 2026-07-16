@@ -24,6 +24,7 @@ import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { PlanPreview } from "../../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
 import { useAuth } from "../../lib/auth";
+import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
 import { exportCsv } from "../../lib/exportCsv";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
@@ -131,6 +132,10 @@ export const TableExplorerSection = () => {
   const catalogOptions = useMemo(
     () => (sources.data ?? []).map((source) => ({ label: source.name, value: source.id })),
     [sources.data]
+  );
+  const presetOptions = useMemo(
+    () => (presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id })),
+    [presets.data]
   );
 
   useEffect(() => {
@@ -291,6 +296,31 @@ export const TableExplorerSection = () => {
     [allMatching, selectedRowKeys, pageItems]
   );
 
+  const assignablePresets = useMemo(() => {
+    const allPresets = presets.data ?? [];
+    const dests = destinations.data ?? [];
+    if (selection?.mode === "filter") {
+      const filterSourceIds = filters.sourceIds;
+      if (filterSourceIds?.length) {
+        return filterPresetsForSources(allPresets, dests, filterSourceIds);
+      }
+      // Broad filter selection: API rejects incompatible Trino assignments.
+      return allPresets;
+    }
+    if (!selectedRowKeys.length) return allPresets;
+    const sourceIds = pageItems
+      .filter((table) => selectedRowKeys.includes(table.id))
+      .map((table) => table.source_id);
+    return filterPresetsForSources(allPresets, dests, sourceIds);
+  }, [
+    presets.data,
+    destinations.data,
+    selection?.mode,
+    filters.sourceIds,
+    selectedRowKeys,
+    pageItems
+  ]);
+
   const exportTablesCsv = () => {
     const rows = pageItems.map((row) => [
       row.catalog_name ?? "",
@@ -395,6 +425,7 @@ export const TableExplorerSection = () => {
       <FilterBar
         value={filters}
         catalogOptions={catalogOptions}
+        presetOptions={presetOptions}
         matchingTotal={matchingTotal}
         hasSelection={hasSelection}
         filterSelectionActive={filterSelectionActive}
@@ -654,7 +685,7 @@ export const TableExplorerSection = () => {
       />
       <BulkAssignBar
         selection={selection}
-        presets={presets.data ?? []}
+        presets={assignablePresets}
         destinations={destinations.data ?? []}
         assigning={assign.isPending}
         running={run.isPending || manifestRewrite.isPending}

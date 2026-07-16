@@ -15,8 +15,8 @@ import { TableExplorerSection } from "./catalog/TableExplorerSection";
  * and pre-applies a source filter -- so the dashboard-to-tables drill-down still works,
  * just on one URL instead of two.
  *
- * The `/tables` route now redirects to `/catalogs` (no source filter), so existing
- * bookmarks and links keep working.
+ * Bare `/tables` redirects to `/catalogs` (query string preserved); `/tables/:id` remains
+ * table detail.
  */
 export const Catalog = () => (
   <div>

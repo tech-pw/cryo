@@ -156,6 +156,7 @@ CREATE TABLE cryo.destinations (
     name            text UNIQUE NOT NULL,
     engine          text NOT NULL,            -- 'trino' | 'spark_emr'
     config          jsonb NOT NULL,           -- trino: {coordinators:[...], port, user, catalog,
+                                              --         catalog_bindings:[{source_id, trino_catalog?}],
                                               --         session:{...}, per_replica_cap}
                                               -- spark_emr: {application_id, role_arn, s3_logs,
                                               --             catalog_conf:{...}, slot_cap}
@@ -725,8 +726,12 @@ POST  /api/v1/presets/{id}/simulate                           # -> {matched_coun
 GET/POST/DELETE        /api/v1/presets/{id}/rules
 POST  /api/v1/assignments                                     # body: {selection, preset_id}
         # selection = {mode:"ids", ids:[...]} OR {mode:"filter", filter:<predicate>}
+        # Trino presets rejected (400) when any selected table's source is not in
+        # destination.config.catalog_bindings
 DELETE /api/v1/assignments                                    # same selection grammar (unassign)
 GET   /api/v1/tables/{id}/effective-preset                    # provenance: assignment | rule | default | none
+GET   /api/v1/tables/{id}/compatible-presets                  # presets whose destination serves this catalog
+        # (Trino: source must appear in catalog_bindings; non-Trino always included)
 
 # Maintenance (ad-hoc) + preview
 POST  /api/v1/maintenance/preview                             # dry-run -> per-table rendered SQL +

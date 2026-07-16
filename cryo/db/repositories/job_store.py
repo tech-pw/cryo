@@ -282,18 +282,17 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         if table.source is not None
         else f"{catalog}.{table.schema_name}.{table.table_name}"
     )
-    if stats is None:
-        return {
-            "catalog": catalog,
-            "schema_name": table.schema_name,
-            "table_name": table.table_name,
-            "table_ref": table_ref,
-        }
-    return {
+    base = {
         "catalog": catalog,
         "schema_name": table.schema_name,
         "table_name": table.table_name,
         "table_ref": table_ref,
+        "source_id": str(table.source_id) if table.source_id is not None else None,
+    }
+    if stats is None:
+        return base
+    return {
+        **base,
         "needs_compaction": stats.needs_compaction,
         "compaction_priority": stats.compaction_priority,
         "grade": stats.grade,

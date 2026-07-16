@@ -359,7 +359,7 @@ export const SLAStatus = () => {
         <Space>
           <Text>Show breached only:</Text>
           <Switch checked={breachedOnly} onChange={setBreachedOnly} />
-          <Link to="/tables">
+          <Link to="/catalogs">
             <Button>Open table explorer</Button>
           </Link>
         </Space>

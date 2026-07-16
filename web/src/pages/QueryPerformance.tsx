@@ -112,7 +112,7 @@ export const QueryPerformance = () => {
       ellipsis: true,
       render: (name: string | null) =>
         name ? (
-          <Link to={`/tables?q=${encodeURIComponent(name)}`}>{name}</Link>
+          <Link to="/catalogs">{name}</Link>
         ) : (
           "—"
         ),
