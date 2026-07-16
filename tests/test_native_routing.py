@@ -8,8 +8,10 @@ from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.native.engine import NativeEngine, _supported_operations
 from cryo.engines.native.routing import (
+    NATIVE_DELETE_FILES_DETAIL,
     NATIVE_MANIFESTS_DETAIL,
     NATIVE_V3_PARTITIONED_DV_DETAIL,
+    has_nonzero_delete_files,
     has_v3_partitioned_deletion_vectors,
     is_mor_table,
     native_cow_optimize_enabled,
@@ -37,13 +39,20 @@ def test_is_mor_table_detects_delete_files() -> None:
     assert not is_mor_table({"total_delete_files": 0, "delete_file_pct": 0})
 
 
-def test_native_optimize_enabled_for_cow_and_mor_on_go_engine(
+def test_has_nonzero_delete_files() -> None:
+    assert has_nonzero_delete_files({"total_delete_files": 2})
+    assert has_nonzero_delete_files({"raw": {"total_delete_files": 1}})
+    assert not has_nonzero_delete_files({"total_delete_files": 0})
+    assert not has_nonzero_delete_files({"delete_file_pct": 0.5})
+
+
+def test_native_optimize_enabled_blocks_delete_files_on_go_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
     cfg = {"engine_impl": "go"}
     assert native_optimize_enabled({"total_delete_files": 0}, cfg)
-    assert native_optimize_enabled({"total_delete_files": 5}, cfg)
+    assert not native_optimize_enabled({"total_delete_files": 5}, cfg)
 
 
 def test_cow_optimize_enabled_only_with_go_engine(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,7 +91,7 @@ def test_v3_partitioned_deletion_vectors_gate() -> None:
         },
     }
     assert not has_v3_partitioned_deletion_vectors(mor_v3_pos)
-    assert native_optimize_enabled(mor_v3_pos, {"engine_impl": "go"})
+    assert not native_optimize_enabled(mor_v3_pos, {"engine_impl": "go"})
 
 
 def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,7 +113,7 @@ def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.Monkey
     assert not routing.skipped_operations
 
 
-def test_resolve_native_routing_mor_includes_native_optimize(
+def test_resolve_native_routing_delete_files_blocks_optimize(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
@@ -114,11 +123,38 @@ def test_resolve_native_routing_mor_includes_native_optimize(
         {"engine_impl": "go", "sql_fallback_destination_id": "trino-1"},
     )
     native_types = {op.type for op in routing.native_operations}
-    assert OperationType.OPTIMIZE in native_types
-    # optimize_manifests routes to SQL fallback when configured (not skipped).
+    assert native_types == {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+    }
+    assert OperationType.OPTIMIZE not in native_types
     fallback_types = {op.type for op, _ in routing.fallback_operations}
-    assert fallback_types == {OperationType.OPTIMIZE_MANIFESTS}
+    assert OperationType.OPTIMIZE in fallback_types
+    assert OperationType.OPTIMIZE_MANIFESTS in fallback_types
+    optimize_detail = next(
+        detail for op, detail in routing.fallback_operations if op.type is OperationType.OPTIMIZE
+    )
+    assert NATIVE_DELETE_FILES_DETAIL in optimize_detail
     assert not routing.skipped_operations
+
+
+def test_resolve_native_routing_delete_files_skips_optimize_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    routing = resolve_native_routing(
+        _deep_plan(),
+        {"total_delete_files": 3, "format_version": 2},
+        {"engine_impl": "go"},
+    )
+    native_types = {op.type for op in routing.native_operations}
+    assert native_types == {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+    }
+    skipped = {op.type: detail for op, detail in routing.skipped_operations}
+    assert OperationType.OPTIMIZE in skipped
+    assert NATIVE_DELETE_FILES_DETAIL in skipped[OperationType.OPTIMIZE]
 
 
 def test_resolve_native_routing_v3_dv_routes_optimize_to_fallback(
@@ -186,7 +222,7 @@ def test_native_render_includes_cow_optimize(monkeypatch: pytest.MonkeyPatch) ->
     }
 
 
-def test_native_render_includes_mor_optimize(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_native_render_excludes_optimize_when_delete_files(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
     engine = NativeEngine(
         config={"engine_impl": "go"},
@@ -197,7 +233,11 @@ def test_native_render_includes_mor_optimize(monkeypatch: pytest.MonkeyPatch) ->
     operations = statements[0].payload.get("operations")
     assert isinstance(operations, list)
     rendered_types = {item["type"] for item in operations}
-    assert "optimize" in rendered_types
+    assert rendered_types == {
+        "expire_snapshots",
+        "remove_orphan_files",
+    }
+    assert "optimize" not in rendered_types
 
 
 def test_resolve_native_routing_zorder_routes_to_fallback(
