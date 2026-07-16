@@ -612,6 +612,23 @@ class SourceRequestCostByDay:
 
 
 @dataclass(frozen=True)
+class SourceRequestCostByBucket:
+    """One source can track several buckets (bronze/silver/gold layers, audit-log
+    variants, etc.) -- this is the per-bucket breakdown of the same totals that get
+    summed into SourceRequestCostRollup's top-level fields, so the UI can show which
+    bucket is actually driving cost instead of only a source-wide sum."""
+
+    bucket: str
+    region: str | None
+    enabled: bool
+    logging_status: str
+    last_ingested_at: datetime | None
+    total_request_count_30d: int
+    total_cost_usd_month: float
+    by_tier: SourceRequestCostByTier
+
+
+@dataclass(frozen=True)
 class SourceRequestCostRollup:
     """Cost page's "S3 requests" tab (fleet-wide view, one row per source): the
     request-count/cost fields are summed across every bucket this source tracks; the
@@ -619,6 +636,11 @@ class SourceRequestCostRollup:
     describe a single "primary" bucket -- the most recently ingested one, or the first
     alphabetically if none have ingested yet -- since a source usually maps to one bucket
     and the fleet view needs a single representative status per row, not a nested table.
+
+    ``by_bucket`` is the real per-bucket breakdown (see SourceRequestCostByBucket) --
+    the top-level fields above stay for backwards compatibility with anything already
+    reading the source-wide total, but any UI that wants to know which bucket is
+    actually expensive should read ``by_bucket`` instead.
     """
 
     bucket: str
@@ -630,6 +652,7 @@ class SourceRequestCostRollup:
     total_cost_usd_month: float
     by_tier: SourceRequestCostByTier
     by_day: list[SourceRequestCostByDay]
+    by_bucket: list[SourceRequestCostByBucket]
     approximate: bool
 
 
@@ -653,9 +676,19 @@ def compute_source_request_cost_rollup(
     if not configs:
         return None
 
+    def _aware(value: datetime | None) -> datetime:
+        # Some configs never ingest (last_ingested_at stays NULL) while others carry a
+        # real timestamp -- SQLite (unit tests) can additionally round-trip a stored
+        # TIMESTAMP as naive even when it was written tz-aware, so comparing a mix of
+        # None/naive/aware values directly raises TypeError. Normalize everything to
+        # aware UTC before sorting.
+        if value is None:
+            return datetime.min.replace(tzinfo=UTC)
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
     primary = sorted(
         configs,
-        key=lambda c: (c.last_ingested_at or datetime.min.replace(tzinfo=UTC), c.bucket),
+        key=lambda c: (_aware(c.last_ingested_at), c.bucket),
         reverse=True,
     )[0]
 
@@ -663,6 +696,7 @@ def compute_source_request_cost_rollup(
     window_start = now.date() - timedelta(days=lookback_days)
     rows = session.execute(
         select(
+            S3RequestCostDaily.bucket,
             S3RequestCostDaily.day,
             S3RequestCostDaily.operation_tier,
             S3RequestCostDaily.request_count,
@@ -678,19 +712,58 @@ def compute_source_request_cost_rollup(
     tier1_cost = tier2_cost = 0.0
     by_day: dict[date, dict[str, float]] = {}
     approximate = False
-    for day, operation_tier, request_count, cost_usd, pricing_source in rows:
+
+    @dataclass
+    class _BucketTotals:
+        tier1_count: int = 0
+        tier2_count: int = 0
+        tier1_cost: float = 0.0
+        tier2_cost: float = 0.0
+
+    bucket_totals: dict[str, _BucketTotals] = {}
+
+    for bucket, day, operation_tier, request_count, cost_usd, pricing_source in rows:
         tier = _PRICING_TIER.get(operation_tier, "tier1")
+        totals = bucket_totals.setdefault(bucket, _BucketTotals())
         if tier == "tier2":
             tier2_count += request_count
             tier2_cost += cost_usd
+            totals.tier2_count += request_count
+            totals.tier2_cost += cost_usd
         else:
             tier1_count += request_count
             tier1_cost += cost_usd
+            totals.tier1_count += request_count
+            totals.tier1_cost += cost_usd
         entry = by_day.setdefault(day, {"count": 0, "cost_usd": 0.0})
         entry["count"] += request_count
         entry["cost_usd"] += cost_usd
         if pricing_source != "aws_price_list_api":
             approximate = True
+
+    # Every configured bucket gets a row, not just ones with cost data in the window --
+    # matching the existing per-source behavior where "configured but zero requests
+    # measured yet" is a real, distinct, visible state rather than an omitted one.
+    by_bucket = [
+        SourceRequestCostByBucket(
+            bucket=config.bucket,
+            region=config.region,
+            enabled=bool(config.enabled),
+            logging_status=config.logging_status,
+            last_ingested_at=config.last_ingested_at,
+            total_request_count_30d=totals.tier1_count + totals.tier2_count,
+            total_cost_usd_month=round(totals.tier1_cost + totals.tier2_cost, 4),
+            by_tier=SourceRequestCostByTier(
+                tier1_count=totals.tier1_count,
+                tier2_count=totals.tier2_count,
+                tier1_cost_usd=round(totals.tier1_cost, 4),
+                tier2_cost_usd=round(totals.tier2_cost, 4),
+            ),
+        )
+        for config in configs
+        for totals in [bucket_totals.get(config.bucket, _BucketTotals())]
+    ]
+    by_bucket.sort(key=lambda b: b.total_cost_usd_month, reverse=True)
 
     return SourceRequestCostRollup(
         bucket=primary.bucket,
@@ -710,5 +783,6 @@ def compute_source_request_cost_rollup(
             SourceRequestCostByDay(day=day, count=int(v["count"]), cost_usd=round(v["cost_usd"], 4))
             for day, v in sorted(by_day.items())
         ],
+        by_bucket=by_bucket,
         approximate=approximate,
     )
