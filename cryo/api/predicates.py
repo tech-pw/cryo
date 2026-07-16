@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, not_, or_, true
 
-from cryo.db.models import Table, TableCost, TableStats
+from cryo.db.models import Table, TableAssignment, TableCost, TableStats
 from cryo.domain.predicates import (
     LEAF_OPERATORS,
     LIKE_ESCAPE,
@@ -38,6 +38,7 @@ FIELD_MAP = {
     "reclaimable_bytes": TableStats.reclaimable_bytes,
     "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
     "cost_precision": TableCost.precision,
+    "assigned_preset_id": TableAssignment.preset_id,
 }
 
 

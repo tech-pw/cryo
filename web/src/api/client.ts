@@ -383,6 +383,8 @@ export const testDestinationConfig = (
 ) => apiFetch<DestinationTestResult>("/destinations/test", api, { method: "POST", body });
 
 export const listPresets = (api: ApiOptions) => apiFetch<PresetRead[]>("/presets", api);
+export const listCompatiblePresets = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<PresetRead[]>(`/tables/${tableId}/compatible-presets`, api);
 export const createPreset = (api: ApiOptions, body: PresetWrite) =>
   apiFetch<PresetRead>("/presets", api, { method: "POST", body });
 export const patchPreset = (api: ApiOptions, id: UUID, body: Partial<PresetWrite>) =>

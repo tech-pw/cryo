@@ -101,7 +101,7 @@ from cryo.api.schemas import (
     TablePreviewRead,
     TableRead,
     TableStatsHistoryResponse,
-    validate_native_engine_config,
+    validate_destination_config,
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
@@ -117,6 +117,7 @@ from cryo.db.models import (
     Source,
     Table,
     TableAlertSubscription,
+    TableAssignment,
     TableCost,
     TableStats,
 )
@@ -481,6 +482,10 @@ def get_destination(destination_id: uuid.UUID, session: SessionDep) -> Destinati
 )
 def create_destination(payload: DestinationCreate, session: SessionDep) -> Destination:
     data = payload.model_dump(mode="json")
+    try:
+        _ensure_catalog_binding_sources(session, data.get("config") or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     tenant_id = tenant_id_for_create(session)
     if tenant_id is not None:
         data["tenant_id"] = tenant_id
@@ -514,7 +519,8 @@ def patch_destination(
     effective_engine = values.get("engine", destination.engine)
     effective_config = values.get("config", destination.config or {})
     try:
-        validate_native_engine_config(effective_engine, effective_config)
+        validate_destination_config(effective_engine, effective_config)
+        _ensure_catalog_binding_sources(session, effective_config)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     _apply_patch(destination, values)
@@ -853,13 +859,20 @@ def list_tables(
         select(Table)
         .outerjoin(TableStats)
         .outerjoin(TableCost)
+        .outerjoin(TableAssignment)
         .options(
             selectinload(Table.source),
             selectinload(Table.stats),
             selectinload(Table.cost),
         )
     )
-    count_stmt = select(func.count()).select_from(Table).outerjoin(TableStats).outerjoin(TableCost)
+    count_stmt = (
+        select(func.count())
+        .select_from(Table)
+        .outerjoin(TableStats)
+        .outerjoin(TableCost)
+        .outerjoin(TableAssignment)
+    )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
     count_stmt = scope_by_tenant(count_stmt, Table, tenant_id)
     if predicate is not None:
@@ -983,6 +996,7 @@ def group_tables(
         .select_from(Table)
         .outerjoin(TableStats)
         .outerjoin(TableCost)
+        .outerjoin(TableAssignment)
     )
     if field == "catalog":
         stmt = stmt.join(Source, Source.id == Table.source_id)
@@ -1196,6 +1210,21 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
     )
 
 
+@router.get(
+    "/tables/{table_id}/compatible-presets",
+    response_model=list[PresetRead],
+    dependencies=[Depends(require_viewer)],
+)
+def list_compatible_presets(table_id: uuid.UUID, session: SessionDep) -> list[Preset]:
+    """Presets whose destination can maintain this table's catalog.
+
+    Trino presets are included only when the table's source appears in the
+    destination's ``catalog_bindings``. Non-Trino presets are always included.
+    """
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    return presets.list_compatible_presets(session, table)
+
+
 @router.post(
     "/assignments",
     response_model=AssignmentResponse,
@@ -1206,6 +1235,14 @@ def assign_tables(payload: AssignmentRequest, session: SessionDep) -> Assignment
         raise HTTPException(status_code=400, detail="Preset does not exist")
 
     selection = _resolve_selection(session, payload.selection)
+    try:
+        presets.assert_preset_compatible_with_tables(
+            session,
+            preset_id=payload.preset_id,
+            table_ids=selection.table_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     affected = presets.assign_tables(
         session,
         table_ids=selection.table_ids,
@@ -2015,6 +2052,17 @@ def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
 def _apply_patch(model: object, values: dict[str, object]) -> None:
     for key, value in values.items():
         setattr(model, key, value)
+
+
+def _ensure_catalog_binding_sources(session: Session, config: dict[str, Any]) -> None:
+    """Ensure every catalog_bindings.source_id refers to a scoped Cryo source."""
+    from cryo.engines.trino.catalog_bindings import parse_catalog_bindings
+
+    bindings = parse_catalog_bindings(config)
+    if not bindings:
+        return
+    for binding in bindings:
+        get_scoped_resource(session, Source, binding.source_id, resource_type="Source")
 
 
 def _renderer_for(

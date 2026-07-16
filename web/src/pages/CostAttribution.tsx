@@ -62,7 +62,7 @@ export const CostAttribution = () => {
           <TeamOutlined />
           <Text strong>{record.cost_center || record.department || "Unattributed"}</Text>
           {(record.cost_center || record.department) ? (
-            <Link to="/tables?view=savings">
+            <Link to="/catalogs">
               <Button size="small" type="link">View tables</Button>
             </Link>
           ) : null}

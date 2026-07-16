@@ -223,6 +223,60 @@ def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     assert result.plan["table_ref"] == "cdp.admin.orphan_files_removal_audit_log"
 
 
+def test_worker_uses_catalog_binding_override_in_plan_table_ref() -> None:
+    from uuid import uuid4
+
+    source_id = str(uuid4())
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            engine="trino",
+            config={
+                "catalog": "session_default",
+                "catalog_bindings": [
+                    {"source_id": source_id, "trino_catalog": "iceberg"},
+                ],
+            },
+        )
+    )
+    store.add_table_data(
+        "table-1",
+        TableMaintenanceData(
+            stats={
+                "source_id": source_id,
+                "catalog": "rest",
+                "schema_name": "demo",
+                "table_name": "events",
+                "small_files_count": 500,
+                "total_size_gb": 10,
+            },
+            partitions=[],
+        ),
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            params={"min_small_files": 10, "chunk_size_gb": 100},
+            status=JobStatus.ADMITTED,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", "r1")
+
+    result = Worker(queue, store, lambda destination: FakeMaintenanceEngine(), locks).process_next()
+
+    assert result is not None
+    assert result.plan is not None
+    assert result.plan["table_ref"] == "iceberg.demo.events"
+
+
 def _worker_fixture(
     chunk_checkpointing: bool = False,
     engine_impl: str | None = None,

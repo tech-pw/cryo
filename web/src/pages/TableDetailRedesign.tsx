@@ -77,6 +77,7 @@ import {
   getTableSignals,
   getTableRoiBreakdown,
   listDestinations,
+  listCompatiblePresets,
   listPresets,
   listSources,
   protectSnapshot,
@@ -280,6 +281,10 @@ export const TableDetail = () => {
     retry: false
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
+  const compatiblePresets = useQuery({
+    queryKey: ["compatible-presets", tableId, token],
+    queryFn: () => listCompatiblePresets(api, tableId)
+  });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
   const compliance = useQuery({
     queryKey: ["table-compliance", tableId, token],
@@ -650,6 +655,19 @@ export const TableDetail = () => {
     return destinations.data?.find((item) => item.id === preset.destination_id) ?? null;
   }, [presets.data, destinations.data, effectivePreset.data?.preset_id]);
 
+  const assignPresetOptions = useMemo(() => {
+    const compatible = compatiblePresets.data ?? [];
+    const options = compatible.map((p) => ({ label: p.name, value: p.id }));
+    const effectiveId = effectivePreset.data?.preset_id;
+    if (effectiveId && !options.some((o) => o.value === effectiveId)) {
+      const fromAll = presets.data?.find((p) => p.id === effectiveId);
+      if (fromAll) {
+        options.unshift({ label: `${fromAll.name} (catalog not linked)`, value: fromAll.id });
+      }
+    }
+    return options;
+  }, [compatiblePresets.data, presets.data, effectivePreset.data?.preset_id]);
+
   const protectedItems: Array<{ snapshot_id: number; label?: string | null; ts?: string | null }> = [
     ...protectedLocal,
     ...protectedFromAudit
@@ -778,8 +796,8 @@ export const TableDetail = () => {
             statsRaw={statsRaw}
             reclaimableBytes={reclaimableBytes}
             savingsUsd={savingsUsd}
-            presetOptions={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
-            presetsLoading={presets.isLoading}
+            presetOptions={assignPresetOptions}
+            presetsLoading={presets.isLoading || compatiblePresets.isLoading}
             effectivePresetId={effectivePreset.data?.preset_id ?? undefined}
             onAssignPreset={(presetId) => assign.mutate(presetId)}
             assignPending={assign.isPending}
@@ -1923,8 +1941,8 @@ export const TableDetail = () => {
             statsRaw={statsRaw}
             reclaimableBytes={reclaimableBytes}
             savingsUsd={savingsUsd}
-            presetOptions={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
-            presetsLoading={presets.isLoading}
+            presetOptions={assignPresetOptions}
+            presetsLoading={presets.isLoading || compatiblePresets.isLoading}
             effectivePresetId={effectivePreset.data?.preset_id ?? undefined}
             onAssignPreset={(presetId) => assign.mutate(presetId)}
             assignPending={assign.isPending}
@@ -2172,9 +2190,9 @@ export const TableDetail = () => {
       <div className="td-breadcrumbs">
         <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/")}>Home</span>
         <span className="td-breadcrumb-separator">/</span>
-        <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/tables")}>Catalogs</span>
+        <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/catalogs")}>Catalogs</span>
         <span className="td-breadcrumb-separator">/</span>
-        <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate(`/tables?source_id=${row?.source_id}`)}>
+        <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate(`/catalogs?source=${row?.source_id}`)}>
           {sourceName}
         </span>
         <span className="td-breadcrumb-separator">/</span>
@@ -2496,7 +2514,7 @@ export const TableDetail = () => {
                   <Select
                     placeholder="Assign preset"
                     value={effectivePreset.data?.preset_id ?? undefined}
-                    options={(presets.data ?? []).map((p) => ({ label: p.name, value: p.id }))}
+                    options={assignPresetOptions}
                     onChange={(presetId) => {
                       if (presetId) {
                         assign.mutate(presetId);
@@ -2504,7 +2522,7 @@ export const TableDetail = () => {
                         unassign.mutate();
                       }
                     }}
-                    loading={assign.isPending || presets.isLoading || unassign.isPending}
+                    loading={assign.isPending || presets.isLoading || compatiblePresets.isLoading || unassign.isPending}
                     disabled={!row}
                     style={{ width: '100%' }}
                     size="small"

@@ -485,6 +485,97 @@ def test_list_runs_filters_by_source_id(api_db: ApiDb) -> None:
     assert [item["id"] for item in response.json()] == [str(matching_run_id)]
 
 
+def test_compatible_presets_and_assign_requires_catalog_binding(api_db: ApiDb) -> None:
+    client = api_db.client
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    other_source_id = uuid.uuid4()
+    with api_db.session_factory() as session:
+        session.add(
+            Source(
+                id=other_source_id,
+                name=f"other-{uuid.uuid4()}",
+                type="rest",
+                config={},
+            )
+        )
+        # Bind only the first source to the Trino destination.
+        destination = session.get(Destination, destination_id)
+        assert destination is not None
+        destination.config = {
+            **dict(destination.config or {}),
+            "catalog_bindings": [{"source_id": str(source_id), "trino_catalog": "iceberg"}],
+        }
+        session.commit()
+
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+    other_table_id = uuid.uuid4()
+    with api_db.session_factory() as session:
+        session.add(
+            Table(
+                id=other_table_id,
+                source_id=other_source_id,
+                schema_name="analytics",
+                table_name="other_events",
+                is_active=True,
+            )
+        )
+        session.commit()
+
+    native_dest = client.post(
+        "/api/v1/destinations",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": f"native-{uuid.uuid4()}",
+            "engine": "native",
+            "config": {"engine_impl": "go", "slot_cap": 2},
+        },
+    )
+    assert native_dest.status_code == 201
+    native_destination_id = native_dest.json()["id"]
+
+    trino_preset = _create_preset(client, "trino-bound", destination_id, priority=100)
+    native_preset = _create_preset(client, "native-any", native_destination_id, priority=100)
+
+    compatible = client.get(
+        f"/api/v1/tables/{hot_table_id}/compatible-presets",
+        headers=VIEWER_HEADERS,
+    )
+    assert compatible.status_code == 200
+    compatible_ids = {item["id"] for item in compatible.json()}
+    assert trino_preset in compatible_ids
+    assert native_preset in compatible_ids
+
+    incompatible_list = client.get(
+        f"/api/v1/tables/{other_table_id}/compatible-presets",
+        headers=VIEWER_HEADERS,
+    )
+    assert incompatible_list.status_code == 200
+    other_ids = {item["id"] for item in incompatible_list.json()}
+    assert trino_preset not in other_ids
+    assert native_preset in other_ids
+
+    ok_assign = client.post(
+        "/api/v1/assignments",
+        headers=OPERATOR_HEADERS,
+        json={
+            "selection": {"mode": "ids", "ids": [str(hot_table_id)]},
+            "preset_id": trino_preset,
+        },
+    )
+    assert ok_assign.status_code == 200
+
+    bad_assign = client.post(
+        "/api/v1/assignments",
+        headers=OPERATOR_HEADERS,
+        json={
+            "selection": {"mode": "ids", "ids": [str(other_table_id)]},
+            "preset_id": trino_preset,
+        },
+    )
+    assert bad_assign.status_code == 400
+    assert "catalog" in bad_assign.json()["detail"].lower()
+
+
 def _seed_source_destination(
     session_factory: sessionmaker[Session],
 ) -> tuple[uuid.UUID, uuid.UUID]:

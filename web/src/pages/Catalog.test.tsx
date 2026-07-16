@@ -59,7 +59,6 @@ const renderPage = (initialRoute = "/catalogs") => {
         <MemoryRouter initialEntries={[initialRoute]}>
           <Routes>
             <Route path="/catalogs" element={<Catalog />} />
-            <Route path="/tables" element={<Catalog />} />
           </Routes>
         </MemoryRouter>
       </ThemeProvider>
@@ -143,22 +142,4 @@ describe("Consolidated Catalog page", () => {
     });
   });
 
-  it("direct /tables URL also lands on the consolidated page", async () => {
-    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
-      total_catalogs: 0,
-      total_tables: 0,
-      total_cost_usd: 0,
-      catalogs: []
-    } as never);
-    vi.mocked(listSources).mockResolvedValue([]);
-    vi.mocked(listTables).mockResolvedValue({
-      items: [],
-      total: 0,
-      limit: 50,
-      offset: 0
-    });
-    renderPage("/tables");
-
-    expect(await screen.findByText(/catalogs & tables/i)).toBeInTheDocument();
-  });
 });

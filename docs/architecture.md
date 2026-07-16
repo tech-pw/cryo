@@ -538,7 +538,9 @@ Destinations answer where maintenance executes. Engines in `cryo/engines/`:
 - `cryo/engines/flink/` — Flink table-maintenance config emitter (team-operated, not Cryo-executed).
 
 Sources and destinations are intentionally separate. A table can be discovered from one source and
-maintained through a destination selected by its effective preset.
+maintained through a destination selected by its effective preset. Trino destinations may declare
+`config.catalog_bindings` (Cryo source IDs, optional Trino catalog-name overrides) so the UI and
+assignment API only offer Trino presets when the table's lakehouse is registered on that engine.
 
 ### Planner
 
