@@ -807,6 +807,9 @@ class CostDashboardTotals(BaseModel):
     precision_coverage: dict[str, int] = Field(default_factory=dict)
     orphan_scan_stale: bool = False
     last_full_cost_scan_at: datetime | None = None
+    # All-time cumulative $ saved from completed maintenance runs -- "saved to date," not
+    # bounded to the trend chart's recent window.
+    total_realized_savings_usd: float = 0.0
 
 
 class CostSchemaItem(BaseModel):
