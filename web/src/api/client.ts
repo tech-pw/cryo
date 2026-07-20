@@ -902,6 +902,13 @@ export interface RoiBreakdownRead {
   monthly_benefit_usd: number;
   monthly_cost_usd: number;
   details: Record<string, number>;
+  effectiveness?: { effectiveness_ratio?: number; effectiveness?: string; run_count?: number } | null;
+  top_moop_partitions?: Array<{
+    partition_value?: string | null;
+    moop_score?: number | null;
+    small_files?: number | null;
+    size_gb?: number | null;
+  }>;
 }
 
 export interface WorkloadForecastRead {
@@ -1721,6 +1728,37 @@ export interface EffectivenessStatsResponse {
 export const getTableEffectiveness = (api: ApiOptions, tableId: UUID, lookbackDays = 30) =>
   apiFetch<EffectivenessStatsResponse>(`/tables/${tableId}/effectiveness`, api, {
     query: { lookback_days: lookbackDays }
+  });
+
+export interface AutoCompCandidateItem {
+  partition_value: string;
+  small_files: number;
+  size_gb: number;
+  query_frequency: number;
+  benefit_score: number;
+  moop_score?: number | null;
+  traits?: Record<string, number | string> | null;
+  eligible: boolean;
+  skip_reason?: string | null;
+}
+
+export interface AutoCompSkippedItem {
+  partition_value: string;
+  skip_reason: string;
+}
+
+export interface AutoCompCandidatesResponse {
+  table_id: UUID;
+  scan_at?: string | null;
+  items: AutoCompCandidateItem[];
+  skipped: AutoCompSkippedItem[];
+  effectiveness?: Record<string, unknown> | null;
+  compare: AutoCompCompareResponse;
+}
+
+export const getAutoCompCandidates = (api: ApiOptions, tableId: UUID, minScore = 1.0) =>
+  apiFetch<AutoCompCandidatesResponse>(`/tables/${tableId}/autocomp/candidates`, api, {
+    query: { min_score: minScore }
   });
 
 export interface TableSignalRead {
