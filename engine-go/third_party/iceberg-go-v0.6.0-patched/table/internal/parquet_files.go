@@ -1,0 +1,1346 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package internal
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
+	"unsafe"
+
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/compute"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/internal"
+	iceio "github.com/apache/iceberg-go/io"
+	"github.com/google/uuid"
+)
+
+const (
+	ParquetRowGroupSizeBytesKey              = "write.parquet.row-group-size-bytes"
+	ParquetRowGroupSizeBytesDefault          = 128 * 1024 * 1024 // 128 MB
+	ParquetRowGroupLimitKey                  = "write.parquet.row-group-limit"
+	ParquetRowGroupLimitDefault              = 1048576
+	ParquetPageSizeBytesKey                  = "write.parquet.page-size-bytes"
+	ParquetPageSizeBytesDefault              = 1024 * 1024 // 1 MB
+	ParquetPageRowLimitKey                   = "write.parquet.page-row-limit"
+	ParquetPageRowLimitDefault               = 20000
+	ParquetDictSizeBytesKey                  = "write.parquet.dict-size-bytes"
+	ParquetDictSizeBytesDefault              = 2 * 1024 * 1024 // 2 MB
+	ParquetPageVersionKey                    = "write.parquet.page-version"
+	ParquetPageVersionDefault                = "2"
+	ParquetCompressionKey                    = "write.parquet.compression-codec"
+	ParquetCompressionDefault                = "zstd"
+	ParquetCompressionLevelKey               = "write.parquet.compression-level"
+	ParquetCompressionLevelDefault           = -1
+	ParquetBloomFilterMaxBytesKey            = "write.parquet.bloom-filter-max-bytes"
+	ParquetBloomFilterMaxBytesDefault        = 1024 * 1024
+	ParquetBloomFilterColumnEnabledKeyPrefix = "write.parquet.bloom-filter-enabled.column"
+
+	ParquetBatchSizeKey     = "read.parquet.batch-size"
+	ParquetBatchSizeDefault = 1 << 17 // 131072 rows
+)
+
+type parquetFormat struct{}
+
+func (parquetFormat) Open(ctx context.Context, fs iceio.IO, path string) (FileReader, error) {
+	inputfile, err := fs.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	rdr, err := file.NewParquetReader(inputfile)
+	if err != nil {
+		return nil, err
+	}
+
+	alloc := compute.GetAllocator(ctx)
+	arrRdr, err := pqarrow.NewFileReader(rdr, pqarrow.ArrowReadProperties{}, alloc)
+	if err != nil {
+		return nil, err
+	}
+
+	return wrapPqArrowReader{arrRdr}, nil
+}
+
+func (parquetFormat) PathToIDMapping(sc *iceberg.Schema) (map[string]int, error) {
+	result := make(map[string]int)
+
+	paths, err := iceberg.PreOrderVisit(sc, &id2ParquetPathVisitor{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range paths {
+		result[entry.path] = entry.fieldID
+	}
+
+	return result, nil
+}
+
+func VariantFieldIDsFromSchema(sc *iceberg.Schema) map[int]struct{} {
+	if sc == nil {
+		return nil
+	}
+
+	result := make(map[int]struct{})
+	collectVariantFields(sc.Fields(), result)
+
+	return result
+}
+
+func collectVariantFields(fields []iceberg.NestedField, result map[int]struct{}) {
+	for _, field := range fields {
+		if _, ok := field.Type.(iceberg.VariantType); ok {
+			result[field.ID] = struct{}{}
+		} else if nested, ok := field.Type.(iceberg.NestedType); ok {
+			collectVariantFields(nested.Fields(), result)
+		}
+	}
+}
+
+func (p parquetFormat) createStatsAgg(typ iceberg.PrimitiveType, physicalTypeStr string, truncLen int) (StatsAgg, error) {
+	// Switch on Iceberg logical type first, then handle physical representations.
+	// This matches iceberg-java's approach in ParquetConversions.java.
+	switch typ.(type) {
+	case iceberg.BooleanType:
+		return newStatAgg[bool](typ, truncLen), nil
+
+	case iceberg.Int32Type, iceberg.DateType:
+		return newStatAgg[int32](typ, truncLen), nil
+
+	case iceberg.Int64Type, iceberg.TimeType, iceberg.TimestampType, iceberg.TimestampTzType,
+		iceberg.TimestampNsType, iceberg.TimestampTzNsType:
+		// Allow INT32 physical for INT64 logical (promotion)
+		if physicalTypeStr == "INT32" {
+			return newStatAgg[int32](typ, truncLen), nil
+		}
+
+		return newStatAgg[int64](typ, truncLen), nil
+
+	case iceberg.Float32Type:
+		return newStatAgg[float32](typ, truncLen), nil
+
+	case iceberg.Float64Type:
+		// Allow FLOAT physical for DOUBLE logical (promotion)
+		if physicalTypeStr == "FLOAT" {
+			return newStatAgg[float32](typ, truncLen), nil
+		}
+
+		return newStatAgg[float64](typ, truncLen), nil
+
+	case iceberg.StringType:
+		return newStatAgg[string](typ, truncLen), nil
+
+	case iceberg.BinaryType:
+		return newStatAgg[[]byte](typ, truncLen), nil
+
+	case iceberg.UUIDType:
+		return newStatAgg[uuid.UUID](typ, truncLen), nil
+
+	case iceberg.FixedType:
+		return newStatAgg[[]byte](typ, truncLen), nil
+
+	case iceberg.DecimalType:
+		// Decimals can be stored as INT32 (precision <= 9), INT64 (precision <= 18),
+		// FIXED_LEN_BYTE_ARRAY, or BYTE_ARRAY per Parquet spec.
+		switch physicalTypeStr {
+		case "INT32":
+			return &decAsIntAgg[int32]{
+				newStatAgg[int32](typ, truncLen).(*statsAggregator[int32]),
+			}, nil
+		case "INT64":
+			return &decAsIntAgg[int64]{
+				newStatAgg[int64](typ, truncLen).(*statsAggregator[int64]),
+			}, nil
+		case "FIXED_LEN_BYTE_ARRAY", "BYTE_ARRAY":
+			return newStatAgg[iceberg.Decimal](typ, truncLen), nil
+		default:
+			return nil, fmt.Errorf("unsupported physical type %s for decimal", physicalTypeStr)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported iceberg type: %s", typ)
+	}
+}
+
+func (parquetFormat) PrimitiveTypeToPhysicalType(typ iceberg.PrimitiveType) string {
+	switch typ.(type) {
+	case iceberg.BooleanType:
+		return "BOOLEAN"
+	case iceberg.Int32Type:
+		return "INT32"
+	case iceberg.Int64Type:
+		return "INT64"
+	case iceberg.Float32Type:
+		return "FLOAT"
+	case iceberg.Float64Type:
+		return "DOUBLE"
+	case iceberg.DateType:
+		return "INT32"
+	case iceberg.TimeType:
+		return "INT64"
+	case iceberg.TimestampType, iceberg.TimestampTzType,
+		iceberg.TimestampNsType, iceberg.TimestampTzNsType:
+		return "INT64"
+	case iceberg.StringType:
+		return "BYTE_ARRAY"
+	case iceberg.UUIDType:
+		return "FIXED_LEN_BYTE_ARRAY"
+	case iceberg.FixedType:
+		return "FIXED_LEN_BYTE_ARRAY"
+	case iceberg.BinaryType:
+		return "BYTE_ARRAY"
+	case iceberg.DecimalType:
+		return "FIXED_LEN_BYTE_ARRAY"
+	default:
+		panic(fmt.Errorf("expected primitive type, got: %s", typ))
+	}
+}
+
+func (parquetFormat) GetWriteProperties(props iceberg.Properties) any {
+	pageVersion := props.Get(ParquetPageVersionKey, ParquetPageVersionDefault)
+
+	var dpVersion parquet.DataPageVersion
+	switch pageVersion {
+	case "1":
+		dpVersion = parquet.DataPageV1
+	case "2":
+		dpVersion = parquet.DataPageV2
+	default:
+		slog.Warn("unrecognized data page version, falling back to v2", "version", pageVersion)
+		dpVersion = parquet.DataPageV2
+	}
+
+	writerProps := []parquet.WriterProperty{
+		parquet.WithDictionaryDefault(false),
+		parquet.WithMaxRowGroupLength(int64(props.GetInt(ParquetRowGroupLimitKey,
+			ParquetRowGroupLimitDefault))),
+		parquet.WithDataPageSize(int64(props.GetInt(ParquetPageSizeBytesKey,
+			ParquetPageSizeBytesDefault))),
+		parquet.WithDataPageVersion(dpVersion),
+		parquet.WithBatchSize(int64(props.GetInt(ParquetPageRowLimitKey,
+			ParquetPageRowLimitDefault))),
+		parquet.WithDictionaryPageSizeLimit(int64(props.GetInt(ParquetDictSizeBytesKey,
+			ParquetDictSizeBytesDefault))),
+	}
+
+	compression := props.Get(ParquetCompressionKey, ParquetCompressionDefault)
+	compressionLevel := props.GetInt(ParquetCompressionLevelKey,
+		ParquetCompressionLevelDefault)
+
+	var codec compress.Compression
+	switch compression {
+	case "snappy":
+		codec = compress.Codecs.Snappy
+	case "zstd":
+		codec = compress.Codecs.Zstd
+	case "uncompressed":
+		codec = compress.Codecs.Uncompressed
+	case "gzip":
+		codec = compress.Codecs.Gzip
+	case "brotli":
+		codec = compress.Codecs.Brotli
+	case "lz4":
+		codec = compress.Codecs.Lz4
+	case "lz4raw":
+		codec = compress.Codecs.Lz4Raw
+	case "lzo":
+		codec = compress.Codecs.Lzo
+	default:
+		slog.Warn("unrecognized compression codec, falling back to uncompressed", "codec", compression)
+	}
+
+	writerProps = append(writerProps, parquet.WithCompression(codec),
+		parquet.WithCompressionLevel(compressionLevel))
+
+	// Bloom filter properties.
+	// write.parquet.bloom-filter-max-bytes caps the per-column bloom filter size.
+	bloomMaxBytes := props.GetInt(ParquetBloomFilterMaxBytesKey, ParquetBloomFilterMaxBytesDefault)
+	writerProps = append(writerProps, parquet.WithMaxBloomFilterBytes(int64(bloomMaxBytes)))
+
+	// write.parquet.bloom-filter-enabled.column.<col-name> enables bloom filters
+	// for individual columns. Scan all properties for the prefix.
+	prefix := ParquetBloomFilterColumnEnabledKeyPrefix + "."
+	for key, val := range props {
+		colName, ok := strings.CutPrefix(key, prefix)
+		if !ok || colName == "" {
+			continue
+		}
+		// EqualFold matches Java's Boolean.parseBoolean: only "true"
+		// (case-insensitive) is true; anything else, including "1" or
+		// "yes", is false. strconv.ParseBool behaves differently ("1" → true).
+		enabled := strings.EqualFold(val, "true")
+		writerProps = append(writerProps, parquet.WithBloomFilterEnabledFor(colName, enabled))
+	}
+
+	return writerProps
+}
+
+func (p parquetFormat) WriteDataFile(ctx context.Context, fs iceio.WriteFileIO, partitionValues map[int]any, info WriteFileInfo, batches []arrow.RecordBatch) (iceberg.DataFile, error) {
+	w, err := p.NewFileWriter(ctx, fs, partitionValues, info, batches[0].Schema())
+	if err != nil {
+		return nil, err
+	}
+
+	for _, batch := range batches {
+		if err := w.Write(batch); err != nil {
+			w.Close()
+
+			return nil, err
+		}
+	}
+
+	return w.Close()
+}
+
+// ParquetFileWriter is an incremental single-file writer with open/write/close
+// lifecycle. It writes Arrow record batches to a Parquet file and tracks bytes
+// written for rolling file decisions.
+type ParquetFileWriter struct {
+	pqWriter   *pqarrow.FileWriter
+	counter    *internal.CountingWriter
+	fileCloser io.Closer
+	format     parquetFormat
+	info       WriteFileInfo
+	partition  map[int]any
+	colMapping map[string]int
+}
+
+// NewFileWriter creates a ParquetFileWriter that writes batches to a single
+// Parquet file. Call Write to append batches, BytesWritten to check actual
+// compressed file size, and Close to finalize and get the resulting DataFile.
+func (p parquetFormat) NewFileWriter(ctx context.Context, fs iceio.WriteFileIO,
+	partitionValues map[int]any, info WriteFileInfo, arrowSchema *arrow.Schema,
+) (FileWriter, error) {
+	fw, err := fs.Create(info.FileName)
+	if err != nil {
+		return nil, err
+	}
+
+	colMapping, err := p.PathToIDMapping(info.FileSchema)
+	if err != nil {
+		fw.Close()
+
+		return nil, err
+	}
+
+	counter := &internal.CountingWriter{W: fw}
+	mem := compute.GetAllocator(ctx)
+	writerProps := parquet.NewWriterProperties(info.WriteProps.([]parquet.WriterProperty)...)
+	arrProps := pqarrow.NewArrowWriterProperties(pqarrow.WithAllocator(mem), pqarrow.WithStoreSchema())
+
+	writer, err := pqarrow.NewFileWriter(arrowSchema, counter, writerProps, arrProps)
+	if err != nil {
+		fw.Close()
+
+		return nil, err
+	}
+
+	return &ParquetFileWriter{
+		pqWriter:   writer,
+		counter:    counter,
+		fileCloser: fw,
+		format:     p,
+		info:       info,
+		partition:  partitionValues,
+		colMapping: colMapping,
+	}, nil
+}
+
+// Write appends a record batch to the Parquet file.
+func (w *ParquetFileWriter) Write(batch arrow.RecordBatch) error {
+	return w.pqWriter.WriteBuffered(batch)
+}
+
+// BytesWritten returns the number of bytes flushed to the output so far.
+func (w *ParquetFileWriter) BytesWritten() int64 {
+	return w.counter.Count
+}
+
+// Close finalizes the Parquet file and returns the resulting DataFile with
+// accurate file statistics and size.
+func (w *ParquetFileWriter) Close() (_ iceberg.DataFile, err error) {
+	defer internal.CheckedClose(w.fileCloser, &err)
+
+	if err = w.pqWriter.Close(); err != nil {
+		return nil, err
+	}
+
+	filemeta, err := w.pqWriter.FileMetadata()
+	if err != nil {
+		return nil, err
+	}
+
+	stats := w.format.DataFileStatsFromMeta(filemeta, w.info.StatsCols, w.colMapping, VariantFieldIDsFromSchema(w.info.FileSchema))
+	stats.EqualityFieldIDs = w.info.EqualityFieldIDs
+
+	return stats.ToDataFile(DataFileOpts{
+		Schema:          w.info.FileSchema,
+		Spec:            w.info.Spec,
+		Path:            w.info.FileName,
+		Format:          iceberg.ParquetFile,
+		Content:         w.info.Content,
+		FileSize:        w.counter.Count,
+		PartitionValues: w.partition,
+		SortOrderID:     w.info.SortOrderID,
+	}), nil
+}
+
+func (w *ParquetFileWriter) Abort() error {
+	return w.fileCloser.Close()
+}
+
+type decAsIntAgg[T int32 | int64] struct {
+	*statsAggregator[T]
+}
+
+func (s *decAsIntAgg[T]) MinAsBytes() ([]byte, error) {
+	if s.curMin == nil {
+		return nil, nil
+	}
+
+	lit := iceberg.DecimalLiteral(iceberg.Decimal{
+		Val:   decimal128.FromI64(int64(s.curMin.Value())),
+		Scale: s.primitiveType.(iceberg.DecimalType).Scale(),
+	})
+	if s.truncLen > 0 {
+		return s.toBytes((&iceberg.TruncateTransform{Width: s.truncLen}).
+			Apply(iceberg.Optional[iceberg.Literal]{Valid: true, Val: lit}).Val)
+	}
+
+	return s.toBytes(lit)
+}
+
+func (s *decAsIntAgg[T]) MaxAsBytes() ([]byte, error) {
+	if s.curMax == nil {
+		return nil, nil
+	}
+
+	lit := iceberg.DecimalLiteral(iceberg.Decimal{
+		Val:   decimal128.FromI64(int64(s.curMax.Value())),
+		Scale: s.primitiveType.(iceberg.DecimalType).Scale(),
+	})
+	if s.truncLen <= 0 {
+		return s.toBytes(lit)
+	}
+
+	return nil, fmt.Errorf("%s cannot be truncated for upper bound", s.primitiveType)
+}
+
+type wrappedBinaryStats struct {
+	*metadata.ByteArrayStatistics
+}
+
+func (w *wrappedBinaryStats) Min() []byte {
+	return w.ByteArrayStatistics.Min()
+}
+
+func (w *wrappedBinaryStats) Max() []byte {
+	return w.ByteArrayStatistics.Max()
+}
+
+type wrappedStringStats struct {
+	*metadata.ByteArrayStatistics
+}
+
+func (w *wrappedStringStats) Min() string {
+	data := w.ByteArrayStatistics.Min()
+
+	return unsafe.String(unsafe.SliceData(data), len(data))
+}
+
+func (w *wrappedStringStats) Max() string {
+	data := w.ByteArrayStatistics.Max()
+
+	return unsafe.String(unsafe.SliceData(data), len(data))
+}
+
+type wrappedUUIDStats struct {
+	*metadata.FixedLenByteArrayStatistics
+}
+
+func (w *wrappedUUIDStats) Min() uuid.UUID {
+	uid, err := uuid.FromBytes(w.FixedLenByteArrayStatistics.Min())
+	if err != nil {
+		panic(err)
+	}
+
+	return uid
+}
+
+func (w *wrappedUUIDStats) Max() uuid.UUID {
+	uid, err := uuid.FromBytes(w.FixedLenByteArrayStatistics.Max())
+	if err != nil {
+		panic(err)
+	}
+
+	return uid
+}
+
+type wrappedFLBAStats struct {
+	*metadata.FixedLenByteArrayStatistics
+}
+
+func (w *wrappedFLBAStats) Min() []byte {
+	return w.FixedLenByteArrayStatistics.Min()
+}
+
+func (w *wrappedFLBAStats) Max() []byte {
+	return w.FixedLenByteArrayStatistics.Max()
+}
+
+type wrappedDecStats struct {
+	*metadata.FixedLenByteArrayStatistics
+	scale int
+}
+
+func (w wrappedDecStats) Min() iceberg.Decimal {
+	dec, err := BigEndianToDecimal(w.FixedLenByteArrayStatistics.Min())
+	if err != nil {
+		panic(err)
+	}
+
+	return iceberg.Decimal{Val: dec, Scale: w.scale}
+}
+
+func (w wrappedDecStats) Max() iceberg.Decimal {
+	dec, err := BigEndianToDecimal(w.FixedLenByteArrayStatistics.Max())
+	if err != nil {
+		panic(err)
+	}
+
+	return iceberg.Decimal{Val: dec, Scale: w.scale}
+}
+
+type wrappedDecByteArrayStats struct {
+	*metadata.ByteArrayStatistics
+	scale int
+}
+
+func (w wrappedDecByteArrayStats) Min() iceberg.Decimal {
+	dec, err := BigEndianToDecimal(w.ByteArrayStatistics.Min())
+	if err != nil {
+		panic(err)
+	}
+
+	return iceberg.Decimal{Val: dec, Scale: w.scale}
+}
+
+func (w wrappedDecByteArrayStats) Max() iceberg.Decimal {
+	dec, err := BigEndianToDecimal(w.ByteArrayStatistics.Max())
+	if err != nil {
+		panic(err)
+	}
+
+	return iceberg.Decimal{Val: dec, Scale: w.scale}
+}
+
+func (p parquetFormat) DataFileStatsFromMeta(meta Metadata, statsCols map[int]StatisticsCollector, colMapping map[string]int, variantFieldIDs map[int]struct{}) *DataFileStatistics {
+	pqmeta := meta.(*metadata.FileMetaData)
+	var (
+		colSizes        = make(map[int]int64)
+		valueCounts     = make(map[int]int64)
+		splitOffsets    = make([]int64, 0)
+		nullValueCounts = make(map[int]int64)
+		nanValueCounts  = make(map[int]int64)
+		invalidateCol   = make(map[int]struct{})
+		colAggs         = make(map[int]StatsAgg)
+	)
+
+	for rg := range pqmeta.NumRowGroups() {
+		// reference: https://github.com/apache/iceberg-python/blob/main/pyiceberg/io/pyarrow.py#L2285
+		rowGroup := pqmeta.RowGroup(rg)
+		colChunk, err := rowGroup.ColumnChunk(0)
+		if err != nil {
+			panic(err)
+		}
+
+		dataOffset, dictOffset := colChunk.DataPageOffset(), colChunk.DictionaryPageOffset()
+		if colChunk.HasDictionaryPage() && dictOffset < dataOffset {
+			splitOffsets = append(splitOffsets, dictOffset)
+		} else {
+			splitOffsets = append(splitOffsets, dataOffset)
+		}
+
+		for pos := range rowGroup.NumColumns() {
+			colChunk, err = rowGroup.ColumnChunk(pos)
+			if err != nil {
+				panic(err)
+			}
+
+			fieldID, ok := colMapping[colChunk.PathInSchema().String()]
+			if !ok {
+				// Variant sub-columns (metadata, value, typed_value children) have no
+				// Iceberg field ID (spec: "must not be assigned field IDs"). Walk up
+				// the path hierarchy to find a variant ancestor.
+				path := colChunk.PathInSchema()
+				found := false
+				for depth := len(path) - 1; depth >= 1; depth-- {
+					ancestorPath := strings.Join(path[:depth], ".")
+					if ancestorID, hasAncestor := colMapping[ancestorPath]; hasAncestor {
+						if _, isVariant := variantFieldIDs[ancestorID]; isVariant {
+							found = true
+						}
+
+						break
+					}
+				}
+				if found {
+					continue
+				}
+
+				panic(fmt.Errorf("column chunk %q not found in column mapping", colChunk.PathInSchema()))
+			}
+			statsCol := statsCols[fieldID]
+			if statsCol.Mode.Typ == MetricModeNone {
+				continue
+			}
+
+			colSizes[fieldID] += colChunk.TotalCompressedSize()
+			valueCounts[fieldID] += colChunk.NumValues()
+			set, err := colChunk.StatsSet()
+			if err != nil {
+				panic(err)
+			}
+
+			if !set {
+				invalidateCol[fieldID] = struct{}{}
+
+				continue
+			}
+
+			stats, err := colChunk.Statistics()
+			if err != nil || stats == nil {
+				invalidateCol[fieldID] = struct{}{}
+
+				continue
+			}
+
+			if stats.HasNullCount() {
+				nullValueCounts[fieldID] += stats.NullCount()
+			}
+
+			if statsCol.Mode.Typ == MetricModeCounts || !stats.HasMinMax() {
+				continue
+			}
+
+			agg, ok := colAggs[fieldID]
+			if !ok {
+				agg, err = p.createStatsAgg(statsCol.IcebergTyp, stats.Type().String(), statsCol.Mode.Len)
+				if err != nil {
+					panic(err)
+				}
+
+				colAggs[fieldID] = agg
+			}
+
+			switch t := statsCol.IcebergTyp.(type) {
+			case iceberg.BinaryType:
+				stats = &wrappedBinaryStats{stats.(*metadata.ByteArrayStatistics)}
+			case iceberg.UUIDType:
+				stats = &wrappedUUIDStats{stats.(*metadata.FixedLenByteArrayStatistics)}
+			case iceberg.StringType:
+				stats = &wrappedStringStats{stats.(*metadata.ByteArrayStatistics)}
+			case iceberg.FixedType:
+				stats = &wrappedFLBAStats{stats.(*metadata.FixedLenByteArrayStatistics)}
+			case iceberg.DecimalType:
+				// Decimals can be stored as INT32/INT64 (small precision) or FIXED_LEN_BYTE_ARRAY/BYTE_ARRAY.
+				// Only wrap FIXED_LEN_BYTE_ARRAY and BYTE_ARRAY statistics; INT32/INT64 stats
+				// are used directly by decAsIntAgg.
+				switch s := stats.(type) {
+				case *metadata.FixedLenByteArrayStatistics:
+					stats = &wrappedDecStats{s, t.Scale()}
+				case *metadata.ByteArrayStatistics:
+					stats = &wrappedDecByteArrayStats{s, t.Scale()}
+					// INT32/INT64 statistics are used directly by decAsIntAgg
+				}
+			}
+
+			agg.Update(stats)
+		}
+
+	}
+
+	slices.Sort(splitOffsets)
+	maps.DeleteFunc(nullValueCounts, func(fieldID int, _ int64) bool {
+		_, ok := invalidateCol[fieldID]
+
+		return ok
+	})
+	maps.DeleteFunc(colAggs, func(fieldID int, _ StatsAgg) bool {
+		_, ok := invalidateCol[fieldID]
+
+		return ok
+	})
+
+	return &DataFileStatistics{
+		RecordCount:     pqmeta.GetNumRows(),
+		ColSizes:        colSizes,
+		ValueCounts:     valueCounts,
+		NullValueCounts: nullValueCounts,
+		NanValueCounts:  nanValueCounts,
+		SplitOffsets:    splitOffsets,
+		ColAggs:         colAggs,
+	}
+}
+
+type ParquetFileSource struct {
+	mem  memory.Allocator
+	fs   iceio.IO
+	file iceberg.DataFile
+}
+
+// RowGroupBloomPred holds the physical-encoded bytes for each literal in a
+// bloom-filterable predicate on one field. A row group can be skipped when
+// NONE of the bytes appear in the column's bloom filter.
+type RowGroupBloomPred struct {
+	FieldID   int
+	PhysBytes [][]byte // one entry for EqualTo; one per value for In
+}
+
+// ParquetRowGroupTester combines stats-based and bloom filter row group pruning.
+// Pass it as the tester argument to wrapPqArrowReader.GetRecords.
+type ParquetRowGroupTester struct {
+	StatsFn    func(*metadata.RowGroupMetaData, []int) (bool, error)
+	BloomPreds []RowGroupBloomPred // nil = no bloom filter pass
+}
+
+type wrapPqArrowReader struct {
+	*pqarrow.FileReader
+}
+
+func (w wrapPqArrowReader) Metadata() Metadata {
+	return w.ParquetReader().MetaData()
+}
+
+func (w wrapPqArrowReader) SourceFileSize() int64 {
+	return w.ParquetReader().MetaData().GetSourceFileSize()
+}
+
+func (w wrapPqArrowReader) Close() error {
+	return w.ParquetReader().Close()
+}
+
+func (w wrapPqArrowReader) PrunedSchema(projectedIDs map[int]struct{}, mapping iceberg.NameMapping) (*arrow.Schema, []int, error) {
+	return pruneParquetColumns(w.Manifest, projectedIDs, false, mapping)
+}
+
+func (w wrapPqArrowReader) GetRecords(ctx context.Context, cols []int, tester any) (array.RecordReader, error) {
+	var rowGroupTester *ParquetRowGroupTester
+
+	if tester != nil {
+		var ok bool
+		rowGroupTester, ok = tester.(*ParquetRowGroupTester)
+		if !ok {
+			return nil, fmt.Errorf("%w: invalid tester type", iceberg.ErrInvalidArgument)
+		}
+	}
+
+	var rgList []int
+	if rowGroupTester != nil && (rowGroupTester.StatsFn != nil || len(rowGroupTester.BloomPreds) > 0) {
+		fileMeta := w.ParquetReader().MetaData()
+		numRg := w.ParquetReader().NumRowGroups()
+
+		var (
+			fieldIDToColIdx map[int]int
+			bfReader        *metadata.BloomFilterReader
+		)
+
+		if len(rowGroupTester.BloomPreds) > 0 {
+			fieldIDToColIdx = buildFieldIDToColIdx(fileMeta)
+			bfReader = w.ParquetReader().GetBloomFilterReader()
+		}
+
+		rgList = make([]int, 0)
+		for rg := 0; rg < numRg; rg++ {
+			use := true
+
+			if rowGroupTester.StatsFn != nil {
+				rgMeta := fileMeta.RowGroup(rg)
+
+				var err error
+				use, err = rowGroupTester.StatsFn(rgMeta, cols)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			if !use {
+				continue
+			}
+
+			if bfReader != nil {
+				var err error
+				use, err = checkRowGroupBloomFilters(bfReader, rg, fieldIDToColIdx, rowGroupTester.BloomPreds)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			if use {
+				rgList = append(rgList, rg)
+			}
+		}
+	}
+
+	return w.GetRecordReader(ctx, cols, rgList)
+}
+
+// buildFieldIDToColIdx maps each Iceberg field ID to its 0-based column index in
+// the Parquet file schema. Used to translate bloom filter predicates (which carry
+// field IDs) into the column positions required by BloomFilterReader.
+func buildFieldIDToColIdx(meta *metadata.FileMetaData) map[int]int {
+	sc := meta.Schema
+	result := make(map[int]int, sc.NumColumns())
+	for i := 0; i < sc.NumColumns(); i++ {
+		fieldID := int(sc.Column(i).SchemaNode().FieldID())
+		result[fieldID] = i
+	}
+
+	return result
+}
+
+// checkRowGroupBloomFilters checks each bloom predicate against the bloom filter
+// for its column in row group rg. Returns false (skip) if ANY predicate has none
+// of its values present in the bloom filter. Returns true (keep) on any error or
+// missing bloom filter data — bloom filters are an optimisation, never a
+// correctness gate.
+func checkRowGroupBloomFilters(
+	bfReader *metadata.BloomFilterReader,
+	rg int,
+	fieldIDToColIdx map[int]int,
+	preds []RowGroupBloomPred,
+) (bool, error) {
+	rgBFReader, err := bfReader.RowGroup(rg)
+	if err != nil {
+		return false, err
+	}
+
+	if rgBFReader == nil {
+		return true, nil
+	}
+
+	for _, pred := range preds {
+		colIdx, ok := fieldIDToColIdx[pred.FieldID]
+		if !ok {
+			continue
+		}
+
+		bf, err := rgBFReader.GetColumnBloomFilter(colIdx)
+		if err != nil || bf == nil {
+			continue
+		}
+
+		hasher := bf.Hasher()
+		anyFound := false
+		for _, physBytes := range pred.PhysBytes {
+			if bf.CheckHash(hasher.Sum64(physBytes)) {
+				anyFound = true
+
+				break
+			}
+		}
+
+		if !anyFound {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func (pfs *ParquetFileSource) GetReader(ctx context.Context) (FileReader, error) {
+	pf, err := pfs.fs.Open(pfs.file.FilePath())
+	if err != nil {
+		return nil, err
+	}
+
+	rdr, err := file.NewParquetReader(pf,
+		file.WithReadProps(parquet.NewReaderProperties(pfs.mem)))
+	if err != nil {
+		return nil, err
+	}
+
+	props := TablePropertiesFromContext(ctx)
+	arrProps := pqarrow.ArrowReadProperties{
+		Parallel:  true,
+		BatchSize: int64(props.GetInt(ParquetBatchSizeKey, ParquetBatchSizeDefault)),
+	}
+
+	if pfs.file.ContentType() == iceberg.EntryContentPosDeletes {
+		// for dictionary for filepath col
+		arrProps.SetReadDict(0, true)
+	}
+
+	fr, err := pqarrow.NewFileReader(rdr, arrProps, pfs.mem)
+	if err != nil {
+		return nil, err
+	}
+
+	return wrapPqArrowReader{fr}, nil
+}
+
+type manifestVisitor[T any] interface {
+	Manifest(*pqarrow.SchemaManifest, []T, *iceberg.MappedField) T
+	Field(pqarrow.SchemaField, T, *iceberg.MappedField) T
+	Struct(pqarrow.SchemaField, []T, *iceberg.MappedField) T
+	List(pqarrow.SchemaField, T, *iceberg.MappedField) T
+	Map(pqarrow.SchemaField, T, T, *iceberg.MappedField) T
+	Primitive(pqarrow.SchemaField, *iceberg.MappedField) T
+}
+
+func visitParquetManifest[T any](manifest *pqarrow.SchemaManifest, visitor manifestVisitor[T], mapping *iceberg.MappedField) (res T, err error) {
+	if manifest == nil {
+		err = fmt.Errorf("%w: cannot visit nil manifest", iceberg.ErrInvalidArgument)
+
+		return res, err
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s", r)
+		}
+	}()
+
+	var fieldMap *iceberg.MappedField
+
+	results := make([]T, len(manifest.Fields))
+	for i, f := range manifest.Fields {
+		if mapping != nil {
+			fieldMap = mapping.GetField(f.Field.Name)
+		}
+		res := visitManifestField(f, visitor, fieldMap)
+		results[i] = visitor.Field(f, res, fieldMap)
+	}
+
+	return visitor.Manifest(manifest, results, mapping), nil
+}
+
+func visitParquetManifestStruct[T any](field pqarrow.SchemaField, visitor manifestVisitor[T], mapping *iceberg.MappedField) T {
+	results := make([]T, len(field.Children))
+	var fieldMap *iceberg.MappedField
+	for i, f := range field.Children {
+		if mapping != nil {
+			fieldMap = mapping.GetField(f.Field.Name)
+		}
+		res := visitManifestField(f, visitor, fieldMap)
+		results[i] = visitor.Field(f, res, fieldMap)
+	}
+
+	return visitor.Struct(field, results, mapping)
+}
+
+func visitManifestList[T any](field pqarrow.SchemaField, visitor manifestVisitor[T], mapping *iceberg.MappedField) T {
+	elemField := field.Children[0]
+	var elemMapping *iceberg.MappedField
+	if mapping != nil {
+		elemMapping = mapping.GetField("element")
+	}
+	res := visitManifestField(elemField, visitor, elemMapping)
+
+	return visitor.List(field, res, mapping)
+}
+
+func visitManifestMap[T any](field pqarrow.SchemaField, visitor manifestVisitor[T], mapping *iceberg.MappedField) T {
+	kvfield := field.Children[0]
+	keyField, valField := kvfield.Children[0], kvfield.Children[1]
+	var keyMapping, valMapping *iceberg.MappedField
+	if mapping != nil {
+		keyMapping = mapping.GetField("key")
+		valMapping = mapping.GetField("value")
+	}
+
+	return visitor.Map(field, visitManifestField(keyField, visitor, keyMapping), visitManifestField(valField, visitor, valMapping), mapping)
+}
+
+func visitManifestField[T any](field pqarrow.SchemaField, visitor manifestVisitor[T], mapping *iceberg.MappedField) T {
+	switch field.Field.Type.(type) {
+	case *arrow.StructType:
+		return visitParquetManifestStruct(field, visitor, mapping)
+	case *arrow.MapType:
+		return visitManifestMap(field, visitor, mapping)
+	case arrow.ListLikeType:
+		return visitManifestList(field, visitor, mapping)
+	default:
+		return visitor.Primitive(field, mapping)
+	}
+}
+
+func pruneParquetColumns(manifest *pqarrow.SchemaManifest, selected map[int]struct{}, selectFullTypes bool, mapping iceberg.NameMapping) (*arrow.Schema, []int, error) {
+	visitor := &pruneParquetSchema{
+		selected:  selected,
+		manifest:  manifest,
+		fullTypes: selectFullTypes,
+		indices:   []int{},
+	}
+
+	result, err := visitParquetManifest(manifest, visitor, &iceberg.MappedField{Fields: mapping})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return arrow.NewSchema(result.Type.(*arrow.StructType).Fields(), &result.Metadata),
+		visitor.indices, nil
+}
+
+func getFieldID(f arrow.Field) *int {
+	if !f.HasMetadata() {
+		return nil
+	}
+
+	fieldIDStr, ok := f.Metadata.GetValue("PARQUET:field_id")
+	if !ok {
+		return nil
+	}
+
+	id, err := strconv.Atoi(fieldIDStr)
+	if err != nil {
+		return nil
+	}
+
+	return &id
+}
+
+type pruneParquetSchema struct {
+	selected  map[int]struct{}
+	fullTypes bool
+	manifest  *pqarrow.SchemaManifest
+
+	indices []int
+}
+
+func (p *pruneParquetSchema) fieldID(field arrow.Field, mapping *iceberg.MappedField) int {
+	if mapping != nil {
+		if mapping.FieldID != nil {
+			return *mapping.FieldID
+		}
+	}
+
+	if id := getFieldID(field); id != nil {
+		return *id
+	}
+
+	panic(fmt.Errorf("%w: cannot convert %s to Iceberg field, missing field_id",
+		iceberg.ErrInvalidSchema, field))
+}
+
+func (p *pruneParquetSchema) Manifest(manifest *pqarrow.SchemaManifest, fields []arrow.Field, _ *iceberg.MappedField) arrow.Field {
+	finalFields := slices.DeleteFunc(fields, func(f arrow.Field) bool { return f.Type == nil })
+	result := arrow.Field{
+		Type: arrow.StructOf(finalFields...),
+	}
+	if manifest.SchemaMeta != nil {
+		result.Metadata = *manifest.SchemaMeta
+	}
+
+	return result
+}
+
+func (p *pruneParquetSchema) Struct(field pqarrow.SchemaField, children []arrow.Field, _ *iceberg.MappedField) arrow.Field {
+	selected, fields := []arrow.Field{}, field.Children
+	sameType := true
+
+	for i, t := range children {
+		field := fields[i]
+		if arrow.TypeEqual(field.Field.Type, t.Type) {
+			selected = append(selected, *field.Field)
+		} else if t.Type == nil {
+			sameType = false
+			// type has changed, create a new field with the projected type
+			selected = append(selected, arrow.Field{
+				Name:     field.Field.Name,
+				Type:     field.Field.Type,
+				Nullable: field.Field.Nullable,
+				Metadata: field.Field.Metadata,
+			})
+		}
+	}
+
+	if len(selected) > 0 {
+		if len(selected) == len(fields) && sameType {
+			// nothing changed, return the original
+			return *field.Field
+		} else {
+			result := *field.Field
+			result.Type = arrow.StructOf(selected...)
+
+			return result
+		}
+	}
+
+	return arrow.Field{}
+}
+
+func (p *pruneParquetSchema) Field(field pqarrow.SchemaField, result arrow.Field, mapping *iceberg.MappedField) arrow.Field {
+	_, ok := p.selected[p.fieldID(*field.Field, mapping)]
+	if !ok {
+		if result.Type != nil {
+			return result
+		}
+
+		return arrow.Field{}
+	}
+
+	if p.fullTypes {
+		return *field.Field
+	}
+
+	if _, ok := field.Field.Type.(*arrow.StructType); ok {
+		result := *field.Field
+		result.Type = p.projectSelectedStruct(result.Type)
+
+		return result
+	}
+
+	// Variant is an extension type wrapping a struct (metadata + value).
+	// Select the entire field including all children.
+	if ext, ok := field.Field.Type.(arrow.ExtensionType); ok && ext.ExtensionName() == "parquet.variant" {
+		return p.projectVariant(field)
+	}
+
+	if !field.IsLeaf() {
+		panic(errors.New("cannot explicitly project list or map types"))
+	}
+
+	p.indices = append(p.indices, field.ColIndex)
+
+	return *field.Field
+}
+
+func (p *pruneParquetSchema) List(field pqarrow.SchemaField, elemResult arrow.Field, mapping *iceberg.MappedField) arrow.Field {
+	var elemMapping *iceberg.MappedField
+	if mapping != nil {
+		elemMapping = mapping.GetField("element")
+	}
+
+	_, ok := p.selected[p.fieldID(*field.Children[0].Field, elemMapping)]
+	if !ok {
+		if elemResult.Type != nil {
+			result := *field.Field
+			result.Type = p.projectList(field.Field.Type.(arrow.ListLikeType), elemResult.Type)
+
+			return result
+		}
+
+		return arrow.Field{}
+	}
+
+	if p.fullTypes {
+		return *field.Field
+	}
+
+	_, ok = field.Children[0].Field.Type.(*arrow.StructType)
+	if field.Children[0].Field.Type != nil && ok {
+		result := *field.Field
+		projected := p.projectSelectedStruct(elemResult.Type)
+		result.Type = p.projectList(field.Field.Type.(arrow.ListLikeType), projected)
+
+		return result
+	}
+
+	if !field.Children[0].IsLeaf() {
+		panic(errors.New("cannot explicitly project list or map types"))
+	}
+
+	p.indices = append(p.indices, field.Children[0].ColIndex)
+
+	return *field.Field
+}
+
+func (p *pruneParquetSchema) Map(field pqarrow.SchemaField, keyResult, valResult arrow.Field, mapping *iceberg.MappedField) arrow.Field {
+	var valMapping *iceberg.MappedField
+	if mapping != nil {
+		valMapping = mapping.GetField("value")
+	}
+
+	_, ok := p.selected[p.fieldID(*field.Children[0].Children[1].Field, valMapping)]
+	if !ok {
+		if valResult.Type != nil {
+			result := *field.Field
+			result.Type = p.projectMap(field.Field.Type.(*arrow.MapType), valResult.Type)
+
+			return result
+		}
+
+		return arrow.Field{}
+	}
+
+	if p.fullTypes {
+		return *field.Field
+	}
+
+	_, ok = field.Children[0].Children[1].Field.Type.(*arrow.StructType)
+	if ok {
+		result := *field.Field
+		projected := p.projectSelectedStruct(valResult.Type)
+		result.Type = p.projectMap(field.Field.Type.(*arrow.MapType), projected)
+
+		return result
+	}
+
+	if !field.Children[0].Children[1].IsLeaf() {
+		panic("cannot explicitly project list or map types")
+	}
+
+	p.indices = append(p.indices, field.Children[0].Children[0].ColIndex)
+	p.indices = append(p.indices, field.Children[0].Children[1].ColIndex)
+
+	return *field.Field
+}
+
+func (p *pruneParquetSchema) Primitive(_ pqarrow.SchemaField, _ *iceberg.MappedField) arrow.Field {
+	return arrow.Field{}
+}
+
+func (p *pruneParquetSchema) projectSelectedStruct(projected arrow.DataType) *arrow.StructType {
+	if projected == nil {
+		return &arrow.StructType{}
+	}
+
+	if ty, ok := projected.(*arrow.StructType); ok {
+		return ty
+	}
+
+	panic("expected a struct")
+}
+
+func (p *pruneParquetSchema) collectLeafIndices(field pqarrow.SchemaField) {
+	if field.IsLeaf() {
+		p.indices = append(p.indices, field.ColIndex)
+
+		return
+	}
+
+	for _, child := range field.Children {
+		p.collectLeafIndices(child)
+	}
+}
+
+func (p *pruneParquetSchema) projectVariant(field pqarrow.SchemaField) arrow.Field {
+	p.collectLeafIndices(field)
+
+	return *field.Field
+}
+
+func (p *pruneParquetSchema) projectList(listType arrow.ListLikeType, elemResult arrow.DataType) arrow.ListLikeType {
+	if arrow.TypeEqual(listType.Elem(), elemResult) {
+		return listType
+	}
+
+	origField := listType.ElemField()
+	origField.Type = elemResult
+
+	switch listType.(type) {
+	case *arrow.ListType:
+		return arrow.ListOfField(origField)
+	case *arrow.LargeListType:
+		return arrow.LargeListOfField(origField)
+	case *arrow.ListViewType:
+		return arrow.ListViewOfField(origField)
+	}
+
+	n := listType.(*arrow.FixedSizeListType).Len()
+
+	return arrow.FixedSizeListOfField(n, origField)
+}
+
+func (p *pruneParquetSchema) projectMap(m *arrow.MapType, valResult arrow.DataType) *arrow.MapType {
+	if arrow.TypeEqual(m.ItemType(), valResult) {
+		return m
+	}
+
+	return arrow.MapOf(m.KeyType(), valResult)
+}
+
+type id2ParquetPath struct {
+	fieldID int
+	path    string
+}
+
+type id2ParquetPathVisitor struct {
+	fieldID int
+	path    []string
+}
+
+func (v *id2ParquetPathVisitor) Schema(_ *iceberg.Schema, res func() []id2ParquetPath) []id2ParquetPath {
+	return res()
+}
+
+func (v *id2ParquetPathVisitor) Struct(_ iceberg.StructType, results []func() []id2ParquetPath) []id2ParquetPath {
+	result := make([]id2ParquetPath, 0, len(results))
+	for _, res := range results {
+		result = append(result, res()...)
+	}
+
+	return result
+}
+
+func (v *id2ParquetPathVisitor) Field(field iceberg.NestedField, res func() []id2ParquetPath) []id2ParquetPath {
+	v.fieldID = field.ID
+	v.path = append(v.path, field.Name)
+	result := res()
+	v.path = v.path[:len(v.path)-1]
+
+	return result
+}
+
+func (v *id2ParquetPathVisitor) List(listType iceberg.ListType, elemResult func() []id2ParquetPath) []id2ParquetPath {
+	v.fieldID = listType.ElementID
+	v.path = append(v.path, "list")
+	result := elemResult()
+	v.path = v.path[:len(v.path)-1]
+
+	return result
+}
+
+func (v *id2ParquetPathVisitor) Map(m iceberg.MapType, keyResult func() []id2ParquetPath, valResult func() []id2ParquetPath) []id2ParquetPath {
+	v.fieldID = m.KeyID
+	v.path = append(v.path, "key_value")
+	keyRes := keyResult()
+	v.path = v.path[:len(v.path)-1]
+
+	v.fieldID = m.ValueID
+	v.path = append(v.path, "key_value")
+	valRes := valResult()
+	v.path = v.path[:len(v.path)-1]
+
+	return append(keyRes, valRes...)
+}
+
+func (v *id2ParquetPathVisitor) Primitive(iceberg.PrimitiveType) []id2ParquetPath {
+	return []id2ParquetPath{{fieldID: v.fieldID, path: strings.Join(v.path, ".")}}
+}
+
+func (v *id2ParquetPathVisitor) Variant(iceberg.VariantType) []id2ParquetPath {
+	return []id2ParquetPath{{fieldID: v.fieldID, path: strings.Join(v.path, ".")}}
+}
