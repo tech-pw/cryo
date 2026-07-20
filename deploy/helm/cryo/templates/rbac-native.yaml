@@ -12,6 +12,12 @@ metadata:
   labels:
     {{- include "cryo.labels" . | nindent 4 }}
     app.kubernetes.io/component: native-engine
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

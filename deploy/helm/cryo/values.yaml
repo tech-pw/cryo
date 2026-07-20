@@ -121,6 +121,10 @@ native:
     pullPolicy: Always # see the comment on image.pullPolicy above
   # Overridden to the chart-managed SA when enabled=true (see worker/governor templates).
   serviceAccount: default
+  # native-job.yaml is a reference/documentation manifest (see its header comment) -- real
+  # per-chunk Jobs are created dynamically by job_dispatch.py. Leave false; installing it live
+  # just leaves a permanently-stuck placeholder Job in the cluster.
+  installReferenceJob: false
   ttlSecondsAfterFinished: 300
   defaultChunkSizeGb: 100
   maxCpu: 4000m
@@ -138,7 +142,9 @@ native:
     pollingInterval: 15
     cooldownPeriod: 60
     # Redis admitted-job LIST used by RedisMaintenanceQueue (`cryo:admitted`).
-    redisAddress: "cryo-redis:6379"
+    # Must be the FQDN: the KEDA operator runs in its own namespace, so the
+    # short service name doesn't resolve cross-namespace.
+    redisAddress: "cryo-redis.cryo.svc.cluster.local:6379"
     redisListName: "cryo:admitted"
     listLength: "1"
     redisPasswordFromSecret: false
