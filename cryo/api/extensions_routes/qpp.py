@@ -16,7 +16,8 @@ from sqlalchemy import func, select
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.config import get_settings
 
-router = APIRouter(prefix="/api/v1", tags=["governor"])
+# No prefix here: included into extensions.py's `router`, which already has prefix="/api/v1".
+router = APIRouter(tags=["governor"])
 
 
 class QPPFeaturesPayload(BaseModel):

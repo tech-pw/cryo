@@ -16,7 +16,8 @@ from pydantic import BaseModel
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.triggers.evaluator import TriggerEvaluator, TriggerType
 
-router = APIRouter(prefix="/api/v1", tags=["governance"])
+# No prefix here: included into extensions.py's `router`, which already has prefix="/api/v1".
+router = APIRouter(tags=["governance"])
 
 
 class SignalResultRead(BaseModel):
