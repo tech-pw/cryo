@@ -1,4 +1,5 @@
 import type { TableFilterState } from "./predicate";
+import { NO_PRESET_FILTER } from "./predicate";
 
 export interface CatalogFilterOption {
   label: string;
@@ -23,7 +24,8 @@ const titleCasePriority = (value: string) =>
 export const buildFilterChips = (
   filters: TableFilterState,
   catalogOptions: CatalogFilterOption[],
-  onPatch: (next: Partial<TableFilterState>) => void
+  onPatch: (next: Partial<TableFilterState>) => void,
+  presetOptions: CatalogFilterOption[] = []
 ): FilterChip[] => {
   const chips: FilterChip[] = [];
 
@@ -42,6 +44,18 @@ export const buildFilterChips = (
       key: "catalog",
       label: `Catalog: ${names.join(", ")}`,
       onRemove: () => onPatch({ sourceIds: undefined })
+    });
+  }
+
+  if (filters.presetFilter?.length) {
+    const presetById = new Map(presetOptions.map((option) => [option.value, option.label]));
+    const names = filters.presetFilter.map((id) =>
+      id === NO_PRESET_FILTER ? "No preset" : (presetById.get(id) ?? id)
+    );
+    chips.push({
+      key: "preset",
+      label: `Preset: ${names.join(", ")}`,
+      onRemove: () => onPatch({ presetFilter: undefined })
     });
   }
 
