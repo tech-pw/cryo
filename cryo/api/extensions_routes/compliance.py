@@ -17,7 +17,8 @@ from cryo.db.models import AuditLog, Source, Table, TableStats
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
-router = APIRouter(prefix="/api/v1", tags=["compliance"])
+# No prefix here: included into extensions.py's `router`, which already has prefix="/api/v1".
+router = APIRouter(tags=["compliance"])
 
 
 class ComplianceStatusResponse(BaseModel):

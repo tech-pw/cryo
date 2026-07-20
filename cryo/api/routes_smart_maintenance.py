@@ -56,6 +56,8 @@ class ROIBreakdownRead(BaseModel):
     monthly_benefit_usd: float
     monthly_cost_usd: float
     details: dict[str, float]
+    effectiveness: dict[str, Any] | None = None
+    top_moop_partitions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DetectionTierRow(BaseModel):
@@ -234,6 +236,42 @@ def get_table_roi(
         ),
         record=False,
     )
+
+    # AutoComp §A.5: surface the same effectiveness signal update_table_effectiveness persists
+    # and the table's top-5 MOOP candidates, so the ROI drawer doesn't need a second round trip.
+    effectiveness = (stats.raw or {}).get("compaction_effectiveness") if stats.raw else None
+    from sqlalchemy import func, select
+
+    from cryo.db.models import TablePartition
+
+    latest_scan = session.scalar(
+        select(func.max(TablePartition.scan_at)).where(TablePartition.table_id == table_id)
+    )
+    top_moop_partitions: list[dict[str, Any]] = []
+    if latest_scan is not None:
+        top_rows = session.scalars(
+            select(TablePartition)
+            .where(
+                TablePartition.table_id == table_id,
+                TablePartition.scan_at == latest_scan,
+                TablePartition.autocomp_traits.isnot(None),
+            )
+        ).all()
+        ranked = sorted(
+            top_rows,
+            key=lambda p: (p.autocomp_traits or {}).get("s_c") or float("-inf"),
+            reverse=True,
+        )[:5]
+        top_moop_partitions = [
+            {
+                "partition_value": p.partition_value,
+                "moop_score": (p.autocomp_traits or {}).get("s_c"),
+                "small_files": p.small_files_in_partition_count,
+                "size_gb": p.partition_size_gb,
+            }
+            for p in ranked
+        ]
+
     return ROIBreakdownRead(
         table_id=table_id,
         decision=ROIDecisionRead(
@@ -257,6 +295,8 @@ def get_table_roi(
             "write_amplification_cost_usd_month": decision.breakdown.write_amplification_cost_usd_month,
             "opportunity_cost_usd_month": decision.breakdown.opportunity_cost_usd_month,
         },
+        effectiveness=effectiveness,
+        top_moop_partitions=top_moop_partitions,
     )
 
 

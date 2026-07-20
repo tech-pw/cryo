@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, QueryLog, Table, TablePartition
+from cryo.db.models import AuditLog, QueryLog, Table, TablePartition, TableStats
 from cryo.domain.enums import PartitionTransform
 from cryo.planner.partition_query_affinity import MIN_COVERAGE_RATIO, compute_partition_affinity
 from cryo.planner.partitions import PartitionFieldSpec, normalize_transform
@@ -471,10 +471,35 @@ def update_all_benefit_scores(session: Session) -> int:
     total = 0
     for table_id in table_ids:
         total += update_partition_benefit_scores(session, table_id)
+        update_table_effectiveness(session, table_id)
         # update_partition_benefit_scores already commits its own partitions before returning;
         # expunge right after so this table's (and its partitions') objects don't linger either.
         session.expunge_all()
     return total
+
+
+def update_table_effectiveness(session: Session, table_id: uuid.UUID) -> bool:
+    """Persist the current compaction-effectiveness ratio onto table_stats.raw (AutoComp §A3).
+
+    Cheap by construction: get_compaction_effectiveness_stats is a single aggregate query (no
+    per-row AuditLog objects loaded), and this only touches the one TableStats row already
+    identified by primary key -- safe to run inside update_all_benefit_scores' per-table loop
+    without reintroducing the identity-map growth that OOM-killed the scheduler before.
+
+    Returns False (no-op) when the table has no TableStats row yet.
+    """
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        return False
+    effectiveness = get_compaction_effectiveness_stats(session, table_id)
+    raw = dict(stats.raw or {})
+    raw["compaction_effectiveness"] = {
+        **effectiveness,
+        "computed_at": datetime.now(UTC).isoformat(),
+    }
+    stats.raw = raw
+    session.commit()
+    return True
 
 
 def get_top_compaction_candidates(

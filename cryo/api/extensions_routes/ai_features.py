@@ -30,7 +30,8 @@ from cryo.api.security import Principal
 from cryo.config import get_settings
 from cryo.db.models import AuditLog, MaintenanceJob, MaintenanceRun, RunFailureDiagnosis, Table
 
-router = APIRouter(prefix="/api/v1", tags=["ai"])
+# No prefix here: included into extensions.py's `router`, which already has prefix="/api/v1".
+router = APIRouter(tags=["ai"])
 
 
 class AnomalyHypothesisRead(BaseModel):
