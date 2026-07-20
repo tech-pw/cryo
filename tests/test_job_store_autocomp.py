@@ -197,3 +197,39 @@ def test_get_job_with_no_scanned_partitions_leaves_params_untouched(session):
 
     assert "benefit_score" not in record.params
     assert "moop_score" not in record.params
+
+
+def test_get_table_data_stats_include_delete_policy_fields(session):
+    """cryo/planner/planner.py's Okolnychyi minor/major delete policy (§C2) reads
+    position_delete_files and format_version off the stats dict build_plan() receives --
+    previously missing from _stats_dict entirely, so the policy always saw 0/None regardless
+    of what the scanner actually recorded."""
+    from cryo.db.models import TableStats
+
+    table, _job = _seed_table_with_job(session)
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="B",
+            overall_score=80,
+            total_files=200,
+            small_files_count=10,
+            total_size_gb=20.0,
+            total_delete_files=90,
+            position_delete_files=80,
+            equality_delete_files=10,
+            delete_file_pct=3.5,
+            raw={"format_version": 2},
+        )
+    )
+    session.commit()
+
+    store = SQLJobStore(lambda: session)
+    data = store.get_table_data(str(table.id))
+
+    assert data.stats["position_delete_files"] == 80
+    assert data.stats["equality_delete_files"] == 10
+    assert data.stats["format_version"] == 2

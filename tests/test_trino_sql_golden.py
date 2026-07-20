@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from cryo.domain.enums import Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
     MaintenancePlan,
@@ -9,7 +11,12 @@ from cryo.domain.models import (
     PartitionPredicate,
     PartitionPredicateTerm,
 )
-from cryo.engines.trino.sql import render, render_predicate, session_setup
+from cryo.engines.trino.sql import (
+    UnsupportedPredicateError,
+    render,
+    render_predicate,
+    session_setup,
+)
 
 
 def _predicate(*terms: PartitionPredicateTerm) -> PartitionPredicate:
@@ -193,3 +200,16 @@ def test_trino_convert_deletes_reuses_optimize_sql() -> None:
     assert stmts[0].sql == (
         "ALTER TABLE iceberg.demo.events EXECUTE optimize(file_size_threshold => '128MB')"
     )
+
+
+def test_trino_rewrite_position_deletes_raises_unsupported() -> None:
+    """Trino has no ALTER TABLE EXECUTE equivalent of rewrite_position_delete_files -- must
+    fail loudly, not silently downgrade to a full OPTIMIZE (defeats Okolnychyi's whole point:
+    a cheap minor pass instead of a full rewrite)."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.REWRITE_POSITION_DELETES, {}),),
+    )
+    with pytest.raises(UnsupportedPredicateError, match="not supported on Trino"):
+        render(plan)

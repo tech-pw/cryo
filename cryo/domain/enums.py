@@ -10,6 +10,10 @@ class OperationType(StrEnum):
     OPTIMIZE = "optimize"
     OPTIMIZE_MANIFESTS = "optimize_manifests"
     COMPUTE_STATISTICS = "compute_statistics"  # Puffin NDV + Bloom filter stats
+    # Okolnychyi et al. (VLDB'24) "minor" delete compaction: merges only the accumulated
+    # position-delete files, cheap relative to a full data rewrite (CONVERT_DELETES / OPTIMIZE
+    # is the "major" path for this same problem -- distinct type for audit-log clarity).
+    REWRITE_POSITION_DELETES = "rewrite_position_deletes"
 
 
 class EngineType(StrEnum):

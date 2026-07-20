@@ -55,6 +55,15 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
         sql = _render_compute_statistics(table_ref, operation.params)
+    elif operation.type is OperationType.REWRITE_POSITION_DELETES:
+        # Trino has no ALTER TABLE EXECUTE equivalent of Iceberg's rewrite_position_delete_files
+        # procedure (Spark-only as of the connectors this renderer targets). Route this
+        # operation to a Spark/native destination instead of silently downgrading it to a full
+        # OPTIMIZE, which would defeat the point of the cheaper minor-compaction path.
+        raise UnsupportedPredicateError(
+            "rewrite_position_delete_files is not supported on Trino destinations; "
+            "route this table's minor delete compaction to a Spark or native destination."
+        )
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
     return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.TRINO)

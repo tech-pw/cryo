@@ -312,10 +312,17 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "total_partitions": stats.total_partitions,
         "total_size_gb": stats.total_size_gb,
         "total_delete_files": stats.total_delete_files,
+        # Okolnychyi (VLDB'24) minor/major delete policy needs these two to distinguish
+        # "many small position-delete files, cheap minor compaction fixes it" from "delete
+        # volume is already high, needs a full major rewrite" -- previously missing here
+        # entirely, so the planner's policy always saw 0/None regardless of the real scan.
+        "position_delete_files": stats.position_delete_files,
+        "equality_delete_files": stats.equality_delete_files,
         "delete_file_pct": stats.delete_file_pct,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
+        "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),
     }
 

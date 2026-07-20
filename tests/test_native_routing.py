@@ -270,3 +270,40 @@ def test_convert_deletes_routes_to_sql_fallback(monkeypatch: pytest.MonkeyPatch)
     )
     assert not routing.native_operations
     assert {op.type for op, _ in routing.fallback_operations} == {OperationType.CONVERT_DELETES}
+
+
+def test_rewrite_position_deletes_routes_to_sql_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Okolnychyi minor delete compaction has no cryo-engine-go implementation -- same
+    fallback-or-skip treatment as CONVERT_DELETES above, not a silent native no-op."""
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.REWRITE_POSITION_DELETES, {}),),
+    )
+    routing = resolve_native_routing(
+        plan,
+        {"position_delete_files": 80},
+        {"engine_impl": "go", "sql_fallback_destination_id": "spark-1"},
+    )
+    assert not routing.native_operations
+    assert {op.type for op, _ in routing.fallback_operations} == {
+        OperationType.REWRITE_POSITION_DELETES
+    }
+
+
+def test_rewrite_position_deletes_skipped_without_sql_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.REWRITE_POSITION_DELETES, {}),),
+    )
+    routing = resolve_native_routing(plan, {"position_delete_files": 80}, {"engine_impl": "go"})
+    assert not routing.native_operations
+    assert not routing.fallback_operations
+    assert {op.type for op, _ in routing.skipped_operations} == {
+        OperationType.REWRITE_POSITION_DELETES
+    }
