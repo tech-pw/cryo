@@ -590,7 +590,10 @@ def _seed_source_destination(
             id=uuid.uuid4(),
             name=f"destination-{uuid.uuid4()}",
             engine="trino",
-            config={"host": "trino"},
+            # destination_serves_source() treats a Trino destination with no
+            # catalog_bindings as serving no source at all -- bind this fixture's own
+            # source so tests exercising assignment/run creation still work.
+            config={"host": "trino", "catalog_bindings": [{"source_id": str(source.id)}]},
         )
         session.add_all([source, destination])
         session.commit()
