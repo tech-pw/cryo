@@ -2,6 +2,9 @@ FROM golang:1.25-bookworm AS cryo-engine-go-builder
 
 WORKDIR /build
 COPY engine-go/go.mod engine-go/go.sum ./
+# go.mod replaces apache/iceberg-go with this local patched copy, so it must be present
+# before `go mod download` -- otherwise resolution fails even for an unrelated dependency.
+COPY engine-go/third_party ./third_party
 RUN go mod download
 COPY engine-go/ ./
 RUN CGO_ENABLED=0 go build -o cryo-engine-go ./cmd/cryo-engine-go
