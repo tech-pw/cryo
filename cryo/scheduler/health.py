@@ -18,7 +18,6 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -96,37 +95,60 @@ def check_silent_data_loss(
     return report
 
 
-def run_silent_data_loss_sweep(session: Session) -> list[SilentLossHealthResult]:
-    """Run the detector for every active table; intended for the 5-minute scheduler loop.
+def run_silent_data_loss_sweep(
+    session: Session,
+    *,
+    after_id: uuid.UUID | None = None,
+    limit: int | None = None,
+) -> tuple[list[SilentLossHealthResult], uuid.UUID | None]:
+    """Run the detector for a bounded slice of active tables, ordered by id, resuming after
+    ``after_id``; intended for the 5-minute scheduler loop.
+
+    Sweeping the whole ~13k-table fleet unbounded in one session accumulates every
+    Table/TableStats ORM object in the session's identity map simultaneously -- a real
+    production incident: cryo-scheduler OOMKilled roughly every 5 minutes. ``limit`` bounds
+    how many tables one call processes; the caller tracks ``after_id`` (the returned cursor)
+    across ticks to rotate through the full fleet over several ticks instead of all at once.
+    Returns ``(results, next_cursor)`` -- ``next_cursor`` is ``None`` once the sweep reaches
+    the end of the fleet, signaling the caller to wrap back to the start.
 
     The sweep is best-effort: a failure on one table must not abort the rest. Each result
     is returned so the caller can build a summary or push to Slack/PagerDuty.
     """
     settings = get_settings()
-    cutoff = datetime.now(UTC)
-    table_ids = session.scalars(select(Table.id).where(Table.is_active.is_(True))).all()
+    batch_size = limit if limit is not None else settings.silent_loss_batch_size
+    stmt = select(Table.id).where(Table.is_active.is_(True)).order_by(Table.id)
+    if after_id is not None:
+        stmt = stmt.where(Table.id > after_id)
+    table_ids = session.scalars(stmt.limit(batch_size)).all()
+    next_cursor: uuid.UUID | None = table_ids[-1] if len(table_ids) == batch_size else None
+
     results: list[SilentLossHealthResult] = []
     for tid in table_ids:
         try:
             report = check_silent_data_loss(session, tid)
+            if report is not None and not report.is_clean():
+                event_id: uuid.UUID | None = None
+                latest = session.scalar(
+                    select(SilentDataLossEvent)
+                    .where(SilentDataLossEvent.table_id == tid)
+                    .order_by(SilentDataLossEvent.detected_at.desc())
+                    .limit(1)
+                )
+                if latest is not None:
+                    event_id = latest.id
+                results.append(
+                    SilentLossHealthResult(table_id=tid, report=report, event_id=event_id)
+                )
         except Exception as exc:  # pragma: no cover
             # defensive: one bad table must not abort sweep.
             logger.warning("silent_data_loss: table=%s failed: %s", tid, exc)
-            continue
-        if report is None:
-            continue
-        event_id: uuid.UUID | None = None
-        latest = session.scalar(
-            select(SilentDataLossEvent)
-            .where(SilentDataLossEvent.table_id == tid)
-            .order_by(SilentDataLossEvent.detected_at.desc())
-            .limit(1)
-        )
-        if latest is not None:
-            event_id = latest.id
-        results.append(SilentLossHealthResult(table_id=tid, report=report, event_id=event_id))
-    del cutoff, settings  # reserved for future throttle / per-table cutoff logic.
-    return results
+        finally:
+            # Detach this table's objects (and anything it pulled in) before moving on --
+            # without this, the identity map keeps every processed table's ORM objects
+            # alive for the rest of the sweep regardless of batch size.
+            session.expunge_all()
+    return results, next_cursor
 
 
 def _committed_from_stats(stats: TableStats) -> list[CommittedManifestEntry]:
