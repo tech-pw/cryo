@@ -150,6 +150,113 @@ def compute_benefit_score(
     return round(score, 4)
 
 
+# AutoComp §A2 default scalarization weights (paper-aligned): S_c = 0.55 T1' + 0.15 T3' +
+# 0.15 T4' - 0.15 T2'. When T3 (file entropy) has no data yet -- the scanner doesn't populate
+# TablePartition.file_entropy today, see docs/implementation/workload-aware-optimization.md
+# §A.4 -- its weight is redistributed proportionally across T1/T4 rather than letting a missing
+# trait silently score as "worst possible entropy".
+@dataclass(frozen=True)
+class MoopWeights:
+    t1_file_count: float = 0.55
+    t2_compute_cost: float = 0.15
+    t3_file_entropy: float = 0.15
+    t4_query_affinity: float = 0.15
+    version: str = "v1"
+
+
+DEFAULT_MOOP_WEIGHTS = MoopWeights()
+
+
+@dataclass(frozen=True)
+class MoopTraits:
+    """Normalized [0,1] trait values plus the scalarized score, for one candidate."""
+
+    t1: float
+    t2: float
+    t3: float
+    t4: float
+    s_c: float
+
+    def as_dict(self, *, weights_version: str) -> dict[str, float | str]:
+        return {
+            "t1": self.t1,
+            "t2": self.t2,
+            "t3": self.t3,
+            "t4": self.t4,
+            "s_c": self.s_c,
+            "weights_version": weights_version,
+        }
+
+
+def compute_moop_scores(
+    candidates: Sequence[Mapping[str, Any]],
+    weights: MoopWeights = DEFAULT_MOOP_WEIGHTS,
+) -> list[MoopTraits]:
+    """MOOP-scalarized score for each candidate, normalized against the others in this batch.
+
+    Each candidate is a mapping with ``small_files``, ``size_gb``, ``query_frequency``, and
+    optionally ``file_entropy``. Normalization is min-max *within this batch* (a table's
+    partitions from one scan, or a fleet-wide batch the caller assembles) -- the paper allows
+    either; per-table keeps this a pure function with no cross-table state to manage.
+    """
+    if not candidates:
+        return []
+
+    small_files = [float(c.get("small_files") or 0) for c in candidates]
+    size_gb = [float(c.get("size_gb") or 0.1) for c in candidates]
+    frequency = [float(c.get("query_frequency") or 0.0) for c in candidates]
+    entropy_raw = [c.get("file_entropy") for c in candidates]
+    has_entropy = any(v is not None for v in entropy_raw)
+    entropy = [float(v) if v is not None else 0.0 for v in entropy_raw]
+
+    t1_norm = _min_max_normalize(small_files)
+    t2_norm = _min_max_normalize(size_gb)
+    t3_norm = _min_max_normalize(entropy) if has_entropy else [0.0] * len(candidates)
+    t4_norm = _min_max_normalize(frequency)
+
+    if has_entropy:
+        t1_w, t2_w, t3_w, t4_w = (
+            weights.t1_file_count,
+            weights.t2_compute_cost,
+            weights.t3_file_entropy,
+            weights.t4_query_affinity,
+        )
+    else:
+        base = weights.t1_file_count + weights.t4_query_affinity
+        share = weights.t3_file_entropy / base if base > 0 else 0.5
+        t1_w = weights.t1_file_count + weights.t1_file_count * share
+        t4_w = weights.t4_query_affinity + weights.t4_query_affinity * share
+        t2_w = weights.t2_compute_cost
+        t3_w = 0.0
+
+    results = []
+    for i in range(len(candidates)):
+        s_c = t1_w * t1_norm[i] + t3_w * t3_norm[i] + t4_w * t4_norm[i] - t2_w * t2_norm[i]
+        results.append(
+            MoopTraits(
+                t1=round(t1_norm[i], 4),
+                t2=round(t2_norm[i], 4),
+                t3=round(t3_norm[i], 4),
+                t4=round(t4_norm[i], 4),
+                s_c=round(s_c, 4),
+            )
+        )
+    return results
+
+
+def _min_max_normalize(values: Sequence[float]) -> list[float]:
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    span = hi - lo
+    if span <= 0:
+        # Every candidate ties on this trait -- neutral midpoint, not 0 (which would read as
+        # "worst on this trait" for an entire batch that's actually uniform) or 1 (which would
+        # read as "best for everyone", equally misleading).
+        return [0.5] * len(values)
+    return [(v - lo) / span for v in values]
+
+
 def _partition_field_spec(partitions: Sequence[TablePartition]) -> PartitionFieldSpec | None:
     """Primary partition-field spec shared by this scan's rows, or None if unpartitioned.
 
@@ -299,15 +406,32 @@ def update_partition_benefit_scores(
         partitions=partitions,
     )
 
-    updated = 0
+    frequencies: list[float] = []
     for partition in partitions:
-        small_files = partition.small_files_in_partition_count or 0
-        size_gb = partition.partition_size_gb or 0.1
         frequency = (
             partition_frequency.get(partition.partition_value, queries_per_day)
             if partition.partition_value is not None
             else queries_per_day
         )
+        frequencies.append(frequency)
+
+    moop_traits = compute_moop_scores(
+        [
+            {
+                "small_files": partition.small_files_in_partition_count or 0,
+                "size_gb": partition.partition_size_gb or 0.1,
+                "query_frequency": frequencies[i],
+                "file_entropy": partition.file_entropy,
+            }
+            for i, partition in enumerate(partitions)
+        ]
+    )
+
+    updated = 0
+    for i, partition in enumerate(partitions):
+        small_files = partition.small_files_in_partition_count or 0
+        size_gb = partition.partition_size_gb or 0.1
+        frequency = frequencies[i]
 
         score = compute_benefit_score(
             small_files=small_files,
@@ -317,6 +441,9 @@ def update_partition_benefit_scores(
 
         partition.query_frequency = frequency
         partition.compaction_benefit_score = score
+        partition.autocomp_traits = moop_traits[i].as_dict(
+            weights_version=DEFAULT_MOOP_WEIGHTS.version
+        )
         updated += 1
 
     session.commit()

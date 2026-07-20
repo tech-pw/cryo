@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from math import floor
@@ -20,6 +20,9 @@ class AdmissionJob:
     mode: Mode | str
     cooldown_hours: int = 0
     estimated_benefit_score: float | None = None
+    # AutoComp §A2 MOOP scalarization; can be negative, so None (not 0) means "not computed".
+    moop_score: float | None = None
+    size_gb: float | None = None
     last_maintained_at: datetime | None = None
     deadline_at: datetime | None = None
 
@@ -37,6 +40,11 @@ class AdmissionConfig:
     high_load_fraction: float = 0.5
     default_cooldown_hours: int = 0
     min_benefit_score: float = 0.0
+    # AutoComp §A2. None disables the corresponding gate (matches min_benefit_score's 0.0-means-
+    # disabled convention, but moop_score can be legitimately negative so 0.0 isn't a safe
+    # "disabled" sentinel for it -- None is unambiguous).
+    min_moop_score: float | None = None
+    fleet_budget_gb: float | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +96,13 @@ def decide_job_admission(
     ):
         return AdmissionDecision(False, "benefit_below_threshold", defer=True)
 
+    if (
+        job.moop_score is not None
+        and config.min_moop_score is not None
+        and float(job.moop_score) < config.min_moop_score
+    ):
+        return AdmissionDecision(False, "below_moop_score", defer=True)
+
     if is_heavy_mode(mode) and not is_offpeak(
         current, config.offpeak_start_ist, config.offpeak_end_ist
     ):
@@ -131,6 +146,44 @@ def compute_admission_budget(
         )
 
     return AdmissionBudget(replicas=tuple(budgets), reasons=tuple(reasons))
+
+
+def pack_fleet_budget(
+    jobs: Sequence[AdmissionJob],
+    config: AdmissionConfig,
+) -> dict[str, AdmissionDecision]:
+    """AutoComp §A2 "Fleet Decide": greedy top-k GB-budget pack.
+
+    Sorts by moop_score (falling back to estimated_benefit_score, then unscored-last) DESC and
+    admits jobs while they fit ``config.fleet_budget_gb`` -- first-fit-decreasing, so a big job
+    that doesn't fit doesn't block smaller ones after it from using the remaining budget.
+
+    Returns a per-job_id decision; callers should treat "not admissible" here the same as any
+    other ``decide_job_admission`` rejection (defer with the given reason). When
+    ``config.fleet_budget_gb`` is None the gate is disabled and every job is admissible --
+    same convention as the per-replica slot cap being a separate, always-on mechanism this
+    doesn't replace.
+    """
+    if config.fleet_budget_gb is None:
+        return {job.job_id: AdmissionDecision(True) for job in jobs}
+
+    def sort_key(job: AdmissionJob) -> float:
+        if job.moop_score is not None:
+            return job.moop_score
+        if job.estimated_benefit_score is not None:
+            return job.estimated_benefit_score
+        return float("-inf")
+
+    decisions: dict[str, AdmissionDecision] = {}
+    remaining = config.fleet_budget_gb
+    for job in sorted(jobs, key=sort_key, reverse=True):
+        size = job.size_gb or 0.0
+        if size <= remaining:
+            decisions[job.job_id] = AdmissionDecision(True)
+            remaining -= size
+        else:
+            decisions[job.job_id] = AdmissionDecision(False, "budget_exhausted", defer=True)
+    return decisions
 
 
 def is_heavy_mode(mode: Mode | str) -> bool:

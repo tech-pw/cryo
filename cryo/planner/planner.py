@@ -23,6 +23,9 @@ class OptimizeCandidate:
     small_files: int
     predicate: PartitionPredicate
     benefit_score: float = 0.0  # AutoComp score; 0 = not computed (fall back to small_files)
+    # AutoComp §A2 MOOP scalarization (autocomp_traits["s_c"]); can be negative (T2 cost is
+    # subtracted), so None -- not a 0/positive sentinel -- means "not computed".
+    moop_score: float | None = None
 
 
 def build_plan(
@@ -203,6 +206,7 @@ def _candidate_partitions(
                 small_files=small_files,
                 predicate=predicate,
                 benefit_score=benefit_score,
+                moop_score=_moop_score(row),
             )
         )
     return candidates
@@ -311,9 +315,22 @@ def _sort_value(row: Mapping[str, Any]) -> str:
     return str(value)
 
 
+def _moop_score(row: Mapping[str, Any]) -> float | None:
+    traits = row.get("autocomp_traits")
+    if not isinstance(traits, Mapping):
+        return None
+    s_c = traits.get("s_c")
+    return float(s_c) if s_c is not None else None
+
+
 def _compare_candidates(left: OptimizeCandidate, right: OptimizeCandidate) -> int:
-    # If benefit scores are available for both, use AutoComp ranking
-    if left.benefit_score > 0 and right.benefit_score > 0:
+    # Prefer MOOP (AutoComp §A2) when both sides have it -- it's the paper's actual ranking
+    # signal (file-count reduction + entropy + query affinity, minus compute cost), not just
+    # small_files x frequency.
+    if left.moop_score is not None and right.moop_score is not None:
+        if left.moop_score != right.moop_score:
+            return -1 if left.moop_score > right.moop_score else 1
+    elif left.benefit_score > 0 and right.benefit_score > 0:
         if left.benefit_score != right.benefit_score:
             return -1 if left.benefit_score > right.benefit_score else 1
     else:
