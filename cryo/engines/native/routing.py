@@ -52,9 +52,9 @@ NATIVE_V3_PARTITIONED_DV_DETAIL = (
 )
 
 NATIVE_DELETE_FILES_DETAIL = (
-    "rewrite (optimize) is blocked on iceberg-go when cryo.table_stats.total_delete_files > 0 "
-    "(iceberg-go bug rewriting tables with delete files); "
-    "expire_snapshots and remove_orphan_files still run; route OPTIMIZE to Trino/Spark"
+    "rewrite (optimize) blocked: cryo.table_stats.total_delete_files > 0 "
+    "(iceberg-go cannot rewrite tables with delete files); "
+    "expire_snapshots and remove_orphan_files still run"
 )
 
 NATIVE_RUST_OPTIMIZE_DETAIL = (
@@ -233,8 +233,6 @@ def _optimize_requires_sql_fallback(
         return NATIVE_ZORDER_DETAIL
     if has_v3_partitioned_deletion_vectors(stats):
         return NATIVE_V3_PARTITIONED_DV_DETAIL
-    if has_nonzero_delete_files(stats):
-        return NATIVE_DELETE_FILES_DETAIL
     return None
 
 
@@ -256,6 +254,10 @@ def resolve_native_routing(
             continue
 
         if operation.type is OperationType.OPTIMIZE:
+            # Hard block: never run or fall back rewrite when delete files are present.
+            if has_nonzero_delete_files(stats):
+                skipped_ops.append((operation, NATIVE_DELETE_FILES_DETAIL))
+                continue
             sql_fallback_detail = _optimize_requires_sql_fallback(operation, stats)
             if sql_fallback_detail is not None:
                 if has_sql_fallback:
@@ -268,8 +270,6 @@ def resolve_native_routing(
                 continue
             if has_v3_partitioned_deletion_vectors(stats):
                 detail = NATIVE_V3_PARTITIONED_DV_DETAIL
-            elif has_nonzero_delete_files(stats):
-                detail = NATIVE_DELETE_FILES_DETAIL
             elif not is_go_engine_impl(cfg):
                 detail = NATIVE_RUST_OPTIMIZE_DETAIL
             else:

@@ -115,6 +115,31 @@ def test_compound_predicates_compile_and_evaluate_with_not() -> None:
     assert not evaluate_predicate(predicate, BASE_ROW | {"table_name": "tmp_orders"})
 
 
+def test_assigned_preset_id_null_compiles_to_is_null() -> None:
+    predicate = {"field": "assigned_preset_id", "op": "=", "value": None}
+    sql = _compile_sql(predicate)
+    assert "IS NULL" in sql
+    assert evaluate_predicate(predicate, BASE_ROW | {"assigned_preset_id": None})
+    assert not evaluate_predicate(
+        predicate,
+        BASE_ROW | {"assigned_preset_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+    )
+
+
+def test_assigned_preset_id_in_compiles_and_evaluates() -> None:
+    preset_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    preset_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    predicate = {"field": "assigned_preset_id", "op": "in", "value": [preset_a, preset_b]}
+    sql = _compile_sql(predicate)
+    assert "IN" in sql.upper()
+    assert evaluate_predicate(predicate, BASE_ROW | {"assigned_preset_id": preset_a})
+    assert not evaluate_predicate(
+        predicate,
+        BASE_ROW | {"assigned_preset_id": "cccccccc-cccc-cccc-cccc-cccccccccccc"},
+    )
+    assert not evaluate_predicate(predicate, BASE_ROW | {"assigned_preset_id": None})
+
+
 def test_empty_top_level_predicates_keep_backwards_compatible_defaults() -> None:
     assert compile_predicate(None) is None
     assert evaluate_predicate(None, BASE_ROW)

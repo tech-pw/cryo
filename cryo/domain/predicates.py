@@ -27,6 +27,7 @@ SUPPORTED_FIELDS = frozenset(
         "reclaimable_bytes",
         "estimated_monthly_s3_cost_usd",
         "cost_precision",
+        "assigned_preset_id",
     }
 )
 LEAF_OPERATORS = frozenset({"=", "!=", "<", "<=", ">", ">=", "in", "like", "glob"})

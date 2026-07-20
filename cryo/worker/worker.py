@@ -1316,8 +1316,26 @@ def _execution_plan_params(
     stats: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Merge destination Trino/Spark catalog into planner params for rendered SQL."""
+    from cryo.engines.trino.catalog_bindings import resolve_trino_catalog
+
     merged = dict(params)
-    catalog = destination.config.get("catalog") or destination.config.get("catalog_name")
+    engine = destination.engine
+    engine_value = engine.value if isinstance(engine, EngineType) else str(engine)
+    source_catalog = stats.get("catalog") or stats.get("catalog_name")
+    source_catalog_name = source_catalog if isinstance(source_catalog, str) else None
+    source_id = stats.get("source_id")
+
+    if engine_value == EngineType.TRINO.value:
+        catalog = resolve_trino_catalog(
+            destination.config,
+            source_id=source_id if isinstance(source_id, (str, UUID)) else None,
+            source_catalog_name=source_catalog_name,
+        )
+    else:
+        catalog = destination.config.get("catalog") or destination.config.get("catalog_name")
+        if not isinstance(catalog, str) or not catalog:
+            catalog = None
+
     if not isinstance(catalog, str) or not catalog:
         return merged
     merged["catalog"] = catalog

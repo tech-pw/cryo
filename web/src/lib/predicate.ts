@@ -3,7 +3,7 @@ export type PredicateOp = "=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "like" |
 export interface PredicateLeaf {
   field: string;
   op: PredicateOp;
-  value: string | number | boolean | Array<string | number | boolean>;
+  value: string | number | boolean | null | Array<string | number | boolean>;
 }
 
 export type Predicate =
@@ -14,12 +14,17 @@ export type Predicate =
 
 export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
 
+/** Sentinel for the Catalogs preset filter: tables with no table_assignments row. */
+export const NO_PRESET_FILTER = "__none__";
+
 export interface TableFilterState {
   grades?: string[];
   priorities?: string[];
   needsCompaction?: boolean;
   schemaSearch?: string;
   sourceIds?: string[];
+  /** `__none__` and/or assigned preset UUIDs (assignment-only, not effective preset). */
+  presetFilter?: string[];
   minSizeGb?: number | null;
   minSmallFiles?: number | null;
   minMonthlySavings?: number | null;
@@ -62,6 +67,7 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
     typeof filters.needsCompaction === "boolean"
       ? leaf("needs_compaction", "=", filters.needsCompaction)
       : null,
+    presetFilterPredicate(filters.presetFilter),
     filters.schemaSearch?.trim()
       ? any([
           leaf("schema_name", "glob", `*${escapeGlob(filters.schemaSearch.trim())}*`),
@@ -83,14 +89,33 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
     filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null
   ]);
 
+const presetFilterPredicate = (presetFilter: string[] | undefined): Predicate | null => {
+  if (!presetFilter?.length) return null;
+  const includeNone = presetFilter.includes(NO_PRESET_FILTER);
+  const presetIds = presetFilter.filter((id) => id !== NO_PRESET_FILTER);
+  return any([
+    includeNone ? leaf("assigned_preset_id", "=", null) : null,
+    presetIds.length ? leaf("assigned_preset_id", "in", presetIds) : null
+  ]);
+};
+
 export const predicateSummary = (
   filters: TableFilterState,
-  catalogOptions: Array<{ label: string; value: string }> = []
+  catalogOptions: Array<{ label: string; value: string }> = [],
+  presetOptions: Array<{ label: string; value: string }> = []
 ): string => {
   const catalogById = new Map(catalogOptions.map((option) => [option.value, option.label]));
+  const presetById = new Map(presetOptions.map((option) => [option.value, option.label]));
   const parts = [
     filters.sourceIds?.length
       ? `Catalog: ${filters.sourceIds.map((id) => catalogById.get(id) ?? id).join(", ")}`
+      : null,
+    filters.presetFilter?.length
+      ? `Preset: ${filters.presetFilter
+          .map((id) =>
+            id === NO_PRESET_FILTER ? "No preset" : (presetById.get(id) ?? id)
+          )
+          .join(", ")}`
       : null,
     filters.grades?.length ? `Grade: ${filters.grades.join(", ")}` : null,
     filters.priorities?.length

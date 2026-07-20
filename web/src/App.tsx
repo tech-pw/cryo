@@ -5,7 +5,6 @@ import {
   ClockCircleOutlined,
   CloudOutlined,
   ControlOutlined,
-  DatabaseOutlined,
   DollarOutlined,
   ExperimentOutlined,
   HistoryOutlined,
@@ -78,7 +77,6 @@ const queryClient = new QueryClient({
 // re-introduction, but no entry point exists in the navigation.
 const navItems = [
   { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
-  { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">Tables</Link> },
   { key: "/catalogs", icon: <AppstoreOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
   { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
   { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
@@ -109,7 +107,7 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Inventory",
-    children: [navByKey["/tables"], navByKey["/catalogs"], navByKey["/scans"]]
+    children: [navByKey["/catalogs"], navByKey["/scans"]]
   },
   {
     type: "group",
@@ -133,7 +131,13 @@ const navGroups: MenuProps["items"] = [
   }
 ];
 
-const routeSelectionAliases = new Map<string, string>();
+// Table detail lives under /tables/:id; highlight Catalogs in the nav.
+const routeSelectionAliases = new Map<string, string>([["/tables", "/catalogs"]]);
+
+const TablesListRedirect = () => {
+  const { search } = useLocation();
+  return <Navigate to={`/catalogs${search}`} replace />;
+};
 
 const ThemeToggle = () => {
   const { theme, toggleTheme } = useTheme();
@@ -242,7 +246,7 @@ const Shell = () => {
               <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
               <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
               <Route path="/attribution" element={<CostAttribution />} />
-              <Route path="/tables" element={<Catalog />} />
+              <Route path="/tables" element={<TablesListRedirect />} />
               <Route path="/tables/:tableId" element={<TableDetail />} />
               <Route path="/scans" element={<Scans />} />
               <Route path="/scans/:runId" element={<Scans />} />
