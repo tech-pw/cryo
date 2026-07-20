@@ -12,6 +12,8 @@ Architecture:
 - Idempotent: Kubernetes Job `.spec.ttlSecondsAfterFinished` cleans up completed pods
 - Graceful fallback: if kubernetes client is unavailable or not in-cluster, falls
   back to the subprocess runner
+- Spot capacity is gated (docs/native-engine-scoping-research.md §6.5): large or
+  uncheckpointed chunks force on-demand even when spot is requested
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -42,6 +45,7 @@ _MEM_PER_10GB = 128
 _MAX_CPU_MILLI = 4000
 _MAX_MEM_MIB = 16384
 _ACTIVE_DEADLINE_SECONDS = 7200
+_DEFAULT_GB_PER_HOUR = 40.0
 
 
 def compute_job_resources(chunk_size_gb: float) -> tuple[int, int]:
@@ -54,6 +58,118 @@ def compute_job_resources(chunk_size_gb: float) -> tuple[int, int]:
         _MEM_BASE_MIB + int(chunk_size_gb / 10 * _MEM_PER_10GB),
     )
     return cpu_milli, mem_mib
+
+
+def estimate_duration_seconds(
+    chunk_size_gb: float, *, gb_per_hour: float = _DEFAULT_GB_PER_HOUR
+) -> float:
+    """Best-effort wall-clock estimate used only for spot gating."""
+    rate = max(float(gb_per_hour), 1.0)
+    return max(60.0, (float(chunk_size_gb) / rate) * 3600.0)
+
+
+def spot_allowed_for_job(
+    *,
+    chunk_size_gb: float,
+    estimated_duration_seconds: float | None = None,
+    config: Mapping[str, Any] | None = None,
+    checkpointing_enabled: bool | None = None,
+) -> bool:
+    """Return True only when spot capacity is safe for this chunk.
+
+    Policy (native-engine-scoping-research.md §6.5):
+    - Spot must be explicitly allowed (config/env).
+    - Chunk size and estimated duration must be under configured caps.
+    - When require_checkpointing is set, checkpointing must be enabled.
+    """
+    cfg = dict(config or {})
+    allow = _bool_cfg(cfg, "k8s_spot_allow", "CRYO_NATIVE_SPOT_ALLOW", default=False)
+    if not allow:
+        return False
+
+    max_gb = _float_cfg(cfg, "k8s_spot_max_chunk_gb", "CRYO_NATIVE_SPOT_MAX_CHUNK_GB", default=50.0)
+    max_duration = _float_cfg(
+        cfg,
+        "k8s_spot_max_estimated_duration_seconds",
+        "CRYO_NATIVE_SPOT_MAX_DURATION_SECONDS",
+        default=1800.0,
+    )
+    require_ckpt = _bool_cfg(
+        cfg,
+        "k8s_spot_require_checkpointing",
+        "CRYO_NATIVE_SPOT_REQUIRE_CHECKPOINTING",
+        default=True,
+    )
+    if checkpointing_enabled is None:
+        checkpointing_enabled = _bool_cfg(
+            cfg,
+            "partial_progress_enabled",
+            "CRYO_NATIVE_CHECKPOINTING",
+            default=True,
+        )
+
+    duration = (
+        float(estimated_duration_seconds)
+        if estimated_duration_seconds is not None
+        else estimate_duration_seconds(chunk_size_gb)
+    )
+    if float(chunk_size_gb) > max_gb:
+        return False
+    if duration > max_duration:
+        return False
+    if require_ckpt and not checkpointing_enabled:
+        return False
+    return True
+
+
+def _bool_cfg(cfg: Mapping[str, Any], key: str, env_key: str, *, default: bool) -> bool:
+    if key in cfg and cfg[key] is not None:
+        value = cfg[key]
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    env_val = os.environ.get(env_key)
+    if env_val is not None:
+        return env_val.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def _float_cfg(cfg: Mapping[str, Any], key: str, env_key: str, *, default: float) -> float:
+    if key in cfg and cfg[key] is not None:
+        return float(cfg[key])
+    env_val = os.environ.get(env_key)
+    if env_val is not None and env_val.strip():
+        return float(env_val)
+    return default
+
+
+def _capacity_scheduling(
+    *,
+    use_spot: bool,
+) -> tuple[dict[str, str], list[dict[str, str]], dict[str, str]]:
+    """Return (node_selector extras, tolerations, annotations) for capacity type."""
+    annotations = {
+        "cryo.io/capacity-type": "spot" if use_spot else "on-demand",
+    }
+    if not use_spot:
+        annotations["karpenter.sh/do-not-disrupt"] = "true"
+        return (
+            {"karpenter.sh/capacity-type": "on-demand"},
+            [],
+            annotations,
+        )
+    return (
+        {"karpenter.sh/capacity-type": "spot"},
+        [
+            {
+                "key": "karpenter.sh/capacity-type",
+                "operator": "Equal",
+                "value": "spot",
+                "effect": "NoSchedule",
+            }
+        ],
+        annotations,
+    )
 
 
 def _safe_load_k8s() -> tuple[type, type] | tuple[None, None]:
@@ -129,11 +245,31 @@ def execute_request_via_job(
 
     image = str(config.get("k8s_image", "cryo:latest"))
     binary = str(config.get("binary_path", "/usr/local/bin/cryo-engine-go"))
-    service_account = str(config.get("k8s_service_account", "default"))
+    service_account = str(
+        config.get("k8s_service_account")
+        or os.environ.get("CRYO_NATIVE_K8S_SERVICE_ACCOUNT")
+        or "default"
+    )
     ttl_seconds = int(config.get("k8s_ttl_seconds_after_finished", 300))
     image_pull_policy = str(config.get("k8s_image_pull_policy", "IfNotPresent"))
-    namespace = str(config.get("k8s_namespace", "default"))
+    namespace = str(
+        config.get("k8s_namespace") or os.environ.get("CRYO_K8S_NAMESPACE") or "default"
+    )
     destination_id = str(config.get("destination_id") or config.get("id") or "")
+
+    use_spot = spot_allowed_for_job(chunk_size_gb=chunk_size_gb, config=config)
+    node_extras, tolerations, capacity_annotations = _capacity_scheduling(use_spot=use_spot)
+    if not use_spot and _bool_cfg(
+        config, "k8s_spot_allow", "CRYO_NATIVE_SPOT_ALLOW", default=False
+    ):
+        logger.info(
+            "Spot requested but gated off for chunk_size_gb=%.1f; using on-demand",
+            chunk_size_gb,
+        )
+
+    node_selector: dict[str, str] = {"kubernetes.io/arch": "amd64"}
+    node_selector.update(node_extras)
+    safe_table_ref = table_ref[:63]
 
     job_manifest: dict[str, Any] = {
         "apiVersion": "batch/v1",
@@ -144,12 +280,13 @@ def execute_request_via_job(
             "labels": {
                 "app.kubernetes.io/name": "cryo",
                 "app.kubernetes.io/component": "native-engine",
-                "cryo/table_ref": table_ref,
+                "cryo/table_ref": safe_table_ref,
                 "cryo/destination": destination_id or "default",
             },
             "annotations": {
                 "cryo/cpu": f"{cpu_milli}m",
                 "cryo/memory": f"{mem_mib}Mi",
+                **capacity_annotations,
             },
         },
         "spec": {
@@ -161,13 +298,16 @@ def execute_request_via_job(
                     "labels": {
                         "app.kubernetes.io/name": "cryo",
                         "app.kubernetes.io/component": "native-engine",
-                        "cryo/table_ref": table_ref,
+                        "cryo/table_ref": safe_table_ref,
                         "cryo/destination": destination_id or "default",
                     },
+                    "annotations": dict(capacity_annotations),
                 },
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,
+                    "nodeSelector": node_selector,
+                    "tolerations": tolerations,
                     "containers": [
                         {
                             "name": "cryo-engine",
@@ -201,7 +341,14 @@ def execute_request_via_job(
 
     try:
         batch_api.create_namespaced_job(body=job_manifest, namespace=namespace)
-        logger.info("Created Kubernetes Job %s for table %s", job_name, table_ref)
+        logger.info(
+            "Created Kubernetes Job %s for table %s (spot=%s cpu=%sm mem=%sMi)",
+            job_name,
+            table_ref,
+            use_spot,
+            cpu_milli,
+            mem_mib,
+        )
     except Exception as exc:
         logger.error("Failed to create Job %s: %s", job_name, exc)
         return NativeExecuteResult(

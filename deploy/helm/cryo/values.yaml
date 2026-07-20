@@ -111,16 +111,40 @@ scanner:
       memory: 4Gi
 
 native:
+  # When true: create ServiceAccount+RBAC for Job dispatch / live capacity, and
+  # pin Worker+Governor pods onto that SA. Destination configs still need
+  # k8s_dispatch=true to create Jobs instead of subprocess.
   enabled: false
   image:
     repository: cryo
     tag: latest
     pullPolicy: Always # see the comment on image.pullPolicy above
+  # Overridden to the chart-managed SA when enabled=true (see worker/governor templates).
   serviceAccount: default
   ttlSecondsAfterFinished: 300
   defaultChunkSizeGb: 100
   maxCpu: 4000m
   maxMemory: 16Gi
+  # Spot is gated (scoping §6.5): never the default for large/uncheckpointed jobs.
+  spot:
+    allow: false
+    maxChunkSizeGb: 50
+    maxEstimatedDurationSeconds: 1800
+    requireCheckpointing: true
+  keda:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    pollingInterval: 15
+    cooldownPeriod: 60
+    # Redis admitted-job LIST used by RedisMaintenanceQueue (`cryo:admitted`).
+    redisAddress: "cryo-redis:6379"
+    redisListName: "cryo:admitted"
+    listLength: "1"
+    redisPasswordFromSecret: false
+  karpenter:
+    # When true, install a ConfigMap with recommended NodePool notes (no CRDs).
+    installNotes: true
 
 redis:
   enabled: true

@@ -198,3 +198,32 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
 - Leader-elected services (scheduler/governor): assume multiple replicas may start; guard with the
   Redis lease so only one is active.
 - Time zones: off-peak windows are **IST**; compute carefully (engine probes/Postgres are UTC).
+
+---
+
+## Learned User Preferences
+
+- When given broad “implement all phases / don’t ask / fix everything” mandates, keep going to
+  completion without pausing for confirmation between phases.
+- AI providers (Anthropic/OpenAI/Azure) and Slack belong on the **Connections** page — not buried
+  in settings or env-only wiring; S3 connections should offer IAM role / IRSA-style auth, not only
+  static keys.
+- For research and Slack/report format work, ground recommendations in official docs and real
+  channel/data evidence — not impressions; land durable format guidance under `docs/`.
+- When a scoping or implementation doc marks items as **Scoped out**, leave those alone unless
+  explicitly asked to expand scope.
+- Workload-aware research build order to prefer: finish **AutoComp** (highest near-term ROI) →
+  **PTO** (biggest net-new) → WAIR / Okolnychyi secondaries; master spec is
+  `docs/implementation/workload-aware-optimization.md`.
+
+## Learned Workspace Facts
+
+- Public GitHub remote is `https://github.com/shelf-project/Cryo` (`origin`); GitLab remote
+  `gitlab` points at `penpencil-services/data/data-engineering/cryo` (often worked on branch
+  `gitlab-main`).
+- Production Cryo for cost/Grafana lookups runs in the **data-platform** Kubernetes cluster
+  (Cryo namespace), not a generic default cluster guess.
+- `EngineType` includes `trino`, `spark_emr`, `native`, and `flink`; **native** is the Go
+  compaction path — UI/run presets should expose it when configured, not Trino-only.
+- Slack daily-report structure guidance lives in `docs/SLACK_REPORT_FORMAT_GUIDE.md`; native-engine
+  scope/gaps are tracked in `docs/native-engine-scoping-research.md`.
