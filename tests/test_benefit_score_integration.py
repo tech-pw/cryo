@@ -8,7 +8,9 @@ from sqlalchemy import select
 
 from cryo.db.models import AuditLog, QueryLog, Source, Table, TablePartition, TableStats
 from cryo.planner.benefit_score import (
+    DEFAULT_MOOP_WEIGHTS,
     compute_benefit_score,
+    compute_moop_scores,
     get_compaction_effectiveness_stats,
     get_top_compaction_candidates,
     update_all_benefit_scores,
@@ -64,6 +66,69 @@ def test_compute_benefit_score():
         partition_size_gb=1.0,
     )
     assert score == 0.0
+
+
+def test_compute_moop_scores_empty_batch():
+    assert compute_moop_scores([]) == []
+
+
+def test_compute_moop_scores_ranks_small_files_and_frequency_up_size_down():
+    candidates = [
+        {"small_files": 500, "size_gb": 5.0, "query_frequency": 20.0},  # best on 3 traits
+        {"small_files": 10, "size_gb": 100.0, "query_frequency": 0.0},  # worst on 3 traits
+    ]
+    traits = compute_moop_scores(candidates)
+    assert len(traits) == 2
+    assert traits[0].s_c > traits[1].s_c
+    assert traits[0].t1 == 1.0  # most small files in this batch -> max-normalized to 1.0
+    assert traits[0].t2 == 0.0  # smallest (cheapest) size -> min-normalized to 0.0
+    assert traits[1].t1 == 0.0
+    assert traits[1].t2 == 1.0
+
+
+def test_compute_moop_scores_all_tied_candidates_get_neutral_traits_not_zero():
+    # Every candidate identical on every trait -- min==max, so normalization is undefined; must
+    # not silently read as "worst on every trait" (0.0) for an entire uniform batch.
+    candidates = [{"small_files": 50, "size_gb": 5.0, "query_frequency": 2.0} for _ in range(3)]
+    traits = compute_moop_scores(candidates)
+    for t in traits:
+        assert t.t1 == 0.5
+        assert t.t2 == 0.5
+        assert t.t4 == 0.5
+
+
+def test_compute_moop_scores_without_file_entropy_redistributes_its_weight():
+    weights = DEFAULT_MOOP_WEIGHTS
+    candidates = [
+        {"small_files": 500, "size_gb": 1.0, "query_frequency": 10.0},
+        {"small_files": 10, "size_gb": 1.0, "query_frequency": 0.0},
+    ]
+    traits = compute_moop_scores(candidates, weights)
+    # T3 excluded entirely (no file_entropy anywhere in the batch) -- its weight lands on
+    # T1/T4 proportionally, not silently dropped (S_c would otherwise never reach its max).
+    assert traits[0].t3 == 0.0
+    top = traits[0]
+    base = weights.t1_file_count + weights.t4_query_affinity
+    share = weights.t3_file_entropy / base
+    t1_w = weights.t1_file_count + weights.t1_file_count * share
+    t4_w = weights.t4_query_affinity + weights.t4_query_affinity * share
+    expected = t1_w * top.t1 + t4_w * top.t4 - weights.t2_compute_cost * top.t2
+    assert top.s_c == pytest.approx(round(expected, 4))
+
+
+def test_compute_moop_scores_with_file_entropy_uses_it_and_can_go_negative():
+    candidates = [
+        # Worst on every positive trait (fewest small files, coldest, lowest entropy) and
+        # worst (most expensive) on the one negative trait -- guaranteed s_c < 0, since T2 is
+        # the only term still contributing once T1/T3/T4 all bottom out at 0.
+        {"small_files": 1, "size_gb": 1000.0, "query_frequency": 0.0, "file_entropy": 0.0},
+        {"small_files": 100, "size_gb": 1.0, "query_frequency": 10.0, "file_entropy": 5.0},
+    ]
+    traits = compute_moop_scores(candidates)
+    assert traits[1].s_c > traits[0].s_c
+    assert traits[0].s_c < 0
+    assert traits[0].t3 == 0.0
+    assert traits[1].t3 == 1.0
 
 
 def test_update_partition_benefit_scores(session):
@@ -145,6 +210,17 @@ def test_update_partition_benefit_scores(session):
         # per-partition signal to attribute to -- every partition must still fall back to the
         # broadcast table-level rate, unchanged from before per-partition affinity existed.
         assert partition.query_frequency == pytest.approx(20 / 7)
+        # AutoComp §A2: MOOP traits persisted alongside the score every scan, not just on
+        # some separate opt-in pass.
+        assert partition.autocomp_traits is not None
+        assert set(partition.autocomp_traits) == {"t1", "t2", "t3", "t4", "s_c", "weights_version"}
+
+    by_value = {p.partition_value: p for p in updated_partitions}
+    # Tied query_frequency (broadcast) across all three -- small_files should still drive T1
+    # divergence: the 200-small-file partition should out-rank the 50-small-file one.
+    hottest_s_c = by_value["2024-01-03"].autocomp_traits["s_c"]
+    coldest_s_c = by_value["2024-01-02"].autocomp_traits["s_c"]
+    assert hottest_s_c > coldest_s_c
 
 
 def test_update_partition_benefit_scores_diverges_per_partition_with_uneven_filters(session):

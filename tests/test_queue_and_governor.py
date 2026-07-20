@@ -77,6 +77,57 @@ def test_governor_admits_wave_round_robin_across_replicas() -> None:
     assert locks.is_table_locked("table-2")
 
 
+def test_governor_fleet_budget_admits_highest_moop_score_first() -> None:
+    """AutoComp §A2 'Fleet Decide' wired into the real wave loop: enough replica slots for
+    both jobs, but fleet_budget_gb only has room for one -- the higher moop_score table wins,
+    the other is deferred with budget_exhausted, not silently admitted anyway."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            config={
+                "replicas": ["r1", "r2"],
+                "per_replica_cap": 5,
+                "adaptive_budget": False,
+                "fleet_budget_gb": 10.0,
+            },
+        )
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="cold-job",
+            run_id="run-1",
+            table_id="cold-table",
+            destination_id="dest",
+            mode=Mode.LIGHT,
+            params={"moop_score": 0.1, "size_gb": 10.0},
+        )
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="hot-job",
+            run_id="run-1",
+            table_id="hot-table",
+            destination_id="dest",
+            mode=Mode.LIGHT,
+            params={"moop_score": 0.9, "size_gb": 10.0},
+        )
+    )
+    queue.enqueue("cold-job", "dest")
+    queue.enqueue("hot-job", "dest")
+
+    governor = Governor(queue, locks, store, default_config=AdmissionConfig(adaptive_budget=False))
+    result = governor.run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    assert result.admitted == 1
+    assert result.deferred == 1
+    assert store.get_job("hot-job").status is JobStatus.ADMITTED
+    assert store.get_job("cold-job").status is JobStatus.DEFERRED
+    assert store.get_job("cold-job").error == "budget_exhausted"
+
+
 def test_governor_defers_heavy_jobs_outside_offpeak() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

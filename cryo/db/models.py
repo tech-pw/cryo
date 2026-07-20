@@ -420,6 +420,12 @@ class TablePartition(Base):
     compaction_benefit_score: Mapped[float | None] = mapped_column(
         Float
     )  # small_files × query_frequency
+    # MOOP multi-objective score (SIGMOD 2025 §A2): file_entropy is the Shannon entropy of the
+    # partition's file-size histogram (higher = more benefit from compaction); autocomp_traits
+    # is {t1,t2,t3,t4,s_c,weights_version} -- the normalized trait inputs to s_c, kept alongside
+    # the score itself so the UI/admission gate don't need to recompute normalization.
+    file_entropy: Mapped[float | None] = mapped_column(Float)
+    autocomp_traits: Mapped[JsonDict | None] = mapped_column(JSONB)
     last_compacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     input_files_last_compaction: Mapped[int | None] = mapped_column(
         Integer

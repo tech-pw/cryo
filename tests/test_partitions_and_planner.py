@@ -174,6 +174,56 @@ def test_orphan_params_emit_min_age_hours() -> None:
     assert params["orphan_min_age_hours"] == 72
 
 
+def test_build_plan_orders_optimize_chunks_by_moop_score_over_small_files() -> None:
+    """AutoComp §A2: when autocomp_traits.s_c is present, it must win over both small_files
+    and the plain benefit_score -- a partition with fewer small files but a much higher MOOP
+    score (e.g. it's cheap to rewrite and heavily queried) should chunk first."""
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 1_000,
+        "total_size_gb": 250,
+        "partition_fields": [
+            {
+                "base_column": "event_date",
+                "partition_field": "event_date_day",
+                "transform": "day",
+                "col_type": "date",
+            }
+        ],
+    }
+    partitions = [
+        {
+            "partition_value": "2025-05-20",
+            "small_files_in_partition_count": 900,  # most files, but...
+            "partition_size_gb": 10,
+            "compaction_benefit_score": 500.0,  # ...and the higher plain benefit_score too
+            "autocomp_traits": {"s_c": 0.1},  # ...MOOP ranks it last
+        },
+        {
+            "partition_value": "2025-05-19",
+            "small_files_in_partition_count": 50,
+            "partition_size_gb": 10,
+            "compaction_benefit_score": 10.0,
+            "autocomp_traits": {"s_c": 0.9},  # MOOP ranks it first
+        },
+    ]
+    params = {
+        "min_small_files": 10,
+        "chunk_size_gb": 10,  # force each partition into its own chunk
+        "max_partitions_per_chunk": 1,
+        "retention_days": 14,
+        "retain_last": 3,
+    }
+
+    plan = build_plan(stats, partitions, Mode.STANDARD, params)
+
+    optimize_ops = [op for op in plan.operations if op.type is OperationType.OPTIMIZE]
+    assert len(optimize_ops) == 2
+    first_chunk_terms = optimize_ops[0].predicates[0].terms
+    assert first_chunk_terms[0].value == "2025-05-19"  # MOOP-preferred partition chunked first
+
+
 def test_planner_skips_hot_partitions_with_recent_writes() -> None:
     """Move 14: 'no writes in N hours' filter keeps actively-written partitions alone."""
     from datetime import UTC, datetime, timedelta
