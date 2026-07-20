@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import TypeGuard
 
 from cryo.domain.enums import OperationType
 from cryo.domain.predicates import LEAF_OPERATORS, SUPPORTED_FIELDS
@@ -37,7 +38,7 @@ def is_safe_manual_sequence(operations: Sequence[OperationType | str]) -> bool:
     return not validate_operation_order(operations)
 
 
-def _is_number(value: object) -> bool:
+def _is_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -107,7 +108,6 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "max_files_per_group",
     )
     positive_keys = (
-        "chunk_size_gb",
         "max_partitions_per_chunk",
         "max_chunks",
         "retention_days",
@@ -124,6 +124,8 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "max_bytes_per_group",
         "min_input_files",
         "target_file_size_bytes",
+        # Optional leftover; native derives chunk at runtime. Still validate if present.
+        "chunk_size_gb",
     )
     for key in non_negative_keys:
         if key not in params:
@@ -134,7 +136,11 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
             continue
         _validate_positive_number(errors, f"params.{key}", params[key])
     if "compression_level" in params:
-        _validate_non_negative_number(errors, "params.compression_level", params["compression_level"])
+        _validate_non_negative_number(
+            errors,
+            "params.compression_level",
+            params["compression_level"],
+        )
     if "delete_ratio_trigger" in params and _is_number(params["delete_ratio_trigger"]):
         ratio = float(params["delete_ratio_trigger"])
         if ratio > 100:

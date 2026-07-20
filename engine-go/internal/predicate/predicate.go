@@ -10,11 +10,14 @@ import (
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
 
-// HasPredicates reports whether the operation carries non-empty predicate branches.
+// HasPredicates reports whether the operation carries real (bindable) predicate
+// branches. Display-only "_unpartitioned" terms are ignored — they mean full-table.
 func HasPredicates(op *protocol.OperationRequest) bool {
 	for _, predicate := range op.Predicates {
-		if len(predicate.Terms) > 0 {
-			return true
+		for _, term := range predicate.Terms {
+			if !isUnpartitionedSentinel(term.BaseColumn) {
+				return true
+			}
 		}
 	}
 	return false
@@ -47,8 +50,19 @@ func termUnsupportedReason(term protocol.PredicateTermRequest) string {
 	}
 }
 
+// unpartitionedSentinel is the scanner display label for tables with an empty
+// partition spec. It is not a real schema column; binders panic on it
+// ("could not bind reference '_unpartitioned'"). Treat as full-table scope.
+const unpartitionedSentinel = "_unpartitioned"
+
+func isUnpartitionedSentinel(name string) bool {
+	trimmed := strings.TrimSpace(name)
+	return trimmed == "" || strings.EqualFold(trimmed, unpartitionedSentinel)
+}
+
 // BuildRowFilter translates Cryo OR-of-AND partition predicates into an iceberg row filter.
 // Returns an unbound expression; iceberg-go's Scan binds it internally.
+// Predicates that only reference the unpartitioned sentinel become AlwaysTrue (full table).
 func BuildRowFilter(_ *iceberg.Schema, predicates []protocol.PredicateRequest) (iceberg.BooleanExpression, error) {
 	if len(predicates) == 0 {
 		return iceberg.AlwaysTrue{}, nil
@@ -62,6 +76,10 @@ func BuildRowFilter(_ *iceberg.Schema, predicates []protocol.PredicateRequest) (
 		branch, err := buildAndBranch(predicate)
 		if err != nil {
 			return nil, err
+		}
+		if branch == nil {
+			// Sentinel-only branch: full-table scope for this OR arm.
+			return iceberg.AlwaysTrue{}, nil
 		}
 		branches = append(branches, branch)
 	}
@@ -77,11 +95,19 @@ func BuildRowFilter(_ *iceberg.Schema, predicates []protocol.PredicateRequest) (
 func buildAndBranch(predicate protocol.PredicateRequest) (iceberg.BooleanExpression, error) {
 	terms := make([]iceberg.BooleanExpression, 0, len(predicate.Terms))
 	for _, term := range predicate.Terms {
+		if isUnpartitionedSentinel(term.BaseColumn) {
+			// Skip display-only sentinel; remaining real terms still constrain the row.
+			continue
+		}
 		expr, err := buildTermExpr(term)
 		if err != nil {
 			return nil, err
 		}
 		terms = append(terms, expr)
+	}
+	if len(terms) == 0 {
+		// All terms were the unpartitioned sentinel → no row filter.
+		return nil, nil
 	}
 	if len(terms) == 1 {
 		return terms[0], nil
@@ -90,6 +116,9 @@ func buildAndBranch(predicate protocol.PredicateRequest) (iceberg.BooleanExpress
 }
 
 func buildTermExpr(term protocol.PredicateTermRequest) (iceberg.BooleanExpression, error) {
+	if isUnpartitionedSentinel(term.BaseColumn) {
+		return iceberg.AlwaysTrue{}, nil
+	}
 	ref := iceberg.Reference(term.BaseColumn)
 	if len(term.Value) == 0 || string(term.Value) == "null" {
 		if term.Transform == "identity" {

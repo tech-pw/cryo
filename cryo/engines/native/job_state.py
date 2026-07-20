@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -26,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 _NATIVE_JOB_LABEL = "app.kubernetes.io/component=native-engine"
 _DESTINATION_LABEL = "cryo/destination"
+_SERVICE_ACCOUNT_NAMESPACE = Path(
+    "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+)
 
 
 _MILLI_RE = re.compile(r"^\s*(\d+)\s*m\s*$")
@@ -72,6 +77,18 @@ def _in_cluster_configured() -> bool:
     except Exception:
         return False
     return True
+
+
+def current_k8s_namespace() -> str:
+    """Return this pod's namespace, with a local-development fallback."""
+    configured = os.environ.get("POD_NAMESPACE") or os.environ.get("CRYO_K8S_NAMESPACE")
+    if configured and configured.strip():
+        return configured.strip()
+    try:
+        namespace = _SERVICE_ACCOUNT_NAMESPACE.read_text(encoding="utf-8").strip()
+    except OSError:
+        namespace = ""
+    return namespace or "default"
 
 
 def parse_cpu_to_milli(value: Any) -> int:
@@ -169,10 +186,10 @@ class NativeJobStateReader:
     def __init__(
         self,
         *,
-        namespace: str = "default",
+        namespace: str | None = None,
         batch_api: Any | None = None,
     ) -> None:
-        self._namespace = namespace
+        self._namespace = namespace or current_k8s_namespace()
         self._batch_api = batch_api
 
     def is_available(self) -> bool:
@@ -220,9 +237,9 @@ class NativeJobStateReader:
             active = int(getattr(status, "active", 0) or 0) if status is not None else 0
             succeeded = int(getattr(status, "succeeded", 0) or 0) if status is not None else 0
             failed = int(getattr(status, "failed", 0) or 0) if status is not None else 0
-            if active <= 0 or succeeded > 0 or failed > 0:
-                # Active count > 0 is the only state that consumes capacity now;
-                # finished jobs (succeeded/failed) are cleaned up by ttlSecondsAfterFinished.
+            if succeeded > 0 or failed > 0:
+                # Pending/unschedulable Jobs still reserve admission capacity;
+                # only terminal Jobs stop consuming a slot.
                 continue
 
             metadata = getattr(job, "metadata", None)

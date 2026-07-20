@@ -72,9 +72,59 @@ func maxBytesPerGroupFromParams(raw json.RawMessage) int64 {
 	}
 	n := int64Param(raw, "max_bytes_per_group", target)
 	if n < 1 {
-		return target
+		n = target
 	}
+	// Defense in depth: never execute groups larger than budget ÷ planning
+	// expansion, even if a stale/over-eager planner stamped a multi-GiB cap
+	// (run 3483a157: 2 GiB groups → ~20 GiB RSS under 512 MiB budget).
+	n = clampMaxBytesToMemoryBudget(n, target, raw)
 	return n
+}
+
+// planningMemoryExpansion is the streaming-rewrite factor used to size groups
+// from compaction_memory_budget_bytes. Lower than defaultMemoryExpansionFactor
+// (admit-gate / dense-string calibration) because ExecuteCompactionGroup streams
+// batches; observed ~10× on unpartitioned ~2 GiB compressed groups.
+const planningMemoryExpansion = 8
+
+// packingTargetsPerGroup is how many target-sized outputs we prefer to pack
+// into one ExecuteCompactionGroup so the rolling writer does not emit one
+// undersized remainder file per tiny group.
+const packingTargetsPerGroup = 2
+
+func clampMaxBytesToMemoryBudget(maxBytes, target int64, raw json.RawMessage) int64 {
+	budget := memoryBudgetFromParams(raw)
+	if budget < 1 {
+		return maxBytes
+	}
+	if target < 1 {
+		target = defaultTargetFileSizeBytes
+	}
+	packingFloor := target * packingTargetsPerGroup
+	if packingFloor < target {
+		packingFloor = target
+	}
+	safe := budget / planningMemoryExpansion
+	if safe < 1 {
+		safe = 1
+	}
+	// Never shred below one target file. Prefer the packing floor when the
+	// budget can hold it so remainder tails stay rare.
+	floor := target
+	if safe >= packingFloor {
+		floor = packingFloor
+	}
+	if safe < floor {
+		safe = floor
+	}
+	// Preserve explicit dense-table overrides below the floor.
+	if maxBytes > 0 && maxBytes < floor {
+		return maxBytes
+	}
+	if maxBytes > safe {
+		return safe
+	}
+	return maxBytes
 }
 
 func minInputFilesFromParams(raw json.RawMessage) int {
@@ -92,15 +142,57 @@ func groupSplitLimitsFromParams(raw json.RawMessage) groupSplitLimits {
 	}
 }
 
-// finalizeRewriteGroups applies memory/file caps after iceberg-go bin-pack, then
-// drops groups that no longer meet min_input_files (Spark/Iceberg semantics:
-// never rewrite fewer than N files unless MOR forced MinInputFiles=1).
+// finalizeRewriteGroups applies memory/file caps after iceberg-go bin-pack:
+// split bins that exceed max_bytes (dense / tight overrides), then coalesce
+// same-partition bins up to max_bytes so larger pods/chunks run fewer groups
+// without changing target_file_size_bytes (output size). Finally drop groups
+// that no longer meet min_input_files.
 func finalizeRewriteGroups(
 	groups []table.CompactionTaskGroup,
 	limits groupSplitLimits,
 	minInputFiles int,
 ) []table.CompactionTaskGroup {
-	return filterGroupsByMinInputFiles(splitOversizedGroups(groups, limits), minInputFiles)
+	split := splitOversizedGroups(groups, limits)
+	coalesced := coalesceGroupsUpTo(split, limits)
+	return filterGroupsByMinInputFiles(coalesced, minInputFiles)
+}
+
+// coalesceGroupsUpTo merges consecutive same-partition rewrite groups until
+// adding the next group would exceed maxBytes or the optional maxFiles ceiling.
+// iceberg-go PlanCompaction packs
+// toward target_file_size_bytes; raising max_bytes_per_group alone does not
+// merge those bins — this step does, so pod-scaled caps reduce group count
+// while ExecuteCompactionGroup still writes at target_file_size_bytes.
+func coalesceGroupsUpTo(groups []table.CompactionTaskGroup, limits groupSplitLimits) []table.CompactionTaskGroup {
+	maxBytes := limits.maxBytes
+	if maxBytes < 1 || len(groups) <= 1 {
+		return groups
+	}
+	out := make([]table.CompactionTaskGroup, 0, len(groups))
+	cur := groups[0]
+	if cur.TotalSizeBytes <= 0 {
+		cur.TotalSizeBytes = groupCompressedBytes(cur)
+	}
+	for i := 1; i < len(groups); i++ {
+		next := groups[i]
+		nextBytes := groupCompressedBytes(next)
+		curBytes := groupCompressedBytes(cur)
+		wouldExceedFiles := limits.maxFiles >= 1 && len(cur.Tasks)+len(next.Tasks) > limits.maxFiles
+		if next.PartitionKey != cur.PartitionKey ||
+			curBytes+nextBytes > maxBytes ||
+			wouldExceedFiles {
+			out = append(out, cur)
+			cur = next
+			if cur.TotalSizeBytes <= 0 {
+				cur.TotalSizeBytes = nextBytes
+			}
+			continue
+		}
+		cur.Tasks = append(cur.Tasks, next.Tasks...)
+		cur.TotalSizeBytes = curBytes + nextBytes
+	}
+	out = append(out, cur)
+	return out
 }
 
 // filterGroupsByMinInputFiles drops rewrite groups with fewer than minInputFiles

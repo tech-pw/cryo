@@ -1,17 +1,8 @@
 """Kubernetes Job-based dispatch for cryo-engine binaries.
 
-Replaces the subprocess runner for native engine execution when running inside a
-Kubernetes cluster. Each maintenance operation (or chunk) is dispatched as a
-separate Kubernetes Job, with resource requests sized from the Planner's
-`total_size_gb` / `chunk_size_gb` / file-count data.
-
-Architecture:
-- Worker creates a Job per chunk using the kubernetes Python client
-- Payload is passed as a base64-encoded env var to avoid ConfigMap overhead
-- Job stdout is captured via pod logs on completion
-- Idempotent: Kubernetes Job `.spec.ttlSecondsAfterFinished` cleans up completed pods
-- Graceful fallback: if kubernetes client is unavailable or not in-cluster, falls
-  back to the subprocess runner
+Jobs are created on Governor admit (preferred path) or via the legacy
+blocking Worker path (``execute_request_via_job``). Resource requests are
+sized by ``cryo.engines.native.resources`` and hard-capped at 16Gi memory.
 """
 
 from __future__ import annotations
@@ -19,14 +10,23 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
-from collections.abc import Mapping
+import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from kubernetes import client
 
+from cryo.engines.native.job_state import current_k8s_namespace
+from cryo.engines.native.resources import (
+    MAX_POD_CPU_MILLI,
+    MAX_POD_MEM_MIB,
+    ResourceCeilings,
+    compute_job_resources,
+)
 from cryo.engines.native.runner import (
     NativeExecuteResult,
     NativeOperationResult,
@@ -35,52 +35,19 @@ from cryo.engines.native.runner import (
 
 logger = logging.getLogger(__name__)
 
-_CPU_BASE_MILLI = 250
-_CPU_PER_10GB = 100
-_MEM_BASE_MIB = 512
-_MEM_PER_10GB = 128
-_MAX_CPU_MILLI = 4000
-_MAX_MEM_MIB = 16384
+_MAX_CPU_MILLI = MAX_POD_CPU_MILLI
+_MAX_MEM_MIB = MAX_POD_MEM_MIB
 _ACTIVE_DEADLINE_SECONDS = 7200
 
-
-def compute_job_resources(chunk_size_gb: float) -> tuple[int, int]:
-    cpu_milli = min(
-        _MAX_CPU_MILLI,
-        _CPU_BASE_MILLI + int(chunk_size_gb / 10 * _CPU_PER_10GB),
-    )
-    mem_mib = min(
-        _MAX_MEM_MIB,
-        _MEM_BASE_MIB + int(chunk_size_gb / 10 * _MEM_PER_10GB),
-    )
-    return cpu_milli, mem_mib
-
-
-def _safe_load_k8s() -> tuple[type, type] | tuple[None, None]:
-    try:
-        from kubernetes import client as k8s_client
-        from kubernetes import config as k8s_config
-
-        return k8s_client, k8s_config
-    except ImportError:
-        return None, None
-
-
-def _in_cluster_configured() -> bool:
-    k8s_client, k8s_config = _safe_load_k8s()
-    if k8s_client is None:
-        return False
-    try:
-        k8s_config.load_incluster_config()  # type: ignore[union-attr]
-        return True
-    except Exception:
-        return False
-
-
-def _new_k8s_batch_client() -> client.BatchV1Api:
-    from kubernetes import client
-
-    return client.BatchV1Api()
+__all__ = [
+    "JobCreateResult",
+    "JobDispatchResult",
+    "compute_job_resources",
+    "create_native_job",
+    "execute_request_via_job",
+    "k8s_dispatch_available",
+    "resolve_k8s_namespace",
+]
 
 
 @dataclass(frozen=True)
@@ -92,48 +59,139 @@ class JobDispatchResult:
     error: str | None
 
 
-def execute_request_via_job(
-    request: Mapping[str, Any],
-    *,
-    config: Mapping[str, Any],
-    job_name: str | None = None,
-    chunk_size_gb: float = 100.0,
-    timeout_seconds: int | None = None,
-) -> NativeExecuteResult:
-    """Dispatch cryo-engine execution as a Kubernetes Job and return results.
+@dataclass(frozen=True)
+class JobCreateResult:
+    ok: bool
+    job_name: str | None
+    cpu_milli: int
+    mem_mib: int
+    error: str | None = None
 
-    Falls back to subprocess runner when kubernetes client is unavailable or not
-    running in-cluster.
-    """
+
+def k8s_dispatch_available() -> bool:
+    """True when the kubernetes client loads and in-cluster config is present."""
     k8s_client, _ = _safe_load_k8s()
     if k8s_client is None:
-        logger.warning("kubernetes client not available, falling back to subprocess")
-        return _fallback_subprocess(request, config, timeout_seconds)
+        return False
+    return _in_cluster_configured()
 
+
+def resolve_k8s_namespace(config: Mapping[str, Any]) -> str:
+    current = current_k8s_namespace()
+    configured = config.get("k8s_namespace")
+    if isinstance(configured, str) and configured.strip():
+        requested = configured.strip()
+        if requested != current:
+            logger.warning(
+                "Ignoring cross-namespace native Job request for %s; Governor namespace is %s",
+                requested,
+                current,
+            )
+        return current
+    return current
+
+
+def create_native_job(
+    payload: Mapping[str, Any],
+    *,
+    config: Mapping[str, Any],
+    cpu_milli: int,
+    mem_mib: int,
+    job_name: str | None = None,
+    dispatch_id: str | None = None,
+    run_id: str | None = None,
+    table_refs: Sequence[str] | None = None,
+    timeout_seconds: int | None = None,
+) -> JobCreateResult:
+    """Create a Kubernetes Job without waiting for completion.
+
+    Memory is hard-clamped to 16Gi. Falls back is the caller's responsibility
+    when ``k8s_dispatch_available()`` is False.
+    """
+    ceilings = ResourceCeilings.from_config(config)
+    cpu_milli = min(max(250, int(cpu_milli)), ceilings.max_cpu_milli, MAX_POD_CPU_MILLI)
+    mem_mib = min(max(512, int(mem_mib)), ceilings.max_mem_mib, MAX_POD_MEM_MIB)
+
+    k8s_client, _ = _safe_load_k8s()
+    if k8s_client is None:
+        return JobCreateResult(
+            ok=False,
+            job_name=None,
+            cpu_milli=cpu_milli,
+            mem_mib=mem_mib,
+            error="kubernetes client not available",
+        )
     if not _in_cluster_configured():
-        logger.warning("not running in-cluster, falling back to subprocess")
-        return _fallback_subprocess(request, config, timeout_seconds)
+        return JobCreateResult(
+            ok=False,
+            job_name=None,
+            cpu_milli=cpu_milli,
+            mem_mib=mem_mib,
+            error="not running in-cluster",
+        )
 
-    table_ref = str(request.get("table_ref", "unknown"))
     if job_name is None:
-        import uuid
+        job_name = f"cryo-native-{uuid.uuid4().hex[:8]}"
 
-        safe_uuid = str(uuid.uuid4())[:8]
-        job_name = f"cryo-native-{safe_uuid}"
-
-    payload_json = json.dumps(dict(request))
+    payload_json = json.dumps(dict(payload))
     payload_b64 = base64.b64encode(payload_json.encode()).decode()
+    timeout_seconds = timeout_seconds or int(
+        config.get("k8s_active_deadline_seconds", _ACTIVE_DEADLINE_SECONDS)
+    )
 
-    cpu_milli, mem_mib = compute_job_resources(chunk_size_gb)
-    timeout_seconds = timeout_seconds or _ACTIVE_DEADLINE_SECONDS
-
-    image = str(config.get("k8s_image", "cryo:latest"))
-    binary = str(config.get("binary_path", "/usr/local/bin/cryo-engine-go"))
-    service_account = str(config.get("k8s_service_account", "default"))
-    ttl_seconds = int(config.get("k8s_ttl_seconds_after_finished", 300))
-    image_pull_policy = str(config.get("k8s_image_pull_policy", "IfNotPresent"))
-    namespace = str(config.get("k8s_namespace", "default"))
+    image = str(config.get("k8s_image") or os.environ.get("CRYO_NATIVE_IMAGE") or "cryo:latest")
+    service_account = str(
+        config.get("k8s_service_account")
+        or os.environ.get("CRYO_NATIVE_SERVICE_ACCOUNT")
+        or "default"
+    )
+    ttl_seconds = int(
+        config.get("k8s_ttl_seconds_after_finished")
+        or os.environ.get("CRYO_NATIVE_TTL_SECONDS")
+        or 3600
+    )
+    image_pull_policy = str(
+        config.get("k8s_image_pull_policy")
+        or os.environ.get("CRYO_NATIVE_IMAGE_PULL_POLICY")
+        or "IfNotPresent"
+    )
+    namespace = resolve_k8s_namespace(config)
     destination_id = str(config.get("destination_id") or config.get("id") or "")
+    binary = str(config.get("binary_path", "/usr/local/bin/cryo-engine-go"))
+
+    # Prefer Python batch entrypoint so multi-table serial pods work without
+    # changing the Go binary contract. Single-table batches still work.
+    use_batch_entrypoint = bool(payload.get("batch")) or bool(
+        config.get("k8s_batch_entrypoint", True)
+    )
+    if use_batch_entrypoint:
+        command = ["python", "-m", "cryo.engines.native.batch"]
+    else:
+        command = [binary, "execute"]
+
+    primary_ref = "batch"
+    if table_refs:
+        primary_ref = str(table_refs[0])[:63]
+    elif isinstance(payload.get("table_ref"), str):
+        primary_ref = str(payload["table_ref"])[:63]
+
+    labels = {
+        "app.kubernetes.io/name": "cryo",
+        "app.kubernetes.io/component": "native-engine",
+        "app": "cryo-native",
+        "cryo/destination": (destination_id or "default")[:63],
+    }
+    if dispatch_id:
+        labels["cryo/dispatch-id"] = str(dispatch_id)[:63]
+    if run_id:
+        labels["cryo/run-id"] = str(run_id)[:63]
+
+    annotations = {
+        "cryo/cpu": f"{cpu_milli}m",
+        "cryo/memory": f"{mem_mib}Mi",
+        "cryo/table_ref": primary_ref,
+    }
+    payload_secret_name = f"{job_name}-payload"
 
     job_manifest: dict[str, Any] = {
         "apiVersion": "batch/v1",
@@ -141,16 +199,8 @@ def execute_request_via_job(
         "metadata": {
             "name": job_name,
             "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/name": "cryo",
-                "app.kubernetes.io/component": "native-engine",
-                "cryo/table_ref": table_ref,
-                "cryo/destination": destination_id or "default",
-            },
-            "annotations": {
-                "cryo/cpu": f"{cpu_milli}m",
-                "cryo/memory": f"{mem_mib}Mi",
-            },
+            "labels": labels,
+            "annotations": annotations,
         },
         "spec": {
             "ttlSecondsAfterFinished": ttl_seconds,
@@ -158,12 +208,7 @@ def execute_request_via_job(
             "backoffLimit": 0,
             "template": {
                 "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": "cryo",
-                        "app.kubernetes.io/component": "native-engine",
-                        "cryo/table_ref": table_ref,
-                        "cryo/destination": destination_id or "default",
-                    },
+                    "labels": dict(labels),
                 },
                 "spec": {
                     "restartPolicy": "Never",
@@ -173,12 +218,18 @@ def execute_request_via_job(
                             "name": "cryo-engine",
                             "image": image,
                             "imagePullPolicy": image_pull_policy,
-                            "command": [binary, "execute"],
+                            "command": command,
                             "env": [
                                 {
                                     "name": "CRYO_PAYLOAD_B64",
-                                    "value": payload_b64,
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": payload_secret_name,
+                                            "key": "payload",
+                                        }
+                                    },
                                 },
+                                {"name": "CRYO_ENGINE_BINARY", "value": binary},
                             ],
                             "resources": {
                                 "requests": {
@@ -186,8 +237,8 @@ def execute_request_via_job(
                                     "memory": f"{mem_mib}Mi",
                                 },
                                 "limits": {
-                                    "cpu": f"{min(cpu_milli * 2, _MAX_CPU_MILLI)}m",
-                                    "memory": f"{min(mem_mib * 2, _MAX_MEM_MIB)}Mi",
+                                    "cpu": f"{min(cpu_milli * 2, MAX_POD_CPU_MILLI)}m",
+                                    "memory": f"{min(mem_mib * 2, MAX_POD_MEM_MIB)}Mi",
                                 },
                             },
                         },
@@ -198,19 +249,118 @@ def execute_request_via_job(
     }
 
     batch_api = _new_k8s_batch_client()
-
+    core_api = _new_k8s_core_client()
+    secret_created = False
     try:
-        batch_api.create_namespaced_job(body=job_manifest, namespace=namespace)
-        logger.info("Created Kubernetes Job %s for table %s", job_name, table_ref)
+        core_api.create_namespaced_secret(
+            namespace=namespace,
+            body={
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": payload_secret_name,
+                    "namespace": namespace,
+                    "labels": labels,
+                },
+                "type": "Opaque",
+                "stringData": {"payload": payload_b64},
+            },
+        )
+        secret_created = True
+        created_job = batch_api.create_namespaced_job(body=job_manifest, namespace=namespace)
+        _adopt_payload_secret(
+            core_api,
+            secret_name=payload_secret_name,
+            namespace=namespace,
+            job_name=job_name,
+            created_job=created_job,
+        )
+        logger.info(
+            "Created Kubernetes Job %s (cpu=%dm mem=%dMi dispatch=%s)",
+            job_name,
+            cpu_milli,
+            mem_mib,
+            dispatch_id,
+        )
+        return JobCreateResult(
+            ok=True,
+            job_name=job_name,
+            cpu_milli=cpu_milli,
+            mem_mib=mem_mib,
+        )
     except Exception as exc:
+        if secret_created:
+            try:
+                core_api.delete_namespaced_secret(name=payload_secret_name, namespace=namespace)
+            except Exception:
+                pass
         logger.error("Failed to create Job %s: %s", job_name, exc)
+        return JobCreateResult(
+            ok=False,
+            job_name=job_name,
+            cpu_milli=cpu_milli,
+            mem_mib=mem_mib,
+            error=f"Failed to create Kubernetes Job: {exc}",
+        )
+
+
+def execute_request_via_job(
+    request: Mapping[str, Any],
+    *,
+    config: Mapping[str, Any],
+    job_name: str | None = None,
+    chunk_size_gb: float | None = None,
+    cpu_milli: int | None = None,
+    mem_mib: int | None = None,
+    timeout_seconds: int | None = None,
+) -> NativeExecuteResult:
+    """Legacy blocking path: create Job and poll until done (Worker fallback)."""
+    if not k8s_dispatch_available():
+        logger.warning("kubernetes unavailable, falling back to subprocess")
+        return _fallback_subprocess(request, config, timeout_seconds)
+
+    table_ref = str(request.get("table_ref", "unknown"))
+    ceilings = ResourceCeilings.from_config(config)
+    if cpu_milli is None or mem_mib is None:
+        size_hint = float(chunk_size_gb) if chunk_size_gb is not None else 100.0
+        sized_cpu, sized_mem = compute_job_resources(size_hint, ceilings=ceilings)
+        cpu_milli = cpu_milli if cpu_milli is not None else sized_cpu
+        mem_mib = mem_mib if mem_mib is not None else sized_mem
+    created = create_native_job(
+        request,
+        config={**dict(config), "k8s_batch_entrypoint": False},
+        cpu_milli=cpu_milli,
+        mem_mib=mem_mib,
+        job_name=job_name,
+        table_refs=(table_ref,),
+        timeout_seconds=timeout_seconds,
+    )
+    if not created.ok or not created.job_name:
         return NativeExecuteResult(
             ok=False,
             table_ref=table_ref,
             results=(),
-            error=f"Failed to create Kubernetes Job: {exc}",
+            error=created.error or "Failed to create Kubernetes Job",
         )
 
+    return _poll_job_until_done(
+        created.job_name,
+        table_ref=table_ref,
+        config=config,
+        timeout_seconds=timeout_seconds or _ACTIVE_DEADLINE_SECONDS,
+    )
+
+
+def _poll_job_until_done(
+    job_name: str,
+    *,
+    table_ref: str,
+    config: Mapping[str, Any],
+    timeout_seconds: int,
+) -> NativeExecuteResult:
+    k8s_client, _ = _safe_load_k8s()
+    namespace = resolve_k8s_namespace(config)
+    batch_api = _new_k8s_batch_client()
     poll_interval = 5.0
     deadline = time.monotonic() + timeout_seconds
 
@@ -255,6 +405,80 @@ def execute_request_via_job(
             table_ref=table_ref,
             results=(),
             error=f"Job {job_name} error during polling: {exc}",
+        )
+
+
+def _safe_load_k8s() -> tuple[type, type] | tuple[None, None]:
+    try:
+        from kubernetes import client as k8s_client
+        from kubernetes import config as k8s_config
+
+        return k8s_client, k8s_config
+    except ImportError:
+        return None, None
+
+
+def _in_cluster_configured() -> bool:
+    k8s_client, k8s_config = _safe_load_k8s()
+    if k8s_client is None:
+        return False
+    try:
+        k8s_config.load_incluster_config()  # type: ignore[union-attr]
+        return True
+    except Exception:
+        return False
+
+
+def _new_k8s_batch_client() -> client.BatchV1Api:
+    from kubernetes import client
+
+    return client.BatchV1Api()
+
+
+def _new_k8s_core_client() -> client.CoreV1Api:
+    from kubernetes import client
+
+    return client.CoreV1Api()
+
+
+def _adopt_payload_secret(
+    core_api: Any,
+    *,
+    secret_name: str,
+    namespace: str,
+    job_name: str,
+    created_job: Any,
+) -> None:
+    metadata = getattr(created_job, "metadata", None)
+    uid = getattr(metadata, "uid", None)
+    if not uid:
+        logger.warning("Created Job %s without UID; payload Secret needs watcher cleanup", job_name)
+        return
+    try:
+        core_api.patch_namespaced_secret(
+            name=secret_name,
+            namespace=namespace,
+            body={
+                "metadata": {
+                    "ownerReferences": [
+                        {
+                            "apiVersion": "batch/v1",
+                            "kind": "Job",
+                            "name": job_name,
+                            "uid": str(uid),
+                            "controller": True,
+                            "blockOwnerDeletion": True,
+                        }
+                    ]
+                }
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to attach payload Secret %s to Job %s: %s",
+            secret_name,
+            job_name,
+            exc,
         )
 
 

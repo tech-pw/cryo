@@ -202,8 +202,9 @@ Two Rust stacks serve different paths (see `docs/native-iceberg-rust-engine-erro
 - `rewrite_manifests` execute blocked upstream (#2556); analyze supported
 
 Fresh databases seed destination `native-datafusion` and preset `default-native-deep`
-(`expire_snapshots` + `remove_orphan_files` + optimize; params include `chunk_size_gb=1`,
-`retain_last=4`). Neither is marked as the platform default; users must explicitly assign
+(`expire_snapshots` + `remove_orphan_files` + optimize; params include `retain_last=4`;
+`chunk_size_gb` is derived at runtime from allocated pod memory, not from the preset).
+Neither is marked as the platform default; users must explicitly assign
 or select a preset before running maintenance. See `scripts/seed_local_config.py`.
 
 - **`cryo-engine/Cargo.toml`** — iceberg-rust (git pin), iceberg-catalog-rest, opendal S3

@@ -152,7 +152,6 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
     ],
     "params": {
         "min_small_files": 10,
-        "chunk_size_gb": 1,
         "retention_days": 7,
         "retain_last": 4,
         "orphan_retention_days": 7,

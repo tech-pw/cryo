@@ -17,7 +17,8 @@ export const PresetConfigFields = ({ destinations }: { destinations: Destination
         Optimization planning
       </Divider>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: -8 }}>
-        Controls when Cryo plans optimize work and how large each chunk can be.
+        Controls when Cryo plans optimize work and how large each chunk can be. Native
+        Kubernetes Jobs ignore the stored chunk size and derive it from pod memory.
       </Typography.Paragraph>
       <Space className="full-width" size={12} wrap>
         <Form.Item
@@ -37,7 +38,7 @@ export const PresetConfigFields = ({ destinations }: { destinations: Destination
           label={
             <HintLabel
               label="Chunk size (GB)"
-              tooltip="Maximum data Cryo places in one optimize chunk. Tables below this size may run a full-table optimize."
+              tooltip="Maximum data in one optimize chunk for Trino and Spark. Native Kubernetes Jobs derive this value from pod memory."
             />
           }
           rules={[presetFieldRules.positive("Chunk size")]}
