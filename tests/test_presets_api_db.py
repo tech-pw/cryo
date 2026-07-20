@@ -338,6 +338,80 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     assert cancelled_job_response.json()["error"] == "cancelled"
 
 
+def test_cancel_releases_table_lock_and_is_idempotent(
+    api_db: ApiDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel must free Redis table locks; re-cancel cleans leftovers from older cancels."""
+    from cryo.api import routes
+    from cryo.domain.enums import JobStatus
+    from cryo.queue.locks import InMemoryLockStore
+    from cryo.queue.redis_queue import InMemoryMaintenanceQueue
+
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    run_id = run_response.json()["run_id"]
+    job_id = run_response.json()["job_ids"][0]
+
+    with api_db.session_factory() as session:
+        job = session.get(MaintenanceJob, uuid.UUID(job_id))
+        assert job is not None
+        job.status = JobStatus.RUNNING.value
+        job.started_at = datetime.now(UTC)
+        session.commit()
+
+    locks = InMemoryLockStore()
+    queue = InMemoryMaintenanceQueue()
+    queue.enqueue(job_id, str(destination_id))
+    queue.admit(job_id, str(destination_id), replica="r1")
+    queue.mark_running(job_id)
+    complete_calls = 0
+    original_complete = queue.complete
+
+    def tracked_complete(job_id_arg: str, status_arg: JobStatus | str) -> None:
+        nonlocal complete_calls
+        complete_calls += 1
+        original_complete(job_id_arg, status_arg)
+
+    monkeypatch.setattr(queue, "complete", tracked_complete)
+    assert locks.acquire_table_lock(str(hot_table_id), job_id, ttl_seconds=3600)
+
+    class _Wiring:
+        def __init__(self) -> None:
+            self.queue = queue
+            self.lock_store = locks
+
+    monkeypatch.setattr(routes, "build_runtime_wiring", lambda: _Wiring())
+
+    cancel_response = client.post(f"/api/v1/runs/{run_id}/cancel", headers=OPERATOR_HEADERS)
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+    assert not locks.is_table_locked(str(hot_table_id))
+    assert queue.local_in_flight_by_replica(str(destination_id)) == {}
+
+    # Simulate a leftover lock from a pre-fix cancel, then re-cancel to reclaim it.
+    assert locks.acquire_table_lock(str(hot_table_id), job_id, ttl_seconds=3600)
+    re_cancel = client.post(f"/api/v1/runs/{run_id}/cancel", headers=OPERATOR_HEADERS)
+    assert re_cancel.status_code == 200
+    assert not locks.is_table_locked(str(hot_table_id))
+    assert complete_calls == 1
+
+
 def test_maintenance_run_with_scheduled_at_creates_scheduled_status(api_db: ApiDb) -> None:
     """A future scheduled_at creates a run in "scheduled" status rather than "queued" --
     cryo/scheduler/service.py's dispatch tick is what actually enqueues it once the time

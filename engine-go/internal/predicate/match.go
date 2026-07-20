@@ -12,8 +12,9 @@ import (
 )
 
 // MatchesAnyDataFile returns true when the data file matches any OR-branch predicate.
+// Sentinel-only "_unpartitioned" predicates match every file (full-table scope).
 func MatchesAnyDataFile(tbl *table.Table, file iceberg.DataFile, predicates []protocol.PredicateRequest) (bool, error) {
-	if len(predicates) == 0 {
+	if !HasPredicates(&protocol.OperationRequest{Predicates: predicates}) {
 		return true, nil
 	}
 	for _, predicate := range predicates {
@@ -33,6 +34,9 @@ func MatchesAnyDataFile(tbl *table.Table, file iceberg.DataFile, predicates []pr
 
 func matchesPredicate(tbl *table.Table, file iceberg.DataFile, predicate protocol.PredicateRequest) (bool, error) {
 	for _, term := range predicate.Terms {
+		if isUnpartitionedSentinel(term.BaseColumn) {
+			continue
+		}
 		match, err := matchesTerm(tbl, file, term)
 		if err != nil {
 			return false, err
@@ -41,10 +45,14 @@ func matchesPredicate(tbl *table.Table, file iceberg.DataFile, predicate protoco
 			return false, nil
 		}
 	}
+	// Empty after stripping sentinels → full-table match for this AND-branch.
 	return true, nil
 }
 
 func matchesTerm(tbl *table.Table, file iceberg.DataFile, term protocol.PredicateTermRequest) (bool, error) {
+	if isUnpartitionedSentinel(term.BaseColumn) {
+		return true, nil
+	}
 	spec := tbl.Metadata().PartitionSpecByID(int(file.SpecID()))
 	if spec == nil {
 		return false, fmt.Errorf("partition spec %d not found", file.SpecID())

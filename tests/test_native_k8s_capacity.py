@@ -144,6 +144,18 @@ def test_reader_ignores_finished_jobs() -> None:
     assert [job.name for job in active] == ["cryo-running"]
 
 
+def test_reader_counts_pending_jobs_as_capacity() -> None:
+    pending = _make_job(name="cryo-pending", active=0)
+    batch_api = MagicMock()
+    batch_api.list_namespaced_job.return_value = _make_list_response([pending])
+    reader = NativeJobStateReader(batch_api=batch_api)
+
+    active = reader.list_active_native_jobs()
+
+    assert active is not None
+    assert [job.name for job in active] == ["cryo-pending"]
+
+
 def test_reader_falls_back_to_pod_spec_when_annotations_missing() -> None:
     resources = SimpleNamespace(
         requests={"cpu": "2000m", "memory": "8Gi"},
@@ -276,6 +288,23 @@ def test_live_capacity_provider_native_uses_k8s_reader() -> None:
     assert live["dest"].available == 8
     assert live["dest"].cpu_used_milli == 1000
     assert live["dest"].mem_used_mib == 2048
+
+
+def test_direct_k8s_capacity_read_failure_fails_closed() -> None:
+    queue = InMemoryMaintenanceQueue()
+    reader = MagicMock()
+    reader.is_available.return_value = True
+    reader.list_active_native_jobs.return_value = None
+
+    live = probe_native_capacity_by_replica(
+        {"slot_cap": 5, "k8s_dispatch": True},
+        destination_id="dest",
+        queue=queue,
+        job_state_reader=reader,
+    )
+
+    assert live["dest"].used == 5
+    assert live["dest"].available == 0
 
 
 def test_capacity_snapshot_backward_compatible_defaults() -> None:

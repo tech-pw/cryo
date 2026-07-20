@@ -43,6 +43,26 @@ func TestBucketTransformUnsupported(t *testing.T) {
 	}
 }
 
+func TestUnpartitionedSentinelIsNotAPredicate(t *testing.T) {
+	op := &protocol.OperationRequest{
+		Predicates: []protocol.PredicateRequest{
+			{Terms: []protocol.PredicateTermRequest{
+				{BaseColumn: "_unpartitioned", Transform: "identity", Value: json.RawMessage(`"_unpartitioned"`)},
+			}},
+		},
+	}
+	if HasPredicates(op) {
+		t.Fatal("sentinel-only predicates must be treated as full-table (no filter)")
+	}
+	expr, err := BuildRowFilter(nil, op.Predicates)
+	if err != nil {
+		t.Fatalf("BuildRowFilter: %v", err)
+	}
+	if _, ok := expr.(iceberg.AlwaysTrue); !ok {
+		t.Fatalf("expected AlwaysTrue for sentinel predicate, got %T (%v)", expr, expr)
+	}
+}
+
 func TestDayRangeBuildsAndExpression(t *testing.T) {
 	colType := "date"
 	term := protocol.PredicateTermRequest{

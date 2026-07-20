@@ -22,6 +22,7 @@ from cryo.governor.admission import (
     compute_admission_budget,
     decide_job_admission,
 )
+from cryo.governor.native_admit import admit_native_k8s_jobs, destination_uses_k8s_dispatch
 from cryo.governor.prefetch import (
     batch_job_requires_approval,
     batch_pii_block_reason,
@@ -142,6 +143,8 @@ class Governor:
                 with self._session_factory() as session:
                     wave_jobs: list[MaintenanceJobRecord] = []
                     table_uuids: set[uuid.UUID] = set()
+                    native_k8s_buffer: list[MaintenanceJobRecord] = []
+                    use_native_k8s = destination_uses_k8s_dispatch(destination)
                     for job_id in job_ids:
                         if not replicas:
                             blocked += 1
@@ -320,7 +323,6 @@ class Governor:
                                     stats_cache=stats_cache,
                                     live_capacity=live_capacity,
                                     job=job,
-                                    session=self._session_factory,
                                 )
                                 if not qpp_admit:
                                     logger.info(
@@ -358,6 +360,8 @@ class Governor:
                         try:
                             from cryo.ai.resource_predictor import predict_resources_for_table
 
+                            if table_uuid is None:
+                                raise ValueError("job has no valid table UUID")
                             sizing = predict_resources_for_table(session, table_uuid)
                             logger.info(
                                 "Resource predictor (shadow) for table %s: cpu=%.1f mem=%.1fGiB "
@@ -372,7 +376,16 @@ class Governor:
                                 config.per_replica_cap,
                             )
                         except Exception as exc:
-                            logger.debug("Resource predictor shadow failed for %s: %s", table_uuid, exc)
+                            logger.debug(
+                                "Resource predictor shadow failed for %s: %s",
+                                table_uuid,
+                                exc,
+                            )
+
+                        if use_native_k8s:
+                            # Buffer for pack-on-admit; do not push to Worker admitted queue.
+                            native_k8s_buffer.append(job)
+                            continue
 
                         replica = replicas.pop(0)
                         self._queue.admit(job.id, destination_id, replica)
@@ -382,6 +395,50 @@ class Governor:
                         register_admission(job.id, config)
                         admitted += 1
                         destination_outcomes[destination_id]["admitted"] += 1
+
+                    if native_k8s_buffer:
+                        def _defer_native_job(jid: str, reason: str) -> None:
+                            self._queue.defer(jid)
+                            self._store.mark_status(jid, JobStatus.DEFERRED, error=reason)
+
+                        result = admit_native_k8s_jobs(
+                            jobs=native_k8s_buffer,
+                            destination=destination,
+                            store=self._store,
+                            session_factory=self._session_factory,
+                            live_capacity=live_capacity,
+                            stats_cache=stats_cache,
+                            mark_status=self._store.mark_status,
+                            cancel_pending=self._queue.cancel_pending,
+                            defer_job=_defer_native_job,
+                            release_lock=self._lock_store.release_table_lock,
+                        )
+                        if result.fallback_to_worker:
+                            for job in native_k8s_buffer:
+                                if not replicas:
+                                    self._defer(job, "no_replica_slots")
+                                    deferred += 1
+                                    destination_outcomes[destination_id]["deferred"] += 1
+                                    continue
+                                replica = replicas.pop(0)
+                                self._queue.admit(job.id, destination_id, replica)
+                                self._store.mark_status(
+                                    job.id, JobStatus.ADMITTED, replica=replica
+                                )
+                                from cryo.governor.bandit_feedback import register_admission
+
+                                register_admission(job.id, config)
+                                admitted += 1
+                                destination_outcomes[destination_id]["admitted"] += 1
+                        else:
+                            admitted += result.admitted
+                            deferred += result.deferred
+                            destination_outcomes[destination_id]["admitted"] += result.admitted
+                            destination_outcomes[destination_id]["deferred"] += result.deferred
+                            from cryo.governor.bandit_feedback import register_admission
+
+                            for job in native_k8s_buffer:
+                                register_admission(job.id, config)
 
             return WaveResult(
                 admitted=admitted,
@@ -561,7 +618,6 @@ def _evaluate_qpp_for_governor(
     stats_cache: Mapping[uuid.UUID, object],
     live_capacity: Mapping[str, object],
     job: MaintenanceJobRecord,
-    session: type[SessionLocal],
 ) -> tuple[bool, float]:
     """Run the variance-aware QPP gate for one governor admission decision.
 

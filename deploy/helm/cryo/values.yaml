@@ -111,15 +111,19 @@ scanner:
       memory: 4Gi
 
 native:
+  # When true: Helm renders Governor Job/Secret RBAC; Governor creates
+  # sized Jobs on admit (destination config k8s_dispatch=true). Hard max memory
+  # request is 16Gi — Python clamps even if this value is set higher.
   enabled: false
   image:
     repository: cryo
     tag: latest
     pullPolicy: Always # see the comment on image.pullPolicy above
   serviceAccount: default
-  ttlSecondsAfterFinished: 300
-  defaultChunkSizeGb: 100
+  # Keep logs/results available across short Governor outages.
+  ttlSecondsAfterFinished: 3600
   maxCpu: 4000m
+  # Absolute upper bound for any native maintenance pod request (do not raise).
   maxMemory: 16Gi
 
 redis:

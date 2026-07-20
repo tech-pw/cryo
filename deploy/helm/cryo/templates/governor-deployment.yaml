@@ -19,6 +19,9 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- if .Values.native.enabled }}
+      serviceAccountName: {{ include "cryo.fullname" . }}-governor
+      {{- end }}
       containers:
         - name: governor
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -28,6 +31,20 @@ spec:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if .Values.native.enabled }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CRYO_NATIVE_IMAGE
+              value: "{{ .Values.native.image.repository }}:{{ .Values.native.image.tag }}"
+            - name: CRYO_NATIVE_IMAGE_PULL_POLICY
+              value: {{ .Values.native.image.pullPolicy | quote }}
+            - name: CRYO_NATIVE_SERVICE_ACCOUNT
+              value: {{ .Values.native.serviceAccount | default "default" | quote }}
+            - name: CRYO_NATIVE_TTL_SECONDS
+              value: {{ .Values.native.ttlSecondsAfterFinished | default 3600 | quote }}
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
