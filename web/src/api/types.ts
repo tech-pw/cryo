@@ -124,6 +124,8 @@ export interface TableStatsRead {
   avg_file_size_mb?: number;
   total_snapshots?: number;
   total_delete_files?: number;
+  equality_delete_files?: number;
+  position_delete_files?: number;
   delete_file_pct?: number;
   manifest_count?: number;
   partition_col?: string | null;
