@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import Float, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
@@ -225,6 +225,16 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     summary = dict(job.run.summary or {}) if job.run else {}
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
+    # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score
+    # gates read AdmissionJob.estimated_benefit_score/moop_score, which _admission_job builds
+    # from these params -- without this, params only ever carries static preset config (never
+    # a live per-table signal), so those gates never actually fire in production. setdefault
+    # so an operator who genuinely configured a static value on the preset still wins.
+    autocomp = _table_autocomp_summary(session, job.table_id)
+    if autocomp is not None:
+        params.setdefault("benefit_score", autocomp["benefit_score"])
+        if autocomp["moop_score"] is not None:
+            params.setdefault("moop_score", autocomp["moop_score"])
     return MaintenanceJobRecord(
         id=str(job.id),
         run_id=str(job.run_id),
@@ -333,6 +343,45 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             "partition_size_gb": row.partition_size_gb,
             "files_per_partition": row.files_per_partition,
             "last_write_at": (row.raw or {}).get("last_write_at"),
+            # AutoComp (SIGMOD 2025): without these, the planner's benefit/MOOP-aware ranking
+            # in _compare_candidates has nothing to rank on and silently falls back to
+            # small_files DESC every time, regardless of how compute_benefit_score /
+            # compute_moop_scores scored these partitions.
+            "compaction_benefit_score": row.compaction_benefit_score,
+            "autocomp_traits": dict(row.autocomp_traits) if row.autocomp_traits else None,
         }
         for row in rows
     ]
+
+
+def _table_autocomp_summary(
+    session: Session, table_id: uuid.UUID
+) -> dict[str, float | None] | None:
+    """Best (max) benefit/MOOP score across the table's latest-scan partitions.
+
+    Job-level admission gates (governor.decide_job_admission) operate per table/job, not per
+    partition, so "is this table worth admitting" is proxied by its single best candidate --
+    consistent with get_top_compaction_candidates already ranking by the same score.
+    """
+    latest_scan = session.scalar(
+        select(func.max(TablePartition.scan_at)).where(TablePartition.table_id == table_id)
+    )
+    if latest_scan is None:
+        return None
+    moop_expr = TablePartition.autocomp_traits["s_c"].astext.cast(Float)
+    row = session.execute(
+        select(
+            func.max(TablePartition.compaction_benefit_score),
+            func.max(moop_expr),
+        ).where(
+            TablePartition.table_id == table_id,
+            TablePartition.scan_at == latest_scan,
+        )
+    ).one()
+    max_benefit, max_moop = row
+    if max_benefit is None:
+        return None
+    return {
+        "benefit_score": float(max_benefit),
+        "moop_score": float(max_moop) if max_moop is not None else None,
+    }

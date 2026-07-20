@@ -6,10 +6,12 @@ from cryo.domain.enums import Mode
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
     AdmissionConfig,
+    AdmissionDecision,
     AdmissionJob,
     compute_admission_budget,
     cooldown_elapsed,
     decide_job_admission,
+    pack_fleet_budget,
 )
 
 
@@ -96,3 +98,85 @@ def test_cooldown_and_deadline_defer_jobs() -> None:
     decision = decide_job_admission(deadline_job, config, now=now)
     assert not decision.admissible
     assert decision.reason == "deadline_near"
+
+
+def test_min_benefit_score_rejects_jobs_below_threshold() -> None:
+    config = AdmissionConfig(min_benefit_score=5.0)
+    low = AdmissionJob("job-1", "table-1", "dest", Mode.LIGHT, estimated_benefit_score=2.0)
+    decision = decide_job_admission(low, config)
+    assert not decision.admissible
+    assert decision.reason == "benefit_below_threshold"
+    assert decision.defer
+
+    high = AdmissionJob("job-2", "table-2", "dest", Mode.LIGHT, estimated_benefit_score=10.0)
+    assert decide_job_admission(high, config).admissible
+
+
+def test_min_benefit_score_gate_is_disabled_when_score_is_unknown_or_threshold_is_zero() -> None:
+    # No score computed yet (estimated_benefit_score=None) -- can't compare against a
+    # threshold, so don't block on it.
+    unscored = AdmissionJob("job-1", "table-1", "dest", Mode.LIGHT, estimated_benefit_score=None)
+    assert decide_job_admission(unscored, AdmissionConfig(min_benefit_score=5.0)).admissible
+
+    # Threshold at the 0.0 default disables the gate even for a scored job.
+    scored = AdmissionJob("job-2", "table-2", "dest", Mode.LIGHT, estimated_benefit_score=0.1)
+    assert decide_job_admission(scored, AdmissionConfig()).admissible
+
+
+def test_min_moop_score_rejects_jobs_below_threshold_including_negative_scores() -> None:
+    config = AdmissionConfig(min_moop_score=0.0)
+    # A real MOOP score can be negative (T2 compute-cost term is subtracted) -- must still be
+    # rejected, not treated as "no score" the way a 0-sentinel would incorrectly do.
+    negative = AdmissionJob("job-1", "table-1", "dest", Mode.LIGHT, moop_score=-0.2)
+    decision = decide_job_admission(negative, config)
+    assert not decision.admissible
+    assert decision.reason == "below_moop_score"
+
+    positive = AdmissionJob("job-2", "table-2", "dest", Mode.LIGHT, moop_score=0.4)
+    assert decide_job_admission(positive, config).admissible
+
+
+def test_min_moop_score_gate_disabled_by_default_none() -> None:
+    job = AdmissionJob("job-1", "table-1", "dest", Mode.LIGHT, moop_score=-99.0)
+    assert decide_job_admission(job, AdmissionConfig()).admissible
+
+
+def test_pack_fleet_budget_admits_highest_moop_score_first_until_budget_exhausted() -> None:
+    config = AdmissionConfig(fleet_budget_gb=15.0)
+    jobs = [
+        AdmissionJob("cold", "t1", "dest", Mode.STANDARD, moop_score=0.1, size_gb=10.0),
+        AdmissionJob("hot", "t2", "dest", Mode.STANDARD, moop_score=0.9, size_gb=10.0),
+        AdmissionJob("warm", "t3", "dest", Mode.STANDARD, moop_score=0.5, size_gb=4.0),
+    ]
+
+    decisions = pack_fleet_budget(jobs, config)
+
+    # hot (10GB) admitted first, leaving 5GB; warm (4GB) fits next; cold (10GB) doesn't fit in
+    # the remaining 1GB even though it was considered before warm's leftover space -- confirms
+    # this is first-fit-decreasing, not "stop at the first job that doesn't fit".
+    assert decisions["hot"].admissible
+    assert decisions["warm"].admissible
+    assert not decisions["cold"].admissible
+    assert decisions["cold"].reason == "budget_exhausted"
+    assert decisions["cold"].defer
+
+
+def test_pack_fleet_budget_falls_back_to_benefit_score_then_treats_unscored_as_lowest() -> None:
+    config = AdmissionConfig(fleet_budget_gb=5.0)
+    jobs = [
+        AdmissionJob("unscored", "t1", "dest", Mode.STANDARD, size_gb=1.0),
+        AdmissionJob(
+            "benefit-only", "t2", "dest", Mode.STANDARD, estimated_benefit_score=3.0, size_gb=4.0
+        ),
+    ]
+
+    decisions = pack_fleet_budget(jobs, config)
+
+    assert decisions["benefit-only"].admissible
+    assert decisions["unscored"].admissible  # still fits in the leftover 1GB
+
+
+def test_pack_fleet_budget_disabled_admits_everyone_when_budget_is_none() -> None:
+    jobs = [AdmissionJob("job-1", "t1", "dest", Mode.STANDARD, size_gb=999.0)]
+    decisions = pack_fleet_budget(jobs, AdmissionConfig())
+    assert decisions["job-1"] == AdmissionDecision(True)

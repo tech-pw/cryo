@@ -21,6 +21,7 @@ from cryo.governor.admission import (
     ReplicaBudget,
     compute_admission_budget,
     decide_job_admission,
+    pack_fleet_budget,
 )
 from cryo.governor.prefetch import (
     batch_job_requires_approval,
@@ -162,6 +163,12 @@ class Governor:
 
                     approved_keys = prefetch_approved_operation_keys(session, table_uuids)
                     stats_cache = prefetch_table_stats(session, table_uuids)
+                    # AutoComp §A2 "Fleet Decide": computed once per destination over the whole
+                    # wave, not per job, so a big low-priority job doesn't block a wave's worth
+                    # of higher-MOOP-score jobs from any budget headroom it leaves behind.
+                    fleet_decisions = pack_fleet_budget(
+                        [_admission_job(job) for job in wave_jobs], config
+                    )
 
                     for job in wave_jobs:
                         if not replicas:
@@ -263,6 +270,18 @@ class Governor:
                                 continue
 
                         if not signal_triggered:
+                            fleet_decision = fleet_decisions.get(job.id)
+                            if fleet_decision is not None and not fleet_decision.admissible:
+                                from cryo.governor.bandit_feedback import (
+                                    record_deferred_admission,
+                                )
+
+                                record_deferred_admission(config)
+                                self._defer(job, fleet_decision.reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                                continue
+
                             decision = decide_job_admission(
                                 _admission_job(job), config, now=current
                             )
@@ -459,6 +478,8 @@ def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
     estimated_benefit = params.get("min_expected_benefit_score")
     if estimated_benefit is None:
         estimated_benefit = params.get("benefit_score")
+    moop_score = params.get("moop_score")
+    size_gb = params.get("size_gb") or params.get("total_size_gb")
     return AdmissionJob(
         job_id=job.id,
         table_id=job.table_id,
@@ -466,6 +487,8 @@ def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
         mode=job.mode,
         cooldown_hours=job.cooldown_hours,
         estimated_benefit_score=float(estimated_benefit) if estimated_benefit is not None else None,
+        moop_score=float(moop_score) if moop_score is not None else None,
+        size_gb=float(size_gb) if size_gb is not None else None,
         last_maintained_at=job.last_maintained_at,
         deadline_at=job.deadline_at,
     )
@@ -534,6 +557,16 @@ def _admission_config_from_destination(
             config.get("default_cooldown_hours", default.default_cooldown_hours)
         ),
         min_benefit_score=float(config.get("min_benefit_score", default.min_benefit_score)),
+        min_moop_score=(
+            float(config["min_moop_score"])
+            if config.get("min_moop_score") is not None
+            else default.min_moop_score
+        ),
+        fleet_budget_gb=(
+            float(config["fleet_budget_gb"])
+            if config.get("fleet_budget_gb") is not None
+            else default.fleet_budget_gb
+        ),
     )
 
 
