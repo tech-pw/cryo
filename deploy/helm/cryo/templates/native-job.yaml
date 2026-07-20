@@ -9,6 +9,12 @@ client) rather than via `helm install`.  This file serves as:
   3. The base template that could alternatively be rendered via Helm SDK in
      environments where the Python client is unavailable
 
+Disabled by default (native.installReferenceJob=false): job_dispatch.py creates
+real per-chunk Jobs dynamically, so installing this as a live resource just
+leaves a permanently-stuck placeholder (hardcoded image/binary path, no real
+payload) sitting in the cluster. Set native.installReferenceJob=true only if
+you actually want to `kubectl apply` this manually per the use case above.
+
 Values used by the Python client (job_dispatch.py):
   - native.enabled          : enable K8s Job dispatch (default: false)
   - native.image.repository : cryo image for the Job pod
@@ -36,7 +42,7 @@ envFrom:
   {{- include "cryo.envFrom" $root | nindent 2 }}
 {{- end -}}
 
-{{- if .Values.native.enabled }}
+{{- if and .Values.native.enabled .Values.native.installReferenceJob }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -56,6 +62,7 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: {{ if .Values.native.enabled }}{{ include "cryo.fullname" . }}-native{{ else }}{{ .Values.native.serviceAccount | default "default" }}{{ end }}
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: cryo-engine
           image: "{{ .Values.native.image.repository }}:{{ .Values.native.image.tag }}"

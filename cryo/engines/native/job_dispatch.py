@@ -243,7 +243,11 @@ def execute_request_via_job(
     cpu_milli, mem_mib = compute_job_resources(chunk_size_gb)
     timeout_seconds = timeout_seconds or _ACTIVE_DEADLINE_SECONDS
 
-    image = str(config.get("k8s_image", "cryo:latest"))
+    image = str(
+        config.get("k8s_image")
+        or os.environ.get("CRYO_NATIVE_K8S_IMAGE")
+        or "cryo:latest"
+    )
     binary = str(config.get("binary_path", "/usr/local/bin/cryo-engine-go"))
     service_account = str(
         config.get("k8s_service_account")
@@ -251,7 +255,20 @@ def execute_request_via_job(
         or "default"
     )
     ttl_seconds = int(config.get("k8s_ttl_seconds_after_finished", 300))
-    image_pull_policy = str(config.get("k8s_image_pull_policy", "IfNotPresent"))
+    image_pull_policy = str(
+        config.get("k8s_image_pull_policy")
+        or os.environ.get("CRYO_NATIVE_K8S_IMAGE_PULL_POLICY")
+        or "IfNotPresent"
+    )
+    image_pull_secrets_raw = config.get("k8s_image_pull_secrets") or os.environ.get(
+        "CRYO_NATIVE_K8S_IMAGE_PULL_SECRETS"
+    )
+    if isinstance(image_pull_secrets_raw, str):
+        image_pull_secrets = [s.strip() for s in image_pull_secrets_raw.split(",") if s.strip()]
+    elif isinstance(image_pull_secrets_raw, (list, tuple)):
+        image_pull_secrets = [str(s) for s in image_pull_secrets_raw]
+    else:
+        image_pull_secrets = []
     namespace = str(
         config.get("k8s_namespace") or os.environ.get("CRYO_K8S_NAMESPACE") or "default"
     )
@@ -308,12 +325,17 @@ def execute_request_via_job(
                     "serviceAccountName": service_account,
                     "nodeSelector": node_selector,
                     "tolerations": tolerations,
+                    "imagePullSecrets": [{"name": s} for s in image_pull_secrets],
                     "containers": [
                         {
                             "name": "cryo-engine",
                             "image": image,
                             "imagePullPolicy": image_pull_policy,
-                            "command": [binary, "execute"],
+                            # The binary only reads its request from stdin (no env/file input
+                            # mode), and a Job pod has no external stdin to attach -- decode the
+                            # payload env var and pipe it in from inside the container instead.
+                            "command": ["/bin/sh", "-c"],
+                            "args": [f'echo "$CRYO_PAYLOAD_B64" | base64 -d | {binary} execute'],
                             "env": [
                                 {
                                     "name": "CRYO_PAYLOAD_B64",
