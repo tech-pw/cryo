@@ -5,6 +5,12 @@ module github.com/cryo-lake/cryo/engine-go
 
 go 1.25.5
 
+// CRYO PATCH: local fork with a one-function fix for a day/month/year/hour-transform
+// partition rewrite-commit bug (avro: cannot use time.Time with Avro type int). See
+// third_party/iceberg-go-v0.6.0-patched/CRYO_PATCH.md. No newer upstream release fixes
+// this yet; remove this replace once one does.
+replace github.com/apache/iceberg-go => ./third_party/iceberg-go-v0.6.0-patched
+
 require (
 	github.com/apache/arrow-go/v18 v18.6.0
 	github.com/apache/iceberg-go v0.6.0
