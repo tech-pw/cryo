@@ -3,10 +3,13 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 from cryo.domain.enums import PartitionTransform, PredicateCapability
 from cryo.domain.models import PartitionPredicate, PartitionPredicateTerm
+
+_EPOCH = date(1970, 1, 1)
 
 DEFAULT_RENDERABLE_CAPABILITIES = {PredicateCapability.BASIC_COMPARISON}
 
@@ -64,6 +67,44 @@ def base_column_from_partition_name(name: str, transform: PartitionTransform) ->
     if transform is PartitionTransform.BUCKET and name.lower().endswith("_bucket"):
         return name[: -len("_bucket")]
     return name
+
+
+def parse_literal_to_date(value: Any) -> date | None:
+    """Parse a query-predicate literal (ISO text or a date/datetime) into a calendar date.
+
+    Mirrors the acceptance rules of the Trino renderer's date parsing so both directions of
+    the transform (render epoch-day -> SQL literal, and here: SQL literal -> epoch-day) agree
+    on what counts as a date. Returns ``None`` rather than raising -- callers treat an
+    unparseable literal as "can't attribute this query to a partition", not an error.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def date_to_transform_value(value: date, transform: PartitionTransform) -> int:
+    """Convert a calendar date into the raw Iceberg partition-transform integer.
+
+    The inverse of the epoch-day math the Trino/Spark renderers use to turn a stored
+    transform value back into a SQL date literal (``value = EPOCH + timedelta(days=N)`` for
+    DAY, etc.) -- same definitions, opposite direction, so a literal parsed from a query's
+    WHERE clause lands on the same integer the scanner already recorded for that partition.
+    """
+    if transform is PartitionTransform.DAY:
+        return (value - _EPOCH).days
+    if transform is PartitionTransform.MONTH:
+        return (value.year - _EPOCH.year) * 12 + (value.month - _EPOCH.month)
+    if transform is PartitionTransform.YEAR:
+        return value.year - _EPOCH.year
+    raise ValueError(f"date_to_transform_value: unsupported transform {transform.value}")
 
 
 def partition_fields_from_stats(

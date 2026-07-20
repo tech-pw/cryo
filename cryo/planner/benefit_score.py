@@ -13,14 +13,18 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import AuditLog, QueryLog, Table, TablePartition
+from cryo.domain.enums import PartitionTransform
+from cryo.planner.partition_query_affinity import MIN_COVERAGE_RATIO, compute_partition_affinity
+from cryo.planner.partitions import PartitionFieldSpec, normalize_transform
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +150,85 @@ def compute_benefit_score(
     return round(score, 4)
 
 
+def _partition_field_spec(partitions: Sequence[TablePartition]) -> PartitionFieldSpec | None:
+    """Primary partition-field spec shared by this scan's rows, or None if unpartitioned.
+
+    Cryo's per-partition scoring (like the rest of Part A) only reasons about the primary
+    partition field, matching ``analyze.py::partition_row``'s own ``accum.fields[0]``
+    convention for compound specs -- multi-field affinity is out of scope for this phase.
+    """
+    primary = next((p for p in partitions if p.base_column), None)
+    if primary is None or primary.base_column is None:
+        return None
+    base_column = primary.base_column
+    fields_raw = primary.partition_fields or []
+    field_detail = fields_raw[0] if fields_raw else {}
+    partition_field_name = field_detail.get("partition_field") or base_column
+    return PartitionFieldSpec(
+        base_column=base_column,
+        transform=normalize_transform(primary.transform),
+        col_type=primary.base_column_type or "",
+        partition_field=str(partition_field_name) if partition_field_name else base_column,
+    )
+
+
+def _partition_query_frequency(
+    session: Session,
+    *,
+    table_id: uuid.UUID,
+    since: datetime,
+    days_in_window: float,
+    partitions: Sequence[TablePartition],
+) -> dict[str, float]:
+    """Per-``partition_value`` queries/day, or ``{}`` to signal "use the table-level rate"."""
+    field = _partition_field_spec(partitions)
+    if field is None or field.transform is PartitionTransform.UNPARTITIONED:
+        return {}
+
+    query_texts = session.scalars(
+        select(QueryLog.query_text).where(
+            QueryLog.table_id == table_id,
+            QueryLog.executed_at >= since,
+            QueryLog.query_text.isnot(None),
+        )
+    ).all()
+    if not query_texts:
+        return {}
+
+    partition_field_key = field.partition_field or field.base_column
+    known_values: dict[str, Any] = {}
+    for partition in partitions:
+        key = partition.partition_value
+        if key is None:
+            continue
+        values = partition.partition_values or {}
+        known_values[key] = values.get(partition_field_key, key)
+
+    affinity = compute_partition_affinity(list(query_texts), field, known_values)
+    if not affinity.is_trustworthy:
+        logger.info(
+            "partition_query_affinity: table=%s coverage=%.0f%% below %.0f%% threshold, "
+            "falling back to table-level frequency (%d/%d queries resolved)",
+            table_id,
+            affinity.coverage_ratio * 100,
+            MIN_COVERAGE_RATIO * 100,
+            affinity.resolved_queries,
+            affinity.total_queries,
+        )
+        return {}
+
+    # Every current partition needs an explicit entry here, defaulting to 0.0 -- a partition
+    # this window's resolved queries never touched is cold, not "unknown". Falling through to
+    # the caller's table-level default for it (via dict.get on a partial mapping) would silently
+    # broadcast the table-wide rate right back onto it, defeating the point of this function.
+    per_day = max(days_in_window, 1.0)
+    return {
+        p.partition_value: affinity.hits.get(p.partition_value, 0.0) / per_day
+        for p in partitions
+        if p.partition_value is not None
+    }
+
+
 def update_partition_benefit_scores(
     session: Session,
     table_id: uuid.UUID,
@@ -157,6 +240,11 @@ def update_partition_benefit_scores(
     - After the scanner updates partition stats
     - After new query logs are ingested
 
+    Partitions get per-partition query frequency (AutoComp §A3.1) when enough in-window
+    queries have a predicate Cryo can resolve to a specific partition value
+    (``PartitionAffinity.is_trustworthy``, see ``partition_query_affinity``); otherwise every
+    partition falls back to the table-level rate, same as before this existed.
+
     Args:
         session: Database session
         table_id: Table to update scores for
@@ -166,21 +254,7 @@ def update_partition_benefit_scores(
         Number of partitions updated
     """
     since = datetime.now(UTC) - timedelta(hours=query_window_hours)
-
-    # Count total queries for this table in the window
-    total_queries = (
-        session.scalar(
-            select(func.count(QueryLog.id)).where(
-                QueryLog.table_id == table_id,
-                QueryLog.executed_at >= since,
-            )
-        )
-        or 0
-    )
-
-    # Queries per day
     days_in_window = query_window_hours / 24.0
-    queries_per_day = total_queries / max(days_in_window, 1.0)
 
     # Load current partitions for this table (from most recent scan only)
     # First get the latest scan_at timestamp
@@ -206,20 +280,42 @@ def update_partition_benefit_scores(
     if not partitions:
         return 0
 
-    # For now, all partitions share the table-level query frequency.
-    # Future: join with per-partition filter predicates to get partition-level frequency.
+    total_queries = (
+        session.scalar(
+            select(func.count(QueryLog.id)).where(
+                QueryLog.table_id == table_id,
+                QueryLog.executed_at >= since,
+            )
+        )
+        or 0
+    )
+    queries_per_day = total_queries / max(days_in_window, 1.0)
+
+    partition_frequency = _partition_query_frequency(
+        session,
+        table_id=table_id,
+        since=since,
+        days_in_window=days_in_window,
+        partitions=partitions,
+    )
+
     updated = 0
     for partition in partitions:
         small_files = partition.small_files_in_partition_count or 0
         size_gb = partition.partition_size_gb or 0.1
+        frequency = (
+            partition_frequency.get(partition.partition_value, queries_per_day)
+            if partition.partition_value is not None
+            else queries_per_day
+        )
 
         score = compute_benefit_score(
             small_files=small_files,
-            query_frequency=queries_per_day,
+            query_frequency=frequency,
             partition_size_gb=size_gb,
         )
 
-        partition.query_frequency = queries_per_day
+        partition.query_frequency = frequency
         partition.compaction_benefit_score = score
         updated += 1
 

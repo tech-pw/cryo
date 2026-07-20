@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import select
 
 from cryo.db.models import AuditLog, QueryLog, Source, Table, TablePartition, TableStats
@@ -140,6 +141,156 @@ def test_update_partition_benefit_scores(session):
         assert partition.compaction_benefit_score is not None
         assert partition.compaction_benefit_score > 0
         assert partition.query_frequency is not None
+        # None of these fixture partitions carry a base_column/transform, so there is no
+        # per-partition signal to attribute to -- every partition must still fall back to the
+        # broadcast table-level rate, unchanged from before per-partition affinity existed.
+        assert partition.query_frequency == pytest.approx(20 / 7)
+
+
+def test_update_partition_benefit_scores_diverges_per_partition_with_uneven_filters(session):
+    """AutoComp §A3.1: a partition actually queried should score higher than an equally
+    small-filed, equally sized partition nobody queries -- the bug the table-broadcast
+    behavior above still has when a real partition spec + literal query filters exist."""
+    table = _seed_table(session, schema_name="analytics", table_name="events")
+    scan_at = datetime.now(UTC)
+
+    def _day_partition(epoch_day: int, small_files: int) -> TablePartition:
+        return TablePartition(
+            table_id=table.id,
+            partition_values={"event_date_day": epoch_day},
+            partition_fields=[
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+            partition_value=str(epoch_day),
+            base_column="event_date",
+            base_column_type="date",
+            transform="day",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=small_files,
+            scan_at=scan_at,
+        )
+
+    hot = _day_partition(20210, small_files=50)  # 2025-05-02, queried a lot
+    cold = _day_partition(20211, small_files=200)  # 2025-05-03, never queried
+    untouched = _day_partition(20212, small_files=200)  # 2025-05-04, never queried
+    session.add_all([hot, cold, untouched])
+
+    source = session.get(Source, table.source_id)
+    for i in range(8):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"hot-{i}",
+                engine="trino",
+                query_text="SELECT * FROM analytics.events WHERE event_date = DATE '2025-05-02'",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=500,
+            )
+        )
+    # A couple of queries that don't reference the partition column at all -- they count toward
+    # the coverage denominator but must not be attributable to any partition.
+    for i in range(2):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"untargeted-{i}",
+                engine="trino",
+                query_text="SELECT count(*) FROM analytics.events",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=200,
+            )
+        )
+    session.commit()
+
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 3
+
+    by_value = {
+        p.partition_value: p
+        for p in session.scalars(
+            select(TablePartition).where(TablePartition.table_id == table.id)
+        ).all()
+    }
+
+    # 8/10 queries resolved to the hot partition -> 80% coverage, well above the 20% trust
+    # threshold, so per-partition (not broadcast) frequency applies.
+    assert by_value["20210"].query_frequency == pytest.approx(8 / 7)
+    assert by_value["20211"].query_frequency == 0.0
+    assert by_value["20212"].query_frequency == 0.0
+
+    # The never-queried partition has *more* small files than the queried one -- under the old
+    # table-broadcast behavior it would still win on benefit score just by file count. With
+    # per-partition affinity, actual query traffic must be what decides it.
+    assert by_value["20210"].compaction_benefit_score > by_value["20211"].compaction_benefit_score
+
+
+def test_update_partition_benefit_scores_falls_back_to_broadcast_below_coverage_threshold(
+    session,
+):
+    """When too few in-window queries resolve to a specific partition, trust the existing
+    table-level rate rather than noisy per-partition numbers (AutoComp §A3.1 fallback)."""
+    table = _seed_table(session, schema_name="analytics", table_name="low_coverage")
+    scan_at = datetime.now(UTC)
+    partition = TablePartition(
+        table_id=table.id,
+        partition_values={"event_date_day": 20210},
+        partition_fields=[
+            {
+                "base_column": "event_date",
+                "partition_field": "event_date_day",
+                "transform": "day",
+                "col_type": "date",
+            }
+        ],
+        partition_value="20210",
+        base_column="event_date",
+        base_column_type="date",
+        transform="day",
+        partition_size_gb=10.0,
+        small_files_in_partition_count=100,
+        scan_at=scan_at,
+    )
+    session.add(partition)
+
+    source = session.get(Source, table.source_id)
+    # One resolvable query out of ten -- 10% coverage, below MIN_COVERAGE_RATIO (20%).
+    session.add(
+        QueryLog(
+            source_id=source.id,
+            table_id=table.id,
+            query_id="resolvable",
+            engine="trino",
+            query_text="SELECT * FROM analytics.low_coverage WHERE event_date = DATE '2025-05-02'",
+            executed_at=datetime.now(UTC),
+            duration_ms=500,
+        )
+    )
+    for i in range(9):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"untargeted-{i}",
+                engine="trino",
+                query_text="SELECT count(*) FROM analytics.low_coverage",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=200,
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, table.id)
+
+    refreshed = session.get(TablePartition, partition.id)
+    # 10 queries / 7 days broadcast, same as if affinity had never run.
+    assert refreshed.query_frequency == pytest.approx(10 / 7)
 
 
 def test_update_all_benefit_scores_covers_every_active_table(session):
