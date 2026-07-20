@@ -15,6 +15,7 @@ from cryo.planner.benefit_score import (
     get_top_compaction_candidates,
     update_all_benefit_scores,
     update_partition_benefit_scores,
+    update_table_effectiveness,
 )
 
 
@@ -565,6 +566,96 @@ def test_compaction_effectiveness_stats(session):
     assert stats["run_count"] == 2
     assert stats["effectiveness_ratio"] == 50.0
     assert stats["effectiveness"] == "excellent"
+
+
+def test_update_table_effectiveness_persists_onto_table_stats_raw(session):
+    table = _seed_table(session, schema_name="test", table_name="effectiveness_persist")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+        raw={"unrelated_key": "keep-me"},
+    )
+    session.add(stats)
+    session.add(
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="ok",
+            input_files_count=100,
+            output_files_count=2,
+            ts=datetime.now(UTC),
+            duration_ms=1000,
+        )
+    )
+    session.commit()
+
+    updated = update_table_effectiveness(session, table.id)
+    assert updated is True
+
+    refreshed = session.get(TableStats, table.id)
+    assert refreshed.raw["unrelated_key"] == "keep-me"  # existing raw keys aren't clobbered
+    persisted = refreshed.raw["compaction_effectiveness"]
+    assert persisted["effectiveness_ratio"] == 50.0
+    assert persisted["effectiveness"] == "excellent"
+    assert "computed_at" in persisted
+
+
+def test_update_table_effectiveness_is_noop_without_a_stats_row(session):
+    table = _seed_table(session, schema_name="test", table_name="no_stats_yet")
+    session.commit()
+    assert update_table_effectiveness(session, table.id) is False
+
+
+def test_update_all_benefit_scores_also_refreshes_effectiveness(session):
+    table = _seed_table(session, schema_name="test", table_name="fleet_effectiveness")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    scan_at = datetime.now(UTC)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=scan_at,
+        )
+    )
+    session.add(
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="ok",
+            input_files_count=20,
+            output_files_count=1,
+            ts=datetime.now(UTC),
+            duration_ms=1000,
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    refreshed = session.get(TableStats, table.id)
+    assert refreshed.raw["compaction_effectiveness"]["effectiveness_ratio"] == 20.0
 
 
 def test_benefit_score_prevents_premature_compaction(session):
