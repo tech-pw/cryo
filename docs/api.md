@@ -207,7 +207,6 @@ Example preset:
   "operations": ["expire_snapshots", "optimize"],
   "params": {
     "min_small_files": 128,
-    "chunk_size_gb": 100,
     "max_partitions_per_chunk": 100,
     "delete_ratio_trigger": 0,
     "retention_days": 7,
@@ -233,10 +232,12 @@ Example preset:
 ```
 
 Supported `params` keys validated by the API include planner tuning (`min_small_files`,
-`chunk_size_gb`, `max_partitions_per_chunk`, `max_chunks`, `delete_ratio_trigger`,
+`max_partitions_per_chunk`, `max_chunks`, `delete_ratio_trigger`,
 `partition_write_idle_hours`, retention fields, `file_size_mb`) and statistics options
 (`compute_statistics`, `stats_columns`, `bloom_filter_columns`, `stats_compute_ndv`).
-Extra keys are accepted for forward compatibility.
+`chunk_size_gb` is not a preset knob (native derives it from pod memory at admit time;
+if present it is still validated as a positive number for back-compat). Extra keys are
+accepted for forward compatibility.
 
 Supported `guardrails` keys include admission and SLA settings (`cooldown_hours`,
 `deadline_minutes`, `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
@@ -374,7 +375,9 @@ WS   /api/v1/ws/runs/{run_id}
 ```
 
 Cancellation marks the run `cancelled` and queued/admitted/running jobs as skipped with
-`error="cancelled"`.
+`error="cancelled"`. It also releases Redis queue / in-flight slots and per-table locks for
+those jobs. Re-cancelling an already-cancelled run is idempotent and re-attempts the same
+Redis cleanup (useful if a prior cancel left a lock behind).
 
 The WebSocket accepts the same viewer role through either an `Authorization: Bearer <token>` header or
 `?token=viewer` for browser clients. It currently emits run/job snapshot messages and can fall back to

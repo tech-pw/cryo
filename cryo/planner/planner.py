@@ -251,7 +251,7 @@ def _expire_params(
     *,
     protected_snapshot_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    out = {
+    out: dict[str, Any] = {
         "retention_days": int(params.get("retention_days", 7)),
         "retain_last": int(params.get("retain_last", 1)),
     }

@@ -320,19 +320,22 @@ class NativeEngine:
             timeout_seconds = int(self.config.get("timeout_seconds", 3600))
 
             if use_k8s:
-                raw_chunk = next(
-                    (
-                        op.params.get("chunk_size_gb")
-                        for op in operations
-                        if op.params.get("chunk_size_gb") is not None
-                    ),
-                    100.0,
+                from cryo.engines.native.resources import (
+                    ResourceCeilings,
+                    estimate_table_resources,
                 )
-                chunk_size_gb = float(raw_chunk) if raw_chunk is not None else 100.0
+
+                ceilings = ResourceCeilings.from_config(self.config)
+                estimate = estimate_table_resources(
+                    self.table_stats,
+                    operations=operations,
+                    ceilings=ceilings,
+                )
                 result = execute_request_via_job(
                     request,
                     config=self.config,
-                    chunk_size_gb=chunk_size_gb,
+                    cpu_milli=estimate.cpu_milli,
+                    mem_mib=estimate.mem_mib,
                     timeout_seconds=timeout_seconds,
                 )
             else:
@@ -401,6 +404,7 @@ class NativeEngine:
             run_id=run_id,
             session_factory=session_factory,
             on_progress=_progress_callback(ctx),
+            table_id=str(ctx.table_id) if ctx.table_id is not None else None,
         )
 
         exec_results: list[ExecResult] = []

@@ -70,7 +70,10 @@ planner only scopes **partitions**):
 2. Cryo may split oversized bins by compressed bytes (`max_bytes_per_group`). An optional
    `max_files_per_group` soft ceiling is available for FD/reader limits but is **unset by
    default** so tiny-file storms can pack toward the output target.
-3. After split, groups with fewer than `min_input_files` are **dropped** — never rewritten 1→1.
+3. Cryo then **coalesces** consecutive same-partition bins up to `max_bytes_per_group` so
+   pod-scaled caps reduce group count; writers still use `target_file_size_bytes` (no small
+   output files from merging).
+4. After split/coalesce, groups with fewer than `min_input_files` are **dropped** — never rewritten 1→1.
 
 | Param | Default | Effect |
 |-------|---------|--------|
@@ -78,7 +81,7 @@ planner only scopes **partitions**):
 | `min_input_files` | `2` | Spark-style floor: skip groups with fewer files (distinct from planner `min_small_files`) |
 | `scan_concurrency` | `1` | Caps parallel Parquet→Arrow readers (`WithCompactionScanConcurrency`) |
 | `max_files_per_group` | unset (unlimited) | Optional soft file-count ceiling; omit so byte packing is not shredded |
-| `max_bytes_per_group` | `= target_file_size_bytes` | Primary memory/split cap; defaults to the output target so splits do not shred bin-pack groups. Lower for dense tables; sub-min groups are then skipped |
+| `max_bytes_per_group` | derived from pod (≥ 2× target when budget allows) | Coalesce cap. Hard floor = `target_file_size_bytes`; packing floor = 2× target (remainder amortization). Soft cap = `budget / planning_expansion` (8). Cryo bumps rewrite mem so the packing floor fits. Go clamps oversized stamps the same way; explicit dense overrides below the floor are preserved. Hard cap 8 GiB |
 | `partial_progress` | `true` | Commits each (split) group independently so an OOM mid-run keeps prior groups |
 | `group_concurrency` | `2` | Parallel `ExecuteCompactionGroup` workers; commits stay serial. Memory-budgeted |
 | `compaction_memory_budget_bytes` | `3 GiB` | Admission cap for in-flight group footprint estimates |

@@ -489,20 +489,14 @@ class DeletionTracking(Base):
         nullable=False,
     )
     subject_id: Mapped[str] = mapped_column(Text, nullable=False)
-    soft_deleted_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
+    soft_deleted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     pending_rows: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    blocked_until: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
+    blocked_until: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
-    resolved_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class TableAlertSubscription(Base):
@@ -741,11 +735,60 @@ class MaintenanceJob(Base):
     plan_hash: Mapped[str | None] = mapped_column(Text)
     verifier_version: Mapped[str | None] = mapped_column(Text)
     verifier_violations: Mapped[JsonList | None] = mapped_column(JSONB)
+    dispatch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.native_dispatches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     run: Mapped[MaintenanceRun] = relationship(back_populates="jobs")
     table: Mapped[Table] = relationship(back_populates="jobs")
     destination: Mapped[Destination] = relationship(back_populates="jobs")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
+    dispatch: Mapped[NativeDispatch | None] = relationship(back_populates="jobs")
+
+
+class NativeDispatch(Base):
+    """One Kubernetes Job that executes 1..M native maintenance table jobs.
+
+    Created by the Governor on admit. JobWatcher finalizes member jobs when the
+    K8s Job completes. Memory requests are hard-capped at 16Gi.
+    """
+
+    __tablename__ = "native_dispatches"
+    __table_args__ = (
+        Index("ix_native_dispatches_run", "run_id"),
+        Index("ix_native_dispatches_status", "status"),
+        Index("ix_native_dispatches_k8s_job", "k8s_job_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.destinations.id"), nullable=False
+    )
+    k8s_job_name: Mapped[str | None] = mapped_column(Text)
+    k8s_namespace: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'default'")
+    )
+    cpu_milli: Mapped[int] = mapped_column(Integer, nullable=False)
+    mem_mib: Mapped[int] = mapped_column(Integer, nullable=False)
+    table_job_ids: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    dedicated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+    jobs: Mapped[list[MaintenanceJob]] = relationship(back_populates="dispatch")
 
 
 class ChunkCheckpoint(Base):
@@ -755,12 +798,14 @@ class ChunkCheckpoint(Base):
     the worker queries which chunks already succeeded, then re-runs only the remaining ones.
     Chunk ordering is defined by the planner's greedy_pack, which produces a deterministic
     sequence of partition-disjoint chunks.
+
+    ``table_id`` disambiguates chunks when multiple tables share a run (multi-table pods).
     """
 
     __tablename__ = "chunk_checkpoints"
     __table_args__ = (
-        UniqueConstraint("run_id", "chunk_index", name="uq_chunk_checkpoint_run_chunk"),
         Index("ix_chunk_checkpoints_run", "run_id"),
+        Index("ix_chunk_checkpoints_table", "table_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -768,6 +813,9 @@ class ChunkCheckpoint(Base):
     )
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
+    )
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     operation_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -921,7 +969,9 @@ class LayoutRecommendation(TimestampMixin, Base):
     dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     dismissed_reason: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    applied_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
+    applied_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id")
+    )
     baseline_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
     post_apply_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
     observed_prune_improvement: Mapped[float | None] = mapped_column(Float)
@@ -1452,7 +1502,9 @@ class LLMObservation(Base):
     skillset_name: Mapped[str | None] = mapped_column(Text)
     skillset_version: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
-    table_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.tables.id"))
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+    )
     outcome_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.skillset_outcomes.id")
     )
@@ -1485,7 +1537,9 @@ class RunFailureDiagnosis(Base):
         UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
     )
     job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.jobs.id"))
-    table_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.tables.id"))
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+    )
     skillset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.skillsets.id")
     )

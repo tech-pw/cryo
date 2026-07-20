@@ -47,7 +47,6 @@ describe("presetToFormValues", () => {
       operations: ["optimize"],
       params: {
         min_small_files: 64,
-        chunk_size_gb: 50,
         max_chunks: 3,
         stats_columns: ["id"]
       },
@@ -70,7 +69,6 @@ describe("presetToFormValues", () => {
 
     const values = presetToFormValues(preset, []);
     expect(values.min_small_files).toBe(64);
-    expect(values.chunk_size_gb).toBe(50);
     expect(values.max_chunks).toBe(3);
     expect(values.stats_columns).toEqual(["id"]);
     expect(values.cooldown_hours).toBe(12);
@@ -123,7 +121,8 @@ describe("formValuesToPresetWrite", () => {
       params: {
         min_small_files: 10,
         partition_col: "event_date",
-        custom_flag: true
+        custom_flag: true,
+        chunk_size_gb: 1
       },
       guardrails: {
         cooldown_hours: 6,
@@ -147,6 +146,7 @@ describe("formValuesToPresetWrite", () => {
     expect(body.params.partition_col).toBe("event_date");
     expect(body.params.custom_flag).toBe(true);
     expect(body.params.min_small_files).toBe(20);
+    expect(body.params.chunk_size_gb).toBe(100);
     expect(body.guardrails.max_table_gb).toBe(500);
     expect(body.guardrails.cooldown_hours).toBe(8);
   });
@@ -191,7 +191,7 @@ describe("formatPresetSummary", () => {
       destination_id: destinationId,
       mode: "standard",
       operations: ["optimize"],
-      params: { min_small_files: 64, chunk_size_gb: 80, retention_days: 5, retain_last: 2 },
+      params: { min_small_files: 64, retention_days: 5, retain_last: 2 },
       guardrails: { cooldown_hours: 12, adaptive_routing: true, engine_preferences: { spark_min_gb: 120 } },
       priority: 100,
       enabled: true,
@@ -200,7 +200,7 @@ describe("formatPresetSummary", () => {
     });
 
     expect(summary).toContain("64 small files");
-    expect(summary).toContain("80 GB chunks");
+    expect(summary).toContain("100 GB chunks");
     expect(summary).toContain("expire 5d");
     expect(summary).toContain("12h cooldown");
     expect(summary).toContain("adaptive routing");
