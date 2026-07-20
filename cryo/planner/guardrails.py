@@ -9,6 +9,7 @@ CORRECT_ORDER: tuple[OperationType, ...] = (
     OperationType.EXPIRE_SNAPSHOTS,
     OperationType.REMOVE_ORPHAN_FILES,
     OperationType.CONVERT_DELETES,
+    OperationType.REWRITE_POSITION_DELETES,
     OperationType.OPTIMIZE,
     OperationType.OPTIMIZE_MANIFESTS,
 )

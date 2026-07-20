@@ -202,3 +202,18 @@ def test_spark_renders_convert_deletes_operation() -> None:
         "table => 'demo.events', options => map("
         "'delete-file-threshold', '2', 'partial-progress.enabled', 'true'))"
     )
+
+
+def test_spark_renders_rewrite_position_deletes_operation() -> None:
+    """Okolnychyi (VLDB'24) minor delete compaction -- distinct from CONVERT_DELETES' full
+    rewrite_data_files call above."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.REWRITE_POSITION_DELETES, {}),),
+    )
+    statements = render(plan)
+    assert len(statements) == 1
+    assert statements[0].sql == (
+        "CALL iceberg.system.rewrite_position_delete_files(table => 'demo.events')"
+    )
