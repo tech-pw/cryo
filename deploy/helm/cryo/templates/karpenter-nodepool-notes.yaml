@@ -1,0 +1,36 @@
+{{- /*
+Karpenter-oriented guidance for native Jobs (native-engine-scoping-research.md §6.2–6.3).
+
+This is a ConfigMap (not a live NodePool) so operators can copy the recommended
+NodePool / NodeClass shapes without Cryo owning Karpenter CRDs in every cluster.
+Enable with native.karpenter.installNotes=true when native.enabled.
+*/ -}}
+{{- if and .Values.native.enabled .Values.native.karpenter.installNotes }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cryo.fullname" . }}-karpenter-notes
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+data:
+  README: |
+    Cryo native Jobs label pods with app.kubernetes.io/component=native-engine and
+    size CPU/memory from chunk_size_gb (see job_dispatch.compute_job_resources).
+
+    Recommended Karpenter NodePool requirements for native Jobs:
+      - kubernetes.io/arch In [amd64]
+      - karpenter.sh/capacity-type In [on-demand] for large chunks
+        (spot only when native.spot.allow=true AND chunk within spot_max_chunk_gb)
+      - Optional: dedicated label cryo.io/workload=native-engine
+
+    Job pods set annotations when spot is disallowed:
+      karpenter.sh/do-not-disrupt: "true" for long-running / large chunks
+      cryo.io/capacity-type: on-demand|spot
+
+    Spot policy (gated — never default for large uncheckpointed jobs):
+      allow: {{ .Values.native.spot.allow }}
+      maxChunkSizeGb: {{ .Values.native.spot.maxChunkSizeGb }}
+      maxEstimatedDurationSeconds: {{ .Values.native.spot.maxEstimatedDurationSeconds }}
+      requireCheckpointing: {{ .Values.native.spot.requireCheckpointing }}
+{{- end }}

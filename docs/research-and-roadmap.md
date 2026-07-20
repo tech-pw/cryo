@@ -243,7 +243,13 @@ Compact a partition if:
 
 Key mechanisms: partition-scope vs table-scope selection; hybrid strategy; priority queue; OpenHouse exposes the trigger and AutoComp is the pluggable executor underneath. This matches Cryo's governor → engine architecture exactly.
 
-**What to implement in Cryo (§3.1 below):** A `CompactionBenefitScore` per partition, stored in `TablePartition`, that combines `small_file_count`, `query_frequency` (from QueryLog), and `last_compacted_at`. Governor uses this score to prioritize work.
+**Status (2026-07-20):** ✅ Shipped — per-partition query affinity, MOOP trait normalization +
+fleet top-k budget pack, skip reasons and effectiveness in the UI are all landed (Part A,
+phases A1–A3). Remaining: file-entropy trait (scanner doesn't populate `file_entropy` yet;
+its weight redistributes to the other traits when absent) and fleet-wide (vs. per-table)
+MOOP normalization.
+
+**Implementation spec:** [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md) Part A (phases A1–A3).
 
 ### 2.2 Puffin Bloom Filter Index — Iceberg Core (2025–2026)
 
@@ -265,16 +271,32 @@ Iceberg now ships a native `TableMaintenance` API for Flink that runs compaction
 
 Production announcements (AWS, Databricks — 2025). Iceberg v3 introduces **deletion vectors** (similar to Delta Lake) and **single-file commits** that reduce write amplification from streaming. For streaming tables, fewer small delete files = less compaction overhead. Cryo should detect v3 tables and adjust maintenance strategies (skip eq-delete → pos-delete conversion when deletion vectors are already in use).
 
+### 2.5 PTO, WAIR, and delete-compaction policy (2026-07-20)
+
+Full implementation spec (algorithms, modules, APIs, UI wireframes, tests):
+[`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md).
+
+| Track | Paper | Cryo fit | Status |
+|-------|-------|----------|--------|
+| **PTO** | [SIGMOD 2026](https://doi.org/10.1145/3786681) — workload-driven joint choice of partition / file size / row group / sort|binpack|zorder via search-space reduction + sampling + GBT | Biggest **net-new** layout brain on top of existing `layout_analyzer` + Smart Maintenance approve/execute | 🔴 Specced (Part B); not built |
+| **WAIR** | [arXiv:2602.23289](https://arxiv.org/abs/2602.23289) — recluster only **boundary** micro-partitions under a cost model; decouple policy from key selection | Incremental sort rewrite budget; complements PTO keys | 🔴 Specced (Part C1) |
+| **Okolnychyi** | [VLDB’24](https://vldb.org/pvldb/vol17/p4159-okolnychyi.pdf) — minor vs major position-delete compaction | Extends `CONVERT_DELETES` with `rewrite_position_delete_files` policy | ✅ Shipped (Part C2); `iterations_since_major` counter not yet tracked |
+| **Qd-tree** | SIGMOD 2020 | Prior art only — no implementation track | Cite-only (Part C3) |
+
+**Recommended build order:** finish AutoComp A1–A3 → PTO B1–B2 → WAIR/Okolnychyi → PTO GBT/auto-apply only after differential CI gate.
+
 ## 3. Prioritized feature backlog
 
 ### Priority 1 — High impact, builds on existing work
 
 #### 3.1 AutoComp-style compaction benefit score
 
-**What**: Per-partition `CompactionBenefitScore = (small_file_count × query_frequency) / estimated_compaction_cost`.
-**Where**: `TablePartition` model + planner guardrails.
-**Impact**: Stops wasting compute on cold tables; focuses budget on high-value partitions.
-**Work**: Add `query_frequency` column to `TablePartition` (populated from `QueryLog`), add benefit score to planner's partition ranking (currently ranks only by small_file_count).
+**Status**: ✅ Shipped — see §2.1. Partition-local query affinity, MOOP traits + fleet top-k
+budget, and skip reasons + effectiveness UI are all landed per
+[`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md) Part A.
+
+**Where**: `benefit_score.py`, governor admission/pack, Smart Maintenance / TableDetail.
+**Impact**: Stops wasting compute on cold partitions; focuses budget on high-value work.
 
 #### 3.2 Puffin statistics as 5th maintenance operation
 
@@ -284,6 +306,11 @@ Production announcements (AWS, Databricks — 2025). Iceberg v3 introduces **del
 **Config**: `compute_stats_after_optimize: bool` (default: true). Respect `analyze_columns` list for selective column stats.
 
 #### 3.3 Compaction effectiveness ratio tracking
+
+**Status**: ✅ Shipped 2026-07-20 — `update_table_effectiveness` persists the ratio onto
+`table_stats.raw["compaction_effectiveness"]` every scoring cycle; surfaced in the ROI drawer
+and Table Detail. No alert channel yet (the optional Slack threshold alert from
+[impl Part A](./implementation/workload-aware-optimization.md) is not done).
 
 **What**: After each `OPTIMIZE` job completes, record `input_files_count` and `output_files_count` in `AuditLog`. Alert when ratio < 10:1.
 **Where**: `cryo/db/repositories/run_finalizer.py`, `cryo/events/`.
@@ -340,27 +367,35 @@ Rather than full-table re-analyze after every compaction, maintain Theta sketche
 | Layout recommendations | ✅ (Phase 2) | ✅ | ✅ | ❌ | ✅ |
 | Native Rust compaction | 🔨 (skeleton) | ✅ | ✅ | ❌ | ❌ |
 | Puffin statistics mgmt | ❌ | §3.2 | ✅ | ❌ | ✅ |
-| Cost-benefit gating | ❌ | §3.1 | ✅ | ❌ | ✅ |
+| Cost-benefit gating | ✅ | §3.1 / [impl Part A](./implementation/workload-aware-optimization.md) | ✅ | ❌ | ✅ |
+| Delete-file minor/major policy (Okolnychyi) | ✅ | [impl Part C2](./implementation/workload-aware-optimization.md) | ❌ | ❌ | ❓ |
+| PTO joint layout optimizer | ❌ | [impl Part B](./implementation/workload-aware-optimization.md) | ❓ | ❌ | ✅ (PO) |
+| WAIR boundary reclustering | ❌ | [impl Part C1](./implementation/workload-aware-optimization.md) | ❓ | ❌ | ❓ |
 | Signal-driven triggers | ❌ | §3.4 | ✅ | ❌ | ✅ |
 | Flink engine | ❌ | §3.5 | ✅ | ✅ | ❌ |
-| Bloom filter recommendations | ❌ | §3.6 | ❌ | ❌ | ❌ |
-| Compaction effectiveness ratio | ❌ | §3.3 | ❌ | ❌ | ❌ |
+| Bloom filter recommendations | 🟡 Partial | §3.6 | ❌ | ❌ | ❌ |
+| Compaction effectiveness ratio | ✅ | §3.3 / [impl A3](./implementation/workload-aware-optimization.md) | ❌ | ❌ | ❌ |
 | Multi-catalog federation | ❌ | §3.8 | ✅ | ✅ | ✅ |
 | Open source / self-hosted | ✅ | ✅ | ❌ | ✅ | ❌ |
 
 ## 5. Recommended next steps (ordered by ROI)
 
-1. **§3.2 — Puffin statistics** as 5th maintenance op. Single PR, high impact, closes a visible gap vs LakeOps.
-2. **§3.1 — AutoComp benefit score**. Improves governor prioritization directly from SIGMOD 2025 research.
-3. **§3.3 — Effectiveness ratio tracking**. Cheap, prevents compute waste, shows up as a dashboard metric.
-4. **§3.4 — Signal-driven triggers**. Required to claim "autonomous control plane" positioning.
-5. **§3.6 — Bloom filter column recommendations**. Unique feature.
-6. **§3.5 — Flink engine**. Opens streaming-team adoption path.
-7. **Finish Rust engine** — get `cryo-native` to a production-ready binpack.
+1. ~~**Finish AutoComp**~~ ✅ done 2026-07-20 ([impl Part A](./implementation/workload-aware-optimization.md)).
+2. ~~**Okolnychyi delete policy**~~ ✅ done 2026-07-20 ([impl Part C2](./implementation/workload-aware-optimization.md)); `iterations_since_major` counter still open.
+3. **§3.2 — Puffin statistics** as 5th maintenance op. Single PR, high impact, closes a visible gap vs LakeOps.
+4. **PTO B1–B2** ([impl Part B](./implementation/workload-aware-optimization.md)) — heuristic joint layout + simulation UI on existing Smart Maintenance flow.
+5. **WAIR** ([impl Part C1](./implementation/workload-aware-optimization.md)) after layout execute path is trusted.
+6. **§3.4 — Signal-driven triggers**. Required to claim "autonomous control plane" positioning.
+7. **§3.5 — Flink engine**. Opens streaming-team adoption path.
+8. **Native engine** — only where profiling justifies; keep behind experimental flags.
 
 ## 6. Key sources
 
+- **Workload-aware impl spec:** [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md)
 - AutoComp paper: https://arxiv.org/abs/2504.04186 (SIGMOD 2025)
+- PTO (SIGMOD 2026): https://doi.org/10.1145/3786681 — https://vamsikrishna1902.github.io/publication/SIGMOD-2026
+- WAIR: https://arxiv.org/abs/2602.23289
+- Okolnychyi et al. (VLDB’24): https://vldb.org/pvldb/vol17/p4159-okolnychyi.pdf
 - LakeOps blog: https://lakeops.dev/blog/
 - IOMETE competitive analysis: https://iomete.com/resources/blog/iceberg-maintenance-alternatives
 - Iceberg Puffin Bloom PR: https://github.com/apache/iceberg/pull/15311
