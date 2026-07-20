@@ -317,10 +317,6 @@ def test_native_compaction_execute_partition_scoped_identity(
 @requires_rest
 @requires_engine
 @pytest.mark.skipif(not _is_go_engine(), reason="Go engine COW compaction commit path")
-@pytest.mark.xfail(
-    reason="iceberg-go v0.6.0 partition day rewrite commit writes time.Time for int day field",
-    strict=False,
-)
 def test_native_compaction_execute_day_partition_scoped(compaction_fixtures: dict[str, object]) -> None:
     spawn_error = _spawn_error()
     if spawn_error is not None:
