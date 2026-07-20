@@ -439,6 +439,43 @@ export function SmartMaintenance() {
                 <Empty description="No ROI data available for this table yet." />
               )}
             </Card>
+            {roi.data?.effectiveness ? (
+              <Card size="small" title="Compaction effectiveness">
+                <Space wrap>
+                  <Tag color={(roi.data.effectiveness.effectiveness_ratio ?? 0) >= 10 ? "success" : "gold"}>
+                    Ratio {(roi.data.effectiveness.effectiveness_ratio ?? 0).toFixed(1)}×
+                  </Tag>
+                  <Tag>{roi.data.effectiveness.effectiveness}</Tag>
+                  <Tag>{roi.data.effectiveness.run_count ?? 0} runs</Tag>
+                </Space>
+              </Card>
+            ) : null}
+            {roi.data?.top_moop_partitions?.length ? (
+              <Card size="small" title="Top MOOP-ranked partitions (AutoComp §A2)">
+                <Table
+                  rowKey={(row) => `${row.partition_value}-${row.moop_score}`}
+                  dataSource={roi.data.top_moop_partitions}
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    { title: "Partition", dataIndex: "partition_value", key: "partition_value" },
+                    {
+                      title: "MOOP score",
+                      dataIndex: "moop_score",
+                      key: "moop_score",
+                      align: "right",
+                      render: (value: number | null | undefined) => (value != null ? value.toFixed(3) : "—")
+                    },
+                    {
+                      title: "Small files",
+                      dataIndex: "small_files",
+                      key: "small_files",
+                      align: "right"
+                    }
+                  ]}
+                />
+              </Card>
+            ) : null}
             <Card loading={forecast.isLoading} title="Workload Forecast (next 24h)" size="small">
               {forecast.data?.points?.length ? (
                 <Table
