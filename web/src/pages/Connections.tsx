@@ -98,6 +98,11 @@ import {
   type EngineVirtualValue,
   type NativeEngineImpl
 } from "../lib/engines";
+import {
+  parseCatalogBindings,
+  sourceCatalogName,
+  type CatalogBindingFormValue
+} from "../lib/catalogBindings";
 import { SourceTestResultPanel } from "./connections/SourceTestResultPanel";
 import { SourceScansPanel } from "./connections/SourceScansPanel";
 
@@ -776,6 +781,7 @@ export const Connections = () => {
       <DestinationDrawer
         key={destinationDrawer && destinationDrawer !== "new" ? destinationDrawer.id : String(destinationDrawer)}
         value={destinationDrawer}
+        sources={sources.data ?? []}
         saving={saveDestination.isPending}
         onClose={() => setDestinationDrawer(null)}
         onSave={(body) => saveDestination.mutate(body)}
@@ -1235,6 +1241,8 @@ interface DestinationFormValues {
   user?: string;
   catalog?: string;
   schema?: string;
+  /** Cryo lakehouses this Trino can reach; optional per-source Trino catalog override. */
+  catalog_bindings?: CatalogBindingFormValue[];
   use_basic_auth?: boolean;
   auth_username?: string;
   auth_password?: string;
@@ -1317,6 +1325,7 @@ const decomposeDestinationConfig = (engine: string, config: Record<string, unkno
     user: typeof cfg.user === "string" ? cfg.user : "cryo",
     catalog: typeof cfg.catalog === "string" ? cfg.catalog : "iceberg",
     schema: typeof cfg.schema === "string" ? cfg.schema : undefined,
+    catalog_bindings: parseCatalogBindings(cfg),
     use_basic_auth: Boolean(auth && auth.type === "basic"),
     auth_username: typeof auth?.username === "string" ? auth.username : "",
     auth_password: typeof auth?.password === "string" ? auth.password : "",
@@ -1376,6 +1385,15 @@ const buildDestinationConfig = (values: DestinationFormValues): Record<string, u
     catalog: values.catalog || "iceberg"
   };
   if (values.schema) config.schema = values.schema;
+  const bindings = (values.catalog_bindings ?? [])
+    .filter((b) => b?.source_id)
+    .map((b) => {
+      const entry: Record<string, string> = { source_id: b.source_id };
+      if (b.trino_catalog?.trim()) entry.trino_catalog = b.trino_catalog.trim();
+      return entry;
+    });
+  // Always emit the key so PATCH can clear bindings (omit would leave stale jsonb entries).
+  config.catalog_bindings = bindings;
   if (values.use_basic_auth) {
     config.auth = { type: "basic", username: values.auth_username, password: values.auth_password };
   }
@@ -1411,11 +1429,13 @@ const buildQueryLogConfig = (values: DestinationFormValues): Record<string, unkn
 
 const DestinationDrawer = ({
   value,
+  sources,
   saving,
   onClose,
   onSave
 }: {
   value: DestinationRead | "new" | null;
+  sources: SourceRead[];
   saving: boolean;
   onClose: () => void;
   onSave: (body: DestinationWrite) => void;
@@ -1430,8 +1450,9 @@ const DestinationDrawer = ({
   const [engine, setEngine] = useState<EngineType>(initialEngine as EngineType);
   const existingConfig = isEditing
     ? decomposeDestinationConfig(initialEngine, value.config as Record<string, unknown>)
-    : { engine_virtual: "trino" as const };
+    : { engine_virtual: "trino" as const, catalog_bindings: [] as CatalogBindingFormValue[] };
   const useBasicAuth = Form.useWatch("use_basic_auth", form);
+  const catalogBindings = Form.useWatch("catalog_bindings", form) as CatalogBindingFormValue[] | undefined;
   const [testPassed, setTestPassed] = useState(false);
 
   const testConnection = useMutation({
@@ -1452,6 +1473,9 @@ const DestinationDrawer = ({
       message.error("Spark submit params must be valid JSON before testing.");
     }
   });
+
+  const sourceById = new Map(sources.map((s) => [s.id, s]));
+  const bindingSourceIds = (catalogBindings ?? []).map((b) => b.source_id).filter(Boolean);
 
   return (
     <Drawer title={isEditing ? "Edit engine" : "New engine"} open={Boolean(value)} onClose={onClose} size={620} destroyOnHidden>
@@ -1566,13 +1590,90 @@ const DestinationDrawer = ({
               <Form.Item name="user" label="User" style={{ flex: 1 }}>
                 <Input placeholder="cryo" />
               </Form.Item>
-              <Form.Item name="catalog" label="Catalog" style={{ flex: 1 }}>
+              <Form.Item
+                name="catalog"
+                label={
+                  <HintLabel
+                    label="Session default catalog"
+                    tooltip="Trino session catalog used for connection probes. Per-table SQL catalog comes from lakehouse bindings below."
+                  />
+                }
+                style={{ flex: 1 }}
+              >
                 <Input placeholder="iceberg" />
               </Form.Item>
               <Form.Item name="schema" label="Schema (optional)" style={{ flex: 1 }}>
                 <Input />
               </Form.Item>
             </Space>
+            <Form.Item
+              label={
+                <HintLabel
+                  label="Lakehouses on this Trino"
+                  tooltip="Select Cryo lakehouses whose catalogs are registered on this Trino cluster. Only tables from these lakehouses can use Trino presets that target this engine."
+                />
+              }
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="Select lakehouses"
+                value={bindingSourceIds}
+                options={sources.map((s) => ({
+                  label: `${s.name} (${sourceCatalogName(s)})`,
+                  value: s.id
+                }))}
+                onChange={(selected: string[]) => {
+                  const prev = new Map(
+                    (form.getFieldValue("catalog_bindings") as CatalogBindingFormValue[] | undefined)?.map(
+                      (b) => [b.source_id, b]
+                    ) ?? []
+                  );
+                  form.setFieldsValue({
+                    catalog_bindings: selected.map((sourceId) => {
+                      const existing = prev.get(sourceId);
+                      return existing ?? { source_id: sourceId, trino_catalog: undefined };
+                    })
+                  });
+                }}
+              />
+            </Form.Item>
+            <Form.List name="catalog_bindings">
+              {(fields) =>
+                fields.length ? (
+                  <Space orientation="vertical" size={8} className="full-width" style={{ marginBottom: 16 }}>
+                    {fields.map((field) => {
+                      const sourceId = form.getFieldValue(["catalog_bindings", field.name, "source_id"]) as
+                        | string
+                        | undefined;
+                      const source = sourceId ? sourceById.get(sourceId) : undefined;
+                      const placeholder = source ? sourceCatalogName(source) : "trino catalog name";
+                      return (
+                        <Form.Item
+                          key={field.key}
+                          name={[field.name, "trino_catalog"]}
+                          label={
+                            <HintLabel
+                              label={`Trino catalog for ${source?.name ?? sourceId ?? "lakehouse"}`}
+                              tooltip="Optional override when the Trino catalog name differs from the Cryo lakehouse catalog name. Leave blank to use the lakehouse catalog name."
+                            />
+                          }
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input placeholder={placeholder} />
+                        </Form.Item>
+                      );
+                    })}
+                    {/* Keep source_id in the form model even though the multi-select owns selection. */}
+                    {fields.map((field) => (
+                      <Form.Item key={`sid-${field.key}`} name={[field.name, "source_id"]} hidden>
+                        <Input />
+                      </Form.Item>
+                    ))}
+                  </Space>
+                ) : null
+              }
+            </Form.List>
             <Form.Item name="use_basic_auth" label="Use basic auth" valuePropName="checked">
               <Switch />
             </Form.Item>

@@ -18,6 +18,7 @@ from cryo.db.models import (
     Source,
     Table,
     TableAssignment,
+    TableCost,
     TableStats,
 )
 from cryo.db.repositories.sources import table_in_source_scope
@@ -119,6 +120,73 @@ def get_table_with_stats(session: Session, table_id: uuid.UUID) -> Table | None:
     )
 
 
+def list_compatible_presets(session: Session, table: Table) -> list[Preset]:
+    """Return presets whose destination can serve this table's catalog.
+
+    Non-Trino destinations are always compatible. Trino destinations require an
+    explicit ``catalog_bindings`` entry for ``table.source_id``.
+    """
+    from cryo.engines.trino.catalog_bindings import destination_serves_source
+
+    presets = list(
+        session.scalars(
+            select(Preset)
+            .options(selectinload(Preset.destination))
+            .order_by(Preset.name)
+        )
+    )
+    return [
+        preset
+        for preset in presets
+        if destination_serves_source(
+            preset.destination.engine,
+            preset.destination.config,
+            table.source_id,
+        )
+    ]
+
+
+def assert_preset_compatible_with_tables(
+    session: Session,
+    *,
+    preset_id: uuid.UUID,
+    table_ids: Sequence[uuid.UUID],
+) -> None:
+    """Raise ValueError if the preset's Trino destination does not bind any table's source."""
+    from cryo.engines.trino.catalog_bindings import destination_serves_source
+
+    if not table_ids:
+        return
+    preset = session.scalar(
+        select(Preset)
+        .where(Preset.id == preset_id)
+        .options(selectinload(Preset.destination))
+    )
+    if preset is None:
+        raise ValueError("Preset does not exist")
+    tables = list(
+        session.scalars(select(Table).where(Table.id.in_(list(table_ids))))
+    )
+    found = {table.id for table in tables}
+    missing = [str(tid) for tid in table_ids if tid not in found]
+    if missing:
+        raise ValueError(f"Tables not found: {', '.join(missing)}")
+    incompatible = [
+        f"{table.schema_name}.{table.table_name}"
+        for table in tables
+        if not destination_serves_source(
+            preset.destination.engine,
+            preset.destination.config,
+            table.source_id,
+        )
+    ]
+    if incompatible:
+        raise ValueError(
+            "Preset's Trino destination does not include the catalog for: "
+            + ", ".join(incompatible)
+        )
+
+
 def load_resolution_inputs(
     session: Session,
 ) -> tuple[list[PresetConfig], list[RuleConfig], list[AssignmentConfig]]:
@@ -180,7 +248,7 @@ def resolve_selection(
         raise ValueError("filter selection requires a filter predicate")
 
     predicate = compile_predicate(filter_payload)
-    stmt = select(Table.id).outerjoin(TableStats)
+    stmt = select(Table.id).outerjoin(TableStats).outerjoin(TableCost).outerjoin(TableAssignment)
     if predicate is not None:
         stmt = stmt.where(predicate)
     return SelectionResult(_filter_ids_in_maintenance_scope(session, list(session.scalars(stmt))))

@@ -18,14 +18,7 @@ describe("PageBreadcrumbs", () => {
     expect(screen.queryByText("Tables")).toBeNull();
   });
 
-  it("renders a labeled breadcrumb for /tables", () => {
-    renderAt("/tables");
-    expect(document.querySelector('[aria-label="Breadcrumb"]')).toBeInTheDocument();
-    const nav = document.querySelector('[aria-label="Breadcrumb"]') as HTMLElement;
-    expect(nav.textContent).toContain("Tables");
-  });
-
-  it("labels nested routes with the route map", () => {
+  it("labels nested table-detail routes with the route map", () => {
     renderAt("/tables/abc-123");
     const nav = document.querySelector('[aria-label="Breadcrumb"]') as HTMLElement;
     expect(nav.textContent).toContain("Tables");

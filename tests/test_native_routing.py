@@ -113,7 +113,7 @@ def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.Monkey
     assert not routing.skipped_operations
 
 
-def test_resolve_native_routing_delete_files_blocks_optimize(
+def test_resolve_native_routing_delete_files_blocks_optimize_no_trino_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
@@ -128,30 +128,10 @@ def test_resolve_native_routing_delete_files_blocks_optimize(
         OperationType.REMOVE_ORPHAN_FILES,
     }
     assert OperationType.OPTIMIZE not in native_types
+    # Rewrite is hard-blocked — never routed to Trino even when sql_fallback is set.
     fallback_types = {op.type for op, _ in routing.fallback_operations}
-    assert OperationType.OPTIMIZE in fallback_types
+    assert OperationType.OPTIMIZE not in fallback_types
     assert OperationType.OPTIMIZE_MANIFESTS in fallback_types
-    optimize_detail = next(
-        detail for op, detail in routing.fallback_operations if op.type is OperationType.OPTIMIZE
-    )
-    assert NATIVE_DELETE_FILES_DETAIL in optimize_detail
-    assert not routing.skipped_operations
-
-
-def test_resolve_native_routing_delete_files_skips_optimize_without_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
-    routing = resolve_native_routing(
-        _deep_plan(),
-        {"total_delete_files": 3, "format_version": 2},
-        {"engine_impl": "go"},
-    )
-    native_types = {op.type for op in routing.native_operations}
-    assert native_types == {
-        OperationType.EXPIRE_SNAPSHOTS,
-        OperationType.REMOVE_ORPHAN_FILES,
-    }
     skipped = {op.type: detail for op, detail in routing.skipped_operations}
     assert OperationType.OPTIMIZE in skipped
     assert NATIVE_DELETE_FILES_DETAIL in skipped[OperationType.OPTIMIZE]
@@ -164,7 +144,7 @@ def test_resolve_native_routing_v3_dv_routes_optimize_to_fallback(
     stats = {
         "format_version": 3,
         "partition_col": "event_date",
-        "total_delete_files": 1,
+        "total_delete_files": 0,
         "raw": {
             "format_version": 3,
             "partition_col": "event_date",

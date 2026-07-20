@@ -1,7 +1,7 @@
 import { Button, Checkbox, Input, InputNumber, Popover, Segmented, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useMemo } from "react";
 import { buildFilterChips, filterScopeLabel, type CatalogFilterOption } from "../lib/filterChips";
-import type { TableFilterState } from "../lib/predicate";
+import { NO_PRESET_FILTER, type TableFilterState } from "../lib/predicate";
 
 export type { CatalogFilterOption };
 
@@ -9,6 +9,7 @@ interface Props {
   value: TableFilterState;
   onChange: (value: TableFilterState) => void;
   catalogOptions?: CatalogFilterOption[];
+  presetOptions?: CatalogFilterOption[];
   matchingTotal?: number;
   hasSelection?: boolean;
   filterSelectionActive?: boolean;
@@ -20,6 +21,7 @@ export const FilterBar = ({
   value,
   onChange,
   catalogOptions = [],
+  presetOptions = [],
   matchingTotal = 0,
   hasSelection = false,
   filterSelectionActive = false,
@@ -30,12 +32,17 @@ export const FilterBar = ({
   const showBulkSelect = onSelectAllMatching !== undefined;
 
   const chips = useMemo(
-    () => buildFilterChips(value, catalogOptions, patch),
-    [value, catalogOptions]
+    () => buildFilterChips(value, catalogOptions, patch, presetOptions),
+    [value, catalogOptions, presetOptions]
   );
   const scopeLabel = useMemo(() => filterScopeLabel(value, chips), [value, chips]);
   const matchLabel =
     matchingTotal === 1 ? "1 table matches" : `${matchingTotal.toLocaleString()} tables match`;
+
+  const presetSelectOptions = useMemo(
+    () => [{ label: "No preset", value: NO_PRESET_FILTER }, ...presetOptions],
+    [presetOptions]
+  );
 
   return (
     <div className="filter-bar">
@@ -84,6 +91,23 @@ export const FilterBar = ({
               style={{ minWidth: 180 }}
             />
           ) : null}
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            aria-label="Filter by preset assignment"
+            placeholder="Preset"
+            value={value.presetFilter}
+            onChange={(presetFilter) =>
+              patch({ presetFilter: presetFilter.length ? presetFilter : undefined })
+            }
+            options={presetSelectOptions}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? "").toString().toLowerCase().includes(input.toLowerCase())
+            }
+            style={{ minWidth: 180 }}
+          />
           <Select
             mode="multiple"
             allowClear

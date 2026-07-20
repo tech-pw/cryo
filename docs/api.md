@@ -96,11 +96,22 @@ Example Trino destination payload:
     "port": 8080,
     "user": "cryo",
     "catalog": "iceberg",
+    "catalog_bindings": [
+      {
+        "source_id": "00000000-0000-0000-0000-000000000001",
+        "trino_catalog": "iceberg"
+      }
+    ],
     "per_replica_cap": 5
   },
   "enabled": true
 }
 ```
+
+`config.catalog` is the Trino **session default** (connection probes). `catalog_bindings` lists
+Cryo lakehouses (sources) registered on this Trino. Optional `trino_catalog` overrides the SQL
+catalog name when it differs from the source's `catalog_name`. Empty bindings mean no tables can
+use Trino presets that target this destination. `catalog_bindings` is Trino-only.
 
 ## Tables
 
@@ -111,7 +122,12 @@ GET /api/v1/tables/{table_id}/partitions
 GET /api/v1/tables/{table_id}/audit
 GET /api/v1/tables/{table_id}/history
 GET /api/v1/tables/{table_id}/effective-preset
+GET /api/v1/tables/{table_id}/compatible-presets
 ```
+
+`compatible-presets` returns presets whose destination can maintain this table's catalog.
+Non-Trino destinations are always included. Trino destinations are included only when the
+table's `source_id` appears in that destination's `config.catalog_bindings`.
 
 Supported sort fields:
 
@@ -137,6 +153,20 @@ Filter predicates use the shared grammar:
 ```
 
 URL-encode the JSON when passing it as the `filter` query parameter.
+
+`assigned_preset_id` filters by **explicit table assignment** (`cryo.table_assignments`),
+not the effective preset (pinned assignment else matching rule). Examples:
+
+```json
+{"field": "assigned_preset_id", "op": "=", "value": null}
+```
+
+```json
+{"field": "assigned_preset_id", "op": "in", "value": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}
+```
+
+Combine with `any` to match unassigned tables or specific presets. Rule-matched but
+unassigned tables appear as `null` (no assignment row).
 
 The drilldown endpoints return bounded UI-ready envelopes:
 
@@ -245,6 +275,9 @@ Rule payload:
 POST   /api/v1/assignments
 DELETE /api/v1/assignments
 ```
+
+`POST` returns **400** when the preset's destination is Trino and any selected table's source is
+not listed in that destination's `catalog_bindings`.
 
 Assignment by ids:
 

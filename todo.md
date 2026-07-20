@@ -99,6 +99,9 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [x] FastAPI app factory + auth (JWT, roles admin/operator/viewer) + deps.
 - [x] Routers: `/sources`, `/destinations` (+ `/test`), `/presets` (+ `/simulate`),
       `/presets/{id}/rules`, `/assignments` (filter/ids selection), `/tables/{id}/effective-preset`.
+- [x] **Trino catalog_bindings**: destination config multi-select of Cryo lakehouses (+ optional
+      `trino_catalog` override); `GET /tables/{id}/compatible-presets`; assign rejects unbound Trino;
+      Connections UI + table/bulk preset filtering; worker resolves SQL catalog from bindings.
 - [x] `/maintenance/preview` (dry-run → per-table rendered SQL + estimates) and `/maintenance/run`.
 - [x] `/maintenance/manifest-rewrite` — standalone manifest-only quick action.
 - [x] `/scans` trigger; `/runs`, `/jobs`, `/runs/{id}/cancel`.
