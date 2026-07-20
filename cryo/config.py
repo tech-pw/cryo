@@ -509,6 +509,17 @@ class Settings(BaseSettings):
         default=".local/tables",
         description="Local filesystem root for table data in dev (CRYO_SILENT_LOSS_LOCAL_ROOT).",
     )
+    silent_loss_batch_size: int = Field(
+        default=500,
+        gt=0,
+        description=(
+            "Tables swept per scheduler tick by the silent-data-loss sweep, not the whole "
+            "fleet at once -- sweeping ~13k tables unbounded in one session accumulated every "
+            "Table/TableStats ORM object simultaneously and OOMKilled cryo-scheduler every "
+            "~5min in production. The sweep rotates through the fleet across ticks instead "
+            "(CRYO_SILENT_LOSS_BATCH_SIZE)."
+        ),
+    )
 
     # Variance-aware QPP (CLOUD 2026 / arXiv:2606.03464)
 
