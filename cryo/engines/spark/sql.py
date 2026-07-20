@@ -43,6 +43,8 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
         sql = _render_optimize(catalog, table_name, operation)
     elif operation.type is OperationType.CONVERT_DELETES:
         sql = _render_convert_deletes(catalog, table_name, operation.params)
+    elif operation.type is OperationType.REWRITE_POSITION_DELETES:
+        sql = f"CALL {catalog}.system.rewrite_position_delete_files(table => '{table_name}')"
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:

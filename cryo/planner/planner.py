@@ -65,9 +65,18 @@ def build_plan(
 
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
         optimize_ops = _optimize_operations(stats, partitions, params, notes)
-        convert_op = _convert_deletes_operation(stats, params, optimize_ops, notes)
-        if convert_op is not None:
-            operations.append(convert_op)
+        if _delete_compaction_policy(stats, params) == "minor":
+            operations.append(_rewrite_position_deletes_operation(params))
+            notes.append(
+                f"Planned rewrite_position_deletes (minor): "
+                f"{int(stats.get('position_delete_files') or 0)} position-delete files, "
+                f"delete_file_pct {float(stats.get('delete_file_pct') or 0):.2f}% below the "
+                f"major-rewrite threshold."
+            )
+        else:
+            convert_op = _convert_deletes_operation(stats, params, optimize_ops, notes)
+            if convert_op is not None:
+                operations.append(convert_op)
         operations.extend(optimize_ops)
 
     if resolved_mode is Mode.DEEP:
@@ -217,6 +226,44 @@ def _optimize_operation(
     predicates: tuple[PartitionPredicate, ...] | None = None,
 ) -> Operation:
     return Operation(OperationType.OPTIMIZE, dict(params), predicates)
+
+
+def _delete_compaction_policy(stats: Mapping[str, Any], params: Mapping[str, Any]) -> str | None:
+    """Okolnychyi et al. ("Petabyte-Scale Row-Level Operations", VLDB'24): minor position-delete
+    compaction is much cheaper than a full major rewrite and restores most of the read-side
+    cost of accumulated deletes -- prefer it while the table hasn't crossed into "needs a real
+    rewrite" territory.
+
+    Returns ``"minor"`` when a cheap rewrite_position_deletes pass should substitute for
+    convert_deletes this cycle, or ``None`` to defer to the existing convert_deletes gate
+    (its own delete_file_pct threshold decides "major" from there -- this function only ever
+    claims the "minor" branch, so it stays purely additive to prior behavior).
+    """
+    format_version = stats.get("format_version")
+    if format_version is not None and int(format_version) >= 3:
+        # V3 deletion-vector tables don't accumulate position-delete *files* the same way --
+        # DV-aware maintenance is a different lever this policy doesn't implement; do not
+        # misapply V2-shaped file-count heuristics to it.
+        return None
+    delete_pct = float(stats.get("delete_file_pct") or 0.0)
+    major_pct = float(params.get("delete_major_pct_threshold", 10.0))
+    if delete_pct >= major_pct:
+        return None  # already past "cheap fix" territory -- let convert_deletes handle it
+    position_delete_files = int(stats.get("position_delete_files") or 0)
+    minor_threshold = int(params.get("delete_minor_file_threshold", 50))
+    if position_delete_files >= minor_threshold:
+        return "minor"
+    return None
+
+
+def _rewrite_position_deletes_operation(params: Mapping[str, Any]) -> Operation:
+    return Operation(
+        OperationType.REWRITE_POSITION_DELETES,
+        {
+            "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
+            "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
+        },
+    )
 
 
 def _convert_deletes_operation(

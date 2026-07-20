@@ -25,6 +25,10 @@ NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (
     OperationType.CONVERT_DELETES,
     OperationType.OPTIMIZE_MANIFESTS,
     OperationType.COMPUTE_STATISTICS,
+    # Okolnychyi minor delete compaction (Iceberg's rewrite_position_delete_files procedure) has
+    # no native (iceberg-go) implementation -- same SQL-fallback-or-skip treatment as the other
+    # ops the native subprocess doesn't execute itself.
+    OperationType.REWRITE_POSITION_DELETES,
 )
 
 NATIVE_MANIFESTS_DETAIL = (
@@ -40,6 +44,11 @@ NATIVE_COMPUTE_STATISTICS_DETAIL = (
 NATIVE_CONVERT_DELETES_DETAIL = (
     "convert_deletes requires SQL engine rewrite_data_files options; "
     "route to Spark/Trino fallback"
+)
+
+NATIVE_REWRITE_POSITION_DELETES_DETAIL = (
+    "rewrite_position_delete_files (Okolnychyi minor delete compaction) has no cryo-engine-go "
+    "implementation; route to Spark (Trino has no equivalent procedure either)"
 )
 
 NATIVE_ZORDER_DETAIL = (
@@ -285,6 +294,8 @@ def resolve_native_routing(
                 detail = NATIVE_COMPUTE_STATISTICS_DETAIL
             elif operation.type is OperationType.CONVERT_DELETES:
                 detail = NATIVE_CONVERT_DELETES_DETAIL
+            elif operation.type is OperationType.REWRITE_POSITION_DELETES:
+                detail = NATIVE_REWRITE_POSITION_DELETES_DETAIL
             else:
                 detail = NATIVE_MANIFESTS_DETAIL
             if has_sql_fallback:

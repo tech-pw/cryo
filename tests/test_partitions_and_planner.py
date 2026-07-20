@@ -390,3 +390,83 @@ def test_planner_adds_convert_deletes_when_optimize_not_planned() -> None:
         OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
     ]
+
+
+def test_planner_prefers_minor_delete_compaction_below_major_threshold() -> None:
+    """Okolnychyi (VLDB'24) §C2: many position-delete files but delete_file_pct still under
+    the major-rewrite threshold -> cheap rewrite_position_deletes, not a full CONVERT_DELETES
+    rewrite."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 80,
+            "position_delete_files": 80,
+            "delete_file_pct": 3.0,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "delete_minor_file_threshold": 50,
+            "delete_major_pct_threshold": 10.0,
+        },
+    )
+    assert [op.type for op in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REWRITE_POSITION_DELETES,
+    ]
+    assert any("rewrite_position_deletes (minor)" in note for note in plan.notes)
+
+
+def test_planner_escalates_to_major_rewrite_above_threshold_even_with_few_position_deletes() -> (
+    None
+):
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 5,
+            "position_delete_files": 5,  # below the minor file-count threshold...
+            "delete_file_pct": 15.0,  # ...but delete volume alone crosses the major threshold
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "delete_minor_file_threshold": 50,
+            "delete_major_pct_threshold": 10.0,
+            "convert_deletes_threshold_pct": 5.0,
+        },
+    )
+    assert [op.type for op in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.CONVERT_DELETES,
+    ]
+
+
+def test_planner_skips_v2_delete_policy_for_v3_deletion_vector_tables() -> None:
+    """A format-version-3 table's position-delete file count shouldn't drive the V2-shaped
+    minor/major policy -- it's not implemented for DV-aware maintenance yet, and must not be
+    misapplied."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 0,
+            "position_delete_files": 80,  # would trigger "minor" if format_version were ignored
+            "delete_file_pct": 1.0,
+            "format_version": 3,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {"min_small_files": 128, "delete_minor_file_threshold": 50},
+    )
+    assert OperationType.REWRITE_POSITION_DELETES not in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
