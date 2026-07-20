@@ -21,6 +21,9 @@ The authoritative architecture / contract docs live at the repo root:
 - [`architecture.md`](./architecture.md) — architecture & AI strategy.
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — recommendations,
   performance & openness, competitive analysis, research notes, roadmap.
+- [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md)
+  — AutoComp finish, PTO, WAIR, Okolnychyi delete policy: algorithms, APIs, UI
+  wireframes (docs-only spec; build order inside).
 - [`RATING_2026.md`](./RATING_2026.md) — 2026-07-07 deep rating (25
   attributes) and remediation roadmap.
 - [`OSS_READINESS.md`](./OSS_READINESS.md) — OSS launch readiness
@@ -48,6 +51,9 @@ The authoritative architecture / contract docs live at the repo root:
 
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — cost-savings UI
   patterns.
+- [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md)
+  — Appendix E: Smart Maintenance / Table Detail / Connections UI for
+  AutoComp, PTO, WAIR.
 - [`ux-improvement-loop.md`](./ux-improvement-loop.md) — design for a self-paced,
   autonomous `/loop` that fixes one UX issue per iteration on a dedicated branch,
   grounded in `PRODUCT.md`/`DESIGN.md`. Designed and proven with one iteration; not

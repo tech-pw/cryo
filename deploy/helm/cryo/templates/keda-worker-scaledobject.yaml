@@ -1,0 +1,35 @@
+{{- /*
+KEDA ScaledObject for Worker replicas (native-engine-scoping-research.md §6.2).
+
+Scales the long-lived Worker Deployment against the Redis admitted-job list
+(`cryo:admitted` by default). Workers still create per-chunk Kubernetes Jobs when
+`k8s_dispatch` is enabled — KEDA supplies elastic Worker count, Jobs supply
+elastic compute per chunk.
+
+Requires the KEDA operator installed in the cluster. Disabled by default.
+*/ -}}
+{{- if and .Values.native.enabled .Values.native.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "cryo.fullname" . }}-worker
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: {{ include "cryo.fullname" . }}-worker
+  minReplicaCount: {{ .Values.native.keda.minReplicas | default 1 }}
+  maxReplicaCount: {{ .Values.native.keda.maxReplicas | default 10 }}
+  pollingInterval: {{ .Values.native.keda.pollingInterval | default 15 }}
+  cooldownPeriod: {{ .Values.native.keda.cooldownPeriod | default 60 }}
+  triggers:
+    - type: redis
+      metadata:
+        address: {{ .Values.native.keda.redisAddress | quote }}
+        listName: {{ .Values.native.keda.redisListName | default "cryo:admitted" | quote }}
+        listLength: {{ .Values.native.keda.listLength | default "1" | quote }}
+        {{- if .Values.native.keda.redisPasswordFromSecret }}
+        passwordFromEnv: REDIS_PASSWORD
+        {{- end }}
+{{- end }}

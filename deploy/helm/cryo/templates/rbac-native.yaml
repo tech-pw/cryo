@@ -1,0 +1,49 @@
+{{- /*
+RBAC for native-engine Job dispatch + live capacity reads.
+
+Worker creates/deletes Jobs and reads pod logs when destination.config.k8s_dispatch=true.
+Governor lists Jobs to account real CPU/memory pressure (Phase E / live capacity).
+*/ -}}
+{{- if .Values.native.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cryo.fullname" . }}-native
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cryo.fullname" . }}-native
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cryo.fullname" . }}-native
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "cryo.fullname" . }}-native
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cryo.fullname" . }}-native
+    namespace: {{ .Release.Namespace }}
+{{- end }}

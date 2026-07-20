@@ -6,6 +6,20 @@ env:
   - name: {{ $k }}
     value: {{ $v | quote }}
   {{- end }}
+  {{- if .root.Values.native.enabled }}
+  - name: CRYO_K8S_NAMESPACE
+    value: {{ .root.Release.Namespace | quote }}
+  - name: CRYO_NATIVE_K8S_SERVICE_ACCOUNT
+    value: {{ include "cryo.fullname" .root }}-native
+  - name: CRYO_NATIVE_SPOT_ALLOW
+    value: {{ .root.Values.native.spot.allow | quote }}
+  - name: CRYO_NATIVE_SPOT_MAX_CHUNK_GB
+    value: {{ .root.Values.native.spot.maxChunkSizeGb | quote }}
+  - name: CRYO_NATIVE_SPOT_MAX_DURATION_SECONDS
+    value: {{ .root.Values.native.spot.maxEstimatedDurationSeconds | quote }}
+  - name: CRYO_NATIVE_SPOT_REQUIRE_CHECKPOINTING
+    value: {{ .root.Values.native.spot.requireCheckpointing | quote }}
+  {{- end }}
 envFrom:
   {{- include "cryo.envFrom" .root | nindent 2 }}
 resources:
@@ -33,6 +47,9 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- if .Values.native.enabled }}
+      serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- end }}
       containers:
         - name: worker
           command: ["cryo", "worker"]

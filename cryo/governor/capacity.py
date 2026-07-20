@@ -146,9 +146,16 @@ class LiveCapacityProvider:
         queue: MaintenanceQueue | None = None,
         *,
         job_state_reader: NativeJobStateReader | None = None,
+        k8s_namespace: str | None = None,
     ) -> None:
+        import os
+
         self._queue = queue
-        self._job_state_reader = job_state_reader
+        if job_state_reader is not None:
+            self._job_state_reader = job_state_reader
+        else:
+            namespace = k8s_namespace or os.environ.get("CRYO_K8S_NAMESPACE") or "default"
+            self._job_state_reader = NativeJobStateReader(namespace=namespace)
 
     def probe(self, destination: DestinationConfig) -> Mapping[str, CapacitySnapshot | int]:
         engine_type = EngineType(destination.engine)

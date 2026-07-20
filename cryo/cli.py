@@ -248,6 +248,8 @@ class GovernorRunner(DaemonRunner):
                 queue=wiring.queue,
                 lock_store=wiring.lock_store,
                 store=wiring.job_store,
+                # LiveCapacityProvider defaults to NativeJobStateReader (CRYO_K8S_NAMESPACE)
+                # and falls back to Redis in-flight when not in-cluster.
                 capacity_provider=LiveCapacityProvider(wiring.queue),
             )
             return self._governor
