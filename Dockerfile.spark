@@ -2,16 +2,25 @@
 # our runner script. No cloud-vendor image or service required -- this runs identically
 # on any Kubernetes cluster via `spark-submit --master k8s://...` (cryo/engines/spark/k8s.py),
 # the same way it already runs against EMR Serverless and local docker-compose.
-FROM apache/spark:4.2.0-python3
+#
+# Spark base version and the iceberg-spark-runtime-<X.Y> artifact must match on Spark's
+# MINOR version -- Iceberg ships a separate runtime jar per Spark minor (spark/v4.0,
+# spark/v4.1, ...) because Spark's internal DataSource V2 APIs aren't binary-compatible
+# across minors. Iceberg 1.11.0 only publishes 4.0 and 4.1 runtimes (no 4.2 yet) --
+# pairing iceberg-spark-runtime-4.0 with a 4.2.0 base threw
+# IncompatibleClassChangeError: SparkView does not implement View (confirmed live against
+# data-platform-cluster, 2026-07-21). Keep both pinned to the same minor.
+FROM apache/spark:4.1.2-python3
 
 ARG ICEBERG_VERSION=1.11.0
+ARG ICEBERG_SPARK_MINOR=4.1
 USER root
 
 # Iceberg's Spark runtime (Iceberg core + Spark integration, shaded) and the AWS bundle
 # (S3FileIO + AWS SDK v2, for s3a:// warehouses) -- both official Apache Iceberg release
 # artifacts from Maven Central, not vendored/rebuilt.
-RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar \
-      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-4.0_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar" \
+RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar" \
     && curl -fsSL -o /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar \
       "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar"
 

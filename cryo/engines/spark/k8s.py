@@ -57,6 +57,8 @@ class SparkK8sConfig:
     catalog_warehouse: str | None = None
     catalog_impl: str = "rest"
     s3_endpoint: str | None = None
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None
     driver_cpu_milli: int = 1000
     driver_mem_mib: int = 2048
     executor_cpu_milli: int = 2000
@@ -95,6 +97,8 @@ class SparkK8sConfig:
             catalog_warehouse=_get("catalog_warehouse"),
             catalog_impl=str(_get("catalog_impl") or "rest"),
             s3_endpoint=_get("s3_endpoint"),
+            s3_access_key=_get("s3_access_key"),
+            s3_secret_key=_get("s3_secret_key"),
             driver_cpu_milli=int(_get("driver_cpu_milli") or 1000),
             driver_mem_mib=int(_get("driver_mem_mib") or 2048),
             executor_cpu_milli=int(_get("executor_cpu_milli") or 2000),
@@ -163,6 +167,14 @@ class SparkK8sClient:
             "--conf", f"spark.executor.memory={cfg.executor_mem_mib}m",
             "--conf", "spark.kubernetes.executor.deleteOnTermination=true",
             "--conf", "spark.kubernetes.submission.waitAppCompletion=true",
+            # Driver/executor pods must land on the same Karpenter on-demand capacity as
+            # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
+            # that node pool's instance profile is what actually has S3 access to the
+            # warehouse bucket. A generic node's instance role does not (confirmed live
+            # against data-platform-cluster, 2026-07-21: AccessDeniedException on
+            # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
+            # aren't checkpointed, so on-demand only, matching the native engine's own rule.
+            "--conf", "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand",
             "local:///opt/cryo/cryo_spark_runner.py",
             *runner_args,
         ]
@@ -171,6 +183,40 @@ class SparkK8sClient:
             spark_submit_cmd[1:1] = [
                 "--conf", f"spark.kubernetes.container.image.pullSecrets={secrets_csv}",
             ]
+
+        credentials_secret_name: str | None = None
+        if cfg.s3_access_key and cfg.s3_secret_key:
+            # secretKeyRef, not a literal --conf value: the pod spec's command array is
+            # always visible via `kubectl get pod -o yaml` regardless of RBAC on Secrets,
+            # so the raw credential must never appear there -- only the Secret's name does.
+            # The native (Go) engine needs the same source-configured S3 credentials (the
+            # node's ambient IAM role alone isn't sufficient here, confirmed live 2026-07-21).
+            credentials_secret_name = f"{k8s_job_name}-aws"
+            core_api = _new_k8s_core_client()
+            core_api.create_namespaced_secret(
+                namespace=cfg.namespace,
+                body={
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {"name": credentials_secret_name, "namespace": cfg.namespace},
+                    "stringData": {
+                        "access_key_id": cfg.s3_access_key,
+                        "secret_access_key": cfg.s3_secret_key,
+                    },
+                },
+            )
+            # Inserted at index 1 (like the pull-secrets conf below), not appended: every
+            # --conf must precede the application script path in spark-submit's argv, or
+            # it gets parsed as an argument to cryo_spark_runner.py instead.
+            for role in ("driver", "executor"):
+                spark_submit_cmd[1:1] = [
+                    "--conf",
+                    f"spark.kubernetes.{role}.secretKeyRef.AWS_ACCESS_KEY_ID="
+                    f"{credentials_secret_name}:access_key_id",
+                    "--conf",
+                    f"spark.kubernetes.{role}.secretKeyRef.AWS_SECRET_ACCESS_KEY="
+                    f"{credentials_secret_name}:secret_access_key",
+                ]
 
         job_manifest: dict[str, Any] = {
             "apiVersion": "batch/v1",
@@ -182,7 +228,14 @@ class SparkK8sClient:
                     "app.kubernetes.io/name": "cryo",
                     "app.kubernetes.io/component": "spark-fallback",
                 },
-                "annotations": {"cryo/driver-pod-name": driver_pod_name},
+                "annotations": {
+                    "cryo/driver-pod-name": driver_pod_name,
+                    **(
+                        {"cryo/credentials-secret-name": credentials_secret_name}
+                        if credentials_secret_name
+                        else {}
+                    ),
+                },
             },
             "spec": {
                 "backoffLimit": 0,
@@ -194,10 +247,12 @@ class SparkK8sClient:
                             "app.kubernetes.io/name": "cryo",
                             "app.kubernetes.io/component": "spark-fallback",
                         },
+                        "annotations": {"karpenter.sh/do-not-disrupt": "true"},
                     },
                     "spec": {
                         "restartPolicy": "Never",
                         "serviceAccountName": cfg.service_account,
+                        "nodeSelector": {"karpenter.sh/capacity-type": "on-demand"},
                         "imagePullSecrets": [{"name": s} for s in cfg.image_pull_secrets],
                         "containers": [
                             {
@@ -222,14 +277,55 @@ class SparkK8sClient:
         return k8s_job_name
 
     def get_job_run(self, job_id: str) -> JobRunResult:
+        """Authoritative state comes from the driver pod, not the dispatch Job.
+
+        spark-submit's own exit code does not reliably mirror the driver's outcome --
+        confirmed live against data-platform-cluster (2026-07-21): a driver pod whose SQL
+        failed (container exit 1) still left the wrapping Job's spark-submit container at
+        exit 0, because spark-submit's post-completion cleanup (deleting the driver's
+        service/pods) threw its own RBAC exceptions in a background thread that never
+        affected the main process's exit code. Trusting the wrapper Job's status alone
+        silently reports SUCCESS for a run whose SQL actually failed -- always check the
+        driver pod's own terminal phase instead.
+        """
+        driver_pod_name = f"{job_id}-driver"
+        core_api = _new_k8s_core_client()
+        from kubernetes.client.exceptions import ApiException
+
+        try:
+            pod = core_api.read_namespaced_pod(name=driver_pod_name, namespace=self._config.namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                # Driver pod not created yet (still starting) or submission failed before
+                # spark-submit ever created it -- the wrapper Job is the only signal we have.
+                return self._get_wrapper_job_run(job_id)
+            raise
+
+        phase = pod.status.phase if pod.status else None
+        if phase == "Succeeded":
+            return JobRunResult(job_run_id=job_id, state=JobRunState.SUCCESS)
+        if phase == "Failed":
+            detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
+            return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
+        return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
+
+    def _get_wrapper_job_run(self, job_id: str) -> JobRunResult:
+        """Fallback for the window before the driver pod exists -- e.g. submission itself
+        failed (bad image, RBAC on the wrapper pod) and spark-submit never got to create it.
+        """
         batch_api = _new_k8s_batch_client()
         job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
         status = job.status
-        if status.succeeded and status.succeeded >= 1:
-            return JobRunResult(job_run_id=job_id, state=JobRunState.SUCCESS)
         if status.failed and status.failed >= 1:
-            detail = _read_failure_detail(job_id, self._config.namespace)
+            detail = _read_pod_log_tail(job_id, self._config.namespace, label_selector=f"job-name={job_id}")
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
+        if status.succeeded and status.succeeded >= 1:
+            # Wrapper finished but we never saw a driver pod -- don't trust that as success.
+            return JobRunResult(
+                job_run_id=job_id,
+                state=JobRunState.FAILED,
+                state_details="Dispatch Job finished but its Spark driver pod was never observed",
+            )
         return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
 
     def wait_for_completion(self, job_id: str) -> JobRunResult:
@@ -252,6 +348,23 @@ class SparkK8sClient:
             propagation_policy="Foreground",
         )
 
+    def cleanup_credentials_secret(self, job_id: str) -> None:
+        """Delete the per-job AWS credentials Secret created by submit_spark_sql, if any.
+
+        Best-effort: called after the run reaches a terminal state (or times out/raises)
+        so credential Secrets don't accumulate. Missing/already-deleted is not an error.
+        """
+        try:
+            batch_api = _new_k8s_batch_client()
+            job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
+            secret_name = (job.metadata.annotations or {}).get("cryo/credentials-secret-name")
+            if not secret_name:
+                return
+            core_api = _new_k8s_core_client()
+            core_api.delete_namespaced_secret(name=secret_name, namespace=self._config.namespace)
+        except Exception:  # noqa: BLE001 - best-effort cleanup only
+            logger.warning("Failed to clean up credentials Secret for job %s", job_id, exc_info=True)
+
 
 def _new_k8s_batch_client() -> client.BatchV1Api:
     from kubernetes import client
@@ -265,14 +378,24 @@ def _new_k8s_core_client() -> client.CoreV1Api:
     return client.CoreV1Api()
 
 
-def _read_failure_detail(job_id: str, namespace: str) -> str | None:
-    """Best-effort: pull a tail of the spark-submit pod's logs for the error."""
+def _read_pod_log_tail(
+    pod_name: str, namespace: str, *, label_selector: str | None = None
+) -> str | None:
+    """Best-effort: pull a tail of a pod's logs for the error.
+
+    Direct name lookup by default (used for the driver pod, whose name is known);
+    falls back to a label-selector list when the caller only knows the owning Job
+    (the wrapper-pod fallback path, where the pod's generated suffix isn't known).
+    """
     try:
         core_api = _new_k8s_core_client()
-        pods = core_api.list_namespaced_pod(
-            namespace=namespace, label_selector=f"job-name={job_id}"
-        )
-        for pod in pods.items:
+        if label_selector:
+            pods = core_api.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            ).items
+        else:
+            pods = [core_api.read_namespaced_pod(name=pod_name, namespace=namespace)]
+        for pod in pods:
             try:
                 logs: str = core_api.read_namespaced_pod_log(
                     name=pod.metadata.name,
