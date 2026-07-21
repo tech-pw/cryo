@@ -215,6 +215,10 @@ class GovernorRunner(DaemonRunner):
         if wiring and not wiring.is_governor_leader():
             return
 
+        # Reconcile direct Kubernetes dispatches before admitting new work so a
+        # restarted governor cannot duplicate a still-running Job whose DB
+        # member status had not yet been advanced.
+        self._tick_native_watcher(wiring)
         result = governor.run_wave(now=datetime.now(UTC))
         if any(
             (result.admitted, result.deferred, result.blocked, result.orphaned, result.re_enqueued)
@@ -227,6 +231,27 @@ class GovernorRunner(DaemonRunner):
                 result.orphaned,
                 result.re_enqueued,
             )
+    def _tick_native_watcher(self, wiring: Any) -> None:
+        try:
+            from cryo.db.session import SessionLocal
+            from cryo.engines.native.watcher import NativeJobWatcher
+
+            watcher = NativeJobWatcher(
+                session_factory=SessionLocal,
+                lock_store=wiring.lock_store,
+                mark_status=wiring.job_store.mark_status,
+                record_audit=wiring.job_store.record_audit,
+            )
+            watch = watcher.tick()
+            if watch.finalized:
+                self._logger.info(
+                    "Native JobWatcher: finalized=%d still_running=%d errors=%d",
+                    watch.finalized,
+                    watch.still_running,
+                    watch.errors,
+                )
+        except Exception as exc:
+            self._logger.debug("Native JobWatcher tick skipped: %s", exc)
 
     def _get_wiring(self) -> Any:
         if self._wiring is not None:
