@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -178,3 +179,118 @@ def test_watcher_preserves_partial_batch_success_and_audits() -> None:
     assert not locks.is_table_locked(str(jobs[0].table_id))
     assert not locks.is_table_locked(str(jobs[1].table_id))
     assert finish.call_args.kwargs["status"] == "partial"
+
+
+def test_line_to_log_events_emits_one_event_per_operation_in_table_result() -> None:
+    """A single CRYO_TABLE_RESULT line bundling two operations for one table must
+    produce two events -- otherwise the second operation silently never appears in
+    the live log (regression: an earlier draft only handled the first result)."""
+    from cryo.engines.native.watcher import _line_to_log_events
+
+    line = TABLE_RESULT_PREFIX + json.dumps(
+        {
+            "ok": True,
+            "job_id": "j1",
+            "table_id": "t1",
+            "table_ref": "ns.tbl",
+            "results": [
+                {"operation": "expire_snapshots", "success": True, "duration_ms": 101},
+                {"operation": "remove_orphan_files", "success": True, "duration_ms": 42},
+            ],
+        }
+    )
+    events = _line_to_log_events(line, run_id="r1")
+    assert [e["operation"] for e in events] == ["expire_snapshots", "remove_orphan_files"]
+    assert all(e["job_id"] == "j1" and e["table_id"] == "t1" for e in events)
+    assert all(e["level"] == "info" for e in events)
+    assert "101ms" in events[0]["message"]
+
+
+def test_line_to_log_events_marks_failed_operation_as_error_level() -> None:
+    from cryo.engines.native.watcher import _line_to_log_events
+
+    line = TABLE_RESULT_PREFIX + json.dumps(
+        {
+            "ok": False,
+            "job_id": "j1",
+            "table_id": "t1",
+            "table_ref": "ns.tbl",
+            "results": [
+                {"operation": "optimize", "success": False, "error": "boom"},
+            ],
+        }
+    )
+    events = _line_to_log_events(line, run_id="r1")
+    assert len(events) == 1
+    assert events[0]["level"] == "error"
+    assert "boom" in events[0]["message"]
+
+
+def test_line_to_log_events_handles_table_level_failure_with_no_results() -> None:
+    from cryo.engines.native.watcher import _line_to_log_events
+
+    line = TABLE_RESULT_PREFIX + json.dumps(
+        {"ok": False, "job_id": "j1", "table_id": "t1", "error": "plan build failed", "results": []}
+    )
+    events = _line_to_log_events(line, run_id="r1")
+    assert len(events) == 1
+    assert events[0]["level"] == "error"
+    assert "plan build failed" in events[0]["message"]
+
+
+def test_line_to_log_events_parses_progress_prefixed_line() -> None:
+    from cryo.engines.native.runner import PROGRESS_PREFIX
+    from cryo.engines.native.watcher import _line_to_log_events
+
+    line = PROGRESS_PREFIX + json.dumps(
+        {"operation": "optimize", "event": "progress", "progress_pct": 40}
+    )
+    events = _line_to_log_events(line, run_id="r1")
+    assert len(events) == 1
+    assert events[0]["operation"] == "optimize"
+    assert "40%" in events[0]["message"]
+
+
+def test_line_to_log_events_ignores_unrecognized_lines() -> None:
+    from cryo.engines.native.watcher import _line_to_log_events
+
+    assert _line_to_log_events("some unrelated log noise", run_id="r1") == []
+    assert _line_to_log_events(TABLE_RESULT_PREFIX + "not json", run_id="r1") == []
+
+
+def test_publish_incremental_progress_dedupes_across_ticks() -> None:
+    """Same dispatch, same log content on two consecutive ticks -- the second tick
+    must publish nothing new, or the UI would show every line duplicated forever."""
+    from cryo.engines.native.watcher import _INCREMENTAL_LOG_SEEN
+
+    dispatch = SimpleNamespace(
+        id=uuid.uuid4(),
+        run_id=uuid.uuid4(),
+        k8s_job_name="cryo-native-abc123",
+    )
+    _INCREMENTAL_LOG_SEEN.pop(str(dispatch.id), None)
+    stdout = TABLE_RESULT_PREFIX + json.dumps(
+        {
+            "ok": True,
+            "job_id": "j1",
+            "table_id": "t1",
+            "table_ref": "ns.tbl",
+            "results": [{"operation": "expire_snapshots", "success": True}],
+        }
+    )
+    published: list[dict] = []
+    watcher = NativeJobWatcher(
+        session_factory=MagicMock(),
+        lock_store=InMemoryLockStore(),
+        mark_status=lambda *a, **k: None,
+        run_events=MagicMock(publish=lambda run_id, event: published.append(event)),
+    )
+    with (
+        patch("cryo.engines.native.watcher._get_job_pods_by_selector", return_value=[object()]),
+        patch("cryo.engines.native.watcher._read_recent_pod_logs", return_value=stdout),
+    ):
+        watcher._publish_incremental_progress(MagicMock(), dispatch, "cryo")
+        watcher._publish_incremental_progress(MagicMock(), dispatch, "cryo")
+
+    assert len(published) == 1
+    _INCREMENTAL_LOG_SEEN.pop(str(dispatch.id), None)

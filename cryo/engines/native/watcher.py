@@ -24,11 +24,23 @@ from cryo.engines.native.job_dispatch import (
     _safe_load_k8s,
 )
 from cryo.engines.native.job_state import current_k8s_namespace
-from cryo.engines.native.runner import split_stdout_lines
+from cryo.engines.native.runner import PROGRESS_PREFIX, split_stdout_lines
 from cryo.queue.locks import LockStore
+from cryo.queue.run_events import build_log_line, safe_publish
 from cryo.worker.worker import AuditRecord
 
 logger = logging.getLogger(__name__)
+
+# Lines already relayed to run_events per dispatch, so a fresh NativeJobWatcher instance
+# each tick (see cli.py._tick_native_watcher) doesn't re-publish the same log lines every
+# poll. Module-level rather than instance state precisely because the instance is
+# short-lived; keyed by dispatch id (str), cleared on finalize. Reset on process restart --
+# acceptable, since the worst case is a handful of already-seen lines replayed once, not an
+# unbounded loop.
+_INCREMENTAL_LOG_SEEN: dict[str, set[str]] = {}
+# How far back to read on each tick's incremental log fetch. Must comfortably exceed the
+# Governor tick interval so a slow tick doesn't miss lines that landed between polls.
+_INCREMENTAL_LOG_WINDOW_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -50,6 +62,7 @@ class NativeJobWatcher:
         record_audit: Callable[[AuditRecord], None] | None = None,
         namespace: str | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
+        run_events: Any | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._lock_store = lock_store
@@ -57,6 +70,7 @@ class NativeJobWatcher:
         self._record_audit = record_audit
         self._namespace = namespace or current_k8s_namespace()
         self._lock_ttl_seconds = lock_ttl_seconds
+        self._run_events = run_events
 
     def tick(self) -> WatchResult:
         k8s_client, _ = _safe_load_k8s()
@@ -176,6 +190,9 @@ class NativeJobWatcher:
                 if dispatch.status == "pending":
                     dispatch.status = "running"
                 self._mark_active_jobs(session, dispatch.id, dispatch.k8s_job_name)
+                self._publish_incremental_progress(
+                    core_api, dispatch, namespace
+                )
                 still_running += 1
 
             session.commit()
@@ -223,6 +240,7 @@ class NativeJobWatcher:
             status=dispatch_status,
             error="; ".join(errors)[:2000] or None,
         )
+        _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
 
     def _finalize_failure(
         self,
@@ -236,6 +254,7 @@ class NativeJobWatcher:
             self._record_plan_failure_audits(job, reason)
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
         mark_dispatch_finished(session, dispatch_id, status="failed", error=reason)
+        _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
 
     def _finalize_cancelled(self, session: Session, dispatch_id: uuid.UUID) -> None:
         jobs = jobs_for_dispatch(session, dispatch_id)
@@ -243,6 +262,45 @@ class NativeJobWatcher:
             self._mark_status(str(job.id), JobStatus.SKIPPED, error="cancelled")
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
         mark_dispatch_finished(session, dispatch_id, status="cancelled", error="cancelled")
+        _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
+
+    def _publish_incremental_progress(
+        self,
+        core_api: Any,
+        dispatch: Any,
+        namespace: str,
+    ) -> None:
+        """Relay new pod-log lines for a still-running dispatch to run_events.
+
+        Gives the Run detail UI live per-operation visibility (Airflow-style task logs)
+        instead of the prior behavior where nothing appeared until the whole K8s Job --
+        which can bundle several tables and run for minutes -- reached a terminal state.
+        Best-effort: any failure here must never affect job finalization, so all errors
+        are swallowed.
+        """
+        if self._run_events is None:
+            return
+        try:
+            pods = _get_job_pods_by_selector(core_api, dispatch.k8s_job_name, namespace)
+            if not pods:
+                return
+            stdout = _read_recent_pod_logs(
+                core_api, pods, "cryo-engine", _INCREMENTAL_LOG_WINDOW_SECONDS
+            )
+            if not stdout:
+                return
+            seen = _INCREMENTAL_LOG_SEEN.setdefault(str(dispatch.id), set())
+            for line in stdout.splitlines():
+                line = line.strip()
+                if not line or line in seen:
+                    continue
+                seen.add(line)
+                for event in _line_to_log_events(line, run_id=dispatch.run_id):
+                    safe_publish(self._run_events, dispatch.run_id, event)
+        except Exception:
+            logger.debug(
+                "Incremental log publish failed for dispatch %s", dispatch.id, exc_info=True
+            )
 
     def _mark_active_jobs(
         self,
@@ -399,6 +457,133 @@ def _parse_batch_results(stdout: str | None) -> dict[str, dict[str, Any]]:
             "results": parsed.get("results"),
         }
     return by_job
+
+
+def _get_job_pods_by_selector(core_api: Any, job_name: str, namespace: str) -> list[Any]:
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace=namespace,
+            label_selector=f"job-name={job_name}",
+        )
+        return list(pods.items)
+    except Exception:
+        return []
+
+
+def _read_recent_pod_logs(
+    core_api: Any,
+    pods: list[Any],
+    container_name: str,
+    since_seconds: int,
+) -> str | None:
+    """Read only the tail window of pod logs, for incremental (still-running) tailing.
+
+    Deliberately uses since_seconds rather than _read_pod_logs' limit_bytes: limit_bytes
+    truncates from the START of the log, so once a verbose multi-table batch exceeds that
+    cap, later reads would keep returning the same stale prefix and never see new lines.
+    since_seconds always returns whatever landed in the trailing window, which is what
+    incremental tailing needs.
+    """
+    for pod in pods:
+        try:
+            return core_api.read_namespaced_pod_log(
+                name=pod.metadata.name,
+                namespace=pod.metadata.namespace,
+                container=container_name,
+                since_seconds=since_seconds,
+            )
+        except Exception:
+            continue
+    return None
+
+
+def _line_to_log_events(line: str, *, run_id: Any) -> list[dict[str, Any]]:
+    """Parse one stdout line from the native engine into run_events log_line payloads.
+
+    A single CRYO_TABLE_RESULT line can carry more than one operation's result (e.g.
+    expire_snapshots and remove_orphan_files bundled for the same table) -- emit one
+    event per operation rather than only the first, or later operations in the same
+    line would silently never appear in the live log.
+    """
+    if line.startswith(TABLE_RESULT_PREFIX):
+        try:
+            item = json.loads(line[len(TABLE_RESULT_PREFIX) :])
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(item, dict):
+            return []
+        job_id = item.get("job_id")
+        table_id = item.get("table_id")
+        table_ref = item.get("table_ref")
+        results = [r for r in (item.get("results") or []) if isinstance(r, dict)]
+        if not results:
+            if item.get("ok", True):
+                return []
+            return [
+                build_log_line(
+                    run_id=run_id,
+                    job_id=job_id,
+                    table_id=table_id,
+                    table_ref=table_ref,
+                    engine="native",
+                    level="error",
+                    message=f"table failed: {item.get('error') or 'unknown error'}",
+                )
+            ]
+        events = []
+        for result in results:
+            operation = str(result.get("operation") or "native")
+            ok = bool(result.get("success"))
+            duration_ms = result.get("duration_ms")
+            if ok:
+                message = f"{operation}: done" + (
+                    f" ({duration_ms}ms)" if duration_ms is not None else ""
+                )
+                level = "info"
+            else:
+                message = f"{operation}: failed — {result.get('error') or 'unknown error'}"
+                level = "error"
+            events.append(
+                build_log_line(
+                    run_id=run_id,
+                    job_id=job_id,
+                    table_id=table_id,
+                    table_ref=table_ref,
+                    operation=operation,
+                    engine="native",
+                    level=level,
+                    message=message,
+                )
+            )
+        return events
+
+    if line.startswith(PROGRESS_PREFIX):
+        try:
+            event = json.loads(line[len(PROGRESS_PREFIX) :])
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(event, dict):
+            return []
+        operation = str(event.get("operation") or "native")
+        event_name = str(event.get("event") or "progress")
+        message = event.get("message")
+        if not message:
+            pct = event.get("progress_pct")
+            message = f"{operation}: {event_name}" + (f" {pct}%" if pct is not None else "")
+        return [
+            build_log_line(
+                run_id=run_id,
+                job_id=event.get("job_id"),
+                table_id=event.get("table_id"),
+                table_ref=event.get("table_ref"),
+                operation=operation,
+                engine="native",
+                level="error" if event_name == "failed" else "info",
+                message=str(message),
+            )
+        ]
+
+    return []
 
 
 def _is_not_found(exc: Exception) -> bool:
