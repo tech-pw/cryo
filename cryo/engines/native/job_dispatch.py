@@ -38,10 +38,13 @@ from cryo.engines.native.runner import (
 
 logger = logging.getLogger(__name__)
 
-_CPU_BASE_MILLI = 250
-_CPU_PER_10GB = 100
-_MEM_BASE_MIB = 512
-_MEM_PER_10GB = 128
+_CPU_BASE_MILLI = 500
+_CPU_PER_10GB = 200
+# DataFusion/Arrow columnar rewrite has substantial fixed overhead (batch buffers, Parquet
+# writer row groups) independent of chunk size -- 512Mi base OOM-killed on a real 73MB rewrite
+# (37 files) during production validation. 2Gi floor + faster per-GB scaling gives real headroom.
+_MEM_BASE_MIB = 2048
+_MEM_PER_10GB = 1024
 _MAX_CPU_MILLI = 4000
 _MAX_MEM_MIB = 16384
 _ACTIVE_DEADLINE_SECONDS = 7200
