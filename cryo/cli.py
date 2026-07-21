@@ -241,6 +241,7 @@ class GovernorRunner(DaemonRunner):
                 lock_store=wiring.lock_store,
                 mark_status=wiring.job_store.mark_status,
                 record_audit=wiring.job_store.record_audit,
+                run_events=getattr(wiring, "run_events", None),
             )
             watch = watcher.tick()
             if watch.finalized:
