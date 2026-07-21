@@ -156,8 +156,11 @@ spark:
   k8s:
     enabled: false
     image:
-      repository: cryo-spark
-      tag: latest
+      # Same GitLab container registry project as the main image (there is no separate
+      # "cryo-spark" project), distinguished by tag only -- mirrors how cryo-web reuses
+      # this project's registry with the "web-latest" tag.
+      repository: cryo
+      tag: spark-latest
       pullPolicy: IfNotPresent
     # Overridden to the chart-managed SA when enabled=true (see rbac-spark.yaml).
     serviceAccount: default
