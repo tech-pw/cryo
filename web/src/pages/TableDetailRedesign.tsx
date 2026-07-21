@@ -148,7 +148,13 @@ import {
 } from "../lib/format";
 import { qualifiedTableName } from "../lib/tableLabels";
 import { chartTooltipProps, cryoColors } from "../lib/theme";
-import { formatEngineLabel, nativeGoDeleteFilesRewriteError, resolveNativeEngineImpl } from "../lib/engines";
+import {
+  formatEngineLabel,
+  hasSqlFallbackConfigured,
+  nativeGoDeleteFilesFallbackNotice,
+  nativeGoDeleteFilesRewriteError,
+  resolveNativeEngineImpl
+} from "../lib/engines";
 import { formatPartitionColumnLabel, provenanceLabel } from "../components/table-detail/helpers";
 
 const isNotFoundError = (error: unknown): boolean => {
@@ -438,13 +444,16 @@ export const TableDetail = () => {
       const mode = preset?.mode ?? "standard";
       const destination = destinations.data?.find((item) => item.id === preset?.destination_id);
       const deleteFiles = table.data?.stats?.total_delete_files ?? 0;
-      const rewriteBlocked =
+      const rewriteAffected =
         destination?.engine === "native" &&
         resolveNativeEngineImpl(destination.config) === "go" &&
         deleteFiles > 0 &&
         (mode === "standard" || mode === "deep");
-      if (rewriteBlocked) {
+      const rewriteHasFallback = rewriteAffected && hasSqlFallbackConfigured(destination?.config);
+      if (rewriteAffected && !rewriteHasFallback) {
         message.error(`${nativeGoDeleteFilesRewriteError} Run queued: ${result.run_id}`);
+      } else if (rewriteHasFallback) {
+        message.info(`${nativeGoDeleteFilesFallbackNotice} Run queued: ${result.run_id}`);
       } else {
         message.success(`Run queued: ${result.run_id}`);
       }
@@ -481,13 +490,16 @@ export const TableDetail = () => {
       const mode = preset?.mode ?? "standard";
       const destination = destinations.data?.find((item) => item.id === preset?.destination_id);
       const deleteFiles = table.data?.stats?.total_delete_files ?? 0;
-      const rewriteBlocked =
+      const rewriteAffected =
         destination?.engine === "native" &&
         resolveNativeEngineImpl(destination.config) === "go" &&
         deleteFiles > 0 &&
         (mode === "standard" || mode === "deep");
-      if (rewriteBlocked) {
+      const rewriteHasFallback = rewriteAffected && hasSqlFallbackConfigured(destination?.config);
+      if (rewriteAffected && !rewriteHasFallback) {
         message.error(`${nativeGoDeleteFilesRewriteError} Run scheduled: ${result.run_id}`);
+      } else if (rewriteHasFallback) {
+        message.info(`${nativeGoDeleteFilesFallbackNotice} Run scheduled: ${result.run_id}`);
       } else {
         message.success(`Run scheduled: ${result.run_id}`);
       }
