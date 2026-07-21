@@ -17,6 +17,7 @@ def write_checkpoint(
     chunk_index: int,
     operation_type: str,
     *,
+    table_id: str | None = None,
     partition_summary: str | None = None,
     input_files: int | None = None,
     output_files: int | None = None,
@@ -25,8 +26,11 @@ def write_checkpoint(
     raw_result: dict[str, Any] | None = None,
 ) -> ChunkCheckpoint:
     """Write a checkpoint after a chunk commits successfully to Iceberg."""
+    import uuid as uuid_mod
+
     checkpoint = ChunkCheckpoint(
         run_id=run_id,
+        table_id=uuid_mod.UUID(str(table_id)) if table_id else None,
         chunk_index=chunk_index,
         operation_type=operation_type,
         partition_summary=partition_summary,
@@ -45,13 +49,18 @@ def write_checkpoint(
 def get_checkpointed_chunks(
     session: Session,
     run_id: str,
+    *,
+    table_id: str | None = None,
 ) -> set[int]:
     """Return the set of chunk indices that have already checkpointed for a run."""
-    rows = session.execute(
-        select(ChunkCheckpoint.chunk_index).where(
-            ChunkCheckpoint.run_id == run_id
-        )
-    ).scalars().all()
+    import uuid as uuid_mod
+
+    stmt = select(ChunkCheckpoint.chunk_index).where(ChunkCheckpoint.run_id == run_id)
+    if table_id is not None:
+        stmt = stmt.where(ChunkCheckpoint.table_id == uuid_mod.UUID(str(table_id)))
+    else:
+        stmt = stmt.where(ChunkCheckpoint.table_id.is_(None))
+    rows = session.execute(stmt).scalars().all()
     return {int(idx) for idx in rows}
 
 

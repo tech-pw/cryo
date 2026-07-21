@@ -111,6 +111,7 @@ from cryo.db.models import (
     Destination,
     MaintenanceJob,
     MaintenanceRun,
+    NativeDispatch,
     Preset,
     PresetRule,
     QueryLog,
@@ -1755,6 +1756,35 @@ def get_run_jobs(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
     return snapshot
 
 
+@router.get(
+    "/runs/{run_id}/dispatches",
+    dependencies=[Depends(require_viewer)],
+    tags=["runs"],
+)
+def get_run_dispatches(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
+    """Native K8s Job dispatches for a run (cpu/mem requests, status, member jobs)."""
+    from cryo.db.repositories.native_dispatch import dispatch_to_dict
+
+    tenant_id = require_tenant(session)
+    run_stmt = (
+        select(MaintenanceRun)
+        .join(MaintenanceJob, MaintenanceJob.run_id == MaintenanceRun.id)
+        .join(Table, Table.id == MaintenanceJob.table_id)
+        .where(MaintenanceRun.id == run_id)
+    )
+    if tenant_id.int != 0:
+        run_stmt = run_stmt.where(Table.tenant_id == tenant_id)
+    run = session.scalar(run_stmt.limit(1))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rows = session.scalars(
+        select(NativeDispatch)
+        .where(NativeDispatch.run_id == run_id)
+        .order_by(NativeDispatch.created_at)
+    ).all()
+    return {"dispatches": [dispatch_to_dict(row) for row in rows]}
+
+
 _TERMINAL_RUN_STATUSES = {
     "succeeded",
     "failed",
@@ -1928,38 +1958,85 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
         session.commit()
         session.refresh(run)
         return RunRead.model_validate(presets.run_summary(run))
-    run.status = "cancelled"
-    run.finished_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    if run.status != "cancelled":
+        run.status = "cancelled"
+        run.finished_at = now
     jobs = list(session.scalars(select(MaintenanceJob).where(MaintenanceJob.run_id == run_id)))
-    # (job_id, destination_id, prior_status) for Redis release after commit.
-    release: list[tuple[str, str, str]] = []
+    active_dispatches = list(
+        session.scalars(
+            select(NativeDispatch).where(
+                NativeDispatch.run_id == run_id,
+                NativeDispatch.status.in_(
+                    ("pending", "running", "cancel_requested", "cancelling")
+                ),
+            )
+        )
+    )
+    active_dispatch_ids = {dispatch.id for dispatch in active_dispatches}
+    for dispatch in active_dispatches:
+        if dispatch.status not in {"cancel_requested", "cancelling"}:
+            dispatch.status = "cancel_requested"
+
+    # (job_id, destination_id, prior_status, table_id, release_lock).
+    # Native dispatch locks stay held until the watcher confirms pod deletion.
+    release: list[tuple[str, str, str, str, bool]] = []
+    cancellable = {
+        JobStatus.QUEUED.value,
+        JobStatus.ADMITTED.value,
+        JobStatus.RUNNING.value,
+    }
     for job in jobs:
-        cancellable = {
-            JobStatus.QUEUED.value,
-            JobStatus.ADMITTED.value,
-            JobStatus.RUNNING.value,
-        }
+        release_lock = job.dispatch_id not in active_dispatch_ids
         if job.status in cancellable:
-            release.append((str(job.id), str(job.destination_id), job.status))
+            release.append(
+                (
+                    str(job.id),
+                    str(job.destination_id),
+                    job.status,
+                    str(job.table_id),
+                    release_lock,
+                )
+            )
             job.status = JobStatus.SKIPPED.value
             job.error = "cancelled"
-            job.finished_at = run.finished_at
+            job.finished_at = run.finished_at or now
+        elif job.status == JobStatus.SKIPPED.value and (job.error or "") == "cancelled":
+            # Idempotent re-cancel: free leftover in-flight / table-lock from a prior
+            # cancel that only cleared DB status (seen with run 888a7b41 locally).
+            release.append(
+                (
+                    str(job.id),
+                    str(job.destination_id),
+                    JobStatus.RUNNING.value,
+                    str(job.table_id),
+                    release_lock,
+                )
+            )
     session.commit()
-    # Release Redis queue / in-flight slots. Without this, cancel leaves
-    # cryo:inflight:{destination} counters elevated and the governor admits nothing
-    # even though no worker is running (seen after bulk cancel of the 800+ cron backlog).
+    # Release Redis queue / in-flight slots and per-table locks. Without this, cancel
+    # leaves cryo:inflight:{destination} counters elevated and table locks held even
+    # though no worker is running (inflight: bulk cancel of the 800+ cron backlog;
+    # locks: cancelled native/adhoc runs blocking re-maintenance on the same table).
     if release:
         try:
             wiring = build_runtime_wiring()
-            for job_id, destination_id, prior_status in release:
-                if prior_status == JobStatus.QUEUED.value:
+            for job_id, destination_id, prior_status, table_id, release_lock in release:
+                queue_status = wiring.queue.status(job_id)
+                if (
+                    prior_status == JobStatus.QUEUED.value
+                    or queue_status is JobStatus.QUEUED
+                ):
                     wiring.queue.cancel_pending(job_id, destination_id)
-                else:
+                elif queue_status in {JobStatus.ADMITTED, JobStatus.RUNNING}:
                     # ADMITTED / RUNNING held an in-flight slot via queue.admit().
                     wiring.queue.complete(job_id, JobStatus.SKIPPED)
+                if release_lock:
+                    # Safe if the job never held the lock (ownership-checked in Redis/Lua).
+                    wiring.lock_store.release_table_lock(table_id, job_id)
         except Exception:
             logger.exception(
-                "Failed to release Redis queue state while cancelling run %s", run_id
+                "Failed to release Redis queue/lock state while cancelling run %s", run_id
             )
     session.refresh(run)
     return RunRead.model_validate(presets.run_summary(run))

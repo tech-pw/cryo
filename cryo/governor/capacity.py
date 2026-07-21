@@ -65,6 +65,10 @@ def probe_native_capacity(
             queued = used
             cpu_used_milli = totals.cpu_used_milli
             mem_used_mib = totals.mem_used_mib
+        elif _k8s_dispatch_enabled(config):
+            logger.error("Native Kubernetes capacity read failed; refusing new direct dispatches")
+            used = capacity
+            queued = capacity
 
     return CapacitySnapshot(
         capacity=capacity,
@@ -101,6 +105,15 @@ def probe_native_capacity_by_replica(
             k8s_count = len(jobs)
             k8s_cpu = sum(job.cpu_milli for job in jobs)
             k8s_mem = sum(job.mem_mib for job in jobs)
+        elif _k8s_dispatch_enabled(config):
+            logger.error("Native Kubernetes capacity read failed; refusing new direct dispatches")
+            return {
+                str(destination_id): CapacitySnapshot(
+                    capacity=slot_cap,
+                    used=slot_cap,
+                    queued=slot_cap,
+                )
+            }
 
     replicas = native_replica_names(config)
     if k8s_bucket is not None and k8s_count > 0:
@@ -131,6 +144,10 @@ def probe_native_capacity_by_replica(
     }
 
 
+def _k8s_dispatch_enabled(config: Mapping[str, Any]) -> bool:
+    return config.get("k8s_dispatch") in (True, "true", "1", 1)
+
+
 class LiveCapacityProvider:
     """Probes real engine capacity by querying running jobs.
 
@@ -148,14 +165,14 @@ class LiveCapacityProvider:
         job_state_reader: NativeJobStateReader | None = None,
         k8s_namespace: str | None = None,
     ) -> None:
-        import os
-
         self._queue = queue
-        if job_state_reader is not None:
-            self._job_state_reader = job_state_reader
-        else:
-            namespace = k8s_namespace or os.environ.get("CRYO_K8S_NAMESPACE") or "default"
-            self._job_state_reader = NativeJobStateReader(namespace=namespace)
+        # In-cluster native dispatch bypasses the Redis admitted queue, so live
+        # Kubernetes state is required to prevent every wave from admitting a
+        # fresh slot_cap worth of Jobs. NativeJobStateReader resolves the namespace
+        # itself (POD_NAMESPACE/CRYO_K8S_NAMESPACE/in-cluster file) when not given.
+        self._job_state_reader = job_state_reader or NativeJobStateReader(
+            namespace=k8s_namespace
+        )
 
     def probe(self, destination: DestinationConfig) -> Mapping[str, CapacitySnapshot | int]:
         engine_type = EngineType(destination.engine)

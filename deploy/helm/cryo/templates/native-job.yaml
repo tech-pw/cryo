@@ -1,87 +1,28 @@
 {{- /*
 Native engine Job template.
 
-Rendered programmatically by cryo.engines.native.job_dispatch (kubernetes Python
-client) rather than via `helm install`.  This file serves as:
-  1. Documentation of the expected Job structure
-  2. A reference manifest operators can apply manually if they prefer Helm over
-     the Python client
-  3. The base template that could alternatively be rendered via Helm SDK in
-     environments where the Python client is unavailable
+Jobs are created by the Governor on admit (cryo.engines.native.job_dispatch.create_native_job)
+rather than via `helm install`. This file documents runtime sizing only and emits no Job.
 
-Disabled by default (native.installReferenceJob=false): job_dispatch.py creates
-real per-chunk Jobs dynamically, so installing this as a live resource just
-leaves a permanently-stuck placeholder (hardcoded image/binary path, no real
-payload) sitting in the cluster. Set native.installReferenceJob=true only if
-you actually want to `kubectl apply` this manually per the use case above.
+Resource sizing (cryo.engines.native.resources.estimate_table_resources):
+  - Peak mem across planned ops (expire / orphan / rewrite), clamped to ≤16Gi
+  - Grouped runs: bin-pack cold tables into shared pods; hot tables dedicated
+  - Serial execution within a shared pod → request = max(member cpu/mem)
 
-Values used by the Python client (job_dispatch.py):
-  - native.enabled          : enable K8s Job dispatch (default: false)
-  - native.image.repository : cryo image for the Job pod
-  - native.image.tag        : image tag
-  - native.image.pullPolicy : pull policy
-  - native.serviceAccount   : service account for the Job pod
-  - native.ttlSecondsAfterFinished : TTL cleanup after Job completes (default: 300)
-  - native.defaultChunkSizeGb : default chunk size for resource estimation (default: 100)
-  - native.maxCpu          : maximum CPU allocation per Job (default: 4000m)
-  - native.maxMemory       : maximum memory allocation per Job (default: 16Gi)
+Hard ceiling: native.maxMemory must not exceed 16Gi (enforced in Python).
 
-Resource sizing (computed by job_dispatch.compute_job_resources):
-  CPU     = min(native.maxCpu,    250m + chunk_size_gb/10 * 100m)
-  Memory  = min(native.maxMemory, 512Mi + chunk_size_gb/10 * 128Mi)
+Values:
+  - native.enabled          : enable Governor RBAC and runtime dispatch
+  - native.image.*          : Job container image
+  - native.serviceAccount   : Job pod SA
+  - native.ttlSecondsAfterFinished
+  - native.maxCpu / native.maxMemory (maxMemory hard-capped at 16Gi)
 */ -}}
 
-{{- define "cryo.nativeJobEnv" -}}
-{{- $root := .root -}}
-env:
-  {{- range $k, $v := $root.Values.global.env }}
-  - name: {{ $k }}
-    value: {{ $v | quote }}
-  {{- end }}
-envFrom:
-  {{- include "cryo.envFrom" $root | nindent 2 }}
-{{- end -}}
-
-{{- if and .Values.native.enabled .Values.native.installReferenceJob }}
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: {{ include "cryo.fullname" . }}-native-{{ .Chart.Version | replace "." "-" | lower }}
-  labels:
-    {{- include "cryo.labels" . | nindent 4 }}
-    app.kubernetes.io/component: native-engine
-spec:
-  ttlSecondsAfterFinished: {{ .Values.native.ttlSecondsAfterFinished | default 300 }}
-  activeDeadlineSeconds: 7200
-  backoffLimit: 0
-  template:
-    metadata:
-      labels:
-        {{- include "cryo.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: native-engine
-    spec:
-      restartPolicy: Never
-      serviceAccountName: {{ if .Values.native.enabled }}{{ include "cryo.fullname" . }}-native{{ else }}{{ .Values.native.serviceAccount | default "default" }}{{ end }}
-      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
-      containers:
-        - name: cryo-engine
-          image: "{{ .Values.native.image.repository }}:{{ .Values.native.image.tag }}"
-          imagePullPolicy: {{ .Values.native.image.pullPolicy }}
-          command:
-            - /usr/local/bin/cryo-engine-go
-            - execute
-          env:
-            - name: CRYO_PAYLOAD_B64
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cryo.fullname" . }}-native-payload
-                  key: payload
-                  optional: true
-          resources:
-            requests:
-              cpu: "250m"
-              memory: "512Mi"
-            limits:
-              cpu: "2"
-              memory: "4Gi"
-{{- end }}
+{{- /*
+This template intentionally emits no resource. Native Jobs are runtime objects
+created by the Governor after admission; rendering a static Job here would start
+an untracked engine pod without a payload on every Helm install/upgrade -- exactly
+the permanently-stuck placeholder found live in production during 2026-07-20/21
+validation (hardcoded image/binary path, no real payload, never cleaned up).
+*/ -}}

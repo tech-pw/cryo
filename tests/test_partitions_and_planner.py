@@ -9,25 +9,27 @@ from cryo.planner.planner import build_plan
 def test_unpartitioned_table_produces_no_partition_fields() -> None:
     """Real production panic (2026-07-14): the scanner used to store partition_col as the
     literal string "_unpartitioned" for genuinely unpartitioned tables (a display-label
-    sentinel, not a real column). This function treats any truthy partition_col as a real,
-    bindable column name -- so that string flowed all the way to the Go engine's row-filter
-    binder, which panicked trying to resolve a column called "_unpartitioned" against the
-    table's actual schema. The scanner now stores None instead; this must produce zero
-    partition fields, matching a table with no partition_col at all."""
-    fields = partition_fields_from_stats({"partition_col": None})
+    sentinel, not a real column). Treating that as a bindable column name flowed all the
+    way to the Go engine's row-filter binder, which panicked trying to resolve
+    '_unpartitioned' against the table schema. None and the sentinel must both yield
+    zero partition fields (full-table optimize, no row filter)."""
+    assert partition_fields_from_stats({"partition_col": None}) == ()
+    assert partition_fields_from_stats({"partition_col": "_unpartitioned"}) == ()
+    assert partition_fields_from_stats({"partition_col": ""}) == ()
 
+
+def test_unpartitioned_sentinel_in_partition_fields_is_filtered() -> None:
+    fields = partition_fields_from_stats(
+        {
+            "partition_fields": [
+                {
+                    "partition_field": "_unpartitioned",
+                    "base_column": "_unpartitioned",
+                }
+            ]
+        }
+    )
     assert fields == ()
-
-
-def test_unpartitioned_sentinel_string_would_have_produced_a_bogus_field() -> None:
-    """Documents the exact failure mode the fix avoids -- if partition_col is ever the
-    "_unpartitioned" string again (e.g. a future regression reintroducing it), this function
-    would treat it as a real column and build_predicate would bind an unreal field. Not
-    asserting this is *desired* behavior -- asserting what would go wrong, as a tripwire."""
-    fields = partition_fields_from_stats({"partition_col": "_unpartitioned"})
-
-    assert len(fields) == 1
-    assert fields[0].partition_field == "_unpartitioned"
 
 
 def test_build_predicate_supports_multi_field_conjunction() -> None:

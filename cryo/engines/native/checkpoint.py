@@ -48,6 +48,8 @@ def execute_plan_per_chunk(
     run_id: str,
     session_factory: Any,
     on_progress: Any = None,
+    *,
+    table_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Execute a maintenance plan one chunk at a time, checkpointing each commit.
 
@@ -59,6 +61,7 @@ def execute_plan_per_chunk(
         run_id: Run UUID, used as the ChunkCheckpoint key.
         session_factory: SQLAlchemy session factory for checkpoint writes.
         on_progress: Optional progress callback, called per chunk.
+        table_id: Optional table UUID for multi-table-run checkpoint isolation.
 
     Returns:
         List of per-chunk result dicts with keys:
@@ -78,7 +81,7 @@ def execute_plan_per_chunk(
     total_duration_ms = 0
 
     with session_factory() as session:
-        checkpointed = get_checkpointed_chunks(session, plan.table_ref)
+        checkpointed = get_checkpointed_chunks(session, run_id, table_id=table_id)
 
     for idx, operation in enumerate(operations):
         start = time.monotonic()
@@ -164,6 +167,7 @@ def execute_plan_per_chunk(
                     op_result=op_result,
                     duration_ms=chunk_duration_ms,
                     native_result=native_result,
+                    table_id=table_id,
                 )
 
             results.append(
@@ -211,6 +215,8 @@ def _write_chunk_checkpoint(
     op_result: NativeOperationResult | None,
     duration_ms: int,
     native_result: NativeExecuteResult,
+    *,
+    table_id: str | None = None,
 ) -> None:
     partition_summary = None
     if operation.predicates:
@@ -225,6 +231,7 @@ def _write_chunk_checkpoint(
             run_id=run_id,
             chunk_index=chunk_index,
             operation_type=operation.type.value,
+            table_id=table_id,
             partition_summary=partition_summary,
             input_files=op_result.input_files if op_result else None,
             output_files=op_result.output_files if op_result else None,
