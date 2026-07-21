@@ -18,7 +18,7 @@ from cryo.db.repositories.native_dispatch import (
     mark_dispatch_running,
 )
 from cryo.domain.enums import EngineType, JobStatus, Mode
-from cryo.domain.models import CapacitySnapshot
+from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.native.batch import build_batch_payload
 from cryo.engines.native.job_dispatch import (
     create_native_job,
@@ -34,6 +34,7 @@ from cryo.engines.native.packing import (
 from cryo.engines.native.payload import (
     build_execute_request_for_operations,
 )
+from cryo.engines.native.routing import filter_native_operations
 from cryo.engines.native.resources import (
     MAX_POD_MEM_MIB,
     ResourceCeilings,
@@ -84,6 +85,58 @@ def destination_uses_k8s_dispatch(destination: DestinationConfig) -> bool:
     if flag is None:
         return False
     return flag in (True, "true", "1", 1)
+
+
+def build_native_request(
+    *,
+    plan: MaintenancePlan,
+    stats: Mapping[str, Any] | None,
+    source_config: Mapping[str, Any],
+    destination_config: Mapping[str, Any],
+    job_id: str,
+    table_id: str,
+    mem_mib: int,
+    derived_chunk: float,
+    budget: int,
+) -> dict[str, Any]:
+    """Build one table's execute request, filtered to native-supported operations.
+
+    Not every planned operation is executable by the native (iceberg-go) engine
+    (e.g. optimize_manifests, compute_statistics) -- filter to what it actually
+    supports rather than dispatching ops that fail on arrival. Matches the Worker
+    legacy path (engine.py::_supported_operations). Found live: a real deep-preset
+    run against a MOR table dispatched optimize_manifests straight to the Go engine
+    and failed the whole batch, because this filter wasn't wired into the
+    Governor's create-on-admit path the way it is into the Worker's legacy path.
+    """
+    native_ops = filter_native_operations(plan, stats, destination_config)
+    if len(native_ops) < len(plan.operations):
+        skipped = {op.type for op in plan.operations} - {op.type for op in native_ops}
+        logger.info(
+            "Dropping native-unsupported operations for table %s: %s",
+            table_id,
+            ", ".join(sorted(str(t) for t in skipped)),
+        )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=native_ops,
+        source_config=source_config,
+        destination_config=destination_config,
+    )
+    request["job_id"] = job_id
+    request["table_id"] = table_id
+    for op in request.get("operations") or []:
+        if isinstance(op, dict) and op.get("type") == "rewrite_data_files":
+            params = dict(op.get("params") or {})
+            params["compaction_memory_budget_bytes"] = budget
+            params["chunk_size_gb"] = derived_chunk
+            # Prefer plan-derived max_bytes; fall back to dispatch sizing.
+            if "max_bytes_per_group" not in params:
+                params["max_bytes_per_group"] = max_bytes_per_group_for_pod_mem(
+                    mem_mib, params, chunk_size_gb=derived_chunk
+                )
+            op["params"] = params
+    return request
 
 
 def cluster_headroom(
@@ -228,25 +281,17 @@ def admit_native_k8s_jobs(
                     plan_params,
                 )
                 store.save_plan(prepared_item.job.id, plan_to_dict(plan))
-                request = build_execute_request_for_operations(
+                request = build_native_request(
                     plan=plan,
-                    operations=plan.operations,
+                    stats=prepared_item.stats,
                     source_config=prepared_item.table_data.source_config,
                     destination_config=destination.config,
+                    job_id=prepared_item.job.id,
+                    table_id=prepared_item.job.table_id,
+                    mem_mib=spec.mem_mib,
+                    derived_chunk=derived_chunk,
+                    budget=budget,
                 )
-                request["job_id"] = prepared_item.job.id
-                request["table_id"] = prepared_item.job.table_id
-                for op in request.get("operations") or []:
-                    if isinstance(op, dict) and op.get("type") == "rewrite_data_files":
-                        params = dict(op.get("params") or {})
-                        params["compaction_memory_budget_bytes"] = budget
-                        params["chunk_size_gb"] = derived_chunk
-                        # Prefer plan-derived max_bytes; fall back to dispatch sizing.
-                        if "max_bytes_per_group" not in params:
-                            params["max_bytes_per_group"] = max_bytes_per_group_for_pod_mem(
-                                spec.mem_mib, params, chunk_size_gb=derived_chunk
-                            )
-                        op["params"] = params
                 requests.append(request)
             except Exception as exc:
                 logger.exception(
