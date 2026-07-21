@@ -64,9 +64,11 @@ def test_build_native_request_drops_unsupported_operations() -> None:
     )
     stats = {"total_delete_files": 12710, "delete_file_pct": 93.22}
     source_config = {"uri": "http://rest:8181", "warehouse": "s3://wh/"}
-    destination_config = {"engine_impl": "go"}
+    # With a fallback destination configured, routing classifies unsupported ops as
+    # fallback_operations (dispatch to it) rather than skipped_operations (drop).
+    destination_config = {"engine_impl": "go", "sql_fallback_destination_id": "spark-dest-1"}
 
-    request = build_native_request(
+    built = build_native_request(
         plan=plan,
         stats=stats,
         source_config=source_config,
@@ -78,11 +80,17 @@ def test_build_native_request_drops_unsupported_operations() -> None:
         budget=8 * 1024 * 1024 * 1024,
     )
 
-    op_types = {op["type"] for op in request["operations"]}
+    op_types = {op["type"] for op in built.request["operations"]}
     assert "optimize_manifests" not in op_types
     # delete files present -> OPTIMIZE is also blocked on the Go engine; only the
     # base ops (always native-supported) should remain.
     assert op_types == {"expire_snapshots", "remove_orphan_files"}
+    # optimize_manifests is surfaced for fallback dispatch. OPTIMIZE itself is a hard
+    # block when delete files are present -- routing.py never routes it to a SQL
+    # fallback even when one is configured (test_native_routing.py documents this as
+    # intentional), so it's dropped (skipped_operations), not exposed here.
+    fallback_types = {op.type.value for op, _ in built.fallback_operations}
+    assert fallback_types == {"optimize_manifests"}
 
 
 def test_build_native_request_keeps_supported_operations_for_cow_table() -> None:
@@ -94,7 +102,7 @@ def test_build_native_request_keeps_supported_operations_for_cow_table() -> None
             Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),
         ),
     )
-    request = build_native_request(
+    built = build_native_request(
         plan=plan,
         stats={"total_delete_files": 0},
         source_config={"uri": "http://rest:8181", "warehouse": "s3://wh/"},
@@ -105,5 +113,6 @@ def test_build_native_request_keeps_supported_operations_for_cow_table() -> None
         derived_chunk=10.0,
         budget=1024 * 1024 * 1024,
     )
-    op_types = {op["type"] for op in request["operations"]}
+    op_types = {op["type"] for op in built.request["operations"]}
     assert op_types == {"expire_snapshots", "rewrite_data_files"}
+    assert built.fallback_operations == ()

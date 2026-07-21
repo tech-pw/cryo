@@ -180,6 +180,10 @@ class LiveCapacityProvider:
         if engine_type is EngineType.TRINO:
             return self._probe_trino(destination.config)
         if engine_type is EngineType.SPARK_EMR:
+            # submit_mode="k8s" is Cryo's self-managed Spark-on-K8s dispatch (no EMR
+            # application_id to probe) -- static slot cap, same as local/dev Spark.
+            if str(destination.config.get("submit_mode") or "").strip().lower() == "k8s":
+                return _static_capacity(destination.config)
             return self._probe_emr(destination.config)
 
         if engine_type is EngineType.NATIVE:

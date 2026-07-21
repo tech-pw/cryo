@@ -18,7 +18,7 @@ from cryo.db.repositories.native_dispatch import (
     mark_dispatch_running,
 )
 from cryo.domain.enums import EngineType, JobStatus, Mode
-from cryo.domain.models import CapacitySnapshot, MaintenancePlan
+from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.native.batch import build_batch_payload
 from cryo.engines.native.job_dispatch import (
     create_native_job,
@@ -34,7 +34,7 @@ from cryo.engines.native.packing import (
 from cryo.engines.native.payload import (
     build_execute_request_for_operations,
 )
-from cryo.engines.native.routing import filter_native_operations
+from cryo.engines.native.routing import resolve_native_routing
 from cryo.engines.native.resources import (
     MAX_POD_MEM_MIB,
     ResourceCeilings,
@@ -87,6 +87,15 @@ def destination_uses_k8s_dispatch(destination: DestinationConfig) -> bool:
     return flag in (True, "true", "1", 1)
 
 
+@dataclass(frozen=True)
+class NativeRequestResult:
+    request: dict[str, Any]
+    # Operations native (iceberg-go) can't run, paired with the reason -- e.g.
+    # optimize_manifests, or optimize itself on a MOR table. Dispatched separately
+    # to sql_fallback_destination_id when configured (see _dispatch_fallback_operations).
+    fallback_operations: tuple[tuple[Operation, str], ...] = ()
+
+
 def build_native_request(
     *,
     plan: MaintenancePlan,
@@ -98,7 +107,7 @@ def build_native_request(
     mem_mib: int,
     derived_chunk: float,
     budget: int,
-) -> dict[str, Any]:
+) -> NativeRequestResult:
     """Build one table's execute request, filtered to native-supported operations.
 
     Not every planned operation is executable by the native (iceberg-go) engine
@@ -108,14 +117,22 @@ def build_native_request(
     run against a MOR table dispatched optimize_manifests straight to the Go engine
     and failed the whole batch, because this filter wasn't wired into the
     Governor's create-on-admit path the way it is into the Worker's legacy path.
+
+    Operations routing sends to a SQL fallback are returned separately rather than
+    dropped, so the caller can dispatch them to destination_config's
+    sql_fallback_destination_id (e.g. a Spark-on-K8s engine) instead of silently
+    skipping real requested work. Native-unsupported ops are only classified as
+    fallback -- not executed -- when this function's caller cannot resolve or
+    dispatch to that fallback destination; see admit_native_k8s_jobs.
     """
-    native_ops = filter_native_operations(plan, stats, destination_config)
-    if len(native_ops) < len(plan.operations):
-        skipped = {op.type for op in plan.operations} - {op.type for op in native_ops}
+    routing = resolve_native_routing(plan, stats, destination_config)
+    native_ops = routing.native_operations
+    if routing.fallback_operations or routing.skipped_operations:
+        dropped = {op.type for op, _ in (*routing.fallback_operations, *routing.skipped_operations)}
         logger.info(
-            "Dropping native-unsupported operations for table %s: %s",
+            "Native-unsupported operations for table %s: %s",
             table_id,
-            ", ".join(sorted(str(t) for t in skipped)),
+            ", ".join(sorted(str(t) for t in dropped)),
         )
     request = build_execute_request_for_operations(
         plan=plan,
@@ -136,7 +153,80 @@ def build_native_request(
                     mem_mib, params, chunk_size_gb=derived_chunk
                 )
             op["params"] = params
-    return request
+    return NativeRequestResult(request=request, fallback_operations=routing.fallback_operations)
+
+
+def _dispatch_fallback_operations(
+    *,
+    store: JobStore,
+    fallback_operations: tuple[tuple[Operation, str], ...],
+    plan: MaintenancePlan,
+    destination_config: Mapping[str, Any],
+    table_ref: str,
+) -> None:
+    """Best-effort synchronous dispatch of native-unsupported ops to a SQL fallback.
+
+    Runs inline in the admission wave (unlike native Jobs, which are fire-and-forget
+    and watched separately) -- acceptable because fallback-eligible tables are the
+    rare/occasional exception, not the routine hot path. Exceptions are caught and
+    logged, never raised: a fallback failure must not affect the native Job this
+    table's native-supported operations are about to run in.
+    """
+    if not fallback_operations:
+        return
+    fallback_id = destination_config.get("sql_fallback_destination_id") or destination_config.get(
+        "fallback_destination_id"
+    )
+    if not isinstance(fallback_id, str) or not fallback_id.strip():
+        logger.info(
+            "%s: %d operation(s) need a SQL fallback but no sql_fallback_destination_id is "
+            "configured; skipped: %s",
+            table_ref,
+            len(fallback_operations),
+            ", ".join(sorted({op.type.value for op, _ in fallback_operations})),
+        )
+        return
+
+    try:
+        from cryo.engines.factory import create_engine
+
+        try:
+            fallback_destination = store.get_destination(fallback_id.strip())
+        except KeyError:
+            logger.error("%s: sql_fallback_destination_id %r not found", table_ref, fallback_id)
+            return
+
+        fallback_engine = create_engine(fallback_destination.engine, fallback_destination.config)
+        for operation, reason in fallback_operations:
+            fallback_plan = MaintenancePlan(
+                table_ref=plan.table_ref, mode=plan.mode, operations=(operation,)
+            )
+            logger.info(
+                "%s: routing %s to %s (%s)",
+                table_ref,
+                operation.type.value,
+                fallback_engine.type,
+                reason,
+            )
+            for statement in fallback_engine.render(fallback_plan):
+                result = fallback_engine.execute(statement)
+                if result.ok:
+                    logger.info(
+                        "%s: fallback %s succeeded (engine_ref=%s, %sms)",
+                        table_ref,
+                        operation.type.value,
+                        result.engine_ref,
+                        result.duration_ms,
+                    )
+                else:
+                    logger.error(
+                        "%s: fallback %s failed: %s",
+                        table_ref,
+                        operation.type.value,
+                        result.error,
+                    )
+    except Exception:
+        logger.exception("%s: SQL fallback dispatch raised unexpectedly", table_ref)
 
 
 def cluster_headroom(
@@ -281,7 +371,7 @@ def admit_native_k8s_jobs(
                     plan_params,
                 )
                 store.save_plan(prepared_item.job.id, plan_to_dict(plan))
-                request = build_native_request(
+                built = build_native_request(
                     plan=plan,
                     stats=prepared_item.stats,
                     source_config=prepared_item.table_data.source_config,
@@ -292,7 +382,14 @@ def admit_native_k8s_jobs(
                     derived_chunk=derived_chunk,
                     budget=budget,
                 )
-                requests.append(request)
+                requests.append(built.request)
+                _dispatch_fallback_operations(
+                    store=store,
+                    fallback_operations=built.fallback_operations,
+                    plan=plan,
+                    destination_config=destination.config,
+                    table_ref=plan.table_ref,
+                )
             except Exception as exc:
                 logger.exception(
                     "Failed to rebuild plan for job %s with derived chunk: %s",
