@@ -44,9 +44,9 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
     elif operation.type is OperationType.CONVERT_DELETES:
         sql = _render_convert_deletes(catalog, table_name, operation.params)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
-        sql = f"CALL {catalog}.system.rewrite_position_delete_files(table => '{table_name}')"
+        sql = f"CALL {catalog}.system.rewrite_position_delete_files(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
-        sql = f"CALL {catalog}.system.rewrite_manifests(table => '{table_name}')"
+        sql = f"CALL {catalog}.system.rewrite_manifests(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
         sql = _render_compute_statistics(catalog, table_name, operation.params)
     else:
@@ -62,13 +62,13 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
     if protected_ids:
         set_clause = (
             f"CALL {catalog}.system.set_snapshot_ref("
-            f"table => '{table_name}', "
+            f"table => '{catalog}.{table_name}', "
             f"snapshot_id => {protected_ids[-1]}, "
             f"ref_name => 'cryo-protected-latest'); "
         )
     expire_call = (
         f"CALL {catalog}.system.expire_snapshots("
-        f"table => '{table_name}', older_than => {older_than}, retain_last => {retain_last})"
+        f"table => '{catalog}.{table_name}', older_than => {older_than}, retain_last => {retain_last})"
     )
     return f"{set_clause}{expire_call}"
 
@@ -77,7 +77,7 @@ def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str
     older_than = _older_than_expr(params)
     return (
         f"CALL {catalog}.system.remove_orphan_files("
-        f"table => '{table_name}', older_than => {older_than})"
+        f"table => '{catalog}.{table_name}', older_than => {older_than})"
     )
 
 
@@ -89,7 +89,7 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     # Per-group rewrite floor (Iceberg procedure). Distinct from planner
     # min_small_files (table-level "should we schedule OPTIMIZE?").
     min_input_files = int(operation.params.get("min_input_files", 2))
-    args = [f"table => '{table_name}'"]
+    args = [f"table => '{catalog}.{table_name}'"]
 
     # Strategy (binpack, sort)
     strategy = operation.params.get("strategy", "binpack")
@@ -143,7 +143,7 @@ def _render_convert_deletes(catalog: str, table_name: str, params: dict[str, Any
     ]
     return (
         f"CALL {catalog}.system.rewrite_data_files("
-        f"table => '{table_name}', options => map({', '.join(options)}))"
+        f"table => '{catalog}.{table_name}', options => map({', '.join(options)}))"
     )
 
 
@@ -165,10 +165,10 @@ def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, 
         cols_expr = ", ".join(f"'{c}'" for c in columns)
         stats_sql = (
             f"CALL {catalog}.system.compute_table_stats("
-            f"table => '{table_name}', columns => ARRAY({cols_expr}))"
+            f"table => '{catalog}.{table_name}', columns => ARRAY({cols_expr}))"
         )
     else:
-        stats_sql = f"CALL {catalog}.system.compute_table_stats(table => '{table_name}')"
+        stats_sql = f"CALL {catalog}.system.compute_table_stats(table => '{catalog}.{table_name}')"
     statements.append(stats_sql)
 
     # Enable Bloom filters for high-cardinality columns via table properties
@@ -196,7 +196,7 @@ def render_clustering_operation(
 
     This is used by the layout optimizer to generate SQL for data re-organization.
     """
-    args = [f"table => '{table_name}'", f"strategy => '{strategy}'"]
+    args = [f"table => '{catalog}.{table_name}'", f"strategy => '{strategy}'"]
 
     if partition_filter:
         args.append(f"where => '{_escape_sql_string(partition_filter)}'")
