@@ -109,3 +109,21 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
+
+spark:
+  # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
+  # fallback destination for ops the native (iceberg-go) engine can't run itself -- see
+  # cryo/engines/spark/k8s.py and native_admit.py::_dispatch_fallback_operations.
+  k8s:
+    enabled: true
+    image:
+      repository: registry.example.com/cryo
+      tag: spark-latest
+      pullPolicy: Always
+    driverCpuMilli: 1000
+    driverMemMib: 2048
+    executorCpuMilli: 2000
+    executorMemMib: 4096
+    executorInstances: 2
+    activeDeadlineSeconds: 7200
+    ttlSecondsAfterFinished: 3600
