@@ -37,6 +37,17 @@ export const nativeRustOptimizeTooltip =
 export const nativeGoDeleteFilesRewriteError =
   "Rewrite is blocked on iceberg-go for tables with delete files (iceberg-go bug). Snapshot expiry and orphan removal will still run.";
 
+export const nativeGoDeleteFilesFallbackNotice =
+  "Rewrite can't run on iceberg-go for tables with delete files (iceberg-go bug); routing it to the configured SQL fallback destination instead.";
+
+/** True when a destination's config names a SQL fallback (Trino/Spark) for
+ * operations the native engine can't run itself -- see cryo.engines.native.routing. */
+export function hasSqlFallbackConfigured(config: JsonObject | null | undefined): boolean {
+  if (!config) return false;
+  const id = config["sql_fallback_destination_id"] ?? config["fallback_destination_id"];
+  return typeof id === "string" && id.trim().length > 0;
+}
+
 const ENGINE_TAG_COLORS: Record<EngineType, string> = {
   trino: "blue",
   spark_emr: "orange",

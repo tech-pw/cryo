@@ -6,6 +6,7 @@ import {
   engineVirtualFromDestination,
   formatDestinationLabel,
   formatEngineLabel,
+  hasSqlFallbackConfigured,
   isNativeDestination,
   isNativeStatement,
   nativeSupportsOperation,
@@ -85,5 +86,13 @@ describe("engines", () => {
   it("detects native pseudo-sql statements", () => {
     expect(isNativeStatement("NATIVE:optimize:db.table")).toBe(true);
     expect(isNativeStatement("EXECUTE optimize")).toBe(false);
+  });
+
+  it("detects a configured SQL fallback destination", () => {
+    expect(hasSqlFallbackConfigured(undefined)).toBe(false);
+    expect(hasSqlFallbackConfigured({})).toBe(false);
+    expect(hasSqlFallbackConfigured({ sql_fallback_destination_id: "" })).toBe(false);
+    expect(hasSqlFallbackConfigured({ sql_fallback_destination_id: "spark-1" })).toBe(true);
+    expect(hasSqlFallbackConfigured({ fallback_destination_id: "spark-1" })).toBe(true);
   });
 });
