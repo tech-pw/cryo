@@ -363,11 +363,19 @@ class Worker:
                     message=f"Started maintenance job for {table_ref or job.table_id}",
                 ),
             )
+            plan_params = _execution_plan_params(job.params, destination, table_data.stats)
+            if _destination_is_native(destination):
+                plan_params = _inject_native_derived_chunk(
+                    plan_params,
+                    table_data.stats,
+                    destination,
+                    operations=job.operations,
+                )
             plan = build_plan(
                 table_data.stats,
                 table_data.partitions,
                 job.mode,
-                _execution_plan_params(job.params, destination, table_data.stats),
+                plan_params,
                 protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
             )
             plan = _gate_native_optimize_manifests(plan, job, destination)
@@ -1310,6 +1318,38 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _destination_is_native(destination: DestinationConfig) -> bool:
+    engine = destination.engine
+    if isinstance(engine, EngineType):
+        return engine is EngineType.NATIVE
+    return str(engine).lower() in {"native", "enginetype.native"}
+
+
+def _inject_native_derived_chunk(
+    params: Mapping[str, Any],
+    stats: Mapping[str, Any],
+    destination: DestinationConfig,
+    *,
+    operations: tuple[OperationType, ...] | None = None,
+) -> dict[str, Any]:
+    """Size a virtual pod from stats, then set chunk_size_gb to fill that budget."""
+    from cryo.engines.native.resources import (
+        ResourceCeilings,
+        derive_chunk_params,
+        estimate_table_resources,
+    )
+
+    ceilings = ResourceCeilings.from_config(destination.config)
+    base = {k: v for k, v in dict(params).items() if k != "chunk_size_gb"}
+    estimate = estimate_table_resources(
+        stats,
+        operations=operations,
+        params=base,
+        ceilings=ceilings,
+    )
+    return derive_chunk_params(estimate.mem_mib, stats, base)
+
+
 def _execution_plan_params(
     params: Mapping[str, Any],
     destination: DestinationConfig,
@@ -1319,6 +1359,9 @@ def _execution_plan_params(
     from cryo.engines.trino.catalog_bindings import resolve_trino_catalog
 
     merged = dict(params)
+    # Native chunk size is derived at runtime — never trust a leftover preset key.
+    if _destination_is_native(destination):
+        merged.pop("chunk_size_gb", None)
     engine = destination.engine
     engine_value = engine.value if isinstance(engine, EngineType) else str(engine)
     source_catalog = stats.get("catalog") or stats.get("catalog_name")

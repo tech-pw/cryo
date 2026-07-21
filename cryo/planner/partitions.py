@@ -44,8 +44,36 @@ def normalize_transform(value: Any) -> PartitionTransform:
         return PartitionTransform.UNSUPPORTED
 
 
+# Display-only sentinel used by scanners for tables with an empty partition spec.
+# It is NOT a real Iceberg column; treating it as bindable produces Go binder panics:
+# "could not bind reference '_unpartitioned'".
+_UNPARTITIONED_SENTINEL = "_unpartitioned"
+
+
+def is_unpartitioned_sentinel(name: Any) -> bool:
+    """True when *name* is the scanner display label for an unpartitioned table.
+
+    ``None`` / blank are treated as sentinel when checking ``partition_col`` from
+    stats. For optional ``partition_field`` on a real field, callers must not use
+    this alone — see the filter in ``partition_fields_from_stats``.
+    """
+    if name is None:
+        return True
+    if not isinstance(name, str):
+        return False
+    return name.strip().lower() in {"", _UNPARTITIONED_SENTINEL}
+
+
+def _is_sentinel_field(field: PartitionFieldSpec) -> bool:
+    if is_unpartitioned_sentinel(field.base_column):
+        return True
+    if field.partition_field is not None and is_unpartitioned_sentinel(field.partition_field):
+        return True
+    return False
+
+
 def infer_transform_from_name(name: str | None) -> PartitionTransform:
-    if not name:
+    if not name or is_unpartitioned_sentinel(name):
         return PartitionTransform.UNPARTITIONED
     lowered = name.lower()
     if lowered.endswith("_day"):
@@ -114,10 +142,17 @@ def partition_fields_from_stats(
     params = params or {}
     raw_fields = params.get("partition_fields") or stats.get("partition_fields")
     if raw_fields:
-        return tuple(_field_from_raw(field) for field in raw_fields)
+        fields = tuple(
+            field
+            for field in (_field_from_raw(raw) for raw in raw_fields)
+            if not _is_sentinel_field(field)
+        )
+        return fields
 
     partition_col = params.get("partition_col") or stats.get("partition_col")
-    if not partition_col:
+    # Legacy scans stored the display sentinel "_unpartitioned" as partition_col.
+    # That must not become a bindable predicate term.
+    if is_unpartitioned_sentinel(partition_col):
         return ()
 
     transform = normalize_transform(
@@ -127,6 +162,8 @@ def partition_fields_from_stats(
         params.get("partition_transform") or stats.get("partition_transform")
     ):
         transform = infer_transform_from_name(str(partition_col))
+    if transform is PartitionTransform.UNPARTITIONED:
+        return ()
 
     return (
         PartitionFieldSpec(

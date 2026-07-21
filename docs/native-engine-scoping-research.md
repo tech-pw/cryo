@@ -31,7 +31,7 @@ recommend a scope-in/scope-out split.
 | Component | Current state | Source |
 |---|---|---|
 | Engine selection | `CRYO_ENGINE_IMPL` set to `go` or `rust`; Rust path structurally blocked (`NATIVE_RUST_OPTIMIZE_DETAIL`: "native compaction blocked upstream on iceberg-rust (EPIC #2269)") | `cryo/engines/native/routing.py` |
-| Execution model | Subprocess runner (default). K8s Job dispatch **added** behind `k8s_dispatch=True` config flag — `cryo/engines/native/job_dispatch.py` creates per-chunk Jobs with resource requests sized from `chunk_size_gb`; falls back to subprocess when not in-cluster | `cryo/engines/native/runner.py`, `cryo/engines/native/job_dispatch.py` |
+| Execution model | Governor creates **K8s Jobs on admit** when destination `k8s_dispatch=True` (pack 1..N pods for grouped runs; size from scanner stats + planned ops; **hard max 16Gi mem**). Fallback: Worker subprocess / legacy blocking Job path when not in-cluster. | `cryo/governor/native_admit.py`, `cryo/engines/native/{resources,packing,job_dispatch,watcher}.py` |
 | Worker pod sizing | Fixed: `requests: {cpu: 500m, memory: 1Gi}`, `limits: {cpu: "2", memory: 4Gi}`, 2 replicas — **identical ceiling for a 2GB table and a 20TB table** | `deploy/helm/cryo/values.yaml` |
 | Governor capacity model (native) | `_probe_native()` uses **queue in-flight** and, when in-cluster, **live K8s Job CPU/mem** via `NativeJobStateReader` (falls back off-cluster) | `cryo/governor/capacity.py`, `cryo/engines/native/job_state.py` |
 | Planner chunking | Already splits a table's plan by `chunk_size_gb` / `gb_budget` — the input a resource-sizing formula would need already exists | `cryo/planner/planner.py` |

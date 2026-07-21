@@ -305,7 +305,10 @@ CREATE TABLE cryo.presets (
     mode            text NOT NULL DEFAULT 'standard', -- light | standard | deep
     operations      jsonb NOT NULL,                 -- ordered: ["expire_snapshots","optimize",...]
     params          jsonb NOT NULL DEFAULT '{}',    -- thresholds: file_size_mb, retention_days,
-                                                    -- min_small_files, chunk_size_gb, max_chunks,
+                                                    -- min_small_files, max_chunks,
+                                                    -- retention_days, … (chunk_size_gb is
+                                                    -- runtime-derived for native; planner
+                                                    -- default 100 when unset)
                                                     -- max_partitions_per_chunk, retain_last
     schedule_cron   text,                            -- null = manual only
     priority        int NOT NULL DEFAULT 100,        -- higher wins when multiple rules match
@@ -342,7 +345,7 @@ Bootstrap (migration `20260706_0011`, updated `20260707_0020`, `20260708_0022`,
 `20260709_0026`): destination `native-datafusion` (`engine = native`,
 `config.engine_impl = go` after backfill) and preset `default-native-deep`
 (`mode = deep`, `is_default = false`, manual runs only when explicitly selected;
-params include `chunk_size_gb = 1`, `retain_last = 4`).
+params include `retain_last = 4`; `chunk_size_gb` is derived at runtime from pod memory).
 
 ### 3.4 Runs, jobs, audit (write side)
 
@@ -693,6 +696,26 @@ mark job succeeded/failed; release lock; update live counters
 Failure on one statement/table is caught, audited, and isolated (run continues). Engine ref (Trino
 query id / EMR jobRunId) is recorded for traceability.
 
+### 11.1 Native K8s Job path (create-on-admit)
+
+When a native destination has `config.k8s_dispatch=true` and the Governor is in-cluster:
+
+1. Governor admission gates each table job as usual (cooldown, locks, ROI, QPP, ABAC).
+2. Admissible jobs for the destination are **packed by `run_id`**: hot tables get a dedicated
+   pod; cold tables share pods (serial execution). Resources come from
+   `cryo.engines.native.resources.estimate_table_resources` (stats + planned ops; **no preset chunk**).
+3. **Hard max memory request = 16Gi** (`MAX_POD_MEM_MIB`); config may only lower the ceiling.
+4. **`chunk_size_gb` is derived from the dispatch `mem_mib`** (`chunk_size_gb_for_pod_mem`) and
+   injected into `build_plan` so rewrite fills the pod. Shared pods use the shared mem for all members.
+5. Governor creates a Kubernetes Job per `DispatchSpec`, persists `cryo.native_dispatches`, marks
+   member jobs `running` with `engine_ref` = Job name — **no Worker claim**.
+6. `NativeJobWatcher` (Governor tick) finalizes jobs from Job stdout / failure / OOM.
+7. Offline/dev fallback: if not in-cluster, jobs are admitted to the Worker subprocess path
+   (Worker also derives chunk from a stats-based estimate).
+
+Ops covered in the pod: `expire_snapshots`, `remove_orphan_files`, `optimize` (rewrite).
+`optimize_manifests` remains routed off-native.
+
 ---
 
 ## 12. API surface (FastAPI) — `cryo/api/routers`
@@ -741,6 +764,7 @@ POST  /api/v1/maintenance/run                                 # create adhoc run
 
 # Runs & live monitoring
 GET   /api/v1/runs                  GET /api/v1/runs/{id}      GET /api/v1/runs/{id}/jobs
+                                    GET /api/v1/runs/{id}/dispatches  # native K8s Job packs
 GET   /api/v1/jobs/{id}
 POST  /api/v1/runs/{id}/cancel
 WS    /api/v1/ws/runs/{id}                                    # live job state / logs

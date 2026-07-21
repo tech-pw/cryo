@@ -97,6 +97,7 @@ class SQLJobStore:
                 JobStatus.FAILED,
                 JobStatus.SKIPPED,
                 JobStatus.DEFERRED,
+                JobStatus.PARTIAL,
             }:
                 job.finished_at = now
             if engine_ref is not None:

@@ -127,6 +127,15 @@ require new research to start.
 - ⚠️ Worker needs a ServiceAccount with `create`, `get`, `list`, `watch`, `delete` on Jobs
   and `get` on Pods; RBAC not yet wired (defer to operator docs / Helm post-install hook)
 
+**Overhaul (2026-07-20) — create-on-admit + bin-pack + 16Gi hard cap:**
+- ✅ `cryo/engines/native/resources.py` — stats+ops estimator; `MAX_POD_MEM_MIB=16384` hard clamp
+- ✅ `cryo/engines/native/packing.py` — hot dedicated / cold FFD pack; serial-within-pod requests
+- ✅ Governor creates Jobs on admit (`cryo/governor/native_admit.py`); Worker skipped for K8s path
+- ✅ `cryo.native_dispatches` + `jobs.dispatch_id` + checkpoint `table_id` (migration `20260720_0027`)
+- ✅ Multi-table serial batch payload (`cryo/engines/native/batch.py`) + `NativeJobWatcher`
+- ✅ Helm Governor RBAC (`governor-rbac.yaml`); `GET /runs/{id}/dispatches`
+- KEDA/Karpenter still deferred
+
 ### Move 4 — Chunk-level checkpointing / partial-progress commits
 
 - **Effort:** 1–2 weeks.

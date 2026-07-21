@@ -204,6 +204,8 @@ Per `architecture.md` §1.5 and `docs/native-iceberg-go-compaction-plan.md` Phas
 - [x] Optional sort compaction validates table sort order / `sort_columns`; z-order routes to SQL.
 - [x] Web UI: split Native (iceberg-go) / Native (iceberg-rust) engine options; `engine_impl` on
   destination form; preset labels + grey-out `optimize_manifests` / manifest-only for native.
+- [x] Native K8s Job create-on-admit: stats-based estimator (≤16Gi), bin-pack grouped runs,
+      `native_dispatches`, JobWatcher (`cryo/governor/native_admit.py`, `engines/native/{resources,packing,job_dispatch,watcher}.py`).
 - [ ] Retire Rust `cryo-engine/` (Docker stage, CI job) after Phase E consecutive green CI.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.
 - [ ] Production hardening: retries, Prometheus metrics, distributed mode, benchmark suite.

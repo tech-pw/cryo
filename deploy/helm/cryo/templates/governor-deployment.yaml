@@ -20,7 +20,7 @@ spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       {{- if .Values.native.enabled }}
-      serviceAccountName: {{ include "cryo.fullname" . }}-native
+      serviceAccountName: {{ include "cryo.fullname" . }}-governor
       {{- end }}
       containers:
         - name: governor
@@ -33,8 +33,30 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- if .Values.native.enabled }}
-            - name: CRYO_K8S_NAMESPACE
-              value: {{ .Release.Namespace | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CRYO_NATIVE_IMAGE
+              value: "{{ .Values.native.image.repository }}:{{ .Values.native.image.tag }}"
+            - name: CRYO_NATIVE_IMAGE_PULL_POLICY
+              value: {{ .Values.native.image.pullPolicy | quote }}
+            {{- if .Values.imagePullSecrets }}
+            - name: CRYO_NATIVE_IMAGE_PULL_SECRETS
+              value: {{ join "," .Values.imagePullSecrets | quote }}
+            {{- end }}
+            - name: CRYO_NATIVE_SERVICE_ACCOUNT
+              value: {{ .Values.native.serviceAccount | default "default" | quote }}
+            - name: CRYO_NATIVE_TTL_SECONDS
+              value: {{ .Values.native.ttlSecondsAfterFinished | default 3600 | quote }}
+            - name: CRYO_NATIVE_SPOT_ALLOW
+              value: {{ .Values.native.spot.allow | quote }}
+            - name: CRYO_NATIVE_SPOT_MAX_CHUNK_GB
+              value: {{ .Values.native.spot.maxChunkSizeGb | quote }}
+            - name: CRYO_NATIVE_SPOT_MAX_DURATION_SECONDS
+              value: {{ .Values.native.spot.maxEstimatedDurationSeconds | quote }}
+            - name: CRYO_NATIVE_SPOT_REQUIRE_CHECKPOINTING
+              value: {{ .Values.native.spot.requireCheckpointing | quote }}
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
