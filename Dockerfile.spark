@@ -1,0 +1,20 @@
+# Cryo's self-managed Spark image: official Apache Spark + the Iceberg Spark plugin +
+# our runner script. No cloud-vendor image or service required -- this runs identically
+# on any Kubernetes cluster via `spark-submit --master k8s://...` (cryo/engines/spark/k8s.py),
+# the same way it already runs against EMR Serverless and local docker-compose.
+FROM apache/spark:4.2.0-python3
+
+ARG ICEBERG_VERSION=1.11.0
+USER root
+
+# Iceberg's Spark runtime (Iceberg core + Spark integration, shaded) and the AWS bundle
+# (S3FileIO + AWS SDK v2, for s3a:// warehouses) -- both official Apache Iceberg release
+# artifacts from Maven Central, not vendored/rebuilt.
+RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-4.0_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar"
+
+COPY cryo_spark_runner.py /opt/cryo/cryo_spark_runner.py
+
+USER 185

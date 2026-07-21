@@ -34,6 +34,10 @@ def create_engine(engine_type: EngineType | str, config: Mapping[str, Any]) -> M
             from cryo.engines.spark.local import SparkLocalEngine
 
             return SparkLocalEngine(config=dict(config))
+        if str(config.get("submit_mode") or "").strip().lower() == "k8s":
+            from cryo.engines.spark.k8s_engine import SparkK8sEngine
+
+            return SparkK8sEngine(config=dict(config))
         from cryo.engines.spark.engine import SparkEMREngine
 
         return SparkEMREngine(config=dict(config))

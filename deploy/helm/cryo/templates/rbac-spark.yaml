@@ -1,0 +1,60 @@
+{{- /*
+RBAC for Cryo-managed Spark-on-Kubernetes (cryo.engines.spark.k8s).
+
+One ServiceAccount used both by the dispatch Job's spark-submit client (creates the
+Spark driver pod, cluster mode) and by the driver pod itself (creates its own executor
+pods + a headless service for driver<->executor communication) -- Spark manages that
+lifecycle internally once it has these permissions; Cryo does not create executor pods.
+*/ -}}
+{{- if .Values.spark.k8s.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "cryo.fullname" . }}-spark
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cryo.fullname" . }}-spark
+    namespace: {{ .Release.Namespace }}
+{{- end }}

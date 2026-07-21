@@ -1,9 +1,12 @@
 {{- /*
-RBAC for the Worker's legacy blocking native-Job path (cryo.engines.native.job_dispatch.
-execute_request_via_job, used when a table isn't dispatched via Governor create-on-admit).
-Governor admission uses its own ServiceAccount (governor-rbac.yaml).
+RBAC for the Worker pod's own job-dispatch needs: the legacy blocking native-Job path
+(cryo.engines.native.job_dispatch.execute_request_via_job, used when a table isn't
+dispatched via Governor create-on-admit) and submitting Spark-on-K8s fallback dispatch
+Jobs (cryo.engines.spark.k8s) -- both are just "create a batch/v1 Job", so one Role
+covers both; Governor admission uses its own ServiceAccount (governor-rbac.yaml), and
+the Spark driver/executor pods run under their own SA (rbac-spark.yaml), not this one.
 */ -}}
-{{- if .Values.native.enabled }}
+{{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
