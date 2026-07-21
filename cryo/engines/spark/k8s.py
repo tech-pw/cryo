@@ -135,9 +135,6 @@ class SparkK8sClient:
         catalog: str = "cdp",
     ) -> str:
         cfg = self._config
-        k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
-        driver_pod_name = f"{k8s_job_name}-driver"
-
         runner_args = [
             "--sql", sql,
             "--catalog", catalog,
@@ -149,6 +146,46 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
+        return self._submit(runner_args, job_name=job_name)
+
+    def submit_repair_missing_files(
+        self,
+        table_ref: str,
+        *,
+        job_name: str = "cryo-repair",
+        commit: bool = False,
+    ) -> str:
+        """Dispatch cryo_spark_runner.py --repair-missing-files against table_ref.
+
+        table_ref is the full catalog.namespace.table Spark identifier (e.g.
+        "lake.analytics.load_test_basefact"). Its first segment is also passed as the
+        runner's --catalog (the Iceberg catalog plugin registration name) -- they must
+        match, or Spark can't resolve the reference at all (confirmed live, 2026-07-21:
+        omitting --catalog left it registered as the runner's "glue_catalog" default,
+        and querying "cdp.ns.table.files" against a catalog actually named "glue_catalog"
+        threw REQUIRES_SINGLE_PART_NAMESPACE from Spark's built-in session catalog).
+        Defaults to a dry run (lists what's missing without committing) -- pass
+        commit=True to actually remove the confirmed-missing manifest entries.
+        """
+        catalog = table_ref.split(".", 1)[0]
+        runner_args = ["--repair-missing-files", "--table", table_ref, "--catalog", catalog]
+        if commit:
+            runner_args.append("--commit")
+        cfg = self._config
+        if cfg.catalog_impl:
+            runner_args += ["--catalog-impl", cfg.catalog_impl]
+        if cfg.catalog_uri:
+            runner_args += ["--catalog-uri", cfg.catalog_uri]
+        if cfg.catalog_warehouse:
+            runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
+        if cfg.s3_endpoint:
+            runner_args += ["--s3-endpoint", cfg.s3_endpoint]
+        return self._submit(runner_args, job_name=job_name)
+
+    def _submit(self, runner_args: list[str], *, job_name: str) -> str:
+        cfg = self._config
+        k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
+        driver_pod_name = f"{k8s_job_name}-driver"
 
         spark_submit_cmd = [
             "/opt/spark/bin/spark-submit",
@@ -366,15 +403,44 @@ class SparkK8sClient:
             logger.warning("Failed to clean up credentials Secret for job %s", job_id, exc_info=True)
 
 
+_k8s_config_loaded = False
+
+
+def _ensure_k8s_config() -> None:
+    """Load in-cluster (or local kubeconfig) auth once per process.
+
+    Without this, the kubernetes client defaults to localhost:80 and every call fails
+    with ConnectionRefusedError -- confirmed live (2026-07-21): this worked from
+    Governor/Worker only because cryo.engines.native.job_dispatch happens to call
+    load_incluster_config() as a side effect of its own (unrelated) capacity check
+    before any Spark dispatch code runs in that process. A process that never touches
+    native job dispatch (the API pod, calling submit_repair_missing_files directly) hit
+    this cold. Each client factory must ensure its own prerequisite, not depend on a
+    side effect from a different module happening to run first.
+    """
+    global _k8s_config_loaded
+    if _k8s_config_loaded:
+        return
+    from kubernetes import config as k8s_config
+
+    try:
+        k8s_config.load_incluster_config()
+    except Exception:
+        k8s_config.load_kube_config()
+    _k8s_config_loaded = True
+
+
 def _new_k8s_batch_client() -> client.BatchV1Api:
     from kubernetes import client
 
+    _ensure_k8s_config()
     return client.BatchV1Api()
 
 
 def _new_k8s_core_client() -> client.CoreV1Api:
     from kubernetes import client
 
+    _ensure_k8s_config()
     return client.CoreV1Api()
 
 

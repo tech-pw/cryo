@@ -103,6 +103,40 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
 
 
+def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
+    batch_api = MagicMock()
+    cfg = SparkK8sConfig(namespace="cryo", catalog_impl="hive", catalog_uri="thrift://hms:9083")
+    client = SparkK8sClient(cfg)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_repair_missing_files("lake.analytics.load_test_basefact")
+
+    manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
+    command = manifest["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert "--repair-missing-files" in command
+    assert "--table" in command
+    assert command[command.index("--table") + 1] == "lake.analytics.load_test_basefact"
+    # Must match table_ref's catalog segment, or Spark can't resolve the reference at
+    # all -- regression: omitting this left the runner's "glue_catalog" default
+    # registered, and querying "cdp...." against it threw REQUIRES_SINGLE_PART_NAMESPACE.
+    assert "--catalog" in command
+    assert command[command.index("--catalog") + 1] == "cdp"
+    assert "--commit" not in command
+
+
+def test_submit_repair_missing_files_with_commit() -> None:
+    batch_api = MagicMock()
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_repair_missing_files("lake.analytics.load_test_basefact", commit=True)
+
+    manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
+    command = manifest["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert "--commit" in command
+
+
 def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
     """The node's ambient IAM role alone isn't enough to reach the S3 bucket (confirmed
     live, 2026-07-21) -- when source-provided S3 credentials are present, they must reach
