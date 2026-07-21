@@ -113,9 +113,12 @@ def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.Monkey
     assert not routing.skipped_operations
 
 
-def test_resolve_native_routing_delete_files_blocks_optimize_no_trino_fallback(
+def test_resolve_native_routing_delete_files_routes_optimize_to_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """iceberg-go can't rewrite tables with delete files, but a configured SQL fallback
+    (Spark) can -- proven live against a real delete-heavy table, 2026-07-21. Was a hard
+    skip (never routed even with sql_fallback set) before cryo.engines.spark.k8s existed."""
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
     routing = resolve_native_routing(
         _deep_plan(),
@@ -128,10 +131,24 @@ def test_resolve_native_routing_delete_files_blocks_optimize_no_trino_fallback(
         OperationType.REMOVE_ORPHAN_FILES,
     }
     assert OperationType.OPTIMIZE not in native_types
-    # Rewrite is hard-blocked — never routed to Trino even when sql_fallback is set.
+    fallback_types = {op.type: detail for op, detail in routing.fallback_operations}
+    assert OperationType.OPTIMIZE in fallback_types
+    assert NATIVE_DELETE_FILES_DETAIL in fallback_types[OperationType.OPTIMIZE]
+    assert OperationType.OPTIMIZE_MANIFESTS in fallback_types
+    assert not routing.skipped_operations
+
+
+def test_resolve_native_routing_delete_files_skips_optimize_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    routing = resolve_native_routing(
+        _deep_plan(),
+        {"total_delete_files": 5, "format_version": 2},
+        {"engine_impl": "go"},
+    )
     fallback_types = {op.type for op, _ in routing.fallback_operations}
     assert OperationType.OPTIMIZE not in fallback_types
-    assert OperationType.OPTIMIZE_MANIFESTS in fallback_types
     skipped = {op.type: detail for op, detail in routing.skipped_operations}
     assert OperationType.OPTIMIZE in skipped
     assert NATIVE_DELETE_FILES_DETAIL in skipped[OperationType.OPTIMIZE]
