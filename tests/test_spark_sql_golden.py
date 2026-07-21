@@ -131,22 +131,22 @@ def test_spark_render_golden_operation_sql() -> None:
 
     assert [statement.sql for statement in render(plan)] == [
         (
-            "CALL iceberg.system.expire_snapshots(table => 'demo.events', "
+            "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
             "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 3)"
         ),
         (
-            "CALL iceberg.system.remove_orphan_files(table => 'demo.events', "
+            "CALL iceberg.system.remove_orphan_files(table => 'iceberg.demo.events', "
             "older_than => TIMESTAMP '2025-05-01 00:00:00')"
         ),
         (
-            "CALL iceberg.system.rewrite_data_files(table => 'demo.events', "
+            "CALL iceberg.system.rewrite_data_files(table => 'iceberg.demo.events', "
             "strategy => 'binpack', "
             "where => '(event_date >= DATE ''2025-05-18'' AND event_date < DATE ''2025-05-19'' "
             "AND region = ''us'')', options => map('target-file-size-bytes', '268435456', "
             "'min-input-files', '10', 'partial-progress.enabled', 'true', "
             "'max-concurrent-file-group-rewrites', '5'))"
         ),
-        "CALL iceberg.system.rewrite_manifests(table => 'demo.events')",
+        "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')",
     ]
 
 
@@ -159,7 +159,7 @@ def test_spark_renders_compute_statistics_all_columns() -> None:
     )
     stmts = render(plan)
     assert len(stmts) == 1
-    assert stmts[0].sql == "CALL iceberg.system.compute_table_stats(table => 'demo.events')"
+    assert stmts[0].sql == "CALL iceberg.system.compute_table_stats(table => 'iceberg.demo.events')"
 
 
 def test_spark_renders_compute_statistics_with_bloom_filters() -> None:
@@ -199,7 +199,7 @@ def test_spark_renders_convert_deletes_operation() -> None:
     assert len(statements) == 1
     assert statements[0].sql == (
         "CALL iceberg.system.rewrite_data_files("
-        "table => 'demo.events', options => map("
+        "table => 'iceberg.demo.events', options => map("
         "'delete-file-threshold', '2', 'partial-progress.enabled', 'true'))"
     )
 
@@ -215,5 +215,5 @@ def test_spark_renders_rewrite_position_deletes_operation() -> None:
     statements = render(plan)
     assert len(statements) == 1
     assert statements[0].sql == (
-        "CALL iceberg.system.rewrite_position_delete_files(table => 'demo.events')"
+        "CALL iceberg.system.rewrite_position_delete_files(table => 'iceberg.demo.events')"
     )
