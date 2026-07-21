@@ -30,6 +30,14 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- if .Values.spark.k8s.enabled }}
+      # /silent-data-loss/{id}/repair calls SparkK8sClient directly from the API process
+      # (native_admit.py's fallback dispatch is Governor-only, this is a synchronous
+      # on-demand admin action) -- needs the same batch/jobs + secrets permissions
+      # Worker/Governor already get from the -native SA (see rbac-native.yaml); the Spark
+      # driver/executor pods still run under their own -spark SA, not this one.
+      serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -42,6 +50,36 @@ spec:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if .Values.spark.k8s.enabled }}
+            - name: CRYO_SPARK_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CRYO_SPARK_K8S_IMAGE
+              value: "{{ .Values.spark.k8s.image.repository }}:{{ .Values.spark.k8s.image.tag }}"
+            - name: CRYO_SPARK_K8S_IMAGE_PULL_POLICY
+              value: {{ .Values.spark.k8s.image.pullPolicy | quote }}
+            {{- if .Values.imagePullSecrets }}
+            - name: CRYO_SPARK_K8S_IMAGE_PULL_SECRETS
+              value: {{ join "," .Values.imagePullSecrets | quote }}
+            {{- end }}
+            - name: CRYO_SPARK_K8S_SERVICE_ACCOUNT
+              value: {{ include "cryo.fullname" . }}-spark
+            - name: CRYO_SPARK_K8S_DRIVER_CPU_MILLI
+              value: {{ .Values.spark.k8s.driverCpuMilli | quote }}
+            - name: CRYO_SPARK_K8S_DRIVER_MEM_MIB
+              value: {{ .Values.spark.k8s.driverMemMib | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_CPU_MILLI
+              value: {{ .Values.spark.k8s.executorCpuMilli | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_MEM_MIB
+              value: {{ .Values.spark.k8s.executorMemMib | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_INSTANCES
+              value: {{ .Values.spark.k8s.executorInstances | quote }}
+            - name: CRYO_SPARK_K8S_ACTIVE_DEADLINE_SECONDS
+              value: {{ .Values.spark.k8s.activeDeadlineSeconds | quote }}
+            - name: CRYO_SPARK_K8S_TTL_SECONDS_AFTER_FINISHED
+              value: {{ .Values.spark.k8s.ttlSecondsAfterFinished | quote }}
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}

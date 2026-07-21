@@ -26,4 +26,8 @@ RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2
 
 COPY cryo_spark_runner.py /opt/cryo/cryo_spark_runner.py
 
+# boto3 for the missing-file repair mode's S3 existence checks (cryo_spark_runner.py
+# --repair-missing-files) -- not needed for the SQL-CALL path, but negligible weight.
+RUN pip install --no-cache-dir boto3
+
 USER 185

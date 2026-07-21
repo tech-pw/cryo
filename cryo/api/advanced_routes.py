@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from cryo.engines.spark.k8s import SparkK8sClient
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -1335,11 +1338,100 @@ class SilentDataLossReportRead(BaseModel):
     is_clean: bool
 
 
+class SilentDataLossRepairRequest(BaseModel):
+    # Default is a dry run: lists what's missing without committing. Iceberg's own
+    # rewrite_manifests does NOT do this repair -- it only reorganizes manifest pointer
+    # files, it never verifies the files they point at still exist (confirmed live,
+    # 2026-07-21). This dispatches cryo_spark_runner.py --repair-missing-files, which
+    # lists the current snapshot's files via Iceberg's `.files` metadata table, checks
+    # each against S3, and for confirmed-missing paths only, commits a DeleteFiles
+    # transaction removing just those entries.
+    commit: bool = False
+
+
 class SilentDataLossRepairResponse(BaseModel):
     table_id: UUID
     audit_log_id: int | None
     status: str
     message: str
+    k8s_job_name: str | None = None
+
+
+# Iceberg's built-in metadata tables (read-only, no data files touched) -- the safe set
+# an operator can already inspect via `SELECT * FROM <table>.<name>` in any SQL engine.
+# Allowlisted so this endpoint can't become an arbitrary-SQL backdoor.
+_DIAGNOSTIC_METADATA_TABLES = {
+    "snapshots",
+    "history",
+    "files",
+    "all_data_files",
+    "manifests",
+    "partitions",
+    "refs",
+    "entries",
+}
+
+
+class SparkDiagnosticRequest(BaseModel):
+    metadata_table: str = Field(description=f"One of: {sorted(_DIAGNOSTIC_METADATA_TABLES)}")
+    limit: int = Field(default=20, ge=1, le=200)
+
+
+class SparkDiagnosticResponse(BaseModel):
+    table_id: UUID
+    status: str
+    message: str
+    k8s_job_name: str | None = None
+
+
+def _resolve_spark_fallback(session: SessionDep, table_id: UUID) -> tuple[SparkK8sClient, str]:
+    """Resolve a table's configured Spark-on-K8s fallback destination and Spark table ref.
+
+    Shared by every endpoint that dispatches a job through the Spark fallback engine
+    (repair, ad-hoc diagnostics) so the resolution and error messages stay consistent.
+    """
+    from cryo.db.models import Destination, Source, Table
+    from cryo.db.repositories.presets import resolve_effective_preset
+    from cryo.engines.spark.k8s import SparkK8sClient, SparkK8sConfig
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(404, "Table not found")
+
+    effective = resolve_effective_preset(session, table)
+    if effective is None:
+        raise HTTPException(422, "Table has no assigned preset/destination")
+    destination = session.get(Destination, effective.preset.destination_id)
+    if destination is None:
+        raise HTTPException(422, "Assigned destination not found")
+    fallback_id = (destination.config or {}).get("sql_fallback_destination_id") or (
+        destination.config or {}
+    ).get("fallback_destination_id")
+    if not fallback_id:
+        raise HTTPException(
+            422,
+            "This table's destination has no sql_fallback_destination_id configured -- "
+            "this operation runs via the Spark-on-K8s engine, same as other SQL fallback "
+            "maintenance operations.",
+        )
+    spark_destination = session.get(Destination, fallback_id)
+    if spark_destination is None:
+        raise HTTPException(422, f"Configured fallback destination {fallback_id} not found")
+
+    source = session.get(Source, table.source_id)
+    if source is None:
+        raise HTTPException(422, "Table's source not found")
+    catalog_name = str((source.config or {}).get("catalog_name") or "cdp")
+    table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
+
+    spark_config = dict(spark_destination.config or {})
+    spark_k8s = dict(spark_config.get("spark_k8s") or {})
+    spark_k8s.setdefault("s3_access_key", (source.config or {}).get("s3.access-key-id"))
+    spark_k8s.setdefault("s3_secret_key", (source.config or {}).get("s3.secret-access-key"))
+    spark_config["spark_k8s"] = spark_k8s
+
+    cfg = SparkK8sConfig.from_config(spark_config)
+    return SparkK8sClient(cfg), table_ref
 
 
 @router.get(
@@ -1385,32 +1477,37 @@ def get_silent_data_loss(
 )
 def repair_silent_data_loss(
     table_id: UUID,
+    payload: SilentDataLossRepairRequest,
     session: SessionDep,
     _principal: Annotated[Principal, Depends(require_editor)],
 ) -> SilentDataLossRepairResponse:
-    """Trigger ``iceberg.rewrite_manifests`` to repair silent-data-loss drift.
+    """Dispatch a live repair of dangling manifest entries via the Spark-on-K8s engine.
 
-    Local dev: this is a noop that records an AuditLog entry so the UI can confirm the
-    repair intent was captured. Production: enqueue a maintenance job that runs
-    ``rewrite_manifests`` against the destination engine.
+    NOT ``rewrite_manifests`` -- that only reorganizes manifest pointer files, it never
+    verifies the files they point at still exist (confirmed live, 2026-07-21: a table
+    with dangling references still broke compute_table_stats/rewrite_data_files right
+    after a successful rewrite_manifests run). This requires the table's effective
+    destination to have a Spark-on-K8s ``sql_fallback_destination_id`` configured (the
+    same engine SQL-fallback maintenance ops already use) -- there's no native/Trino
+    equivalent for this repair. Defaults to a dry run (payload.commit=False): lists what
+    would be removed without committing.
     """
-    from cryo.db.models import AuditLog, Table
-    from cryo.scheduler.health import check_silent_data_loss
+    from cryo.db.models import AuditLog
 
-    table = session.get(Table, table_id)
-    if table is None:
-        raise HTTPException(404, "Table not found")
-    report = check_silent_data_loss(session, table_id)
+    client, table_ref = _resolve_spark_fallback(session, table_id)
+
+    k8s_job_name = client.submit_repair_missing_files(
+        table_ref,
+        job_name="cryo-repair",
+        commit=payload.commit,
+    )
+
     audit = AuditLog(
         table_id=table_id,
         action="silent_data_loss_repair",
         status="OK",
-        engine="noop",
-        detail=(
-            f"orphan_count={len(report.orphan_data_files) if report else 0} "
-            f"missing_count={len(report.missing_files) if report else 0} "
-            f"root_cause={report.root_cause if report else 'unknown'}"
-        ),
+        engine="spark_k8s",
+        detail=f"table_ref={table_ref} commit={payload.commit} k8s_job={k8s_job_name}",
     )
     session.add(audit)
     session.commit()
@@ -1418,9 +1515,50 @@ def repair_silent_data_loss(
     return SilentDataLossRepairResponse(
         table_id=table_id,
         audit_log_id=int(audit.id),
-        status="noop",
+        status="dispatched" if payload.commit else "dispatched_dry_run",
+        k8s_job_name=k8s_job_name,
         message=(
-            "Local dev: audit recorded. In production this would enqueue "
-            "iceberg.rewrite_manifests against the destination engine."
+            f"Dispatched to Spark-on-K8s Job {k8s_job_name} "
+            f"({'committing removal' if payload.commit else 'dry run, listing only'})."
         ),
+    )
+
+
+@router.post(
+    "/silent-data-loss/{table_id}/diagnostics",
+    response_model=SparkDiagnosticResponse,
+    dependencies=[Depends(require_editor)],
+)
+def spark_diagnostic_query(
+    table_id: UUID,
+    payload: SparkDiagnosticRequest,
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_editor)],
+) -> SparkDiagnosticResponse:
+    """Dispatch a read-only query against one of a table's Iceberg metadata tables.
+
+    For inspecting snapshot/manifest state (e.g. confirming whether a repair commit
+    actually changed anything) without hand-crafting a Kubernetes Job manifest and
+    applying it to the cluster directly -- that bypasses the tested SparkK8sClient
+    dispatch path and RBAC/config wiring it already goes through (confirmed live,
+    2026-07-21: a hand-applied diagnostic Job worked but is not a pattern to repeat).
+    Read-only: metadata_table is restricted to Iceberg's built-in metadata tables, no
+    arbitrary SQL. Results land in the Spark driver pod's logs, same as every other
+    Spark-on-K8s job Cryo dispatches -- fetch them with the existing job-log tooling.
+    """
+    if payload.metadata_table not in _DIAGNOSTIC_METADATA_TABLES:
+        raise HTTPException(
+            422,
+            f"metadata_table must be one of {sorted(_DIAGNOSTIC_METADATA_TABLES)}",
+        )
+
+    client, table_ref = _resolve_spark_fallback(session, table_id)
+    sql = f"SELECT * FROM {table_ref}.{payload.metadata_table} LIMIT {payload.limit}"
+    k8s_job_name = client.submit_spark_sql(sql, job_name="cryo-diagnostic")
+
+    return SparkDiagnosticResponse(
+        table_id=table_id,
+        status="dispatched",
+        k8s_job_name=k8s_job_name,
+        message=f"Dispatched to Spark-on-K8s Job {k8s_job_name}. Check its driver pod logs for results.",
     )
