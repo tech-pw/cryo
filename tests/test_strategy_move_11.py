@@ -42,7 +42,7 @@ def test_standalone_manifest_rewrite_renders_for_spark() -> None:
     statements = render_spark(plan)
     assert len(statements) == 1
     assert statements[0].action is OperationType.OPTIMIZE_MANIFESTS
-    assert statements[0].sql == "CALL iceberg.system.rewrite_manifests(table => 'demo.events')"
+    assert statements[0].sql == "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')"
 
 
 def test_manifest_only_planner_emits_only_manifest_rewrite_operation() -> None:
