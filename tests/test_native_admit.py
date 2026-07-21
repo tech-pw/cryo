@@ -82,15 +82,15 @@ def test_build_native_request_drops_unsupported_operations() -> None:
 
     op_types = {op["type"] for op in built.request["operations"]}
     assert "optimize_manifests" not in op_types
-    # delete files present -> OPTIMIZE is also blocked on the Go engine; only the
-    # base ops (always native-supported) should remain.
+    # delete files present -> OPTIMIZE can't run on the Go engine either; only the
+    # base ops (always native-supported) should remain in the native Go batch.
     assert op_types == {"expire_snapshots", "remove_orphan_files"}
-    # optimize_manifests is surfaced for fallback dispatch. OPTIMIZE itself is a hard
-    # block when delete files are present -- routing.py never routes it to a SQL
-    # fallback even when one is configured (test_native_routing.py documents this as
-    # intentional), so it's dropped (skipped_operations), not exposed here.
+    # Both optimize_manifests and OPTIMIZE itself are surfaced for fallback dispatch --
+    # OPTIMIZE-with-delete-files routes to Spark/Trino when a fallback is configured
+    # (proven live against a real delete-heavy table, 2026-07-21), it's no longer
+    # dropped outright the way it was before cryo.engines.spark.k8s existed.
     fallback_types = {op.type.value for op, _ in built.fallback_operations}
-    assert fallback_types == {"optimize_manifests"}
+    assert fallback_types == {"optimize_manifests", "optimize"}
 
 
 def test_build_native_request_keeps_supported_operations_for_cow_table() -> None:

@@ -263,9 +263,18 @@ def resolve_native_routing(
             continue
 
         if operation.type is OperationType.OPTIMIZE:
-            # Hard block: never run or fall back rewrite when delete files are present.
+            # iceberg-go cannot rewrite tables with delete files -- route to a SQL
+            # fallback (Spark/Trino) when one is configured, same as every other
+            # native-unsupported case below. Was a hard skip (never routed even with
+            # sql_fallback set) until cryo.engines.spark.k8s landed and was proven to
+            # actually execute rewrite_manifests/rewrite_data_files against a real
+            # delete-heavy table (data-platform-cluster, 2026-07-21) -- see
+            # tests/test_native_admit.py and tests/test_spark_k8s*.py.
             if has_nonzero_delete_files(stats):
-                skipped_ops.append((operation, NATIVE_DELETE_FILES_DETAIL))
+                if has_sql_fallback:
+                    fallback_ops.append((operation, NATIVE_DELETE_FILES_DETAIL))
+                else:
+                    skipped_ops.append((operation, NATIVE_DELETE_FILES_DETAIL))
                 continue
             sql_fallback_detail = _optimize_requires_sql_fallback(operation, stats)
             if sql_fallback_detail is not None:
