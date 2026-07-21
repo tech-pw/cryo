@@ -67,12 +67,19 @@ def main() -> int | NoReturn:
         builder = builder.config(
             f"spark.sql.catalog.{args.catalog}.warehouse", args.catalog_warehouse
         )
+        if args.catalog_warehouse.startswith("s3://") or args.catalog_warehouse.startswith(
+            "s3a://"
+        ):
+            # Iceberg's own S3FileIO (from iceberg-aws-bundle, already on the classpath) --
+            # not Hadoop's S3AFileSystem, which needs the separate hadoop-aws jar we don't
+            # ship. HiveCatalog defaults to Hadoop's FileIO unless told otherwise, which
+            # throws ClassNotFoundException: S3AFileSystem (confirmed live, 2026-07-21).
+            builder = builder.config(
+                f"spark.sql.catalog.{args.catalog}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO"
+            )
     if args.s3_endpoint:
         builder = builder.config(
             f"spark.sql.catalog.{args.catalog}.s3.endpoint", args.s3_endpoint
-        )
-        builder = builder.config(
-            f"spark.sql.catalog.{args.catalog}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO"
         )
     # Hive metastore catalogs need Hive support enabled; harmless no-op for REST/Glue/JDBC.
     if _resolve_catalog_impl(args.catalog_impl) == _CATALOG_IMPL_SHORTHAND["hive"]:

@@ -68,6 +68,7 @@ class SparkK8sEngine:
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
         job_name = _build_job_name(stmt, ctx)
         start = time.monotonic()
+        job_id: str | None = None
 
         try:
             job_id = self.k8s_client.submit_spark_sql(
@@ -106,6 +107,11 @@ class SparkK8sEngine:
                 error=f"Spark-on-K8s submission failed: {exc}",
                 duration_ms=_elapsed_ms(start),
             )
+        finally:
+            # Best-effort: don't leave per-job AWS credential Secrets lying around once
+            # the run is terminal (or timed out/raised).
+            if job_id is not None:
+                self.k8s_client.cleanup_credentials_secret(job_id)
 
 
 def _build_job_name(stmt: RenderedStatement, ctx: ExecCtx | None) -> str:

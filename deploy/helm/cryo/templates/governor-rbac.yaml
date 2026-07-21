@@ -1,7 +1,12 @@
 {{- /*
-RBAC for Governor to create/watch native maintenance Jobs on admit.
+RBAC for Governor to create/watch native maintenance Jobs on admit, and (when
+spark.k8s.enabled) to submit the Spark-on-K8s dispatch Job for SQL-fallback
+operations -- native_admit.py's _dispatch_fallback_operations calls
+SparkK8sClient.submit_spark_sql directly from the Governor process. batch/jobs
+create is all that call needs; the Spark driver/executor pods it spins up run
+under their own -spark SA (rbac-spark.yaml), not this one.
 */ -}}
-{{- if .Values.native.enabled }}
+{{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:

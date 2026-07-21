@@ -16,10 +16,17 @@ spec:
       labels:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: governor
+      annotations:
+        # native_admit.py's SQL-fallback dispatch runs synchronously inside the admission
+        # wave and blocks it for the full duration of the Spark job (minutes, not seconds,
+        # for anything beyond a metadata-only op) -- Karpenter consolidating this pod
+        # mid-wave ("Evicted pod: Underutilized") silently drops that in-flight dispatch
+        # and its cleanup. Confirmed live against data-platform-cluster, 2026-07-21.
+        karpenter.sh/do-not-disrupt: "true"
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
-      {{- if .Values.native.enabled }}
+      {{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
       serviceAccountName: {{ include "cryo.fullname" . }}-governor
       {{- end }}
       containers:
@@ -57,6 +64,40 @@ spec:
               value: {{ .Values.native.spot.maxEstimatedDurationSeconds | quote }}
             - name: CRYO_NATIVE_SPOT_REQUIRE_CHECKPOINTING
               value: {{ .Values.native.spot.requireCheckpointing | quote }}
+            {{- end }}
+            {{- if .Values.spark.k8s.enabled }}
+            # Governor (not Worker) is what actually calls SparkK8sClient -- native_admit.py's
+            # _dispatch_fallback_operations runs inline during Governor's create-on-admit loop.
+            # Without these, SparkK8sConfig falls back to namespace="default"/serviceAccount=
+            # "default", which have no RBAC binding -- the create_namespaced_job call 403s.
+            - name: CRYO_SPARK_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CRYO_SPARK_K8S_IMAGE
+              value: "{{ .Values.spark.k8s.image.repository }}:{{ .Values.spark.k8s.image.tag }}"
+            - name: CRYO_SPARK_K8S_IMAGE_PULL_POLICY
+              value: {{ .Values.spark.k8s.image.pullPolicy | quote }}
+            {{- if .Values.imagePullSecrets }}
+            - name: CRYO_SPARK_K8S_IMAGE_PULL_SECRETS
+              value: {{ join "," .Values.imagePullSecrets | quote }}
+            {{- end }}
+            - name: CRYO_SPARK_K8S_SERVICE_ACCOUNT
+              value: {{ include "cryo.fullname" . }}-spark
+            - name: CRYO_SPARK_K8S_DRIVER_CPU_MILLI
+              value: {{ .Values.spark.k8s.driverCpuMilli | quote }}
+            - name: CRYO_SPARK_K8S_DRIVER_MEM_MIB
+              value: {{ .Values.spark.k8s.driverMemMib | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_CPU_MILLI
+              value: {{ .Values.spark.k8s.executorCpuMilli | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_MEM_MIB
+              value: {{ .Values.spark.k8s.executorMemMib | quote }}
+            - name: CRYO_SPARK_K8S_EXECUTOR_INSTANCES
+              value: {{ .Values.spark.k8s.executorInstances | quote }}
+            - name: CRYO_SPARK_K8S_ACTIVE_DEADLINE_SECONDS
+              value: {{ .Values.spark.k8s.activeDeadlineSeconds | quote }}
+            - name: CRYO_SPARK_K8S_TTL_SECONDS_AFTER_FINISHED
+              value: {{ .Values.spark.k8s.ttlSecondsAfterFinished | quote }}
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}

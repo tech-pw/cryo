@@ -156,12 +156,37 @@ def build_native_request(
     return NativeRequestResult(request=request, fallback_operations=routing.fallback_operations)
 
 
+def _fallback_engine_config(
+    fallback_config: Mapping[str, Any], source_config: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge the source's S3 credentials into a copy of the fallback destination's config.
+
+    The native (Go) engine gets these from source_config.s3.access-key-id/secret-access-key
+    (cryo.engines.native.payload.source_catalog_config) rather than the node's ambient IAM
+    role -- confirmed live (2026-07-21): a Spark driver pod using only the node's instance
+    role got AccessDeniedException on s3:GetObject against the same bucket the native
+    engine reads fine. The Spark engine needs the same explicit credentials. This merge is
+    in-memory only for this dispatch call, never persisted back to the destination row.
+    """
+    access_key = source_config.get("s3.access-key-id")
+    secret_key = source_config.get("s3.secret-access-key")
+    if not (isinstance(access_key, str) and access_key and isinstance(secret_key, str) and secret_key):
+        return dict(fallback_config)
+    merged = dict(fallback_config)
+    spark_k8s = dict(merged.get("spark_k8s") or {})
+    spark_k8s.setdefault("s3_access_key", access_key)
+    spark_k8s.setdefault("s3_secret_key", secret_key)
+    merged["spark_k8s"] = spark_k8s
+    return merged
+
+
 def _dispatch_fallback_operations(
     *,
     store: JobStore,
     fallback_operations: tuple[tuple[Operation, str], ...],
     plan: MaintenancePlan,
     destination_config: Mapping[str, Any],
+    source_config: Mapping[str, Any],
     table_ref: str,
 ) -> None:
     """Best-effort synchronous dispatch of native-unsupported ops to a SQL fallback.
@@ -196,7 +221,10 @@ def _dispatch_fallback_operations(
             logger.error("%s: sql_fallback_destination_id %r not found", table_ref, fallback_id)
             return
 
-        fallback_engine = create_engine(fallback_destination.engine, fallback_destination.config)
+        fallback_engine = create_engine(
+            fallback_destination.engine,
+            _fallback_engine_config(fallback_destination.config, source_config),
+        )
         for operation, reason in fallback_operations:
             fallback_plan = MaintenancePlan(
                 table_ref=plan.table_ref, mode=plan.mode, operations=(operation,)
@@ -388,6 +416,7 @@ def admit_native_k8s_jobs(
                     fallback_operations=built.fallback_operations,
                     plan=plan,
                     destination_config=destination.config,
+                    source_config=prepared_item.table_data.source_config,
                     table_ref=plan.table_ref,
                 )
             except Exception as exc:
