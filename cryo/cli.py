@@ -205,6 +205,7 @@ class GovernorRunner(DaemonRunner):
         super().__init__("governor", interval)
         self._wiring: Any = wiring
         self._governor: Any = None
+        self._reconciled_locks_on_startup = False
 
     def _tick(self) -> None:
         governor = self._get_governor()
@@ -214,6 +215,10 @@ class GovernorRunner(DaemonRunner):
         wiring = self._get_wiring()
         if wiring and not wiring.is_governor_leader():
             return
+
+        if not self._reconciled_locks_on_startup:
+            self._reconcile_orphaned_table_locks(wiring)
+            self._reconciled_locks_on_startup = True
 
         # Reconcile direct Kubernetes dispatches before admitting new work so a
         # restarted governor cannot duplicate a still-running Job whose DB
@@ -253,6 +258,45 @@ class GovernorRunner(DaemonRunner):
                 )
         except Exception as exc:
             self._logger.debug("Native JobWatcher tick skipped: %s", exc)
+
+    def _reconcile_orphaned_table_locks(self, wiring: Any) -> None:
+        """Release table locks whose owning job isn't actually running.
+
+        Governor's admission loop acquires a table lock in one step (governor.py's
+        per-job loop) and only dispatches or safely defers-with-release in a later
+        step (native_admit.py, processing the buffered jobs). If the process dies in
+        that window -- e.g. a rollout restart mid-admission -- the lock is orphaned:
+        no code path ever runs to release it, and it would otherwise sit until its
+        TTL expires (up to lock_ttl_seconds, default 6h), blocking every future
+        admission attempt for that table with "table_locked". Confirmed live,
+        2026-07-22: two tables stuck exactly this way after repeated Governor
+        restarts during same-day deploys. Run once per process lifetime (guarded by
+        the caller), on the leader only, since it's a global sweep, not a per-tick
+        concern.
+        """
+        try:
+            from cryo.domain.enums import JobStatus
+
+            lock_store = wiring.lock_store
+            job_store = wiring.job_store
+            released = 0
+            for table_id, job_id in lock_store.list_table_locks():
+                try:
+                    record = job_store.get_job(job_id)
+                except KeyError:
+                    lock_store.release_table_lock(table_id, job_id)
+                    released += 1
+                    continue
+                if record.status is not JobStatus.RUNNING:
+                    lock_store.release_table_lock(table_id, job_id)
+                    released += 1
+            if released:
+                self._logger.info(
+                    "Startup lock reconciliation: released %d orphaned table lock(s)",
+                    released,
+                )
+        except Exception as exc:
+            self._logger.warning("Table lock reconciliation failed: %s", exc)
 
     def _get_wiring(self) -> Any:
         if self._wiring is not None:
