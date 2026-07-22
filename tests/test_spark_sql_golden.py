@@ -232,6 +232,43 @@ def test_spark_renders_convert_deletes_respects_explicit_tuning() -> None:
     assert "'max-concurrent-file-group-rewrites', '20'" in statements[0].sql
 
 
+def test_spark_renders_convert_deletes_scoped_to_partition_predicates() -> None:
+    """Regression, 2026-07-22: CONVERT_DELETES ignored operation.predicates entirely, so
+    the planner's skewed-partition scoping (cryo/planner/planner.py's
+    _skewed_partition_predicates) had nowhere to land -- a global call self-selects file
+    groups across the whole table and can silently starve heavily-skewed partitions run
+    after run. Mirrors the where-clause mechanism OPTIMIZE already had."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.CONVERT_DELETES,
+                {"delete_file_threshold": 1, "partial_progress_enabled": True},
+                predicates=(
+                    _predicate(
+                        PartitionPredicateTerm(
+                            "_date", PartitionTransform.IDENTITY, "20485", "date"
+                        )
+                    ),
+                    _predicate(
+                        PartitionPredicateTerm(
+                            "_date", PartitionTransform.IDENTITY, "20486", "date"
+                        )
+                    ),
+                ),
+            ),
+        ),
+    )
+    statements = render(plan)
+    assert statements[0].sql == (
+        "CALL iceberg.system.rewrite_data_files(table => 'iceberg.demo.events', "
+        "where => '(_date = DATE ''2026-02-01'') OR (_date = DATE ''2026-02-02'')', "
+        "options => map('delete-file-threshold', '1', 'partial-progress.enabled', 'true', "
+        "'partial-progress.max-commits', '50', 'max-concurrent-file-group-rewrites', '5'))"
+    )
+
+
 def test_spark_renders_convert_deletes_without_partial_progress_omits_commit_tuning() -> None:
     """max-commits/max-concurrent-file-group-rewrites only mean anything when
     partial-progress is enabled -- a full atomic rewrite doesn't use them."""
