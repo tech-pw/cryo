@@ -1063,6 +1063,7 @@ class JobRead(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     plan: JsonDict | None = None
+    force_admit: bool = False
 
 
 class RunJobsResponse(BaseModel):

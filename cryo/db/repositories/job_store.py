@@ -107,6 +107,12 @@ class SQLJobStore:
             job.error = error
             session.commit()
 
+    def set_force_admit(self, job_id: str, value: bool) -> None:
+        with self._session_factory() as session:
+            job = _load_job(session, uuid.UUID(job_id))
+            job.force_admit = value
+            session.commit()
+
     def record_audit(self, record: AuditRecord) -> None:
         with self._session_factory() as session:
             session.add(
@@ -255,6 +261,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         last_maintained_at=_last_maintained_at(session, job.table_id),
         actor=actor,
         operations=operations,
+        force_admit=bool(job.force_admit),
     )
 
 

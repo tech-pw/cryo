@@ -272,7 +272,7 @@ class Governor:
                                 destination_outcomes[destination_id]["deferred"] += 1
                                 continue
 
-                        if not signal_triggered:
+                        if not signal_triggered and not job.force_admit:
                             fleet_decision = fleet_decisions.get(job.id)
                             if fleet_decision is not None and not fleet_decision.admissible:
                                 from cryo.governor.bandit_feedback import (
@@ -548,6 +548,7 @@ def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
         size_gb=float(size_gb) if size_gb is not None else None,
         last_maintained_at=job.last_maintained_at,
         deadline_at=job.deadline_at,
+        force_admit=job.force_admit,
     )
 
 

@@ -65,6 +65,23 @@ def configure_logging(
             logger_factory=structlog.stdlib.LoggerFactory(),
             cache_logger_on_first_use=True,
         )
+        # structlog.stdlib.LoggerFactory() routes every call through the standard-library
+        # logging module -- JSONRenderer above only formats the final message string, it
+        # doesn't emit it anywhere. Without a handler on the root logger here, every daemon
+        # process (governor, worker, scheduler) silently drops every log line: no stdout
+        # output, no stderr, nothing, since Python's logging.lastResort fallback only fires
+        # for WARNING+ and this repo's DaemonRunner base class logs its own startup/tick
+        # lines at INFO. Found live, 2026-07-22: a stuck governor pod produced zero log
+        # output for 20+ minutes, including its own "Starting governor" banner and repeated
+        # "Error in governor tick" exception logs -- there was no way to tell whether the
+        # process was idle, hung, or crash-looping without exec-ing in and re-deriving state
+        # by hand. `basicConfig` below only runs in the non-JSON branch, so it never covers
+        # this path.
+        root_logger = logging.getLogger()
+        if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            root_logger.addHandler(handler)
     else:
         # Configure standard logging for console output
         logging.basicConfig(

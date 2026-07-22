@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   Descriptions,
@@ -30,6 +30,7 @@ import {
 import { Link, useParams, useNavigate } from "react-router-dom";
 import {
   diagnoseRunFailure,
+  forceAdmitJob,
   getLatestRunDiagnosis,
   getJob,
   getJobDetailDashboard,
@@ -38,6 +39,7 @@ import {
   type JobDetailDashboard
 } from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
+import { ConfirmAction } from "../components/confirm";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
 import { formatDuration } from "../lib/format";
@@ -52,10 +54,13 @@ const formatJobDuration = (seconds: number | null) => {
   return formatDuration(seconds * 1000);
 };
 
+const STUCK_STATUSES = new Set(["queued", "deferred"]);
+
 export const JobDetail = () => {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const { api } = useAuth();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery<JobDetail>({
     queryKey: ["job-detail", api.token, jobId],
@@ -92,6 +97,15 @@ export const JobDetail = () => {
     mutationFn: (feedback: "up" | "down") =>
       submitDiagnosisFeedback(api, diagnosisRecord!.id, { feedback }),
     onSuccess: () => message.success("Diagnosis feedback recorded"),
+    onError: (err) => message.error((err as Error).message)
+  });
+  const forceAdmit = useMutation({
+    mutationFn: () => forceAdmitJob(api, jobId!),
+    onSuccess: () => {
+      message.success("Bypassed scheduling gates; job re-queued for the next admission wave.");
+      void queryClient.invalidateQueries({ queryKey: ["job-detail", api.token, jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["job-raw", api.token, jobId] });
+    },
     onError: (err) => message.error((err as Error).message)
   });
 
@@ -134,12 +148,27 @@ export const JobDetail = () => {
 
       {data.error_message && (
         <Alert
-          title="Job Failed"
+          title={data.status === "failed" ? "Job failed" : `Job ${data.status}`}
           description={data.error_message}
-          type="error"
+          type={data.status === "failed" ? "error" : "warning"}
           showIcon
           icon={<WarningOutlined />}
           style={{ marginBottom: 24 }}
+          action={
+            STUCK_STATUSES.has(data.status) && !data.force_admit ? (
+              <ConfirmAction
+                title="Bypass scheduling gates?"
+                description="Skips cooldown, benefit/moop score, and offpeak checks for this job. Table locks and PII/ABAC safety gates still apply."
+                okText="Force run"
+                okButtonProps={{ danger: false }}
+                onConfirm={() => forceAdmit.mutate()}
+              >
+                <Button size="small" loading={forceAdmit.isPending}>
+                  Force run
+                </Button>
+              </ConfirmAction>
+            ) : undefined
+          }
         />
       )}
       {data.status === "failed" ? (
