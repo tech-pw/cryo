@@ -100,6 +100,32 @@ def test_cooldown_and_deadline_defer_jobs() -> None:
     assert decision.reason == "deadline_near"
 
 
+def test_force_admit_bypasses_cooldown() -> None:
+    """Regression, 2026-07-22: last_maintained_at is computed live from the most recent
+    successful AuditLog entry, not stored per-job -- so repeatedly re-running the same
+    table for manual testing keeps re-arming its cooldown clock, and any other pending job
+    for that table (or a retried defer of the same job) gets stuck on "cooldown" with no
+    way for an operator to unstick it short of editing DB/Redis state directly. force_admit
+    is the operator escape hatch: it must skip cooldown (and the other soft scheduling
+    gates) entirely."""
+    now = datetime(2026, 6, 29, 20, 0, tzinfo=UTC)
+    config = AdmissionConfig(wave_wait_sec=300)
+    job = AdmissionJob(
+        "job-1",
+        "table-1",
+        "dest",
+        Mode.LIGHT,
+        cooldown_hours=24,
+        last_maintained_at=now - timedelta(minutes=5),
+        deadline_at=now + timedelta(seconds=200),  # would also defer as deadline_near
+        force_admit=True,
+    )
+    decision = decide_job_admission(job, config, now=now)
+    assert decision.admissible
+    assert decision.reason == "ok"
+    assert not decision.defer
+
+
 def test_min_benefit_score_rejects_jobs_below_threshold() -> None:
     config = AdmissionConfig(min_benefit_score=5.0)
     low = AdmissionJob("job-1", "table-1", "dest", Mode.LIGHT, estimated_benefit_score=2.0)

@@ -1,16 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Drawer, Space, Table, Typography } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Drawer, Space, Table, Tag, Typography, message } from "antd";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getRun, getRunJobs } from "../api/client";
+import { forceAdmitJob, getRun, getRunJobs } from "../api/client";
 import type { JobRead, UUID } from "../api/types";
 import { useRunLiveEvents, isTerminalRunStatus } from "../hooks/useRunLiveEvents";
+import { ConfirmAction } from "./confirm";
 import { StatStrip } from "./common";
 import { useAuth } from "../lib/auth";
 import { formatEngineLabel } from "../lib/engines";
 import { formatTime } from "../lib/format";
 import { LogList } from "./LogList";
 import { StatusTag } from "./status";
+
+const STUCK_STATUSES = new Set(["queued", "deferred"]);
 
 const shortId = (value?: string | null) => value?.slice(0, 8) ?? "-";
 
@@ -22,6 +25,7 @@ const tableRef = (job: JobRead) => {
 
 export const RunConsole = ({ runId }: { runId: UUID }) => {
   const { api, token } = useAuth();
+  const queryClient = useQueryClient();
   const [logJob, setLogJob] = useState<JobRead | null>(null);
   const { messages, snapshot, wsOpen, wsExhausted, runTerminal, reconnectAttempt, manualReconnect } =
     useRunLiveEvents(runId, token);
@@ -36,6 +40,14 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
     queryFn: () => getRunJobs(api, runId),
     retry: 1,
     refetchInterval: wsOpen ? false : 5000
+  });
+  const forceAdmit = useMutation({
+    mutationFn: (jobId: string) => forceAdmitJob(api, jobId),
+    onSuccess: () => {
+      message.success("Bypassed scheduling gates; job re-queued for the next admission wave.");
+      void queryClient.invalidateQueries({ queryKey: ["run-jobs", runId] });
+    },
+    onError: (error) => message.error((error as Error).message)
   });
 
   const runData = snapshot?.run ?? run.data;
@@ -134,9 +146,20 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
           },
           {
             title: "Status",
-            dataIndex: "status",
-            width: 112,
-            render: (status) => <StatusTag status={status} />
+            width: 160,
+            render: (_, row) => (
+              <Space orientation="vertical" size={2}>
+                <Space size={4}>
+                  <StatusTag status={row.status} />
+                  {row.force_admit ? <Tag color="purple">Forced</Tag> : null}
+                </Space>
+                {row.error && STUCK_STATUSES.has(row.status) ? (
+                  <Typography.Text type="secondary" className="secondary-line" ellipsis={{ tooltip: row.error }}>
+                    {row.error}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            )
           },
           { title: "Mode", dataIndex: "mode", width: 90 },
           {
@@ -155,16 +178,31 @@ export const RunConsole = ({ runId }: { runId: UUID }) => {
           { title: "Started", dataIndex: "started_at", width: 148, render: formatTime },
           {
             title: "",
-            key: "log",
-            width: 72,
+            key: "actions",
+            width: 168,
             render: (_, row) => (
-              <Button size="small" onClick={() => setLogJob(row)}>
-                Logs
-              </Button>
+              <Space size={4}>
+                {STUCK_STATUSES.has(row.status) && !row.force_admit ? (
+                  <ConfirmAction
+                    title="Bypass scheduling gates?"
+                    description="Skips cooldown, benefit/moop score, and offpeak checks for this job. Table locks and PII/ABAC safety gates still apply."
+                    okText="Force run"
+                    okButtonProps={{ danger: false }}
+                    onConfirm={() => forceAdmit.mutate(row.id)}
+                  >
+                    <Button size="small" loading={forceAdmit.isPending}>
+                      Force run
+                    </Button>
+                  </ConfirmAction>
+                ) : null}
+                <Button size="small" onClick={() => setLogJob(row)}>
+                  Logs
+                </Button>
+              </Space>
             )
           }
         ]}
-        scroll={{ x: 920 }}
+        scroll={{ x: 1080 }}
       />
       <LogList
         title="Live log"

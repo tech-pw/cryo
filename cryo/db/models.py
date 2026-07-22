@@ -746,6 +746,12 @@ class MaintenanceJob(Base):
         ForeignKey("cryo.native_dispatches.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Operator-triggered bypass of soft scheduling gates (cooldown, benefit/moop score,
+    # offpeak window) in decide_job_admission -- set via POST /jobs/{id}/force-admit when a
+    # manually-triggered run keeps cycling through queued/deferred because an unrelated
+    # successful run against the same table just reset its cooldown clock. Table locks, PII,
+    # and ABAC checks are real safety gates and are never bypassed by this flag.
+    force_admit: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     run: Mapped[MaintenanceRun] = relationship(back_populates="jobs")
     table: Mapped[Table] = relationship(back_populates="jobs")

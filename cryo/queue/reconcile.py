@@ -212,4 +212,5 @@ def _admission_job(job: MaintenanceJobRecord, admission_job: type[Any]) -> objec
         cooldown_hours=job.cooldown_hours,
         last_maintained_at=job.last_maintained_at,
         deadline_at=job.deadline_at,
+        force_admit=job.force_admit,
     )

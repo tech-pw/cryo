@@ -25,6 +25,10 @@ class AdmissionJob:
     size_gb: float | None = None
     last_maintained_at: datetime | None = None
     deadline_at: datetime | None = None
+    # Operator override: skip the soft scheduling gates below (deadline/cooldown/benefit
+    # score/moop score/offpeak). Table locks, PII, and ABAC checks live outside this
+    # function entirely and are never affected. See MaintenanceJob.force_admit.
+    force_admit: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,9 @@ def decide_job_admission(
 ) -> AdmissionDecision:
     current = _ensure_aware(now or datetime.now(UTC))
     mode = Mode(job.mode)
+
+    if job.force_admit:
+        return AdmissionDecision(True)
 
     if deadline_expired(job.deadline_at, current, config.wave_wait_sec):
         return AdmissionDecision(False, "deadline_near", defer=True)

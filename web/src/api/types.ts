@@ -698,6 +698,7 @@ export interface JobRead {
   finished_at?: string | null;
   error?: string | null;
   plan?: JsonObject | null;
+  force_admit?: boolean;
 }
 
 export interface DatalakeDashboard {

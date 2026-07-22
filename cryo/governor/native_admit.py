@@ -325,6 +325,18 @@ def admit_native_k8s_jobs(
     _ = stats_cache
     prepared: list[_PreparedJob] = []
     by_job_id: dict[str, _PreparedJob] = {}
+    # Every job reaching here already holds its table lock (acquired by the governor's
+    # per-job loop before buffering for native dispatch). `resolved` tracks which of
+    # those jobs have reached an explicit admitted/deferred-with-release outcome, so
+    # the outer except below can safety-net release anything left dangling if a call
+    # in this function raises somewhere we didn't anticipate (e.g. a DB write or K8s
+    # API call that isn't individually guarded) -- otherwise that job's lock orphans
+    # silently and every future admission attempt for its table self-blocks on
+    # "table_locked" until the 6h TTL expires. Seen live, 2026-07-22.
+    resolved: set[str] = set()
+    admitted = 0
+    deferred = 0
+    dispatch_ids: list[str] = []
 
     for job in jobs:
         try:
@@ -365,198 +377,229 @@ def admit_native_k8s_jobs(
             mark_status(job.id, JobStatus.FAILED, error=f"native_admit_prepare_failed: {exc}")
             cancel_pending(job.id, destination.id)
             release_lock(job.table_id, job.id)
+            resolved.add(job.id)
 
     if not prepared:
         return NativeAdmitResult()
 
-    specs = pack_jobs([p.packable for p in prepared], ceilings=ceilings)
-    slots_left, cpu_left, mem_left = cluster_headroom(
-        live_capacity, config=destination.config
-    )
-
-    admitted = 0
-    deferred = 0
-    dispatch_ids: list[str] = []
-
-    for spec in specs:
-        if slots_left <= 0 or spec.cpu_milli > cpu_left or spec.mem_mib > mem_left:
-            deferred += _defer_spec(
-                spec,
-                defer_job=defer_job,
-                release_lock=release_lock,
-                reason="native_cluster_capacity",
-            )
-            continue
-
-        # Shared pod: all members use chunk / file-group caps from the dispatch mem.
-        peak_stats = _peak_stats_for_spec(spec, by_job_id)
-        derived_chunk = chunk_size_gb_for_pod_mem(spec.mem_mib, peak_stats)
-        budget = compaction_memory_budget_bytes(spec.mem_mib)
-
-        requests: list[dict[str, Any]] = []
-        plan_ok = True
-        for member in spec.members:
-            prepared_item = by_job_id.get(member.job_id)
-            if prepared_item is None:
-                plan_ok = False
-                break
-            try:
-                plan_params = derive_chunk_params(
-                    spec.mem_mib,
-                    prepared_item.stats,
-                    {
-                        k: v
-                        for k, v in dict(prepared_item.job.params).items()
-                        if k != "chunk_size_gb"
-                    },
-                )
-                plan = build_plan(
-                    prepared_item.stats,
-                    prepared_item.table_data.partitions,
-                    prepared_item.mode,
-                    plan_params,
-                )
-                store.save_plan(prepared_item.job.id, plan_to_dict(plan))
-                built = build_native_request(
-                    plan=plan,
-                    stats=prepared_item.stats,
-                    source_config=prepared_item.table_data.source_config,
-                    destination_config=destination.config,
-                    job_id=prepared_item.job.id,
-                    table_id=prepared_item.job.table_id,
-                    mem_mib=spec.mem_mib,
-                    derived_chunk=derived_chunk,
-                    budget=budget,
-                )
-                requests.append(built.request)
-                _dispatch_fallback_operations(
-                    store=store,
-                    fallback_operations=built.fallback_operations,
-                    plan=plan,
-                    destination_config=destination.config,
-                    source_config=prepared_item.table_data.source_config,
-                    table_ref=plan.table_ref,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to rebuild plan for job %s with derived chunk: %s",
-                    member.job_id,
-                    exc,
-                )
-                plan_ok = False
-                break
-
-        if not plan_ok or not requests:
-            deferred += _defer_spec(
-                spec,
-                defer_job=defer_job,
-                release_lock=release_lock,
-                reason="native_admit_plan_rebuild_failed",
-            )
-            continue
-
-        batch_payload = build_batch_payload(requests, run_id=spec.run_id)
-        namespace = resolve_k8s_namespace(destination.config)
-
-        with session_factory() as session:
-            row = create_dispatch_record(
-                session,
-                spec=spec,
-                destination_id=destination.id,
-                k8s_namespace=namespace,
-                status="pending",
-            )
-            dispatch_id = str(row.id)
-            job_name = f"cryo-native-{row.id.hex[:12]}"
-            row.k8s_job_name = job_name
-            session.commit()
-
-        batch_payload["dispatch_id"] = dispatch_id
-        dest_cfg = dict(destination.config)
-        dest_cfg["destination_id"] = destination.id
-        dest_cfg["k8s_namespace"] = namespace
-        dest_cfg.setdefault("k8s_image", dest_cfg.get("image") or "cryo:latest")
-        dest_cfg.setdefault("max_memory_mib", ceilings.max_mem_mib)
-        dest_cfg.setdefault("max_cpu_milli", ceilings.max_cpu_milli)
-
-        created = create_native_job(
-            batch_payload,
-            config=dest_cfg,
-            cpu_milli=spec.cpu_milli,
-            mem_mib=spec.mem_mib,
-            job_name=job_name,
-            dispatch_id=dispatch_id,
-            run_id=spec.run_id,
-            table_refs=tuple(
-                str(req.get("table_ref", jid))
-                for jid, req in zip(spec.job_ids, requests, strict=False)
-            ),
+    try:
+        specs = pack_jobs([p.packable for p in prepared], ceilings=ceilings)
+        slots_left, cpu_left, mem_left = cluster_headroom(
+            live_capacity, config=destination.config
         )
-        if not created.ok or not created.job_name:
-            deferred += _defer_spec(
-                spec,
-                defer_job=defer_job,
-                release_lock=release_lock,
-                reason=created.error or "k8s_job_create_failed",
-            )
+
+        for spec in specs:
+            if slots_left <= 0 or spec.cpu_milli > cpu_left or spec.mem_mib > mem_left:
+                deferred += _defer_spec(
+                    spec,
+                    defer_job=defer_job,
+                    release_lock=release_lock,
+                    reason="native_cluster_capacity",
+                    resolved=resolved,
+                )
+                continue
+
+            # Shared pod: all members use chunk / file-group caps from the dispatch mem.
+            peak_stats = _peak_stats_for_spec(spec, by_job_id)
+            derived_chunk = chunk_size_gb_for_pod_mem(spec.mem_mib, peak_stats)
+            budget = compaction_memory_budget_bytes(spec.mem_mib)
+
+            requests: list[dict[str, Any]] = []
+            plan_ok = True
+            for member in spec.members:
+                prepared_item = by_job_id.get(member.job_id)
+                if prepared_item is None:
+                    plan_ok = False
+                    break
+                try:
+                    plan_params = derive_chunk_params(
+                        spec.mem_mib,
+                        prepared_item.stats,
+                        {
+                            k: v
+                            for k, v in dict(prepared_item.job.params).items()
+                            if k != "chunk_size_gb"
+                        },
+                    )
+                    plan = build_plan(
+                        prepared_item.stats,
+                        prepared_item.table_data.partitions,
+                        prepared_item.mode,
+                        plan_params,
+                    )
+                    store.save_plan(prepared_item.job.id, plan_to_dict(plan))
+                    built = build_native_request(
+                        plan=plan,
+                        stats=prepared_item.stats,
+                        source_config=prepared_item.table_data.source_config,
+                        destination_config=destination.config,
+                        job_id=prepared_item.job.id,
+                        table_id=prepared_item.job.table_id,
+                        mem_mib=spec.mem_mib,
+                        derived_chunk=derived_chunk,
+                        budget=budget,
+                    )
+                    requests.append(built.request)
+                    _dispatch_fallback_operations(
+                        store=store,
+                        fallback_operations=built.fallback_operations,
+                        plan=plan,
+                        destination_config=destination.config,
+                        source_config=prepared_item.table_data.source_config,
+                        table_ref=plan.table_ref,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Failed to rebuild plan for job %s with derived chunk: %s",
+                        member.job_id,
+                        exc,
+                    )
+                    plan_ok = False
+                    break
+
+            if not plan_ok or not requests:
+                deferred += _defer_spec(
+                    spec,
+                    defer_job=defer_job,
+                    release_lock=release_lock,
+                    reason="native_admit_plan_rebuild_failed",
+                    resolved=resolved,
+                )
+                continue
+
+            batch_payload = build_batch_payload(requests, run_id=spec.run_id)
+            namespace = resolve_k8s_namespace(destination.config)
+
             with session_factory() as session:
-                from cryo.db.repositories.native_dispatch import mark_dispatch_finished
-
-                mark_dispatch_finished(
+                row = create_dispatch_record(
                     session,
-                    uuid.UUID(dispatch_id),
-                    status="failed",
-                    error=created.error,
+                    spec=spec,
+                    destination_id=destination.id,
+                    k8s_namespace=namespace,
+                    status="pending",
                 )
+                dispatch_id = str(row.id)
+                job_name = f"cryo-native-{row.id.hex[:12]}"
+                row.k8s_job_name = job_name
                 session.commit()
-            continue
 
-        cancelled_during_create = False
-        with session_factory() as session:
-            dispatch = get_dispatch(session, uuid.UUID(dispatch_id))
-            if dispatch is not None and dispatch.status in {
-                "cancel_requested",
-                "cancelling",
-                "cancelled",
-            }:
-                cancelled_during_create = True
-            else:
-                mark_dispatch_running(
-                    session, uuid.UUID(dispatch_id), k8s_job_name=created.job_name
+            batch_payload["dispatch_id"] = dispatch_id
+            dest_cfg = dict(destination.config)
+            dest_cfg["destination_id"] = destination.id
+            dest_cfg["k8s_namespace"] = namespace
+            dest_cfg.setdefault("k8s_image", dest_cfg.get("image") or "cryo:latest")
+            dest_cfg.setdefault("max_memory_mib", ceilings.max_mem_mib)
+            dest_cfg.setdefault("max_cpu_milli", ceilings.max_cpu_milli)
+
+            created = create_native_job(
+                batch_payload,
+                config=dest_cfg,
+                cpu_milli=spec.cpu_milli,
+                mem_mib=spec.mem_mib,
+                job_name=job_name,
+                dispatch_id=dispatch_id,
+                run_id=spec.run_id,
+                table_refs=tuple(
+                    str(req.get("table_ref", jid))
+                    for jid, req in zip(spec.job_ids, requests, strict=False)
+                ),
+            )
+            if not created.ok or not created.job_name:
+                deferred += _defer_spec(
+                    spec,
+                    defer_job=defer_job,
+                    release_lock=release_lock,
+                    reason=created.error or "k8s_job_create_failed",
+                    resolved=resolved,
                 )
-            session.commit()
+                with session_factory() as session:
+                    from cryo.db.repositories.native_dispatch import mark_dispatch_finished
 
-        if cancelled_during_create:
+                    mark_dispatch_finished(
+                        session,
+                        uuid.UUID(dispatch_id),
+                        status="failed",
+                        error=created.error,
+                    )
+                    session.commit()
+                continue
+
+            cancelled_during_create = False
+            with session_factory() as session:
+                dispatch = get_dispatch(session, uuid.UUID(dispatch_id))
+                if dispatch is not None and dispatch.status in {
+                    "cancel_requested",
+                    "cancelling",
+                    "cancelled",
+                }:
+                    cancelled_during_create = True
+                else:
+                    mark_dispatch_running(
+                        session, uuid.UUID(dispatch_id), k8s_job_name=created.job_name
+                    )
+                session.commit()
+
+            if cancelled_during_create:
+                logger.info(
+                    "Native dispatch %s was cancelled while Job %s was being created",
+                    dispatch_id,
+                    created.job_name,
+                )
+                # The cancellation flow owns releasing these locks -- mark resolved so
+                # the safety net below doesn't double-release or re-defer them.
+                resolved.update(spec.job_ids)
+                continue
+
+            for job_id in spec.job_ids:
+                cancel_pending(job_id, destination.id)
+                mark_status(
+                    job_id,
+                    JobStatus.RUNNING,
+                    engine_ref=created.job_name,
+                    replica=created.job_name,
+                )
+                admitted += 1
+                resolved.add(job_id)
+
+            slots_left -= 1
+            cpu_left -= spec.cpu_milli
+            mem_left -= spec.mem_mib
+            dispatch_ids.append(dispatch_id)
             logger.info(
-                "Native dispatch %s was cancelled while Job %s was being created",
+                "Admitted native dispatch %s job=%s tables=%d cpu=%dm mem=%dMi chunk_gb=%.1f",
                 dispatch_id,
                 created.job_name,
+                len(spec.job_ids),
+                created.cpu_milli,
+                created.mem_mib,
+                derived_chunk,
             )
-            continue
-
-        for job_id in spec.job_ids:
-            cancel_pending(job_id, destination.id)
-            mark_status(
-                job_id,
-                JobStatus.RUNNING,
-                engine_ref=created.job_name,
-                replica=created.job_name,
-            )
-            admitted += 1
-
-        slots_left -= 1
-        cpu_left -= spec.cpu_milli
-        mem_left -= spec.mem_mib
-        dispatch_ids.append(dispatch_id)
-        logger.info(
-            "Admitted native dispatch %s job=%s tables=%d cpu=%dm mem=%dMi chunk_gb=%.1f",
-            dispatch_id,
-            created.job_name,
-            len(spec.job_ids),
-            created.cpu_milli,
-            created.mem_mib,
-            derived_chunk,
+    except Exception as exc:
+        # Anything above that isn't individually guarded (pack_jobs, cluster_headroom,
+        # the create_dispatch_record/mark_dispatch_running DB writes) can throw and abort
+        # this loop mid-flight. Every job here already holds its table lock; leaving it
+        # orphaned means every future admission attempt for that table self-blocks on
+        # "table_locked" until the 6h TTL expires -- with the actual cause never
+        # surfaced. Defer and release everything not yet resolved instead of letting the
+        # exception propagate and silently orphan locks.
+        unresolved = [job for job in jobs if job.id not in resolved]
+        logger.exception(
+            "admit_native_k8s_jobs crashed mid-dispatch (%d job(s) left unresolved): %s",
+            len(unresolved),
+            exc,
         )
+        for job in unresolved:
+            try:
+                defer_job(job.id, "native_admit_unexpected_error")
+            except Exception:
+                logger.exception("Failed to defer job %s after native admit crash", job.id)
+            try:
+                release_lock(job.table_id, job.id)
+            except Exception:
+                logger.exception(
+                    "Failed to release lock for job %s after native admit crash", job.id
+                )
+            deferred += 1
 
     return NativeAdmitResult(
         admitted=admitted,
@@ -601,11 +644,14 @@ def _defer_spec(
     release_lock: Callable[[str, str], None],
     reason: str,
     mark_status: Callable[..., None] | None = None,
+    resolved: set[str] | None = None,
 ) -> int:
     _ = mark_status
     count = 0
     for member in spec.members:
         defer_job(member.job_id, reason)
         release_lock(member.table_id, member.job_id)
+        if resolved is not None:
+            resolved.add(member.job_id)
         count += 1
     return count

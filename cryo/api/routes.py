@@ -2055,6 +2055,43 @@ def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
     return JobRead.model_validate(presets.job_summary(job))
 
 
+@router.post(
+    "/jobs/{job_id}/force-admit",
+    response_model=JobRead,
+    dependencies=[Depends(require_operator)],
+    tags=["runs"],
+)
+def force_admit_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
+    """Bypass soft scheduling gates (cooldown, benefit/moop score, offpeak window,
+    fleet budget) for one job and requeue it immediately.
+
+    Does not bypass table locks, PII gates, or ABAC checks -- those protect against
+    genuinely unsafe concurrent operations on a table, not scheduling policy. A job
+    stuck on "table_locked" needs the lock to actually clear (or a lock-bug fix), not
+    this endpoint.
+    """
+    job = session.get(MaintenanceJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in {JobStatus.QUEUED.value, JobStatus.DEFERRED.value}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {job.status}; force-admit only applies to queued or deferred jobs",
+        )
+    job.force_admit = True
+    was_deferred = job.status == JobStatus.DEFERRED.value
+    if was_deferred:
+        job.status = JobStatus.QUEUED.value
+        job.error = None
+        job.finished_at = None
+    session.commit()
+    session.refresh(job)
+    if was_deferred:
+        wiring = build_runtime_wiring()
+        wiring.queue.enqueue(str(job.id), str(job.destination_id))
+    return JobRead.model_validate(presets.job_summary(job))
+
+
 def _websocket_viewer_principal(websocket: WebSocket, token: str | None) -> Principal | None:
     auth_header = websocket.headers.get("authorization")
     token_value = token
