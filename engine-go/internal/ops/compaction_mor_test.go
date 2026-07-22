@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/apache/iceberg-go/table"
 
@@ -64,5 +65,24 @@ func TestIsRetryableCommitError(t *testing.T) {
 	// conflict from any other commit error, so any commit error is assumed retryable there.
 	if !isRetryableCommitError(errUnwrappedHiveConflict, false) {
 		t.Fatal("non-REST catalog: an unwrapped commit conflict must be treated as retryable")
+	}
+}
+
+func TestExpireCommitBackoffSchedule(t *testing.T) {
+	t.Parallel()
+	if got := expireCommitBackoffFor(0); got != 250*time.Millisecond {
+		t.Fatalf("attempt 0: got %v want 250ms", got)
+	}
+	if got := expireCommitBackoffFor(-1); got != 250*time.Millisecond {
+		t.Fatalf("negative attempt should clamp to first entry: got %v", got)
+	}
+	last := expireCommitBackoffFor(len(_expireCommitBackoff) - 1)
+	// Attempts beyond the schedule's length must repeat the cap, not panic or grow unbounded.
+	if got := expireCommitBackoffFor(len(_expireCommitBackoff) + 10); got != last {
+		t.Fatalf("out-of-range attempt: got %v want capped %v", got, last)
+	}
+	if _expireCommitMaxRetries <= appCommitRetries {
+		t.Fatalf("expire_snapshots retry budget (%d) should exceed the rewrite path's (%d) -- "+
+			"a live streaming writer needs more attempts, not fewer", _expireCommitMaxRetries, appCommitRetries)
 	}
 }
