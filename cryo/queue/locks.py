@@ -17,6 +17,8 @@ class LockStore(Protocol):
 
     def is_table_locked(self, table_id: str) -> bool: ...
 
+    def list_table_locks(self) -> list[tuple[str, str]]: ...
+
 
 @dataclass
 class _MemoryLock:
@@ -52,6 +54,10 @@ class InMemoryLockStore:
     def is_table_locked(self, table_id: str) -> bool:
         self._purge_expired(self._table_locks)
         return table_id in self._table_locks
+
+    def list_table_locks(self) -> list[tuple[str, str]]:
+        self._purge_expired(self._table_locks)
+        return [(table_id, lock.holder) for table_id, lock in self._table_locks.items()]
 
     def _acquire(
         self,
@@ -111,6 +117,19 @@ class RedisLockStore:
 
     def is_table_locked(self, table_id: str) -> bool:
         return bool(self._redis.exists(self._table_key(table_id)))
+
+    def list_table_locks(self) -> list[tuple[str, str]]:
+        # SCAN, not KEYS -- KEYS blocks the whole Redis instance on a large keyspace;
+        # SCAN iterates in small cursor batches instead.
+        prefix = f"{self._namespace}:table-lock:"
+        pairs: list[tuple[str, str]] = []
+        for raw_key in self._redis.scan_iter(match=f"{prefix}*"):
+            key = _decode(raw_key)
+            table_id = key[len(prefix) :]
+            holder = _decode(self._redis.get(key))
+            if holder:
+                pairs.append((table_id, holder))
+        return pairs
 
     def _leader_key(self, name: str) -> str:
         return f"{self._namespace}:leader:{name}"
