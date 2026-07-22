@@ -391,6 +391,38 @@ def max_bytes_per_group_for_pod_mem(
     return max(floor, int(scaled))
 
 
+_GROUP_CONCURRENCY_MIN = 2
+_GROUP_CONCURRENCY_MAX = 8
+# Aim to keep a rewrite under this many sequential commit rounds. group_concurrency=2
+# (the flat historical default) was validated on a 24-48-file local-MinIO fixture
+# (docs/native-go-compaction-throughput.md) -- three orders of magnitude below real
+# tables with hundreds of partitions. Confirmed live, 2026-07-21: a 340-partition table
+# at concurrency=2 needed ~170 sequential rounds, accounting for the bulk of a
+# 46-minute rewrite. Scale toward this target instead of a flat constant.
+_GROUP_CONCURRENCY_TARGET_ROUNDS = 40
+
+
+def group_concurrency_for_table(
+    stats: Mapping[str, Any] | None,
+    *,
+    max_cpu_milli: int = MAX_POD_CPU_MILLI,
+) -> int:
+    """Scale OPTIMIZE's group_concurrency toward the table's partition count.
+
+    Each concurrent group is CPU-bound in practice (Arrow/Parquet decode, zstd,
+    memmove -- see docs/native-go-compaction-throughput.md's CPU profile), so also
+    cap by the pod's CPU ceiling: no point staging more groups in parallel than
+    there is CPU to actually run them concurrently.
+    """
+    stats = stats or {}
+    total_partitions = _as_int(stats.get("total_partitions"), 0)
+    if total_partitions <= 0:
+        return _GROUP_CONCURRENCY_MIN
+    wanted = -(-total_partitions // _GROUP_CONCURRENCY_TARGET_ROUNDS)  # ceil div
+    cpu_cap = max(_GROUP_CONCURRENCY_MIN, max_cpu_milli // 1000)
+    return max(_GROUP_CONCURRENCY_MIN, min(wanted, _GROUP_CONCURRENCY_MAX, cpu_cap))
+
+
 def derive_chunk_params(
     mem_mib: int,
     stats: Mapping[str, Any] | None,
