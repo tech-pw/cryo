@@ -144,6 +144,7 @@ def test_spark_render_golden_operation_sql() -> None:
             "where => '(event_date >= DATE ''2025-05-18'' AND event_date < DATE ''2025-05-19'' "
             "AND region = ''us'')', options => map('target-file-size-bytes', '268435456', "
             "'min-input-files', '10', 'partial-progress.enabled', 'true', "
+            "'partial-progress.max-commits', '50', "
             "'max-concurrent-file-group-rewrites', '5'))"
         ),
         "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')",
@@ -185,6 +186,10 @@ def test_spark_renders_compute_statistics_with_bloom_filters() -> None:
 
 
 def test_spark_renders_convert_deletes_operation() -> None:
+    """Regression, 2026-07-22: without explicit max-commits/max-concurrent-file-group-rewrites
+    options, Iceberg's own defaults (10 commits, 1 concurrent rewrite) mean a single run on a
+    large delete-heavy table barely dents it -- confirmed live: 46/13,661 files touched, 0
+    deletes removed in one pass. Both must be present whenever partial-progress is enabled."""
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.STANDARD,
@@ -200,7 +205,51 @@ def test_spark_renders_convert_deletes_operation() -> None:
     assert statements[0].sql == (
         "CALL iceberg.system.rewrite_data_files("
         "table => 'iceberg.demo.events', options => map("
-        "'delete-file-threshold', '2', 'partial-progress.enabled', 'true'))"
+        "'delete-file-threshold', '2', 'partial-progress.enabled', 'true', "
+        "'partial-progress.max-commits', '50', "
+        "'max-concurrent-file-group-rewrites', '5'))"
+    )
+
+
+def test_spark_renders_convert_deletes_respects_explicit_tuning() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.CONVERT_DELETES,
+                {
+                    "delete_file_threshold": 2,
+                    "partial_progress_enabled": True,
+                    "convert_deletes_max_commits": 200,
+                    "convert_deletes_max_concurrent_rewrites": 20,
+                },
+            ),
+        ),
+    )
+    statements = render(plan)
+    assert "'partial-progress.max-commits', '200'" in statements[0].sql
+    assert "'max-concurrent-file-group-rewrites', '20'" in statements[0].sql
+
+
+def test_spark_renders_convert_deletes_without_partial_progress_omits_commit_tuning() -> None:
+    """max-commits/max-concurrent-file-group-rewrites only mean anything when
+    partial-progress is enabled -- a full atomic rewrite doesn't use them."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.CONVERT_DELETES,
+                {"delete_file_threshold": 1, "partial_progress_enabled": False},
+            ),
+        ),
+    )
+    statements = render(plan)
+    assert statements[0].sql == (
+        "CALL iceberg.system.rewrite_data_files("
+        "table => 'iceberg.demo.events', options => map("
+        "'delete-file-threshold', '1', 'partial-progress.enabled', 'false'))"
     )
 
 
