@@ -479,6 +479,8 @@ export const getRunJobs = (api: ApiOptions, id: UUID) =>
 export const cancelRun = (api: ApiOptions, id: UUID) =>
   apiFetch<RunRead>(`/runs/${id}/cancel`, api, { method: "POST" });
 export const getJob = (api: ApiOptions, id: UUID) => apiFetch<JobRead>(`/jobs/${id}`, api);
+export const forceAdmitJob = (api: ApiOptions, id: UUID) =>
+  apiFetch<JobRead>(`/jobs/${id}/force-admit`, api, { method: "POST" });
 
 export const getDatalakeDashboard = (
   api: ApiOptions,
@@ -1402,6 +1404,7 @@ export interface JobDetailDashboard {
   error_message: string | null;
   sql_statements: string[] | null;
   partition_predicates: string[] | null;
+  force_admit?: boolean;
 }
 
 export const getCostAttributionDashboard = (api: ApiOptions, month?: string) =>

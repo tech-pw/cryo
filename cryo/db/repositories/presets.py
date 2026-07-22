@@ -386,6 +386,7 @@ def job_summary(job: MaintenanceJob) -> dict[str, object]:
         "finished_at": job.finished_at,
         "error": job.error,
         "plan": job.plan,
+        "force_admit": job.force_admit,
     }
 
 

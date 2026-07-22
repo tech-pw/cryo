@@ -201,11 +201,21 @@ class S3LogIngestRunner(DaemonRunner):
 class GovernorRunner(DaemonRunner):
     """Runs the admission governor wave loop."""
 
+    # How often to re-run the orphaned-lock sweep after the mandatory startup pass.
+    # A one-shot startup sweep only catches locks orphaned by a restart; it misses
+    # locks orphaned mid-life by a dispatch-path exception (native_admit.py's
+    # create_dispatch_record/pack_jobs/etc calls aren't all individually guarded --
+    # hardened in admit_native_k8s_jobs, but a periodic safety net costs one cheap
+    # Redis SCAN + a handful of DB lookups and catches whatever that hardening
+    # doesn't). At larger table counts the absolute rate of these events rises even
+    # if the per-operation rate doesn't, so don't rely on "only ever restarts once."
+    _LOCK_RECONCILE_INTERVAL_SECONDS = 600
+
     def __init__(self, interval: int = 30, wiring: Any = None) -> None:
         super().__init__("governor", interval)
         self._wiring: Any = wiring
         self._governor: Any = None
-        self._reconciled_locks_on_startup = False
+        self._last_lock_reconcile_at: float = 0.0
 
     def _tick(self) -> None:
         governor = self._get_governor()
@@ -216,9 +226,10 @@ class GovernorRunner(DaemonRunner):
         if wiring and not wiring.is_governor_leader():
             return
 
-        if not self._reconciled_locks_on_startup:
+        now_monotonic = time.monotonic()
+        if now_monotonic - self._last_lock_reconcile_at >= self._LOCK_RECONCILE_INTERVAL_SECONDS:
             self._reconcile_orphaned_table_locks(wiring)
-            self._reconciled_locks_on_startup = True
+            self._last_lock_reconcile_at = now_monotonic
 
         # Reconcile direct Kubernetes dispatches before admitting new work so a
         # restarted governor cannot duplicate a still-running Job whose DB

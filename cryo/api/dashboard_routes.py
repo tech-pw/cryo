@@ -256,6 +256,7 @@ class JobDetailRead(BaseModel):
     error_message: str | None
     sql_statements: list[str] | None
     partition_predicates: list[str] | None
+    force_admit: bool = False
 
 
 class SLAStatusRead(BaseModel):
@@ -542,9 +543,14 @@ def get_job_detail(
         input_files_count=audit.input_files_count if audit else None,
         output_files_count=audit.output_files_count if audit else None,
         effectiveness_ratio=effectiveness_ratio,
-        error_message=job.error if job.status == JobStatus.FAILED.value else None,
+        # Previously suppressed unless status == FAILED, so a queued/deferred job's
+        # "table_locked"/"cooldown"/etc reason (job.error is set for those statuses too)
+        # never reached the UI -- the operator had no way to see why a run wasn't
+        # progressing short of asking someone to check server-side state by hand.
+        error_message=job.error,
         sql_statements=sql_statements,
         partition_predicates=partition_predicates,
+        force_admit=job.force_admit,
     )
 
 

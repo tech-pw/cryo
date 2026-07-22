@@ -50,6 +50,7 @@ class MaintenanceJobRecord:
     last_maintained_at: datetime | None = None
     actor: str | None = None
     operations: tuple[OperationType, ...] | None = None
+    force_admit: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,8 @@ class JobStore(Protocol):
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]: ...
 
+    def set_force_admit(self, job_id: str, value: bool) -> None: ...
+
 
 class InMemoryJobStore:
     def __init__(self) -> None:
@@ -208,6 +211,9 @@ class InMemoryJobStore:
 
     def record_audit(self, record: AuditRecord) -> None:
         self.audit.append(record)
+
+    def set_force_admit(self, job_id: str, value: bool) -> None:
+        self.jobs[job_id].force_admit = value
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]:
         return [
