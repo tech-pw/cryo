@@ -127,6 +127,12 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         options.append("'rewrite-all', 'true'")
     if operation.params.get("partial_progress", True):
         options.append("'partial-progress.enabled', 'true'")
+        # Iceberg's own default (10) stops the whole rewrite after 10 commits regardless of
+        # table size -- see _render_convert_deletes for the same fix and the live incident
+        # that surfaced it (a 13.6k-file table's optimize fallback would otherwise touch a
+        # near-fixed handful of file groups no matter how far behind the table actually is).
+        max_commits = operation.params.get("max_commits", 50)
+        options.append(f"'partial-progress.max-commits', '{max_commits}'")
     max_concurrent = operation.params.get("max_concurrent_file_group_rewrites", 5)
     options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
 
@@ -141,6 +147,20 @@ def _render_convert_deletes(catalog: str, table_name: str, params: dict[str, Any
         f"'delete-file-threshold', '{max(1, threshold)}'",
         f"'partial-progress.enabled', '{str(partial_progress_enabled).lower()}'",
     ]
+    if partial_progress_enabled:
+        # Iceberg's own defaults here (max-commits=10, max-concurrent-file-group-rewrites=1)
+        # are far too conservative for real fleet tables -- a single admission cycle only
+        # ever rewrites a handful of file groups regardless of how many delete files the
+        # table actually has, since partial-progress stops after max-commits commits no
+        # matter how much of the table remains. Confirmed live, 2026-07-22: one full run
+        # against a 13.6k-file, 12.7k-delete-file table touched only 46 files and removed
+        # zero deletes in that pass. Bump both unless the caller has explicitly tuned them;
+        # this still converges over repeated runs for very large tables, just far fewer of
+        # them are needed.
+        max_commits = int(params.get("convert_deletes_max_commits", 50))
+        max_concurrent_rewrites = int(params.get("convert_deletes_max_concurrent_rewrites", 5))
+        options.append(f"'partial-progress.max-commits', '{max(1, max_commits)}'")
+        options.append(f"'max-concurrent-file-group-rewrites', '{max(1, max_concurrent_rewrites)}'")
     return (
         f"CALL {catalog}.system.rewrite_data_files("
         f"table => '{catalog}.{table_name}', options => map({', '.join(options)}))"
