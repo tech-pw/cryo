@@ -159,7 +159,7 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 			)
 		}
 		lastErr = runErr
-		if !isRetryableCommitError(runErr) || attempt == attempts-1 {
+		if !isRetryableCommitError(runErr, isRESTCatalog(req)) || attempt == attempts-1 {
 			return failRewrite(operation, runErr)
 		}
 	}

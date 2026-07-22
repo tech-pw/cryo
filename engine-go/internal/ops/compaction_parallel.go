@@ -140,7 +140,7 @@ func runParallelPartialProgress(
 				ctx, tbl, sg, morCompaction, rewrittenPaths, snapshotProps, beforeMeta,
 			)
 			if commitErr != nil {
-				if isRetryableCommitError(commitErr) {
+				if isRetryableCommitError(commitErr, isRESTCatalog(req)) {
 					lastConflict = commitErr
 					conflicted = true
 					break
