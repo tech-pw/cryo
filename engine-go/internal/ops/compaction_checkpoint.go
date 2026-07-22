@@ -37,7 +37,10 @@ func rewriteErrorMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	if isCommitRaceLost(err) || isRetryableCommitError(err) {
+	// Cosmetic label only (no catalog context available here) -- the strict REST-pattern
+	// check is preserved as before; the real retry decisions that needed catalog awareness
+	// are fixed at their call sites, not here.
+	if isCommitRaceLost(err) || isRetryableCommitError(err, true) {
 		return fmt.Sprintf("%s: %s", commitRaceLostToken, err.Error())
 	}
 	return err.Error()
@@ -149,7 +152,7 @@ func executePartialProgressResumable(
 				ctx, tbl, stageTbl, group, morCompaction, rewrittenPaths, rewriteOpts, beforeMeta,
 			)
 			if err != nil {
-				if isRetryableCommitError(err) {
+				if isRetryableCommitError(err, isRESTCatalog(req)) {
 					lastConflict = err
 					conflicted = true
 					break

@@ -95,9 +95,22 @@ func collectDeadEqualityDeletes(
 	return compaction.CollectDeadEqualityDeletes(ctx, fs, snap, rewrittenPaths)
 }
 
-func isRetryableCommitError(err error) bool {
+// isRetryableCommitError classifies a commit failure as a retryable optimistic-concurrency
+// conflict. REST catalogs reliably wrap conflicts with table.ErrCommitFailed/ErrCommitDiverged,
+// so errors.Is is precise there. Non-REST catalogs (Hive, Glue, JDBC) don't -- confirmed live,
+// 2026-07-21: a genuine "branch \"main\" has changed" conflict against a Hive metastore
+// propagated as an immediate hard failure instead of retrying, even on a call site that had
+// already budgeted extra attempts specifically for this case (attempts was bumped, but every
+// attempt after the first was unreachable because this check always returned false first).
+// Since non-REST catalogs give no reliable way to distinguish a conflict from any other
+// commit error, treat any commit error as retryable there -- same assumption the single-commit
+// MOR path's `attempts` calculation already makes.
+func isRetryableCommitError(err error, isREST bool) bool {
 	if err == nil {
 		return false
+	}
+	if !isREST {
+		return true
 	}
 	return errors.Is(err, table.ErrCommitFailed) || errors.Is(err, table.ErrCommitDiverged)
 }
