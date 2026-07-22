@@ -74,7 +74,7 @@ def build_plan(
                 f"major-rewrite threshold."
             )
         else:
-            convert_op = _convert_deletes_operation(stats, params, optimize_ops, notes)
+            convert_op = _convert_deletes_operation(stats, partitions, params, optimize_ops, notes)
             if convert_op is not None:
                 operations.append(convert_op)
         operations.extend(optimize_ops)
@@ -268,6 +268,7 @@ def _rewrite_position_deletes_operation(params: Mapping[str, Any]) -> Operation:
 
 def _convert_deletes_operation(
     stats: Mapping[str, Any],
+    partitions: Sequence[Mapping[str, Any]],
     params: Mapping[str, Any],
     optimize_ops: Sequence[Operation],
     notes: list[str],
@@ -291,10 +292,63 @@ def _convert_deletes_operation(
         "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
         "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
     }
+    predicates = _skewed_partition_predicates(stats, partitions, params, notes)
     notes.append(
         f"Planned convert_deletes: delete_file_pct {delete_pct:.2f}% >= threshold {threshold:.2f}%."
     )
-    return Operation(OperationType.CONVERT_DELETES, convert_params)
+    return Operation(OperationType.CONVERT_DELETES, convert_params, predicates=predicates or None)
+
+
+def _skewed_partition_predicates(
+    stats: Mapping[str, Any],
+    partitions: Sequence[Mapping[str, Any]],
+    params: Mapping[str, Any],
+    notes: list[str],
+) -> tuple[PartitionPredicate, ...]:
+    """Scope convert_deletes to disproportionately fragmented partitions when present.
+
+    rewrite_data_files self-selects file groups across the WHOLE table using its own
+    binpack/size heuristics when given no `where` clause. On a heavily skewed table that
+    silently starves the worst partitions run after run: confirmed live, 2026-07-22, a
+    200-partition table averaging ~19 files/partition but with 10+ partitions holding
+    700-791 files each had convert_deletes touch the same 46 files and remove zero deletes
+    across three separate attempts, including one with 4x the Spark executors -- the skewed
+    partitions were never reached. Only kicks in when a real skew is detected; otherwise
+    returns empty and the call stays table-wide (unchanged prior behavior).
+    """
+    if len(partitions) < 2:
+        return ()
+    fields = partition_fields_from_stats(stats, params)
+    if not fields or all(field.transform is PartitionTransform.UNPARTITIONED for field in fields):
+        return ()
+    counts = [(_small_files(row), row) for row in partitions]
+    counts = [(count, row) for count, row in counts if count > 0]
+    if not counts:
+        return ()
+    total = sum(count for count, _ in counts)
+    average = total / len(counts)
+    skew_multiplier = float(params.get("convert_deletes_skew_multiplier", 3.0))
+    min_files = int(params.get("convert_deletes_skew_min_files", 50))
+    skew_threshold = max(min_files, skew_multiplier * average)
+    skewed = sorted(
+        (row for count, row in counts if count >= skew_threshold),
+        key=lambda row: _small_files(row),
+        reverse=True,
+    )
+    if not skewed:
+        return ()
+    max_partitions = int(params.get("convert_deletes_skew_max_partitions", 20))
+    skewed = skewed[:max_partitions]
+    predicates = tuple(build_predicate(fields, row) for row in skewed)
+    predicates = tuple(p for p in predicates if not any(t.unsupported_reason for t in p.terms))
+    if not predicates:
+        return ()
+    notes.append(
+        f"Scoped convert_deletes to {len(predicates)} skewed partition(s) "
+        f"(>= {skew_threshold:.0f} small files, {skew_multiplier:g}x the {average:.0f}-file "
+        "table average) instead of a table-wide rewrite."
+    )
+    return predicates
 
 
 def _expire_params(

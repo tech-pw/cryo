@@ -451,6 +451,85 @@ def test_planner_escalates_to_major_rewrite_above_threshold_even_with_few_positi
     ]
 
 
+def test_convert_deletes_scopes_to_skewed_partitions() -> None:
+    """Regression, 2026-07-22: rewrite_data_files with no `where` clause self-selects file
+    groups across the whole table using its own binpack heuristics. On a table with a small
+    number of wildly over-fragmented partitions among many normal ones, that silently starved
+    the skewed partitions run after run -- confirmed live: a 200-partition table averaging
+    ~19 small files/partition but with 10+ partitions holding 700-791 files each had
+    convert_deletes touch the same 46 files and remove zero deletes across three attempts,
+    including one with 4x the Spark executors. The skewed partitions were never reached."""
+    partitions = [
+        {"partition_value": str(20485 + i), "small_files_in_partition_count": 750}
+        for i in range(3)
+    ] + [{"partition_value": str(20500 + i), "small_files_in_partition_count": 19} for i in range(50)]
+    plan = build_plan(
+        {
+            "schema_name": "cdp",
+            "table_name": "load_test_basefact",
+            "small_files_count": 12710,
+            "total_delete_files": 12710,
+            "delete_file_pct": 83.82,
+            "total_size_gb": 5,
+            "partition_fields": [
+                {
+                    "base_column": "_date",
+                    "partition_field": "_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 10,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    convert_op = next(op for op in plan.operations if op.type is OperationType.CONVERT_DELETES)
+    assert convert_op.predicates is not None
+    assert len(convert_op.predicates) == 3
+    scoped_values = {term.value for predicate in convert_op.predicates for term in predicate.terms}
+    assert scoped_values == {"20485", "20486", "20487"}
+    assert any("Scoped convert_deletes to 3 skewed partition" in note for note in plan.notes)
+
+
+def test_convert_deletes_stays_table_wide_without_skew() -> None:
+    """No predicates when partitions are roughly even -- must not regress the common case."""
+    partitions = [
+        {"partition_value": str(20500 + i), "small_files_in_partition_count": 20} for i in range(20)
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 400,
+            "total_delete_files": 100,
+            "delete_file_pct": 25.0,
+            "total_size_gb": 5,
+            "partition_fields": [
+                {
+                    "base_column": "_date",
+                    "partition_field": "_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    convert_op = next(op for op in plan.operations if op.type is OperationType.CONVERT_DELETES)
+    assert convert_op.predicates is None
+
+
 def test_planner_skips_v2_delete_policy_for_v3_deletion_vector_tables() -> None:
     """A format-version-3 table's position-delete file count shouldn't drive the V2-shaped
     minor/major policy -- it's not implemented for DV-aware maintenance yet, and must not be

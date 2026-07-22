@@ -42,7 +42,7 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
     elif operation.type is OperationType.OPTIMIZE:
         sql = _render_optimize(catalog, table_name, operation)
     elif operation.type is OperationType.CONVERT_DELETES:
-        sql = _render_convert_deletes(catalog, table_name, operation.params)
+        sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
         sql = f"CALL {catalog}.system.rewrite_position_delete_files(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
@@ -140,9 +140,26 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
 
 
-def _render_convert_deletes(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+def _render_convert_deletes(catalog: str, table_name: str, operation: Operation) -> str:
+    params = operation.params
     threshold = int(params.get("delete_file_threshold", 1))
     partial_progress_enabled = bool(params.get("partial_progress_enabled", True))
+    args = [f"table => '{catalog}.{table_name}'"]
+
+    # Partition filter -- without this, rewrite_data_files self-selects file groups across
+    # the WHOLE table using its own binpack/size heuristics, which can silently starve
+    # heavily-skewed partitions of attention run after run. Confirmed live, 2026-07-22: a
+    # table with 200 partitions averaging 19 files each, but 10+ partitions holding 700-791
+    # files apiece, had a global convert_deletes call touch the exact same 46 files and
+    # remove zero deletes across three separate attempts (including one with 4x the Spark
+    # executors) -- the skewed partitions were never reached. Scoping the call to the
+    # worst partitions directly (planner-attached via operation.predicates, same mechanism
+    # OPTIMIZE already uses) forces the rewrite to actually cover them instead of leaving it
+    # to chance.
+    if operation.predicates:
+        where = " OR ".join(render_predicate(predicate) for predicate in operation.predicates)
+        args.append(f"where => '{_escape_sql_string(where)}'")
+
     options = [
         f"'delete-file-threshold', '{max(1, threshold)}'",
         f"'partial-progress.enabled', '{str(partial_progress_enabled).lower()}'",
@@ -161,10 +178,8 @@ def _render_convert_deletes(catalog: str, table_name: str, params: dict[str, Any
         max_concurrent_rewrites = int(params.get("convert_deletes_max_concurrent_rewrites", 5))
         options.append(f"'partial-progress.max-commits', '{max(1, max_commits)}'")
         options.append(f"'max-concurrent-file-group-rewrites', '{max(1, max_concurrent_rewrites)}'")
-    return (
-        f"CALL {catalog}.system.rewrite_data_files("
-        f"table => '{catalog}.{table_name}', options => map({', '.join(options)}))"
-    )
+    args.append(f"options => map({', '.join(options)})")
+    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
 
 
 def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, Any]) -> str:
