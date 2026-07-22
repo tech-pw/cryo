@@ -14,6 +14,7 @@ from cryo.engines.native.resources import (
     compute_job_resources,
     derive_chunk_params,
     estimate_table_resources,
+    group_concurrency_for_table,
 )
 
 
@@ -240,3 +241,32 @@ def test_derive_preserves_explicit_max_bytes_override() -> None:
     )
     assert params["max_bytes_per_group"] == override
     assert params["chunk_size_gb"] >= MIN_CHUNK_GB
+
+def test_group_concurrency_flat_default_for_no_partition_stats() -> None:
+    assert group_concurrency_for_table(None) == 2
+    assert group_concurrency_for_table({}) == 2
+    assert group_concurrency_for_table({"total_partitions": 0}) == 2
+
+
+def test_group_concurrency_scales_with_partition_count() -> None:
+    # Regression case: the actual production table that surfaced this gap.
+    got = group_concurrency_for_table({"total_partitions": 340}, max_cpu_milli=4000)
+    assert got > 2
+    assert got <= 8
+
+
+def test_group_concurrency_small_table_stays_at_floor() -> None:
+    got = group_concurrency_for_table({"total_partitions": 10}, max_cpu_milli=4000)
+    assert got == 2
+
+
+def test_group_concurrency_capped_by_cpu_ceiling() -> None:
+    # Even a huge partition count should not exceed what the pod's CPU ceiling
+    # can plausibly run concurrently.
+    got = group_concurrency_for_table({"total_partitions": 100_000}, max_cpu_milli=2000)
+    assert got == 2
+
+
+def test_group_concurrency_capped_by_hard_max() -> None:
+    got = group_concurrency_for_table({"total_partitions": 100_000}, max_cpu_milli=100_000)
+    assert got == 8

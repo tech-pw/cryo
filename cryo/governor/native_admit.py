@@ -41,6 +41,7 @@ from cryo.engines.native.resources import (
     chunk_size_gb_for_pod_mem,
     compaction_memory_budget_bytes,
     derive_chunk_params,
+    group_concurrency_for_table,
     max_bytes_per_group_for_pod_mem,
 )
 from cryo.planner.planner import build_plan
@@ -152,6 +153,14 @@ def build_native_request(
                 params["max_bytes_per_group"] = max_bytes_per_group_for_pod_mem(
                     mem_mib, params, chunk_size_gb=derived_chunk
                 )
+            # normalize_native_operation_params defaults group_concurrency to a flat 2,
+            # validated only on a 24-48-file fixture (docs/native-go-compaction-throughput.md).
+            # Scale it toward the table's real partition count here, where stats are
+            # actually available -- but only when the preset hasn't explicitly picked a
+            # different value (2 is indistinguishable from "left at the default", so an
+            # explicit 2 gets upgraded too; anything else is respected as intentional).
+            if params.get("group_concurrency") in (None, 2):
+                params["group_concurrency"] = group_concurrency_for_table(stats)
             op["params"] = params
     return NativeRequestResult(request=request, fallback_operations=routing.fallback_operations)
 
@@ -324,12 +333,21 @@ def admit_native_k8s_jobs(
             mode = job.mode if isinstance(job.mode, Mode) else Mode(str(job.mode))
             # Estimate from stats only (no preset chunk) — chunk comes after pack.
             ops_hint = job.operations
+            sizing_params = {k: v for k, v in dict(job.params).items() if k != "chunk_size_gb"}
+            # Keep the CPU estimate in sync with the group_concurrency actually dispatched
+            # (see the matching override in build_native_request below) -- otherwise the pod
+            # gets sized/CPU-limited for concurrency=2 while the engine is told to run more
+            # groups in parallel, throttling away most of the intended speedup.
+            if sizing_params.get("group_concurrency") in (None, 2):
+                sizing_params["group_concurrency"] = group_concurrency_for_table(
+                    stats, max_cpu_milli=ceilings.max_cpu_milli
+                )
             packable = build_packable_job(
                 job_id=job.id,
                 table_id=job.table_id,
                 run_id=job.run_id,
                 stats=stats,
-                params={k: v for k, v in dict(job.params).items() if k != "chunk_size_gb"},
+                params=sizing_params,
                 operations=ops_hint,
                 ceilings=ceilings,
             )
