@@ -111,6 +111,34 @@ func expireOptions(retentionDays, retainLast int) []table.ExpireSnapshotsOpt {
 	return opts
 }
 
+// _expireCommitMaxRetries and the backoff schedule are deliberately larger/slower than
+// appCommitRetries (used elsewhere for rewrite commit races). Confirmed live, 2026-07-22:
+// a real streaming table's Hive metastore lock stayed contended across all 4 of
+// appCommitRetries' immediate, no-backoff retries -- expire_snapshots exhausted its budget
+// and failed outright. A live writer committing every few seconds needs more attempts AND
+// deliberate spacing between them (immediate retries just re-lose the same race), not just
+// a bigger number fired back-to-back.
+const _expireCommitMaxRetries = 12
+
+var _expireCommitBackoff = [...]time.Duration{
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+	4 * time.Second,
+	8 * time.Second, // remaining attempts repeat this cap
+}
+
+func expireCommitBackoffFor(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt >= len(_expireCommitBackoff) {
+		attempt = len(_expireCommitBackoff) - 1
+	}
+	return _expireCommitBackoff[attempt]
+}
+
 func commitExpireSnapshots(
 	ctx context.Context,
 	req *protocol.ExecuteRequest,
@@ -119,14 +147,15 @@ func commitExpireSnapshots(
 ) (*table.Table, uint64, error) {
 	current := tbl
 	var totalExpired uint64
-	// Bare transient-network-error retry (dropped Hive Thrift connection, etc.) --
-	// confirmed live, 2026-07-21: an "EOF" from a Hive metastore aborted expire_snapshots
-	// on the first attempt with zero retry. Distinct from the rewrite path's
-	// isRetryableCommitError classification (that's about telling an optimistic-concurrency
-	// conflict apart from other errors on catalogs that don't wrap it); here any commit
-	// error is worth reloading and re-attempting, bounded so a permanently broken
-	// connection still fails instead of looping forever.
-	retriesLeft := appCommitRetries
+	// Bare transient-error retry (dropped Hive Thrift connection, lock contention against a
+	// live writer, etc.) -- confirmed live, 2026-07-21/22: an "EOF" from a Hive metastore, and
+	// separately a "failed to acquire lock" against an actively-written streaming table, both
+	// aborted expire_snapshots outright. Distinct from the rewrite path's isRetryableCommitError
+	// classification (that's about telling an optimistic-concurrency conflict apart from other
+	// errors on catalogs that don't wrap it); here any commit error is worth reloading,
+	// backing off, and re-attempting -- bounded so a permanently broken connection or a table
+	// under truly continuous write pressure still fails instead of retrying forever.
+	attempt := 0
 
 	for {
 		beforeCount := len(snapshotIDs(current))
@@ -146,10 +175,15 @@ func commitExpireSnapshots(
 		}
 		updated, err := txn.Commit(ctx)
 		if err != nil {
-			if retriesLeft <= 0 {
+			if attempt >= _expireCommitMaxRetries {
 				return current, totalExpired, err
 			}
-			retriesLeft--
+			select {
+			case <-ctx.Done():
+				return current, totalExpired, ctx.Err()
+			case <-time.After(expireCommitBackoffFor(attempt)):
+			}
+			attempt++
 			reloaded, reloadErr := reloadTable(ctx, req)
 			if reloadErr != nil {
 				return current, totalExpired, err
