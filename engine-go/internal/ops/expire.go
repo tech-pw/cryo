@@ -29,7 +29,7 @@ func ExpireSnapshots(ctx context.Context, req *protocol.ExecuteRequest, op *prot
 
 	var expired uint64
 	if isExecuteMode(req.Mode) {
-		updated, count, err := commitExpireSnapshots(ctx, tbl, retentionDays, retainLast)
+		updated, count, err := commitExpireSnapshots(ctx, req, tbl, retentionDays, retainLast)
 		if err != nil {
 			progress.Failed(operation, err.Error())
 			return failResult(operation, fmt.Errorf("failed to commit expire_snapshots: %w", err))
@@ -113,11 +113,20 @@ func expireOptions(retentionDays, retainLast int) []table.ExpireSnapshotsOpt {
 
 func commitExpireSnapshots(
 	ctx context.Context,
+	req *protocol.ExecuteRequest,
 	tbl *table.Table,
 	retentionDays, retainLast int,
 ) (*table.Table, uint64, error) {
 	current := tbl
 	var totalExpired uint64
+	// Bare transient-network-error retry (dropped Hive Thrift connection, etc.) --
+	// confirmed live, 2026-07-21: an "EOF" from a Hive metastore aborted expire_snapshots
+	// on the first attempt with zero retry. Distinct from the rewrite path's
+	// isRetryableCommitError classification (that's about telling an optimistic-concurrency
+	// conflict apart from other errors on catalogs that don't wrap it); here any commit
+	// error is worth reloading and re-attempting, bounded so a permanently broken
+	// connection still fails instead of looping forever.
+	retriesLeft := appCommitRetries
 
 	for {
 		beforeCount := len(snapshotIDs(current))
@@ -137,7 +146,16 @@ func commitExpireSnapshots(
 		}
 		updated, err := txn.Commit(ctx)
 		if err != nil {
-			return current, totalExpired, err
+			if retriesLeft <= 0 {
+				return current, totalExpired, err
+			}
+			retriesLeft--
+			reloaded, reloadErr := reloadTable(ctx, req)
+			if reloadErr != nil {
+				return current, totalExpired, err
+			}
+			current = reloaded
+			continue
 		}
 		removed := countRemovedSnapshots(snapshotIDs(current), snapshotIDs(updated))
 		totalExpired += removed
