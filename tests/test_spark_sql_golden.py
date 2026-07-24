@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+import re
+from datetime import UTC, date, datetime, timedelta
 
 from cryo.domain.enums import Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
@@ -149,6 +150,29 @@ def test_spark_render_golden_operation_sql() -> None:
         ),
         "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')",
     ]
+
+
+def test_spark_renders_expire_snapshots_default_retention_as_literal_timestamp() -> None:
+    """Regression, 2026-07-24: with no explicit older_than/cutoff_timestamp, the retention
+    fallback used to render `current_timestamp() - INTERVAL 7 DAYS` -- a SQL expression, not
+    a literal. Spark 4.1.2's stricter CALL-argument binder rejects that form outright with
+    IllegalArgumentException: number of args and params must match after binding (confirmed
+    live against cdp.mview.load_test_basefact). A literal TIMESTAMP computed at render time
+    sidesteps it."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.LIGHT,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7, "retain_last": 1}),
+        ),
+    )
+    sql = render(plan)[0].sql
+    assert "current_timestamp()" not in sql
+    match = re.search(r"older_than => TIMESTAMP '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})'", sql)
+    assert match is not None, sql
+    rendered_cutoff = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    expected_cutoff = datetime.now(UTC) - timedelta(days=7)
+    assert abs((rendered_cutoff - expected_cutoff).total_seconds()) < 30
 
 
 def test_spark_renders_compute_statistics_all_columns() -> None:
