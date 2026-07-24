@@ -168,24 +168,53 @@ def build_native_request(
 def _fallback_engine_config(
     fallback_config: Mapping[str, Any], source_config: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Merge the source's S3 credentials into a copy of the fallback destination's config.
+    """Merge the source's own catalog connection info and S3 credentials into a copy of the
+    fallback destination's config.
 
-    The native (Go) engine gets these from source_config.s3.access-key-id/secret-access-key
+    The native (Go) engine gets S3 credentials from source_config.s3.access-key-id/secret-access-key
     (cryo.engines.native.payload.source_catalog_config) rather than the node's ambient IAM
     role -- confirmed live (2026-07-21): a Spark driver pod using only the node's instance
     role got AccessDeniedException on s3:GetObject against the same bucket the native
-    engine reads fine. The Spark engine needs the same explicit credentials. This merge is
-    in-memory only for this dispatch call, never persisted back to the destination row.
+    engine reads fine. The Spark engine needs the same explicit credentials.
+
+    A single SQL-fallback destination is shared across every table routed to it regardless
+    of which catalog that table actually lives in, so its spark_k8s.catalog_uri/catalog_warehouse
+    and top-level `catalog` are just a static default -- correct only for tables whose source
+    happens to match it. Confirmed live, 2026-07-24: lms.silver_adminactions (source catalog_name
+    "hive", metastore thrift://trino-metastore-v2.example.com:9083, warehouse
+    s3://example-lake-dev-bronze-layer/) fell back to this same destination as
+    lake.analytics.load_test_basefact, whose static config points at a completely different
+    metastore/warehouse (thrift://trino-prod-metastore.example.com:9083,
+    s3://example-lake-prod-gold-layer/) under catalog name "cdp". Spark registered its Iceberg
+    catalog plugin under the wrong name entirely, so `CALL hive.system.rewrite_data_files(...)`
+    silently resolved against the builtin spark_catalog instead and failed with
+    MISSING_CATALOG_ABILITY.PROCEDURES. The source's own uri/warehouse/catalog_name -- always
+    correct for its own tables -- must win whenever present.
+
+    This merge is in-memory only for this dispatch call, never persisted back to the
+    destination row.
     """
-    access_key = source_config.get("s3.access-key-id")
-    secret_key = source_config.get("s3.secret-access-key")
-    if not (isinstance(access_key, str) and access_key and isinstance(secret_key, str) and secret_key):
-        return dict(fallback_config)
     merged = dict(fallback_config)
     spark_k8s = dict(merged.get("spark_k8s") or {})
-    spark_k8s.setdefault("s3_access_key", access_key)
-    spark_k8s.setdefault("s3_secret_key", secret_key)
-    merged["spark_k8s"] = spark_k8s
+
+    access_key = source_config.get("s3.access-key-id")
+    secret_key = source_config.get("s3.secret-access-key")
+    if isinstance(access_key, str) and access_key and isinstance(secret_key, str) and secret_key:
+        spark_k8s.setdefault("s3_access_key", access_key)
+        spark_k8s.setdefault("s3_secret_key", secret_key)
+
+    source_uri = source_config.get("uri")
+    source_warehouse = source_config.get("warehouse")
+    source_catalog_name = source_config.get("catalog_name")
+    if isinstance(source_uri, str) and source_uri:
+        spark_k8s["catalog_uri"] = source_uri
+    if isinstance(source_warehouse, str) and source_warehouse:
+        spark_k8s["catalog_warehouse"] = source_warehouse
+    if isinstance(source_catalog_name, str) and source_catalog_name:
+        merged["catalog"] = source_catalog_name
+
+    if spark_k8s:
+        merged["spark_k8s"] = spark_k8s
     return merged
 
 

@@ -51,7 +51,9 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
         sql = _render_compute_statistics(catalog, table_name, operation.params)
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
-    return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.SPARK_EMR)
+    return RenderedStatement(
+        action=operation.type, sql=sql, engine=EngineType.SPARK_EMR, metadata={"catalog": catalog}
+    )
 
 
 def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str:
