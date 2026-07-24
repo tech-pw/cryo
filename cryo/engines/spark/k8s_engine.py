@@ -35,7 +35,8 @@ class SparkK8sEngine:
         self.settings = self.settings or get_settings()
         self._k8s_config = SparkK8sConfig.from_config(self.config)
         self._client: SparkK8sClient | None = None
-        self._catalog = str(self.config.get("catalog") or "cdp")
+        catalog = self.config.get("catalog")
+        self._catalog = str(catalog) if catalog else None
         self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
 
     @property
@@ -70,11 +71,32 @@ class SparkK8sEngine:
         start = time.monotonic()
         job_id: str | None = None
 
+        # A destination's `catalog` is a static default -- correct only for tables whose own
+        # catalog_name matches it. A shared SQL-fallback destination routes tables from
+        # different catalogs (e.g. a REST-catalog "cdp" table and a Hive-Metastore "hive"
+        # table both falling back to the same Spark destination), so the statement's own
+        # catalog (set at render time from the table's real table_ref) must win when present
+        # -- confirmed live, 2026-07-24: submitting with the destination's default "cdp" while
+        # the SQL referenced "hive.system.rewrite_data_files" left no "hive" catalog plugin
+        # registered in the Spark session, and Spark silently tried to resolve it against the
+        # builtin spark_catalog instead, which doesn't support procedures at all.
+        catalog = stmt.metadata.get("catalog") or self._catalog
+        if not catalog:
+            return ExecResult(
+                ok=False,
+                detail=stmt.sql,
+                error=(
+                    "No Spark catalog name available for this dispatch -- neither the "
+                    "rendered statement nor this destination's config specifies one. Set "
+                    "the table's source catalog_name or this destination's `catalog`."
+                ),
+                duration_ms=_elapsed_ms(start),
+            )
         try:
             job_id = self.k8s_client.submit_spark_sql(
                 stmt.sql,
                 job_name=job_name,
-                catalog=self._catalog,
+                catalog=str(catalog),
             )
             result = self.k8s_client.wait_for_completion(job_id)
 
