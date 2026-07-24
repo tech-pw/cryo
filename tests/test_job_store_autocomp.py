@@ -188,6 +188,69 @@ def test_get_job_does_not_override_an_explicit_preset_param(session):
     assert record.params["benefit_score"] == 999.0
 
 
+def test_get_job_applies_table_param_overrides_over_preset_params(session):
+    """table_assignments.param_overrides lets one table tweak a param (e.g. a tighter
+    retention_days) without forking the shared preset, which may be pinned to other
+    tables that shouldn't be affected. Override must win over the preset default."""
+    from cryo.db.models import Preset, TableAssignment
+
+    source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
+    destination = Destination(
+        id=uuid4(), name=f"dest-{uuid4()}", engine="trino", config={"host": "trino"}
+    )
+    table = Table(
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="analytics",
+        table_name="events",
+        is_active=True,
+    )
+    session.add_all([source, destination, table])
+    session.flush()
+
+    preset = Preset(
+        id=uuid4(),
+        name=f"preset-{uuid4()}",
+        destination_id=destination.id,
+        operations=["expire_snapshots"],
+        params={"retention_days": 7, "min_small_files": 10},
+        guardrails={},
+    )
+    session.add(preset)
+    session.flush()
+
+    session.add(
+        TableAssignment(
+            table_id=table.id,
+            preset_id=preset.id,
+            param_overrides={"retention_days": 1},
+        )
+    )
+
+    run = MaintenanceRun(
+        id=uuid4(), kind="adhoc", trigger="api", status="queued", preset_id=preset.id, summary={}
+    )
+    session.add(run)
+    session.flush()
+
+    job = MaintenanceJob(
+        id=uuid4(),
+        run_id=run.id,
+        table_id=table.id,
+        destination_id=destination.id,
+        mode="standard",
+        status="queued",
+    )
+    session.add(job)
+    session.commit()
+
+    store = SQLJobStore(lambda: session)
+    record = store.get_job(str(job.id))
+
+    assert record.params["retention_days"] == 1
+    assert record.params["min_small_files"] == 10
+
+
 def test_get_job_with_no_scanned_partitions_leaves_params_untouched(session):
     table, job = _seed_table_with_job(session)
     session.commit()

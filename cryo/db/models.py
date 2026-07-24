@@ -674,6 +674,9 @@ class TableAssignment(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    param_overrides: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     table: Mapped[Table] = relationship(back_populates="assignment")
     preset: Mapped[Preset] = relationship(back_populates="assignments")

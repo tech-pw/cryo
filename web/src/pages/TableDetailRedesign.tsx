@@ -108,6 +108,7 @@ import { CostPrecisionBadge } from "../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../components/CostSavingsWaterfall";
 import { HealthScoreBreakdown, buildHealthScoreFactors } from "../components/HealthScoreBreakdown";
 import { SavingsByOperation } from "../components/SavingsByOperation";
+import { TableParamOverrides } from "../components/TableParamOverrides";
 import { PlanPreview } from "../components/PlanPreview";
 import { QueryState } from "../components/QueryState";
 import { TableAiInsights } from "../components/TableAiInsights";
@@ -1979,6 +1980,7 @@ export const TableDetail = () => {
             onPreview={() => setPreviewOpen(true)}
             onRun={() => run.mutate()}
           />
+          <TableParamOverrides tableId={tableId} />
         </div>
       ),
       forceRender: true

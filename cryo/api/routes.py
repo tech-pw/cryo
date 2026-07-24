@@ -57,6 +57,7 @@ from cryo.api.schemas import (
     DestinationRead,
     DestinationTestRequest,
     DestinationTestResponse,
+    EffectiveParamsResponse,
     EffectivePresetResponse,
     JobRead,
     MaintenancePreviewRequest,
@@ -96,6 +97,7 @@ from cryo.api.schemas import (
     TableCostRead,
     TableGroupByResponse,
     TableGroupByRow,
+    TableParamOverridePatch,
     TablePartitionsResponse,
     TablePatch,
     TablePreviewRead,
@@ -1209,6 +1211,65 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         provenance=provenance,
         rule_id=uuid.UUID(effective.rule_id) if effective.rule_id else None,
     )
+
+
+@router.get(
+    "/tables/{table_id}/effective-params",
+    response_model=EffectiveParamsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveParamsResponse:
+    table = presets.get_table_with_stats(session, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    effective = presets.resolve_effective_preset(session, table)
+    assignment = session.get(TableAssignment, table_id)
+    overrides = dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
+    preset_params = dict(effective.preset.params) if effective else {}
+    return EffectiveParamsResponse(
+        table_id=table_id,
+        preset_id=uuid.UUID(effective.preset.id) if effective else None,
+        preset_name=effective.preset.name if effective else None,
+        preset_params=preset_params,
+        param_overrides=overrides,
+        effective_params={**preset_params, **overrides},
+    )
+
+
+@router.patch(
+    "/tables/{table_id}/param-overrides",
+    response_model=EffectiveParamsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def patch_table_param_overrides(
+    table_id: uuid.UUID, payload: TableParamOverridePatch, session: SessionDep
+) -> EffectiveParamsResponse:
+    """Per-table tweaks (e.g. a tighter retention_days for one hot/test table) layered on
+    top of its assigned preset's params -- without forking the shared preset, which may be
+    pinned to other tables that shouldn't be affected. Full-replace semantics: the given
+    dict becomes the entire override set, same as PresetPatch.params.
+    """
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    param_errors = validate_params(payload.param_overrides)
+    if param_errors:
+        raise HTTPException(status_code=400, detail={"param_overrides": param_errors})
+    assignment = session.get(TableAssignment, table_id)
+    if assignment is None:
+        effective = presets.resolve_effective_preset(session, table)
+        if effective is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Table has no effective preset to override; assign one first",
+            )
+        assignment = TableAssignment(
+            table_id=table_id,
+            preset_id=uuid.UUID(effective.preset.id),
+            pinned=True,
+        )
+        session.add(assignment)
+    assignment.param_overrides = payload.param_overrides
+    session.commit()
+    return get_effective_params(table_id, session)
 
 
 @router.get(

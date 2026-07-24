@@ -553,6 +553,19 @@ class EffectivePresetResponse(BaseModel):
     rule_id: uuid.UUID | None = None
 
 
+class TableParamOverridePatch(BaseModel):
+    param_overrides: JsonDict
+
+
+class EffectiveParamsResponse(BaseModel):
+    table_id: uuid.UUID
+    preset_id: uuid.UUID | None = None
+    preset_name: str | None = None
+    preset_params: JsonDict
+    param_overrides: JsonDict
+    effective_params: JsonDict
+
+
 class TableStatsRead(OrmModel):
     table_id: uuid.UUID | None = None
     scan_at: datetime | None = None
