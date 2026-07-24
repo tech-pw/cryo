@@ -113,14 +113,15 @@ def build_evidence(session: Session, table_id: uuid.UUID) -> list[str]:
         session.scalars(
             select(QueryPattern)
             .where(QueryPattern.table_id == table_id)
-            .order_by(desc(QueryPattern.query_count))
+            .order_by(desc(QueryPattern.filter_count))
             .limit(3)
         )
     )
     if qps:
         top = qps[0]
         evidence.append(
-            f"Top query pattern runs {float(top.query_count or 0):.0f} times/day with p95 {float(top.p95_latency_ms or 0):.0f}ms."
+            f"Column '{top.column_name}' is the most frequently filtered "
+            f"({top.filter_count} filters, {top.join_count} joins) in recent query patterns."
         )
 
     table = session.get(Table, table_id)
