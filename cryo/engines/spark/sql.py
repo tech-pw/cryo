@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from cryo.domain.enums import EngineType, OperationType, PartitionTransform, PredicateCapability
@@ -307,7 +307,13 @@ def _older_than_expr(params: dict[str, Any]) -> str:
     cutoff = params.get("older_than") or params.get("cutoff_timestamp")
     if cutoff:
         return f"TIMESTAMP '{_timestamp_string(cutoff)}'"
-    return f"current_timestamp() - INTERVAL {int(params.get('retention_days', 7))} DAYS"
+    # A literal, not `current_timestamp() - INTERVAL N DAYS` -- Spark 4.1.2's stricter SQL
+    # parameter binder rejects that expression form for CALL procedure args with
+    # "IllegalArgumentException: number of args and params must match after binding"
+    # (confirmed live, 2026-07-24). Computing the cutoff here sidesteps it entirely.
+    retention_days = int(params.get("retention_days", 7))
+    computed_cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    return f"TIMESTAMP '{_timestamp_string(computed_cutoff)}'"
 
 
 def _day_start(value: Any) -> date:

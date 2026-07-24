@@ -4,6 +4,7 @@ import type {
   DatalakeDashboard,
   DestinationRead,
   DestinationWrite,
+  EffectiveParamsResponse,
   EffectivePresetResponse,
   EngineType,
   JobRead,
@@ -262,6 +263,19 @@ export const getTableHealthTrends = (api: ApiOptions, id: UUID, days = 30) =>
 
 export const getEffectivePreset = (api: ApiOptions, id: UUID) =>
   apiFetch<EffectivePresetResponse>(`/tables/${id}/effective-preset`, api);
+
+export const getEffectiveParams = (api: ApiOptions, id: UUID) =>
+  apiFetch<EffectiveParamsResponse>(`/tables/${id}/effective-params`, api);
+
+export const patchTableParamOverrides = (
+  api: ApiOptions,
+  id: UUID,
+  paramOverrides: Record<string, unknown>
+) =>
+  apiFetch<EffectiveParamsResponse>(`/tables/${id}/param-overrides`, api, {
+    method: "PATCH",
+    body: { param_overrides: paramOverrides }
+  });
 
 export const listSources = (api: ApiOptions) => apiFetch<SourceRead[]>("/sources", api);
 export const createSource = (api: ApiOptions, body: SourceWrite) =>

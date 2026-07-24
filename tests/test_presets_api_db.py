@@ -292,6 +292,93 @@ def test_simulate_effective_preset_assignment_and_sorting(api_db: ApiDb) -> None
     assert cold_table_id != hot_table_id
 
 
+def test_table_param_overrides_layer_on_preset_and_are_admin_gated(api_db: ApiDb) -> None:
+    """Per-table param tweaks (e.g. a tighter retention_days on one hot/test table) must
+    layer on top of the assigned preset's params without mutating the preset itself --
+    the preset here is shared, so a change to it would leak to every other table pinned
+    to it."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, cold_table_id = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    preset_response = client.post(
+        "/api/v1/presets",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "shared-preset",
+            "destination_id": str(destination_id),
+            "operations": ["expire_snapshots", "optimize"],
+            "params": {"min_small_files": 10, "retention_days": 7},
+            "priority": 100,
+        },
+    )
+    assert preset_response.status_code == 201
+    preset_id = preset_response.json()["id"]
+
+    assign_response = client.post(
+        "/api/v1/assignments",
+        headers=OPERATOR_HEADERS,
+        json={
+            "preset_id": preset_id,
+            "selection": {"mode": "ids", "ids": [str(hot_table_id)]},
+        },
+    )
+    assert assign_response.status_code == 200
+
+    baseline = client.get(
+        f"/api/v1/tables/{hot_table_id}/effective-params", headers=VIEWER_HEADERS
+    )
+    assert baseline.status_code == 200
+    assert baseline.json()["param_overrides"] == {}
+    assert baseline.json()["effective_params"] == {"min_small_files": 10, "retention_days": 7}
+
+    viewer_patch = client.patch(
+        f"/api/v1/tables/{hot_table_id}/param-overrides",
+        headers=VIEWER_HEADERS,
+        json={"param_overrides": {"retention_days": 1}},
+    )
+    assert viewer_patch.status_code == 403
+
+    operator_patch = client.patch(
+        f"/api/v1/tables/{hot_table_id}/param-overrides",
+        headers=OPERATOR_HEADERS,
+        json={"param_overrides": {"retention_days": 1}},
+    )
+    assert operator_patch.status_code == 403
+
+    invalid_patch = client.patch(
+        f"/api/v1/tables/{hot_table_id}/param-overrides",
+        headers=ADMIN_HEADERS,
+        json={"param_overrides": {"retention_days": -1}},
+    )
+    assert invalid_patch.status_code == 400
+
+    admin_patch = client.patch(
+        f"/api/v1/tables/{hot_table_id}/param-overrides",
+        headers=ADMIN_HEADERS,
+        json={"param_overrides": {"retention_days": 1}},
+    )
+    assert admin_patch.status_code == 200
+    assert admin_patch.json()["param_overrides"] == {"retention_days": 1}
+    # Override wins for retention_days; min_small_files still inherited from the preset.
+    assert admin_patch.json()["effective_params"] == {"min_small_files": 10, "retention_days": 1}
+
+    refetched = client.get(
+        f"/api/v1/tables/{hot_table_id}/effective-params", headers=VIEWER_HEADERS
+    )
+    assert refetched.json()["effective_params"]["retention_days"] == 1
+
+    preset_unchanged = client.get(f"/api/v1/presets/{preset_id}", headers=VIEWER_HEADERS)
+    assert preset_unchanged.json()["params"]["retention_days"] == 7
+
+    unassigned_patch = client.patch(
+        f"/api/v1/tables/{cold_table_id}/param-overrides",
+        headers=ADMIN_HEADERS,
+        json={"param_overrides": {"retention_days": 1}},
+    )
+    assert unassigned_patch.status_code == 400
+
+
 def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     source_id, destination_id = _seed_source_destination(api_db.session_factory)
     hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)

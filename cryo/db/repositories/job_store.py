@@ -15,6 +15,7 @@ from cryo.db.models import (
     MaintenanceJob,
     MaintenanceRun,
     Table,
+    TableAssignment,
     TablePartition,
 )
 from cryo.domain.enums import JobStatus, Mode, OperationType
@@ -227,6 +228,13 @@ def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:
 def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     preset = job.run.preset if job.run else None
     params: dict[str, Any] = dict(preset.params) if preset else {}
+    # Per-table tweaks (e.g. a tighter retention_days for one hot table) layered on top
+    # of the shared preset -- without this, changing a param for one table means either
+    # forking the preset or editing it in place and affecting every other table pinned
+    # to it. table_assignments.param_overrides wins over the preset default.
+    assignment = session.get(TableAssignment, job.table_id)
+    if assignment is not None and assignment.param_overrides:
+        params.update(assignment.param_overrides)
     guardrails = dict(preset.guardrails) if preset else {}
     operations = _coerce_operations(preset.operations) if preset else None
     summary = dict(job.run.summary or {}) if job.run else {}

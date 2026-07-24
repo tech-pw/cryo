@@ -564,6 +564,15 @@ export interface EffectivePresetResponse {
   rule_id?: UUID | null;
 }
 
+export interface EffectiveParamsResponse {
+  table_id: UUID;
+  preset_id?: UUID | null;
+  preset_name?: string | null;
+  preset_params: Record<string, unknown>;
+  param_overrides: Record<string, unknown>;
+  effective_params: Record<string, unknown>;
+}
+
 export interface RenderedStatementRead {
   action: string;
   engine: EngineType;
