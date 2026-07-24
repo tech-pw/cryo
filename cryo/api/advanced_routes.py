@@ -1401,7 +1401,7 @@ def _resolve_spark_fallback(session: SessionDep, table_id: UUID) -> tuple[SparkK
     effective = resolve_effective_preset(session, table)
     if effective is None:
         raise HTTPException(422, "Table has no assigned preset/destination")
-    destination = session.get(Destination, effective.preset.destination_id)
+    destination = session.get(Destination, UUID(effective.preset.destination_id))
     if destination is None:
         raise HTTPException(422, "Assigned destination not found")
     fallback_id = (destination.config or {}).get("sql_fallback_destination_id") or (
@@ -1414,20 +1414,44 @@ def _resolve_spark_fallback(session: SessionDep, table_id: UUID) -> tuple[SparkK
             "this operation runs via the Spark-on-K8s engine, same as other SQL fallback "
             "maintenance operations.",
         )
-    spark_destination = session.get(Destination, fallback_id)
+    try:
+        fallback_uuid = UUID(str(fallback_id))
+    except ValueError:
+        raise HTTPException(
+            422, f"sql_fallback_destination_id {fallback_id!r} is not a valid UUID"
+        ) from None
+    spark_destination = session.get(Destination, fallback_uuid)
     if spark_destination is None:
         raise HTTPException(422, f"Configured fallback destination {fallback_id} not found")
 
     source = session.get(Source, table.source_id)
     if source is None:
         raise HTTPException(422, "Table's source not found")
-    catalog_name = str((source.config or {}).get("catalog_name") or "cdp")
+    source_config = source.config or {}
+    catalog_name = source_config.get("catalog_name")
+    if not isinstance(catalog_name, str) or not catalog_name:
+        raise HTTPException(
+            422,
+            "Table's source has no catalog_name configured -- required to resolve the "
+            "Spark-on-K8s catalog for this table.",
+        )
     table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
 
+    # The fallback destination is shared across every table routed to it regardless of
+    # catalog, so its own spark_k8s.catalog_uri/catalog_warehouse are only a default correct
+    # for whichever catalog it was originally tuned for (see native_admit._fallback_engine_config
+    # for the same fix on the governor's own fallback dispatch path). The source's own
+    # connection info -- always correct for its own tables -- must win when present.
     spark_config = dict(spark_destination.config or {})
     spark_k8s = dict(spark_config.get("spark_k8s") or {})
-    spark_k8s.setdefault("s3_access_key", (source.config or {}).get("s3.access-key-id"))
-    spark_k8s.setdefault("s3_secret_key", (source.config or {}).get("s3.secret-access-key"))
+    spark_k8s.setdefault("s3_access_key", source_config.get("s3.access-key-id"))
+    spark_k8s.setdefault("s3_secret_key", source_config.get("s3.secret-access-key"))
+    source_uri = source_config.get("uri")
+    source_warehouse = source_config.get("warehouse")
+    if isinstance(source_uri, str) and source_uri:
+        spark_k8s["catalog_uri"] = source_uri
+    if isinstance(source_warehouse, str) and source_warehouse:
+        spark_k8s["catalog_warehouse"] = source_warehouse
     spark_config["spark_k8s"] = spark_k8s
 
     cfg = SparkK8sConfig.from_config(spark_config)
@@ -1554,7 +1578,9 @@ def spark_diagnostic_query(
 
     client, table_ref = _resolve_spark_fallback(session, table_id)
     sql = f"SELECT * FROM {table_ref}.{payload.metadata_table} LIMIT {payload.limit}"
-    k8s_job_name = client.submit_spark_sql(sql, job_name="cryo-diagnostic")
+    k8s_job_name = client.submit_spark_sql(
+        sql, job_name="cryo-diagnostic", catalog=table_ref.split(".", 1)[0]
+    )
 
     return SparkDiagnosticResponse(
         table_id=table_id,

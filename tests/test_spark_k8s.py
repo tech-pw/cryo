@@ -155,7 +155,7 @@ def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
         patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
         patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
     ):
-        client.submit_spark_sql("CALL cdp.system.rewrite_manifests(table => 'ns.tbl')")
+        client.submit_spark_sql("CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp")
 
     secret_body = core_api.create_namespaced_secret.call_args.kwargs["body"]
     assert secret_body["stringData"]["access_key_id"] == "AKIA_TEST"

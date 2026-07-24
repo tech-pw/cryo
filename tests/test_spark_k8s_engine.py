@@ -42,6 +42,34 @@ def test_execute_success_returns_ok_result() -> None:
     assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "cdp"
 
 
+def test_execute_uses_the_statements_own_catalog_over_the_destination_default() -> None:
+    """Regression, 2026-07-24: a shared SQL-fallback destination's `catalog` config is only
+    a static default (correct for whichever table it was tuned for), but execute() used to
+    trust it unconditionally. Confirmed live: a table whose real catalog is "hive" fell back
+    to a destination statically configured for "cdp" -- Spark registered its Iceberg catalog
+    plugin under "cdp" while the rendered SQL referenced "hive.system.rewrite_data_files",
+    silently resolving against the builtin spark_catalog and failing with
+    MISSING_CATALOG_ABILITY.PROCEDURES. The catalog actually used to render the SQL (carried
+    on the statement's own metadata) must win over the destination's static default."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-abc123"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-abc123", state=JobRunState.SUCCESS
+    )
+    engine._client = mock_client
+
+    hive_plan = MaintenancePlan(
+        table_ref="hive.lms.silver_adminactions",
+        mode=Mode.DEEP,
+        operations=(Operation(OperationType.OPTIMIZE_MANIFESTS, {}),),
+    )
+    results = engine.execute_plan(hive_plan)
+    assert len(results) == 1
+    assert results[0].ok
+    assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "hive"
+
+
 def test_execute_failure_returns_error_result() -> None:
     engine = SparkK8sEngine(config={})
     mock_client = MagicMock()

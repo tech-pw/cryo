@@ -131,8 +131,8 @@ class SparkK8sClient:
         self,
         sql: str,
         *,
+        catalog: str,
         job_name: str = "cryo-spark",
-        catalog: str = "cdp",
     ) -> str:
         cfg = self._config
         runner_args = [
