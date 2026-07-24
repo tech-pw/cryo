@@ -187,6 +187,17 @@ def main() -> int | NoReturn:
             builder = builder.config(
                 f"spark.sql.catalog.{args.catalog}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO"
             )
+            # Iceberg's own delete-loader reads position-delete files concurrently via its
+            # internal worker pool (org.apache.iceberg.data.BaseDeleteLoader), independent of
+            # Spark's own executor/task parallelism -- a table with hundreds/thousands of small
+            # delete files can issue that many near-simultaneous S3 GetObject calls well before
+            # Spark-level concurrency is a factor. The Apache HTTP client's default connection
+            # pool is small enough that this genuinely exhausts it (confirmed live, 2026-07-24:
+            # ConnectionPoolTimeoutException while reading position deletes for
+            # hive.lms.silver_adminactions, 1,344 delete files against only 3 data files).
+            builder = builder.config(
+                f"spark.sql.catalog.{args.catalog}.http-client.apache.max-connections", "200"
+            )
     if args.s3_endpoint:
         builder = builder.config(
             f"spark.sql.catalog.{args.catalog}.s3.endpoint", args.s3_endpoint
