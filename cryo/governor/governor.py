@@ -113,12 +113,20 @@ class Governor:
             re_enqueued = reconcile_queued_jobs(self._store, self._queue)
             re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
             orphaned = purge_stale_queue_entries(self._store, self._queue)
+            step_ledger = None
+            try:
+                from cryo.db.repositories.job_steps import JobStepStore
+
+                step_ledger = JobStepStore(self._session_factory)
+            except Exception:
+                logger.debug("JobStepStore unavailable for stale reaper", exc_info=True)
             reaped = reconcile_stale_running_jobs(
                 self._store,
                 self._queue,
                 self._lock_store,
                 now=current,
                 stale_after_seconds=self._lock_ttl_seconds,
+                step_ledger=step_ledger,
             )
             admitted = 0
             deferred = 0

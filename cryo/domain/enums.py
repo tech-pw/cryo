@@ -74,3 +74,15 @@ class JobStatus(StrEnum):
     SKIPPED = "skipped"
     DEFERRED = "deferred"
     PARTIAL = "partial"
+
+
+class JobStepStatus(StrEnum):
+    """Write-ahead statement status on ``cryo.job_steps``.
+
+    See ``docs/WORKER_STEP_LEDGER.md``.
+    """
+
+    STARTED = "started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"

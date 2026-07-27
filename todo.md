@@ -274,6 +274,9 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       (Remaining: multi-region price tables, non-storage AWS cost lines like data transfer.)
 - [ ] Saved filters / scheduled saved views in the Explorer.
 - [x] Redis WebSocket fanout for live run console (run events via Redis Streams + `/ws/runs/{id}`).
+- [x] **Worker step ledger + orphan recovery** — write-ahead `cryo.job_steps`, quiet-window gates for
+      dangerous ops, job-owner Redis leases, Trino/Spark engine probes, governor reaper skips leased/
+      started/active jobs. See `docs/WORKER_STEP_LEDGER.md`. Migration `20260727_0033`.
 - [ ] Self-host IBM Plex fonts (woff2) instead of Google Fonts CDN (`research-and-roadmap.md` Part 6 §8).
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.

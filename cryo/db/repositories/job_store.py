@@ -114,6 +114,12 @@ class SQLJobStore:
             job.force_admit = value
             session.commit()
 
+    def set_engine_ref(self, job_id: str, engine_ref: str) -> None:
+        with self._session_factory() as session:
+            job = _load_job(session, uuid.UUID(job_id))
+            job.engine_ref = engine_ref
+            session.commit()
+
     def record_audit(self, record: AuditRecord) -> None:
         with self._session_factory() as session:
             session.add(
@@ -270,6 +276,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         actor=actor,
         operations=operations,
         force_admit=bool(job.force_admit),
+        dispatch_id=str(job.dispatch_id) if job.dispatch_id is not None else None,
     )
 
 

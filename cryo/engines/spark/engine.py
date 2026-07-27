@@ -85,6 +85,8 @@ class SparkEMREngine:
                 job_name=job_name,
                 catalog=self._catalog,
             )
+            if ctx is not None and ctx.on_engine_ref is not None:
+                ctx.on_engine_ref(job_run_id)
             result = self.emr_client.wait_for_completion(job_run_id)
 
             duration_ms = _elapsed_ms(start)
