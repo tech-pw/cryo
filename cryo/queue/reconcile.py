@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -95,6 +96,8 @@ def reconcile_stale_running_jobs(
     *,
     now: datetime | None = None,
     stale_after_seconds: int = 6 * 60 * 60,
+    step_ledger: Any | None = None,
+    engine_activity_checker: Callable[[MaintenanceJobRecord], bool] | None = None,
 ) -> int:
     """Fail jobs stuck in RUNNING past `stale_after_seconds` and free their slot.
 
@@ -104,6 +107,9 @@ def reconcile_stale_running_jobs(
     since nothing else transitions a RUNNING job out of that state. Seen in production:
     5 jobs stuck RUNNING for hours (oldest ~20h) across two worker restarts, silently
     eating destination concurrency slots that never got reclaimed.
+
+    Skips jobs that still have an adopt lease, an open write-ahead step, or live engine
+    maintenance activity — those are owned by orphan recovery, not this reaper.
     """
     list_running = getattr(store, "list_running_jobs", None)
     if not callable(list_running):
@@ -116,6 +122,16 @@ def reconcile_stale_running_jobs(
             continue
         started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=UTC)
         if (current - started_at).total_seconds() <= stale_after_seconds:
+            continue
+        get_owner = getattr(lock_store, "get_job_owner", None)
+        if callable(get_owner) and get_owner(job.id):
+            logger.debug("Skipping stale reap for job %s: adopt lease held", job.id)
+            continue
+        if step_ledger is not None and step_ledger.has_started_step(job.id):
+            logger.debug("Skipping stale reap for job %s: started step open", job.id)
+            continue
+        if callable(engine_activity_checker) and engine_activity_checker(job):
+            logger.debug("Skipping stale reap for job %s: engine still active", job.id)
             continue
         store.mark_status(job.id, JobStatus.FAILED, error="stale_running_reaped")
         queue.complete(job.id, JobStatus.FAILED)

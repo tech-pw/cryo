@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
+from cryo.domain.enums import EngineType, JobStatus, JobStepStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
 from cryo.engines.base import ExecCtx, RenderedStatement
 from cryo.engines.base import ExecResult as BaseExecResult
@@ -21,6 +21,7 @@ from cryo.queue.run_events import (
     build_log_line,
     safe_publish,
 )
+from cryo.worker.safety_gates import requires_quiet_window, wait_for_table_quiet
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class MaintenanceJobRecord:
     actor: str | None = None
     operations: tuple[OperationType, ...] | None = None
     force_admit: bool = False
+    dispatch_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,8 @@ class JobStore(Protocol):
 
     def set_force_admit(self, job_id: str, value: bool) -> None: ...
 
+    def set_engine_ref(self, job_id: str, engine_ref: str) -> None: ...
+
 
 class InMemoryJobStore:
     def __init__(self) -> None:
@@ -214,6 +218,9 @@ class InMemoryJobStore:
 
     def set_force_admit(self, job_id: str, value: bool) -> None:
         self.jobs[job_id].force_admit = value
+
+    def set_engine_ref(self, job_id: str, engine_ref: str) -> None:
+        self.jobs[job_id].engine_ref = engine_ref
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]:
         return [
@@ -300,6 +307,11 @@ class Worker:
         on_job_finished: Callable[[], None] | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
         run_events: RunEventSink | None = None,
+        step_ledger: Any | None = None,
+        should_stop: Callable[[], bool] | None = None,
+        table_activity_probe: Callable[..., Any] | None = None,
+        quiet_interval_sec: float = 1.0,
+        quiet_max_wait_sec: float | None = 120.0,
     ) -> None:
         self._queue = queue
         self._store = store
@@ -308,6 +320,11 @@ class Worker:
         self._on_job_finished = on_job_finished
         self._lock_ttl_seconds = lock_ttl_seconds
         self._run_events = run_events
+        self._step_ledger = step_ledger
+        self._should_stop = should_stop
+        self._table_activity_probe = table_activity_probe
+        self._quiet_interval_sec = quiet_interval_sec
+        self._quiet_max_wait_sec = quiet_max_wait_sec
 
     def process_next(self) -> MaintenanceJobRecord | None:
         job_id = self._queue.claim_admitted()
@@ -442,7 +459,32 @@ class Worker:
                 had_skip = native_had_skip
             else:
                 for index, statement in enumerate(statements):
+                    if self._should_stop is not None and self._should_stop():
+                        return self._store.get_job(job.id)
                     self._renew_table_lock(job)
+
+                    existing_step = None
+                    if self._step_ledger is not None:
+                        existing_step = self._step_ledger.get_step(job.id, index)
+                        if existing_step is not None and existing_step.status in {
+                            JobStepStatus.SUCCEEDED,
+                            JobStepStatus.SKIPPED,
+                        }:
+                            had_success = had_success or (
+                                existing_step.status is JobStepStatus.SUCCEEDED
+                            )
+                            had_skip = had_skip or (
+                                existing_step.status is JobStepStatus.SKIPPED
+                            )
+                            continue
+                        if (
+                            existing_step is not None
+                            and existing_step.status is JobStepStatus.STARTED
+                        ):
+                            final_status = JobStatus.RUNNING
+                            error = "awaiting_started_step_recovery"
+                            break
+
                     from cryo.db.session import SessionLocal
                     from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
@@ -475,6 +517,26 @@ class Worker:
                                 ),
                             )
                             break
+
+                    if not self._preflight_before_step(
+                        job=job,
+                        destination=destination,
+                        table_ref=table_ref,
+                        operation=statement.action,
+                        detail=statement.sql,
+                    ):
+                        final_status = JobStatus.RUNNING
+                        error = "table_not_quiet"
+                        break
+
+                    if self._step_ledger is not None:
+                        self._step_ledger.begin_step(
+                            job.id,
+                            index,
+                            statement.action,
+                            detail=statement.sql,
+                        )
+
                     started = perf_counter()
                     exec_ctx = ExecContext(
                         job_id=job.id,
@@ -483,6 +545,19 @@ class Worker:
                         statement_index=index,
                         replica=job.replica,
                     )
+
+                    def _on_engine_ref(
+                        ref: str,
+                        *,
+                        _job_id: str = job.id,
+                        _index: int = index,
+                    ) -> None:
+                        if self._step_ledger is not None:
+                            self._step_ledger.set_step_engine_ref(_job_id, _index, ref)
+                        set_ref = getattr(self._store, "set_engine_ref", None)
+                        if callable(set_ref):
+                            set_ref(_job_id, ref)
+
                     safe_publish(
                         self._run_events,
                         job.run_id,
@@ -500,9 +575,19 @@ class Worker:
                         ),
                     )
                     try:
-                        result = engine.execute(statement, _to_exec_ctx(exec_ctx))
+                        result = engine.execute(
+                            statement,
+                            _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
+                        )
                     except Exception as exc:
                         duration_ms = int((perf_counter() - started) * 1000)
+                        if self._step_ledger is not None:
+                            self._step_ledger.complete_step(
+                                job.id,
+                                index,
+                                JobStepStatus.FAILED,
+                                detail=str(exc),
+                            )
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
@@ -542,6 +627,14 @@ class Worker:
                     if getattr(result, "skipped", False):
                         had_skip = True
                         detail = result.detail or result.error or "operation skipped"
+                        if self._step_ledger is not None:
+                            self._step_ledger.complete_step(
+                                job.id,
+                                index,
+                                JobStepStatus.SKIPPED,
+                                engine_ref=result.engine_ref,
+                                detail=detail,
+                            )
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
@@ -571,6 +664,14 @@ class Worker:
                         continue
                     if not getattr(result, "ok", True):
                         detail = result.error or result.detail or "engine execution failed"
+                        if self._step_ledger is not None:
+                            self._step_ledger.complete_step(
+                                job.id,
+                                index,
+                                JobStepStatus.FAILED,
+                                engine_ref=result.engine_ref,
+                                detail=detail,
+                            )
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
@@ -603,6 +704,14 @@ class Worker:
                         error = detail
                         break
                     had_success = True
+                    if self._step_ledger is not None:
+                        self._step_ledger.complete_step(
+                            job.id,
+                            index,
+                            JobStepStatus.SUCCEEDED,
+                            engine_ref=result.engine_ref,
+                            detail=result.detail,
+                        )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
@@ -641,6 +750,8 @@ class Worker:
                     )
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
+            if error in frozenset({"table_not_quiet", "awaiting_started_step_recovery"}):
+                return self._store.get_job(job.id)
         except Exception as exc:
             final_status = JobStatus.FAILED
             error = str(exc)
@@ -717,6 +828,65 @@ class Worker:
             operation_type=operation_type,
             status=metric_status,
         ).inc()
+
+    def _preflight_before_step(
+        self,
+        *,
+        job: MaintenanceJobRecord,
+        destination: DestinationConfig,
+        table_ref: str | None,
+        operation: OperationType,
+        detail: str | None,
+    ) -> bool:
+        """Return False if the table is not quiet enough to begin this step."""
+        if self._table_activity_probe is None and not requires_quiet_window(operation):
+            return True
+        if self._table_activity_probe is None:
+            cfg = destination.config or {}
+            if not (
+                cfg.get("coordinators") or cfg.get("hosts") or cfg.get("host")
+            ):
+                engine = destination.engine or ""
+                if engine in {
+                    EngineType.SPARK_EMR.value,
+                    "spark_emr",
+                    "spark",
+                }:
+                    if not cfg.get("application_id") and cfg.get("submit_mode") != "k8s":
+                        return True
+                if engine in {
+                    EngineType.TRINO.value,
+                    "trino",
+                    EngineType.TRINO,
+                }:
+                    return True
+            from cryo.worker.orphan_recovery import probe_table_activity_for_destination
+
+            def _probe() -> Any:
+                return probe_table_activity_for_destination(
+                    destination,
+                    table_ref,
+                    operation=operation,
+                    detail=detail,
+                    engine_ref=job.engine_ref,
+                )
+
+            probe = _probe
+        else:
+            probe = self._table_activity_probe
+
+        if not requires_quiet_window(operation):
+            from cryo.worker.safety_gates import TableActivity
+
+            activity = probe()
+            return activity is not TableActivity.ACTIVE
+        return wait_for_table_quiet(
+            probe,
+            operation=operation,
+            interval_sec=self._quiet_interval_sec,
+            max_wait_sec=self._quiet_max_wait_sec,
+            should_stop=self._should_stop,
+        )
 
     def _ensure_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is None or self._lock_store.is_table_locked(job.table_id):
@@ -1527,6 +1697,7 @@ def _to_exec_ctx(
     *,
     run_id: str | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    on_engine_ref: Callable[[str], None] | None = None,
     session_factory: Any = None,
     chunk_checkpointing: bool = False,
 ) -> ExecCtx:
@@ -1547,6 +1718,8 @@ def _to_exec_ctx(
         replica=ctx.replica,
         run_id=run_id,
         on_progress=on_progress,
+        on_engine_ref=on_engine_ref,
+        statement_index=ctx.statement_index,
         session_factory=session_factory,
         chunk_checkpointing=chunk_checkpointing,
     )

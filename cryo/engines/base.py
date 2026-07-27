@@ -19,6 +19,7 @@ class RenderedStatement:
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+EngineRefCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class ExecCtx:
     replica: str | None = None
     run_id: str | None = None
     on_progress: ProgressCallback | None = None
+    on_engine_ref: EngineRefCallback | None = None
+    statement_index: int | None = None
     session_factory: Any = None
     chunk_checkpointing: bool = False
 

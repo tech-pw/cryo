@@ -151,6 +151,69 @@ def test_reconcile_keeps_running_job_still_within_staleness_window() -> None:
     assert store.get_job("job-1").status is JobStatus.RUNNING
 
 
+def test_reconcile_skips_stale_job_with_adopt_lease() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 7, 13, 17, 15, tzinfo=UTC),
+        )
+    )
+    assert locks.acquire_job_owner("job-1", "worker-a", ttl_seconds=600)
+
+    reaped = reconcile_stale_running_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC),
+        stale_after_seconds=6 * 60 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
+def test_reconcile_skips_stale_job_with_started_step() -> None:
+    from cryo.db.repositories.job_steps import InMemoryJobStepStore
+    from cryo.domain.enums import OperationType
+
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    steps = InMemoryJobStepStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 7, 13, 17, 15, tzinfo=UTC),
+        )
+    )
+    steps.begin_step("job-1", 0, OperationType.EXPIRE_SNAPSHOTS, detail="expire")
+
+    reaped = reconcile_stale_running_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC),
+        stale_after_seconds=6 * 60 * 60,
+        step_ledger=steps,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
 def test_governor_re_enqueues_and_admits_db_queued_jobs() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

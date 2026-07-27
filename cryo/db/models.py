@@ -755,12 +755,49 @@ class MaintenanceJob(Base):
     # successful run against the same table just reset its cooldown clock. Table locks, PII,
     # and ABAC checks are real safety gates and are never bypassed by this flag.
     force_admit: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Write-ahead statement index for worker step ledger (docs/WORKER_STEP_LEDGER.md).
+    current_step_index: Mapped[int | None] = mapped_column(Integer)
 
     run: Mapped[MaintenanceRun] = relationship(back_populates="jobs")
     table: Mapped[Table] = relationship(back_populates="jobs")
     destination: Mapped[Destination] = relationship(back_populates="jobs")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
     dispatch: Mapped[NativeDispatch | None] = relationship(back_populates="jobs")
+    steps: Mapped[list[JobStep]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class JobStep(Base):
+    """Write-ahead per-statement ledger for a maintenance job.
+
+    ``begin_step`` before engine execute; ``complete_step`` after. See
+    ``docs/WORKER_STEP_LEDGER.md``.
+    """
+
+    __tablename__ = "job_steps"
+    __table_args__ = (
+        UniqueConstraint("job_id", "step_index", name="uq_job_steps_job_step"),
+        Index("ix_job_steps_job_status", "job_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'started'"))
+    engine_ref: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    job: Mapped[MaintenanceJob] = relationship(back_populates="steps")
 
 
 class NativeDispatch(Base):

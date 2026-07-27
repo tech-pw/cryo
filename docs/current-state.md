@@ -227,6 +227,15 @@ upstream-gated. Trino/Spark remain the production-safe choice for OPTIMIZE until
 - Production-grade signed JWT/OIDC auth (current auth is dev-friendly)
 - Full iceberg-rust write operations (waiting for upstream API stabilization)
 
+## Worker step ledger / orphan recovery (2026-07-27)
+
+- Write-ahead `cryo.job_steps` + `jobs.current_step_index` (migration `20260727_0033`)
+- Worker begins/completes steps around engine execute; Spark submits call `on_engine_ref` before wait
+- Quiet-window preflight for expire / orphan / optimize_manifests (`cryo/worker/safety_gates.py`)
+- Orphan recovery adopts RUNNING jobs via job-owner lease; does not admit; native watcher boundary
+- Governor stale reaper skips jobs with adopt lease, open started step, or live engine activity
+- Contract: `docs/WORKER_STEP_LEDGER.md`
+
 ## Verification Snapshot
 
 Recent checks from implementation sessions:
