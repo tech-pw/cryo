@@ -17,6 +17,7 @@ import {
   type SmartLayoutRecommendationRead
 } from "../api/client";
 import { useCommitEventStream } from "../hooks/useCommitEventStream";
+import { ConfirmAction } from "../components/confirm";
 import { useAuth } from "../lib/auth";
 
 const TIERING_HELP_CONTENT = (
@@ -152,7 +153,7 @@ export function SmartMaintenance() {
     mutationFn: (rec: SmartLayoutRecommendationRead) =>
       executeSmartLayoutRecommendation(api, rec.id, "standard"),
     onSuccess: async (result) => {
-      messageApi.success("Run queued from approved recommendation");
+      messageApi.success("Layout change applied");
       await refreshQueries();
       navigate(`/runs/${result.run_id}`);
     },
@@ -243,14 +244,23 @@ export function SmartMaintenance() {
           >
             Approve
           </Button>
-          <Button
-            size="small"
-            onClick={() => execute.mutate(row)}
+          <ConfirmAction
+            title="Apply this layout change?"
+            description={
+              <span>
+                Physically re-sorts <strong>{row.table_ref}</strong> by{" "}
+                <strong>{row.recommended_columns?.join(", ") || "the recommended columns"}</strong>{" "}
+                ({row.recommended_strategy}) and sets <code>write.sort-order</code> so future
+                writers keep it that way. This rewrites the table&apos;s data files now.
+              </span>
+            }
+            onConfirm={() => execute.mutate(row)}
             disabled={row.status !== "approved"}
-            loading={execute.isPending}
           >
-            Execute
-          </Button>
+            <Button size="small" disabled={row.status !== "approved"} loading={execute.isPending}>
+              Execute
+            </Button>
+          </ConfirmAction>
           <Button
             size="small"
             danger

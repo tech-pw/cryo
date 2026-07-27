@@ -20,7 +20,6 @@ const ROUTE_LABELS: Record<string, string> = {
   "/cost": "Cost",
   "/cost-insights": "Cost insights",
   "/sla": "SLA",
-  "/optimize": "Optimize",
   "/presets": "Presets",
   "/runs": "Runs",
   "/connections": "Connections",

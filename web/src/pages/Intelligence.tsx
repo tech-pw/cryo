@@ -27,6 +27,7 @@ import {
   getBanditStatus,
   getCopilotQuestions,
   getCostModelEvaluate,
+  getQPPConfidence,
   listMcpTools,
   resetBandit,
   searchCopilot
@@ -64,6 +65,11 @@ export const Intelligence = () => {
   const costModel = useQuery({
     queryKey: ["cost-model-evaluate"],
     queryFn: () => getCostModelEvaluate(api),
+    refetchInterval: 120_000
+  });
+  const qpp = useQuery({
+    queryKey: ["qpp-confidence"],
+    queryFn: () => getQPPConfidence(api),
     refetchInterval: 120_000
   });
   const mcpTools = useQuery({
@@ -362,6 +368,49 @@ export const Intelligence = () => {
                 </>
               ) : (
                 <EmptyState title="Cost model unavailable" description="No audit outcomes to evaluate yet." />
+              )}
+            </Card>
+
+            <Card title="Query performance prediction (QPP)" loading={qpp.isLoading}>
+              {qpp.data ? (
+                <>
+                  <Tag color={qpp.data.qpp_enabled ? "success" : "default"}>
+                    {qpp.data.qpp_enabled ? "Admission gating enabled" : "Advisory only — not gating admission"}
+                  </Tag>
+                  <Row gutter={16} style={{ marginTop: 12 }}>
+                    <Col span={12}>
+                      <Statistic title="Observations" value={qpp.data.observations} />
+                    </Col>
+                    <Col span={12}>
+                      <Statistic
+                        title="Confidence"
+                        value={(qpp.data.confidence * 100).toFixed(0)}
+                        suffix="%"
+                      />
+                    </Col>
+                  </Row>
+                  <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
+                    <Descriptions.Item label="Using trained model">
+                      {qpp.data.using_trained_model ? "Yes" : "No — falling back to defaults"}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Min observations to train">
+                      {formatNumber(qpp.data.min_observations)}
+                    </Descriptions.Item>
+                  </Descriptions>
+                  {!qpp.data.using_trained_model ? (
+                    <Alert
+                      style={{ marginTop: 12 }}
+                      type="info"
+                      showIcon
+                      title="Still collecting observations — the governor uses default latency estimates until enough runs are recorded."
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <EmptyState
+                  title="QPP unavailable"
+                  description="No query performance predictions recorded yet."
+                />
               )}
             </Card>
           </Space>

@@ -140,6 +140,9 @@ def test_spark_render_golden_operation_sql() -> None:
             "older_than => TIMESTAMP '2025-05-01 00:00:00')"
         ),
         (
+            "ALTER TABLE iceberg.demo.events SET TBLPROPERTIES ("
+            "'write.target-file-size-bytes' = '268435456', "
+            "'write.distribution-mode' = 'hash');\n"
             "CALL iceberg.system.rewrite_data_files(table => 'iceberg.demo.events', "
             "strategy => 'binpack', "
             "where => '(event_date >= DATE ''2025-05-18'' AND event_date < DATE ''2025-05-19'' "
@@ -150,6 +153,29 @@ def test_spark_render_golden_operation_sql() -> None:
         ),
         "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')",
     ]
+
+
+def test_spark_renders_optimize_persists_target_file_size_and_distribution_mode() -> None:
+    """target-file-size-bytes previously only governed the one rewrite it was passed to --
+    nothing told the table itself, so the next writer that isn't Cryo has no idea what size
+    this table was tuned to and can reintroduce the exact fragmentation optimize just fixed.
+    Persisting it (and a sensible write.distribution-mode default) as table properties closes
+    that gap."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.OPTIMIZE, {"file_size_mb": 128}),),
+    )
+    sql = render(plan)[0].sql
+    statements = sql.split(";\n")
+    assert len(statements) == 2
+    assert statements[0] == (
+        "ALTER TABLE iceberg.demo.events SET TBLPROPERTIES ("
+        "'write.target-file-size-bytes' = '134217728', "
+        "'write.distribution-mode' = 'hash')"
+    )
+    assert statements[1].startswith("CALL iceberg.system.rewrite_data_files(")
+    assert "'target-file-size-bytes', '134217728'" in statements[1]
 
 
 def test_spark_renders_expire_snapshots_default_retention_as_literal_timestamp() -> None:
