@@ -19,6 +19,14 @@ class LockStore(Protocol):
 
     def list_table_locks(self) -> list[tuple[str, str]]: ...
 
+    def acquire_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool: ...
+
+    def renew_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool: ...
+
+    def release_job_owner(self, job_id: str, holder: str) -> None: ...
+
+    def get_job_owner(self, job_id: str) -> str | None: ...
+
 
 @dataclass
 class _MemoryLock:
@@ -31,6 +39,7 @@ class InMemoryLockStore:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._leaders: dict[str, _MemoryLock] = {}
         self._table_locks: dict[str, _MemoryLock] = {}
+        self._job_owners: dict[str, _MemoryLock] = {}
 
     def acquire_leader(self, name: str, holder: str, ttl_seconds: int) -> bool:
         return self._acquire(self._leaders, name, holder, ttl_seconds)
@@ -58,6 +67,27 @@ class InMemoryLockStore:
     def list_table_locks(self) -> list[tuple[str, str]]:
         self._purge_expired(self._table_locks)
         return [(table_id, lock.holder) for table_id, lock in self._table_locks.items()]
+
+    def acquire_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool:
+        return self._acquire(self._job_owners, job_id, holder, ttl_seconds)
+
+    def renew_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool:
+        self._purge_expired(self._job_owners)
+        lock = self._job_owners.get(job_id)
+        if lock is None or lock.holder != holder:
+            return False
+        lock.expires_at = self._clock() + timedelta(seconds=ttl_seconds)
+        return True
+
+    def release_job_owner(self, job_id: str, holder: str) -> None:
+        lock = self._job_owners.get(job_id)
+        if lock and lock.holder == holder:
+            del self._job_owners[job_id]
+
+    def get_job_owner(self, job_id: str) -> str | None:
+        self._purge_expired(self._job_owners)
+        lock = self._job_owners.get(job_id)
+        return lock.holder if lock is not None else None
 
     def _acquire(
         self,
@@ -131,11 +161,39 @@ class RedisLockStore:
                 pairs.append((table_id, holder))
         return pairs
 
+    def acquire_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool:
+        return bool(self._redis.set(self._job_owner_key(job_id), holder, nx=True, ex=ttl_seconds))
+
+    def renew_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool:
+        key = self._job_owner_key(job_id)
+        current = self._redis.get(key)
+        if _decode(current) != holder:
+            return False
+        return bool(self._redis.expire(key, ttl_seconds))
+
+    def release_job_owner(self, job_id: str, holder: str) -> None:
+        key = self._job_owner_key(job_id)
+        lua = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        else
+            return 0
+        end
+        """
+        self._redis.eval(lua, 1, key, holder)
+
+    def get_job_owner(self, job_id: str) -> str | None:
+        value = _decode(self._redis.get(self._job_owner_key(job_id)))
+        return value or None
+
     def _leader_key(self, name: str) -> str:
         return f"{self._namespace}:leader:{name}"
 
     def _table_key(self, table_id: str) -> str:
         return f"{self._namespace}:table-lock:{table_id}"
+
+    def _job_owner_key(self, job_id: str) -> str:
+        return f"{self._namespace}:job-owner:{job_id}"
 
 
 def _decode(value: Any) -> str:

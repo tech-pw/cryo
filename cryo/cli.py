@@ -353,6 +353,23 @@ class WorkerRunner(DaemonRunner):
             self._logger.warning("Worker not available (missing dependencies)")
             return
 
+        try:
+            from cryo.db.repositories.job_steps import JobStepStore
+            from cryo.db.session import SessionLocal
+            from cryo.worker.orphan_recovery import default_worker_holder_id, recover_orphaned_jobs
+
+            wiring = self._get_wiring()
+            step_ledger = JobStepStore(SessionLocal)
+            recover_orphaned_jobs(
+                store=wiring.job_store,
+                queue=wiring.queue,
+                lock_store=wiring.lock_store,
+                step_ledger=step_ledger,
+                holder_id=default_worker_holder_id(),
+            )
+        except Exception as exc:
+            self._logger.debug("Orphan recovery tick failed: %s", exc)
+
         job = worker.process_next()
         if job is not None:
             self._logger.info(
@@ -375,6 +392,7 @@ class WorkerRunner(DaemonRunner):
             return self._worker
 
         try:
+            from cryo.db.repositories.job_steps import JobStepStore
             from cryo.db.repositories.run_finalizer import finalize_open_runs
             from cryo.db.session import SessionLocal
             from cryo.worker.worker import Worker
@@ -390,6 +408,7 @@ class WorkerRunner(DaemonRunner):
                 lock_store=wiring.lock_store,
                 on_job_finished=finalize_finished_runs,
                 run_events=wiring.run_events,
+                step_ledger=JobStepStore(SessionLocal),
             )
             return self._worker
         except Exception as exc:

@@ -98,6 +98,8 @@ class SparkK8sEngine:
                 job_name=job_name,
                 catalog=str(catalog),
             )
+            if ctx is not None and ctx.on_engine_ref is not None:
+                ctx.on_engine_ref(job_id)
             result = self.k8s_client.wait_for_completion(job_id)
 
             duration_ms = _elapsed_ms(start)
@@ -112,7 +114,10 @@ class SparkK8sEngine:
                 ok=False,
                 engine_ref=job_id,
                 detail=stmt.sql,
-                error=f"Spark-on-K8s Job {result.state.value}: {result.state_details or 'no details'}",
+                error=(
+                    f"Spark-on-K8s Job {result.state.value}: "
+                    f"{result.state_details or 'no details'}"
+                ),
                 duration_ms=duration_ms,
             )
         except TimeoutError as exc:
