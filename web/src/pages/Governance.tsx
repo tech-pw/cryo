@@ -23,13 +23,17 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   approvalAction,
+  compactObservations,
   createApprovalRequest,
   createTierPolicy,
   deleteTierPolicy,
   getCostForecast,
+  getGitOpsStatus,
+  getObservationStats,
   getS3TieringRecommendations,
   getTableLineage,
   getTierCandidates,
+  listAbacPolicies,
   listFleetAnomalies,
   listMaintenanceSignals,
   listPendingApprovals,
@@ -37,6 +41,7 @@ import {
   listTables,
   listTierPolicies,
   patchTierPolicy,
+  searchObservations,
   type TierPolicyRead,
   type TierPolicyWrite
 } from "../api/client";
@@ -45,7 +50,7 @@ import { ConfirmAction } from "../components/confirm";
 import { EmptyState, PageHeader, QueryErrorAlert, TelemetryRequiredNotice } from "../components/common";
 import { StatusTag } from "../components/status";
 import { useAuth } from "../lib/auth";
-import { formatCurrency, formatTime } from "../lib/format";
+import { formatBytesGb, formatCurrency, formatTime } from "../lib/format";
 import { qualifiedTableName, schemaTableName } from "../lib/tableLabels";
 import { leaf } from "../lib/predicate";
 
@@ -135,6 +140,38 @@ export const Governance = () => {
     queryKey: ["table-lineage", api.token, lineageTableId],
     queryFn: () => getTableLineage(api, lineageTableId),
     enabled: lineageTableId.length > 8
+  });
+
+  const observationStats = useQuery({
+    queryKey: ["observation-stats", api.token],
+    queryFn: () => getObservationStats(api),
+    refetchInterval: 60_000
+  });
+  const [observationFilter, setObservationFilter] = useState<{ table_id?: string; event_type?: string }>({});
+  const observationSearch = useQuery({
+    queryKey: ["observation-search", api.token, observationFilter],
+    queryFn: () => searchObservations(api, { ...observationFilter, limit: 50 })
+  });
+  const abacPolicies = useQuery({
+    queryKey: ["abac-policies", api.token],
+    queryFn: () => listAbacPolicies(api)
+  });
+  const gitopsStatus = useQuery({
+    queryKey: ["gitops-status", api.token],
+    queryFn: () => getGitOpsStatus(api),
+    refetchInterval: 60_000
+  });
+  const compactObservationsMutation = useMutation({
+    mutationFn: () => compactObservations(api),
+    onSuccess: (result) => {
+      const shrinkFactor = result.bytes_out > 0 ? result.bytes_in / result.bytes_out : null;
+      message.success(
+        `Compacted ${result.files_merged} files (${result.rows} rows` +
+          (shrinkFactor ? `, ${shrinkFactor.toFixed(1)}x smaller)` : ")")
+      );
+      void queryClient.invalidateQueries({ queryKey: ["observation-stats"] });
+    },
+    onError: (error) => message.error((error as Error).message)
   });
 
   const actOnApproval = useMutation({
@@ -705,6 +742,250 @@ export const Governance = () => {
                   description="Lineage is built from query-log ingestion; complex SQL may produce incomplete graphs."
                 />
               )}
+            </Space>
+          </Card>
+        </Col>
+
+        <Col xs={24}>
+          <Card
+            title="Observation lakehouse"
+            extra={
+              role === "admin" ? (
+                <ConfirmAction
+                  title="Compact observation history?"
+                  description="Merges small append-only observation files into fewer, larger ones. Safe to run anytime; does not delete events."
+                  onConfirm={() => compactObservationsMutation.mutate()}
+                >
+                  <Button size="small" loading={compactObservationsMutation.isPending}>
+                    Compact now
+                  </Button>
+                </ConfirmAction>
+              ) : null
+            }
+          >
+            <Space orientation="vertical" size={12} className="full-width">
+              <Typography.Text type="secondary">
+                Append-only archive of every actuation (stimulus / response / context) for
+                incident review and audit — separate from the Postgres audit log.
+              </Typography.Text>
+              <QueryErrorAlert error={observationStats.error} title="Failed to load observation stats" />
+              {observationStats.data ? (
+                <Row gutter={[16, 16]}>
+                  <Col xs={12} md={6}>
+                    <Typography.Text type="secondary">Files</Typography.Text>
+                    <div>{observationStats.data.total_files.toLocaleString()}</div>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Typography.Text type="secondary">Size</Typography.Text>
+                    <div>{formatBytesGb(observationStats.data.total_bytes)}</div>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Typography.Text type="secondary">Oldest event</Typography.Text>
+                    <div>{observationStats.data.oldest_event ? formatTime(observationStats.data.oldest_event) : "—"}</div>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Typography.Text type="secondary">Newest event</Typography.Text>
+                    <div>{observationStats.data.newest_event ? formatTime(observationStats.data.newest_event) : "—"}</div>
+                  </Col>
+                </Row>
+              ) : null}
+
+              <Space wrap>
+                <Select
+                  showSearch
+                  allowClear
+                  placeholder="Filter by table"
+                  optionFilterProp="label"
+                  style={{ minWidth: 260 }}
+                  loading={tableOptions.isLoading}
+                  options={(tableOptions.data?.items ?? []).map((table) => ({
+                    value: table.id,
+                    label: qualifiedTableName(table)
+                  }))}
+                  value={observationFilter.table_id}
+                  onChange={(value) =>
+                    setObservationFilter((prev) => ({ ...prev, table_id: value ?? undefined }))
+                  }
+                />
+                <Select
+                  allowClear
+                  placeholder="Event type"
+                  style={{ minWidth: 200 }}
+                  options={[
+                    { value: "maintenance_run", label: "Maintenance run" },
+                    { value: "scan", label: "Scan" },
+                    { value: "approval", label: "Approval" },
+                    { value: "trigger", label: "Signal trigger" },
+                    { value: "ai_recommendation", label: "AI recommendation" }
+                  ]}
+                  value={observationFilter.event_type}
+                  onChange={(value) =>
+                    setObservationFilter((prev) => ({ ...prev, event_type: value ?? undefined }))
+                  }
+                />
+              </Space>
+
+              <QueryErrorAlert error={observationSearch.error} title="Failed to search observations" />
+              <Table
+                size="small"
+                rowKey="id"
+                loading={observationSearch.isLoading}
+                dataSource={observationSearch.data?.items ?? []}
+                pagination={false}
+                scroll={{ y: 320 }}
+                locale={{
+                  emptyText: (
+                    <EmptyState
+                      title="No observations found"
+                      description="Adjust the filters above, or nothing has been recorded yet for this scope."
+                    />
+                  )
+                }}
+                columns={[
+                  { title: "Time", dataIndex: "recorded_at", width: 160, render: formatTime },
+                  { title: "Type", dataIndex: "event_type", width: 140 },
+                  {
+                    title: "Level",
+                    dataIndex: "level",
+                    width: 90,
+                    render: (level: string) => (
+                      <Tag color={level === "error" ? "error" : level === "warn" ? "warning" : "default"}>
+                        {level}
+                      </Tag>
+                    )
+                  },
+                  { title: "Subject", dataIndex: "subject" },
+                  { title: "Actor", dataIndex: "actor", width: 140, render: (v) => v ?? "—" },
+                  {
+                    title: "Correlation",
+                    dataIndex: "correlation_id",
+                    width: 140,
+                    render: (v) => (v ? <Typography.Text code>{String(v).slice(0, 8)}</Typography.Text> : "—")
+                  }
+                ]}
+              />
+              {observationSearch.data ? (
+                <Typography.Text type="secondary">
+                  Showing {observationSearch.data.items.length} of {observationSearch.data.total.toLocaleString()} matching events
+                </Typography.Text>
+              ) : null}
+            </Space>
+          </Card>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Card title="ABAC policies">
+            <Space orientation="vertical" size={12} className="full-width">
+              <QueryErrorAlert error={abacPolicies.error} title="Failed to load ABAC policies" />
+              {abacPolicies.data ? (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    title={abacPolicies.data.enforcement_note}
+                  />
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    loading={abacPolicies.isLoading}
+                    dataSource={abacPolicies.data.items}
+                    pagination={false}
+                    locale={{
+                      emptyText: (
+                        <EmptyState
+                          title="No ABAC policies configured"
+                          description="Every table/role pair is unrestricted until a policy row exists for it (fail-open)."
+                        />
+                      )
+                    }}
+                    columns={[
+                      {
+                        title: "Table",
+                        dataIndex: "table_id",
+                        render: (id: string) => (
+                          <Link to={`/tables/${id}`}>
+                            <Typography.Text code>{id.slice(0, 8)}</Typography.Text>
+                          </Link>
+                        )
+                      },
+                      { title: "Role", dataIndex: "role", width: 100 },
+                      {
+                        title: "Allowed ops",
+                        dataIndex: "allowed_operations",
+                        render: (ops: string[]) => ops.join(", ") || "—"
+                      },
+                      {
+                        title: "Row filter",
+                        dataIndex: "has_row_filter",
+                        width: 90,
+                        render: (v: boolean) => (v ? <Tag color="processing">yes</Tag> : "—")
+                      },
+                      {
+                        title: "Masked columns",
+                        dataIndex: "masked_columns",
+                        render: (cols: string[]) => (cols.length ? cols.join(", ") : "—")
+                      }
+                    ]}
+                  />
+                </>
+              ) : null}
+            </Space>
+          </Card>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Card title="GitOps policy sync">
+            <Space orientation="vertical" size={12} className="full-width">
+              <QueryErrorAlert error={gitopsStatus.error} title="Failed to load GitOps status" />
+              {gitopsStatus.data && !gitopsStatus.data.configured ? (
+                <EmptyState
+                  title="GitOps not configured"
+                  description={gitopsStatus.data.message ?? "Set CRYO_GITOPS_REPO_PATH to enable maintenance-as-code."}
+                />
+              ) : gitopsStatus.data ? (
+                <>
+                  <Typography.Text type="secondary">
+                    {gitopsStatus.data.repo_path} / {gitopsStatus.data.policy_dir}
+                  </Typography.Text>
+                  {gitopsStatus.data.conflicts.length > 0 ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title={`${gitopsStatus.data.conflicts.length} policy conflict(s) detected`}
+                      description={gitopsStatus.data.conflicts.join("; ")}
+                    />
+                  ) : null}
+                  <Table
+                    size="small"
+                    rowKey="table_pattern"
+                    loading={gitopsStatus.isLoading}
+                    dataSource={gitopsStatus.data.policies}
+                    pagination={false}
+                    locale={{
+                      emptyText: (
+                        <EmptyState
+                          title="No policies loaded"
+                          description={gitopsStatus.data.message ?? "No YAML policy files found in the configured directory."}
+                        />
+                      )
+                    }}
+                    columns={[
+                      { title: "Table pattern", dataIndex: "table_pattern" },
+                      {
+                        title: "Operations",
+                        dataIndex: "maintenance_operations",
+                        render: (ops: string[]) => ops.join(", ") || "—"
+                      },
+                      {
+                        title: "Alerts",
+                        dataIndex: "has_alerts",
+                        width: 80,
+                        render: (v: boolean) => (v ? <Tag color="success">yes</Tag> : "—")
+                      }
+                    ]}
+                  />
+                </>
+              ) : null}
             </Space>
           </Card>
         </Col>

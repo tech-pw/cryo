@@ -1173,3 +1173,33 @@ export interface QPPConfidenceResponse {
   using_trained_model: boolean;
   qpp_enabled: boolean;
 }
+
+export interface ABACPolicyRead {
+  id: number;
+  table_id: UUID;
+  role: string;
+  has_row_filter: boolean;
+  masked_columns: string[];
+  allowed_operations: string[];
+}
+
+export interface ABACPolicyListResponse {
+  items: ABACPolicyRead[];
+  total: number;
+  enforcement_note: string;
+}
+
+export interface GitOpsPolicySummary {
+  table_pattern: string;
+  maintenance_operations: string[];
+  has_alerts: boolean;
+}
+
+export interface GitOpsStatusResponse {
+  configured: boolean;
+  repo_path: string | null;
+  policy_dir: string | null;
+  policies: GitOpsPolicySummary[];
+  conflicts: string[];
+  message: string | null;
+}

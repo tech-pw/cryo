@@ -964,6 +964,67 @@ def list_llm_observations(
     )
 
 
+class GitOpsPolicySummary(BaseModel):
+    table_pattern: str
+    maintenance_operations: list[str]
+    has_alerts: bool
+
+
+class GitOpsStatusResponse(BaseModel):
+    configured: bool
+    repo_path: str | None = None
+    policy_dir: str | None = None
+    policies: list[GitOpsPolicySummary] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    message: str | None = None
+
+
+@router.get("/gitops/status", response_model=GitOpsStatusResponse, tags=["gitops"])
+def gitops_status(
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> GitOpsStatusResponse:
+    """Read current GitOps policy sync state: loaded policies and any conflicts.
+
+    Policies are loaded fresh from the configured repo checkout on each call (no
+    caching) -- this reflects whatever the last webhook-triggered `git checkout`
+    left on disk, not a live poll of the remote.
+    """
+    settings = get_settings()
+    if not settings.gitops_repo_path:
+        return GitOpsStatusResponse(
+            configured=False,
+            message="GitOps is not configured (CRYO_GITOPS_REPO_PATH unset).",
+        )
+
+    from cryo.gitops.policy_loader import detect_policy_conflicts, load_policies_from_directory
+
+    policy_dir = Path(settings.gitops_repo_path) / settings.gitops_policy_dir
+    if not policy_dir.is_dir():
+        return GitOpsStatusResponse(
+            configured=True,
+            repo_path=settings.gitops_repo_path,
+            policy_dir=settings.gitops_policy_dir,
+            message=f"Policy directory {policy_dir} does not exist on disk yet.",
+        )
+
+    policies = load_policies_from_directory(policy_dir)
+    conflicts = detect_policy_conflicts(policies)
+    return GitOpsStatusResponse(
+        configured=True,
+        repo_path=settings.gitops_repo_path,
+        policy_dir=settings.gitops_policy_dir,
+        policies=[
+            GitOpsPolicySummary(
+                table_pattern=policy.table_pattern,
+                maintenance_operations=sorted(policy.maintenance.keys()),
+                has_alerts=bool(policy.alerts),
+            )
+            for policy in policies
+        ],
+        conflicts=conflicts,
+    )
+
+
 @router.post("/gitops/webhook", tags=["gitops"])
 def gitops_webhook(
     payload: dict,

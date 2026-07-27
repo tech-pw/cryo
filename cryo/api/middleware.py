@@ -51,8 +51,6 @@ def _is_expensive_request(method: str, path: str) -> bool:
         return True
     if path == "/api/v1/routing/preview" and method == "POST":
         return True
-    if method == "POST" and "/clustering-plan" in path:
-        return True
     return False
 
 

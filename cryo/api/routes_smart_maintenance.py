@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -10,14 +11,29 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import joinedload
 
 from cryo.api.deps import SessionDep, require_editor, require_operator, require_viewer
-from cryo.api.routes import create_maintenance_run
-from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
+from cryo.api.schemas import MaintenanceRunResponse
 from cryo.api.security import Principal
-from cryo.db.models import LayoutRecommendation, Table, TableCost, TableStats
+from cryo.db.models import (
+    Destination,
+    LayoutRecommendation,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableCost,
+    TableStats,
+)
 from cryo.db.repositories import presets
+from cryo.domain.enums import EngineType, Mode, OperationType
+from cryo.domain.models import MaintenancePlan, Operation
+from cryo.engines.base import RenderedStatement
+from cryo.engines.spark.k8s_engine import SparkK8sEngine
 from cryo.governor.admission import AdmissionJob
+from cryo.governor.native_admit import _fallback_engine_config
 from cryo.governor.roi_gate import ROIGate
 from cryo.scheduler.forecaster import WorkloadForecaster
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/smart-maintenance", tags=["smart-maintenance"])
 
@@ -435,30 +451,166 @@ def execute_layout_recommendation(
     session: SessionDep,
     principal: Principal = Depends(require_editor),
 ) -> MaintenanceRunResponse:
+    """Apply a layout recommendation's specific sort/z-order strategy.
+
+    Regression, 2026-07-24: this used to dispatch the table's generic assigned preset
+    (whatever operations that preset happens to run -- typically plain binpack compaction)
+    and unconditionally mark the recommendation "applied" regardless of what the dispatched
+    run actually did. It never read recommended_strategy/recommended_columns at all, so
+    approving and "executing" a sort/z-order recommendation silently did neither -- no
+    physical resort, no persisted write.sort-order. This dispatches the actual recommended
+    rewrite via Spark (native Go doesn't support custom sort-order/z-order rewrites),
+    persists write.sort-order for future writers on success, and only marks the
+    recommendation applied if the rewrite genuinely succeeded.
+    """
     recommendation = session.get(LayoutRecommendation, recommendation_id)
     if recommendation is None:
         raise HTTPException(status_code=404, detail="Recommendation not found")
+    if recommendation.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Recommendation must be approved before executing (status={recommendation.status!r})",
+        )
+    if recommendation.recommended_strategy not in ("sort", "zorder"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No actionable rewrite for strategy {recommendation.recommended_strategy!r}",
+        )
+    columns = _normalize_recommended_columns(recommendation.recommended_columns)
+    if not columns:
+        raise HTTPException(status_code=400, detail="Recommendation has no columns to apply")
+
     table = session.get(Table, recommendation.table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
-        raise HTTPException(status_code=400, detail="Table has no effective preset")
+        raise HTTPException(status_code=400, detail="Table has no effective preset/destination")
 
-    run = create_maintenance_run(
-        MaintenanceRunRequest(
-            table_ids=[table.id],
-            destination_id=uuid.UUID(effective.preset.destination_id),
-            preset_id=uuid.UUID(effective.preset.id),
-            mode=payload.mode,
-            trigger="layout-approved",
-        ),
-        session,
-        principal,
+    destination = session.get(Destination, uuid.UUID(effective.preset.destination_id))
+    if destination is None:
+        raise HTTPException(status_code=422, detail="Assigned destination not found")
+    fallback_id = (destination.config or {}).get("sql_fallback_destination_id") or (
+        destination.config or {}
+    ).get("fallback_destination_id")
+    if not fallback_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This table's destination has no sql_fallback_destination_id configured -- "
+                "sort/z-order rewrites run via the Spark-on-K8s engine, same as other SQL "
+                "fallback maintenance operations."
+            ),
+        )
+    fallback_destination = session.get(Destination, uuid.UUID(str(fallback_id)))
+    if fallback_destination is None:
+        raise HTTPException(
+            status_code=422, detail=f"Configured fallback destination {fallback_id} not found"
+        )
+    source = session.get(Source, table.source_id)
+    if source is None:
+        raise HTTPException(status_code=422, detail="Table's source not found")
+    catalog_name = (source.config or {}).get("catalog_name")
+    if not isinstance(catalog_name, str) or not catalog_name:
+        raise HTTPException(
+            status_code=422, detail="Table's source has no catalog_name configured"
+        )
+    table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
+
+    run = MaintenanceRun(
+        kind="adhoc",
+        preset_id=None,
+        trigger="layout-recommendation-apply",
+        status="running",
+        summary={"actor": principal.subject, "layout_recommendation_id": str(recommendation.id)},
     )
+    session.add(run)
+    session.flush()
+    job = MaintenanceJob(
+        run_id=run.id,
+        table_id=table.id,
+        destination_id=destination.id,
+        mode=payload.mode,
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+    session.add(job)
+    session.flush()
+
+    op_params: dict[str, Any] = {"strategy": recommendation.recommended_strategy, "rewrite_all": True}
+    if recommendation.recommended_strategy == "zorder":
+        op_params["zorder_columns"] = columns
+    else:
+        op_params["sort_columns"] = columns
+    plan = MaintenancePlan(
+        table_ref=table_ref,
+        mode=Mode(payload.mode),
+        operations=(Operation(OperationType.OPTIMIZE, op_params),),
+    )
+
+    merged_config = _fallback_engine_config(fallback_destination.config, source.config)
+    engine = SparkK8sEngine(config=merged_config)
+    results = engine.execute_plan(plan)
+    rewrite_result = results[0] if results else None
+
+    if rewrite_result is None or not rewrite_result.ok:
+        error = rewrite_result.error if rewrite_result else "No result from Spark dispatch"
+        job.status = "failed"
+        job.error = error
+        job.engine_ref = rewrite_result.engine_ref if rewrite_result else None
+        job.finished_at = datetime.now(UTC)
+        run.status = "failed"
+        run.finished_at = datetime.now(UTC)
+        session.commit()
+        raise HTTPException(
+            status_code=502,
+            detail=f"{recommendation.recommended_strategy} rewrite failed: {error} (run {run.id})",
+        )
+
+    persisted_sort_order = False
+    persist_error: str | None = None
+    if recommendation.recommended_strategy == "sort":
+        order_expr = ", ".join(f"`{c}` ASC" for c in columns)
+        alter_stmt = RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql=f"ALTER TABLE {table_ref} WRITE ORDERED BY {order_expr}",
+            engine=EngineType.SPARK_EMR,
+            metadata={"catalog": catalog_name},
+        )
+        alter_result = engine.execute(alter_stmt)
+        persisted_sort_order = alter_result.ok
+        if not alter_result.ok:
+            persist_error = alter_result.error
+            logger.warning(
+                "layout recommendation %s: rewrite succeeded but persisting write.sort-order "
+                "failed: %s",
+                recommendation.id,
+                persist_error,
+            )
+
+    notes = []
+    if recommendation.recommended_strategy == "sort":
+        notes.append(
+            "write.sort-order persisted for future writers"
+            if persisted_sort_order
+            else f"write.sort-order NOT persisted: {persist_error}"
+        )
+
+    job.status = "succeeded"
+    job.finished_at = datetime.now(UTC)
+    job.engine_ref = rewrite_result.engine_ref
+    job.plan = {
+        "table_ref": table_ref,
+        "mode": payload.mode,
+        "operations": [{"type": "optimize", "params": op_params}],
+        "notes": notes,
+    }
+    run.status = "succeeded"
+    run.finished_at = datetime.now(UTC)
+
     recommendation.status = "applied"
     recommendation.applied_at = datetime.now(UTC)
-    recommendation.applied_run_id = run.run_id
+    recommendation.applied_run_id = run.id
 
     # Best-effort before/after effectiveness baseline from recent query telemetry.
     baseline = session.scalar(
@@ -468,7 +620,8 @@ def execute_layout_recommendation(
     )
     recommendation.baseline_scan_bytes = int((baseline or 0.0) * 1024 * 1024)
     session.commit()
-    return run
+
+    return MaintenanceRunResponse(run_id=run.id, job_ids=[job.id], status=run.status)
 
 
 def _normalize_recommended_columns(raw: Any) -> list[str]:

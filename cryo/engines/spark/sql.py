@@ -139,7 +139,20 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
 
     args.append(f"options => map({', '.join(options)})")
-    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+    rewrite_call = f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+    # target-file-size-bytes above only governs this one rewrite -- without also persisting
+    # it (and a sensible write.distribution-mode) as table properties, the next writer that
+    # isn't Cryo (a different Spark job, Flink, whatever) has no idea what target this table
+    # was tuned to and can reintroduce the exact fragmentation optimize just fixed. hash
+    # distribution groups same-partition rows together during writes, Iceberg's own general
+    # guidance for partitioned tables; it's a no-op for unpartitioned ones, not harmful.
+    properties_stmt = (
+        f"ALTER TABLE {catalog}.{table_name} SET TBLPROPERTIES ("
+        f"'write.target-file-size-bytes' = '{target_bytes}', "
+        "'write.distribution-mode' = 'hash')"
+    )
+    return f"{properties_stmt};\n{rewrite_call}"
 
 
 def _render_convert_deletes(catalog: str, table_name: str, operation: Operation) -> str:

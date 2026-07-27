@@ -70,7 +70,38 @@ vi.mock("../api/client", () => ({
   approvalAction: vi.fn(),
   createTierPolicy: vi.fn(),
   patchTierPolicy: vi.fn(),
-  deleteTierPolicy: vi.fn()
+  deleteTierPolicy: vi.fn(),
+  getObservationStats: vi.fn().mockResolvedValue({
+    total_files: 0,
+    total_bytes: 0,
+    oldest_event: null,
+    newest_event: null
+  }),
+  searchObservations: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  compactObservations: vi.fn(),
+  listAbacPolicies: vi.fn().mockResolvedValue({
+    items: [],
+    total: 0,
+    enforcement_note: "Enforced on maintenance-execute paths only."
+  }),
+  getGitOpsStatus: vi.fn().mockResolvedValue({
+    configured: false,
+    repo_path: null,
+    policy_dir: null,
+    policies: [],
+    conflicts: [],
+    message: "GitOps is not configured."
+  }),
+  ApiError: class ApiError extends Error {
+    status: number;
+    detail?: unknown;
+    constructor(status: number, message: string, detail?: unknown) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.detail = detail;
+    }
+  }
 }));
 
 describe("Governance page", () => {
