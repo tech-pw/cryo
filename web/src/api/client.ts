@@ -98,6 +98,8 @@ import type {
   QPPFeaturesPayload,
   QPPObservationPayload,
   QPPConfidenceResponse,
+  ABACPolicyListResponse,
+  GitOpsStatusResponse,
   S3LogConfigRead,
   S3LogConfigPatch,
   S3LogConfigCheckResponse,
@@ -835,43 +837,6 @@ export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
 // Layout Optimization
 // ============================================================================
 
-export interface QueryPatternRead {
-  column_name: string;
-  filter_count: number;
-  equality_filter_count: number;
-  range_filter_count: number;
-  join_count: number;
-  projection_count: number;
-  avg_selectivity?: number | null;
-}
-
-export interface TableQueryPatternsResponse {
-  table_id: UUID;
-  schema_name: string;
-  table_name: string;
-  total_queries: number;
-  patterns: QueryPatternRead[];
-  dominant_filter_column?: string | null;
-  multi_column_filter_ratio: number;
-}
-
-export interface LayoutRecommendationRead {
-  id: UUID;
-  table_id: UUID;
-  current_sort_order?: Array<{ column: string }> | null;
-  recommended_strategy: string;
-  recommended_columns: Array<{ column: string }>;
-  estimated_prune_improvement?: number | null;
-  current_prune_efficiency?: number | null;
-  analysis_query_count: number;
-  confidence: number;
-  status: string;
-  applied_at?: string | null;
-  detail?: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface SmartMaintenanceOverviewRead {
   generated_at: string;
   tables_with_stats: number;
@@ -951,24 +916,6 @@ export interface SmartLayoutRecommendationRead {
   applied_run_id?: UUID | null;
 }
 
-export interface ClusteringPlanRequest {
-  strategy?: string;
-  columns?: string[] | null;
-  partition_filter?: string | null;
-  target_file_size_mb?: number;
-  rewrite_all?: boolean;
-}
-
-export interface ClusteringPlanResponse {
-  table_id: UUID;
-  table_ref: string;
-  strategy: string;
-  columns: string[];
-  spark_sql: string;
-  spark_python: string;
-  trino_sql?: string | null;
-}
-
 export interface PartitionEvolutionRecommendationRead {
   table_id: UUID;
   table_name: string;
@@ -999,9 +946,6 @@ export interface BloomFilterRecommendationsResponse {
   recommendations: BloomFilterRecommendationRead[];
 }
 
-export const getTableQueryPatterns = (api: ApiOptions, tableId: UUID) =>
-  apiFetch<TableQueryPatternsResponse>(`/tables/${tableId}/query-patterns`, api);
-
 export const getPartitionEvolutionRecommendation = (
   api: ApiOptions,
   tableId: UUID,
@@ -1015,31 +959,6 @@ export const getPartitionEvolutionRecommendation = (
 
 export const getBloomFilterRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<BloomFilterRecommendationsResponse>(`/advanced/bloom-filter-recommendations/${tableId}`, api);
-
-export const getLayoutRecommendation = (api: ApiOptions, tableId: UUID, refresh?: boolean) =>
-  apiFetch<LayoutRecommendationRead>(`/tables/${tableId}/layout-recommendation`, api, {
-    query: { refresh: refresh ?? false }
-  });
-
-export const createClusteringPlan = (api: ApiOptions, tableId: UUID, body: ClusteringPlanRequest) =>
-  apiFetch<ClusteringPlanResponse>(`/tables/${tableId}/clustering-plan`, api, {
-    method: "POST",
-    body
-  });
-
-export const listLayoutRecommendations = (
-  api: ApiOptions,
-  params?: { status?: string; min_confidence?: number; limit?: number }
-) =>
-  apiFetch<LayoutRecommendationRead[]>("/optimization/recommendations", api, {
-    query: params
-  });
-
-export const updateRecommendationStatus = (api: ApiOptions, recId: UUID, status: string) =>
-  apiFetch<LayoutRecommendationRead>(`/optimization/recommendations/${recId}`, api, {
-    method: "PATCH",
-    query: { status }
-  });
 
 export const getSmartMaintenanceOverview = (api: ApiOptions) =>
   apiFetch<SmartMaintenanceOverviewRead>("/smart-maintenance/overview", api);
@@ -1100,15 +1019,6 @@ export const executeSmartLayoutRecommendation = (
     api,
     { method: "POST", body: { mode } }
   );
-
-export const ingestQueryTelemetry = (
-  api: ApiOptions,
-  body: { source_id: UUID; since_hours?: number; limit?: number }
-) =>
-  apiFetch<{ queries_ingested: number; patterns_updated: number }>("/telemetry/ingest", api, {
-    method: "POST",
-    body
-  });
 
 export const getTablePiiClassification = (api: ApiOptions, tableId: UUID) =>
   apiFetch<PiiClassificationResponse>(`/tables/${tableId}/pii-classification`, api);
@@ -2160,3 +2070,14 @@ export const getQPPConfidence = (
     api,
     { query: tableId ? { table_id: tableId } : undefined }
   );
+
+export const listAbacPolicies = (
+  api: ApiOptions,
+  tableId?: UUID
+): Promise<ABACPolicyListResponse> =>
+  apiFetch<ABACPolicyListResponse>("/security/abac/policies", api, {
+    query: tableId ? { table_id: tableId } : undefined
+  });
+
+export const getGitOpsStatus = (api: ApiOptions): Promise<GitOpsStatusResponse> =>
+  apiFetch<GitOpsStatusResponse>("/advanced/gitops/status", api);

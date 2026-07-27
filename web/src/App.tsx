@@ -2,11 +2,11 @@ import {
   ApiOutlined,
   AppstoreOutlined,
   BarChartOutlined,
+  BulbOutlined,
   ClockCircleOutlined,
   CloudOutlined,
   ControlOutlined,
   DollarOutlined,
-  ExperimentOutlined,
   HistoryOutlined,
   MoonOutlined,
   SettingOutlined,
@@ -41,7 +41,6 @@ const Governance = lazy(() => import("./pages/Governance").then((m) => ({ defaul
 const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
-const LayoutOptimization = lazy(() => import("./pages/LayoutOptimization"));
 const Catalog = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.Catalog })));
 const Presets = lazy(() => import("./pages/Presets").then((m) => ({ default: m.Presets })));
 const QueryPerformance = lazy(() =>
@@ -84,7 +83,6 @@ const navItems = [
   { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
   { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
   { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
-  { key: "/optimize", icon: <ExperimentOutlined />, label: <Link to="/optimize">Optimize</Link> },
   {
     key: "/smart-maintenance",
     icon: <CloudOutlined />,
@@ -92,6 +90,7 @@ const navItems = [
   },
   { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
   { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
+  { key: "/skillsets", icon: <BulbOutlined />, label: <Link to="/skillsets">Skillsets</Link> },
   { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
 ];
 
@@ -113,7 +112,6 @@ const navGroups: MenuProps["items"] = [
     type: "group",
     label: "Operations",
     children: [
-      navByKey["/optimize"],
       navByKey["/smart-maintenance"],
       navByKey["/presets"],
       navByKey["/runs"]
@@ -122,7 +120,13 @@ const navGroups: MenuProps["items"] = [
   {
     type: "group",
     label: "Insights",
-    children: [navByKey["/ai"], navByKey["/governance"], navByKey["/queries"], navByKey["/cost"]]
+    children: [
+      navByKey["/ai"],
+      navByKey["/governance"],
+      navByKey["/queries"],
+      navByKey["/cost"],
+      navByKey["/skillsets"]
+    ]
   },
   {
     type: "group",
@@ -254,7 +258,7 @@ const Shell = () => {
               <Route path="/governance" element={<Governance />} />
               <Route path="/queries" element={<QueryPerformance />} />
               <Route path="/sla" element={<SLAStatus />} />
-              <Route path="/optimize" element={<LayoutOptimization />} />
+              <Route path="/optimize" element={<Navigate to="/smart-maintenance" replace />} />
               <Route path="/smart-maintenance" element={<SmartMaintenance />} />
               <Route path="/presets" element={<Presets />} />
               <Route path="/runs" element={<Runs />} />

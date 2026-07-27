@@ -63,6 +63,21 @@ class CatalogLatencyResponse(BaseModel):
     operations: dict[str, dict[str, float]]
 
 
+class ABACPolicyRead(BaseModel):
+    id: int
+    table_id: uuid.UUID
+    role: str
+    has_row_filter: bool
+    masked_columns: list[str]
+    allowed_operations: list[str]
+
+
+class ABACPolicyListResponse(BaseModel):
+    items: list[ABACPolicyRead]
+    total: int
+    enforcement_note: str
+
+
 class McpToolCallRequest(BaseModel):
     name: str
     arguments: dict[str, Any] = {}
@@ -281,6 +296,44 @@ def unprotect_snapshot(
         table_id=table_id,
         snapshot_id=snapshot_id,
         removed=True,
+    )
+
+
+@router.get(
+    "/security/abac/policies",
+    response_model=ABACPolicyListResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def list_abac_policies_route(
+    session: SessionDep,
+    table_id: uuid.UUID | None = None,
+) -> ABACPolicyListResponse:
+    """List configured ABAC policies (table + role -> allowed operations).
+
+    Enforcement is fail-open: a table/role pair with no matching policy row is
+    unrestricted. Only maintenance-execute paths are enforced today; scan-time
+    row/column filtering requires a catalog proxy and is not wired up.
+    """
+    from cryo.security.abac_enforcement import list_abac_policies
+
+    rows = list_abac_policies(session, table_id=table_id)
+    return ABACPolicyListResponse(
+        items=[
+            ABACPolicyRead(
+                id=row.id,
+                table_id=row.table_id,
+                role=row.role,
+                has_row_filter=bool(row.row_filter),
+                masked_columns=sorted((row.column_masks or {}).keys()),
+                allowed_operations=list(row.allowed_operations or []),
+            )
+            for row in rows
+        ],
+        total=len(rows),
+        enforcement_note=(
+            "Enforced on maintenance-execute paths only (fail-open: a table/role with no "
+            "policy row is unrestricted). Scan-time row/column filtering is not wired up."
+        ),
     )
 
 

@@ -2912,3 +2912,9 @@ textarea.mono-input {
   background: var(--primary-soft, #e8effc) !important;
 }
 
+.mono-textarea,
+.mono-textarea textarea {
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 12px;
+}
+
