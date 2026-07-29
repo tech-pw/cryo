@@ -1,4 +1,4 @@
-import { message as antdMessage } from "antd";
+import { toast } from "sonner";
 import type { Key } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { fetchAllMatchingTableIds, type ApiOptions } from "../api/client";
@@ -96,7 +96,7 @@ export const useTableExplorerSelection = ({
           setSelectedRowKeys(demoted);
         } catch (error) {
           if (controller.signal.aborted || epoch !== selectionEpochRef.current) return;
-          antdMessage.error(
+          toast.error(
             error instanceof Error ? error.message : "Could not resolve matching tables for selection"
           );
         } finally {

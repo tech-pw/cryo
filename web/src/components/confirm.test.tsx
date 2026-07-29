@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Button } from "antd";
 import { describe, expect, it, vi } from "vitest";
+import { Button } from "./ui/button";
 import { ConfirmAction } from "./confirm";
 
 describe("ConfirmAction", () => {
@@ -8,7 +8,7 @@ describe("ConfirmAction", () => {
     const onConfirm = vi.fn();
     render(
       <ConfirmAction title="Delete item?" description="This cannot be undone." onConfirm={onConfirm}>
-        <Button danger>Delete</Button>
+        <Button variant="danger">Delete</Button>
       </ConfirmAction>
     );
 

@@ -1,7 +1,14 @@
-import { Button, Checkbox, Input, InputNumber, Popover, Segmented, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useMemo } from "react";
 import { buildFilterChips, filterScopeLabel, type CatalogFilterOption } from "../lib/filterChips";
 import { NO_PRESET_FILTER, type TableFilterState } from "../lib/predicate";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import { Input } from "./ui/input";
+import { InputNumber } from "./ui/input-number";
+import { MultiSelect, Select } from "./ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Segmented } from "./ui/segmented";
 
 export type { CatalogFilterOption };
 
@@ -47,174 +54,148 @@ export const FilterBar = ({
   return (
     <div className="filter-bar">
       <div className="filter-bar__controls">
-        <Space size={8} wrap>
+        <div className="flex flex-wrap items-center gap-2">
           {showBulkSelect ? (
-            <Space size={6}>
-              {filterSelectionActive ? <Tag color="processing">Filter selection</Tag> : null}
+            <div className="flex items-center gap-1.5">
+              {filterSelectionActive ? <Badge variant="default">Filter selection</Badge> : null}
               {!filterSelectionActive ? (
-                <Tooltip title="Select every table that matches the current filters, including tables on other pages.">
-                  <Button disabled={matchingTotal === 0} onClick={onSelectAllMatching}>
-                    Select all matching tables
-                  </Button>
-                </Tooltip>
+                <Button
+                  title="Select every table that matches the current filters, including tables on other pages."
+                  disabled={matchingTotal === 0}
+                  onClick={onSelectAllMatching}
+                >
+                  Select all matching tables
+                </Button>
               ) : null}
               {hasSelection ? (
-                <Tooltip title="Clear all selected tables.">
-                  <Button size="small" onClick={onClearSelection}>
-                    Clear selection
-                  </Button>
-                </Tooltip>
+                <Button title="Clear all selected tables." size="sm" onClick={onClearSelection}>
+                  Clear selection
+                </Button>
               ) : null}
-            </Space>
+            </div>
           ) : null}
-          <Input.Search
-            allowClear
+          <Input
+            aria-label="Schema or table search"
             placeholder="Schema or table"
-            value={value.schemaSearch}
+            value={value.schemaSearch ?? ""}
             onChange={(event) => patch({ schemaSearch: event.target.value || undefined })}
             style={{ width: 220 }}
           />
           {catalogOptions.length > 0 ? (
-            <Select
-              mode="multiple"
-              allowClear
-              maxTagCount="responsive"
+            <MultiSelect
               aria-label="Filter by catalog"
               placeholder="Catalog"
-              value={value.sourceIds}
+              value={value.sourceIds ?? []}
               onChange={(sourceIds) => patch({ sourceIds })}
               options={catalogOptions}
-              showSearch
-              filterOption={(input, option) =>
-                (option?.label ?? "").toString().toLowerCase().includes(input.toLowerCase())
-              }
               style={{ minWidth: 180 }}
             />
           ) : null}
-          <Select
-            mode="multiple"
-            allowClear
-            maxTagCount="responsive"
+          <MultiSelect
             aria-label="Filter by preset assignment"
             placeholder="Preset"
-            value={value.presetFilter}
-            onChange={(presetFilter) =>
-              patch({ presetFilter: presetFilter.length ? presetFilter : undefined })
-            }
+            value={value.presetFilter ?? []}
+            onChange={(presetFilter) => patch({ presetFilter: presetFilter.length ? presetFilter : undefined })}
             options={presetSelectOptions}
-            showSearch
-            filterOption={(input, option) =>
-              (option?.label ?? "").toString().toLowerCase().includes(input.toLowerCase())
-            }
             style={{ minWidth: 180 }}
           />
-          <Select
-            mode="multiple"
-            allowClear
-            maxTagCount="responsive"
+          <MultiSelect
             aria-label="Filter by health grade"
             placeholder="Grade"
-            value={value.grades}
+            value={value.grades ?? []}
             onChange={(grades) => patch({ grades })}
             options={["A", "B", "C", "D", "F"].map((grade) => ({ label: grade, value: grade }))}
             style={{ minWidth: 140 }}
           />
-          <Select
-            mode="multiple"
-            allowClear
-            maxTagCount="responsive"
+          <MultiSelect
             aria-label="Filter by compaction priority"
             placeholder="Priority"
-            value={value.priorities}
+            value={value.priorities ?? []}
             onChange={(priorities) => patch({ priorities })}
             options={["HIGH", "MEDIUM", "LOW"].map((priority) => ({ label: priority, value: priority }))}
             style={{ minWidth: 160 }}
           />
           <Segmented
             value={typeof value.needsCompaction === "boolean" ? String(value.needsCompaction) : "all"}
-            onChange={(next) =>
-              patch({ needsCompaction: next === "all" ? undefined : next === "true" })
-            }
+            onChange={(next) => patch({ needsCompaction: next === "all" ? undefined : next === "true" })}
             options={[
               { label: "All", value: "all" },
               { label: "Needs compaction", value: "true" },
               { label: "Healthy", value: "false" }
             ]}
           />
-          <Popover
-            trigger="click"
-            placement="bottomLeft"
-            content={
-              <Space orientation="vertical" size={10}>
-                <InputNumber
-                  min={0}
-                  addonBefore="Min GB"
-                  value={value.minSizeGb}
-                  onChange={(minSizeGb) => patch({ minSizeGb })}
-                />
-                <InputNumber
-                  min={0}
-                  addonBefore="Min small files"
-                  value={value.minSmallFiles}
-                  onChange={(minSmallFiles) => patch({ minSmallFiles })}
-                />
-                <InputNumber
-                  min={0}
-                  addonBefore="Min savings $/mo"
-                  value={value.minMonthlySavings}
-                  onChange={(minMonthlySavings) => patch({ minMonthlySavings })}
-                />
-                <InputNumber
-                  min={0}
-                  addonBefore="Min reclaim GB"
-                  value={value.minReclaimableGb}
-                  onChange={(minReclaimableGb) => patch({ minReclaimableGb })}
-                />
-                <Select
-                  allowClear
-                  placeholder="Cost precision"
-                  value={value.costPrecision ?? undefined}
-                  onChange={(costPrecision) => patch({ costPrecision: costPrecision ?? null })}
-                  options={[
-                    { label: "Estimated", value: "heuristic" },
-                    { label: "Metadata precise", value: "metadata" },
-                    { label: "Storage verified", value: "storage_truth" }
-                  ]}
-                  style={{ width: "100%" }}
-                />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button>Advanced</Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 space-y-2.5">
+              <InputNumber
+                min={0}
+                addonBefore="Min GB"
+                value={value.minSizeGb}
+                onChange={(minSizeGb) => patch({ minSizeGb: minSizeGb ?? undefined })}
+              />
+              <InputNumber
+                min={0}
+                addonBefore="Min small files"
+                value={value.minSmallFiles}
+                onChange={(minSmallFiles) => patch({ minSmallFiles: minSmallFiles ?? undefined })}
+              />
+              <InputNumber
+                min={0}
+                addonBefore="Min savings $/mo"
+                value={value.minMonthlySavings}
+                onChange={(minMonthlySavings) => patch({ minMonthlySavings: minMonthlySavings ?? undefined })}
+              />
+              <InputNumber
+                min={0}
+                addonBefore="Min reclaim GB"
+                value={value.minReclaimableGb}
+                onChange={(minReclaimableGb) => patch({ minReclaimableGb: minReclaimableGb ?? undefined })}
+              />
+              <Select
+                allowClear
+                placeholder="Cost precision"
+                value={value.costPrecision ?? undefined}
+                onChange={(costPrecision) =>
+                  patch({ costPrecision: (costPrecision as TableFilterState["costPrecision"]) ?? null })
+                }
+                options={[
+                  { label: "Estimated", value: "heuristic" },
+                  { label: "Metadata precise", value: "metadata" },
+                  { label: "Storage verified", value: "storage_truth" }
+                ]}
+              />
+              <label className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={value.activeOnly !== false}
-                  onChange={(event) => patch({ activeOnly: event.target.checked })}
-                >
-                  Active tables only
-                </Checkbox>
-              </Space>
-            }
-          >
-            <Button>Advanced</Button>
+                  onCheckedChange={(checked) => patch({ activeOnly: checked === true })}
+                />
+                Active tables only
+              </label>
+            </PopoverContent>
           </Popover>
           <Button onClick={() => onChange({ activeOnly: true })}>Reset</Button>
-        </Space>
+        </div>
       </div>
       <div className="filter-bar__footer">
         <div className="filter-bar__summary">
-          <Typography.Text type="secondary" className="filter-bar__scope">
-            {scopeLabel}
-          </Typography.Text>
+          <p className="filter-bar__scope text-sm text-muted-foreground">{scopeLabel}</p>
           {chips.length ? (
-            <Space size={[6, 6]} wrap className="filter-bar__chips">
+            <div className="filter-bar__chips flex flex-wrap gap-1.5">
               {chips.map((chip, idx) => (
-                <Tag key={`${chip.key ?? "chip"}-${idx}`} closable onClose={chip.onRemove}>
+                <Badge key={`${chip.key ?? "chip"}-${idx}`} variant="secondary" className="gap-1">
                   {chip.label}
-                </Tag>
+                  <button type="button" className="ml-1 text-xs" onClick={chip.onRemove} aria-label={`Remove ${chip.label}`}>
+                    ×
+                  </button>
+                </Badge>
               ))}
-            </Space>
+            </div>
           ) : null}
         </div>
         {showBulkSelect ? (
-          <Typography.Text type="secondary" className="filter-bar__match-count">
-            {matchLabel}
-          </Typography.Text>
+          <p className="filter-bar__match-count text-sm text-muted-foreground">{matchLabel}</p>
         ) : null}
       </div>
     </div>

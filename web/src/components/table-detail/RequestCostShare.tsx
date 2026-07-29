@@ -1,5 +1,5 @@
-import { Tooltip, Typography } from "antd";
 import { formatCurrency, formatNumber } from "../../lib/format";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 interface RequestCostShareProps {
   storageCostUsd: number;
@@ -37,10 +37,13 @@ export const RequestCostShare = ({
       <div className="td-chart-card-header" style={{ marginBottom: 8 }}>
         <span className="td-chart-card-title">Storage vs. request cost</span>
         {isApproximate ? (
-          <Tooltip title="Live AWS pricing wasn't available for this account/region -- using a default rate instead.">
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Approximate
-            </Typography.Text>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs text-muted-foreground">Approximate</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Live AWS pricing wasn&apos;t available for this account/region — using a default rate instead.
+            </TooltipContent>
           </Tooltip>
         ) : null}
       </div>
@@ -65,10 +68,10 @@ export const RequestCostShare = ({
         </span>
       </div>
       {getRequests30d != null || putRequests30d != null || listRequests30d != null ? (
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
+        <span className="mt-1.5 block text-xs text-muted-foreground">
           Last 30 days: {formatNumber(getRequests30d ?? 0)} GET, {formatNumber(putRequests30d ?? 0)} PUT,{" "}
           {formatNumber(listRequests30d ?? 0)} LIST
-        </Typography.Text>
+        </span>
       ) : null}
     </div>
   );

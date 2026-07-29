@@ -1,5 +1,5 @@
-import { AutoComplete, Typography } from "antd";
 import { CRON_PRESET_OPTIONS } from "../lib/cron";
+import { Autocomplete } from "./ui/autocomplete";
 
 type CronInputProps = {
   value?: string | null;
@@ -17,22 +17,20 @@ export const CronInput = ({
   allowEmpty = false
 }: CronInputProps) => (
   <>
-    <AutoComplete
+    <Autocomplete
       value={value ?? ""}
       onChange={onChange}
       options={CRON_PRESET_OPTIONS}
       placeholder={placeholder}
       className="mono-input"
-      style={{ width: "100%" }}
       filterOption={(inputValue, option) =>
-        String(option?.label ?? "")
-          .toLowerCase()
-          .includes(inputValue.toLowerCase()) || String(option?.value ?? "").includes(inputValue)
+        (option.label?.toLowerCase().includes(inputValue.toLowerCase()) ?? false) ||
+        option.value.includes(inputValue)
       }
     />
-    <Typography.Text type="secondary">
+    <p className="mt-1 text-xs text-muted-foreground">
       {allowEmpty ? "Leave blank for manual-only. " : ""}
       {CRON_HELP_TEXT}
-    </Typography.Text>
+    </p>
   </>
 );

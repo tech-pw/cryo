@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Drawer, Empty, Popover, Row, Space, Statistic, Table, Tabs, Tag, Typography, message } from "antd";
-import { InfoCircleOutlined } from "@ant-design/icons";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Info } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-
 import {
   approveSmartLayoutRecommendation,
   dismissSmartLayoutRecommendation,
@@ -16,75 +16,114 @@ import {
   type DetectionTierRowRead,
   type SmartLayoutRecommendationRead
 } from "../api/client";
-import { useCommitEventStream } from "../hooks/useCommitEventStream";
+import { AsyncBoundary } from "../components/AsyncBoundary";
+import { PageHeader } from "../components/common";
 import { ConfirmAction } from "../components/confirm";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { DataTable } from "../components/ui/data-table";
+import { EmptyState } from "../components/ui/empty-state";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
+import { Skeleton } from "../components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { MetricTile } from "../components/ui/stat";
+import { useCommitEventStream } from "../hooks/useCommitEventStream";
 import { useAuth } from "../lib/auth";
 
 const TIERING_HELP_CONTENT = (
-  <Space direction="vertical" size={10} style={{ maxWidth: 360 }}>
-    <Typography.Paragraph style={{ marginBottom: 0 }}>
-      Every scanned table gets one of four tiers so maintenance effort goes where it matters:
-    </Typography.Paragraph>
-    <ul style={{ margin: 0, paddingLeft: 18 }}>
+  <div className="max-w-sm space-y-2 text-sm">
+    <p>Every scanned table gets one of four tiers so maintenance effort goes where it matters:</p>
+    <ul className="list-disc space-y-1 pl-4">
       <li>
-        <Typography.Text strong>HOT</Typography.Text> — heavy recent write or read churn;
-        maintenance pays off immediately.
+        <strong>HOT</strong> — heavy recent write or read churn; maintenance pays off immediately.
       </li>
       <li>
-        <Typography.Text strong>WARM</Typography.Text> — moderate activity; worth scheduling
-        regular maintenance.
+        <strong>WARM</strong> — moderate activity; worth scheduling regular maintenance.
       </li>
       <li>
-        <Typography.Text strong>COLD</Typography.Text> — low activity; safe to deprioritize
-        routine maintenance.
+        <strong>COLD</strong> — low activity; safe to deprioritize routine maintenance.
       </li>
       <li>
-        <Typography.Text strong>DORMANT</Typography.Text> — no recent commits or queries and a
-        stale scan history.
+        <strong>DORMANT</strong> — no recent commits or queries and a stale scan history.
       </li>
     </ul>
-    <Typography.Paragraph style={{ marginBottom: 0 }}>
-      The tier comes from a score built from commits in the last 24h/7d, query volume over the
-      last 7 days, small-file count, and delete-file percentage.
-    </Typography.Paragraph>
-    <Typography.Paragraph type="warning" style={{ marginBottom: 0 }}>
-      A table&apos;s <em>first</em> scan always lands in COLD, even for a genuinely busy table —
-      commit velocity is measured by diffing snapshots across scans, and query volume needs a
-      history window to build up, so there&apos;s no signal yet on scan one. It re-tiers on later
-      scans once that history exists; no separate action needed, just time and another scan pass.
-    </Typography.Paragraph>
-    <Typography.Paragraph style={{ marginBottom: 0 }}>
-      Click a row in Detection Tiers (or use Inspect ROI) to see the exact reason and score behind
-      a specific table&apos;s tier.
-    </Typography.Paragraph>
-  </Space>
+    <p>
+      The tier comes from a score built from commits in the last 24h/7d, query volume over the last 7 days, small-file
+      count, and delete-file percentage.
+    </p>
+    <p className="text-[var(--color-status-warning)]">
+      A table&apos;s <em>first</em> scan always lands in COLD, even for a genuinely busy table — commit velocity is
+      measured by diffing snapshots across scans, and query volume needs a history window to build up.
+    </p>
+  </div>
 );
 
 const TieringHelpButton = () => (
-  <Popover
-    trigger="click"
-    placement="bottomLeft"
-    title="How tiering works"
-    content={TIERING_HELP_CONTENT}
-  >
-    <Button type="text" icon={<InfoCircleOutlined />} aria-label="How tiering works" />
+  <Popover>
+    <PopoverTrigger asChild>
+      <Button variant="ghost" size="icon" aria-label="How tiering works">
+        <Info className="size-4" aria-hidden="true" />
+      </Button>
+    </PopoverTrigger>
+    <PopoverContent align="start" className="w-96">
+      <p className="mb-2 font-semibold">How tiering works</p>
+      {TIERING_HELP_CONTENT}
+    </PopoverContent>
   </Popover>
 );
 
-const tierColor: Record<string, string> = {
-  hot: "red",
-  warm: "gold",
-  cold: "blue",
-  dormant: "default",
-  unknown: "default"
+const tierBadgeVariant = (tier: string): "danger" | "warning" | "default" | "secondary" => {
+  if (tier === "hot") return "danger";
+  if (tier === "warm") return "warning";
+  if (tier === "cold") return "default";
+  return "secondary";
 };
+
+const sevenDaysAgo = () => Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+const recommendationCounts = (items: SmartLayoutRecommendationRead[]) => {
+  const committed7d = items.filter((item) => {
+    if (item.status !== "applied" || !item.applied_at) return false;
+    return Date.parse(item.applied_at) >= sevenDaysAgo();
+  }).length;
+  return {
+    pending: items.filter((item) => item.status === "pending").length,
+    approved: items.filter((item) => item.status === "approved").length,
+    dismissed: items.filter((item) => item.status === "rejected").length,
+    committed7d
+  };
+};
+
+const KpiSkeleton = () => (
+  <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    {Array.from({ length: 4 }).map((_, index) => (
+      <MetricTile key={index} label="Loading" value="—" loading />
+    ))}
+  </div>
+);
+
+const DescriptionList = ({
+  items
+}: {
+  items: Array<{ label: string; value: ReactNode }>;
+}) => (
+  <dl className="grid grid-cols-2 gap-3 rounded-[var(--radius-default)] border border-border p-3 text-sm sm:grid-cols-3 lg:grid-cols-4">
+    {items.map((item) => (
+      <div key={item.label}>
+        <dt className="text-xs text-muted-foreground">{item.label}</dt>
+        <dd className="font-medium">{item.value}</dd>
+      </div>
+    ))}
+  </dl>
+);
 
 export function SmartMaintenance() {
   const { api, token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [inspectTable, setInspectTable] = useState<DetectionTierRowRead | null>(null);
-  const [messageApi, contextHolder] = message.useMessage();
 
   useCommitEventStream({
     onTick: () => {
@@ -97,30 +136,30 @@ export function SmartMaintenance() {
     queryKey: ["smart-maintenance-overview", token],
     queryFn: () => getSmartMaintenanceOverview(api)
   });
-
   const tiers = useQuery({
     queryKey: ["smart-maintenance-detection-tiers", token],
     queryFn: () => getDetectionTiers(api, 500)
   });
-
   const recommendations = useQuery({
     queryKey: ["smart-maintenance-layout-recommendations", token],
     queryFn: () => listSmartLayoutRecommendations(api)
   });
 
   const inspectTableId = inspectTable?.table_id ?? null;
-
   const roi = useQuery({
     queryKey: ["smart-maintenance-roi", inspectTableId],
     queryFn: () => getTableRoiBreakdown(api, inspectTableId as string),
     enabled: Boolean(inspectTableId)
   });
-
   const forecast = useQuery({
     queryKey: ["smart-maintenance-forecast", inspectTableId],
     queryFn: () => getTableWorkloadForecast(api, inspectTableId as string, 24),
     enabled: Boolean(inspectTableId)
   });
+
+  const recommendationItems = recommendations.data?.items ?? [];
+  const recStats = useMemo(() => recommendationCounts(recommendationItems), [recommendationItems]);
+  const tierItems = tiers.data?.items ?? [];
 
   const refreshQueries = async () => {
     await Promise.all([
@@ -130,117 +169,64 @@ export function SmartMaintenance() {
   };
 
   const approve = useMutation({
-    mutationFn: (rec: SmartLayoutRecommendationRead) =>
-      approveSmartLayoutRecommendation(api, rec.id),
+    mutationFn: (rec: SmartLayoutRecommendationRead) => approveSmartLayoutRecommendation(api, rec.id),
     onSuccess: async () => {
-      messageApi.success("Recommendation approved");
+      toast.success("Recommendation approved");
       await refreshQueries();
     },
-    onError: (error: Error) => messageApi.error(error.message)
+    onError: (error: Error) => toast.error(error.message)
   });
-
   const dismiss = useMutation({
     mutationFn: (rec: SmartLayoutRecommendationRead) =>
       dismissSmartLayoutRecommendation(api, rec.id, "dismissed_from_ui"),
     onSuccess: async () => {
-      messageApi.success("Recommendation dismissed");
+      toast.success("Recommendation dismissed");
       await refreshQueries();
     },
-    onError: (error: Error) => messageApi.error(error.message)
+    onError: (error: Error) => toast.error(error.message)
   });
-
   const execute = useMutation({
     mutationFn: (rec: SmartLayoutRecommendationRead) =>
       executeSmartLayoutRecommendation(api, rec.id, "standard"),
     onSuccess: async (result) => {
-      messageApi.success("Layout change applied");
+      toast.success("Layout change applied");
       await refreshQueries();
       navigate(`/runs/${result.run_id}`);
     },
-    onError: (error: Error) => messageApi.error(error.message)
+    onError: (error: Error) => toast.error(error.message)
   });
 
-  const tierItems = tiers.data?.items ?? [];
-  const recommendationItems = recommendations.data?.items ?? [];
-
-  const tierColumns = [
+  const recColumns: ColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
     {
-      title: "Table",
-      key: "table",
-      render: (_: unknown, row: DetectionTierRowRead) => (
-        <Button type="link" style={{ padding: 0 }} onClick={(e) => {
-          e.stopPropagation();
-          navigate(`/tables/${row.table_id}`);
-        }}>
-          {row.schema_name}.{row.table_name}
+      id: "table_ref",
+      header: "Table",
+      cell: ({ row }) => (
+        <Button variant="ghost" className="h-auto p-0 text-primary" onClick={() => navigate(`/tables/${row.original.table_id}`)}>
+          {row.original.table_ref}
         </Button>
       )
     },
+    { id: "strategy", header: "Strategy", cell: ({ row }) => row.original.recommended_strategy },
     {
-      title: "Tier",
-      key: "tier",
-      render: (_: unknown, row: DetectionTierRowRead) => (
-        <Tag color={tierColor[row.tier] ?? "default"}>{row.tier.toUpperCase()}</Tag>
-      )
+      id: "columns",
+      header: "Columns",
+      cell: ({ row }) => (row.original.recommended_columns?.length ? row.original.recommended_columns.join(", ") : "-")
     },
     {
-      title: "Score",
-      dataIndex: "score",
-      key: "score",
-      render: (score: number | null) => (score == null ? <Typography.Text type="secondary">Not scored</Typography.Text> : score)
-    },
-    { title: "Commits (24h)", dataIndex: "commits_24h", key: "commits_24h" },
-    { title: "Commits (7d)", dataIndex: "commits_7d", key: "commits_7d" },
-    { title: "Delete %", dataIndex: "delete_file_pct", key: "delete_file_pct" },
-    { title: "Queries (30d)", dataIndex: "query_count_30d", key: "query_count_30d" },
-    {
-      title: "",
-      key: "inspect",
-      width: 96,
-      render: (_: unknown, row: DetectionTierRowRead) => (
-        <Button size="small" onClick={(e) => {
-          e.stopPropagation();
-          setInspectTable(row);
-        }}>
-          Inspect ROI
-        </Button>
-      )
-    }
-  ];
-
-  const recColumns = [
-    {
-      title: "Table",
-      key: "table_ref",
-      render: (_: unknown, row: SmartLayoutRecommendationRead) => (
-        <Button type="link" onClick={() => navigate(`/tables/${row.table_id}`)}>
-          {row.table_ref}
-        </Button>
-      )
-    },
-    { title: "Strategy", dataIndex: "recommended_strategy", key: "recommended_strategy" },
-    {
-      title: "Columns",
-      key: "recommended_columns",
-      render: (_: unknown, row: SmartLayoutRecommendationRead) =>
-        row.recommended_columns?.length ? row.recommended_columns.join(", ") : "-"
+      id: "status",
+      header: "Status",
+      cell: ({ row }) => <Badge variant="secondary">{row.original.status.toUpperCase()}</Badge>
     },
     {
-      title: "Status",
-      key: "status",
-      render: (_: unknown, row: SmartLayoutRecommendationRead) => (
-        <Tag>{row.status.toUpperCase()}</Tag>
-      )
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      render: (_: unknown, row: SmartLayoutRecommendationRead) => (
-        <Space>
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-1">
           <Button
-            size="small"
-            onClick={() => approve.mutate(row)}
-            disabled={row.status === "applied" || row.status === "approved"}
+            size="sm"
+            variant="secondary"
+            onClick={() => approve.mutate(row.original)}
+            disabled={row.original.status === "applied" || row.original.status === "approved"}
           >
             Approve
           </Button>
@@ -248,267 +234,299 @@ export function SmartMaintenance() {
             title="Apply this layout change?"
             description={
               <span>
-                Physically re-sorts <strong>{row.table_ref}</strong> by{" "}
-                <strong>{row.recommended_columns?.join(", ") || "the recommended columns"}</strong>{" "}
-                ({row.recommended_strategy}) and sets <code>write.sort-order</code> so future
-                writers keep it that way. This rewrites the table&apos;s data files now.
+                Physically re-sorts <strong>{row.original.table_ref}</strong> by{" "}
+                <strong>{row.original.recommended_columns?.join(", ") || "the recommended columns"}</strong> (
+                {row.original.recommended_strategy}) and sets <code>write.sort-order</code>.
               </span>
             }
-            onConfirm={() => execute.mutate(row)}
-            disabled={row.status !== "approved"}
+            onConfirm={() => execute.mutate(row.original)}
+            disabled={row.original.status !== "approved"}
           >
-            <Button size="small" disabled={row.status !== "approved"} loading={execute.isPending}>
+            <Button size="sm" variant="secondary" disabled={row.original.status !== "approved"} loading={execute.isPending}>
               Execute
             </Button>
           </ConfirmAction>
-          <Button
-            size="small"
-            danger
-            onClick={() => dismiss.mutate(row)}
-            disabled={row.status === "rejected" || row.status === "applied"}
+          <ConfirmAction
+            title="Dismiss this recommendation?"
+            description={<span>Removes <strong>{row.original.table_ref}</strong> from the pending layout queue.</span>}
+            onConfirm={() => dismiss.mutate(row.original)}
+            disabled={row.original.status === "rejected" || row.original.status === "applied"}
           >
-            Dismiss
-          </Button>
-        </Space>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={row.original.status === "rejected" || row.original.status === "applied"}
+              loading={dismiss.isPending}
+            >
+              Dismiss
+            </Button>
+          </ConfirmAction>
+        </div>
+      )
+    }
+  ];
+
+  const tierColumns: ColumnDef<DetectionTierRowRead, unknown>[] = [
+    {
+      id: "table",
+      header: "Table",
+      cell: ({ row }) => (
+        <Button
+          variant="ghost"
+          className="h-auto p-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/tables/${row.original.table_id}`);
+          }}
+        >
+          {row.original.schema_name}.{row.original.table_name}
+        </Button>
+      )
+    },
+    {
+      id: "tier",
+      header: "Tier",
+      cell: ({ row }) => (
+        <Badge variant={tierBadgeVariant(row.original.tier)}>{row.original.tier.toUpperCase()}</Badge>
+      )
+    },
+    {
+      id: "score",
+      header: "Score",
+      cell: ({ row }) =>
+        row.original.score == null ? <span className="text-muted-foreground">Not scored</span> : row.original.score
+    },
+    { id: "commits_24h", header: "Commits (24h)", cell: ({ row }) => row.original.commits_24h },
+    { id: "commits_7d", header: "Commits (7d)", cell: ({ row }) => row.original.commits_7d },
+    { id: "delete_file_pct", header: "Delete %", cell: ({ row }) => row.original.delete_file_pct },
+    { id: "query_count_30d", header: "Queries (30d)", cell: ({ row }) => row.original.query_count_30d },
+    {
+      id: "inspect",
+      header: "",
+      cell: ({ row }) => (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={(e) => {
+            e.stopPropagation();
+            setInspectTable(row.original);
+          }}
+        >
+          Inspect ROI
+        </Button>
       )
     }
   ];
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      {contextHolder}
-      <Space size={8} align="center">
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Smart Maintenance
-        </Typography.Title>
-        <TieringHelpButton />
-      </Space>
-      <Tabs
-        items={[
-          {
-            key: "overview",
-            label: "Overview",
-            children: (
-              <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                {overview.isError ? (
-                  <Alert
-                    type="error"
-                    showIcon
-                    message="Couldn't load Smart Maintenance overview"
-                    description={
-                      overview.error instanceof Error ? overview.error.message : "Unknown error"
-                    }
-                    action={
-                      <Button size="small" onClick={() => void overview.refetch()}>
-                        Retry
-                      </Button>
-                    }
-                  />
-                ) : null}
-                <Row gutter={[12, 12]}>
-                  <Col xs={24} md={8}>
-                    <Card>
-                      <Statistic
-                        title="Tables With Stats"
-                        value={overview.data?.tables_with_stats ?? 0}
-                        loading={overview.isLoading}
-                      />
-                    </Card>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Card>
-                      <Statistic
-                        title="ROI Shadow Decisions (30d)"
-                        value={overview.data?.roi_shadow_decisions_30d ?? 0}
-                        loading={overview.isLoading}
-                      />
-                    </Card>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Card>
-                      <Statistic
-                        title="Pending Layout Recommendations"
-                        value={overview.data?.pending_layout_recommendations ?? 0}
-                        loading={overview.isLoading}
-                      />
-                    </Card>
-                  </Col>
-                </Row>
-                {overview.data ? (
-                  <Descriptions bordered size="small" column={5}>
-                    <Descriptions.Item label="HOT">{overview.data.tiers.hot}</Descriptions.Item>
-                    <Descriptions.Item label="WARM">{overview.data.tiers.warm}</Descriptions.Item>
-                    <Descriptions.Item label="COLD">{overview.data.tiers.cold}</Descriptions.Item>
-                    <Descriptions.Item label="DORMANT">{overview.data.tiers.dormant}</Descriptions.Item>
-                    <Descriptions.Item label="UNKNOWN">{overview.data.tiers.unknown}</Descriptions.Item>
-                  </Descriptions>
-                ) : null}
-                {recommendations.isError ? (
-                  <Alert
-                    type="error"
-                    showIcon
-                    message="Couldn't load layout recommendations"
-                    description={
-                      recommendations.error instanceof Error
-                        ? recommendations.error.message
-                        : "Unknown error"
-                    }
-                    action={
-                      <Button size="small" onClick={() => void recommendations.refetch()}>
-                        Retry
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <Card title="Layout Recommendations">
-                    <Table
-                      rowKey="id"
-                      loading={recommendations.isLoading}
-                      dataSource={recommendationItems}
-                      columns={recColumns}
-                      pagination={{ pageSize: 10 }}
-                    />
-                  </Card>
-                )}
-              </Space>
-            )
-          },
-          {
-            key: "tiers",
-            label: "Detection Tiers",
-            children: (
-              <Card>
-                {tiers.isError ? (
-                  <Alert
-                    type="error"
-                    showIcon
-                    message="Couldn't load detection tiers"
-                    description={tiers.error instanceof Error ? tiers.error.message : "Unknown error"}
-                    action={
-                      <Button size="small" onClick={() => void tiers.refetch()}>
-                        Retry
-                      </Button>
-                    }
-                    style={{ marginBottom: 12 }}
-                  />
-                ) : (
-                  <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                    Click a row, or use Inspect ROI, to see the ROI decision and workload forecast
-                    behind a table&apos;s tier without leaving this list.
-                  </Typography.Paragraph>
-                )}
-                <Table
-                  rowKey="table_id"
-                  loading={tiers.isLoading}
-                  dataSource={tierItems}
-                  columns={tierColumns}
-                  onRow={(record) => ({
-                    onClick: () => setInspectTable(record),
-                    style: { cursor: "pointer" }
-                  })}
-                  pagination={{ pageSize: 20 }}
-                />
-              </Card>
-            )
-          }
-        ]}
+    <div>
+      <PageHeader
+        title="Smart Maintenance"
+        subtitle="Workload-aware tiers and layout recommendations from scan telemetry."
+        actions={<TieringHelpButton />}
       />
-      <Drawer
-        title={inspectTable ? `ROI decision · ${inspectTable.schema_name}.${inspectTable.table_name}` : "ROI decision"}
-        width={560}
-        open={inspectTable !== null}
-        onClose={() => setInspectTable(null)}
-        destroyOnClose
-      >
-        {inspectTable ? (
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Button
-              type="link"
-              style={{ padding: 0 }}
-              onClick={() => navigate(`/tables/${inspectTable.table_id}`)}
+
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricTile label="Pending" value={recStats.pending} loading={recommendations.isLoading} emphasis={recStats.pending > 0} />
+        <MetricTile label="Approved" value={recStats.approved} loading={recommendations.isLoading} />
+        <MetricTile label="Dismissed" value={recStats.dismissed} loading={recommendations.isLoading} />
+        <MetricTile label="Committed (7d)" value={recStats.committed7d} loading={recommendations.isLoading} />
+      </div>
+
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="tiers">Detection Tiers</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview">
+          <div className="space-y-4">
+            <AsyncBoundary
+              isLoading={overview.isLoading}
+              isError={overview.isError}
+              error={overview.error}
+              onRetry={() => void overview.refetch()}
+              skeleton={<KpiSkeleton />}
             >
-              Open table detail
-            </Button>
-            <Card loading={roi.isLoading} title="ROI Breakdown" size="small">
-              {roi.data ? (
-                <Descriptions bordered size="small" column={1}>
-                  <Descriptions.Item label="Action">{roi.data.decision.action}</Descriptions.Item>
-                  <Descriptions.Item label="Reason">{roi.data.decision.reason}</Descriptions.Item>
-                  <Descriptions.Item label="BCR">{roi.data.decision.bcr.toFixed(3)}</Descriptions.Item>
-                  <Descriptions.Item label="Threshold">
-                    {roi.data.decision.threshold.toFixed(3)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Benefit (USD/month)">
-                    {roi.data.monthly_benefit_usd.toFixed(2)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Cost (USD/month)">
-                    {roi.data.monthly_cost_usd.toFixed(2)}
-                  </Descriptions.Item>
-                </Descriptions>
-              ) : (
-                <Empty description="No ROI data available for this table yet." />
-              )}
-            </Card>
-            {roi.data?.effectiveness ? (
-              <Card size="small" title="Compaction effectiveness">
-                <Space wrap>
-                  <Tag color={(roi.data.effectiveness.effectiveness_ratio ?? 0) >= 10 ? "success" : "gold"}>
-                    Ratio {(roi.data.effectiveness.effectiveness_ratio ?? 0).toFixed(1)}×
-                  </Tag>
-                  <Tag>{roi.data.effectiveness.effectiveness}</Tag>
-                  <Tag>{roi.data.effectiveness.run_count ?? 0} runs</Tag>
-                </Space>
-              </Card>
-            ) : null}
-            {roi.data?.top_moop_partitions?.length ? (
-              <Card size="small" title="Top MOOP-ranked partitions (AutoComp §A2)">
-                <Table
-                  rowKey={(row) => `${row.partition_value}-${row.moop_score}`}
-                  dataSource={roi.data.top_moop_partitions}
-                  size="small"
-                  pagination={false}
-                  columns={[
-                    { title: "Partition", dataIndex: "partition_value", key: "partition_value" },
-                    {
-                      title: "MOOP score",
-                      dataIndex: "moop_score",
-                      key: "moop_score",
-                      align: "right",
-                      render: (value: number | null | undefined) => (value != null ? value.toFixed(3) : "—")
-                    },
-                    {
-                      title: "Small files",
-                      dataIndex: "small_files",
-                      key: "small_files",
-                      align: "right"
-                    }
+              {overview.data ? (
+                <DescriptionList
+                  items={[
+                    { label: "Tables with stats", value: overview.data.tables_with_stats },
+                    { label: "ROI shadow (30d)", value: overview.data.roi_shadow_decisions_30d },
+                    { label: "HOT", value: overview.data.tiers.hot },
+                    { label: "WARM", value: overview.data.tiers.warm },
+                    { label: "COLD", value: overview.data.tiers.cold },
+                    { label: "DORMANT", value: overview.data.tiers.dormant },
+                    { label: "UNKNOWN", value: overview.data.tiers.unknown }
                   ]}
                 />
+              ) : null}
+            </AsyncBoundary>
+
+            <AsyncBoundary
+              isLoading={recommendations.isLoading}
+              isError={recommendations.isError}
+              error={recommendations.error}
+              onRetry={() => void recommendations.refetch()}
+              isEmpty={recommendationItems.length === 0}
+              emptyTitle="No layout recommendations"
+              emptyDescription="Sort-order suggestions appear after scan telemetry builds up."
+            >
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>Layout recommendations</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0 pt-0">
+                  <DataTable
+                    columns={recColumns}
+                    data={recommendationItems}
+                    getRowId={(row) => row.id}
+                  />
+                </CardContent>
               </Card>
-            ) : null}
-            <Card loading={forecast.isLoading} title="Workload Forecast (next 24h)" size="small">
-              {forecast.data?.points?.length ? (
-                <Table
-                  rowKey="hour_start"
-                  dataSource={forecast.data.points}
-                  size="small"
-                  pagination={false}
-                  columns={[
-                    { title: "Hour", dataIndex: "hour_start", key: "hour_start" },
-                    {
-                      title: "Expected Queries",
-                      dataIndex: "expected_queries",
-                      key: "expected_queries"
-                    }
-                  ]}
+            </AsyncBoundary>
+          </div>
+        </TabsContent>
+        <TabsContent value="tiers">
+          <AsyncBoundary
+            isLoading={tiers.isLoading}
+            isError={tiers.isError}
+            error={tiers.error}
+            onRetry={() => void tiers.refetch()}
+          >
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle>Detection tiers</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 p-0 pt-0">
+                <p className="px-4 text-sm text-muted-foreground">
+                  Click a row, or use Inspect ROI, to see the ROI decision and workload forecast behind a table&apos;s
+                  tier.
+                </p>
+                <DataTable
+                  columns={tierColumns}
+                  data={tierItems}
+                  getRowId={(row) => row.table_id}
+                  getRowClassName={() => "cursor-pointer"}
                 />
-              ) : (
-                <Empty description="No forecast available for this table yet." />
-              )}
+              </CardContent>
             </Card>
-          </Space>
-        ) : null}
-      </Drawer>
-    </Space>
+          </AsyncBoundary>
+        </TabsContent>
+      </Tabs>
+
+      <Sheet open={inspectTable !== null} onOpenChange={(open) => !open && setInspectTable(null)}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>
+              {inspectTable
+                ? `ROI decision · ${inspectTable.schema_name}.${inspectTable.table_name}`
+                : "ROI decision"}
+            </SheetTitle>
+          </SheetHeader>
+          {inspectTable ? (
+            <div className="mt-4 space-y-4">
+              <Button variant="ghost" className="h-auto p-0 text-primary" onClick={() => navigate(`/tables/${inspectTable.table_id}`)}>
+                Open table detail
+              </Button>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>ROI Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {roi.isLoading ? (
+                    <Skeleton className="h-32 w-full" />
+                  ) : roi.data ? (
+                    <DescriptionList
+                      items={[
+                        { label: "Action", value: roi.data.decision.action },
+                        { label: "Reason", value: roi.data.decision.reason },
+                        { label: "BCR", value: roi.data.decision.bcr.toFixed(3) },
+                        { label: "Threshold", value: roi.data.decision.threshold.toFixed(3) },
+                        { label: "Benefit (USD/month)", value: roi.data.monthly_benefit_usd.toFixed(2) },
+                        { label: "Cost (USD/month)", value: roi.data.monthly_cost_usd.toFixed(2) }
+                      ]}
+                    />
+                  ) : (
+                    <EmptyState title="No ROI data" description="No ROI data available for this table yet." />
+                  )}
+                </CardContent>
+              </Card>
+              {roi.data?.effectiveness ? (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle>Compaction effectiveness</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    <Badge variant={(roi.data.effectiveness.effectiveness_ratio ?? 0) >= 10 ? "success" : "warning"}>
+                      Ratio {(roi.data.effectiveness.effectiveness_ratio ?? 0).toFixed(1)}×
+                    </Badge>
+                    <Badge variant="secondary">{roi.data.effectiveness.effectiveness}</Badge>
+                    <Badge variant="secondary">{roi.data.effectiveness.run_count ?? 0} runs</Badge>
+                  </CardContent>
+                </Card>
+              ) : null}
+              {roi.data?.top_moop_partitions?.length ? (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle>Top MOOP-ranked partitions</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0 pt-0">
+                    <table className="td-schema-table w-full">
+                      <thead>
+                        <tr>
+                          <th>Partition</th>
+                          <th className="text-right">MOOP score</th>
+                          <th className="text-right">Small files</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {roi.data.top_moop_partitions.map((partition) => (
+                          <tr key={`${partition.partition_value}-${partition.moop_score}`}>
+                            <td>{partition.partition_value}</td>
+                            <td className="text-right">
+                              {partition.moop_score != null ? partition.moop_score.toFixed(3) : "—"}
+                            </td>
+                            <td className="text-right">{partition.small_files}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+              ) : null}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>Workload Forecast (next 24h)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {forecast.isLoading ? (
+                    <Skeleton className="h-24 w-full" />
+                  ) : forecast.data?.points?.length ? (
+                    <table className="td-schema-table w-full">
+                      <thead>
+                        <tr>
+                          <th>Hour</th>
+                          <th>Expected Queries</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forecast.data.points.map((point) => (
+                          <tr key={point.hour_start}>
+                            <td>{point.hour_start}</td>
+                            <td>{point.expected_queries}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <EmptyState title="No forecast" description="No forecast available for this table yet." />
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+    </div>
   );
 }

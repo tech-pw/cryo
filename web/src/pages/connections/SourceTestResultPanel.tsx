@@ -1,5 +1,5 @@
-import { Alert, Typography } from "antd";
 import type { SourceTestResult } from "../../api/types";
+import { Alert } from "../../components/ui/alert";
 import { formatSourceTestSuccessMessage } from "./helpers";
 
 interface SourceTestResultPanelProps {
@@ -11,8 +11,7 @@ export const SourceTestResultPanel = ({ result }: SourceTestResultPanelProps) =>
     return (
       <Alert
         className="page-alert"
-        type="error"
-        showIcon
+        variant="error"
         title="Couldn't connect"
         description={result.error}
       />
@@ -21,15 +20,10 @@ export const SourceTestResultPanel = ({ result }: SourceTestResultPanelProps) =>
   return (
     <Alert
       className="page-alert"
-      type="success"
-      showIcon
+      variant="success"
       title={formatSourceTestSuccessMessage(result.namespaces.length)}
       description={
-        result.note ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
-            {result.note}
-          </Typography.Text>
-        ) : undefined
+        result.note ? <span className="text-xs text-muted-foreground">{result.note}</span> : undefined
       }
     />
   );

@@ -1,16 +1,41 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { PageBreadcrumbs } from "./PageBreadcrumbs";
+import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { PageBreadcrumbs } from "./PageBreadcrumbs";
 
-const renderAt = (path: string) =>
-  render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="*" element={<PageBreadcrumbs />} />
-      </Routes>
-    </MemoryRouter>
+vi.mock("../lib/auth", () => ({
+  useAuth: () => ({
+    api: { token: "test-token" },
+    token: "test-token",
+    role: "admin",
+    subject: "tester",
+    loading: false,
+    error: null,
+    isAuthenticated: true,
+    signIn: vi.fn(),
+    signOut: vi.fn()
+  })
+}));
+
+vi.mock("../api/client", () => ({
+  listPresets: vi.fn().mockResolvedValue([])
+}));
+
+const renderAt = (path: string) => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } }
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="*" element={<PageBreadcrumbs />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
+};
 
 describe("PageBreadcrumbs", () => {
   it("renders nothing on the root", () => {

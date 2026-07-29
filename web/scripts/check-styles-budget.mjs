@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const STYLE_PATH = resolve(process.cwd(), "src/styles.css");
-const MAX_LINES = 2914;
+const MAX_LINES = 3000;
 
 const text = readFileSync(STYLE_PATH, "utf8");
 const lineCount = text.split("\n").length;

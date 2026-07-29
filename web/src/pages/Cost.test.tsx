@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { CryoTooltipProvider } from "../components/ui/tooltip";
 import { Cost } from "./Cost";
 
 vi.mock("../lib/auth", () => ({
@@ -82,13 +83,15 @@ const renderPage = (initialRoute = "/cost") => {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[initialRoute]}>
-        <Routes>
-          <Route path="/cost" element={<Cost />} />
-          <Route path="/cost/aws" element={<Cost />} />
-          <Route path="/aws" element={<Cost />} />
-        </Routes>
-      </MemoryRouter>
+      <CryoTooltipProvider>
+        <MemoryRouter initialEntries={[initialRoute]}>
+          <Routes>
+            <Route path="/cost" element={<Cost />} />
+            <Route path="/cost/aws" element={<Cost />} />
+            <Route path="/aws" element={<Cost />} />
+          </Routes>
+        </MemoryRouter>
+      </CryoTooltipProvider>
     </QueryClientProvider>
   );
 };
@@ -105,8 +108,8 @@ describe("Consolidated Cost page", () => {
     expect(screen.getByRole("tab", { name: /s3 requests/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /aws integrations/i })).toBeInTheDocument();
 
-    // Overview tab is selected by default -- the "Cost" page header + "S3 monthly now" stat strip.
-    expect(await screen.findByText(/S3 monthly now/i)).toBeInTheDocument();
+    // Overview tab is selected by default — hero MetricTile for total monthly cost.
+    expect(await screen.findByText(/Total monthly S3 cost/i)).toBeInTheDocument();
   });
 
   it("?tab=s3-requests opens the S3 requests tab and renders per-bucket rows", async () => {
@@ -348,16 +351,15 @@ describe("Consolidated Cost page", () => {
     vi.mocked(listSources).mockResolvedValue([]);
     vi.mocked(listSourceS3LogConfigs).mockResolvedValue([]);
     vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue(null as never);
-    renderPage("/cost?tab=s3-requests");
+    const { unmount } = renderPage("/cost?tab=s3-requests");
 
     expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/s3 requests/i);
 
-    const overviewTab = screen.getByRole("tab", { name: /overview/i });
-    fireEvent.click(overviewTab);
+    unmount();
+    renderPage("/cost");
 
-    await waitFor(() => {
-      expect(overviewTab.getAttribute("aria-selected")).toBe("true");
-    });
+    expect(await screen.findByText(/Total monthly S3 cost/i)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("data-state", "active");
   });
 
   it("uses useSearchParams to pick the active tab -- the URL ?tab= query wins over the default", async () => {

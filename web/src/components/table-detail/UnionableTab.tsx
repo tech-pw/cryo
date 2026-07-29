@@ -1,8 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, Empty, Skeleton, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ApiOptions } from "../../api/client";
 import { getUnionable } from "../../api/client";
 import type { UnionScoreRead } from "../../api/types";
+import { EmptyState } from "../common";
+import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { ChartCard } from "./ChartCard";
 
 interface Props {
   api: ApiOptions;
@@ -11,6 +15,12 @@ interface Props {
 
 const formatScore = (v: number) => `${Math.round(v * 100)}%`;
 
+const scoreVariant = (pct: number): "success" | "warning" | "secondary" => {
+  if (pct >= 0.7) return "success";
+  if (pct >= 0.4) return "warning";
+  return "secondary";
+};
+
 export const UnionableTab = ({ api, tableId }: Props) => {
   const query = useQuery({
     queryKey: ["unionable", tableId],
@@ -18,86 +28,114 @@ export const UnionableTab = ({ api, tableId }: Props) => {
     enabled: Boolean(tableId)
   });
 
-  if (query.isLoading) return <Skeleton active />;
-  if (query.isError) {
+  if (query.isLoading) {
     return (
-      <Card>
-        <Typography.Text type="danger">Failed to load union candidates: {(query.error as Error).message}</Typography.Text>
-      </Card>
+      <div className="space-y-3 p-4">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-32 w-full" />
+      </div>
     );
   }
+
+  if (query.isError) {
+    return (
+      <ChartCard title="Unionable Tables">
+        <p className="text-sm text-[var(--color-status-danger)]">
+          Failed to load union candidates: {(query.error as Error).message}
+        </p>
+      </ChartCard>
+    );
+  }
+
   const results: UnionScoreRead[] = query.data?.results ?? [];
 
   if (results.length === 0) {
     return (
-      <Card
+      <ChartCard
         title="Unionable Tables"
-        extra={<Tooltip title="LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)"><Tag>EasyTUS</Tag></Tooltip>}
+        actions={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="secondary">EasyTUS</Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)
+            </TooltipContent>
+          </Tooltip>
+        }
       >
-        <Empty description="No Union-Compatible Tables Found." />
-      </Card>
+        <EmptyState title="No Union-Compatible Tables Found." />
+      </ChartCard>
     );
   }
 
   return (
-    <Card
+    <ChartCard
       title="Unionable Tables"
-      extra={<Tooltip title="LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)"><Tag color="purple">EasyTUS</Tag></Tooltip>}
+      actions={
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="default">EasyTUS</Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            LLM-embedded schema similarity (EasyTUS, IEEE BigData 2025)
+          </TooltipContent>
+        </Tooltip>
+      }
     >
-      <Table
-        dataSource={results}
-        rowKey={(r) => r.candidate_table_id}
-        size="small"
-        pagination={false}
-        columns={[
-          {
-            title: "Candidate",
-            dataIndex: "candidate_table_id",
-            key: "candidate",
-            render: (v: string) => <Typography.Text code>{v}</Typography.Text>
-          },
-          {
-            title: "Match",
-            dataIndex: "score",
-            key: "score",
-            sorter: (a, b) => a.score - b.score,
-            render: (v: number) => {
-              const pct = v;
-              const color = pct >= 0.7 ? "success" : pct >= 0.4 ? "warning" : "default";
-              return <Tag color={color}>{formatScore(v)}</Tag>;
-            }
-          },
-          {
-            title: "Overlap Columns",
-            dataIndex: "overlap_columns",
-            key: "overlap",
-            render: (cols: string[]) => (
-              <Space size={4} wrap>
-                {cols.slice(0, 5).map((c) => (
-                  <Tag key={c}>{c}</Tag>
-                ))}
-                {cols.length > 5 ? <Typography.Text type="secondary">+{cols.length - 5} More</Typography.Text> : null}
-              </Space>
-            )
-          },
-          {
-            title: "Suggested Union",
-            dataIndex: "union_sql",
-            key: "sql",
-            render: (v: string) => (
-              <Tooltip title={v}>
-                <Typography.Text code style={{ fontSize: 11 }}>{v.slice(0, 80)}{v.length > 80 ? "…" : ""}</Typography.Text>
-              </Tooltip>
-            )
-          },
-          {
-            title: "Rationale",
-            dataIndex: "rationale",
-            key: "rationale",
-            render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v}</Typography.Text>
-          }
-        ]}
-      />
-    </Card>
+      <div className="overflow-x-auto">
+        <table className="td-schema-table">
+          <thead>
+            <tr>
+              <th>Candidate</th>
+              <th>Match</th>
+              <th>Overlap Columns</th>
+              <th>Suggested Union</th>
+              <th>Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((row) => (
+              <tr key={row.candidate_table_id}>
+                <td>
+                  <code className="font-mono text-xs">{row.candidate_table_id}</code>
+                </td>
+                <td>
+                  <Badge variant={scoreVariant(row.score)}>{formatScore(row.score)}</Badge>
+                </td>
+                <td>
+                  <div className="flex flex-wrap gap-1">
+                    {row.overlap_columns.slice(0, 5).map((c) => (
+                      <Badge key={c} variant="secondary">
+                        {c}
+                      </Badge>
+                    ))}
+                    {row.overlap_columns.length > 5 ? (
+                      <span className="text-xs text-muted-foreground">
+                        +{row.overlap_columns.length - 5} More
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
+                <td>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <code className="font-mono text-[11px]">
+                        {row.union_sql.slice(0, 80)}
+                        {row.union_sql.length > 80 ? "…" : ""}
+                      </code>
+                    </TooltipTrigger>
+                    <TooltipContent>{row.union_sql}</TooltipContent>
+                  </Tooltip>
+                </td>
+                <td>
+                  <span className="text-[11px]">{row.rationale}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </ChartCard>
   );
 };

@@ -1,11 +1,11 @@
 import {
-  ApartmentOutlined,
-  DatabaseOutlined,
-  DollarOutlined,
-  FileTextOutlined,
-  HeartOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
+  AlertTriangle,
+  Database,
+  DollarSign,
+  FileText,
+  Heart,
+  Network
+} from "lucide-react";
 import type { CSSProperties } from "react";
 import type { TableStatsRead } from "../../api/types";
 import { healthScoreColor } from "../status";
@@ -37,7 +37,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
         className="td-kpi-tile"
         style={{ "--kpi-accent": healthScoreColor(score) } as CSSProperties}
       >
-        <HeartOutlined className="td-kpi-icon" />
+        <Heart className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Health Score</span>
           <span className="td-kpi-value">{formatNumber(score)}</span>
@@ -45,7 +45,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       </div>
 
       <div className="td-kpi-tile td-kpi-impact-cool">
-        <DatabaseOutlined className="td-kpi-icon" />
+        <Database className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Total Size</span>
           <span className="td-kpi-value">{formatGb(stats?.total_size_gb)}</span>
@@ -53,7 +53,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       </div>
 
       <div className="td-kpi-tile td-kpi-impact-cool">
-        <FileTextOutlined className="td-kpi-icon" />
+        <FileText className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Files</span>
           <span className="td-kpi-value">{formatNumber(stats?.total_files, true)}</span>
@@ -64,7 +64,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       </div>
 
       <div className={`td-kpi-tile ${impactClassForSmallFiles(smallRate)}`}>
-        <WarningOutlined className="td-kpi-icon" />
+        <AlertTriangle className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Small Files</span>
           <span className="td-kpi-value">{formatNumber(stats?.small_files_count, true)}</span>
@@ -73,7 +73,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       </div>
 
       <div className="td-kpi-tile td-kpi-impact-cool">
-        <ApartmentOutlined className="td-kpi-icon" />
+        <Network className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Partitions</span>
           <span className="td-kpi-value">{formatNumber(stats?.total_partitions)}</span>
@@ -81,7 +81,7 @@ export const KpiStripe = ({ stats, savingsUsd, reclaimableBytes }: KpiStripeProp
       </div>
 
       <div className={`td-kpi-tile ${savingsUsd > 0 ? "td-kpi-impact-cool" : "td-kpi-impact-muted"}`}>
-        <DollarOutlined className="td-kpi-icon" />
+        <DollarSign className="td-kpi-icon" />
         <div className="td-kpi-content">
           <span className="td-kpi-label">Monthly Savings</span>
           <span className="td-kpi-value">{formatCurrency(savingsUsd)}</span>

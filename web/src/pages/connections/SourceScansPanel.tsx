@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Space, Typography, message } from "antd";
+import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { listRuns, triggerScan } from "../../api/client";
 import type { RunRead } from "../../api/types";
 import { ConfirmAction } from "../../components/confirm";
 import { StatusTag } from "../../components/status";
+import { Button } from "../../components/ui/button";
 import { useAuth } from "../../lib/auth";
 import { formatTime } from "../../lib/format";
 import { SCAN_ACTIVE_STATUSES } from "./constants";
@@ -38,16 +39,16 @@ export const SourceScansPanel = ({ sourceId }: SourceScansPanelProps) => {
         trigger: "web-connections"
       }),
     onSuccess: (result) => {
-      message.success(result.message || `Scan queued: ${result.run_id}`);
+      toast.success(result.message || `Scan queued: ${result.run_id}`);
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const activeRun = (runs.data ?? []).find((run) => SCAN_ACTIVE_STATUSES.has(run.status));
 
   return (
-    <Space orientation="vertical" size={10} className="full-width">
+    <div className="flex w-full flex-col gap-2.5">
       <ConfirmAction
         title="Scan this lakehouse now?"
         description="Queues a scan of just this lakehouse -- other connected lakehouses aren't touched."
@@ -58,31 +59,26 @@ export const SourceScansPanel = ({ sourceId }: SourceScansPanelProps) => {
         </Button>
       </ConfirmAction>
       {runs.isLoading ? null : (runs.data ?? []).length ? (
-        <Space orientation="vertical" size={6} className="full-width">
+        <div className="flex w-full flex-col gap-1.5">
           {(runs.data as RunRead[]).map((run) => (
-            <Space
+            <div
               key={run.id ?? `${run.status}-${run.kind}-${run.created_at ?? "unknown"}`}
-              size={8}
-              style={{ width: "100%", justifyContent: "space-between" }}
+              className="flex w-full items-center justify-between gap-2"
             >
-              <Space size={8}>
+              <div className="flex items-center gap-2">
                 <StatusTag status={run.status} />
                 <Link to={`/scans/${run.id}`}>
-                  <Typography.Text code className="mono-id">
-                    {run.id.slice(0, 8)}
-                  </Typography.Text>
+                  <code className="mono-id text-xs">{run.id.slice(0, 8)}</code>
                 </Link>
-              </Space>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {formatTime(run.created_at)}
-              </Typography.Text>
-            </Space>
+              </div>
+              <span className="text-xs text-muted-foreground">{formatTime(run.created_at)}</span>
+            </div>
           ))}
-        </Space>
+        </div>
       ) : (
-        <Typography.Text type="secondary">No scans yet for this lakehouse.</Typography.Text>
+        <p className="text-sm text-muted-foreground">No scans yet for this lakehouse.</p>
       )}
-    </Space>
+    </div>
   );
 };
 

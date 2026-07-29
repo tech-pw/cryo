@@ -12,27 +12,29 @@
  * endpoint exists), so per-card collapse would misrepresent what actually happened.
  */
 import {
-  AppstoreOutlined,
-  CalendarOutlined,
-  CheckCircleOutlined,
-  ClearOutlined,
-  CloseCircleOutlined,
-  FireOutlined,
-  HistoryOutlined,
-  RadarChartOutlined,
-  SyncOutlined,
-  ThunderboltOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
-import { Button, Card, DatePicker, Popover, Select, Space, Tag, Typography } from "antd";
+  AlertTriangle,
+  Calendar,
+  CheckCircle2,
+  Eraser,
+  Flame,
+  History,
+  LayoutGrid,
+  Loader2,
+  Radar,
+  XCircle,
+  Zap
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
-import dayjs, { type Dayjs } from "dayjs";
 import type { BenefitScoreResponse, TableSignalRead, TableSignalsResponse } from "../../api/client";
 import type { TableCostRead } from "../../api/types";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
 import { operationLabels } from "../../lib/theme";
 import { ConfirmAction } from "../confirm";
 import { QueryErrorAlert } from "../common";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { ChartCard } from "./ChartCard";
 import { getSignalMatrix, getSignalPointerDetail } from "./helpers";
 
 type Severity = "critical" | "warning" | "info";
@@ -50,23 +52,29 @@ interface HealthIssue {
 }
 
 const operationIcon = (operation: string): ReactNode => {
-  if (operation === "optimize") return <FireOutlined />;
-  if (operation === "remove_orphan_files") return <ClearOutlined />;
-  if (operation === "expire_snapshots") return <HistoryOutlined />;
-  if (operation === "optimize_manifests") return <AppstoreOutlined />;
-  return <RadarChartOutlined />;
+  if (operation === "optimize") return <Flame className="size-3.5" />;
+  if (operation === "remove_orphan_files") return <Eraser className="size-3.5" />;
+  if (operation === "expire_snapshots") return <History className="size-3.5" />;
+  if (operation === "optimize_manifests") return <LayoutGrid className="size-3.5" />;
+  return <Radar className="size-3.5" />;
 };
 
 const severityIcon = (severity: Severity): ReactNode => {
-  if (severity === "critical") return <CloseCircleOutlined style={{ color: "var(--error, #dc3545)" }} />;
-  if (severity === "warning") return <WarningOutlined style={{ color: "var(--warning, #f0a020)" }} />;
-  return <RadarChartOutlined style={{ color: "var(--muted, #5c667a)" }} />;
+  if (severity === "critical") return <XCircle className="size-3.5" style={{ color: "var(--error, #dc3545)" }} />;
+  if (severity === "warning") return <AlertTriangle className="size-3.5" style={{ color: "var(--warning, #f0a020)" }} />;
+  return <Radar className="size-3.5" style={{ color: "var(--muted, #5c667a)" }} />;
 };
 
-const severityTagColor = (severity: Severity): string =>
-  severity === "critical" ? "red" : severity === "warning" ? "orange" : "default";
+const severityBadgeVariant = (severity: Severity): "danger" | "warning" | "secondary" =>
+  severity === "critical" ? "danger" : severity === "warning" ? "warning" : "secondary";
 
 const severityRank: Record<Severity, number> = { critical: 0, warning: 1, info: 2 };
+
+const minScheduleLocal = (): string => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+};
 
 function buildIssues(params: {
   signals?: TableSignalsResponse;
@@ -122,7 +130,7 @@ function buildIssues(params: {
     issues.push({
       id: "hot-partition",
       severity: "info",
-      icon: <FireOutlined />,
+      icon: <Flame className="size-3.5" />,
       title: "Hot partition needs compaction",
       impactText: `${formatNumber(topPartition.small_files)} small files`,
       current: `${topPartition.partition_value ?? "(table)"} — benefit score ${topPartition.benefit_score.toFixed(3)}`,
@@ -187,7 +195,7 @@ export const ActNowSection = ({
   const [acting, setActing] = useState(false);
   const [scheduledFor, setScheduledFor] = useState<string | null>(null);
   const [pickerOpenFor, setPickerOpenFor] = useState<string | null>(null);
-  const [pickedTime, setPickedTime] = useState<Dayjs | null>(null);
+  const [pickedTime, setPickedTime] = useState<string>("");
 
   const handleRun = () => {
     setActing(true);
@@ -196,10 +204,10 @@ export const ActNowSection = ({
 
   const handleSchedule = () => {
     if (!pickedTime) return;
-    const iso = pickedTime.toISOString();
+    const iso = new Date(pickedTime).toISOString();
     setScheduledFor(iso);
     setPickerOpenFor(null);
-    setPickedTime(null);
+    setPickedTime("");
     onSchedule(iso);
   };
 
@@ -209,45 +217,43 @@ export const ActNowSection = ({
 
   if (signalsLoading) {
     return (
-      <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Checking diagnostic signals…
-        </Typography.Text>
-      </Card>
+      <ChartCard>
+        <span className="text-xs text-muted-foreground">Checking diagnostic signals…</span>
+      </ChartCard>
     );
   }
 
   const inFlight = acting || runPending || Boolean(queuedMaintenanceRunId);
   if (inFlight) {
     return (
-      <Card className="td-chart-card td-act-now-banner" classNames={{ body: "td-chart-card-body" }}>
-        <Space align="center" size={10}>
-          <SyncOutlined spin style={{ color: "var(--primary, #3d6fd4)" }} />
-          <Typography.Text strong style={{ fontSize: 13 }}>
+      <ChartCard className="td-act-now-banner">
+        <div className="flex items-center gap-2.5">
+          <Loader2 className="size-3.5 animate-spin" style={{ color: "var(--primary, #3d6fd4)" }} />
+          <span className="text-[13px] font-semibold">
             {runPending ? "Queueing maintenance run…" : "Maintenance run queued for this table"}
-          </Typography.Text>
-        </Space>
-        {queuedMaintenanceRunId ? (
-          <Button size="small" type="primary" onClick={onOpenRun} style={{ marginLeft: 16 }}>
-            Open run
-          </Button>
-        ) : null}
-      </Card>
+          </span>
+          {queuedMaintenanceRunId ? (
+            <Button size="sm" variant="primary" onClick={onOpenRun} className="ml-4">
+              Open run
+            </Button>
+          ) : null}
+        </div>
+      </ChartCard>
     );
   }
 
   if (scheduledFor || schedulePending) {
     return (
-      <Card className="td-chart-card td-act-now-banner" classNames={{ body: "td-chart-card-body" }}>
-        <Space align="center" size={10}>
-          <CalendarOutlined style={{ color: "var(--primary, #3d6fd4)" }} />
-          <Typography.Text strong style={{ fontSize: 13 }}>
+      <ChartCard className="td-act-now-banner">
+        <div className="flex items-center gap-2.5">
+          <Calendar className="size-3.5" style={{ color: "var(--primary, #3d6fd4)" }} />
+          <span className="text-[13px] font-semibold">
             {schedulePending
               ? "Scheduling maintenance run…"
               : `Maintenance run scheduled for ${formatTime(scheduledFor ?? "")}`}
-          </Typography.Text>
-        </Space>
-      </Card>
+          </span>
+        </div>
+      </ChartCard>
     );
   }
 
@@ -255,131 +261,145 @@ export const ActNowSection = ({
 
   if (!issues.length) {
     return (
-      <Card className="td-chart-card td-act-now-healthy" classNames={{ body: "td-chart-card-body" }}>
-        <Space align="center" size={8}>
-          <CheckCircleOutlined style={{ color: "var(--success, #28a745)" }} />
-          <Typography.Text strong style={{ fontSize: 12, color: "var(--success, #28a745)" }}>
-            No issues detected
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+      <ChartCard className="td-act-now-healthy">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="size-3.5" style={{ color: "var(--success, #28a745)" }} />
+          <span className="text-xs font-semibold text-[var(--success,#28a745)]">No issues detected</span>
+          <span className="text-[11px] text-muted-foreground">
             All {signals?.signals.length ?? 0} background diagnostic checks passed.
-          </Typography.Text>
-        </Space>
-      </Card>
+          </span>
+        </div>
+      </ChartCard>
     );
   }
 
   return (
     <div className="td-act-now-section">
       {lastRunSkipNotes && lastRunSkipNotes.length > 0 ? (
-        <Card className="td-chart-card td-act-now-skip-banner" classNames={{ body: "td-chart-card-body" }}>
-          <Space align="start" size={8}>
-            <WarningOutlined style={{ color: "var(--warning, #f0a020)" }} />
-            <Typography.Text style={{ fontSize: 12 }}>
-              The last run completed but didn't change this: {lastRunSkipNotes.join(" · ")}
-            </Typography.Text>
-          </Space>
-        </Card>
+        <ChartCard className="td-act-now-skip-banner">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="size-3.5" style={{ color: "var(--warning, #f0a020)" }} />
+            <span className="text-xs">
+              The last run completed but didn&apos;t change this: {lastRunSkipNotes.join(" · ")}
+            </span>
+          </div>
+        </ChartCard>
       ) : null}
       <div className="td-act-now-header">
         <span className="td-chart-card-title">Act now</span>
-        <Tag color="error" style={{ margin: 0 }}>{issues.length}</Tag>
-        <div style={{ flex: 1 }} />
-        <Space size={6}>
-          <Typography.Text type="secondary" style={{ fontSize: 11 }}>Engine preset:</Typography.Text>
-          <Select
-            placeholder="Assign preset"
-            value={effectivePresetId}
-            options={presetOptions}
-            onChange={onAssignPreset}
-            loading={assignPending || presetsLoading}
-            size="small"
-            style={{ width: 160 }}
-            popupMatchSelectWidth={false}
-          />
-        </Space>
+        <Badge variant="danger" className="m-0">
+          {issues.length}
+        </Badge>
+        <div className="flex-1" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">Engine preset:</span>
+          <select
+            className="flex h-7 w-40 rounded-[var(--radius-default)] border border-border bg-background px-2 text-xs"
+            value={effectivePresetId ?? ""}
+            disabled={assignPending || presetsLoading}
+            onChange={(e) => onAssignPreset(e.target.value)}
+          >
+            <option value="">Assign preset</option>
+            {presetOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <div className="td-act-now-list">
         {issues.map((issue) => (
-          <Card key={issue.id} className={`td-act-now-card td-act-now-${issue.severity}`}>
+          <div key={issue.id} className={`td-act-now-card td-act-now-${issue.severity}`}>
             <div className="td-act-now-card-head">
-              <Space size={8} align="center">
+              <div className="flex items-center gap-2">
                 {issue.icon}
-                <Typography.Text strong style={{ fontSize: 13 }}>{issue.title}</Typography.Text>
-              </Space>
-              <Tag color={severityTagColor(issue.severity)} style={{ margin: 0 }}>{issue.impactText}</Tag>
+                <span className="text-[13px] font-semibold">{issue.title}</span>
+              </div>
+              <Badge variant={severityBadgeVariant(issue.severity)} className="m-0">
+                {issue.impactText}
+              </Badge>
             </div>
-            {issue.why ? (
-              <Typography.Text type="secondary" className="td-act-now-why">{issue.why}</Typography.Text>
-            ) : null}
+            {issue.why ? <span className="td-act-now-why text-muted-foreground">{issue.why}</span> : null}
             {issue.current && issue.ideal && issue.current !== issue.ideal ? (
               <div className="td-act-now-transition">
-                <Tag style={{ margin: 0 }}>{issue.current}</Tag>
+                <Badge variant="secondary" className="m-0">
+                  {issue.current}
+                </Badge>
                 <span className="td-act-now-arrow">&rarr;</span>
-                <Tag color="blue" style={{ margin: 0 }}>{issue.ideal}</Tag>
+                <Badge variant="default" className="m-0">
+                  {issue.ideal}
+                </Badge>
               </div>
             ) : issue.current ? (
-              <Tag style={{ margin: 0, alignSelf: "flex-start" }}>{issue.current}</Tag>
+              <Badge variant="secondary" className="m-0 self-start">
+                {issue.current}
+              </Badge>
             ) : null}
             {issue.recommendation ? (
-              <Typography.Text className="td-act-now-recommendation">
-                <ThunderboltOutlined style={{ marginRight: 6, color: "var(--primary, #3d6fd4)" }} />
+              <span className="td-act-now-recommendation">
+                <Zap className="mr-1.5 size-3.5" style={{ color: "var(--primary, #3d6fd4)" }} />
                 {issue.recommendation}
-              </Typography.Text>
+              </span>
             ) : null}
-            <Space size={8}>
-              <Button size="small" onClick={onPreview}>Preview</Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" onClick={onPreview}>
+                Preview
+              </Button>
               <ConfirmAction
                 title="Run maintenance now?"
                 description={`This queues maintenance for ${tableLabel} using the assigned engine preset.`}
                 onConfirm={handleRun}
               >
-                <Button size="small" type="primary" disabled={!effectivePresetId}>
+                <Button size="sm" variant="primary" disabled={!effectivePresetId}>
                   Act now
                 </Button>
               </ConfirmAction>
               <Popover
-                trigger="click"
                 open={pickerOpenFor === issue.id}
                 onOpenChange={(open) => {
                   setPickerOpenFor(open ? issue.id : null);
-                  if (!open) setPickedTime(null);
+                  if (!open) setPickedTime("");
                 }}
-                title="Schedule for a specific time"
-                content={
-                  <Space orientation="vertical" size={8}>
-                    <DatePicker
-                      showTime
+              >
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="secondary" disabled={!effectivePresetId}>
+                    <Calendar className="size-3.5" />
+                    Schedule…
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80">
+                  <p className="mb-2 text-sm font-medium">Schedule for a specific time</p>
+                  <div className="flex flex-col gap-2">
+                    <input
+                      type="datetime-local"
+                      className="flex h-8 w-full rounded-[var(--radius-default)] border border-border bg-background px-2 text-xs"
                       value={pickedTime}
-                      onChange={(value) => setPickedTime(value)}
-                      disabledDate={(current) => Boolean(current && current.isBefore(dayjs(), "minute"))}
+                      min={minScheduleLocal()}
+                      onChange={(e) => setPickedTime(e.target.value)}
                     />
-                    <Typography.Text type="secondary" style={{ fontSize: 11, display: "block" }}>
+                    <span className="block text-[11px] text-muted-foreground">
                       Runs through the same engine preset and Governor checks as Act now, just
                       deferred until this time.
-                    </Typography.Text>
+                    </span>
                     <ConfirmAction
                       title="Schedule this run?"
                       description={
                         pickedTime
-                          ? `Queues maintenance for ${tableLabel} at ${pickedTime.format("MMM D, YYYY h:mm A")}, using the assigned engine preset.`
+                          ? `Queues maintenance for ${tableLabel} at ${new Date(pickedTime).toLocaleString()}, using the assigned engine preset.`
                           : "Pick a time first."
                       }
                       onConfirm={handleSchedule}
                     >
-                      <Button size="small" type="primary" disabled={!pickedTime || !effectivePresetId} block>
+                      <Button size="sm" variant="primary" disabled={!pickedTime || !effectivePresetId} className="w-full">
                         Schedule
                       </Button>
                     </ConfirmAction>
-                  </Space>
-                }
-              >
-                <Button size="small" icon={<CalendarOutlined />} disabled={!effectivePresetId}>
-                  Schedule…
-                </Button>
+                  </div>
+                </PopoverContent>
               </Popover>
-            </Space>
-          </Card>
+            </div>
+          </div>
         ))}
       </div>
     </div>

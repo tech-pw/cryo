@@ -1,18 +1,7 @@
+import { Copy } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Form,
-  Input,
-  Select,
-  Space,
-  Switch,
-  Tag,
-  Tooltip,
-  Typography,
-  message
-} from "antd";
-import { CopyOutlined } from "@ant-design/icons";
+import { useEffect } from "react";
+import { toast } from "sonner";
 import {
   createAwsIntegration,
   deleteAwsIntegration,
@@ -23,6 +12,15 @@ import {
 } from "../api/client";
 import type { AWSIntegrationRead, AWSIntegrationWrite, UUID } from "../api/types";
 import { ConfirmAction } from "./confirm";
+import { HintLabel } from "./common";
+import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { FormField, FormProvider, useForm } from "./ui/form";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatCurrency, formatTime } from "../lib/format";
 
@@ -32,10 +30,6 @@ interface AwsIntegrationPanelProps {
   compact?: boolean;
 }
 
-// Real AWS regions only -- this integration calls CloudWatch/Pricing directly, so unlike the
-// lakehouse S3 config (which also has to support MinIO/S3-compatible endpoints), there's no
-// legitimate custom value here. A strict Select prevents typos entirely rather than just
-// suggesting corrections.
 const AWS_REGIONS = [
   "us-east-1",
   "us-east-2",
@@ -66,6 +60,8 @@ const AWS_REGIONS = [
   "sa-east-1"
 ].map((region) => ({ value: region, label: region }));
 
+type AwsFormValues = AWSIntegrationWrite & { secret_access_key?: string };
+
 const formatRelative = (value?: string | null): string => {
   if (!value) return "Never";
   const ts = new Date(value).getTime();
@@ -83,7 +79,15 @@ const formatRelative = (value?: string | null): string => {
 export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegrationPanelProps) => {
   const { api } = useAuth();
   const queryClient = useQueryClient();
-  const [form] = Form.useForm<AWSIntegrationWrite & { secret_access_key?: string }>();
+
+  const form = useForm<AwsFormValues>({
+    defaultValues: {
+      bucket: "",
+      region: "us-east-1",
+      access_key_id: "",
+      enabled: true
+    }
+  });
 
   const integration = useQuery({
     queryKey: ["aws-integration", sourceId],
@@ -98,6 +102,18 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
     retry: false
   });
 
+  const existing: AWSIntegrationRead | undefined = integration.data ?? undefined;
+
+  useEffect(() => {
+    form.reset({
+      bucket: existing?.bucket ?? "",
+      region: existing?.region ?? "us-east-1",
+      access_key_id: existing?.access_key_id ?? "",
+      enabled: existing?.enabled ?? true,
+      secret_access_key: ""
+    });
+  }, [existing?.id, existing?.bucket, existing?.region, existing?.access_key_id, existing?.enabled, form]);
+
   const usage = useQuery({
     queryKey: ["aws-usage", sourceId],
     queryFn: () => getAwsUsage(api, sourceId),
@@ -107,253 +123,270 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
   });
 
   const save = useMutation({
-    mutationFn: (values: AWSIntegrationWrite) => {
-      if (integration.data) {
-        return patchAwsIntegration(api, sourceId, values);
+    mutationFn: (values: AwsFormValues) => {
+      const body: AWSIntegrationWrite = {
+        bucket: values.bucket,
+        region: values.region,
+        access_key_id: values.access_key_id || undefined,
+        enabled: values.enabled
+      };
+      if (values.secret_access_key) {
+        body.secret_access_key = values.secret_access_key;
       }
-      return createAwsIntegration(api, sourceId, values);
+      if (integration.data) {
+        return patchAwsIntegration(api, sourceId, body);
+      }
+      return createAwsIntegration(api, sourceId, body);
     },
     onSuccess: () => {
-      message.success(integration.data ? "AWS integration updated" : "AWS integration connected");
+      toast.success(integration.data ? "AWS integration updated" : "AWS integration connected");
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
       void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const remove = useMutation({
     mutationFn: () => deleteAwsIntegration(api, sourceId),
     onSuccess: () => {
-      message.success("AWS integration removed");
-      form.resetFields();
+      toast.success("AWS integration removed");
+      form.reset();
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
       void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const test = useMutation({
     mutationFn: () => testAwsIntegration(api, sourceId),
     onSuccess: (result) => {
       if (result.ok) {
-        message.success(`Connected to AWS account ${result.account_id ?? "?"}`);
+        toast.success(`Connected to AWS account ${result.account_id ?? "?"}`);
       } else {
-        message.error(result.error ?? "Connection failed");
+        toast.error(result.error ?? "Connection failed");
       }
       void queryClient.invalidateQueries({ queryKey: ["aws-integration", sourceId] });
       void queryClient.invalidateQueries({ queryKey: ["aws-integrations-overview"] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
-
-  const existing: AWSIntegrationRead | undefined = integration.data ?? undefined;
 
   if (integration.isError && !integration.isLoading) {
     const status = (integration.error as { status?: number } | null)?.status;
     if (status === 404) {
       return (
-        <Space orientation="vertical" size={10} className="full-width">
-          <Typography.Text type="secondary">
-            Connect this lakehouse's S3 bucket to Cryo so we can pull free CloudWatch storage metrics
-            and real regional pricing — no extra AWS charges.
-          </Typography.Text>
-        </Space>
+        <p className="text-sm text-muted-foreground">
+          Connect this lakehouse&apos;s S3 bucket to Cryo so we can pull free CloudWatch storage metrics
+          and real regional pricing — no extra AWS charges.
+        </p>
       );
     }
   }
 
+  const submit = (values: AwsFormValues) => {
+    if (!values.bucket.trim()) {
+      form.setError("bucket", { message: "Bucket name is required" });
+      return;
+    }
+    if (!values.region?.trim()) {
+      form.setError("region", { message: "Region is required" });
+      return;
+    }
+    save.mutate(values);
+  };
+
   return (
-    <Space orientation="vertical" className="full-width" size={12}>
+    <div className="flex flex-col gap-3">
       {!compact ? (
         <Alert
-          type="info"
-          showIcon
+          variant="info"
           title="Free-tier AWS metrics only"
           description="Uses S3 CloudWatch daily storage metrics and the Price List API — no LIST, no charges."
         />
       ) : null}
 
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{
-          bucket: existing?.bucket ?? "",
-          region: existing?.region ?? "us-east-1",
-          access_key_id: existing?.access_key_id ?? "",
-          enabled: existing?.enabled ?? true
-        }}
-        key={existing?.id ?? "new"}
-        onFinish={(values) => {
-          const body: AWSIntegrationWrite = {
-            bucket: values.bucket,
-            region: values.region,
-            access_key_id: values.access_key_id || undefined,
-            enabled: values.enabled
-          };
-          if (values.secret_access_key) {
-            body.secret_access_key = values.secret_access_key;
-          }
-          save.mutate(body);
-        }}
-      >
-        <Form.Item
-          name="bucket"
-          label="S3 bucket"
-          rules={[{ required: true, message: "Bucket name is required" }]}
-        >
-          <Input placeholder="my-iceberg-bucket" autoComplete="off" />
-        </Form.Item>
-        <Form.Item name="region" label="Region" rules={[{ required: true }]}>
-          <Select showSearch options={AWS_REGIONS} placeholder="ap-south-1" popupMatchSelectWidth={220} />
-        </Form.Item>
-        <Form.Item
-          name="access_key_id"
-          label={
-            <Tooltip title="Leave blank to use IRSA, instance profile, or ~/.aws/credentials.">
-              Access key ID (optional) <Typography.Text type="secondary">ⓘ</Typography.Text>
-            </Tooltip>
-          }
-        >
-          <Input placeholder="AKIA..." autoComplete="off" />
-        </Form.Item>
-        <Form.Item
-          name="secret_access_key"
-          label={
-            <Tooltip
-              title={
-                existing
-                  ? "Stored encrypted at rest. Leave blank to keep the existing secret."
-                  : "Stored encrypted at rest. Leave blank to use the default AWS credential chain."
-              }
-            >
-              Secret access key <Typography.Text type="secondary">ⓘ</Typography.Text>
-            </Tooltip>
-          }
-        >
-          <Input.Password
-            placeholder={existing ? "Leave blank to keep existing" : "Optional with IRSA"}
-            autoComplete="off"
-          />
-        </Form.Item>
-        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
-          <Switch />
-        </Form.Item>
-        <Space wrap>
-          <Button type="primary" htmlType="submit" loading={save.isPending}>
-            {existing ? "Save changes" : "Connect"}
-          </Button>
-          {existing ? (
-            <>
-              <Button loading={test.isPending} onClick={() => test.mutate()}>
-                Test connection
-              </Button>
-              <ConfirmAction
-                title="Remove AWS integration?"
-                description="CloudWatch cost metrics for this source will stop updating. You can reconnect any time."
-                onConfirm={() => remove.mutate()}
-                okText="Remove"
-              >
-                <Button danger loading={remove.isPending}>
-                  Remove
+      <FormProvider {...form}>
+        <form className="flex flex-col gap-3" onSubmit={form.handleSubmit(submit)}>
+          <FormField name="bucket" label="S3 bucket">
+            {(field) => (
+              <Input
+                placeholder="my-iceberg-bucket"
+                autoComplete="off"
+                value={String(field.value ?? "")}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            )}
+          </FormField>
+
+          <FormField name="region" label="Region">
+            {(field) => (
+              <Select
+                value={String(field.value ?? "")}
+                onChange={(next) => field.onChange(next ?? "")}
+                options={AWS_REGIONS}
+                placeholder="ap-south-1"
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            )}
+          </FormField>
+
+          <FormField
+            name="access_key_id"
+            label={
+              <HintLabel
+                label="Access key ID (optional)"
+                tooltip="Leave blank to use IRSA, instance profile, or ~/.aws/credentials."
+              />
+            }
+          >
+            {(field) => (
+              <Input
+                placeholder="AKIA..."
+                autoComplete="off"
+                value={String(field.value ?? "")}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            )}
+          </FormField>
+
+          <FormField
+            name="secret_access_key"
+            label={
+              <HintLabel
+                label="Secret access key"
+                tooltip={
+                  existing
+                    ? "Stored encrypted at rest. Leave blank to keep the existing secret."
+                    : "Stored encrypted at rest. Leave blank to use the default AWS credential chain."
+                }
+              />
+            }
+          >
+            {(field) => (
+              <Input
+                type="password"
+                placeholder={existing ? "Leave blank to keep existing" : "Optional with IRSA"}
+                autoComplete="off"
+                value={String(field.value ?? "")}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            )}
+          </FormField>
+
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`aws-enabled-${sourceId}`}
+              checked={form.watch("enabled")}
+              onCheckedChange={(checked) => form.setValue("enabled", checked)}
+            />
+            <Label htmlFor={`aws-enabled-${sourceId}`}>Enabled</Label>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" loading={save.isPending}>
+              {existing ? "Save changes" : "Connect"}
+            </Button>
+            {existing ? (
+              <>
+                <Button type="button" variant="secondary" loading={test.isPending} onClick={() => test.mutate()}>
+                  Test connection
                 </Button>
-              </ConfirmAction>
-            </>
-          ) : null}
-        </Space>
-      </Form>
+                <ConfirmAction
+                  title="Remove AWS integration?"
+                  description="CloudWatch cost metrics for this source will stop updating. You can reconnect any time."
+                  onConfirm={() => remove.mutate()}
+                  okText="Remove"
+                >
+                  <Button type="button" variant="danger" loading={remove.isPending}>
+                    Remove
+                  </Button>
+                </ConfirmAction>
+              </>
+            ) : null}
+          </div>
+        </form>
+      </FormProvider>
 
       {existing ? (
-        <Space size={16} wrap>
-          <Tag color={existing.enabled ? "green" : "default"}>
+        <div className="flex flex-wrap items-center gap-4">
+          <Badge variant={existing.enabled ? "success" : "secondary"}>
             {existing.enabled ? "Enabled" : "Disabled"}
-          </Tag>
-          <Typography.Text type="secondary">
+          </Badge>
+          <span className="text-sm text-muted-foreground">
             Last tested: {formatRelative(existing.last_tested_at)}
             {existing.last_tested_at ? ` (${formatTime(existing.last_tested_at)})` : ""}
-          </Typography.Text>
-          {existing.last_test_ok === true ? <Tag color="green">OK</Tag> : null}
-          {existing.last_test_ok === false ? <Tag color="red">Failed</Tag> : null}
-        </Space>
+          </span>
+          {existing.last_test_ok === true ? <Badge variant="success">OK</Badge> : null}
+          {existing.last_test_ok === false ? <Badge variant="danger">Failed</Badge> : null}
+        </div>
       ) : null}
 
       {test.data?.ok && test.data.arn ? (
-        <Space size={6} align="center">
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {test.data.arn}
-          </Typography.Text>
-          <Tooltip title="Copy ARN">
-            <Button
-              size="small"
-              type="text"
-              icon={<CopyOutlined />}
-              onClick={() => {
-                void navigator.clipboard.writeText(test.data?.arn ?? "").then(
-                  () => message.success("ARN copied"),
-                  () => message.error("Could not copy to clipboard")
-                );
-              }}
-            />
-          </Tooltip>
-        </Space>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">{test.data.arn}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label="Copy ARN"
+            onClick={() => {
+              void navigator.clipboard.writeText(test.data?.arn ?? "").then(
+                () => toast.success("ARN copied"),
+                () => toast.error("Could not copy to clipboard")
+              );
+            }}
+          >
+            <Copy className="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
       ) : null}
 
       {existing?.enabled ? (
         usage.isLoading ? (
-          <Typography.Text type="secondary">Loading bucket metrics…</Typography.Text>
+          <p className="text-sm text-muted-foreground">Loading bucket metrics…</p>
         ) : usage.data ? (
-          <Space size={24} wrap>
+          <div className="flex flex-wrap gap-6">
             <div>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Bucket size
-              </Typography.Text>
-              <div>
-                <Typography.Text strong style={{ fontSize: 16 }}>
-                  {formatBytesGb(usage.data.total_size_bytes)}
-                </Typography.Text>
-              </div>
+              <p className="text-xs text-muted-foreground">Bucket size</p>
+              <p className="text-base font-semibold">{formatBytesGb(usage.data.total_size_bytes)}</p>
             </div>
             <div>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Objects
-              </Typography.Text>
-              <div>
-                <Typography.Text strong style={{ fontSize: 16 }}>
-                  {usage.data.object_count?.toLocaleString() ?? "—"}
-                </Typography.Text>
-              </div>
+              <p className="text-xs text-muted-foreground">Objects</p>
+              <p className="text-base font-semibold">{usage.data.object_count?.toLocaleString() ?? "—"}</p>
             </div>
             <div>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                $/GB-month
-              </Typography.Text>
-              <div>
-                <Typography.Text strong style={{ fontSize: 16 }}>
-                  {usage.data.price_per_gb_month != null
-                    ? formatCurrency(usage.data.price_per_gb_month)
-                    : "—"}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+              <p className="text-xs text-muted-foreground">$/GB-month</p>
+              <p className="text-base font-semibold">
+                {usage.data.price_per_gb_month != null ? formatCurrency(usage.data.price_per_gb_month) : "—"}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
                   {usage.data.price_source ?? "AWS"}
-                </Typography.Text>
-              </div>
+                </span>
+              </p>
             </div>
             <div>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Measured
-              </Typography.Text>
-              <div>
-                <Typography.Text strong style={{ fontSize: 16 }}>
-                  {usage.data.measured_at ? formatTime(usage.data.measured_at) : "—"}
-                </Typography.Text>
-              </div>
+              <p className="text-xs text-muted-foreground">Measured</p>
+              <p className="text-base font-semibold">
+                {usage.data.measured_at ? formatTime(usage.data.measured_at) : "—"}
+              </p>
             </div>
-          </Space>
+          </div>
         ) : usage.isError ? (
-          <Typography.Text type="secondary">
+          <p className="text-sm text-muted-foreground">
             Usage metrics unavailable — check credentials and bucket access.
-          </Typography.Text>
+          </p>
         ) : null
       ) : null}
-    </Space>
+    </div>
   );
 };
