@@ -110,7 +110,18 @@ def probe_engine_op_state(
             return EngineOpState.NOT_APPLICABLE
         if engine_ref:
             return EngineOpState.NOT_APPLICABLE
-        return EngineOpState.UNCERTAIN
+        # No dispatch_id and no engine_ref means nothing has ever been dispatched for this
+        # job -- there is no prior/orphaned attempt to check for staleness, so this is
+        # unambiguously quiet, not uncertain. Regression, 2026-07-28: this returned UNCERTAIN
+        # unconditionally, which wait_for_table_quiet() never resolves out of (UNCERTAIN
+        # always resets its consecutive-clean counter for DANGEROUS_OPS) -- every fresh job's
+        # first dangerous op (always expire_snapshots, always first in the plan) held forever
+        # at "Table activity uncertain before expire_snapshots; holding for quiet window",
+        # confirmed live blocking every fresh Spark-K8s AND native job dispatched after this
+        # safety gate was deployed. SUCCEEDED maps to TableActivity.QUIET below (the only
+        # EngineOpState values that do); it's a slight misnomer here (nothing ran) but is the
+        # existing state that carries the right "nothing to wait for" meaning.
+        return EngineOpState.SUCCEEDED
 
     if engine in {EngineType.TRINO.value, "trino"}:
         coordinators = _trino_coordinators(destination.config)
@@ -131,7 +142,11 @@ def probe_engine_op_state(
 
     if engine in {EngineType.SPARK_EMR.value, "spark_emr", "spark"}:
         if not engine_ref:
-            return EngineOpState.UNCERTAIN
+            # Same reasoning as the native branch above: no engine_ref means nothing has
+            # been dispatched for this job yet, so there is no prior Spark-on-K8s/EMR job to
+            # check for staleness. Confirmed live, 2026-07-28: this returning UNCERTAIN
+            # unconditionally blocked every fresh Spark job's first dangerous op forever.
+            return EngineOpState.SUCCEEDED
         return _spark_job_state(destination, engine_ref)
 
     return EngineOpState.UNCERTAIN
@@ -317,14 +332,23 @@ def _spark_job_state(destination: DestinationConfig, engine_ref: str) -> EngineO
     submit_mode = str(destination.config.get("submit_mode") or "").lower()
     try:
         if submit_mode == "k8s":
-            from cryo.engines.spark.emr import JobRunState
-            from cryo.engines.spark.k8s import SparkK8sClient, SparkK8sConfig
+            # Regression, 2026-07-29: this used to import JobRunState from
+            # cryo.engines.spark.emr while comparing it against the result of
+            # SparkK8sClient.get_job_run(), which returns cryo.engines.spark.k8s.JobRunState --
+            # a *different* enum class. `result.state is JobRunState.SUCCESS` compares object
+            # identity across two unrelated StrEnum classes, which is never True even when both
+            # members are literally named/valued "SUCCESS" -- so a genuinely completed Spark-K8s
+            # job could never be detected as SUCCEEDED here, only ever falling through to
+            # RUNNING. Confirmed live: an orphaned job whose Spark K8s Job had already reached
+            # completionTime/succeeded=1 was still logged "still running; waiting" 40+ minutes
+            # after the underlying rewrite committed, permanently stalling the job.
+            from cryo.engines.spark.k8s import JobRunState, SparkK8sClient, SparkK8sConfig
 
             k8s_client = SparkK8sClient(SparkK8sConfig.from_config(destination.config))
             result = k8s_client.get_job_run(engine_ref)
             if result.state is JobRunState.SUCCESS:
                 return EngineOpState.SUCCEEDED
-            if result.state in {JobRunState.FAILED, JobRunState.CANCELLED}:
+            if result.state is JobRunState.FAILED:
                 return EngineOpState.FAILED
             return EngineOpState.RUNNING
 

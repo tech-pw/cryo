@@ -11,7 +11,7 @@ from cryo.queue.locks import InMemoryLockStore
 from cryo.queue.reconcile import reconcile_stale_running_jobs
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.worker import orphan_recovery
-from cryo.worker.orphan_recovery import recover_orphaned_jobs
+from cryo.worker.orphan_recovery import probe_engine_op_state, recover_orphaned_jobs
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore, MaintenanceJobRecord
 
 
@@ -91,6 +91,76 @@ def test_succeeded_step_closed_on_recover(monkeypatch) -> None:
     )
     assert result.resolved_steps == 1
     assert steps.get_step("job-1", 0).status is JobStepStatus.SUCCEEDED
+
+
+def test_probe_engine_op_state_is_quiet_not_uncertain_with_no_prior_dispatch() -> None:
+    """Regression, 2026-07-28: a fresh job's very first dangerous op (always expire_snapshots,
+    always first in the plan) has no engine_ref yet -- there is no prior dispatch to check for
+    staleness. probe_engine_op_state used to return UNCERTAIN unconditionally in that case for
+    both native and Spark destinations, and wait_for_table_quiet() never resolves out of
+    UNCERTAIN for a DANGEROUS_OP (it keeps resetting the consecutive-clean counter), so every
+    fresh job held forever at "holding for quiet window" and never dispatched anything.
+    Confirmed live: this blocked every fresh Spark-K8s and native job after the quiet-window
+    safety gate (f2af45a) was deployed."""
+    spark_dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
+    assert (
+        probe_engine_op_state(spark_dest, table_ref="cdp.reports.t", engine_ref=None)
+        is EngineOpState.SUCCEEDED
+    )
+
+    native_dest = DestinationConfig(id="dest-native", engine=EngineType.NATIVE)
+    assert (
+        probe_engine_op_state(native_dest, table_ref="cdp.reports.t", engine_ref=None, job=None)
+        is EngineOpState.SUCCEEDED
+    )
+
+
+def test_spark_k8s_job_state_detects_success_not_just_failure(monkeypatch) -> None:
+    """Regression, 2026-07-29: _spark_job_state imported JobRunState from
+    cryo.engines.spark.emr while comparing it (via `is`) against the result of
+    SparkK8sClient.get_job_run(), which returns cryo.engines.spark.k8s.JobRunState -- a
+    different enum class. Identity comparison across two unrelated StrEnum classes is never
+    True even when both members are named/valued "SUCCESS", so a genuinely completed Spark-K8s
+    job could never be detected as SUCCEEDED, only ever falling through to RUNNING. Confirmed
+    live: an adopted orphan job whose Spark K8s Job had already reached completionTime/
+    succeeded=1 was still logged "still running; waiting" 40+ minutes after the underlying
+    rewrite committed, permanently stalling the job at that step forever."""
+    from cryo.engines.spark import k8s as spark_k8s
+
+    class _FakeResult:
+        def __init__(self, state: spark_k8s.JobRunState) -> None:
+            self.state = state
+
+    monkeypatch.setattr(
+        spark_k8s.SparkK8sClient,
+        "get_job_run",
+        lambda self, job_id: _FakeResult(spark_k8s.JobRunState.SUCCESS),
+    )
+    dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
+    assert (
+        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        is EngineOpState.SUCCEEDED
+    )
+
+    monkeypatch.setattr(
+        spark_k8s.SparkK8sClient,
+        "get_job_run",
+        lambda self, job_id: _FakeResult(spark_k8s.JobRunState.FAILED),
+    )
+    assert (
+        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        is EngineOpState.FAILED
+    )
+
+    monkeypatch.setattr(
+        spark_k8s.SparkK8sClient,
+        "get_job_run",
+        lambda self, job_id: _FakeResult(spark_k8s.JobRunState.RUNNING),
+    )
+    assert (
+        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        is EngineOpState.RUNNING
+    )
 
 
 def test_native_live_dispatch_skipped() -> None:
