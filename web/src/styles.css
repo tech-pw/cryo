@@ -1591,20 +1591,6 @@ textarea.mono-input {
   justify-content: center;
 }
 
-.td-protected-list {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.td-protected-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
 .td-embedded-toolbar {
   display: flex;
   justify-content: flex-end;
@@ -1831,112 +1817,11 @@ textarea.mono-input {
   flex-shrink: 0;
 }
 
-.td-split-layout {
-  margin-top: 16px;
-}
-
 .td-main-column {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.td-sidebar-column {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.td-sidebar-sticky {
-  position: sticky;
-  top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.td-sidebar-card {
-  border-radius: 10px !important;
-  border: 1px solid var(--line, #e1e6ed) !important;
-}
-
-.td-sidebar-card .ant-card-head {
-  border-bottom: 1px solid var(--line, #e1e6ed) !important;
-  background: transparent !important;
-  padding: 10px 14px !important;
-  min-height: auto !important;
-}
-
-.td-sidebar-card .ant-card-head-title {
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
-  color: var(--ink, #131b24) !important;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.td-sidebar-card .ant-card-body {
-  padding: 14px !important;
-}
-
-.td-sidebar-health-gauge-wrap {
-  display: flex;
-  justify-content: center;
-  padding: 8px 0;
-}
-
-.td-sidebar-score-bars .td-score-breakdown {
-  width: 100% !important;
-  min-width: auto !important;
-}
-
-.td-sidebar-meta-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.td-sidebar-meta-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-}
-
-.td-sidebar-meta-label {
-  color: var(--muted, #5c667a);
-  font-weight: 500;
-  font-size: 11px;
-}
-
-.td-sidebar-meta-value {
-  color: var(--ink, #131b24);
-  font-weight: 600;
-}
-
-.td-sidebar-desc-val {
-  word-break: break-all;
-  font-weight: 600;
-  color: var(--ink, #131b24);
-}
-
-/* Sidebar Attributes Override */
-.td-sidebar-card .td-meta-tiles {
-  grid-template-columns: 1fr !important;
-  border: none !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  gap: 12px;
-}
-
-.td-sidebar-card .td-meta-tile {
-  background: transparent !important;
-  padding: 0 !important;
-  min-height: auto !important;
-}
-
-.td-sidebar-card .td-meta-tile-wide {
-  grid-column: auto !important;
+  margin-top: 16px;
 }
 
 /* -------------------------------------------------------------------------- */

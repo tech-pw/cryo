@@ -50,7 +50,12 @@ export const CostPrecisionBadge = ({
   lastFullCostScanAt?: string | null;
   orphanScanStale?: boolean;
 }) => {
-  if (!precision) return null;
+  if (!precision) {
+    // Every other numeric column in this table falls back to "—" (see CatalogDashboard's
+    // Est. Savings cell) rather than rendering nothing -- an unscanned/no-cost-precision
+    // table should read as "not yet computed," not as a blank cell under a lone tooltip icon.
+    return <span className="text-sm text-muted-foreground">—</span>;
+  }
   const label = LABELS[precision] ?? precision;
   const style = TIER_STYLE[precision] ?? TIER_STYLE.heuristic;
   const variant = orphanScanStale ? "warning" : style.variant;

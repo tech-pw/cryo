@@ -6,6 +6,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { searchCatalog } from "../../api/client";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useAuth } from "../../lib/auth";
+import { withTimeoutSignal } from "../../lib/abortTimeout";
 import { Input } from "../ui/input";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { pushRecentItem } from "./recent";
@@ -30,9 +31,13 @@ export const CatalogSearch = () => {
   const searchQuery = useQuery({
     queryKey: ["catalog-search-preview", token, debouncedQuery],
     queryFn: ({ signal }) =>
-      searchCatalog(api, { q: debouncedQuery, limit: PREVIEW_LIMIT, signal }),
+      searchCatalog(api, { q: debouncedQuery, limit: PREVIEW_LIMIT, signal: withTimeoutSignal(signal, 6000) }),
     enabled: debouncedQuery.length >= 2,
-    staleTime: 10_000
+    staleTime: 10_000,
+    // A live-typing preview shouldn't retry a request that already timed out once -- that
+    // would double the worst-case hang (the global default is retry:1) for very little
+    // benefit; the full /search results page is still one click away if this fails.
+    retry: false
   });
 
   useEffect(() => {
@@ -74,7 +79,9 @@ export const CatalogSearch = () => {
                 }
               }}
               placeholder="Search tables, schemas, columns…"
+              role="combobox"
               aria-label="Search catalogs"
+              aria-autocomplete="list"
               aria-expanded={showDropdown}
               aria-controls="catalog-search-preview"
               autoComplete="off"
