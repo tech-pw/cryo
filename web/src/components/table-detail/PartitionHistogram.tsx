@@ -8,7 +8,6 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Typography } from "antd";
 import type { PartitionRead } from "../../api/types";
 import { chartTooltipProps } from "../../lib/theme";
 import { formatGb, formatNumber } from "../../lib/format";
@@ -42,7 +41,7 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
     });
 
   if (!top.length) {
-    return <Typography.Text type="secondary">No Partition Histogram Yet.</Typography.Text>;
+    return <span className="text-sm text-muted-foreground">No Partition Histogram Yet.</span>;
   }
 
   return (

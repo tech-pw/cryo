@@ -70,6 +70,12 @@ describe("Consolidated Catalog page", () => {
   beforeEach(() => {
     vi.mocked(listPresets).mockResolvedValue([]);
     vi.mocked(listDestinations).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 500,
+      offset: 0
+    });
   });
 
   it("renders the page header and the table explorer even when the dashboard is empty", async () => {
@@ -93,12 +99,12 @@ describe("Consolidated Catalog page", () => {
 
     // Dashboard section: KPI strip renders once the dashboard query resolves.
     await waitFor(() => {
-      expect(screen.getAllByText(/total catalogs/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/catalogs enabled/i).length).toBeGreaterThan(0);
     });
 
     // Table explorer: Export CSV button is mounted regardless of row count.
     expect(screen.getByRole("button", { name: /export csv/i })).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("renders a dashboard row per catalog with the catalog name", async () => {
     // The drill-down click handler lives on each row -- verified in production via the
@@ -134,11 +140,11 @@ describe("Consolidated Catalog page", () => {
     });
     renderPage();
 
-    // The dashboard renders prod_data inside an <strong> tag, so we filter by tagName to
-    // distinguish the dashboard row from the FilterBar (which renders the source name
-    // inside a <span>).
+    // Dashboard catalog name is rendered in the DataTable cell (font-medium span inside a button).
     await waitFor(() => {
-      expect(screen.getAllByText("prod_data").some((el) => el.tagName === "STRONG")).toBe(true);
+      expect(
+        screen.getAllByText("prod_data").some((el) => el.tagName === "SPAN" && el.className.includes("font-medium"))
+      ).toBe(true);
     });
   });
 

@@ -1,33 +1,15 @@
-import {
-  ApiOutlined,
-  AppstoreOutlined,
-  BarChartOutlined,
-  BulbOutlined,
-  ClockCircleOutlined,
-  CloudOutlined,
-  ControlOutlined,
-  DollarOutlined,
-  HistoryOutlined,
-  MoonOutlined,
-  SettingOutlined,
-  RobotOutlined,
-  SunOutlined,
-  SyncOutlined,
-  TeamOutlined,
-  ThunderboltOutlined,
-  MenuOutlined
-} from "@ant-design/icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Button, ConfigProvider, Layout, Menu, Space, Spin, Tooltip, Typography, theme, Drawer } from "antd";
-import type { MenuProps } from "antd";
-import { Suspense, lazy, useMemo, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AuthProvider, useAuth } from "./lib/auth";
-import { cryoColorsLight, cryoColorsDark } from "./lib/theme";
-import { ThemeProvider, useTheme } from "./lib/themeContext";
+import { Suspense, lazy } from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+
+import { AppShellLayout } from "./AppShellLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { NoSourcesBanner } from "./components/NoSourcesBanner";
 import { NotificationProvider } from "./components/NotificationRegion";
+import { Skeleton } from "./components/ui/skeleton";
+import { Toaster } from "./components/ui/sonner";
+import { AuthProvider, useAuth } from "./lib/auth";
+import { ThemeProvider } from "./lib/themeContext";
+import { CryoTooltipProvider } from "./components/ui/tooltip";
 
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
 const Skillsets = lazy(() => import("./pages/Skillsets").then((m) => ({ default: m.Skillsets })));
@@ -42,21 +24,34 @@ const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ de
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
 const Catalog = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.Catalog })));
-const Presets = lazy(() => import("./pages/Presets").then((m) => ({ default: m.Presets })));
+const OperationsHome = lazy(() =>
+  import("./pages/operations/OperationsHome").then((m) => ({ default: m.OperationsHome }))
+);
+const RunDetail = lazy(() => import("./pages/operations/RunDetail").then((m) => ({ default: m.RunDetail })));
+const PresetDetail = lazy(() =>
+  import("./pages/operations/PresetDetail").then((m) => ({ default: m.PresetDetail }))
+);
+const ScannerDetail = lazy(() =>
+  import("./pages/operations/ScannerDetail").then((m) => ({ default: m.ScannerDetail }))
+);
 const QueryPerformance = lazy(() =>
   import("./pages/QueryPerformance").then((m) => ({ default: m.QueryPerformance }))
 );
-const Runs = lazy(() => import("./pages/Runs").then((m) => ({ default: m.Runs })));
 const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
-const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
+const SearchResults = lazy(() =>
+  import("./pages/SearchResults").then((m) => ({ default: m.SearchResults }))
+);
+const Styleguide = lazy(() => import("./pages/dev/Styleguide"));
 const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ default: m.TableDetail })));
 const SmartMaintenance = lazy(() =>
   import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
 );
 
 const PageFallback = () => (
-  <div className="content" style={{ display: "grid", placeItems: "center", minHeight: 240 }}>
-    <Spin size="large" />
+  <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-6">
+    <Skeleton className="h-8 w-48" />
+    <Skeleton className="h-4 w-64" />
+    <Skeleton className="h-4 w-56" />
   </div>
 );
 
@@ -69,92 +64,19 @@ const queryClient = new QueryClient({
   }
 });
 
-// Cost attribution is intentionally not in the nav: per docs/OSS_READINESS.md §2.2 the
-// feature is a stub that requires custom `cost_center` / `department` tags on Source /
-// Connection models and isn't ready for the v1 launch surface. The /attribution route
-// remains registered so the URL still works for direct links from docs / future
-// re-introduction, but no entry point exists in the navigation.
-const navItems = [
-  { key: "/health", icon: <BarChartOutlined />, label: <Link to="/health">Health</Link> },
-  { key: "/catalogs", icon: <AppstoreOutlined />, label: <Link to="/catalogs">Catalogs</Link> },
-  { key: "/scans", icon: <SyncOutlined />, label: <Link to="/scans">Scanner</Link> },
-  { key: "/ai", icon: <RobotOutlined />, label: <Link to="/ai">Intelligence</Link> },
-  { key: "/governance", icon: <TeamOutlined />, label: <Link to="/governance">Governance</Link> },
-  { key: "/queries", icon: <ThunderboltOutlined />, label: <Link to="/queries">Queries</Link> },
-  { key: "/cost", icon: <DollarOutlined />, label: <Link to="/cost">Cost</Link> },
-  { key: "/sla", icon: <ClockCircleOutlined />, label: <Link to="/sla">SLA</Link> },
-  {
-    key: "/smart-maintenance",
-    icon: <CloudOutlined />,
-    label: <Link to="/smart-maintenance">Smart Maintenance</Link>
-  },
-  { key: "/presets", icon: <ControlOutlined />, label: <Link to="/presets">Presets</Link> },
-  { key: "/runs", icon: <HistoryOutlined />, label: <Link to="/runs">Runs</Link> },
-  { key: "/skillsets", icon: <BulbOutlined />, label: <Link to="/skillsets">Skillsets</Link> },
-  { key: "/connections", icon: <ApiOutlined />, label: <Link to="/connections">Connections</Link> }
-];
-
-// Index lookup is fragile to nav reordering — resolve by route key instead.
-const navByKey = Object.fromEntries(navItems.map((item) => [item.key, item]));
-
-const navGroups: MenuProps["items"] = [
-  {
-    type: "group",
-    label: "Overview",
-    children: [navByKey["/health"], navByKey["/sla"]]
-  },
-  {
-    type: "group",
-    label: "Inventory",
-    children: [navByKey["/catalogs"], navByKey["/scans"]]
-  },
-  {
-    type: "group",
-    label: "Operations",
-    children: [
-      navByKey["/smart-maintenance"],
-      navByKey["/presets"],
-      navByKey["/runs"]
-    ]
-  },
-  {
-    type: "group",
-    label: "Insights",
-    children: [
-      navByKey["/ai"],
-      navByKey["/governance"],
-      navByKey["/queries"],
-      navByKey["/cost"],
-      navByKey["/skillsets"]
-    ]
-  },
-  {
-    type: "group",
-    label: "Settings",
-    children: [navByKey["/connections"]]
-  }
-];
-
-// Table detail lives under /tables/:id; highlight Catalogs in the nav.
-const routeSelectionAliases = new Map<string, string>([["/tables", "/catalogs"]]);
-
 const TablesListRedirect = () => {
   const { search } = useLocation();
   return <Navigate to={`/catalogs${search}`} replace />;
 };
 
-const ThemeToggle = () => {
-  const { theme, toggleTheme } = useTheme();
-  return (
-    <Tooltip title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
-      <Button
-        type="text"
-        icon={theme === "light" ? <MoonOutlined /> : <SunOutlined />}
-        onClick={toggleTheme}
-        aria-label="Toggle theme"
-      />
-    </Tooltip>
-  );
+const RunsRunRedirect = () => {
+  const { runId } = useParams();
+  return <Navigate to={`/operations/runs/${runId}`} replace />;
+};
+
+const ScansRunRedirect = () => {
+  const { runId } = useParams();
+  return <Navigate to={`/operations/runs/${runId}`} replace />;
 };
 
 const SkillsetsRoute = () => {
@@ -165,22 +87,55 @@ const SkillsetsRoute = () => {
   return <Skillsets />;
 };
 
+const AuthenticatedRoutes = () => (
+  <AppShellLayout>
+    <Suspense fallback={<PageFallback />}>
+      <ErrorBoundary>
+        <Routes>
+            <Route path="/" element={<Navigate to="/health" replace />} />
+            <Route path="/health" element={<DatalakeHealth />} />
+            <Route path="/catalogs" element={<Catalog />} />
+            <Route path="/cost" element={<Cost />} />
+            <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
+            <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
+            <Route path="/attribution" element={<CostAttribution />} />
+            <Route path="/tables" element={<TablesListRedirect />} />
+            <Route path="/tables/:tableId" element={<TableDetail />} />
+            <Route path="/scans" element={<Navigate to="/operations/scanner" replace />} />
+            <Route path="/scans/:runId" element={<ScansRunRedirect />} />
+            <Route path="/operations" element={<OperationsHome />} />
+            <Route path="/operations/scanner" element={<ScannerDetail />} />
+            <Route path="/operations/presets/:presetId" element={<PresetDetail />} />
+            <Route path="/operations/runs/:runId" element={<RunDetail />} />
+            <Route path="/ai" element={<Intelligence />} />
+            <Route path="/governance" element={<Governance />} />
+            <Route path="/queries" element={<QueryPerformance />} />
+            <Route path="/sla" element={<SLAStatus />} />
+            <Route path="/search" element={<SearchResults />} />
+            <Route path="/optimize" element={<Navigate to="/smart-maintenance" replace />} />
+            <Route path="/smart-maintenance" element={<SmartMaintenance />} />
+            <Route path="/presets" element={<Navigate to="/operations" replace />} />
+            <Route path="/runs" element={<Navigate to="/operations?tab=runs" replace />} />
+            <Route path="/runs/:runId" element={<RunsRunRedirect />} />
+            <Route path="/jobs/:jobId" element={<JobDetail />} />
+            <Route path="/connections" element={<Connections />} />
+            <Route path="/skillsets" element={<SkillsetsRoute />} />
+            {import.meta.env.DEV ? <Route path="/dev/styleguide" element={<Styleguide />} /> : null}
+          </Routes>
+        </ErrorBoundary>
+      </Suspense>
+    </AppShellLayout>
+);
+
 const Shell = () => {
   const location = useLocation();
-  const { subject, role, loading: authLoading, error: authError, isAuthenticated, signOut } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const selectedKey = useMemo(() => {
-    const alias = [...routeSelectionAliases.entries()].find(([route]) => location.pathname.startsWith(route))?.[1];
-    return alias ?? navItems.find((item) => location.pathname.startsWith(item.key))?.key ?? "/health";
-  }, [location.pathname]);
+  const { loading: authLoading, isAuthenticated } = useAuth();
 
   if (authLoading) {
     return (
-      <Layout className="app-shell">
-        <Layout.Content className="content login-screen">
-          <Typography.Text type="secondary">Restoring session…</Typography.Text>
-        </Layout.Content>
-      </Layout>
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-layout-bg)] p-6">
+        <p className="text-sm text-muted-foreground">Restoring session…</p>
+      </div>
     );
   }
 
@@ -199,184 +154,20 @@ const Shell = () => {
     );
   }
 
-  return (
-    <Layout className="app-shell">
-      <a href="#main-content" className="skip-link">
-        Skip to main content
-      </a>
-      <Layout.Sider width={212} className="side-nav" breakpoint="lg" collapsedWidth={0}>
-        <div className="brand">
-          <SettingOutlined />
-          <span>Cryo</span>
-        </div>
-        <Menu mode="inline" selectedKeys={[selectedKey]} items={navGroups} />
-      </Layout.Sider>
-      <Layout>
-        <Layout.Header className="topbar">
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <Button
-              type="text"
-              icon={<MenuOutlined />}
-              onClick={() => setMobileMenuOpen(true)}
-              className="mobile-menu-btn"
-              aria-label="Open navigation menu"
-            />
-            <Typography.Text type="secondary">Apache Iceberg maintenance and health</Typography.Text>
-          </div>
-          <Space>
-            <ThemeToggle />
-            {authError ? (
-              <Typography.Text type="danger" style={{ maxWidth: 280 }}>
-                Auth: {authError}
-              </Typography.Text>
-            ) : null}
-            <Typography.Text type="secondary">
-              {subject} · {role}
-            </Typography.Text>
-            <Button size="small" onClick={signOut}>
-              Sign out
-            </Button>
-          </Space>
-        </Layout.Header>
-        <Layout.Content className="content" id="main-content" tabIndex={-1}>
-          <NoSourcesBanner />
-          <Suspense fallback={<PageFallback />}>
-            <ErrorBoundary>
-            <Routes>
-              <Route path="/" element={<Navigate to="/health" replace />} />
-              <Route path="/health" element={<DatalakeHealth />} />
-              <Route path="/catalogs" element={<Catalog />} />
-              <Route path="/cost" element={<Cost />} />
-              <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
-              <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
-              <Route path="/attribution" element={<CostAttribution />} />
-              <Route path="/tables" element={<TablesListRedirect />} />
-              <Route path="/tables/:tableId" element={<TableDetail />} />
-              <Route path="/scans" element={<Scans />} />
-              <Route path="/scans/:runId" element={<Scans />} />
-              <Route path="/ai" element={<Intelligence />} />
-              <Route path="/governance" element={<Governance />} />
-              <Route path="/queries" element={<QueryPerformance />} />
-              <Route path="/sla" element={<SLAStatus />} />
-              <Route path="/optimize" element={<Navigate to="/smart-maintenance" replace />} />
-              <Route path="/smart-maintenance" element={<SmartMaintenance />} />
-              <Route path="/presets" element={<Presets />} />
-              <Route path="/runs" element={<Runs />} />
-              <Route path="/runs/:runId" element={<Runs />} />
-              <Route path="/jobs/:jobId" element={<JobDetail />} />
-              <Route path="/connections" element={<Connections />} />
-              <Route path="/skillsets" element={<SkillsetsRoute />} />
-            </Routes>
-            </ErrorBoundary>
-          </Suspense>
-        </Layout.Content>
-      </Layout>
-      <Drawer
-        title={
-          <div className="brand" style={{ padding: 0, height: "auto" }}>
-            <SettingOutlined />
-            <span>Cryo</span>
-          </div>
-        }
-        placement="left"
-        onClose={() => setMobileMenuOpen(false)}
-        open={mobileMenuOpen}
-        size={220}
-        styles={{
-          body: { padding: 0, background: "var(--sidebar-bg)" },
-          header: { background: "var(--sidebar-bg)", borderBottom: "1px solid #202a38" }
-        }}
-        closeIcon={<MenuOutlined style={{ color: "var(--sidebar-text-active)" }} />}
-      >
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={navGroups}
-          onClick={() => setMobileMenuOpen(false)}
-        />
-      </Drawer>
-    </Layout>
-  );
-};
-
-const ThemedApp = () => {
-  const { theme: currentTheme } = useTheme();
-  const colors = currentTheme === "dark" ? cryoColorsDark : cryoColorsLight;
-  const algorithm = currentTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm;
-
-  return (
-    <ConfigProvider
-      theme={{
-        algorithm,
-        token: {
-          colorPrimary: colors.primary,
-          colorInfo: colors.primary,
-          colorBgBase: colors.bg,
-          colorBgContainer: colors.bg,
-          colorBgElevated: colors.bg,
-          colorBgLayout: colors.panel,
-          colorText: colors.ink,
-          colorTextBase: colors.ink,
-          colorTextSecondary: colors.muted,
-          colorTextTertiary: colors.mutedSubtle,
-          colorBorder: colors.border,
-          colorBorderSecondary: colors.border,
-          colorFillAlter: colors.tableHeader,
-          colorFillSecondary: colors.panel,
-          colorFillTertiary: colors.panelStrong,
-          borderRadius: 8,
-          fontSize: 13,
-          fontFamily:
-            '"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          controlHeight: 32,
-          controlHeightSM: 26,
-          margin: 12,
-          padding: 12
-        },
-        components: {
-          Table: {
-            cellPaddingBlock: 7,
-            cellPaddingInline: 10,
-            headerBg: colors.tableHeader,
-            colorBgContainer: colors.bg,
-            rowHoverBg: colors.surfaceSunken
-          },
-          Layout: {
-            bodyBg: colors.panel,
-            siderBg: "#0c121b",
-            headerBg: colors.bg,
-            triggerBg: "#0c121b"
-          },
-          Card: {
-            paddingLG: 14,
-            colorBgContainer: colors.bg,
-            colorTextHeading: colors.ink
-          },
-          Menu: {
-            itemBg: "transparent",
-            itemColor: "#c7d2de",
-            itemHoverBg: "#141c28",
-            itemHoverColor: "#ffffff",
-            itemSelectedBg: "rgba(61, 111, 212, 0.15)",
-            itemSelectedColor: "#ffffff",
-            subMenuItemBg: "#0c121b"
-          }
-        }
-      }}
-    >
-      <AuthProvider>
-        <NotificationProvider>
-          <Shell />
-        </NotificationProvider>
-      </AuthProvider>
-    </ConfigProvider>
-  );
+  return <AuthenticatedRoutes />;
 };
 
 export const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <ThemedApp />
+      <CryoTooltipProvider>
+        <AuthProvider>
+          <NotificationProvider>
+            <Shell />
+            <Toaster />
+          </NotificationProvider>
+        </AuthProvider>
+      </CryoTooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>
 );

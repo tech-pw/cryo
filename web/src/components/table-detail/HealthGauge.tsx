@@ -1,6 +1,6 @@
-import { ArrowDownOutlined, ArrowUpOutlined } from "@ant-design/icons";
-import { Tag, Typography } from "antd";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { healthScoreColor } from "../status";
+import { Badge } from "../ui/badge";
 
 interface HealthGaugeProps {
   score: number;
@@ -47,24 +47,24 @@ export const HealthGauge = ({
       </svg>
 
       <div className="td-health-gauge-center">
-        <Typography.Text className="td-health-gauge-score">{safeScore.toFixed(0)}</Typography.Text>
-        <Typography.Text className="td-health-gauge-label">Overall Health</Typography.Text>
+        <span className="td-health-gauge-score">{safeScore.toFixed(0)}</span>
+        <span className="td-health-gauge-label">Overall Health</span>
       </div>
 
       <div className="td-health-gauge-meta">
         {trendLabel ? (
           <span className={`td-health-trend td-health-trend-${trendDirection}`}>
-            {trendDirection === "up" ? <ArrowUpOutlined /> : null}
-            {trendDirection === "down" ? <ArrowDownOutlined /> : null}
+            {trendDirection === "up" ? <ArrowUp size={12} /> : null}
+            {trendDirection === "down" ? <ArrowDown size={12} /> : null}
             {trendLabel}
           </span>
         ) : (
           <span className="td-health-trend td-health-trend-flat">No Trend Signal Yet</span>
         )}
         {daysToCritical != null && daysToCritical < 30 ? (
-          <Tag color="warning" className="td-health-critical-tag">
+          <Badge variant="warning" className="td-health-critical-tag">
             {daysToCritical} Days to Critical
-          </Tag>
+          </Badge>
         ) : null}
       </div>
     </div>

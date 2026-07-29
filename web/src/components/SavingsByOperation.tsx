@@ -1,4 +1,3 @@
-import { Typography } from "antd";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import type { CostByOperation } from "../api/types";
 import { ChartFrame, EmptyState } from "./common";
@@ -18,8 +17,6 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
     );
   }
 
-  // A donut only earns its keep as a part-to-whole comparison across several categories --
-  // at 1-2 items it's just a redundant ring duplicating what the list below already says.
   const showChart = active.length >= 3;
 
   return (
@@ -56,8 +53,8 @@ export const SavingsByOperation = ({ items }: { items: CostByOperation[] }) => {
         {active.map((item, index) => (
           <div key={item.operation ?? `operation-${index}`} className="operation-list-row">
             <span className="operation-swatch" style={{ background: operationColors[item.operation] }} />
-            <Typography.Text>{operationLabels[item.operation] ?? item.operation}</Typography.Text>
-            <Typography.Text type="secondary">{formatCurrency(item.savings_usd_month)}/mo</Typography.Text>
+            <span>{operationLabels[item.operation] ?? item.operation}</span>
+            <span className="text-muted-foreground">{formatCurrency(item.savings_usd_month)}/mo</span>
           </div>
         ))}
       </div>

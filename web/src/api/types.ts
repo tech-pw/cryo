@@ -734,6 +734,24 @@ export interface DatalakeDashboard {
   drift?: Array<HistoryPoint & { table_id?: UUID; schema_name?: string; table_name?: string }>;
 }
 
+export interface FleetHealthTrendPoint {
+  day: string;
+  avg_health_score: number;
+  tables_at_grade_df: number;
+}
+
+export interface FleetCostTrendPoint {
+  day: string;
+  total_monthly_cost_usd: number;
+  projected_savings_usd_month: number;
+}
+
+export interface FleetTrendsResponse {
+  days: number;
+  health_trend: FleetHealthTrendPoint[];
+  cost_trend: FleetCostTrendPoint[];
+}
+
 export interface CostByOperation {
   operation: OperationType;
   savings_usd_month: number;

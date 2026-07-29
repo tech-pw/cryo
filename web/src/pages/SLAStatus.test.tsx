@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { CryoTooltipProvider } from "../components/ui/tooltip";
 import { bucketForFreshness, SLAStatus } from "./SLAStatus";
 import type { SLAResponse } from "../api/client";
 
@@ -29,9 +30,11 @@ const renderPage = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <SLAStatus />
-      </MemoryRouter>
+      <CryoTooltipProvider>
+        <MemoryRouter>
+          <SLAStatus />
+        </MemoryRouter>
+      </CryoTooltipProvider>
     </QueryClientProvider>
   );
 };
@@ -100,7 +103,7 @@ describe("SLAStatus page", () => {
     renderPage();
 
     const alert = await screen.findByText(/SLA breaches detected/i);
-    expect(alert.closest(".ant-alert")).toHaveTextContent(/1 freshness, 1 maintenance, 0 latency/i);
+    expect(alert.closest('[role="alert"]')).toHaveTextContent(/1 freshness, 1 maintenance, 0 latency/i);
   });
 
   it("shows the missing-coverage banner only for breached tables without a preset", async () => {
@@ -145,8 +148,9 @@ describe("SLAStatus page", () => {
     } satisfies SLAResponse);
     renderPage();
 
-    expect(await screen.findByText("SLA matrix by schema")).toBeInTheDocument();
-    expect(screen.getByText("lms")).toBeInTheDocument();
+    const matrixHeader = await screen.findByText(/SLA matrix by schema/i);
+    fireEvent.click(matrixHeader);
+    expect(await screen.findByText("lms")).toBeInTheDocument();
     expect(screen.getByText("cdp_revenue")).toBeInTheDocument();
     // cdp_revenue: 1 table, 1 breached -> 0.0% compliance
     expect(screen.getByText("0.0%")).toBeInTheDocument();
@@ -167,7 +171,7 @@ describe("SLAStatus page", () => {
     toggle.click();
 
     await screen.findByRole("switch", { checked: true });
-    expect(screen.queryByText("SLA matrix by schema")).not.toBeInTheDocument();
+    expect(screen.queryByText(/SLA matrix by schema/i)).not.toBeInTheDocument();
   });
 
   it("renders the freshness distribution card", async () => {

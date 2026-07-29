@@ -1,8 +1,9 @@
-import { Alert, Table, Button, Card, Col, Row, Skeleton, Space, Tag, Tooltip, Typography, message } from "antd";
+import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   assignTables,
   deriveCostDashboard,
@@ -18,14 +19,23 @@ import {
   triggerCostScan,
   triggerScan
 } from "../../api/client";
-import type { CostDashboard, Mode, TableRead, UUID } from "../../api/types";
+import type { CostDashboard, CostTrendPoint, Mode, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar, type BulkSelection } from "../../components/BulkAssignBar";
-import { EmptyState, StatStrip } from "../../components/common";
+import { EmptyState } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { CostSavingsWaterfall } from "../../components/CostSavingsWaterfall";
 import { PlanPreview } from "../../components/PlanPreview";
 import { SavingsByOperation } from "../../components/SavingsByOperation";
 import { GradePill } from "../../components/status";
+import { Alert } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { DataTable } from "../../components/ui/data-table";
+import { MetricGrid } from "../../components/ui/metric-grid";
+import { Skeleton } from "../../components/ui/skeleton";
+import { MetricTile } from "../../components/ui/stat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
 import { qualifiedTableName } from "../../lib/tableLabels";
@@ -34,18 +44,67 @@ import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
 
 const OPPORTUNITY_FILTER: Predicate = savingsOpportunityFilter;
 
+const computeCostDelta30d = (trend: CostTrendPoint[] | undefined) => {
+  if (!trend || trend.length < 2) return undefined;
+  const sorted = [...trend].sort((a, b) => a.scan_at.localeCompare(b.scan_at));
+  const latest = sorted[sorted.length - 1];
+  const latestCost = latest.current_monthly_cost_usd ?? 0;
+  const latestDate = new Date(latest.scan_at);
+  const cutoff = new Date(latestDate);
+  cutoff.setDate(cutoff.getDate() - 30);
+  const baseline = sorted.find((point) => new Date(point.scan_at) <= cutoff) ?? sorted[0];
+  const baselineCost = baseline.current_monthly_cost_usd ?? latestCost;
+  const diff = latestCost - baselineCost;
+  if (diff === 0) return { value: "No change vs 30d ago", tone: "neutral" as const };
+  return {
+    value: `${diff > 0 ? "+" : ""}${formatCurrency(diff)} vs 30d ago`,
+    tone: (diff > 0 ? "bad" : "good") as "bad" | "good"
+  };
+};
+
+const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
+  {
+    id: "table",
+    header: "Table",
+    cell: ({ row }) => (
+      <div className="flex items-center gap-1.5">
+        <Link to={`/tables/${row.original.id}`} className="font-medium text-foreground hover:text-primary">
+          {qualifiedTableName(row.original)}
+        </Link>
+        <GradePill grade={row.original.stats?.grade} />
+      </div>
+    )
+  },
+  {
+    id: "size",
+    header: "Size",
+    cell: ({ row }) =>
+      row.original.stats?.total_size_gb != null ? formatBytesGb(row.original.stats.total_size_gb) : "—"
+  },
+  {
+    id: "reclaim",
+    header: "Reclaimable",
+    cell: ({ row }) =>
+      row.original.stats?.reclaimable_bytes != null
+        ? formatBytesGb(row.original.stats.reclaimable_bytes)
+        : "—"
+  },
+  {
+    id: "scan_at",
+    header: "Last scan",
+    cell: ({ row }) => (row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "—")
+  }
+];
+
 /**
  * Overview tab of the consolidated Cost page. Wraps the body of the legacy
  * CostSavings page so the same chart + tables + planner flows live in one tab.
- *
- * Returns the inner content of the tab (no PageHeader). The parent adds the tabs +
- * shared header.
  */
 export const CostOverviewTab = () => {
   const { api, token } = useAuth();
   const [previewTables, setPreviewTables] = useState<TableRead[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<UUID[]>([]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkSelection, setBulkSelection] = useState<BulkSelection | null>(null);
 
   const cost = useQuery({
@@ -98,12 +157,23 @@ export const CostOverviewTab = () => {
       : data.totals.precision_coverage?.metadata && data.totals.precision_coverage.metadata > 0
         ? "metadata"
         : "heuristic";
+  const costDelta30d = computeCostDelta30d(data.trend);
 
+  const selectedRowKeys = Object.keys(rowSelection) as UUID[];
   const selection: BulkSelection | null =
     bulkSelection ??
     (selectedRowKeys.length
       ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
       : null);
+
+  const opportunityRows = useMemo(
+    () =>
+      (tables.data?.items ?? [])
+        .slice()
+        .sort((a, b) => (b.stats?.reclaimable_bytes ?? 0) - (a.stats?.reclaimable_bytes ?? 0))
+        .slice(0, 50),
+    [tables.data?.items]
+  );
 
   const assign = useMutation({
     mutationFn: (presetId: UUID) => {
@@ -116,7 +186,7 @@ export const CostOverviewTab = () => {
         preset_id: presetId
       });
     },
-    onSuccess: (result) => message.success(`Assigned ${result.affected} tables`)
+    onSuccess: (result) => toast.success(`Assigned ${result.affected} tables`)
   });
 
   const bulkRun = useMutation({
@@ -139,14 +209,14 @@ export const CostOverviewTab = () => {
         trigger: "web-cost"
       });
     },
-    onSuccess: (result) => message.success(`Run queued: ${result.run_id}`),
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: (result) => toast.success(`Run queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const fullCostScan = useMutation({
     mutationFn: () => triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" }),
-    onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: (result) => toast.success(result.message || `Scan queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
   const bulkManifestRewrite = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
@@ -166,8 +236,8 @@ export const CostOverviewTab = () => {
         trigger: "web-cost-manifest"
       });
     },
-    onSuccess: (result) => message.success(`Manifest rewrite queued: ${result.run_id}`),
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: (result) => toast.success(`Manifest rewrite queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
   const bulkScan = useMutation({
     mutationFn: () => {
@@ -187,12 +257,12 @@ export const CostOverviewTab = () => {
         trigger: "web-cost-selection"
       });
     },
-    onSuccess: (result) => message.success(result.message || `Scan queued: ${result.run_id}`),
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: (result) => toast.success(result.message || `Scan queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const clearSelection = () => {
-    setSelectedRowKeys([]);
+    setRowSelection({});
     setBulkSelection(null);
   };
 
@@ -202,90 +272,132 @@ export const CostOverviewTab = () => {
     <>
       {usingFallback ? (
         <Alert
-          className="page-alert"
-          type="info"
-          showIcon
+          className="page-alert mb-3"
+          variant="info"
           title="Cost dashboard endpoint is not available yet; showing a fallback view from /tables."
         />
       ) : null}
       {isLoading ? (
-        <Skeleton active />
+        <div className="space-y-3">
+          <Skeleton className="h-8 w-full max-w-xl" />
+          <MetricGrid columns={4}>
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
+            ))}
+          </MetricGrid>
+        </div>
       ) : (
         <>
-          <Space wrap style={{ marginBottom: 12 }}>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
             <CostPrecisionBadge
               precision={dominantPrecision}
               lastFullCostScanAt={data.totals.last_full_cost_scan_at}
               orphanScanStale={data.totals.orphan_scan_stale}
             />
             {data.totals.orphan_scan_stale ? (
-              <Typography.Text type="secondary">
+              <p className="text-sm text-muted-foreground">
                 Orphan estimates may be stale — run a full cost scan for storage-truth accuracy.
-              </Typography.Text>
+              </p>
             ) : null}
-          </Space>
-          <StatStrip
-            items={[
-              { label: "S3 monthly now", value: formatCurrency(data.totals.current_monthly_cost_usd) },
-              {
-                label: "After maintenance",
-                value: formatCurrency(data.totals.projected_monthly_cost_usd),
-                tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
-              },
-              { label: "Monthly savings", value: formatCurrency(data.totals.projected_savings_usd_month) },
-              {
-                label: "Saved to date",
-                value: formatCurrency(data.totals.total_realized_savings_usd ?? 0),
-                tooltip: "Cumulative $ actually saved from completed maintenance runs, all-time — not a projection."
-              },
-              {
-                label: "Reclaimable storage",
-                value: formatBytesGb(data.totals.reclaimable_bytes),
-                tooltip: "Disk space maintenance would free up — dead/expired data, orphan files, and metadata bloat."
-              },
-              {
-                label: "Precision coverage",
-                value: `${metadataCoverage}%`,
-                tooltip:
-                  "Share of tables where these cost figures come from a real metadata or storage scan, rather than a rough per-GB estimate."
+          </div>
+          <MetricGrid columns={4} className="mb-3">
+            <MetricTile
+              label="Total monthly S3 cost"
+              value={formatCurrency(data.totals.current_monthly_cost_usd)}
+              emphasis
+              delta={costDelta30d}
+            />
+            <MetricTile
+              label="After maintenance"
+              value={formatCurrency(data.totals.projected_monthly_cost_usd)}
+              hint={
+                <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
+                  ⓘ
+                </span>
               }
-            ]}
-          />
+            />
+            <MetricTile label="Monthly savings" value={formatCurrency(data.totals.projected_savings_usd_month)} />
+            <MetricTile
+              label="Saved to date"
+              value={formatCurrency(data.totals.total_realized_savings_usd ?? 0)}
+              hint={
+                <span title="Cumulative savings from completed maintenance runs." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+          </MetricGrid>
+          <MetricGrid columns={2} className="mb-4">
+            <MetricTile
+              label="Reclaimable storage"
+              value={formatBytesGb(data.totals.reclaimable_bytes)}
+              hint={
+                <span title="Disk space maintenance would free up." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+            <MetricTile
+              label="Precision coverage"
+              value={`${metadataCoverage}%`}
+              hint={
+                <span title="Share of tables with metadata or storage-truth cost figures." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+          </MetricGrid>
           {costModel.data ? (
-            <Card size="small" style={{ marginBottom: 12 }} title="Learned cost model (holdout)">
-              <Space wrap size="large">
-                <Typography.Text>
-                  MAE learned {formatCurrency(costModel.data.mae_learned)}/mo vs heuristic{" "}
-                  {formatCurrency(costModel.data.mae_heuristic)}/mo
-                </Typography.Text>
-                <Tag color={costModel.data.beats_heuristic ? "success" : "default"}>
-                  {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
-                </Tag>
-                <Typography.Text type="secondary">
-                  {costModel.data.n_samples} labeled outcomes · {(costModel.data.band_coverage * 100).toFixed(0)}%
-                  conformal coverage
-                </Typography.Text>
-                <Link to="/ai">Governor & copilot →</Link>
-              </Space>
+            <Card className="mb-3">
+              <CardHeader className="pb-2">
+                <CardTitle>Learned cost model (holdout)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <span>
+                    MAE learned {formatCurrency(costModel.data.mae_learned)}/mo vs heuristic{" "}
+                    {formatCurrency(costModel.data.mae_heuristic)}/mo
+                  </span>
+                  <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
+                    {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {costModel.data.n_samples} labeled outcomes · {(costModel.data.band_coverage * 100).toFixed(0)}%
+                    conformal coverage
+                  </span>
+                  <Link to="/ai" className="text-primary hover:underline">
+                    Governor & copilot →
+                  </Link>
+                </div>
+              </CardContent>
             </Card>
           ) : null}
-          <Row gutter={[12, 12]}>
-            <Col xs={24} xl={16}>
-              <Card title="Current to projected">
+          <div className="mb-3 grid gap-3 xl:grid-cols-12">
+            <Card className="xl:col-span-8">
+              <CardHeader className="pb-2">
+                <CardTitle>Current to projected</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <CostSavingsWaterfall
                   currentCostUsd={data.totals.current_monthly_cost_usd}
                   currentStorageBytes={data.totals.current_storage_bytes}
                   byOperation={data.savings_by_operation}
                 />
-              </Card>
-            </Col>
-            <Col xs={24} xl={8}>
-              <Card title="Savings by operation">
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-4">
+              <CardHeader className="pb-2">
+                <CardTitle>Savings by operation</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <SavingsByOperation items={data.savings_by_operation} />
-              </Card>
-            </Col>
-            <Col xs={24} lg={14}>
-              <Card title="Monthly trend">
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-7">
+              <CardHeader className="pb-2">
+                <CardTitle>Monthly trend</CardTitle>
+              </CardHeader>
+              <CardContent>
                 {hasRealizedTrend ? (
                   <LineChart
                     data={data.trend ?? []}
@@ -293,12 +405,7 @@ export const CostOverviewTab = () => {
                     margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
                   >
                     <CartesianGrid stroke={cryoColors.chartGrid} />
-                    <XAxis
-                      dataKey="bucket"
-                      stroke={cryoColors.inkFaint}
-                      tick={chartAxisTick}
-                      interval="preserveStartEnd"
-                    />
+                    <XAxis dataKey="bucket" stroke={cryoColors.inkFaint} tick={chartAxisTick} interval="preserveStartEnd" />
                     <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
                     <RechartsTooltip {...chartTooltipProps} />
                     <Line
@@ -324,10 +431,13 @@ export const CostOverviewTab = () => {
                     description="Realized savings appear here after maintenance runs complete."
                   />
                 )}
-              </Card>
-            </Col>
-            <Col xs={24} lg={10}>
-              <Card title="Cost by schema">
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-5">
+              <CardHeader className="pb-2">
+                <CardTitle>Cost by schema</CardTitle>
+              </CardHeader>
+              <CardContent>
                 {schemaCost.data && schemaCost.data.length ? (
                   <BarChart
                     data={(schemaCost.data ?? []).slice(0, 8)}
@@ -353,76 +463,44 @@ export const CostOverviewTab = () => {
                     description="Cost-by-schema appears here once a Tier-1 cost scan has run."
                   />
                 )}
-              </Card>
-            </Col>
-          </Row>
+              </CardContent>
+            </Card>
+          </div>
 
-          <Card
-            title="Savings opportunities"
-            extra={
-              <Space>
-                <Tooltip title="Ranked by reclaimable bytes — biggest wins first.">
-                  <Tag color="blue">{matchingTables.data?.total ?? 0} candidates</Tag>
+          <Card className="mt-3">
+            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle>Savings opportunities</CardTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge>{matchingTables.data?.total ?? 0} candidates</Badge>
+                  </TooltipTrigger>
+                  <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
                 </Tooltip>
-                <Tooltip title="Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.">
-                  <Button
-                    size="small"
-                    loading={fullCostScan.isPending}
-                    onClick={() => fullCostScan.mutate()}
-                  >
-                    Run full cost scan
-                  </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="sm" loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
+                      Run full cost scan
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.
+                  </TooltipContent>
                 </Tooltip>
-              </Space>
-            }
-            style={{ marginTop: 12 }}
-          >
-            <Table<TableRead>
-              rowKey="id"
-              dataSource={(tables.data?.items ?? [])
-                .slice()
-                .sort((a, b) => (b.stats?.reclaimable_bytes ?? 0) - (a.stats?.reclaimable_bytes ?? 0))
-                .slice(0, 50)}
-              pagination={false}
-              size="small"
-              rowSelection={{
-                selectedRowKeys,
-                onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as UUID[])
-              }}
-              columns={[
-                {
-                  title: "Table",
-                  dataIndex: "schema_name",
-                  key: "table",
-                  render: (_: unknown, record: TableRead) => (
-                    <Space size={6}>
-                      <Link to={`/tables/${record.id}`}>{qualifiedTableName(record)}</Link>
-                      <GradePill grade={record.stats?.grade} />
-                    </Space>
-                  )
-                },
-                {
-                  title: "Size",
-                  dataIndex: "total_size_gb",
-                  key: "size",
-                  render: (value: number | undefined) => (value != null ? formatBytesGb(value) : "—")
-                },
-                {
-                  title: "Reclaimable",
-                  key: "reclaim",
-                  render: (_: unknown, record: TableRead) =>
-                    record.stats?.reclaimable_bytes != null
-                      ? formatBytesGb(record.stats.reclaimable_bytes)
-                      : "—"
-                },
-                {
-                  title: "Last scan",
-                  dataIndex: "scan_at",
-                  key: "scan_at",
-                  render: (value: string | undefined) => (value ? formatTime(value) : "—")
-                }
-              ]}
-            />
+              </div>
+            </CardHeader>
+            <CardContent className="p-0 pt-0">
+              <DataTable
+                columns={opportunityColumns}
+                data={opportunityRows}
+                getRowId={(row) => row.id}
+                rowSelection={rowSelection}
+                onRowSelectionChange={setRowSelection}
+                enableRowSelection
+                emptyTitle="No savings opportunities"
+                emptyDescription="Tables with reclaimable storage will appear here after a scan."
+              />
+            </CardContent>
           </Card>
 
           <BulkAssignBar
@@ -431,9 +509,7 @@ export const CostOverviewTab = () => {
             destinations={destinations.data ?? []}
             onClear={clearSelection}
             onAssign={(presetId) => assign.mutate(presetId)}
-            onRun={({ destinationId, presetId, mode }) =>
-              bulkRun.mutate({ destinationId, presetId, mode })
-            }
+            onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
             onManifestRewrite={({ destinationId, presetId }) =>
               bulkManifestRewrite.mutate({ destinationId, presetId })
             }
@@ -443,20 +519,18 @@ export const CostOverviewTab = () => {
               setPreviewTables(
                 selection.mode === "filter"
                   ? (tables.data?.items ?? []).slice(0, 25)
-                  : ((await listTables(api, {
-                      predicate: { all: { ids: selection.ids } } as unknown as Predicate,
-                      limit: 25
-                    })).items ?? [])
+                  : (
+                      await listTables(api, {
+                        predicate: { all: { ids: selection.ids } } as unknown as Predicate,
+                        limit: 25
+                      })
+                    ).items ?? []
               );
               setPreviewOpen(true);
             }}
           />
 
-          <PlanPreview
-            open={previewOpen}
-            onClose={() => setPreviewOpen(false)}
-            tables={previewTables}
-          />
+          <PlanPreview open={previewOpen} onClose={() => setPreviewOpen(false)} tables={previewTables} />
         </>
       )}
     </>

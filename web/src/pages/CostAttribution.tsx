@@ -1,38 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  Card,
-  Row,
-  Col,
-  Table,
-  Typography,
-  Statistic,
-  Select,
-  Space,
-  Spin,
-  Alert,
-  Progress,
-  Tag,
-  Button,
-} from "antd";
-import {
-  DollarOutlined,
-  DatabaseOutlined,
-  CloudServerOutlined,
-  ToolOutlined,
-  TeamOutlined,
-} from "@ant-design/icons";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Database, Users } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { getCostAttributionDashboard, type CostAttributionResponse } from "../api/client";
 import { PageHeader, QueryErrorAlert } from "../components/common";
+import { Alert } from "../components/ui/alert";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { DataTable } from "../components/ui/data-table";
+import { MetricGrid } from "../components/ui/metric-grid";
+import { Skeleton } from "../components/ui/skeleton";
+import { MetricTile } from "../components/ui/stat";
 import { useAuth } from "../lib/auth";
 import { formatCurrency } from "../lib/format";
 import { sharedPieColors } from "../lib/theme";
 
-const { Text } = Typography;
-
 type CostAttributionRow = CostAttributionResponse["attributions"][number];
+
+const ProgressBar = ({ percent, className }: { percent: number; className?: string }) => (
+  <div className={`h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-sunken)] ${className ?? ""}`}>
+    <div
+      className="h-full rounded-full bg-primary transition-all"
+      style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+    />
+  </div>
+);
 
 export const CostAttribution = () => {
   const { api } = useAuth();
@@ -40,10 +35,9 @@ export const CostAttribution = () => {
 
   const { data, isLoading, error } = useQuery<CostAttributionResponse>({
     queryKey: ["cost-attribution", api.token, selectedMonth],
-    queryFn: () => getCostAttributionDashboard(api, selectedMonth),
+    queryFn: () => getCostAttributionDashboard(api, selectedMonth)
   });
 
-  // Generate month options (last 12 months)
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const date = new Date();
     date.setMonth(date.getMonth() - i);
@@ -52,97 +46,89 @@ export const CostAttribution = () => {
     return { value, label };
   });
 
-  const columns = [
+  const columns: ColumnDef<CostAttributionRow, unknown>[] = [
     {
-      title: "Team/Department",
-      key: "team",
-      width: "20%",
-      render: (_: any, record: CostAttributionRow) => (
-        <Space>
-          <TeamOutlined />
-          <Text strong>{record.cost_center || record.department || "Unattributed"}</Text>
-          {(record.cost_center || record.department) ? (
+      id: "team",
+      header: "Team/Department",
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          <Users className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span className="font-medium">{row.original.cost_center || row.original.department || "Unattributed"}</span>
+          {row.original.cost_center || row.original.department ? (
             <Link to="/catalogs">
-              <Button size="small" type="link">View tables</Button>
+              <Button size="sm" variant="ghost" className="h-auto px-1 py-0 text-primary">
+                View tables
+              </Button>
             </Link>
           ) : null}
-        </Space>
-      ),
+        </div>
+      )
     },
     {
-      title: "Tables",
-      dataIndex: "table_count",
-      key: "table_count",
-      width: "10%",
-      align: "right" as const,
-      render: (count: number) => <Tag icon={<DatabaseOutlined />}>{count}</Tag>,
+      id: "table_count",
+      header: "Tables",
+      cell: ({ row }) => (
+        <Badge variant="secondary">
+          <Database className="mr-1 size-3" aria-hidden="true" />
+          {row.original.table_count}
+        </Badge>
+      )
     },
     {
-      title: "Storage",
-      dataIndex: "storage_cost_usd",
-      key: "storage",
-      width: "15%",
-      align: "right" as const,
-      render: (cost: number) => (
-        <Text type="secondary">{formatCurrency(cost)}</Text>
-      ),
+      id: "storage",
+      header: "Storage",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatCurrency(row.original.storage_cost_usd)}</span>
+      )
     },
     {
-      title: "Compute",
-      dataIndex: "compute_cost_usd",
-      key: "compute",
-      width: "15%",
-      align: "right" as const,
-      render: (cost: number) => (
-        <Text type="secondary">{formatCurrency(cost)}</Text>
-      ),
+      id: "compute",
+      header: "Compute",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatCurrency(row.original.compute_cost_usd)}</span>
+      )
     },
     {
-      title: "Maintenance",
-      dataIndex: "maintenance_cost_usd",
-      key: "maintenance",
-      width: "15%",
-      align: "right" as const,
-      render: (cost: number) => (
-        <Text type="secondary">{formatCurrency(cost)}</Text>
-      ),
+      id: "maintenance",
+      header: "Maintenance",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatCurrency(row.original.maintenance_cost_usd)}</span>
+      )
     },
     {
-      title: "Total Cost",
-      dataIndex: "total_cost_usd",
-      key: "total",
-      width: "15%",
-      align: "right" as const,
-      render: (cost: number, record: CostAttributionRow) => {
+      id: "total",
+      header: "Total Cost",
+      cell: ({ row }) => {
+        const cost = row.original.total_cost_usd;
         const percent = data ? (cost / data.total_cost_usd) * 100 : 0;
         return (
-          <Space orientation="vertical" size={2} style={{ width: "100%" }}>
-            <Text strong>{formatCurrency(cost)}</Text>
-            <Progress percent={percent} strokeColor="#3d6fd4" showInfo={false} size="small" />
-          </Space>
+          <div className="space-y-1">
+            <span className="font-semibold">{formatCurrency(cost)}</span>
+            <ProgressBar percent={percent} />
+          </div>
         );
-      },
+      }
     },
     {
-      title: "% of Total",
-      key: "percent",
-      width: "10%",
-      align: "right" as const,
-      render: (_: any, record: CostAttributionRow) => {
-        const percent = data ? (record.total_cost_usd / data.total_cost_usd) * 100 : 0;
-        return <Text type="secondary">{percent.toFixed(1)}%</Text>;
-      },
-    },
+      id: "percent",
+      header: "% of Total",
+      cell: ({ row }) => {
+        const percent = data ? (row.original.total_cost_usd / data.total_cost_usd) * 100 : 0;
+        return <span className="text-muted-foreground">{percent.toFixed(1)}%</span>;
+      }
+    }
   ];
 
   const pieData = (data?.attributions || []).map((item) => ({
     name: item.cost_center || item.department || "Unattributed",
-    value: item.total_cost_usd,
+    value: item.total_cost_usd
   }));
 
   const attributionRate = data
     ? ((data.total_cost_usd - data.unattributed_cost_usd) / Math.max(1, data.total_cost_usd)) * 100
     : 0;
+
+  const totals = data?.attributions ?? [];
 
   return (
     <div>
@@ -150,168 +136,125 @@ export const CostAttribution = () => {
         title="Cost attribution"
         subtitle="Storage, compute, and maintenance costs by team and department."
         actions={
-          <Space>
+          <div className="flex flex-wrap items-center gap-2">
             <Link to="/cost">
-              <Button>Savings overview</Button>
+              <Button variant="secondary">Savings overview</Button>
             </Link>
-            <Select
-              style={{ width: 200 }}
-              value={selectedMonth}
-              onChange={setSelectedMonth}
-              options={monthOptions}
-              placeholder="Current month"
-              allowClear
-            />
-          </Space>
+            <select
+              className="h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+              value={selectedMonth ?? ""}
+              onChange={(event) => setSelectedMonth(event.target.value || undefined)}
+            >
+              <option value="">Current month</option>
+              {monthOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         }
       />
 
       <QueryErrorAlert error={error} title="Failed to load cost attribution" />
 
       {isLoading ? (
-        <div style={{ textAlign: "center", padding: "60px" }}>
-          <Spin size="large" />
+        <div className="space-y-4 py-8">
+          <MetricGrid columns={4}>
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
+            ))}
+          </MetricGrid>
         </div>
       ) : !data || data.attributions.length === 0 ? (
         <Alert
+          variant="info"
           title="Cost Attribution Not Available"
           description={
-            <>
-              <p>
-                Cost attribution requires custom tags on Source/Connection models:
-              </p>
-              <ul>
-                <li><code>cost_center</code> - Cost center identifier</li>
-                <li><code>department</code> - Department name</li>
+            <div className="space-y-2">
+              <p>Cost attribution requires custom tags on Source/Connection models:</p>
+              <ul className="list-disc pl-5">
+                <li>
+                  <code>cost_center</code> - Cost center identifier
+                </li>
+                <li>
+                  <code>department</code> - Department name
+                </li>
               </ul>
-              <p style={{ marginBottom: 0 }}>
-                Once tags are configured, cost data will be aggregated by team/department automatically.
-              </p>
-              <Space style={{ marginTop: 8 }}>
+              <p>Once tags are configured, cost data will be aggregated by team/department automatically.</p>
+              <div className="flex flex-wrap gap-2 pt-1">
                 <Link to="/connections">
-                  <Button size="small" type="primary">Open connections</Button>
+                  <Button size="sm" variant="primary">
+                    Open connections
+                  </Button>
                 </Link>
                 <Link to="/cost">
-                  <Button size="small">Open savings dashboard</Button>
+                  <Button size="sm" variant="secondary">
+                    Open savings dashboard
+                  </Button>
                 </Link>
-              </Space>
-            </>
+              </div>
+            </div>
           }
-          type="info"
-          showIcon
         />
       ) : (
         <>
-          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col xs={24} sm={12} md={6}>
-              <Card>
-                <Statistic
-                  title="Total Cost"
-                  value={data.total_cost_usd}
-                  prefix="$"
-                  precision={2}
-                  styles={{ content: { color: "#3d6fd4" }}}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {data.month}
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card>
-                <Statistic
-                  title="Attribution Rate"
-                  value={attributionRate}
-                  suffix="%"
-                  precision={1}
-                  styles={{
-                    content: {
-                      color: attributionRate >= 90 ? "#52c41a" : attributionRate >= 70 ? "#faad14" : "#ff4d4f",
-                    },
-                  }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Cost assigned to teams
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card>
-                <Statistic
-                  title="Unattributed"
-                  value={data.unattributed_cost_usd}
-                  prefix="$"
-                  precision={2}
-                  styles={{
-                    content: {
-                      color: data.unattributed_cost_usd > 0 ? "#faad14" : "#52c41a",
-                    },
-                  }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Tables without cost tags
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card>
-                <Statistic
-                  title="Teams"
-                  value={data.attributions.length}
-                  prefix={<TeamOutlined />}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Active cost centers
-                </Text>
-              </Card>
-            </Col>
-          </Row>
+          <MetricGrid columns={4} className="mb-6">
+            <MetricTile
+              label="Total Cost"
+              value={formatCurrency(data.total_cost_usd)}
+              hint={<span className="text-xs text-muted-foreground">{data.month}</span>}
+              emphasis
+            />
+            <MetricTile
+              label="Attribution Rate"
+              value={`${attributionRate.toFixed(1)}%`}
+              hint={<span className="text-xs text-muted-foreground">Cost assigned to teams</span>}
+              emphasis={attributionRate < 70}
+            />
+            <MetricTile
+              label="Unattributed"
+              value={formatCurrency(data.unattributed_cost_usd)}
+              hint={<span className="text-xs text-muted-foreground">Tables without cost tags</span>}
+              emphasis={data.unattributed_cost_usd > 0}
+            />
+            <MetricTile
+              label="Teams"
+              value={data.attributions.length}
+              hint={<span className="text-xs text-muted-foreground">Active cost centers</span>}
+            />
+          </MetricGrid>
 
-          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            <Col xs={24} lg={16}>
-              <Card title="Cost by Team">
-                <Table
+          <div className="mb-6 grid gap-4 lg:grid-cols-12">
+            <Card className="lg:col-span-8">
+              <CardHeader className="pb-2">
+                <CardTitle>Cost by Team</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0 pt-0">
+                <DataTable
                   columns={columns}
-                  dataSource={data.attributions}
-                  rowKey={(record) => record.cost_center || record.department || "unattributed"}
-                  pagination={false}
-                  size="small"
-                  summary={(pageData) => {
-                    const totalStorage = pageData.reduce((sum, item) => sum + item.storage_cost_usd, 0);
-                    const totalCompute = pageData.reduce((sum, item) => sum + item.compute_cost_usd, 0);
-                    const totalMaintenance = pageData.reduce((sum, item) => sum + item.maintenance_cost_usd, 0);
-                    const totalCost = pageData.reduce((sum, item) => sum + item.total_cost_usd, 0);
-                    return (
-                      <Table.Summary.Row style={{ backgroundColor: "#fafafa" }}>
-                        <Table.Summary.Cell index={0}>
-                          <Text strong>TOTAL</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={1} align="right">
-                          <Text strong>{pageData.reduce((sum, item) => sum + item.table_count, 0)}</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={2} align="right">
-                          <Text strong>{formatCurrency(totalStorage)}</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={3} align="right">
-                          <Text strong>{formatCurrency(totalCompute)}</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={4} align="right">
-                          <Text strong>{formatCurrency(totalMaintenance)}</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={5} align="right">
-                          <Text strong>{formatCurrency(totalCost)}</Text>
-                        </Table.Summary.Cell>
-                        <Table.Summary.Cell index={6} align="right">
-                          <Text strong>100%</Text>
-                        </Table.Summary.Cell>
-                      </Table.Summary.Row>
-                    );
-                  }}
+                  data={data.attributions}
+                  getRowId={(row) => row.cost_center || row.department || "unattributed"}
+                  emptyTitle="No attribution data"
                 />
-              </Card>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Card title="Cost Distribution">
+                <div className="border-t border-border bg-[var(--color-surface-sunken)] px-3 py-2 text-sm">
+                  <div className="grid grid-cols-7 gap-2 font-semibold">
+                    <span>TOTAL</span>
+                    <span>{totals.reduce((sum, item) => sum + item.table_count, 0)}</span>
+                    <span>{formatCurrency(totals.reduce((sum, item) => sum + item.storage_cost_usd, 0))}</span>
+                    <span>{formatCurrency(totals.reduce((sum, item) => sum + item.compute_cost_usd, 0))}</span>
+                    <span>{formatCurrency(totals.reduce((sum, item) => sum + item.maintenance_cost_usd, 0))}</span>
+                    <span>{formatCurrency(totals.reduce((sum, item) => sum + item.total_cost_usd, 0))}</span>
+                    <span>100%</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="lg:col-span-4">
+              <CardHeader className="pb-2">
+                <CardTitle>Cost Distribution</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
@@ -324,64 +267,34 @@ export const CostAttribution = () => {
                       label={(entry) => `${entry.name}: $${entry.value.toFixed(0)}`}
                     >
                       {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={sharedPieColors[index % sharedPieColors.length]} />
+                        <Cell key={`cell-${entry.name}`} fill={sharedPieColors[index % sharedPieColors.length]} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
-              </Card>
-            </Col>
-          </Row>
+              </CardContent>
+            </Card>
+          </div>
 
-          <Row gutter={[16, 16]}>
-            <Col xs={24} lg={8}>
-              <Card>
-                <Statistic
-                  title="Storage Costs"
-                  value={data.attributions.reduce((sum, item) => sum + item.storage_cost_usd, 0)}
-                  prefix={<DatabaseOutlined />}
-                  suffix="USD"
-                  precision={2}
-                  styles={{ content: { fontSize: "20px" } }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  S3 storage at $0.023/GB/month
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Card>
-                <Statistic
-                  title="Compute Costs"
-                  value={data.attributions.reduce((sum, item) => sum + item.compute_cost_usd, 0)}
-                  prefix={<CloudServerOutlined />}
-                  suffix="USD"
-                  precision={2}
-                  styles={{ content: { fontSize: "20px" } }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Query execution costs (Trino/Spark)
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Card>
-                <Statistic
-                  title="Maintenance Costs"
-                  value={data.attributions.reduce((sum, item) => sum + item.maintenance_cost_usd, 0)}
-                  prefix={<ToolOutlined />}
-                  suffix="USD"
-                  precision={2}
-                  styles={{ content: { fontSize: "20px" } }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Compaction and optimization jobs
-                </Text>
-              </Card>
-            </Col>
-          </Row>
+          <MetricGrid columns={3}>
+            <MetricTile
+              label="Storage Costs"
+              value={formatCurrency(totals.reduce((sum, item) => sum + item.storage_cost_usd, 0))}
+              hint={<span className="text-xs text-muted-foreground">S3 storage at $0.023/GB/month</span>}
+            />
+            <MetricTile
+              label="Compute Costs"
+              value={formatCurrency(totals.reduce((sum, item) => sum + item.compute_cost_usd, 0))}
+              hint={<span className="text-xs text-muted-foreground">Query execution costs (Trino/Spark)</span>}
+            />
+            <MetricTile
+              label="Maintenance Costs"
+              value={formatCurrency(totals.reduce((sum, item) => sum + item.maintenance_cost_usd, 0))}
+              hint={<span className="text-xs text-muted-foreground">Compaction and optimization jobs</span>}
+            />
+          </MetricGrid>
         </>
       )}
     </div>

@@ -1,0 +1,203 @@
+import type { EngineType } from "../../api/types";
+import {
+  engineVirtualFromDestination,
+  parseEngineVirtual,
+  resolveNativeEngineImpl,
+  type EngineVirtualValue,
+  type NativeEngineImpl
+} from "../../lib/engines";
+import { parseCatalogBindings, type CatalogBindingFormValue } from "../../lib/catalogBindings";
+
+export interface TrinoCoordinatorFormValue {
+  host: string;
+  port: number;
+  http_scheme: "http" | "https";
+}
+
+export interface DestinationFormValues {
+  name: string;
+  engine: EngineType;
+  engine_virtual: EngineVirtualValue;
+  engine_impl?: NativeEngineImpl;
+  offpeak_start?: number;
+  offpeak_end?: number;
+  secret_ref?: string | null;
+  enabled: boolean;
+  coordinators?: TrinoCoordinatorFormValue[];
+  user?: string;
+  catalog?: string;
+  schema?: string;
+  catalog_bindings?: CatalogBindingFormValue[];
+  use_basic_auth?: boolean;
+  auth_username?: string;
+  auth_password?: string;
+  application_id?: string;
+  execution_role_arn?: string;
+  region?: string;
+  s3_logs_bucket?: string;
+  s3_logs_prefix?: string;
+  entry_point?: string;
+  poll_interval_seconds?: number;
+  timeout_seconds?: number;
+  spark_submit_params_json?: string;
+  query_log_enabled?: boolean;
+  query_log_mode?: "trino_system_runtime" | "read_through";
+  query_log_external_table?: string;
+  query_log_sample_rate?: number;
+  query_log_pull_interval_seconds?: number;
+  query_log_watermark_overlap_seconds?: number;
+  query_log_telemetry_coordinators?: string;
+  query_log_retention_days?: number;
+  slot_cap?: number;
+  operation_mode?: string;
+  binary_path?: string;
+}
+
+export const decomposeDestinationConfig = (engine: string, config: Record<string, unknown> | undefined) => {
+  const cfg = config ?? {};
+  if (engine === "spark_emr") {
+    const sparkParams = cfg.spark_submit_params;
+    return {
+      application_id: typeof cfg.application_id === "string" ? cfg.application_id : "",
+      execution_role_arn: typeof cfg.execution_role_arn === "string" ? cfg.execution_role_arn : "",
+      region: typeof cfg.region === "string" ? cfg.region : "us-east-1",
+      s3_logs_bucket: typeof cfg.s3_logs_bucket === "string" ? cfg.s3_logs_bucket : "",
+      s3_logs_prefix: typeof cfg.s3_logs_prefix === "string" ? cfg.s3_logs_prefix : "cryo-spark-logs",
+      entry_point:
+        typeof cfg.entry_point === "string" ? cfg.entry_point : "s3://cryo-artifacts/cryo_spark_runner.py",
+      poll_interval_seconds: typeof cfg.poll_interval_seconds === "number" ? cfg.poll_interval_seconds : 10,
+      timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
+      spark_submit_params_json: sparkParams ? JSON.stringify(sparkParams, null, 2) : ""
+    };
+  }
+  if (engine === "native") {
+    const engine_impl = resolveNativeEngineImpl(cfg);
+    return {
+      engine_impl,
+      engine_virtual: engineVirtualFromDestination("native", cfg),
+      slot_cap: typeof cfg.slot_cap === "number" ? cfg.slot_cap : 5,
+      operation_mode: typeof cfg.operation_mode === "string" ? cfg.operation_mode : "execute",
+      timeout_seconds: typeof cfg.timeout_seconds === "number" ? cfg.timeout_seconds : 3600,
+      binary_path: typeof cfg.binary_path === "string" ? cfg.binary_path : ""
+    };
+  }
+
+  const rawCoordinators = Array.isArray(cfg.coordinators) ? cfg.coordinators : ["localhost"];
+  const coordinators: TrinoCoordinatorFormValue[] = rawCoordinators.map((item) => {
+    if (typeof item === "string") {
+      return { host: item, port: 8080, http_scheme: "http" };
+    }
+    const record = item as Record<string, unknown>;
+    return {
+      host: typeof record.host === "string" ? record.host : "",
+      port: typeof record.port === "number" ? record.port : 8080,
+      http_scheme: record.http_scheme === "https" || record.scheme === "https" ? "https" : "http"
+    };
+  });
+  const auth = cfg.auth as Record<string, unknown> | undefined;
+  const ql = (cfg as Record<string, unknown>).query_log as Record<string, unknown> | undefined;
+  const qlCoordinators = Array.isArray(ql?.telemetry_coordinators)
+    ? (ql!.telemetry_coordinators as string[]).join("\n")
+    : "";
+  return {
+    coordinators,
+    user: typeof cfg.user === "string" ? cfg.user : "cryo",
+    catalog: typeof cfg.catalog === "string" ? cfg.catalog : "iceberg",
+    schema: typeof cfg.schema === "string" ? cfg.schema : undefined,
+    catalog_bindings: parseCatalogBindings(cfg),
+    use_basic_auth: Boolean(auth && auth.type === "basic"),
+    auth_username: typeof auth?.username === "string" ? auth.username : "",
+    auth_password: typeof auth?.password === "string" ? auth.password : "",
+    query_log_enabled: Boolean(ql && ql.enabled),
+    query_log_mode: ql?.mode === "read_through" ? "read_through" : "trino_system_runtime",
+    query_log_external_table: typeof ql?.external_table === "string" ? ql.external_table : "",
+    query_log_sample_rate: typeof ql?.sample_rate === "number" ? ql.sample_rate : 1.0,
+    query_log_pull_interval_seconds:
+      typeof ql?.pull_interval_seconds === "number" ? ql.pull_interval_seconds : 300,
+    query_log_watermark_overlap_seconds:
+      typeof ql?.watermark_overlap_seconds === "number" ? ql.watermark_overlap_seconds : 900,
+    query_log_telemetry_coordinators: qlCoordinators,
+    query_log_retention_days: typeof ql?.retention_days === "number" ? ql.retention_days : 30
+  };
+};
+
+export const buildDestinationConfig = (values: DestinationFormValues): Record<string, unknown> => {
+  if (values.engine === "spark_emr") {
+    const config: Record<string, unknown> = {
+      application_id: values.application_id,
+      execution_role_arn: values.execution_role_arn,
+      region: values.region || "us-east-1",
+      s3_logs_prefix: values.s3_logs_prefix || "cryo-spark-logs",
+      entry_point: values.entry_point || "s3://cryo-artifacts/cryo_spark_runner.py",
+      poll_interval_seconds: values.poll_interval_seconds || 10,
+      timeout_seconds: values.timeout_seconds || 3600
+    };
+    if (values.s3_logs_bucket) config.s3_logs_bucket = values.s3_logs_bucket;
+    if (values.spark_submit_params_json?.trim()) {
+      config.spark_submit_params = JSON.parse(values.spark_submit_params_json);
+    }
+    return config;
+  }
+  if (values.engine === "native") {
+    const config: Record<string, unknown> = {
+      engine_impl: values.engine_impl ?? "go",
+      slot_cap: values.slot_cap ?? 5,
+      operation_mode: values.operation_mode || "execute",
+      timeout_seconds: values.timeout_seconds ?? 3600
+    };
+    if (values.binary_path?.trim()) config.binary_path = values.binary_path.trim();
+    return config;
+  }
+
+  const config: Record<string, unknown> = {
+    coordinators: (values.coordinators ?? []).map((c) => ({
+      host: c.host,
+      port: c.port || 8080,
+      http_scheme: c.http_scheme || "http"
+    })),
+    user: values.user || "cryo",
+    catalog: values.catalog || "iceberg"
+  };
+  if (values.schema) config.schema = values.schema;
+  const bindings = (values.catalog_bindings ?? [])
+    .filter((b) => b?.source_id)
+    .map((b) => {
+      const entry: Record<string, string> = { source_id: b.source_id };
+      if (b.trino_catalog?.trim()) entry.trino_catalog = b.trino_catalog.trim();
+      return entry;
+    });
+  config.catalog_bindings = bindings;
+  if (values.use_basic_auth) {
+    config.auth = { type: "basic", username: values.auth_username, password: values.auth_password };
+  }
+  return config;
+};
+
+export const buildQueryLogConfig = (values: DestinationFormValues): Record<string, unknown> | null => {
+  if (!values.query_log_enabled) return null;
+  const block: Record<string, unknown> = {
+    enabled: true,
+    mode: values.query_log_mode || "trino_system_runtime"
+  };
+  if (values.query_log_external_table) {
+    block.external_table = values.query_log_external_table;
+  }
+  if (typeof values.query_log_sample_rate === "number") {
+    block.sample_rate = values.query_log_sample_rate;
+  }
+  if (typeof values.query_log_pull_interval_seconds === "number") {
+    block.pull_interval_seconds = values.query_log_pull_interval_seconds;
+  }
+  if (typeof values.query_log_watermark_overlap_seconds === "number") {
+    block.watermark_overlap_seconds = values.query_log_watermark_overlap_seconds;
+  }
+  if (values.query_log_telemetry_coordinators?.trim()) {
+    block.telemetry_coordinators = values.query_log_telemetry_coordinators
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return block;
+};
+
+export { parseEngineVirtual };

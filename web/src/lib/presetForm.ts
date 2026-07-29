@@ -1,4 +1,5 @@
 import type { DestinationRead, JsonObject, Mode, PresetRead, PresetWrite } from "../api/types";
+import { validateCronExpression } from "./cron";
 import {
   EDITABLE_GUARDRAIL_KEYS,
   EDITABLE_PARAM_KEYS,
@@ -297,51 +298,121 @@ export const formatPresetSummary = (preset: PresetRead): string => {
   return parts.join(" · ");
 };
 
-const nonNegativeRule = (label: string) => ({
-  validator: (_: unknown, value?: number | null) => {
-    if (value == null) return Promise.resolve();
-    if (!Number.isFinite(value) || value < 0) {
-      return Promise.reject(new Error(`${label} must be a non-negative number`));
-    }
-    return Promise.resolve();
+const validateNonNegative = (label: string, value?: number | null): string | null => {
+  if (value == null) return null;
+  if (!Number.isFinite(value) || value < 0) {
+    return `${label} must be a non-negative number`;
   }
-});
+  return null;
+};
 
-const positiveRule = (label: string) => ({
-  validator: (_: unknown, value?: number | null) => {
-    if (value == null) return Promise.resolve();
-    if (!Number.isFinite(value) || value < 1) {
-      return Promise.reject(new Error(`${label} must be at least 1`));
-    }
-    return Promise.resolve();
+const validatePositive = (label: string, value?: number | null): string | null => {
+  if (value == null) return null;
+  if (!Number.isFinite(value) || value < 1) {
+    return `${label} must be at least 1`;
   }
-});
+  return null;
+};
 
-export const presetFieldRules = {
-  nonNegative: nonNegativeRule,
-  positive: positiveRule,
-  deleteRatio: {
-    validator: (_: unknown, value?: number) => {
-      if (value == null) return Promise.resolve();
-      if (!Number.isFinite(value) || value < 0 || value > 100) {
-        return Promise.reject(new Error("Delete ratio trigger must be between 0 and 100"));
-      }
-      return Promise.resolve();
-    }
-  },
-  routingRules: {
-    validator: (_: unknown, value?: RoutingRuleFormRow[]) => {
-      if (!value?.length) return Promise.resolve();
-      for (const [index, row] of value.entries()) {
-        const hasAny = Boolean(row.field || row.op || row.destination || row.value !== "" && row.value != null);
-        if (!hasAny) continue;
-        if (!row.field || !row.op || !row.destination || row.value === "" || row.value == null) {
-          return Promise.reject(
-            new Error(`Routing rule ${index + 1} needs field, operator, value, and destination`)
-          );
-        }
-      }
-      return Promise.resolve();
+const validateDeleteRatio = (value?: number): string | null => {
+  if (value == null) return null;
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    return "Delete ratio trigger must be between 0 and 100";
+  }
+  return null;
+};
+
+const validateRoutingRules = (value?: RoutingRuleFormRow[]): string | null => {
+  if (!value?.length) return null;
+  for (const [index, row] of value.entries()) {
+    const hasAny = Boolean(row.field || row.op || row.destination || (row.value !== "" && row.value != null));
+    if (!hasAny) continue;
+    if (!row.field || !row.op || !row.destination || row.value === "" || row.value == null) {
+      return `Routing rule ${index + 1} needs field, operator, value, and destination`;
     }
   }
+  return null;
+};
+
+export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): PresetFormValues => {
+  const base = presetToFormValues(null, destinations);
+  return {
+    name: "",
+    description: "",
+    destination_id: base.destination_id ?? destinations[0]?.id ?? "",
+    mode: base.mode ?? "standard",
+    operations: base.operations ?? DEFAULT_OPERATIONS,
+    schedule_cron: base.schedule_cron ?? null,
+    priority: base.priority ?? 100,
+    enabled: base.enabled ?? true,
+    is_default: base.is_default ?? false,
+    min_small_files: base.min_small_files ?? PRESET_PARAM_DEFAULTS.min_small_files,
+    chunk_size_gb: base.chunk_size_gb ?? PRESET_PARAM_DEFAULTS.chunk_size_gb,
+    max_partitions_per_chunk:
+      base.max_partitions_per_chunk ?? PRESET_PARAM_DEFAULTS.max_partitions_per_chunk,
+    max_chunks: base.max_chunks ?? null,
+    delete_ratio_trigger: base.delete_ratio_trigger ?? PRESET_PARAM_DEFAULTS.delete_ratio_trigger,
+    partition_write_idle_hours:
+      base.partition_write_idle_hours ?? PRESET_PARAM_DEFAULTS.partition_write_idle_hours,
+    retention_days: base.retention_days ?? PRESET_PARAM_DEFAULTS.retention_days,
+    retain_last: base.retain_last ?? PRESET_PARAM_DEFAULTS.retain_last,
+    orphan_retention_days: base.orphan_retention_days ?? null,
+    file_size_mb: base.file_size_mb ?? PRESET_PARAM_DEFAULTS.file_size_mb,
+    compute_statistics: base.compute_statistics ?? PRESET_PARAM_DEFAULTS.compute_statistics,
+    stats_columns: base.stats_columns,
+    bloom_filter_columns: base.bloom_filter_columns,
+    stats_compute_ndv: base.stats_compute_ndv ?? PRESET_PARAM_DEFAULTS.stats_compute_ndv,
+    cooldown_hours: base.cooldown_hours ?? PRESET_GUARDRAIL_DEFAULTS.cooldown_hours,
+    deadline_minutes: base.deadline_minutes ?? null,
+    sla_freshness_hours: base.sla_freshness_hours ?? PRESET_GUARDRAIL_DEFAULTS.sla_freshness_hours,
+    sla_maintenance_days: base.sla_maintenance_days ?? PRESET_GUARDRAIL_DEFAULTS.sla_maintenance_days,
+    sla_p95_latency_ms: base.sla_p95_latency_ms ?? PRESET_GUARDRAIL_DEFAULTS.sla_p95_latency_ms,
+    adaptive_routing: base.adaptive_routing ?? PRESET_GUARDRAIL_DEFAULTS.adaptive_routing,
+    engine_pool: base.engine_pool,
+    spark_min_gb: base.spark_min_gb ?? PRESET_GUARDRAIL_DEFAULTS.spark_min_gb,
+    native_min_gb: base.native_min_gb ?? PRESET_GUARDRAIL_DEFAULTS.native_min_gb,
+    latency_p99_ms: base.latency_p99_ms ?? PRESET_GUARDRAIL_DEFAULTS.latency_p99_ms,
+    routing_rules: base.routing_rules ?? []
+  };
+};
+
+export const validatePresetFormValues = (values: PresetFormValues): Record<string, string> | null => {
+  const errors: Record<string, string> = {};
+
+  if (!values.name?.trim()) errors.name = "Name is required";
+  if (!values.destination_id) errors.destination_id = "Engine is required";
+  if (!values.mode) errors.mode = "Mode is required";
+
+  const cronError = validateCronExpression(values.schedule_cron, { allowEmpty: true });
+  if (cronError) errors.schedule_cron = cronError;
+
+  const fieldChecks: Array<[keyof PresetFormValues, string | null]> = [
+    ["min_small_files", validateNonNegative("Min small files", values.min_small_files)],
+    ["chunk_size_gb", validatePositive("Chunk size", values.chunk_size_gb)],
+    ["max_partitions_per_chunk", validatePositive("Max partitions per chunk", values.max_partitions_per_chunk)],
+    ["max_chunks", validatePositive("Max chunks", values.max_chunks)],
+    ["delete_ratio_trigger", validateDeleteRatio(values.delete_ratio_trigger)],
+    ["partition_write_idle_hours", validateNonNegative("Partition idle hours", values.partition_write_idle_hours)],
+    ["file_size_mb", validatePositive("Target file size", values.file_size_mb)],
+    ["retention_days", validatePositive("Snapshot retention", values.retention_days)],
+    ["retain_last", validatePositive("Retain last snapshots", values.retain_last)],
+    ["orphan_retention_days", validatePositive("Orphan retention", values.orphan_retention_days)],
+    ["cooldown_hours", validateNonNegative("Cooldown", values.cooldown_hours)],
+    ["deadline_minutes", validatePositive("Run deadline", values.deadline_minutes)],
+    ["sla_freshness_hours", validateNonNegative("Freshness SLA", values.sla_freshness_hours)],
+    ["sla_maintenance_days", validateNonNegative("Maintenance SLA", values.sla_maintenance_days)],
+    ["sla_p95_latency_ms", validateNonNegative("P95 latency SLA", values.sla_p95_latency_ms)],
+    ["spark_min_gb", validateNonNegative("Spark threshold", values.spark_min_gb)],
+    ["native_min_gb", validateNonNegative("Native threshold", values.native_min_gb)],
+    ["latency_p99_ms", validateNonNegative("Catalog latency threshold", values.latency_p99_ms)]
+  ];
+
+  for (const [field, message] of fieldChecks) {
+    if (message) errors[field] = message;
+  }
+
+  const routingError = validateRoutingRules(values.routing_rules);
+  if (routingError) errors.routing_rules = routingError;
+
+  return Object.keys(errors).length ? errors : null;
 };

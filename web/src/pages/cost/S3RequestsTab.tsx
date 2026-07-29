@@ -1,4 +1,4 @@
-import { Alert, Card, Skeleton, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   Bar,
   BarChart,
@@ -19,14 +19,16 @@ import {
 } from "../../api/client";
 import type { SourceRead } from "../../api/types";
 import { EmptyState } from "../../components/common";
+import { Alert } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { DataTable } from "../../components/ui/data-table";
+import { MetricGrid } from "../../components/ui/metric-grid";
+import { Skeleton } from "../../components/ui/skeleton";
+import { MetricTile } from "../../components/ui/stat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
 import { formatCurrency, formatNumber, formatTime } from "../../lib/format";
-
-/**
- * S3 Requests tab — fleet-wide rollup of per-bucket S3 request costs (PUT/COPY/POST/LIST
- * + GET/SELECT/HEAD) sourced from the per-bucket S3 access-log ingestion pipeline
- * (docs/s3-request-cost-tracking.md §1, §3, §5).
- */
 
 interface BucketRow {
   key: string;
@@ -42,6 +44,87 @@ interface BucketRow {
   approximate: boolean;
   lastIngestedAt?: string | null;
 }
+
+const loggingBadgeVariant = (status: string): "success" | "secondary" | "warning" => {
+  if (status === "enabled") return "success";
+  if (status === "disabled") return "secondary";
+  return "warning";
+};
+
+const bucketColumns: ColumnDef<BucketRow, unknown>[] = [
+  {
+    id: "source",
+    header: "Source",
+    cell: ({ row }) => (
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium">{row.original.sourceName}</span>
+        <Badge variant="secondary">{row.original.sourceType}</Badge>
+      </div>
+    )
+  },
+  {
+    id: "bucket",
+    header: "Bucket",
+    cell: ({ row }) => row.original.bucket
+  },
+  {
+    id: "logging",
+    header: "Logging",
+    cell: ({ row }) => (
+      <Badge variant={loggingBadgeVariant(row.original.loggingStatus)}>{row.original.loggingStatus}</Badge>
+    )
+  },
+  {
+    id: "count",
+    header: "Requests (30d)",
+    cell: ({ row }) =>
+      row.original.requestCount !== null ? formatNumber(row.original.requestCount) : "—",
+    meta: { align: "right" }
+  },
+  {
+    id: "tier1",
+    header: "PUT/LIST (30d)",
+    cell: ({ row }) => (row.original.tier1Count !== null ? formatNumber(row.original.tier1Count) : "—"),
+    meta: { align: "right" }
+  },
+  {
+    id: "tier2",
+    header: "GET (30d)",
+    cell: ({ row }) => (row.original.tier2Count !== null ? formatNumber(row.original.tier2Count) : "—"),
+    meta: { align: "right" }
+  },
+  {
+    id: "cost",
+    header: "Estimated $ / mo",
+    cell: ({ row }) =>
+      row.original.costUsdMonth !== null ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={
+                row.original.approximate ? "font-semibold text-[var(--color-status-warning)]" : "font-semibold"
+              }
+            >
+              {formatCurrency(row.original.costUsdMonth)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {row.original.approximate
+              ? "Estimated using the default rate. Grant pricing:GetProducts for live regional pricing."
+              : "Live AWS pricing for this account/region."}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        "—"
+      ),
+    meta: { align: "right" }
+  },
+  {
+    id: "last_ingested",
+    header: "Last ingest",
+    cell: ({ row }) => (row.original.lastIngestedAt ? formatTime(row.original.lastIngestedAt) : "—")
+  }
+];
 
 export const S3RequestsTab = () => {
   const { api, token } = useAuth();
@@ -66,9 +149,7 @@ export const S3RequestsTab = () => {
         try {
           const [buckets, rollup] = await Promise.all([
             listSourceS3LogConfigs(api, source.id),
-            getSourceS3RequestCostRollup(api, source.id, { lookback_days: 30 }).catch(
-              () => null
-            )
+            getSourceS3RequestCostRollup(api, source.id, { lookback_days: 30 }).catch(() => null)
           ]);
           results.push({ source, buckets, rollup });
         } catch (err) {
@@ -94,9 +175,6 @@ export const S3RequestsTab = () => {
   );
   const fleetApproximate = (rollups.data ?? []).some((r) => r.rollup?.approximate === true);
 
-  // One row per bucket, not per source: a source's rollup already sums cost across every
-  // bucket it tracks into one total, but that hid which specific bucket was actually
-  // driving cost. by_bucket carries the real per-bucket breakdown behind that total.
   const bucketRows: BucketRow[] = (rollups.data ?? []).flatMap((r): BucketRow[] => {
     if (r.rollup && (r.rollup.by_bucket?.length ?? 0) > 0) {
       const rollup = r.rollup;
@@ -117,9 +195,6 @@ export const S3RequestsTab = () => {
         })
       );
     }
-    // No rollup at all (zero enabled buckets on this source, or the rollup call failed) --
-    // fall back to the raw discovered-bucket list so those buckets are still visible,
-    // just without cost figures.
     return r.buckets.map(
       (b): BucketRow => ({
         key: `${r.source.id}__${b.bucket}`,
@@ -152,160 +227,91 @@ export const S3RequestsTab = () => {
     <>
       {fleetApproximate ? (
         <Alert
-          type="warning"
-          showIcon
-          className="page-alert"
+          variant="warning"
+          className="page-alert mb-3"
           title="Some request costs are estimated using the default rate"
           description="One or more buckets used the per-call default rate because the AWS Price List API returned no usable results for their region/storage class. Grant pricing:GetProducts for live regional pricing."
         />
       ) : null}
 
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Statistic
-          title="Buckets with tracking enabled"
+      <MetricGrid columns={3} className="mb-3">
+        <MetricTile
+          label="Buckets with tracking enabled"
           value={fleetBuckets}
           loading={rollups.isLoading}
         />
-        <Statistic
-          title="Requests (30d, fleet)"
-          value={fleetCount}
+        <MetricTile
+          label="Requests (30d, fleet)"
+          value={formatNumber(fleetCount)}
           loading={rollups.isLoading}
-          formatter={(value) => formatNumber(Number(value))}
         />
-        <Statistic
-          title="Estimated monthly request cost"
+        <MetricTile
+          label="Estimated monthly request cost"
           value={formatCurrency(fleetCost)}
           loading={rollups.isLoading}
-          valueStyle={fleetApproximate ? { color: "#f59e0b" } : undefined}
+          emphasis={fleetApproximate}
         />
-      </Space>
+      </MetricGrid>
 
-      <Card title="Top buckets by request cost (last 30 days)" style={{ marginBottom: 12 }}>
-        {barData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={barData} margin={{ top: 8, right: 16, bottom: 64, left: 0 }}>
-              <CartesianGrid stroke={cryoColors.chartGrid} />
-              <XAxis
-                dataKey="bucket"
-                stroke={cryoColors.inkFaint}
-                tick={{ ...chartAxisTick, fontSize: 11 }}
-                angle={-30}
-                textAnchor="end"
-                interval={0}
-                height={70}
-              />
-              <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
-              <RechartsTooltip {...chartTooltipProps} />
-              <Bar dataKey="cost" fill={cryoColors.primary} name="$ / 30d" />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : rollups.isLoading ? (
-          <Skeleton active />
-        ) : (
-          <EmptyState
-            title="No S3 request-cost data yet"
-            description={
-              rollups.data && rollups.data.length > 0
-                ? "Buckets are discovered but no enabled integrations exist. Open a bucket's S3 log config panel on the Connections page to enable tracking."
-                : "Add a lakehouse source first, then enable S3 access-log ingestion on at least one bucket to start collecting request counts."
-            }
-          />
-        )}
+      <Card className="mb-3">
+        <CardHeader className="pb-2">
+          <CardTitle>Top buckets by request cost (last 30 days)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {barData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={barData} margin={{ top: 8, right: 16, bottom: 64, left: 0 }}>
+                <CartesianGrid stroke={cryoColors.chartGrid} />
+                <XAxis
+                  dataKey="bucket"
+                  stroke={cryoColors.inkFaint}
+                  tick={{ ...chartAxisTick, fontSize: 11 }}
+                  angle={-30}
+                  textAnchor="end"
+                  interval={0}
+                  height={70}
+                />
+                <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                <RechartsTooltip {...chartTooltipProps} />
+                <Bar dataKey="cost" fill={cryoColors.primary} name="$ / 30d" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : rollups.isLoading ? (
+            <Skeleton className="h-[260px] w-full rounded-[var(--radius-default)]" />
+          ) : (
+            <EmptyState
+              title="No S3 request-cost data yet"
+              description={
+                rollups.data && rollups.data.length > 0
+                  ? "Buckets are discovered but no enabled integrations exist. Open a bucket's S3 log config panel on the Connections page to enable tracking."
+                  : "Add a lakehouse source first, then enable S3 access-log ingestion on at least one bucket to start collecting request counts."
+              }
+            />
+          )}
+        </CardContent>
       </Card>
 
-      <Card title="Per-bucket status">
-        {rollups.isLoading ? (
-          <Skeleton active paragraph={{ rows: 4 }} />
-        ) : (
-          <Table<BucketRow>
-            rowKey="key"
-            pagination={false}
-            size="small"
-            dataSource={bucketRows}
-            columns={[
-              {
-                title: "Source",
-                key: "source",
-                render: (_: unknown, row) => (
-                  <Space size={6}>
-                    <Typography.Text strong>{row.sourceName}</Typography.Text>
-                    <Tag>{row.sourceType}</Tag>
-                  </Space>
-                )
-              },
-              {
-                title: "Bucket",
-                key: "bucket",
-                render: (_: unknown, row) => row.bucket
-              },
-              {
-                title: "Logging",
-                key: "logging",
-                render: (_: unknown, row) => {
-                  const status = row.loggingStatus;
-                  const color =
-                    status === "enabled"
-                      ? "success"
-                      : status === "disabled"
-                        ? "default"
-                        : "warning";
-                  return <Tag color={color}>{status}</Tag>;
-                }
-              },
-              {
-                title: "Requests (30d)",
-                key: "count",
-                align: "right",
-                sorter: (a, b) => (a.requestCount ?? -1) - (b.requestCount ?? -1),
-                render: (_: unknown, row) =>
-                  row.requestCount !== null ? formatNumber(row.requestCount) : "—"
-              },
-              {
-                title: "PUT/LIST (30d)",
-                key: "tier1",
-                align: "right",
-                render: (_: unknown, row) =>
-                  row.tier1Count !== null ? formatNumber(row.tier1Count) : "—"
-              },
-              {
-                title: "GET (30d)",
-                key: "tier2",
-                align: "right",
-                render: (_: unknown, row) =>
-                  row.tier2Count !== null ? formatNumber(row.tier2Count) : "—"
-              },
-              {
-                title: "Estimated $ / mo",
-                key: "cost",
-                align: "right",
-                defaultSortOrder: "descend",
-                sorter: (a, b) => (a.costUsdMonth ?? -1) - (b.costUsdMonth ?? -1),
-                render: (_: unknown, row) =>
-                  row.costUsdMonth !== null ? (
-                    <Tooltip
-                      title={
-                        row.approximate
-                          ? "Estimated using the default rate. Grant pricing:GetProducts for live regional pricing."
-                          : "Live AWS pricing for this account/region."
-                      }
-                    >
-                      <Typography.Text type={row.approximate ? "warning" : undefined} strong>
-                        {formatCurrency(row.costUsdMonth)}
-                      </Typography.Text>
-                    </Tooltip>
-                  ) : (
-                    "—"
-                  )
-              },
-              {
-                title: "Last ingest",
-                key: "last_ingested",
-                render: (_: unknown, row) =>
-                  row.lastIngestedAt ? formatTime(row.lastIngestedAt) : "—"
-              }
-            ]}
-          />
-        )}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle>Per-bucket status</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 pt-0">
+          {rollups.isLoading ? (
+            <div className="space-y-2 p-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : (
+            <DataTable
+              columns={bucketColumns}
+              data={bucketRows}
+              getRowId={(row) => row.key}
+              emptyTitle="No buckets discovered"
+              emptyDescription="Enable S3 access-log ingestion on a lakehouse bucket to see per-bucket request costs."
+            />
+          )}
+        </CardContent>
       </Card>
     </>
   );

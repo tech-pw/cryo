@@ -1,188 +1,199 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  Card,
-  Table,
-  Tag,
-  Typography,
-  Select,
-  Space,
-  Tooltip,
-} from "antd";
-import {
-  ClockCircleOutlined,
-  DatabaseOutlined,
-  WarningOutlined,
-  CheckCircleOutlined
-} from "@ant-design/icons";
+import type { ColumnDef } from "@tanstack/react-table";
+import { CheckCircle2, Clock, Database, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getQueryPerformanceDashboard, type QueryPerformanceData } from "../api/client";
-import { StatStrip, TelemetryRequiredNotice } from "../components/common";
-import { OverviewPage } from "../components/layout/OverviewPage";
+import { AsyncBoundary } from "../components/AsyncBoundary";
+import { PageHeader, TelemetryRequiredNotice } from "../components/common";
+import { Badge } from "../components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { DataTable } from "../components/ui/data-table";
+import { MetricTile } from "../components/ui/stat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useAuth } from "../lib/auth";
 import { formatBytesGb, formatDuration } from "../lib/format";
 
-const { Text } = Typography;
+type QueryRow = QueryPerformanceData["queries"][number];
+
+const durationBadgeVariant = (ms: number): "danger" | "warning" | "success" => {
+  if (ms > 10000) return "danger";
+  if (ms > 5000) return "warning";
+  return "success";
+};
+
+const KpiSkeleton = () => (
+  <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+    {Array.from({ length: 6 }).map((_, index) => (
+      <MetricTile key={index} label="Loading" value="—" loading />
+    ))}
+  </div>
+);
 
 export const QueryPerformance = () => {
   const { api } = useAuth();
   const [engine, setEngine] = useState<string | undefined>(undefined);
   const [hours, setHours] = useState(24);
 
-  const { data, isLoading, error } = useQuery<QueryPerformanceData>({
+  const { data, isLoading, error, refetch } = useQuery<QueryPerformanceData>({
     queryKey: ["query-performance", api.token, engine, hours],
     queryFn: () => getQueryPerformanceDashboard(api, hours, engine),
     refetchInterval: 30000
   });
 
-  const columns = [
+  const columns: ColumnDef<QueryRow, unknown>[] = [
     {
-      title: "Query",
-      dataIndex: "query_text",
-      key: "query_text",
-      ellipsis: true,
-      width: "35%",
-      render: (text: string | null) => (
-        <Tooltip title={text}>
-          <Text code style={{ fontSize: "11px" }}>
-            {text ? text.slice(0, 80) + (text.length > 80 ? "..." : "") : "—"}
-          </Text>
-        </Tooltip>
-      ),
-    },
-    {
-      title: "Engine",
-      dataIndex: "engine",
-      key: "engine",
-      width: "10%",
-      render: (engine: string) => (
-        <Tag color="blue">{engine.toUpperCase()}</Tag>
-      ),
-    },
-    {
-      title: "Duration",
-      dataIndex: "duration_ms",
-      key: "duration_ms",
-      width: "10%",
-      sorter: (a: any, b: any) => a.duration_ms - b.duration_ms,
-      render: (ms: number) => {
-        const color = ms > 10000 ? "red" : ms > 5000 ? "orange" : "success";
+      id: "query_text",
+      header: "Query",
+      cell: ({ row }) => {
+        const text = row.original.query_text;
+        const preview = text ? text.slice(0, 80) + (text.length > 80 ? "..." : "") : "—";
         return (
-          <Tag color={color} icon={<ClockCircleOutlined />}>
-            {formatDuration(ms)}
-          </Tag>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <code className="text-[11px]">{preview}</code>
+            </TooltipTrigger>
+            {text ? <TooltipContent className="max-w-md break-all">{text}</TooltipContent> : null}
+          </Tooltip>
         );
-      },
+      }
     },
     {
-      title: "Data Scanned",
-      dataIndex: "bytes_scanned",
-      key: "bytes_scanned",
-      width: "12%",
-      render: (bytes: number | null) => formatBytesGb(bytes),
+      id: "engine",
+      header: "Engine",
+      cell: ({ row }) => <Badge variant="secondary">{row.original.engine.toUpperCase()}</Badge>
     },
     {
-      title: "Rows",
-      dataIndex: "rows_produced",
-      key: "rows_produced",
-      width: "10%",
-      render: (rows: number | null) =>
-        rows ? rows.toLocaleString() : "—",
+      id: "duration_ms",
+      header: "Duration",
+      cell: ({ row }) => (
+        <Badge variant={durationBadgeVariant(row.original.duration_ms)}>
+          <Clock className="mr-1 size-3" aria-hidden="true" />
+          {formatDuration(row.original.duration_ms)}
+        </Badge>
+      )
     },
     {
-      title: "Status",
-      dataIndex: "status",
-      key: "status",
-      width: "10%",
-      render: (status: string) => {
-        const icon = status === "failed" ? <WarningOutlined /> : <CheckCircleOutlined />;
-        const color = status === "failed" ? "red" : "green";
+      id: "bytes_scanned",
+      header: "Data Scanned",
+      cell: ({ row }) => formatBytesGb(row.original.bytes_scanned)
+    },
+    {
+      id: "rows_produced",
+      header: "Rows",
+      cell: ({ row }) => (row.original.rows_produced ? row.original.rows_produced.toLocaleString() : "—")
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: ({ row }) => {
+        const failed = row.original.status === "failed";
         return (
-          <Tag color={color} icon={icon}>
-            {status.toUpperCase()}
-          </Tag>
+          <Badge variant={failed ? "danger" : "success"}>
+            {failed ? (
+              <TriangleAlert className="mr-1 size-3" aria-hidden="true" />
+            ) : (
+              <CheckCircle2 className="mr-1 size-3" aria-hidden="true" />
+            )}
+            {row.original.status.toUpperCase()}
+          </Badge>
         );
-      },
+      }
     },
     {
-      title: "Table",
-      dataIndex: "table_name",
-      key: "table_name",
-      width: "13%",
-      ellipsis: true,
-      render: (name: string | null) =>
-        name ? (
-          <Link to="/catalogs">{name}</Link>
-        ) : (
-          "—"
-        ),
-    },
+      id: "table_name",
+      header: "Table",
+      cell: ({ row }) => {
+        const name = row.original.table_name;
+        if (!name) return "—";
+        if (row.original.table_id) {
+          return (
+            <Link to={`/tables/${row.original.table_id}`} title="Open table detail" className="hover:text-primary">
+              {name}
+            </Link>
+          );
+        }
+        return (
+          <Link to="/catalogs" title="Open catalog explorer to locate this table" className="hover:text-primary">
+            {name}
+          </Link>
+        );
+      }
+    }
   ];
 
   return (
-    <OverviewPage
-      title="Query performance"
-      subtitle="Monitor query latency, throughput, and failure rates."
-      actions={
-        <Space>
-          <Select
-            style={{ width: 120 }}
-            placeholder="All Engines"
-            allowClear
-            value={engine}
-            onChange={setEngine}
-            options={[
-              { label: "Trino", value: "trino" },
-              { label: "Spark", value: "spark" },
-              { label: "Athena", value: "athena" },
-              { label: "DuckDB", value: "duckdb" }
-            ]}
+    <div>
+      <PageHeader
+        title="Query performance"
+        subtitle="Monitor query latency, throughput, and failure rates."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <select
+              className="h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+              value={engine ?? ""}
+              onChange={(event) => setEngine(event.target.value || undefined)}
+            >
+              <option value="">All Engines</option>
+              <option value="trino">Trino</option>
+              <option value="spark">Spark</option>
+              <option value="athena">Athena</option>
+              <option value="duckdb">DuckDB</option>
+            </select>
+            <select
+              className="h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+              value={hours}
+              onChange={(event) => setHours(Number(event.target.value))}
+            >
+              <option value={1}>Last 1 hour</option>
+              <option value={6}>Last 6 hours</option>
+              <option value={24}>Last 24 hours</option>
+              <option value={168}>Last 7 days</option>
+            </select>
+          </div>
+        }
+      />
+
+      <AsyncBoundary
+        isLoading={isLoading}
+        isError={Boolean(error)}
+        error={error}
+        onRetry={() => void refetch()}
+        skeleton={<KpiSkeleton />}
+      >
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+          <MetricTile label="Total queries" value={data?.total ?? 0} suffix="queries" />
+          <MetricTile label="P50 latency" value={`${data?.p50_latency_ms ?? 0} ms`} />
+          <MetricTile label="P95 latency" value={`${data?.p95_latency_ms ?? 0} ms`} />
+          <MetricTile label="P99 latency" value={`${data?.p99_latency_ms ?? 0} ms`} />
+          <MetricTile label="Avg data scanned" value={formatBytesGb(data?.avg_bytes_scanned ?? null)} />
+          <MetricTile
+            label="Failed"
+            value={`${data?.failed_count ?? 0} / ${data?.total ?? 0}`}
+            emphasis={(data?.failed_count ?? 0) > 0}
           />
-          <Select
-            style={{ width: 120 }}
-            value={hours}
-            onChange={setHours}
-            options={[
-              { label: "Last 1 hour", value: 1 },
-              { label: "Last 6 hours", value: 6 },
-              { label: "Last 24 hours", value: 24 },
-              { label: "Last 7 days", value: 168 }
-            ]}
-          />
-        </Space>
-      }
-      loading={isLoading}
-      error={error}
-      errorTitle="Failed to load query performance"
-      kpis={
-        <StatStrip
-          items={[
-            { label: "Total queries", value: data?.total ?? 0, suffix: "queries" },
-            { label: "P50 latency", value: `${data?.p50_latency_ms ?? 0} ms` },
-            { label: "P95 latency", value: `${data?.p95_latency_ms ?? 0} ms` },
-            { label: "P99 latency", value: `${data?.p99_latency_ms ?? 0} ms` },
-            { label: "Avg data scanned", value: formatBytesGb(data?.avg_bytes_scanned ?? null) },
-            { label: "Failed", value: `${data?.failed_count ?? 0} / ${data?.total ?? 0}` }
-          ]}
-        />
-      }
-    >
-      {!isLoading && !error && (data?.total ?? 0) === 0 ? (
-        <TelemetryRequiredNotice surface="Query performance" />
-      ) : null}
-      <Card title="Top slowest queries" extra={<DatabaseOutlined />}>
-        <Table
-          columns={columns}
-          dataSource={data?.queries || []}
-          rowKey="query_id"
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            showTotal: (total) => `${total} queries`,
-          }}
-          size="small"
-        />
-      </Card>
-    </OverviewPage>
+        </div>
+
+        {(data?.total ?? 0) === 0 ? (
+          <TelemetryRequiredNotice surface="Query performance" />
+        ) : (
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle>Top slowest queries</CardTitle>
+              <Database className="size-4 text-muted-foreground" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="p-0 pt-0">
+              <DataTable
+                columns={columns}
+                data={data?.queries ?? []}
+                getRowId={(row) => row.query_id}
+                emptyTitle="No queries recorded"
+                emptyDescription="Query telemetry will appear here once engines report execution stats."
+              />
+            </CardContent>
+          </Card>
+        )}
+      </AsyncBoundary>
+    </div>
   );
 };

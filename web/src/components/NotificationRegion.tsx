@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert } from "antd";
+
+import { Alert } from "./ui/alert";
 
 type ToastKind = "info" | "success" | "warning" | "error";
 interface Toast {
@@ -22,6 +23,8 @@ export const useNotifications = (): NotificationContextValue => {
   return ctx;
 };
 
+const toastVariant = (kind: ToastKind): "info" | "success" | "warning" | "error" => kind;
+
 export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seq = useRef(0);
@@ -43,27 +46,17 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         aria-live="polite"
         aria-atomic="true"
         role="status"
-        style={{
-          position: "fixed",
-          top: 72,
-          right: 24,
-          zIndex: 2000,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          maxWidth: 380
-        }}
+        className="pointer-events-none fixed right-6 top-[72px] z-[2000] flex max-w-[380px] flex-col gap-2"
       >
         {toasts.map((t) => (
-          <Alert
-            key={t.id}
-            type={t.kind}
-            message={t.message}
-            description={t.description}
-            showIcon
-            closable
-            onClose={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
-          />
+          <div key={t.id} className="pointer-events-auto">
+            <Alert
+              variant={toastVariant(t.kind)}
+              title={t.message}
+              description={t.description}
+              onDismiss={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
+            />
+          </div>
         ))}
       </div>
     </NotificationContext.Provider>

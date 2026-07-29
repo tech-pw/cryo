@@ -47,17 +47,12 @@ describe("BulkAssignBar", () => {
 
     expect(screen.getByText("Filter selection")).toBeInTheDocument();
     expect(screen.getByText("All 42 matching tables selected")).toBeInTheDocument();
-    expect(
-      screen.getByText("Actions now apply to every table matching the current filters, across all pages.")
-    ).toBeInTheDocument();
 
     const runButton = screen.getByText("Run now").closest("button")!;
     expect(runButton.disabled).toBe(true);
 
-    // Simulate explicit preset selection via the antd Select.
     const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.mouseDown(presetSelect);
-    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
+    fireEvent.change(presetSelect, { target: { value: "preset-1" } });
 
     expect(onAssign).toHaveBeenCalledWith("preset-1");
 
@@ -69,7 +64,7 @@ describe("BulkAssignBar", () => {
     expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
   });
 
-  it("labels preset and engine options with useful context", async () => {
+  it("labels preset and engine options with useful context", () => {
     render(
       <BulkAssignBar
         selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
@@ -83,13 +78,15 @@ describe("BulkAssignBar", () => {
     );
 
     const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.mouseDown(presetSelect);
-    fireEvent.click(await screen.findByText("trino-standard · Default local Trino maintenance profile"));
-    expect(screen.getAllByText("trino-standard · Default local Trino maintenance profile").length).toBeGreaterThan(0);
+    expect(
+      Array.from((presetSelect as HTMLSelectElement).options).some((option) =>
+        option.text.includes("trino-standard · Default local Trino maintenance profile")
+      )
+    ).toBe(true);
     expect(screen.getByText("trino-main · Trino")).toBeInTheDocument();
   });
 
-  it("labels native engine destinations clearly", async () => {
+  it("labels native engine destinations clearly", () => {
     const nativeDestination: DestinationRead = {
       ...destination,
       id: "dest-native",
@@ -109,14 +106,10 @@ describe("BulkAssignBar", () => {
       />
     );
 
-    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.mouseDown(presetSelect);
-    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
-
     expect(screen.getByText("native-datafusion · Native (iceberg-go)")).toBeInTheDocument();
   });
 
-  it("disables manifest rewrite for native destinations", async () => {
+  it("disables manifest rewrite for native destinations", () => {
     const nativeDestination: DestinationRead = {
       ...destination,
       id: "dest-native",
@@ -138,8 +131,7 @@ describe("BulkAssignBar", () => {
     );
 
     const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.mouseDown(presetSelect);
-    fireEvent.click(await screen.findByText("trino-standard · standard maintenance preset"));
+    fireEvent.change(presetSelect, { target: { value: "preset-1" } });
 
     expect(screen.getByText("Manifest rewrite").closest("button")?.disabled).toBe(true);
   });

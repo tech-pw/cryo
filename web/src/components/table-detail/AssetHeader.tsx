@@ -1,0 +1,320 @@
+import {
+  AlertTriangle,
+  Columns3,
+  Copy,
+  Database,
+  DollarSign,
+  FileText,
+  GitBranch,
+  Heart,
+  History,
+  Info,
+  LayoutGrid,
+  Loader2,
+  SlidersHorizontal,
+  Table,
+  Trash2
+} from "lucide-react";
+import { toast } from "sonner";
+import { CompactionTag, GradePill, PriorityTag, healthScoreColor } from "../status";
+import { formatBytesGb, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { qualifiedTableName } from "../../lib/tableLabels";
+import { formatEngineLabel } from "../../lib/engines";
+import { provenanceLabel } from "./helpers";
+import type { TableDetailState } from "../../pages/table-detail/useTableDetail";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+
+type AssetHeaderProps = Pick<
+  TableDetailState,
+  | "navigate"
+  | "row"
+  | "stats"
+  | "sourceName"
+  | "effectivePreset"
+  | "effectiveDestination"
+  | "lastSnapshotCommittedAt"
+  | "score"
+  | "savingsDisplay"
+  | "reclaimableBytes"
+  | "partitionColLabel"
+  | "hideSinglePartitionKpi"
+  | "scan"
+  | "queuedScanRunId"
+  | "handleScanAction"
+>;
+
+export const AssetHeader = ({
+  navigate,
+  row,
+  stats,
+  sourceName,
+  effectivePreset,
+  effectiveDestination,
+  lastSnapshotCommittedAt,
+  score,
+  savingsDisplay,
+  reclaimableBytes,
+  partitionColLabel,
+  hideSinglePartitionKpi,
+  scan,
+  queuedScanRunId,
+  handleScanAction
+}: AssetHeaderProps) => (
+  <>
+    <div className="td-breadcrumbs">
+      <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/")}>
+        Home
+      </span>
+      <span className="td-breadcrumb-separator">/</span>
+      <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/catalogs")}>
+        Catalogs
+      </span>
+      <span className="td-breadcrumb-separator">/</span>
+      <span
+        className="td-breadcrumb-item td-breadcrumb-interactive"
+        onClick={() => navigate(`/catalogs?source=${row?.source_id}`)}
+      >
+        {sourceName}
+      </span>
+      <span className="td-breadcrumb-separator">/</span>
+      <span className="td-breadcrumb-item">{row?.schema_name ?? "schema"}</span>
+      <span className="td-breadcrumb-separator">/</span>
+      <span className="td-breadcrumb-item active">{row?.table_name ?? "table"}</span>
+    </div>
+
+    <div className="td-header-row">
+      <div className="td-header-info">
+        <h3 className="td-header-title">{row ? qualifiedTableName(row) : "Loading..."}</h3>
+        <div className="td-header-tags">
+          {stats?.grade ? <GradePill grade={stats.grade} /> : null}
+          {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}
+          <CompactionTag needsCompaction={stats?.needs_compaction} />
+        </div>
+        <div className="td-hero-meta">
+          <span>
+            Preset: <strong>{effectivePreset.data?.preset_name ?? "None"}</strong>
+            <span className="td-meta-faint"> ({provenanceLabel(effectivePreset.data?.provenance)})</span>
+            {effectiveDestination ? (
+              <span className="td-meta-faint">
+                {" "}
+                · {effectiveDestination.name} ({formatEngineLabel(effectiveDestination.engine)})
+              </span>
+            ) : null}
+          </span>
+          {stats?.scan_at ? (
+            <span>
+              Last scan: <strong>{formatTime(stats.scan_at)}</strong>
+            </span>
+          ) : null}
+          {lastSnapshotCommittedAt ? (
+            <span>
+              Last commit: <strong>{formatTime(lastSnapshotCommittedAt)}</strong>
+            </span>
+          ) : null}
+          {row?.location ? (
+            <span>
+              Path:{" "}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <code className="td-path-value inline-block max-w-[360px] truncate align-middle text-xs">
+                    {row.location}
+                  </code>
+                </TooltipTrigger>
+                <TooltipContent>{row.location}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="td-path-copy h-6 w-6 align-middle text-muted-foreground"
+                    aria-label="Copy table path"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(row.location ?? "").then(
+                        () => toast.success("Path copied"),
+                        () => toast.error("Could not copy to clipboard")
+                      );
+                    }}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Copy path</TooltipContent>
+              </Tooltip>
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="td-interaction-toolbar">
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={scan.isPending}
+          onClick={handleScanAction}
+          disabled={!row}
+          className="td-refresh-btn text-xs font-medium text-muted-foreground"
+          aria-label={scan.isPending ? "Refreshing stats" : queuedScanRunId ? "Open scan run" : "Refresh stats"}
+        >
+          {!scan.isPending ? <Loader2 className="size-3.5" /> : null}
+          {scan.isPending ? "Refreshing stats..." : queuedScanRunId ? "Open scan run" : "Refresh stats"}
+        </Button>
+      </div>
+    </div>
+
+    <div
+      className="td-quick-attribution-bar"
+      style={{ display: "flex", gap: "16px", padding: "10px 16px", overflowX: "auto" }}
+    >
+      <AttributionItem
+        icon={<Heart style={{ color: healthScoreColor(score) }} className="size-3.5" />}
+        label="Health Score"
+        value={formatNumber(score)}
+        valueClassName="td-health-score"
+        valueStyle={{ color: healthScoreColor(score) }}
+      />
+      <AttributionDivider />
+      <AttributionItem icon={<Database className="size-3.5" />} label="Total Size" value={formatGb(stats?.total_size_gb)} />
+      <AttributionDivider />
+      <AttributionItem icon={<Table className="size-3.5" />} label="Records" value={formatNumber(stats?.total_records, true)} />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<Columns3 className="size-3.5" />}
+        label="Partition col"
+        value={
+          <>
+            {partitionColLabel}
+            {stats?.partition_col_type ? (
+              <span className="td-attribution-subtle">({stats.partition_col_type})</span>
+            ) : null}
+          </>
+        }
+        title={partitionColLabel}
+      />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<DollarSign className="size-3.5" />}
+        iconBg="rgba(30, 142, 90, 0.06)"
+        iconColor="var(--savings, #1e8e5a)"
+        label="Savings / Mo"
+        value={
+          <>
+            {savingsDisplay}
+            {reclaimableBytes > 0 ? (
+              <span className="td-attribution-subtle">{formatBytesGb(reclaimableBytes)} rec.</span>
+            ) : null}
+          </>
+        }
+        valueClassName="td-savings-value"
+      />
+      {!hideSinglePartitionKpi ? (
+        <>
+          <AttributionDivider />
+          <AttributionItem
+            icon={<LayoutGrid className="size-3.5" />}
+            label="Partitions"
+            value={formatNumber(stats?.total_partitions)}
+          />
+          <AttributionDivider />
+        </>
+      ) : null}
+      <AttributionItem icon={<FileText className="size-3.5" />} label="Files" value={formatNumber(stats?.total_files, true)} />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<AlertTriangle className="size-3.5" />}
+        label="Small Files"
+        iconBg={stats?.small_files_count ? "rgba(240, 160, 32, 0.08)" : undefined}
+        iconColor={stats?.small_files_count ? "var(--warning, #f0a020)" : undefined}
+        value={
+          <>
+            {formatNumber(stats?.small_files_count, true)}
+            {stats?.total_files && stats.small_files_count != null ? (
+              <span className="td-attribution-subtle">
+                {((stats.small_files_count / stats.total_files) * 100).toFixed(0)}%
+              </span>
+            ) : null}
+          </>
+        }
+      />
+      <AttributionDivider />
+      <AttributionItem icon={<History className="size-3.5" />} label="Snapshots" value={formatNumber(stats?.total_snapshots)} />
+      <AttributionDivider />
+      <AttributionItem icon={<GitBranch className="size-3.5" />} label="Manifests" value={formatNumber(stats?.manifest_count)} />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<Trash2 className="size-3.5" />}
+        label="Delete files"
+        iconBg={stats?.total_delete_files ? "rgba(220, 53, 69, 0.08)" : undefined}
+        iconColor={stats?.total_delete_files ? "var(--error, #dc3545)" : undefined}
+        value={formatNumber(stats?.total_delete_files)}
+      />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<Info className="size-3.5" />}
+        label="Avg file size"
+        value={stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}
+      />
+      <AttributionDivider />
+      <AttributionItem
+        icon={<SlidersHorizontal className="size-3.5" />}
+        label="Partition skew"
+        iconBg={stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "rgba(240, 160, 32, 0.08)" : undefined}
+        iconColor={
+          stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "var(--warning, #f0a020)" : undefined
+        }
+        value={stats?.partition_skew_ratio != null ? `${stats.partition_skew_ratio.toFixed(2)}x` : "-"}
+      />
+    </div>
+  </>
+);
+
+const AttributionDivider = () => <div className="td-attribution-divider" style={{ alignSelf: "center" }} />;
+
+const AttributionItem = ({
+  icon,
+  label,
+  value,
+  title,
+  valueClassName,
+  valueStyle,
+  iconBg,
+  iconColor
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  title?: string;
+  valueClassName?: string;
+  valueStyle?: React.CSSProperties;
+  iconBg?: string;
+  iconColor?: string;
+}) => (
+  <div
+    className="td-attribution-item"
+    style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}
+  >
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 28,
+        height: 28,
+        borderRadius: "6px",
+        backgroundColor: iconBg ?? "rgba(92, 102, 122, 0.05)",
+        color: iconColor ?? "var(--muted, #5c667a)",
+        fontSize: 13,
+        flexShrink: 0
+      }}
+    >
+      {icon}
+    </div>
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      <span className="td-attribution-label">{label}</span>
+      <span className={`td-attribution-value${valueClassName ? ` ${valueClassName}` : ""}`} style={valueStyle} title={title}>
+        {value}
+      </span>
+    </div>
+  </div>
+);

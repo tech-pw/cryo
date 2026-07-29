@@ -1,13 +1,9 @@
-import {
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-  DatabaseOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
-import { Tag, Tooltip } from "antd";
+import { CheckCircle2, Clock3, Database, Loader2, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CostPrecision } from "../api/types";
 import { formatTime } from "../lib/format";
+import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const LABELS: Record<CostPrecision, string> = {
   heuristic: "Quick estimate",
@@ -26,25 +22,22 @@ const TOOLTIPS: Record<CostPrecision, string> = {
 
 const TIER_STYLE: Record<
   CostPrecision,
-  { color: string; icon: ReactNode; staleColor: string; staleIcon: ReactNode }
+  { variant: "secondary" | "default" | "success" | "warning"; icon: ReactNode; staleIcon: ReactNode }
 > = {
   heuristic: {
-    color: "default",
-    icon: <ClockCircleOutlined />,
-    staleColor: "warning",
-    staleIcon: <WarningOutlined />
+    variant: "secondary",
+    icon: <Clock3 className="size-3" />,
+    staleIcon: <TriangleAlert className="size-3" />
   },
   metadata: {
-    color: "blue",
-    icon: <DatabaseOutlined />,
-    staleColor: "warning",
-    staleIcon: <WarningOutlined />
+    variant: "default",
+    icon: <Database className="size-3" />,
+    staleIcon: <TriangleAlert className="size-3" />
   },
   storage_truth: {
-    color: "success",
-    icon: <CheckCircleOutlined />,
-    staleColor: "warning",
-    staleIcon: <WarningOutlined />
+    variant: "success",
+    icon: <CheckCircle2 className="size-3" />,
+    staleIcon: <TriangleAlert className="size-3" />
   }
 };
 
@@ -60,7 +53,7 @@ export const CostPrecisionBadge = ({
   if (!precision) return null;
   const label = LABELS[precision] ?? precision;
   const style = TIER_STYLE[precision] ?? TIER_STYLE.heuristic;
-  const color = orphanScanStale ? style.staleColor : style.color;
+  const variant = orphanScanStale ? "warning" : style.variant;
   const icon = orphanScanStale ? style.staleIcon : style.icon;
   const tooltip = [
     TOOLTIPS[precision],
@@ -74,10 +67,16 @@ export const CostPrecisionBadge = ({
     .join(" ");
 
   return (
-    <Tooltip title={tooltip}>
-      <Tag color={color} icon={icon}>
-        {orphanScanStale ? `${label} · stale` : label}
-      </Tag>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant={variant} className="gap-1">
+          {icon}
+          {orphanScanStale ? `${label} · stale` : label}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
   );
 };
+
+export const AwsStatusSpinner = () => <Loader2 className="size-3 animate-spin" aria-hidden />;

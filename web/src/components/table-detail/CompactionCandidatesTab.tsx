@@ -1,19 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, Empty, Skeleton, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
 import type { ApiOptions } from "../../api/client";
 import { getCompactionCandidates } from "../../api/client";
 import type { CompactionCandidateRead } from "../../api/types";
+import { EmptyState } from "../common";
+import { Badge } from "../ui/badge";
+import { MetricTile } from "../ui/stat";
+import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { ChartCard } from "./ChartCard";
 
 interface Props {
   api: ApiOptions;
   tableId: string;
 }
 
-const PRIORITY_COLORS: Record<string, string> = {
-  HIGH: "error",
-  MED: "warning",
-  MEDIUM: "warning",
-  LOW: "default"
+const priorityVariant = (priority: string): "danger" | "warning" | "secondary" => {
+  if (priority === "HIGH") return "danger";
+  if (priority === "MED" || priority === "MEDIUM") return "warning";
+  return "secondary";
 };
 
 const formatNumber = (n: number | null | undefined): string =>
@@ -35,14 +39,29 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
     enabled: Boolean(tableId)
   });
 
-  if (query.isLoading) return <Skeleton active />;
-  if (query.isError) {
+  if (query.isLoading) {
     return (
-      <Card>
-        <Typography.Text type="danger">Failed to load compaction candidates: {(query.error as Error).message}</Typography.Text>
-      </Card>
+      <div className="space-y-4 p-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+        <Skeleton className="h-48 w-full" />
+      </div>
     );
   }
+
+  if (query.isError) {
+    return (
+      <ChartCard title="Top Compaction Candidates">
+        <p className="text-sm text-[var(--color-status-danger)]">
+          Failed to load compaction candidates: {(query.error as Error).message}
+        </p>
+      </ChartCard>
+    );
+  }
+
   const data = query.data;
   const candidates: CompactionCandidateRead[] = data?.candidates ?? [];
   const totalSavings = candidates.reduce((s, c) => s + (c.savings_estimate_usd ?? 0), 0);
@@ -50,68 +69,91 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
 
   if (candidates.length === 0) {
     return (
-      <Card title="Top Compaction Candidates" extra={<Typography.Text type="secondary">AutoComp-Style Ranking</Typography.Text>}>
-        <Empty description="No Compaction Candidates Found. Either the table has healthy file distribution, or it has not been scanned." />
-      </Card>
+      <ChartCard
+        title="Top Compaction Candidates"
+        subtitle="AutoComp-Style Ranking"
+      >
+        <EmptyState
+          title="No Compaction Candidates Found"
+          description="Either the table has healthy file distribution, or it has not been scanned."
+        />
+      </ChartCard>
     );
   }
 
   return (
-    <Space orientation="vertical" size={16} style={{ width: "100%" }}>
-      <Card>
-        <Space size={32}>
-          <Statistic title="Candidates" value={candidates.length} />
-          <Statistic title="High Priority" value={highPriority} valueStyle={highPriority > 0 ? { color: "#dc3545" } : undefined} />
-          <Statistic title="Projected 12-Month Savings" value={formatUsd(totalSavings)} valueStyle={{ color: "#1e8e5a" }} />
-        </Space>
-      </Card>
-      <Card
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricTile label="Candidates" value={candidates.length} />
+        <MetricTile
+          label="High Priority"
+          value={highPriority}
+          className={highPriority > 0 ? "[&_p:last-child]:text-[var(--color-status-danger)]" : undefined}
+        />
+        <MetricTile
+          label="Projected 12-Month Savings"
+          value={formatUsd(totalSavings)}
+          className="[&_p:last-child]:text-[var(--grade-a)]"
+        />
+      </div>
+      <ChartCard
         title="Top 10 Candidates by Benefit Score"
-        extra={
-          <Tooltip title="Score = (small_files × query_freq) / partition_size_gb. Higher = more impact from compacting this partition.">
-            <Tag color="blue">AutoComp</Tag>
+        actions={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="default">AutoComp</Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              Score = (small_files × query_freq) / partition_size_gb. Higher = more impact from compacting this partition.
+            </TooltipContent>
           </Tooltip>
         }
       >
-        <Table
-          dataSource={candidates}
-          rowKey={(c) => c.partition_path}
-          size="small"
-          pagination={false}
-          columns={[
-            {
-              title: "Partition",
-              dataIndex: "partition_path",
-              key: "partition_path",
-              render: (v) => <Typography.Text code>{v}</Typography.Text>
-            },
-            { title: "Score", dataIndex: "score", key: "score", sorter: (a, b) => a.score - b.score, render: (v) => v.toFixed(2) },
-            {
-              title: "Priority",
-              dataIndex: "priority",
-              key: "priority",
-              render: (v) => <Tag color={PRIORITY_COLORS[v] ?? "default"}>{v}</Tag>
-            },
-            { title: "Small Files", dataIndex: "small_files", key: "small_files", render: formatNumber },
-            { title: "Size", dataIndex: "partition_size_gb", key: "size", render: formatGb },
-            { title: "QPS (30 Days)", dataIndex: "query_freq_per_day", key: "qps", render: (v) => v.toFixed(1) },
-            { title: "p95 Latency (ms)", dataIndex: "p95_latency_ms", key: "p95", render: formatNumber },
-            { title: "Savings (12-Month)", dataIndex: "savings_estimate_usd", key: "savings", render: formatUsd },
-            {
-              title: "Reasons",
-              dataIndex: "reasons",
-              key: "reasons",
-              render: (reasons: string[]) => (
-                <Space orientation="vertical" size={2}>
-                  {reasons.map((r, i) => (
-                    <Typography.Text key={i} type="secondary" style={{ fontSize: 11 }}>· {r}</Typography.Text>
-                  ))}
-                </Space>
-              )
-            }
-          ]}
-        />
-      </Card>
-    </Space>
+        <div className="overflow-x-auto">
+          <table className="td-schema-table">
+            <thead>
+              <tr>
+                <th>Partition</th>
+                <th>Score</th>
+                <th>Priority</th>
+                <th>Small Files</th>
+                <th>Size</th>
+                <th>QPS (30 Days)</th>
+                <th>p95 Latency (ms)</th>
+                <th>Savings (12-Month)</th>
+                <th>Reasons</th>
+              </tr>
+            </thead>
+            <tbody>
+              {candidates.map((row) => (
+                <tr key={row.partition_path}>
+                  <td>
+                    <code className="font-mono text-xs">{row.partition_path}</code>
+                  </td>
+                  <td>{row.score.toFixed(2)}</td>
+                  <td>
+                    <Badge variant={priorityVariant(row.priority)}>{row.priority}</Badge>
+                  </td>
+                  <td>{formatNumber(row.small_files)}</td>
+                  <td>{formatGb(row.partition_size_gb)}</td>
+                  <td>{row.query_freq_per_day.toFixed(1)}</td>
+                  <td>{formatNumber(row.p95_latency_ms)}</td>
+                  <td>{formatUsd(row.savings_estimate_usd)}</td>
+                  <td>
+                    <div className="flex flex-col gap-0.5">
+                      {row.reasons.map((reason, i) => (
+                        <span key={i} className="text-[11px] text-muted-foreground">
+                          · {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ChartCard>
+    </div>
   );
 };
