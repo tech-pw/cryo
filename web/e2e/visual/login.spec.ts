@@ -1,3 +1,10 @@
+/**
+ * Visual regression — login screen (no API required).
+ *
+ * Baselines live beside this file: `login.spec.ts-snapshots/`
+ * Update after intentional UI change: `npm run test:visual:update -- --grep login`
+ * Compare only: `npm run test:visual -- --grep login`
+ */
 import { expect, test } from "@playwright/test";
 
 import { applyTheme, settlePage, type VisualTheme } from "./helpers";

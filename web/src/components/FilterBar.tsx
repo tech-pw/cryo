@@ -6,7 +6,8 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { InputNumber } from "./ui/input-number";
-import { MultiSelect, Select } from "./ui/select";
+import { Select } from "./ui/select";
+import { MultiSelect } from "./ui/multi-select";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Segmented } from "./ui/segmented";
 
@@ -88,7 +89,7 @@ export const FilterBar = ({
               value={value.sourceIds ?? []}
               onChange={(sourceIds) => patch({ sourceIds })}
               options={catalogOptions}
-              style={{ minWidth: 180 }}
+              className="min-w-[10rem]"
             />
           ) : null}
           <MultiSelect
@@ -97,7 +98,7 @@ export const FilterBar = ({
             value={value.presetFilter ?? []}
             onChange={(presetFilter) => patch({ presetFilter: presetFilter.length ? presetFilter : undefined })}
             options={presetSelectOptions}
-            style={{ minWidth: 180 }}
+            className="min-w-[10rem]"
           />
           <MultiSelect
             aria-label="Filter by health grade"
@@ -105,7 +106,7 @@ export const FilterBar = ({
             value={value.grades ?? []}
             onChange={(grades) => patch({ grades })}
             options={["A", "B", "C", "D", "F"].map((grade) => ({ label: grade, value: grade }))}
-            style={{ minWidth: 140 }}
+            className="min-w-[8rem]"
           />
           <MultiSelect
             aria-label="Filter by compaction priority"
@@ -113,7 +114,7 @@ export const FilterBar = ({
             value={value.priorities ?? []}
             onChange={(priorities) => patch({ priorities })}
             options={["HIGH", "MEDIUM", "LOW"].map((priority) => ({ label: priority, value: priority }))}
-            style={{ minWidth: 160 }}
+            className="min-w-[9rem]"
           />
           <Segmented
             value={typeof value.needsCompaction === "boolean" ? String(value.needsCompaction) : "all"}

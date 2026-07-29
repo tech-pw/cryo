@@ -66,6 +66,7 @@ export function useTableDetail() {
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [queuedScanRunId, setQueuedScanRunId] = useState<string | null>(null);
   const [queuedMaintenanceRunId, setQueuedMaintenanceRunId] = useState<string | null>(null);
   // Tracks a run to completion independently of queuedMaintenanceRunId (which the "in flight"
@@ -685,6 +686,8 @@ export function useTableDetail() {
     queryClient,
     previewOpen,
     setPreviewOpen,
+    settingsOpen,
+    setSettingsOpen,
     queuedScanRunId,
     queuedMaintenanceRunId,
     trackedRunId,

@@ -1,3 +1,11 @@
+/**
+ * Visual regression — datalake health overview (authenticated).
+ *
+ * Requires API on :8000 — tests skip gracefully when `GET /healthz` fails.
+ * Baselines: `health.spec.ts-snapshots/`
+ * Update: `npm run test:visual:update -- --grep health`
+ * Compare: `npm run test:visual -- --grep health`
+ */
 import { expect, test } from "@playwright/test";
 
 import { applyTheme, requireApi, settlePage, signIn, type VisualTheme } from "./helpers";

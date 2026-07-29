@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getEffectiveParams, patchTableParamOverrides } from "../api/client";
 import type { UUID } from "../api/types";
-import { QueryErrorAlert } from "./common";
+import { EmptyState, QueryErrorAlert } from "./common";
 import { useAuth } from "../lib/auth";
 import { Autocomplete } from "./ui/autocomplete";
 import { Badge } from "./ui/badge";
@@ -85,7 +85,7 @@ export const TableParamOverrides = ({ tableId }: Props) => {
     patch.mutate(next);
   };
 
-  if (effectiveParams.isLoading || !effectiveParams.data?.preset_id) {
+  if (effectiveParams.isLoading) {
     return null;
   }
 
@@ -94,6 +94,29 @@ export const TableParamOverrides = ({ tableId }: Props) => {
       <Card className="mt-3">
         <CardContent className="pt-4">
           <QueryErrorAlert error={effectiveParams.error} title="Failed to load effective parameters" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Per-table overrides layer on top of an effective preset (cryo/api/routes.py's
+  // resolve_effective_preset) -- with no preset assigned there's nothing to override, so this
+  // used to silently render nothing at all here. That read as "this feature is missing" rather
+  // than "assign a preset first" -- say so instead of vanishing.
+  if (!effectiveParams.data?.preset_id) {
+    return (
+      <Card className="mt-3">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <SlidersHorizontal className="size-4" />
+            Table parameter overrides
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EmptyState
+            title="No preset assigned"
+            description="Assign a preset (in the header above) to configure per-table parameter overrides on top of it."
+          />
         </CardContent>
       </Card>
     );

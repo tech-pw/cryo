@@ -1,5 +1,5 @@
 import { OverviewTab } from "./OverviewTab";
-import { RecommendedActions } from "./RecommendedActions";
+import { ComplianceOwnershipSummary } from "./ComplianceOwnershipSummary";
 import { TableParamOverrides } from "../TableParamOverrides";
 import { AsyncBoundary } from "../AsyncBoundary";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
@@ -51,14 +51,10 @@ export const OverviewTabPanel = () => {
           tableQueriesLoading={ctx.tableQueries.isLoading}
           pointDeductions={ctx.pointDeductions}
         />
-        <RecommendedActions
-          costView={ctx.costView}
-          signals={ctx.tableSignals.data}
-          benefitScores={ctx.benefitScores.data}
-          onPreview={() => ctx.setPreviewOpen(true)}
-          onRun={() => ctx.run.mutate()}
-        />
         <TableParamOverrides tableId={ctx.tableId} />
+        <div style={{ marginTop: 16 }}>
+          <ComplianceOwnershipSummary />
+        </div>
       </div>
     </AsyncBoundary>
   );

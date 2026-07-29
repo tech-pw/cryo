@@ -27,6 +27,7 @@ import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { DataTable } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
@@ -600,21 +601,22 @@ export const TableExplorerSection = () => {
         <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
           Refresh
         </Button>
-        <select
-          className="h-[var(--control-height)] w-[200px] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+        <Select
+          aria-label="Group tables by"
+          className="w-[200px]"
           value={groupByField ?? ""}
-          onChange={(event) =>
-            setGroupByField(event.target.value ? (event.target.value as TableGroupByField) : null)
-          }
-        >
-          <option value="">No grouping</option>
-          <option value="catalog">Group by catalog</option>
-          <option value="schema_name">Group by schema</option>
-          <option value="grade">Group by grade</option>
-          <option value="compaction_priority">Group by priority</option>
-          <option value="needs_compaction">Group by compaction</option>
-          <option value="size_bucket">Group by size</option>
-        </select>
+          onChange={(next) => setGroupByField((next as TableGroupByField) || null)}
+          allowClear
+          placeholder="No grouping"
+          options={[
+            { label: "Group by catalog", value: "catalog" },
+            { label: "Group by schema", value: "schema_name" },
+            { label: "Group by grade", value: "grade" },
+            { label: "Group by priority", value: "compaction_priority" },
+            { label: "Group by compaction", value: "needs_compaction" },
+            { label: "Group by size", value: "size_bucket" }
+          ]}
+        />
       </div>
       <div className="mb-2.5 flex w-full flex-col gap-1.5">
         <form
