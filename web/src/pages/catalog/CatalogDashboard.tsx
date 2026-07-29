@@ -13,7 +13,7 @@ import { DataTable } from "../../components/ui/data-table";
 import { MetricTile } from "../../components/ui/stat";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency, formatGb } from "../../lib/format";
-import { tableFiltersToPredicate } from "../../lib/predicate";
+import { all, leaf, tableFiltersToPredicate } from "../../lib/predicate";
 import { useTheme } from "../../lib/themeContext";
 
 interface CatalogStats {
@@ -63,13 +63,25 @@ export const CatalogDashboard = () => {
     refetchInterval: 60000
   });
 
-  const presetSample = useQuery({
-    queryKey: ["catalog-preset-coverage", token],
+  // Both queries fetch limit:1 -- only `.total` (an exact backend COUNT) is read, never
+  // `.items`. Previously this sampled the first 500 active tables and only computed a
+  // percentage `if (presetTotal <= presetItems.length)`, so at real fleet scale (total
+  // active tables > 500) that guard always failed and the KPI was permanently stuck on
+  // "--". Two count-only queries give an exact ratio at any fleet size instead of an
+  // artificially capped sample.
+  const presetActiveTotal = useQuery({
+    queryKey: ["catalog-preset-coverage", "active-total", token],
+    queryFn: () =>
+      listTables(api, { limit: 1, offset: 0, predicate: tableFiltersToPredicate({ activeOnly: true }) }),
+    staleTime: 60_000
+  });
+  const presetAssignedTotal = useQuery({
+    queryKey: ["catalog-preset-coverage", "assigned-total", token],
     queryFn: () =>
       listTables(api, {
-        limit: 500,
+        limit: 1,
         offset: 0,
-        predicate: tableFiltersToPredicate({ activeOnly: true })
+        predicate: all([leaf("is_active", "=", true), leaf("assigned_preset_id", "!=", null)])
       }),
     staleTime: 60_000
   });
@@ -77,13 +89,10 @@ export const CatalogDashboard = () => {
   const catalogs = data?.catalogs || [];
   const enabledCatalogs = catalogs.filter((catalog) => catalog.enabled).length;
   const needsCompaction = catalogs.reduce((sum, catalog) => sum + catalog.needs_compaction_count, 0);
-  const presetItems = presetSample.data?.items ?? [];
-  const presetTotal = presetSample.data?.total ?? 0;
-  const presetAssigned = presetItems.filter((table) => Boolean(table.effective_preset)).length;
-  const presetCoverage =
-    presetTotal > 0 && presetTotal <= presetItems.length
-      ? Math.round((presetAssigned / presetTotal) * 100)
-      : null;
+  const activeTotal = presetActiveTotal.data?.total ?? 0;
+  const assignedTotal = presetAssignedTotal.data?.total ?? 0;
+  const presetCoverage = activeTotal > 0 ? Math.round((assignedTotal / activeTotal) * 100) : null;
+  const presetCoverageLoading = presetActiveTotal.isLoading || presetAssignedTotal.isLoading;
 
   const columns = useMemo<ColumnDef<CatalogStats, unknown>[]>(
     () => [
@@ -210,7 +219,7 @@ export const CatalogDashboard = () => {
         <MetricTile
           label="Preset coverage"
           value={presetCoverage == null ? "—" : `${presetCoverage}%`}
-          loading={presetSample.isLoading}
+          loading={presetCoverageLoading}
         />
       </div>
 

@@ -1,3 +1,11 @@
+/**
+ * Visual regression — operations home (authenticated).
+ *
+ * Requires API on :8000 — tests skip gracefully when `GET /healthz` fails.
+ * Baselines: `operations.spec.ts-snapshots/`
+ * Update: `npm run test:visual:update -- --grep operations`
+ * Compare: `npm run test:visual -- --grep operations`
+ */
 import { expect, test } from "@playwright/test";
 
 import { applyTheme, requireApi, settlePage, signIn, type VisualTheme } from "./helpers";

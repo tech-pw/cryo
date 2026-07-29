@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   getAutoCompCandidates,
@@ -22,6 +23,14 @@ import { DataTable } from "./ui/data-table";
 interface Props {
   tableId: UUID;
   embedded?: boolean;
+  /**
+   * Truncates the candidates table to the top 3 rows and links out to the Cost tab's fuller
+   * ranking instead of repeating it in full. The two tables score candidates differently --
+   * this one is MOOP/benefit-score based (small-file pressure), Cost's is query-frequency and
+   * savings-estimate based -- so they're cross-linked as two distinct rankings, not merged
+   * into one, per the table-detail revamp's own "verify equivalence before deduping" rule.
+   */
+  compact?: boolean;
 }
 
 const DEFAULT_MINOR_FILE_THRESHOLD = 50;
@@ -125,7 +134,7 @@ const signalColumns: ColumnDef<TableSignalRead, unknown>[] = [
   { accessorKey: "reason", header: "Reason", cell: ({ getValue }) => <span className="truncate">{String(getValue())}</span> }
 ];
 
-export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) => {
+export const TableCompactionAnalytics = ({ tableId, embedded = false, compact = false }: Props) => {
   const { api, role } = useAuth();
   const queryClient = useQueryClient();
   const canUpdate = role === "admin" || role === "operator";
@@ -170,7 +179,21 @@ export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) =
   const content = (
     <div className="grid gap-3 lg:grid-cols-3">
       <div className="space-y-2 lg:col-span-2">
-        <h5 className="text-sm font-semibold">Compaction candidates (AutoComp §A2)</h5>
+        <div className="flex items-center justify-between gap-2">
+          <h5 className="text-sm font-semibold">Compaction candidates (MOOP / benefit score)</h5>
+          {compact ? (
+            <Link to="?tab=cost" className="text-xs text-primary hover:underline">
+              View cost-based ranking →
+            </Link>
+          ) : null}
+        </div>
+        {compact ? (
+          <p className="text-xs text-muted-foreground">
+            Ranked by small-file pressure (benefit/MOOP score). The Cost tab ranks the same
+            partitions by query frequency and dollar savings instead — a different question,
+            not a duplicate.
+          </p>
+        ) : null}
         <QueryErrorAlert error={candidates.error} title="Failed to load AutoComp candidates" />
         {compare?.autocomp_wins ? (
           <Alert
@@ -180,7 +203,7 @@ export const TableCompactionAnalytics = ({ tableId, embedded = false }: Props) =
         ) : null}
         <DataTable
           columns={candidateColumns}
-          data={(candidates.data?.items ?? []).slice(0, 5)}
+          data={(candidates.data?.items ?? []).slice(0, compact ? 3 : 5)}
           getRowId={(row) => `${row.partition_value}-${row.benefit_score}`}
           loading={candidates.isLoading}
           density="compact"

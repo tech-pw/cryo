@@ -41,6 +41,7 @@ export const Autocomplete = ({
         onChange={(event) => onChange?.(event.target.value)}
         onFocus={() => setOpen(true)}
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
       />
