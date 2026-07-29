@@ -6,13 +6,14 @@
  * registered. Only shows when sources==0, so it doesn't add visual noise
  * for already-onboarded operators.
  */
-import { Alert, Button } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
 
 import { listSources } from "../api/client";
 import { useAuth } from "../lib/auth";
+import { Alert } from "./ui/alert";
+import { Button } from "./ui/button";
 
 export const NoSourcesBanner = () => {
   const { api, token } = useAuth();
@@ -23,8 +24,6 @@ export const NoSourcesBanner = () => {
     staleTime: 30_000
   });
 
-  // Hide during the brief loading window so we don't flash an empty-state
-  // banner before the source list resolves.
   const isFirstRun =
     sourcesQuery.isSuccess && (sourcesQuery.data?.length ?? 0) === 0;
 
@@ -39,25 +38,22 @@ export const NoSourcesBanner = () => {
 
   return (
     <Alert
-      type="info"
-      showIcon
-      style={{ marginBottom: 16 }}
-      message="No sources connected yet"
+      className="mb-4"
+      variant="info"
+      title="No sources connected yet"
       description={
-        <span>
-          Cryo can&apos;t discover tables, costs, or query patterns until at
-          least one catalog is wired up. Connect a REST, Glue, or Hive
-          Metastore lakehouse to get started.
-        </span>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Cryo can&apos;t discover tables, costs, or query patterns until at least one catalog is wired up.
+            Connect a REST, Glue, or Hive Metastore lakehouse to get started.
+          </span>
+          <Link to="/connections">
+            <Button variant="primary" size="sm">
+              Connect a catalog
+            </Button>
+          </Link>
+        </div>
       }
-      action={
-        <Link to="/connections">
-          <Button type="primary" size="small">
-            Connect a catalog
-          </Button>
-        </Link>
-      }
-      closable={false}
     />
   );
 };

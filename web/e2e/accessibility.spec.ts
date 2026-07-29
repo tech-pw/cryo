@@ -1,81 +1,89 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+import { applyTheme, type VisualTheme } from "./visual/helpers";
+
 /**
- * Move 21 — WCAG 2.2 AA gate via axe-core.
- *
- * Scans every primary launch route in the navigation for accessibility violations
- * and fails the build when any serious/critical issue is found. Lower-severity
- * violations (moderate/minor) are tracked as test annotations but do not block.
- *
- * Per docs/PRODUCT.md (accessibility target) and docs/RATING_2026.md §10 — this
- * gate turns the WCAG target from aspiration into an enforced one.
- *
- * Routes covered:
- *   /health      → Datalake health overview
- *   /catalogs    → Catalog / table explorer
- *   /scans       → Scanner
- *   /runs        → Runs / jobs
- *   /presets     → Optimisation presets
- *
- * Color-contrast is *not* blocking at v1 per the comment in the test below.
+ * WCAG 2.2 AA gate via axe-core — serious/critical violations block CI.
+ * Color-contrast is not blocking at v1 (see disableRules below).
  */
 const protectedRoutes = [
   { path: "/health", name: "Health" },
   { path: "/catalogs", name: "Catalogs" },
-  { path: "/scans", name: "Scanner" },
-  { path: "/runs", name: "Runs" },
-  { path: "/presets", name: "Presets" },
+  { path: "/operations", name: "Operations" },
+  { path: "/operations/scanner", name: "Scanner" },
   { path: "/queries", name: "Queries" },
   { path: "/governance", name: "Governance" },
   { path: "/ai", name: "Intelligence" },
-  { path: "/cost", name: "Cost" }
+  { path: "/cost", name: "Cost" },
+  { path: "/connections", name: "Connections" },
+  { path: "/smart-maintenance", name: "Smart Maintenance" },
+  { path: "/sla", name: "SLA" },
+  { path: "/search", name: "Search" }
 ];
 
-test.describe("WCAG 2.2 AA gate (axe-core)", () => {
+const scanRoute = async (page: import("@playwright/test").Page, path: string) => {
+  await page.goto(path);
+  await page.waitForLoadState("networkidle", { timeout: 10_000 });
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .disableRules(["color-contrast"])
+    .analyze();
+
+  const seriousOrCritical = results.violations.filter(
+    (v) => v.impact === "serious" || v.impact === "critical"
+  );
+
+  if (seriousOrCritical.length > 0) {
+    const summary = seriousOrCritical
+      .map((v) => `[${v.impact}] ${v.id} — ${v.description} (nodes: ${v.nodes.length})`)
+      .join("\n");
+    throw new Error(
+      `${seriousOrCritical.length} serious/critical a11y violations on ${path}:\n${summary}`
+    );
+  }
+
+  const minor = results.violations.filter((v) => v.impact === "moderate" || v.impact === "minor");
+  if (minor.length > 0) {
+    test.info().annotations.push({
+      type: "moderate-minor-violations",
+      description: `${minor.length} moderate/minor a11y issues on ${path}: ${minor.map((v) => v.id).join(", ")}`
+    });
+  }
+
+  expect(seriousOrCritical).toEqual([]);
+};
+
+test.describe("WCAG 2.2 AA gate (axe-core, light)", () => {
   test.beforeEach(async ({ request }) => {
     const health = await request.get("http://127.0.0.1:8000/healthz");
     test.skip(!health.ok(), "API must be running on :8000 for axe-core scan");
   });
 
   for (const route of protectedRoutes) {
-    test(`${route.name} (${route.path}) has no serious/critical a11y violations`, async ({
-      page
-    }) => {
-      await page.goto(route.path);
-      await page.waitForLoadState("networkidle", { timeout: 10_000 });
+    test(`${route.name} (${route.path}) has no serious/critical a11y violations`, async ({ page }) => {
+      await scanRoute(page, route.path);
+    });
+  }
+});
 
-      const results = await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-        .disableRules(["color-contrast"])
-        .analyze();
+const darkRoutes: typeof protectedRoutes = [
+  { path: "/health", name: "Health" },
+  { path: "/operations", name: "Operations" },
+  { path: "/catalogs", name: "Catalogs" }
+];
 
-      const seriousOrCritical = results.violations.filter(
-        (v) => v.impact === "serious" || v.impact === "critical"
-      );
+test.describe("WCAG 2.2 AA gate (axe-core, dark)", () => {
+  test.beforeEach(async ({ request }) => {
+    const health = await request.get("http://127.0.0.1:8000/healthz");
+    test.skip(!health.ok(), "API must be running on :8000 for axe-core scan");
+  });
 
-      if (seriousOrCritical.length > 0) {
-        const summary = seriousOrCritical
-          .map((v) => `[${v.impact}] ${v.id} — ${v.description} (nodes: ${v.nodes.length})`)
-          .join("\n");
-        throw new Error(
-          `${seriousOrCritical.length} serious/critical a11y violations on ${route.path}:\n${summary}`
-        );
-      }
-
-      const minor = results.violations.filter(
-        (v) => v.impact === "moderate" || v.impact === "minor"
-      );
-      if (minor.length > 0) {
-        test.info().annotations.push({
-          type: "moderate-minor-violations",
-          description: `${minor.length} moderate/minor a11y issues on ${route.path}: ${minor
-            .map((v) => v.id)
-            .join(", ")}`
-        });
-      }
-
-      expect(seriousOrCritical).toEqual([]);
+  for (const route of darkRoutes) {
+    test(`${route.name} (${route.path}) dark theme`, async ({ page }) => {
+      await applyTheme(page, "dark");
+      await scanRoute(page, route.path);
     });
   }
 });

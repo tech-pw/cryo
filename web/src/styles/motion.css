@@ -1,0 +1,18 @@
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  [data-theme="dark"] {
+    --motion-fast: var(--motion-instant);
+    --motion-base: var(--motion-instant);
+    --motion-medium: var(--motion-instant);
+    --motion-slow: var(--motion-instant);
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

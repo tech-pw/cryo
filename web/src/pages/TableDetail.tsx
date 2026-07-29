@@ -1,1 +1,1 @@
-export { TableDetail } from "./TableDetailRedesign";
+export { TableDetailShell as TableDetail } from "./table-detail/TableDetailShell";

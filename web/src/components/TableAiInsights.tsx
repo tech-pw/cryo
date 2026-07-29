@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Space, Table, Tabs, Tag, Typography, message } from "antd";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import {
   explainTableHealth,
   getAnomalyRootCauseBrief,
@@ -17,6 +18,12 @@ import { EmptyState } from "../components/common";
 import { useAuth } from "../lib/auth";
 import { schemaTableName } from "../lib/tableLabels";
 import { formatTime } from "../lib/format";
+import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent } from "./ui/card";
+import { DataTable } from "./ui/data-table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 interface TableAiInsightsProps {
   tableId: UUID;
@@ -25,6 +32,23 @@ interface TableAiInsightsProps {
   visibleTabs?: Array<"pii" | "similar" | "risk" | "anomalies" | "dq" | "autocomp">;
   hideTabsWhenSingle?: boolean;
 }
+
+const similarColumns: ColumnDef<SimilarTableRead, unknown>[] = [
+  {
+    id: "name",
+    header: "Table",
+    cell: ({ row }) => (
+      <Link to={`/tables/${row.original.table_id}`} className="truncate">
+        {schemaTableName(row.original)}
+      </Link>
+    )
+  },
+  {
+    accessorKey: "similarity",
+    header: "Match",
+    cell: ({ getValue }) => <span className="block text-right">{`${((getValue() as number) * 100).toFixed(0)}%`}</span>
+  }
+];
 
 export const TableAiInsights = ({
   tableId,
@@ -35,294 +59,197 @@ export const TableAiInsights = ({
 }: TableAiInsightsProps) => {
   const { api } = useAuth();
 
-  const pii = useQuery({
-    queryKey: ["table-pii", tableId],
-    queryFn: () => getTablePiiClassification(api, tableId),
-    retry: false
-  });
-  const similar = useQuery({
-    queryKey: ["table-similar", tableId],
-    queryFn: () => getSimilarTables(api, tableId),
-    retry: false
-  });
-  const health = useQuery({
-    queryKey: ["table-health-classification", tableId],
-    queryFn: () => getTableHealthClassification(api, tableId),
-    retry: false
-  });
-  const anomalies = useQuery({
-    queryKey: ["table-anomalies", tableId],
-    queryFn: () => getTableAnomalies(api, tableId),
-    retry: false
-  });
-  const anomalyBrief = useQuery({
-    queryKey: ["table-anomaly-brief", tableId],
-    queryFn: () => getAnomalyRootCauseBrief(api, tableId),
-    retry: false
-  });
-  const dataQuality = useQuery({
-    queryKey: ["table-data-quality", tableId],
-    queryFn: () => getDataQualityProfile(api, tableId),
-    retry: false
-  });
-  const autocomp = useQuery({
-    queryKey: ["table-autocomp", tableId],
-    queryFn: () => getAutoCompCompare(api, tableId),
-    retry: false
-  });
+  const pii = useQuery({ queryKey: ["table-pii", tableId], queryFn: () => getTablePiiClassification(api, tableId), retry: false });
+  const similar = useQuery({ queryKey: ["table-similar", tableId], queryFn: () => getSimilarTables(api, tableId), retry: false });
+  const health = useQuery({ queryKey: ["table-health-classification", tableId], queryFn: () => getTableHealthClassification(api, tableId), retry: false });
+  const anomalies = useQuery({ queryKey: ["table-anomalies", tableId], queryFn: () => getTableAnomalies(api, tableId), retry: false });
+  const anomalyBrief = useQuery({ queryKey: ["table-anomaly-brief", tableId], queryFn: () => getAnomalyRootCauseBrief(api, tableId), retry: false });
+  const dataQuality = useQuery({ queryKey: ["table-data-quality", tableId], queryFn: () => getDataQualityProfile(api, tableId), retry: false });
+  const autocomp = useQuery({ queryKey: ["table-autocomp", tableId], queryFn: () => getAutoCompCompare(api, tableId), retry: false });
 
   const explain = useMutation({
     mutationFn: () => explainTableHealth(api, tableId),
-    onSuccess: (result) => {
-      message.info(result.explanation, 8);
-    },
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: (result) => toast.info(result.explanation, { duration: 8000 }),
+    onError: (error) => toast.error((error as Error).message)
   });
   const anomalyFeedback = useMutation({
     mutationFn: (decision: "accepted" | "rejected") =>
       recordSkillsetOutcome(api, "iceberg_advisor", {
         prompt_name: "anomaly_root_cause_brief",
-        recommendation:
-          anomalyBrief.data?.hypotheses?.[0]?.title ??
-          "No anomaly hypothesis available",
+        recommendation: anomalyBrief.data?.hypotheses?.[0]?.title ?? "No anomaly hypothesis available",
         decision,
         table_id: tableId
       }),
-    onSuccess: () => message.success("Feedback recorded"),
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: () => toast.success("Feedback recorded"),
+    onError: (error) => toast.error((error as Error).message)
   });
 
-  const loading =
-    pii.isLoading || similar.isLoading || health.isLoading || anomalies.isLoading || dataQuality.isLoading;
+  const loading = pii.isLoading || similar.isLoading || health.isLoading || anomalies.isLoading || dataQuality.isLoading;
 
-  const similarColumns = [
+  const tabDefs = [
     {
-      title: "Table",
-      key: "name",
-      render: (_: unknown, record: SimilarTableRead) => (
-        <Link to={`/tables/${record.table_id}`}>
-          {schemaTableName(record)}
-        </Link>
-      ),
-      ellipsis: true
-    },
-    {
-      title: "Match",
-      dataIndex: "similarity",
-      align: "right" as const,
-      render: (v: number) => `${(v * 100).toFixed(0)}%`
-    }
-  ];
-
-  const allTabItems = [
-    {
-      key: "pii",
+      key: "pii" as const,
       label: "PII",
-      children: (pii.data?.matches ?? []).length ? (
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="column_name"
-          dataSource={pii.data?.matches ?? []}
+      content: (pii.data?.matches ?? []).length ? (
+        <DataTable
           columns={[
-            { title: "Column", dataIndex: "column_name", ellipsis: true },
-            { title: "Category", dataIndex: "pii_category", render: (v) => <Tag>{v}</Tag> },
+            { accessorKey: "column_name", header: "Column" },
+            { accessorKey: "pii_category", header: "Category", cell: ({ getValue }) => <Badge>{String(getValue())}</Badge> },
+            { accessorKey: "similarity", header: "Score", cell: ({ getValue }) => <span className="text-right">{(getValue() as number).toFixed(2)}</span> },
             {
-              title: "Score",
-              dataIndex: "similarity",
-              align: "right",
-              render: (v: number) => v.toFixed(2)
-            },
-            {
-              title: "Tagged",
-              dataIndex: "already_tagged",
-              render: (v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)
+              accessorKey: "already_tagged",
+              header: "Tagged",
+              cell: ({ getValue }) => <Badge variant={(getValue() as boolean) ? "success" : "secondary"}>{(getValue() as boolean) ? "yes" : "no"}</Badge>
             }
           ]}
+          data={pii.data?.matches ?? []}
+          getRowId={(row) => row.column_name}
+          density="compact"
         />
       ) : (
         <EmptyState title="No PII signals" description="No likely PII columns from metadata embeddings." />
       )
     },
     {
-      key: "similar",
+      key: "similar" as const,
       label: "Similar tables",
-      children: (similar.data?.similar ?? []).length ? (
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="table_id"
-          dataSource={similar.data?.similar ?? []}
-          columns={similarColumns}
-        />
+      content: (similar.data?.similar ?? []).length ? (
+        <DataTable columns={similarColumns} data={similar.data?.similar ?? []} getRowId={(row) => row.table_id} density="compact" />
       ) : (
         <EmptyState title="No matches" description="No fleet tables above the similarity threshold." />
       )
     },
     {
-      key: "risk",
+      key: "risk" as const,
       label: "Compaction risk",
-      children: health.data ? (
-        <Space orientation="vertical">
-          <Tag color={health.data.needs_emergency_compaction ? "error" : "success"}>
+      content: health.data ? (
+        <div className="space-y-1">
+          <Badge variant={health.data.needs_emergency_compaction ? "danger" : "success"}>
             {health.data.needs_emergency_compaction ? "Elevated emergency risk" : "Normal"}
-          </Tag>
-          <Typography.Text type="secondary">
+          </Badge>
+          <p className="text-xs text-muted-foreground">
             {(health.data.probability * 100).toFixed(0)}% probability · {health.data.method}
-          </Typography.Text>
-        </Space>
+          </p>
+        </div>
       ) : (
         <EmptyState title="Unavailable" description="Classifier needs table stats and fleet examples." />
       )
     },
     {
-      key: "anomalies",
+      key: "anomalies" as const,
       label: `Anomalies${anomalies.data?.anomalies.length ? ` (${anomalies.data.anomalies.length})` : ""}`,
-      children: (
-        <Space orientation="vertical" className="full-width">
+      content: (
+        <div className="space-y-3">
           {anomalyBrief.data ? (
             <Alert
-              type="info"
-              showIcon
+              variant="info"
               title="Root-cause brief"
               description={
-                <Space orientation="vertical" size={4}>
+                <div className="space-y-2">
                   {anomalyBrief.data.hypotheses.map((hypothesis) => (
                     <div key={hypothesis.title}>
-                      <Typography.Text strong>
+                      <p className="font-medium">
                         {hypothesis.title} ({Math.round(hypothesis.confidence * 100)}%)
-                      </Typography.Text>
-                      <br />
-                      <Typography.Text type="secondary">{hypothesis.because}</Typography.Text>
+                      </p>
+                      <p className="text-xs text-muted-foreground">{hypothesis.because}</p>
                     </div>
                   ))}
                   {anomalyBrief.data.evidence.length ? (
-                    <Typography.Text type="secondary">
-                      Evidence: {anomalyBrief.data.evidence.join(" | ")}
-                    </Typography.Text>
+                    <p className="text-xs text-muted-foreground">Evidence: {anomalyBrief.data.evidence.join(" | ")}</p>
                   ) : null}
-                  <Space>
-                    <Button
-                      size="small"
-                      loading={anomalyFeedback.isPending}
-                      onClick={() => anomalyFeedback.mutate("accepted")}
-                    >
+                  <div className="flex gap-2">
+                    <Button size="sm" loading={anomalyFeedback.isPending} onClick={() => anomalyFeedback.mutate("accepted")}>
                       Helpful
                     </Button>
-                    <Button
-                      size="small"
-                      loading={anomalyFeedback.isPending}
-                      onClick={() => anomalyFeedback.mutate("rejected")}
-                    >
+                    <Button size="sm" loading={anomalyFeedback.isPending} onClick={() => anomalyFeedback.mutate("rejected")}>
                       Not helpful
                     </Button>
-                  </Space>
-                </Space>
+                  </div>
+                </div>
               }
             />
           ) : null}
           {(anomalies.data?.anomalies ?? []).length ? (
-            <Table
-              size="small"
-              pagination={false}
-              rowKey={(row) => `${row.metric}-${row.z_score}`}
-              dataSource={anomalies.data?.anomalies ?? []}
+            <DataTable
               columns={[
-                { title: "Metric", dataIndex: "metric" },
+                { accessorKey: "metric", header: "Metric" },
+                { accessorKey: "value", header: "Value", cell: ({ getValue }) => <span className="text-right">{(getValue() as number).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span> },
+                { accessorKey: "baseline", header: "Baseline", cell: ({ getValue }) => <span className="text-right">{(getValue() as number).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span> },
+                { accessorKey: "z_score", header: "Z", cell: ({ getValue }) => <span className="text-right">{(getValue() as number).toFixed(2)}</span> },
                 {
-                  title: "Value",
-                  dataIndex: "value",
-                  align: "right",
-                  render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                },
-                {
-                  title: "Baseline",
-                  dataIndex: "baseline",
-                  align: "right",
-                  render: (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                },
-                {
-                  title: "Z",
-                  dataIndex: "z_score",
-                  align: "right",
-                  render: (v: number) => v.toFixed(2)
-                },
-                {
-                  title: "Severity",
-                  dataIndex: "severity",
-                  render: (v: string) => (
-                    <Tag color={v === "critical" ? "red" : v === "warning" ? "orange" : "default"}>{v}</Tag>
-                  )
+                  accessorKey: "severity",
+                  header: "Severity",
+                  cell: ({ getValue }) => {
+                    const v = getValue() as string;
+                    return <Badge variant={v === "critical" ? "danger" : v === "warning" ? "warning" : "secondary"}>{v}</Badge>;
+                  }
                 }
               ]}
+              data={anomalies.data?.anomalies ?? []}
+              getRowId={(row) => `${row.metric}-${row.z_score}`}
+              density="compact"
             />
           ) : (
             <EmptyState title="No anomalies" description="Stats history looks stable vs recent baseline." />
           )}
-        </Space>
+        </div>
       )
     },
     {
-      key: "dq",
+      key: "dq" as const,
       label: "Data quality",
-      children: dataQuality.data ? (
-        <Space orientation="vertical" className="full-width" size={12}>
+      content: dataQuality.data ? (
+        <div className="space-y-3">
           {(dataQuality.data.new_columns.length > 0 || dataQuality.data.dropped_columns.length > 0) && (
             <Alert
-              type="warning"
-              showIcon
+              variant="warning"
               title="Schema drift detected"
               description={
-                <Space orientation="vertical" size={0}>
-                  {dataQuality.data.new_columns.length ? (
-                    <span>New: {dataQuality.data.new_columns.join(", ")}</span>
-                  ) : null}
-                  {dataQuality.data.dropped_columns.length ? (
-                    <span>Dropped: {dataQuality.data.dropped_columns.join(", ")}</span>
-                  ) : null}
-                </Space>
+                <div>
+                  {dataQuality.data.new_columns.length ? <p>New: {dataQuality.data.new_columns.join(", ")}</p> : null}
+                  {dataQuality.data.dropped_columns.length ? <p>Dropped: {dataQuality.data.dropped_columns.join(", ")}</p> : null}
+                </div>
               }
             />
           )}
-          <Typography.Text type="secondary">
-            Profiled {formatTime(dataQuality.data.profiled_at)} ·{" "}
-            {dataQuality.data.anomalies_detected} column anomalies
-          </Typography.Text>
-          <Table
-            size="small"
-            pagination={{ pageSize: 8 }}
-            rowKey="column_name"
-            dataSource={dataQuality.data.column_metrics}
+          <p className="text-xs text-muted-foreground">
+            Profiled {formatTime(dataQuality.data.profiled_at)} · {dataQuality.data.anomalies_detected} column anomalies
+          </p>
+          <DataTable
             columns={[
-              { title: "Column", dataIndex: "column_name", ellipsis: true },
+              { accessorKey: "column_name", header: "Column" },
               {
-                title: "Null %",
-                dataIndex: "null_rate_pct",
-                align: "right",
-                render: (v: number, row) => (
-                  <Space size={4}>
-                    {v.toFixed(1)}
-                    {row.null_rate_spike ? <Tag color="orange">spike</Tag> : null}
-                  </Space>
+                accessorKey: "null_rate_pct",
+                header: "Null %",
+                cell: ({ row, getValue }) => (
+                  <span className="flex items-center justify-end gap-1">
+                    {(getValue() as number).toFixed(1)}
+                    {row.original.null_rate_spike ? <Badge variant="warning">spike</Badge> : null}
+                  </span>
                 )
               },
               {
-                title: "Baseline null %",
-                dataIndex: "null_rate_baseline_pct",
-                align: "right",
-                render: (v: number | null) => (v != null ? v.toFixed(1) : "—")
+                accessorKey: "null_rate_baseline_pct",
+                header: "Baseline null %",
+                cell: ({ getValue }) => {
+                  const v = getValue() as number | null;
+                  return <span className="text-right">{v != null ? v.toFixed(1) : "—"}</span>;
+                }
               },
               {
-                title: "Range",
-                key: "range",
-                render: (_, row) =>
-                  row.min_value != null || row.max_value != null
-                    ? `${row.min_value ?? "?"} – ${row.max_value ?? "?"}`
+                id: "range",
+                header: "Range",
+                cell: ({ row }) =>
+                  row.original.min_value != null || row.original.max_value != null
+                    ? `${row.original.min_value ?? "?"} – ${row.original.max_value ?? "?"}`
                     : "—"
               }
             ]}
+            data={dataQuality.data.column_metrics}
+            getRowId={(row) => row.column_name}
+            density="compact"
           />
-        </Space>
+        </div>
       ) : dataQuality.isError ? (
         <EmptyState title="No quality profile" description="Run a scan to populate column metadata stats." />
       ) : (
@@ -330,37 +257,32 @@ export const TableAiInsights = ({
       )
     },
     {
-      key: "autocomp",
+      key: "autocomp" as const,
       label: "AutoComp",
-      children: autocomp.data ? (
-        <Row gutter={16}>
-          <Col xs={24} md={12}>
-            <Typography.Text strong>Static partition order</Typography.Text>
-            <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+      content: autocomp.data ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="text-sm font-medium">Static partition order</p>
+            <ul className="mt-2 list-disc pl-5 text-sm">
               {autocomp.data.static_order.map((p, index) => (
-                <li key={`static-${index}-${p ?? "none"}`}>
-                  <Typography.Text code>{p}</Typography.Text>
-                </li>
+                <li key={`static-${index}-${p ?? "none"}`}><code>{p}</code></li>
               ))}
             </ul>
-          </Col>
-          <Col xs={24} md={12}>
-            <Typography.Text strong>Benefit-score order</Typography.Text>
-            <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+          </div>
+          <div>
+            <p className="text-sm font-medium">Benefit-score order</p>
+            <ul className="mt-2 list-disc pl-5 text-sm">
               {autocomp.data.autocomp_order.map((p, index) => (
-                <li key={`auto-${index}-${p ?? "none"}`}>
-                  <Typography.Text code>{p}</Typography.Text>
-                </li>
+                <li key={`auto-${index}-${p ?? "none"}`}><code>{p}</code></li>
               ))}
             </ul>
-          </Col>
-          <Col span={24}>
-            <Tag color={autocomp.data.autocomp_wins ? "success" : "default"}>
-              {autocomp.data.autocomp_wins ? "AutoComp wins" : "Static wins"} · ratio{" "}
-              {autocomp.data.improvement_ratio.toFixed(2)}×
-            </Tag>
-          </Col>
-        </Row>
+          </div>
+          <div className="md:col-span-2">
+            <Badge variant={autocomp.data.autocomp_wins ? "success" : "secondary"}>
+              {autocomp.data.autocomp_wins ? "AutoComp wins" : "Static wins"} · ratio {autocomp.data.improvement_ratio.toFixed(2)}×
+            </Badge>
+          </div>
+        </div>
       ) : autocomp.isError ? (
         <EmptyState title="Not enough partitions" description="AutoComp compare needs partition stats." />
       ) : (
@@ -369,35 +291,50 @@ export const TableAiInsights = ({
     }
   ];
 
-  const tabItems = visibleTabs
-    ? allTabItems.filter((item) => visibleTabs.includes(item.key as typeof visibleTabs[number]))
-    : allTabItems;
+  const tabs = visibleTabs ? tabDefs.filter((item) => visibleTabs.includes(item.key)) : tabDefs;
 
   const content = (
     <div className={embedded ? "td-chart-card-content td-chart-card-content-embedded" : "td-chart-card-content"}>
       {lastSnapshotCommittedAt ? (
-        <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+        <p className="mb-3 text-xs text-muted-foreground">
           Data freshness anchor: last snapshot commit {formatTime(lastSnapshotCommittedAt)}
-        </Typography.Text>
+        </p>
       ) : null}
 
-      {hideTabsWhenSingle && tabItems.length === 1 ? tabItems[0]?.children : <Tabs items={tabItems} />}
+      {hideTabsWhenSingle && tabs.length === 1 ? (
+        tabs[0]?.content
+      ) : (
+        <Tabs defaultValue={tabs[0]?.key}>
+          <TabsList>
+            {tabs.map((tab) => (
+              <TabsTrigger key={tab.key} value={tab.key}>
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {tabs.map((tab) => (
+            <TabsContent key={tab.key} value={tab.key}>
+              {tab.content}
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   );
 
   if (embedded) return content;
 
   return (
-    <Card className="td-chart-card" classNames={{ body: "td-chart-card-body" }} loading={loading}>
+    <Card className="td-chart-card">
       <div className="td-chart-card-header">
         <span className="td-chart-card-title">AI & observability</span>
         <div className="td-chart-card-actions">
-          <Button size="small" loading={explain.isPending} onClick={() => explain.mutate()}>
+          <Button size="sm" loading={explain.isPending || loading} onClick={() => explain.mutate()}>
             Explain health change
           </Button>
         </div>
       </div>
-      {content}
+      <CardContent className="p-0">{content}</CardContent>
     </Card>
   );
 };

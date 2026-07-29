@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, Space, Switch, Tag, Typography, message } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   checkS3LogConfigLogging,
   ingestS3LogConfig,
@@ -14,6 +14,13 @@ import type { S3LogConfigRead, UUID } from "../api/types";
 import { ConfirmAction } from "./confirm";
 import { useAuth } from "../lib/auth";
 import { formatTime } from "../lib/format";
+import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { FormField, FormProvider, useForm } from "./ui/form";
+import { Input } from "./ui/input";
+import { Switch } from "./ui/switch";
 
 interface S3LogConfigPanelProps {
   sourceId: UUID;
@@ -30,22 +37,44 @@ interface ManualFormValues {
 const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigRead }) => {
   const { api } = useAuth();
   const queryClient = useQueryClient();
-  const [form] = Form.useForm<ManualFormValues>();
   const [probeResult, setProbeResult] = useState<string | null>(null);
+
+  const form = useForm<ManualFormValues>({
+    defaultValues: {
+      log_target_bucket: config.log_target_bucket ?? "",
+      log_target_prefix: config.log_target_prefix ?? "",
+      access_key_id: config.access_key_id ?? "",
+      region: config.region ?? "",
+      secret_access_key: ""
+    }
+  });
+
+  useEffect(() => {
+    form.reset({
+      log_target_bucket: config.log_target_bucket ?? "",
+      log_target_prefix: config.log_target_prefix ?? "",
+      access_key_id: config.access_key_id ?? "",
+      region: config.region ?? "",
+      secret_access_key: ""
+    });
+  }, [
+    config.log_target_bucket,
+    config.log_target_prefix,
+    config.access_key_id,
+    config.region,
+    form
+  ]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["s3-log-configs", sourceId] });
 
   const check = useMutation({
     mutationFn: () => checkS3LogConfigLogging(api, sourceId, config.bucket),
     onSuccess: (result) => {
-      if (result.error) {
-        message.error(result.error);
-      } else {
-        message.success(`Logging status: ${result.logging_status}`);
-      }
+      if (result.error) toast.error(result.error);
+      else toast.success(`Logging status: ${result.logging_status}`);
       invalidate();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const saveManual = useMutation({
@@ -59,137 +88,113 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
         manual_override: true
       }),
     onSuccess: () => {
-      message.success("Log target saved");
+      toast.success("Log target saved");
       invalidate();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const probe = useMutation({
     mutationFn: () => probeS3LogConfigTarget(api, sourceId, config.bucket),
     onSuccess: (result) => {
-      if (result.error) {
-        setProbeResult(`Could not check this path: ${result.error}`);
-      } else if (result.files_found > 0) {
+      if (result.error) setProbeResult(`Could not check this path: ${result.error}`);
+      else if (result.files_found > 0)
         setProbeResult(`Found ${result.files_found}${result.truncated ? "+" : ""} log files at this path`);
-      } else {
-        setProbeResult("Nothing found yet — double check the path, or wait for logs to arrive");
-      }
+      else setProbeResult("Nothing found yet — double check the path, or wait for logs to arrive");
     },
     onError: (error) => setProbeResult((error as Error).message)
   });
 
   const toggleEnabled = useMutation({
     mutationFn: (enabled: boolean) => patchS3LogConfig(api, sourceId, config.bucket, { enabled }),
-    onSuccess: () => {
-      invalidate();
-    },
-    onError: (error) => message.error((error as Error).message)
+    onSuccess: invalidate,
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const ingestNow = useMutation({
     mutationFn: () => ingestS3LogConfig(api, sourceId, config.bucket),
     onSuccess: (result) => {
-      if (result.error) {
-        message.error(result.error);
-      } else {
-        message.success(`Ingested ${result.rows_ingested} row(s), matched ${result.tables_matched} table(s)`);
-      }
+      if (result.error) toast.error(result.error);
+      else toast.success(`Ingested ${result.rows_ingested} row(s), matched ${result.tables_matched} table(s)`);
       invalidate();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const enableLogging = useMutation({
     mutationFn: () => provisionS3LogConfig(api, sourceId, config.bucket),
     onSuccess: (result) => {
-      if (result.ok) {
-        message.success(`Logging enabled, delivering to ${result.log_target_bucket}`);
-      } else {
-        message.error(result.error ?? "Could not enable logging");
-      }
+      if (result.ok) toast.success(`Logging enabled, delivering to ${result.log_target_bucket}`);
+      else toast.error(result.error ?? "Could not enable logging");
       invalidate();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const removeTracking = useMutation({
     mutationFn: () => teardownS3LogConfig(api, sourceId, config.bucket, { revert_policy: true }),
     onSuccess: (result) => {
-      if (result.warnings.length) {
-        message.warning(result.warnings.join("; "));
-      } else {
-        message.success("Bucket tracking removed");
-      }
+      if (result.warnings.length) toast.warning(result.warnings.join("; "));
+      else toast.success("Bucket tracking removed");
       invalidate();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const hasTarget = Boolean(config.log_target_bucket);
   const awaitingFirstDelivery = hasTarget && config.enabled && !config.last_ingested_at;
+  const loggingVariant =
+    config.logging_status === "enabled" ? "success" : config.logging_status === "disabled" ? "warning" : "secondary";
 
   return (
-    <Card
-      size="small"
-      title={config.bucket}
-      extra={
-        <Space size={8}>
-          <Tag color={config.logging_status === "enabled" ? "green" : config.logging_status === "disabled" ? "gold" : "default"}>
-            {config.logging_status}
-          </Tag>
+    <Card className="mb-3">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm">{config.bucket}</CardTitle>
+        <div className="flex items-center gap-2">
+          <Badge variant={loggingVariant}>{config.logging_status}</Badge>
           <Switch
-            size="small"
             checked={config.enabled}
             disabled={!hasTarget || toggleEnabled.isPending}
-            onChange={(checked) => toggleEnabled.mutate(checked)}
+            onCheckedChange={(checked) => toggleEnabled.mutate(checked)}
           />
-        </Space>
-      }
-      style={{ marginBottom: 12 }}
-    >
-      <Space orientation="vertical" size={10} className="full-width">
-        <Space wrap size={12}>
-          <Button size="small" loading={check.isPending} onClick={() => check.mutate()}>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2.5">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" loading={check.isPending} onClick={() => check.mutate()}>
             Check logging status
           </Button>
           {config.enabled && hasTarget ? (
-            <Button size="small" loading={ingestNow.isPending} onClick={() => ingestNow.mutate()}>
+            <Button size="sm" loading={ingestNow.isPending} onClick={() => ingestNow.mutate()}>
               Ingest now
             </Button>
           ) : null}
           <ConfirmAction
             title="Remove tracking for this bucket?"
-            description="Removes Cryo's config for this bucket and, if Cryo turned logging on itself, offers to revert the bucket-policy statement it added. Logging itself is left running on AWS unless Cryo added it."
+            description="Removes Cryo's config for this bucket and may revert the bucket-policy statement Cryo added."
             onConfirm={() => removeTracking.mutate()}
             okText="Remove"
           >
-            <Button size="small" danger loading={removeTracking.isPending}>
+            <Button size="sm" variant="danger" loading={removeTracking.isPending}>
               Remove tracking
             </Button>
           </ConfirmAction>
-        </Space>
+        </div>
 
         {config.last_error ? (
-          <Alert
-            type="error"
-            showIcon
-            title="Last check failed"
-            description={config.last_error}
-          />
+          <Alert variant="error" title="Last check failed" description={config.last_error} />
         ) : null}
 
         {config.logging_status === "enabled" && hasTarget ? (
-          <Typography.Text type="secondary">
+          <p className="text-xs text-muted-foreground">
             Logging target: {config.log_target_bucket}/{config.log_target_prefix ?? ""}
             {config.last_ingested_date ? ` — last ingested ${config.last_ingested_date}` : ""}
-          </Typography.Text>
+          </p>
         ) : null}
 
         {awaitingFirstDelivery ? (
           <Alert
-            type="info"
-            showIcon
+            variant="info"
             title="Logging configured, waiting for first delivery"
             description="This usually takes a few hours after logging is turned on."
           />
@@ -197,70 +202,104 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
 
         {config.logging_status !== "enabled" ? (
           <>
-            <Typography.Text type="secondary">
-              Cryo can see request activity for this bucket once server access logging is turned
-              on and pointed at a log target it can read. Turn it on with one click if Cryo's
-              credentials allow it, enter the target manually below, or ask whoever manages this
-              bucket's logging for the path.
-            </Typography.Text>
+            <p className="text-xs text-muted-foreground">
+              Cryo can see request activity for this bucket once server access logging is turned on and pointed at a log
+              target it can read.
+            </p>
             <ConfirmAction
               title="Turn on request-cost logging for this bucket?"
-              description={`Cryo will create or reuse a log target bucket ("${config.bucket}-cryo-access-logs" unless one already exists), grant it permission to receive delivery, and turn on S3 server access logging for "${config.bucket}". Requires the optional write-permission tier -- if Cryo's credentials don't have it, this will fail with a clear error and you can use manual entry below instead.`}
+              description={`Cryo will create or reuse a log target bucket and turn on S3 server access logging for "${config.bucket}".`}
               onConfirm={() => enableLogging.mutate()}
               okText="Enable logging"
             >
-              <Button size="small" type="primary" loading={enableLogging.isPending}>
+              <Button size="sm" variant="primary" loading={enableLogging.isPending}>
                 Enable logging
               </Button>
             </ConfirmAction>
-            <Form
-              form={form}
-              layout="vertical"
-              initialValues={{
-                log_target_bucket: config.log_target_bucket ?? "",
-                log_target_prefix: config.log_target_prefix ?? "",
-                access_key_id: config.access_key_id ?? "",
-                region: config.region ?? ""
-              }}
-              onFinish={(values) => saveManual.mutate(values)}
-            >
-              <Space size={12} className="full-width" style={{ display: "flex" }}>
-                <Form.Item name="log_target_bucket" label="Log target bucket" style={{ flex: 1 }}>
-                  <Input placeholder="my-access-logs" autoComplete="off" />
-                </Form.Item>
-                <Form.Item name="log_target_prefix" label="Log target prefix" style={{ flex: 1 }}>
-                  <Input placeholder="logs/my-bucket/" autoComplete="off" />
-                </Form.Item>
-              </Space>
-              <Space size={12} className="full-width" style={{ display: "flex" }}>
-                <Form.Item name="region" label="Region" style={{ flex: 1 }}>
-                  <Input placeholder="us-east-1" autoComplete="off" />
-                </Form.Item>
-                <Form.Item name="access_key_id" label="Access key ID (optional)" style={{ flex: 1 }}>
-                  <Input placeholder="AKIA..." autoComplete="off" />
-                </Form.Item>
-              </Space>
-              <Form.Item
-                name="secret_access_key"
-                label="Secret access key (optional, stored encrypted)"
-              >
-                <Input.Password placeholder="Leave blank to keep existing" autoComplete="off" />
-              </Form.Item>
-              <Space wrap>
-                <Button size="small" type="primary" htmlType="submit" loading={saveManual.isPending}>
-                  Save target
-                </Button>
-                <Button size="small" loading={probe.isPending} onClick={() => probe.mutate()}>
-                  Validate path
-                </Button>
-              </Space>
-            </Form>
-            {probeResult ? (
-              <Typography.Text type="secondary">{probeResult}</Typography.Text>
-            ) : null}
+            <FormProvider {...form}>
+              <form className="space-y-3" onSubmit={form.handleSubmit((values) => saveManual.mutate(values))}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField name="log_target_bucket" label="Log target bucket">
+                    {(field) => (
+                      <Input
+                        placeholder="my-access-logs"
+                        autoComplete="off"
+                        value={String(field.value ?? "")}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    )}
+                  </FormField>
+                  <FormField name="log_target_prefix" label="Log target prefix">
+                    {(field) => (
+                      <Input
+                        placeholder="logs/my-bucket/"
+                        autoComplete="off"
+                        value={String(field.value ?? "")}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    )}
+                  </FormField>
+                  <FormField name="region" label="Region">
+                    {(field) => (
+                      <Input
+                        placeholder="us-east-1"
+                        autoComplete="off"
+                        value={String(field.value ?? "")}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    )}
+                  </FormField>
+                  <FormField name="access_key_id" label="Access key ID (optional)">
+                    {(field) => (
+                      <Input
+                        placeholder="AKIA..."
+                        autoComplete="off"
+                        value={String(field.value ?? "")}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    )}
+                  </FormField>
+                </div>
+                <FormField name="secret_access_key" label="Secret access key (optional, stored encrypted)">
+                  {(field) => (
+                    <Input
+                      type="password"
+                      placeholder="Leave blank to keep existing"
+                      autoComplete="off"
+                      value={String(field.value ?? "")}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                    />
+                  )}
+                </FormField>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="primary" type="submit" loading={saveManual.isPending}>
+                    Save target
+                  </Button>
+                  <Button size="sm" type="button" loading={probe.isPending} onClick={() => probe.mutate()}>
+                    Validate path
+                  </Button>
+                </div>
+              </form>
+            </FormProvider>
+            {probeResult ? <p className="text-xs text-muted-foreground">{probeResult}</p> : null}
           </>
         ) : null}
-      </Space>
+      </CardContent>
     </Card>
   );
 };
@@ -274,27 +313,26 @@ export const S3LogConfigPanel = ({ sourceId }: S3LogConfigPanelProps) => {
   });
 
   if (configs.isLoading) {
-    return <Typography.Text type="secondary">Loading buckets…</Typography.Text>;
+    return <p className="text-sm text-muted-foreground">Loading buckets…</p>;
   }
 
   if (!configs.data || configs.data.length === 0) {
     return (
-      <Typography.Text type="secondary">
-        No buckets discovered yet — click &quot;Run full cost scan&quot; on the source
-        above so Cryo can record each table&apos;s S3 location. Bucket discovery reads
-        from the table locations recorded during scans.
-      </Typography.Text>
+      <p className="text-sm text-muted-foreground">
+        No buckets discovered yet — click &quot;Run full cost scan&quot; on the source above so Cryo can record each
+        table&apos;s S3 location.
+      </p>
     );
   }
 
   return (
-    <Space orientation="vertical" className="full-width" size={0}>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5 }}>
+    <div className="w-full space-y-0">
+      <p className="mb-3 text-[12.5px] text-muted-foreground">
         Turn this on to see per-table GET/PUT/LIST request costs, not just storage costs.
-      </Typography.Paragraph>
+      </p>
       {configs.data.map((config) => (
         <BucketCard key={config.bucket} sourceId={sourceId} config={config} />
       ))}
-    </Space>
+    </div>
   );
 };

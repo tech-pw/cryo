@@ -1,5 +1,6 @@
-import { Alert, Button } from "antd";
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Alert } from "./ui/alert";
+import { Button } from "./ui/button";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -27,20 +28,17 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (this.state.error) {
       if (this.props.fallback) return this.props.fallback;
       return (
-        <div className="content" role="alert" style={{ padding: 24 }}>
+        <div className="p-6" role="alert">
           <Alert
-            type="error"
-            showIcon
-            message="Something went wrong rendering this view."
+            variant="error"
+            title="Something went wrong rendering this view."
             description={
-              <pre style={{ whiteSpace: "pre-wrap", marginBottom: 12 }}>
-                {this.state.error.message}
-              </pre>
-            }
-            action={
-              <Button size="small" onClick={this.reset}>
-                Try again
-              </Button>
+              <>
+                <pre className="mb-3 whitespace-pre-wrap">{this.state.error.message}</pre>
+                <Button size="sm" onClick={this.reset}>
+                  Try again
+                </Button>
+              </>
             }
           />
         </div>

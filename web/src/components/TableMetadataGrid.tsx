@@ -1,21 +1,19 @@
 import {
-  ApartmentOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-  DatabaseOutlined,
-  DeleteOutlined,
-  FileTextOutlined,
-  HddOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
-import { Tag } from "antd";
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Database,
+  FileText,
+  HardDrive,
+  Network,
+  Trash2
+} from "lucide-react";
 import type { TableStatsRead } from "../api/types";
 import { HintLabel } from "./common";
 import { scoreFactorColor, type ScoreFactor } from "./HealthScoreBreakdown";
+import { Badge } from "./ui/badge";
 import { formatNumber } from "../lib/format";
 
-// Mirrors the threshold used for the "rebalance candidate" hint on the Health Score tile in
-// TableDetail.tsx -- kept local since this is a small, page-specific presentation constant.
 const SKEW_HINT_THRESHOLD = 2;
 
 export interface TableMetadataGridProps {
@@ -31,7 +29,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
   return (
     <div className="td-meta-tiles">
       <div className="td-meta-tile">
-        <ApartmentOutlined className="td-meta-tile-icon" />
+        <Network className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">Partition col</span>
           <span className="td-meta-tile-value">
@@ -42,7 +40,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
       </div>
 
       <div className="td-meta-tile">
-        <ClockCircleOutlined className="td-meta-tile-icon" />
+        <Clock className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">Snapshots</span>
           <span className="td-meta-tile-value">{formatNumber(stats?.total_snapshots)}</span>
@@ -50,7 +48,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
       </div>
 
       <div className="td-meta-tile">
-        <FileTextOutlined className="td-meta-tile-icon" />
+        <FileText className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">Manifests</span>
           <span className="td-meta-tile-value">{formatNumber(stats?.manifest_count)}</span>
@@ -58,7 +56,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
       </div>
 
       <div className="td-meta-tile">
-        <DeleteOutlined className="td-meta-tile-icon" />
+        <Trash2 className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">
             <HintLabel label="Delete files" tooltip="Position delete files used for row-level deletes." />
@@ -68,7 +66,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
       </div>
 
       <div className="td-meta-tile">
-        <DatabaseOutlined className="td-meta-tile-icon" />
+        <Database className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">Records</span>
           <span className="td-meta-tile-value">{formatNumber(stats?.total_records, true)}</span>
@@ -76,7 +74,7 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
       </div>
 
       <div className="td-meta-tile">
-        <HddOutlined className="td-meta-tile-icon" />
+        <HardDrive className="td-meta-tile-icon" />
         <div className="td-meta-tile-body">
           <span className="td-meta-tile-label">Avg file size</span>
           <span className="td-meta-tile-value">
@@ -87,18 +85,18 @@ export const TableMetadataGrid = ({ stats, factors }: TableMetadataGridProps) =>
 
       <div className="td-meta-tile td-meta-tile-wide">
         {isSkewed ? (
-          <WarningOutlined className="td-meta-tile-icon" style={{ color: "var(--gradeC, #a9791e)" }} />
+          <AlertTriangle className="td-meta-tile-icon" style={{ color: "var(--gradeC, #a9791e)" }} />
         ) : (
-          <CheckCircleOutlined className="td-meta-tile-icon" style={{ color: "var(--gradeA, #1e8e5a)" }} />
+          <CheckCircle2 className="td-meta-tile-icon" style={{ color: "var(--gradeA, #1e8e5a)" }} />
         )}
         <div className="td-meta-tile-body" style={{ flex: 1 }}>
           <span className="td-meta-tile-label">Partition skew</span>
           <span className="td-meta-tile-value">
             {skew != null ? `${skew.toFixed(2)}x` : "-"}
             {isSkewed ? (
-              <Tag color="gold" className="td-metric-hint-tag">
+              <Badge variant="warning" className="td-metric-hint-tag ml-1">
                 rebalance candidate
-              </Tag>
+              </Badge>
             ) : null}
           </span>
           {skewFactor ? (

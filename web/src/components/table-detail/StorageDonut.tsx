@@ -1,5 +1,4 @@
 import { Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip, Cell } from "recharts";
-import { Typography } from "antd";
 import { formatBytesGb, formatCurrency } from "../../lib/format";
 import { chartTooltipProps } from "../../lib/theme";
 
@@ -30,7 +29,7 @@ export const StorageDonut = ({
   const total = parts.reduce((sum, part) => sum + part.bytes, 0);
 
   if (!total) {
-    return <Typography.Text type="secondary">Storage breakdown unavailable.</Typography.Text>;
+    return <span className="text-sm text-muted-foreground">Storage breakdown unavailable.</span>;
   }
 
   return (

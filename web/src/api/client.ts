@@ -2,6 +2,7 @@ import type {
   AuditEntry,
   CostDashboard,
   DatalakeDashboard,
+  FleetTrendsResponse,
   DestinationRead,
   DestinationWrite,
   EffectiveParamsResponse,
@@ -505,6 +506,10 @@ export const getDatalakeDashboard = (
   apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api, {
     query: { top_limit: args.top_limit, drift_limit: args.drift_limit }
   }).then(normalizeDashboard);
+export const getFleetTrends = (api: ApiOptions, args: { days?: number } = {}) =>
+  apiFetch<FleetTrendsResponse>("/dashboard/fleet-trends", api, {
+    query: { days: args.days ?? 30 }
+  });
 export const getSchemaCost = (api: ApiOptions) =>
   apiFetch<RawSchemaCost>("/dashboards/schema-cost", api).then((payload) =>
     payload.items.map((item) => ({
@@ -1264,6 +1269,7 @@ export interface QueryPerformanceData {
     status: string;
     started_at: string;
     table_name: string | null;
+    table_id: string | null;
   }>;
   total: number;
   p50_latency_ms: number | null;
@@ -1465,6 +1471,55 @@ export interface ComplianceStatusRead {
 
 export const getComplianceStatus = (api: ApiOptions, tableId: UUID) =>
   apiFetch<ComplianceStatusRead>(`/tables/${tableId}/compliance`, api);
+
+export type PropertyRecommendationTier = "tier1" | "tier2" | "tier3";
+export type PropertyRecommendationAction =
+  | "apply"
+  | "link_layout"
+  | "link_bloom"
+  | "link_run"
+  | "read_only"
+  | "banner"
+  | "informational";
+
+export interface PropertyRecommendationRead {
+  property_key: string;
+  current_value: string | null;
+  recommended_value: string | null;
+  reason: string;
+  tier: PropertyRecommendationTier;
+  action: PropertyRecommendationAction;
+  layout_recommendation_id: UUID | null;
+  bloom_filter_column: string | null;
+  needs_confirmation: boolean;
+}
+
+export interface PropertyRecommendationsResponse {
+  table_id: UUID;
+  generated_at: string;
+  items: PropertyRecommendationRead[];
+  gc_blocked: boolean;
+}
+
+export interface ApplyTablePropertiesResponse {
+  table_id: UUID;
+  applied: Record<string, string>;
+  audit_log_id: number;
+  message: string;
+}
+
+export const getPropertyRecommendations = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<PropertyRecommendationsResponse>(`/tables/${tableId}/property-recommendations`, api);
+
+export const applyTableProperties = (
+  api: ApiOptions,
+  tableId: UUID,
+  body: { properties: Record<string, string>; confirm_risky?: boolean; note?: string }
+) =>
+  apiFetch<ApplyTablePropertiesResponse>(`/tables/${tableId}/properties/apply`, api, {
+    method: "POST",
+    body
+  });
 
 export const protectSnapshot = (
   api: ApiOptions,
@@ -2081,3 +2136,137 @@ export const listAbacPolicies = (
 
 export const getGitOpsStatus = (api: ApiOptions): Promise<GitOpsStatusResponse> =>
   apiFetch<GitOpsStatusResponse>("/advanced/gitops/status", api);
+
+// ============================================================================
+// Global catalog search (Part 6.2.1)
+// ============================================================================
+
+export type SearchAssetType = "catalogs" | "schemas" | "tables" | "columns";
+
+export type SearchMatchReason = "name" | "schema" | "semantic" | "catalog" | "column";
+
+type SearchAssetTypeRaw = "catalog" | "schema" | "table" | "column";
+
+interface SearchMatchRaw {
+  asset_type: SearchAssetTypeRaw;
+  name: string;
+  qualified_name?: string | null;
+  catalog_id?: string | null;
+  catalog_name?: string | null;
+  schema_name?: string | null;
+  table_id?: string | null;
+  column_name?: string | null;
+  data_type?: string | null;
+  match_reason: SearchMatchReason;
+  score?: number | null;
+}
+
+interface SearchGroupRaw {
+  asset_type: SearchAssetType;
+  total: number;
+  hits: SearchMatchRaw[];
+}
+
+interface SearchResponseRaw {
+  query: string;
+  groups: SearchGroupRaw[];
+}
+
+const SEARCH_GROUP_LABELS: Record<SearchAssetType, string> = {
+  catalogs: "Catalogs",
+  schemas: "Schemas",
+  tables: "Tables",
+  columns: "Columns"
+};
+
+const SEARCH_HIT_GROUP: Record<SearchAssetTypeRaw, SearchAssetType> = {
+  catalog: "catalogs",
+  schema: "schemas",
+  table: "tables",
+  column: "columns"
+};
+
+const searchHitId = (hit: SearchMatchRaw): string => {
+  if (hit.table_id && hit.column_name) return `${hit.table_id}:${hit.column_name}`;
+  if (hit.table_id) return hit.table_id;
+  if (hit.catalog_id && hit.schema_name) return `${hit.catalog_id}:${hit.schema_name}`;
+  if (hit.catalog_id) return hit.catalog_id;
+  return hit.qualified_name ?? hit.name;
+};
+
+const normalizeSearchHit = (hit: SearchMatchRaw): SearchHit => ({
+  id: searchHitId(hit),
+  type: SEARCH_HIT_GROUP[hit.asset_type],
+  name: hit.name,
+  qualified_name: hit.qualified_name,
+  catalog: hit.catalog_name,
+  schema_name: hit.schema_name,
+  table_id: hit.table_id,
+  column_name: hit.column_name,
+  data_type: hit.data_type,
+  match_reason: hit.match_reason,
+  similarity_score: hit.score
+});
+
+const normalizeSearchResponse = (raw: SearchResponseRaw): SearchResponse => {
+  const groups = raw.groups.map((group) => ({
+    type: group.asset_type,
+    label: SEARCH_GROUP_LABELS[group.asset_type],
+    total: group.total,
+    items: group.hits.map(normalizeSearchHit)
+  }));
+  return {
+    query: raw.query,
+    groups,
+    total: groups.reduce((sum, group) => sum + group.total, 0)
+  };
+};
+
+export interface SearchHit {
+  id: string;
+  type: SearchAssetType;
+  name: string;
+  qualified_name?: string | null;
+  catalog?: string | null;
+  schema_name?: string | null;
+  table_id?: string | null;
+  column_name?: string | null;
+  data_type?: string | null;
+  match_reason: SearchMatchReason;
+  similarity_score?: number | null;
+}
+
+export interface SearchGroup {
+  type: SearchAssetType;
+  label: string;
+  total: number;
+  items: SearchHit[];
+}
+
+export interface SearchResponse {
+  query: string;
+  groups: SearchGroup[];
+  total: number;
+}
+
+export const searchCatalog = async (
+  api: ApiOptions,
+  args: {
+    q: string;
+    limit?: number;
+    group?: SearchAssetType;
+    offset?: number;
+    signal?: AbortSignal;
+  }
+): Promise<SearchResponse> => {
+  const raw = await apiFetch<SearchResponseRaw>("/search", api, {
+    query: {
+      q: args.q,
+      limit: args.limit,
+      group: args.group,
+      offset: args.offset
+    },
+    signal: args.signal
+  });
+  return normalizeSearchResponse(raw);
+};

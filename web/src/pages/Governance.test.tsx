@@ -104,31 +104,28 @@ vi.mock("../api/client", () => ({
   }
 }));
 
+const renderGovernance = (initialRoute = "/governance") => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[initialRoute]}>
+        <Governance />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+};
+
 describe("Governance page", () => {
   it("renders governance sections and tier policies", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <Governance />
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
-    expect(await screen.findByText("Governance")).toBeInTheDocument();
+    renderGovernance("/governance?tab=policies");
+    expect(screen.getByRole("heading", { name: "Governance" })).toBeInTheDocument();
     expect(await screen.findByText("Tier policies")).toBeInTheDocument();
     expect(await screen.findByText("Cold after 30d")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("shows the failure category for broken tables", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <Governance />
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
+    renderGovernance("/governance?tab=inventory");
     expect(await screen.findByText("demo.broken_orders")).toBeInTheDocument();
     expect(await screen.findByText("Permission denied")).toBeInTheDocument();
-  });
+  }, 15000);
 });

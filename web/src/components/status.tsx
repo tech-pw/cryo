@@ -1,52 +1,75 @@
-import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
-import { Badge, Tag, type TagProps } from "antd";
+import { CheckCircle2, Lock } from "lucide-react";
 import type { ReactNode } from "react";
+
+import { formatRunKind } from "../lib/operations";
 import { cryoColors } from "../lib/theme";
+import { Badge } from "./ui/badge";
+import { cn } from "../lib/cn";
 
-const gradeColor: Record<string, string> = {
-  A: "success",
-  B: "processing",
-  C: "warning",
-  D: "orange",
-  F: "error"
+const gradeVariant = (grade?: string | null) => {
+  switch (grade) {
+    case "A":
+      return "gradeA" as const;
+    case "B":
+      return "gradeB" as const;
+    case "C":
+      return "gradeC" as const;
+    case "D":
+      return "gradeD" as const;
+    case "F":
+      return "gradeF" as const;
+    default:
+      return "secondary" as const;
+  }
 };
 
-const priorityColor: Record<string, TagProps["color"]> = {
-  HIGH: "red",
-  MEDIUM: "gold",
-  LOW: "default"
+const priorityVariant = (priority?: string | null) => {
+  switch (priority) {
+    case "HIGH":
+      return "danger" as const;
+    case "MEDIUM":
+      return "warning" as const;
+    case "LOW":
+      return "secondary" as const;
+    default:
+      return "secondary" as const;
+  }
 };
 
-const statusColor: Record<string, TagProps["color"]> = {
-  accepted: "default",
-  scheduled: "purple",
-  queued: "default",
-  admitted: "blue",
-  running: "processing",
-  succeeded: "success",
-  success: "success",
-  partial_failed: "orange",
-  failed: "error",
-  cancelled: "warning",
-  skipped: "default",
-  deferred: "gold"
+const statusVariant = (status?: string | null) => {
+  const key = status?.toLowerCase() ?? "";
+  if (["succeeded", "success"].includes(key)) return "success" as const;
+  if (["failed", "error"].includes(key)) return "danger" as const;
+  if (["running", "admitted", "processing"].includes(key)) return "default" as const;
+  if (["cancelled", "warning", "partial_failed", "deferred"].includes(key)) return "warning" as const;
+  if (["scheduled", "queued", "accepted", "skipped"].includes(key)) return "secondary" as const;
+  return "secondary" as const;
+};
+
+const runKindVariant = (category: "scan" | "maintenance" | "other") => {
+  if (category === "scan") return "default" as const;
+  if (category === "maintenance") return "default" as const;
+  return "secondary" as const;
 };
 
 export const GradePill = ({ grade }: { grade?: string | null }) => (
-  <Tag className="grade-pill" color={grade ? gradeColor[grade] ?? "default" : "default"}>
+  <Badge variant={gradeVariant(grade)} className="grade-pill tabular-nums">
     {grade ?? "-"}
-  </Tag>
+  </Badge>
 );
 
 export const PriorityTag = ({ priority }: { priority?: string | null }) => (
-  <Tag color={priority ? priorityColor[priority] ?? "default" : "default"}>{priority ?? "-"}</Tag>
+  <Badge variant={priorityVariant(priority)}>{priority ?? "-"}</Badge>
 );
 
 export const StatusTag = ({ status }: { status?: string | null }) => (
-  <Tag color={status ? statusColor[status.toLowerCase()] ?? "default" : "default"}>
-    {status ?? "-"}
-  </Tag>
+  <Badge variant={statusVariant(status)}>{status ?? "-"}</Badge>
 );
+
+export const RunKindTag = ({ kind }: { kind?: string | null }) => {
+  const { label, category } = formatRunKind(kind);
+  return <Badge variant={runKindVariant(category)}>{label}</Badge>;
+};
 
 /** Map a 0–100 health score to a chart/progress color (shared across dashboard pages). */
 export const healthScoreColor = (score: number): string => {
@@ -56,18 +79,33 @@ export const healthScoreColor = (score: number): string => {
 };
 
 export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (
-  <Tag color={needsCompaction ? "gold" : "default"}>
+  <Badge variant={needsCompaction ? "warning" : "secondary"}>
     {needsCompaction ? "Needs compaction" : "Healthy"}
-  </Tag>
+  </Badge>
 );
 
 export const HealthBadge = ({ healthy, children }: { healthy?: boolean; children?: ReactNode }) => (
-  <Badge status={healthy ? "success" : "warning"} text={children ?? (healthy ? "Healthy" : "Attention")} />
+  <span className="inline-flex items-center gap-1.5 text-sm">
+    <span
+      className={cn(
+        "inline-block h-2 w-2 rounded-full",
+        healthy ? "bg-[var(--color-status-success)]" : "bg-[var(--color-status-warning)]"
+      )}
+      aria-hidden
+    />
+    <span>{children ?? (healthy ? "Healthy" : "Attention")}</span>
+  </span>
 );
 
 export const PendingDeletionTag = ({ pending }: { pending?: boolean }) =>
   pending ? (
-    <Tag color="warning" icon={<LockOutlined />}>Pending</Tag>
+    <Badge variant="warning" className="gap-1">
+      <Lock className="size-3" aria-hidden />
+      Pending
+    </Badge>
   ) : (
-    <Tag color="success" icon={<CheckCircleOutlined />}>None</Tag>
+    <Badge variant="success" className="gap-1">
+      <CheckCircle2 className="size-3" aria-hidden />
+      None
+    </Badge>
   );

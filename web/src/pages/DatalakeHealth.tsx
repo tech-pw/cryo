@@ -1,25 +1,108 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Row, Skeleton, Space, Table, Typography } from "antd";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
+import type { ReactNode } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import { Link } from "react-router-dom";
-import { getDatalakeDashboard, getSmartMaintenanceOverview, listTables } from "../api/client";
-import type { DatalakeDashboard, TableRead } from "../api/types";
-import { ChartFrame, EmptyState, PageHeader, StatStrip, QueryErrorAlert, FirstRunEmptyState, TruncatedResultsBanner } from "../components/common";
+import { getDatalakeDashboard, getFleetTrends, getSmartMaintenanceOverview, listTables } from "../api/client";
+import type { DatalakeDashboard, FleetCostTrendPoint, FleetHealthTrendPoint, TableRead } from "../api/types";
+import {
+  ChartFrame,
+  EmptyState,
+  QueryErrorAlert,
+  FirstRunEmptyState,
+  TruncatedResultsBanner
+} from "../components/common";
+import { GradeDistributionMiniBar } from "../components/GradeDistributionMiniBar";
 import { GradePill, PriorityTag } from "../components/status";
+import { Alert } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { MetricGrid } from "../components/ui/metric-grid";
+import { PageHeader } from "../components/ui/page-header";
+import { Skeleton } from "../components/ui/skeleton";
+import { MetricTile } from "../components/ui/stat";
 import { useAuth } from "../lib/auth";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
 import { qualifiedTableName } from "../lib/tableLabels";
 
-const gradePalette: Record<string, string> = {
-  A: cryoColors.gradeA,
-  B: cryoColors.gradeB,
-  C: cryoColors.gradeC,
-  D: cryoColors.gradeD,
-  F: cryoColors.gradeF
+const TOP_OFFENDERS_LIMIT = 50;
+const TREND_EMPTY_TITLE = "Trend available after your next scan";
+const TREND_EMPTY_DESCRIPTION =
+  "Fleet-wide trends need at least two daily scan snapshots. Run another scan to see health and cost movement.";
+
+const formatTrendDay = (day: string): string => {
+  const date = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return day;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 };
 
-const TOP_OFFENDERS_LIMIT = 50;
+const ChartPanel = ({
+  title,
+  extra,
+  children
+}: {
+  title: string;
+  extra?: ReactNode;
+  children: ReactNode;
+}) => (
+  <Card>
+    <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+      <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+      {extra ? <div className="text-xs text-muted-foreground">{extra}</div> : null}
+    </CardHeader>
+    <CardContent>{children}</CardContent>
+  </Card>
+);
+
+const FleetTrendChartPanel = <T extends FleetHealthTrendPoint | FleetCostTrendPoint>({
+  title,
+  points,
+  ariaLabel,
+  children
+}: {
+  title: string;
+  points: T[];
+  ariaLabel: string;
+  children: ReactNode;
+}) => (
+  <ChartPanel title={title}>
+    {points.length < 2 ? (
+      <EmptyState title={TREND_EMPTY_TITLE} description={TREND_EMPTY_DESCRIPTION} />
+    ) : (
+      <ChartFrame empty={false} ariaLabel={ariaLabel}>
+        {children}
+      </ChartFrame>
+    )}
+  </ChartPanel>
+);
+
+const HealthPageSkeleton = () => (
+  <div className="space-y-4">
+    <MetricGrid columns={4}>
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
+      ))}
+    </MetricGrid>
+    <Skeleton className="h-8 w-full max-w-xl" />
+    <MetricGrid columns={5}>
+      {Array.from({ length: 5 }).map((_, index) => (
+        <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
+      ))}
+    </MetricGrid>
+    <div className="grid gap-3 lg:grid-cols-2">
+      <Skeleton className="h-[320px] rounded-[var(--radius-default)]" />
+      <Skeleton className="h-[320px] rounded-[var(--radius-default)]" />
+    </div>
+  </div>
+);
 
 export const DatalakeHealth = () => {
   const { api, token } = useAuth();
@@ -38,13 +121,40 @@ export const DatalakeHealth = () => {
     queryFn: () => getSmartMaintenanceOverview(api),
     retry: 1
   });
+  const fleetTrends = useQuery({
+    queryKey: ["fleet-trends", token],
+    queryFn: () => getFleetTrends(api, { days: 30 }),
+    retry: 1
+  });
 
   const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
   const topOffenders = data.top_offenders ?? [];
   const tableTotal = tables.data?.total;
-  const hasProjectedCost = Boolean(
-    data.totals?.projected_monthly_cost_usd || data.totals?.projected_savings_usd_month
-  );
+  const healthTrend = fleetTrends.data?.health_trend ?? [];
+  const costTrend = fleetTrends.data?.cost_trend ?? [];
+  const healthTrendChartData = healthTrend.map((point) => ({
+    ...point,
+    label: formatTrendDay(point.day)
+  }));
+  const costTrendChartData = costTrend.map((point) => ({
+    ...point,
+    label: formatTrendDay(point.day)
+  }));
+  const gradeDistribution = data.grade_distribution ?? [];
+  const gradeDfCount = gradeDistribution
+    .filter((entry) => entry.grade === "D" || entry.grade === "F")
+    .reduce((sum, entry) => sum + entry.count, 0);
+  const dfTrendDelta = (() => {
+    if (healthTrend.length < 2) return undefined;
+    const prev = healthTrend[healthTrend.length - 2].tables_at_grade_df;
+    const cur = healthTrend[healthTrend.length - 1].tables_at_grade_df;
+    const diff = cur - prev;
+    if (diff === 0) return { value: "No change vs prior scan", tone: "neutral" as const };
+    return {
+      value: `${diff > 0 ? "+" : ""}${diff} vs prior scan`,
+      tone: (diff > 0 ? "bad" : "good") as "bad" | "good"
+    };
+  })();
 
   return (
     <div>
@@ -52,28 +162,28 @@ export const DatalakeHealth = () => {
         title="Datalake health"
         subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
-          <Space>
+          <>
             <Link to="/catalogs">
-              <Button type="primary">Fix top offenders</Button>
+              <Button variant="primary">Fix top offenders</Button>
             </Link>
             <Link to="/ai">
-              <Button>Intelligence hub</Button>
+              <Button variant="secondary">Intelligence hub</Button>
             </Link>
             <Link to="/cost">
-              <Button>View cost savings</Button>
+              <Button variant="secondary">View cost savings</Button>
             </Link>
-          </Space>
+          </>
         }
       />
       {dashboard.isError ? (
         <Alert
           className="page-alert"
-          type="info"
-          showIcon
+          variant="info"
           title="Dashboard endpoint is not available yet; showing a fallback view from /tables."
         />
       ) : null}
       <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />
+      <QueryErrorAlert error={fleetTrends.error} title="Failed to load fleet trends" />
       {dashboard.isError ? (
         <TruncatedResultsBanner
           shown={tables.data?.items.length ?? 0}
@@ -82,165 +192,248 @@ export const DatalakeHealth = () => {
         />
       ) : null}
       {dashboard.isLoading || tables.isLoading ? (
-        <Skeleton active />
+        <HealthPageSkeleton />
       ) : (
         <>
-          <StatStrip
-            items={[
-              { label: "Tables", value: formatNumber(data.totals?.tables, true) },
-              {
-                label: "Total data size",
-                value: formatGb(data.totals?.size_gb),
-                tooltip: "Combined size of every table Cryo is tracking, across all schemas."
-              },
-              {
-                label: "Small files",
-                value: formatNumber(data.totals?.small_files, true),
-                tooltip: "Files under the target size threshold — too many of these slows down queries."
-              },
-              { label: "Needs compaction", value: formatNumber(data.totals?.needs_compaction) },
-              { label: "S3 monthly now", value: formatCurrency(data.totals?.monthly_cost_usd) },
-              {
-                label: "After maintenance",
-                value: formatCurrency(
-                  data.totals?.projected_monthly_cost_usd ?? data.totals?.monthly_cost_usd
-                ),
-                tooltip: "Projected S3 storage cost if all recommended maintenance ran today."
-              },
-              { label: "Monthly savings", value: formatCurrency(data.totals?.projected_savings_usd_month) },
-              {
-                label: "Reclaimable storage",
-                value: formatBytesGb(data.totals?.reclaimable_bytes),
-                tooltip:
-                  "Dead/expired snapshots, orphan files, and metadata bloat accumulated across each table's full unexpired history — not bounded by Total data size (which is current live data only). A number larger than Total data size means expire_snapshots/remove_orphan_files maintenance has been neglected for a long time, not a calculation error."
+          <MetricGrid columns={4} className="mb-3">
+            <MetricTile
+              label="Tables at grade D/F"
+              value={formatNumber(gradeDfCount, true)}
+              emphasis={gradeDfCount > 0}
+              delta={dfTrendDelta}
+              hint={
+                gradeDfCount > 0 ? (
+                  <Link to="/catalogs" className="text-xs text-primary hover:underline">
+                    Fix in catalog
+                  </Link>
+                ) : undefined
               }
-            ]}
-          />
+            />
+            <MetricTile label="Tracked tables" value={formatNumber(data.totals?.tables, true)} />
+            <MetricTile
+              label="Needs compaction"
+              value={formatNumber(data.totals?.needs_compaction)}
+              emphasis={(data.totals?.needs_compaction ?? 0) > 0}
+            />
+            <MetricTile
+              label="Monthly savings"
+              value={formatCurrency(data.totals?.projected_savings_usd_month)}
+              hint={
+                <Link to="/cost" className="text-xs text-primary hover:underline">
+                  Cost breakdown
+                </Link>
+              }
+            />
+          </MetricGrid>
+          <GradeDistributionMiniBar distribution={gradeDistribution} />
+          <h2 className="mb-2 mt-0 text-sm font-semibold text-foreground">Health</h2>
+          <MetricGrid columns={5} className="mb-4">
+            <MetricTile
+              label="Total data size"
+              value={formatGb(data.totals?.size_gb)}
+              hint={
+                <span title="Combined size of every table Cryo is tracking, across all schemas." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+            <MetricTile
+              label="Small files"
+              value={formatNumber(data.totals?.small_files, true)}
+              hint={
+                <span title="Files under the target size threshold — too many of these slows down queries." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+            <MetricTile label="Needs compaction" value={formatNumber(data.totals?.needs_compaction)} />
+            <MetricTile
+              label="Reclaimable storage"
+              value={formatBytesGb(data.totals?.reclaimable_bytes)}
+              hint={
+                <span
+                  title="Dead/expired snapshots, orphan files, and metadata bloat accumulated across each table's full unexpired history."
+                  className="cursor-help"
+                >
+                  ⓘ
+                </span>
+              }
+            />
+          </MetricGrid>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="m-0 text-sm font-semibold text-foreground">Cost</h2>
+            <Link to="/cost" className="text-sm text-primary hover:underline">
+              View cost breakdown
+            </Link>
+          </div>
+          <MetricGrid columns={3} className="mb-4">
+            <MetricTile label="S3 monthly now" value={formatCurrency(data.totals?.monthly_cost_usd)} />
+            <MetricTile
+              label="After maintenance"
+              value={formatCurrency(data.totals?.projected_monthly_cost_usd ?? data.totals?.monthly_cost_usd)}
+              hint={
+                <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
+            <MetricTile label="Monthly savings" value={formatCurrency(data.totals?.projected_savings_usd_month)} />
+          </MetricGrid>
           {smartOverview.data ? (
-            <Card
-              title="Smart maintenance posture"
-              extra={<Link to="/smart-maintenance">Open Smart Maintenance</Link>}
-              style={{ marginBottom: 12 }}
-            >
-              <Space size={24} wrap>
-                <Typography.Text>
-                  HOT tables: <strong>{smartOverview.data.tiers.hot}</strong>
-                </Typography.Text>
-                <Typography.Text>
-                  ROI shadow decisions: <strong>{smartOverview.data.roi_shadow_decisions_30d}</strong>
-                </Typography.Text>
-                <Typography.Text>
-                  Pending layout actions: <strong>{smartOverview.data.pending_layout_recommendations}</strong>
-                </Typography.Text>
-              </Space>
+            <Card className="my-3">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm font-semibold">Smart maintenance posture</CardTitle>
+                <Link to="/smart-maintenance" className="text-xs text-primary hover:underline">
+                  Open Smart Maintenance
+                </Link>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-6 text-sm text-foreground">
+                  <span>
+                    HOT tables: <strong>{smartOverview.data.tiers.hot}</strong>
+                  </span>
+                  <span>
+                    ROI shadow decisions: <strong>{smartOverview.data.roi_shadow_decisions_30d}</strong>
+                  </span>
+                  <span>
+                    Pending layout actions: <strong>{smartOverview.data.pending_layout_recommendations}</strong>
+                  </span>
+                </div>
+              </CardContent>
             </Card>
           ) : null}
-          <Row gutter={[12, 12]}>
-            <Col xs={24} lg={9}>
-              <Card title="Grade distribution">
-                <ChartFrame empty={!data.grade_distribution?.length}>
-                  <PieChart>
-                    <Pie data={data.grade_distribution} dataKey="count" nameKey="grade" innerRadius={46} outerRadius={82}>
-                      {(data.grade_distribution ?? []).map((entry, index) => (
-                        <Cell
-                          key={entry.grade ?? `grade-${index}`}
-                          fill={gradePalette[entry.grade] ?? cryoColors.mutedSubtle}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip {...chartTooltipProps} />
-                  </PieChart>
-                </ChartFrame>
-              </Card>
-            </Col>
-            <Col xs={24} lg={15}>
-              <Card title="Cost by schema">
-                <ChartFrame empty={!data.cost_by_schema?.length}>
-                  {hasProjectedCost ? (
-                    <BarChart data={data.cost_by_schema?.slice(0, 12)}>
-                      <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
-                      <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
-                      <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                      <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
-                      <Legend />
-                      <Bar dataKey="cost_usd" name="Now" fill={cryoColors.costCurrent} radius={[4, 4, 0, 0]} />
-                      <Bar
-                        dataKey="projected_usd"
-                        name="After maintenance"
-                        fill={cryoColors.costProjected}
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  ) : (
-                    <BarChart data={data.cost_by_schema?.slice(0, 12)}>
-                      <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
-                      <XAxis dataKey="schema_name" tickLine={false} axisLine={false} tick={chartAxisTick} />
-                      <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                      <Tooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
-                      <Bar dataKey="cost_usd" fill={cryoColors.chartPrimary} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  )}
-                </ChartFrame>
-              </Card>
-            </Col>
-            <Col xs={24} xl={15}>
-              <Card
-                title="Top offenders"
-                extra={
-                  (data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Showing top {topOffenders.length.toLocaleString()} of{" "}
-                      {(data.totals?.needs_compaction ?? topOffenders.length).toLocaleString()} tables needing
-                      attention
-                    </Typography.Text>
-                  ) : null
-                }
-              >
-                <Table<TableRead>
-                  size="small"
-                  rowKey={(row) => row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}
-                  dataSource={topOffenders}
-                  pagination={false}
-                  columns={[
-                    {
-                      title: "Table",
-                      render: (_, row) => (
-                        <Link to={`/tables/${row.id}`}>
-                          <Typography.Text strong>{qualifiedTableName(row)}</Typography.Text>
-                        </Link>
-                      )
-                    },
-                    { title: "Grade", render: (_, row) => <GradePill grade={row.stats?.grade} /> },
-                    {
-                      title: "Priority",
-                      render: (_, row) => <PriorityTag priority={row.stats?.compaction_priority} />
-                    },
-                    { title: "Small files", align: "right", render: (_, row) => formatNumber(row.stats?.small_files_count, true) },
-                    { title: "Size", align: "right", render: (_, row) => formatGb(row.stats?.total_size_gb) }
-                  ]}
-                  locale={{
-                    emptyText:
-                      (data.totals?.tables ?? 0) === 0 ? (
-                        <FirstRunEmptyState />
-                      ) : (
-                        <EmptyState
-                          title="No tables need attention"
-                          description="Every tracked table is below the compaction threshold right now."
-                        />
-                      )
-                  }}
+          <div className="mb-3 grid gap-3 lg:grid-cols-2">
+            <FleetTrendChartPanel
+              title="Fleet health trend"
+              points={healthTrend}
+              ariaLabel="Fleet average health score over time"
+            >
+              <LineChart data={healthTrendChartData}>
+                <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={chartAxisTick} interval="preserveStartEnd" />
+                <YAxis yAxisId="score" tickLine={false} axisLine={false} tick={chartAxisTick} domain={[0, 100]} />
+                <YAxis yAxisId="count" orientation="right" tickLine={false} axisLine={false} tick={chartAxisTick} />
+                <RechartsTooltip {...chartTooltipProps} />
+                <Legend />
+                <Line
+                  yAxisId="score"
+                  type="monotone"
+                  dataKey="avg_health_score"
+                  name="Avg health score"
+                  stroke={cryoColors.primary}
+                  strokeWidth={2}
+                  dot={false}
                 />
-              </Card>
-            </Col>
-            <Col xs={24} xl={9}>
-              <Card
-                title="Recent scan trend"
-                extra={
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Small-file count per scan
-                  </Typography.Text>
-                }
-              >
+                <Line
+                  yAxisId="count"
+                  type="monotone"
+                  dataKey="tables_at_grade_df"
+                  name="D/F tables"
+                  stroke={cryoColors.gradeD}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </FleetTrendChartPanel>
+            <FleetTrendChartPanel
+              title="Fleet cost trend"
+              points={costTrend}
+              ariaLabel="Fleet monthly storage cost and projected savings over time"
+            >
+              <LineChart data={costTrendChartData}>
+                <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={chartAxisTick} interval="preserveStartEnd" />
+                <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
+                <RechartsTooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="total_monthly_cost_usd"
+                  name="Monthly cost"
+                  stroke={cryoColors.costCurrent}
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="projected_savings_usd_month"
+                  name="Projected savings"
+                  stroke={cryoColors.savings}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </FleetTrendChartPanel>
+          </div>
+          <div className="grid gap-3 xl:grid-cols-12">
+            <Card className="xl:col-span-8">
+              <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm font-semibold">Top offenders</CardTitle>
+                {(data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    Showing top {topOffenders.length.toLocaleString()} of{" "}
+                    {(data.totals?.needs_compaction ?? topOffenders.length).toLocaleString()} tables needing attention
+                  </p>
+                ) : null}
+              </CardHeader>
+              <CardContent className="p-0 pt-0">
+                {topOffenders.length === 0 ? (
+                  <div className="p-4">
+                    {(data.totals?.tables ?? 0) === 0 ? (
+                      <FirstRunEmptyState />
+                    ) : (
+                      <EmptyState
+                        title="No tables need attention"
+                        description="Every tracked table is below the compaction threshold right now."
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="td-schema-table w-full">
+                      <thead>
+                        <tr>
+                          <th>Table</th>
+                          <th>Grade</th>
+                          <th>Priority</th>
+                          <th className="text-right">Small files</th>
+                          <th className="text-right">Size</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topOffenders.map((row) => (
+                          <tr key={row.id ?? `${row.source_id}-${row.schema_name}-${row.table_name}`}>
+                            <td>
+                              <Link to={`/tables/${row.id}`} className="font-medium text-foreground hover:text-primary">
+                                {qualifiedTableName(row)}
+                              </Link>
+                            </td>
+                            <td>
+                              <GradePill grade={row.stats?.grade} />
+                            </td>
+                            <td>
+                              <PriorityTag priority={row.stats?.compaction_priority} />
+                            </td>
+                            <td className="text-right [font-variant-numeric:tabular-nums]">
+                              {formatNumber(row.stats?.small_files_count, true)}
+                            </td>
+                            <td className="text-right [font-variant-numeric:tabular-nums]">
+                              {formatGb(row.stats?.total_size_gb)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-4">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm font-semibold">Recent scan trend</CardTitle>
+                <span className="text-xs text-muted-foreground">Small-file count per scan</span>
+              </CardHeader>
+              <CardContent>
                 {(data.drift ?? []).length ? (
                   <div className="drift-list">
                     {(data.drift ?? []).slice(0, 8).map((item, index) => (
@@ -256,9 +449,9 @@ export const DatalakeHealth = () => {
                     description="This fills in once the datalake has been scanned more than once, so you can see whether small-file counts are climbing."
                   />
                 )}
-              </Card>
-            </Col>
-          </Row>
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
     </div>

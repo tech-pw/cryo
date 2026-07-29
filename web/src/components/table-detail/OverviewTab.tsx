@@ -8,29 +8,14 @@
  * stats pulled from the parent.
  */
 import {
-  ArrowRightOutlined,
-  BranchesOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  DashboardOutlined,
-  DownOutlined,
-  InfoCircleOutlined,
-  PartitionOutlined,
-  RightOutlined,
-  TableOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
-import {
-  Alert,
-  Card,
-  Col,
-  Empty as AntdEmpty,
-  Row,
-  Space,
-  Table,
-  Tag,
-  Typography
-} from "antd";
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  XCircle
+} from "lucide-react";
 import { useState } from "react";
 import {
   Area,
@@ -51,7 +36,10 @@ import type {
   TableHealthTrends
 } from "../../api/client";
 import { EmptyState } from "../common";
+import { Alert } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { HealthScoreBreakdown } from "../HealthScoreBreakdown";
+import { ChartCard } from "./ChartCard";
 import type { ScoreFactor as HealthScoreFactor } from "../HealthScoreBreakdown";
 import { ActNowSection } from "./ActNowSection";
 import { HealthGauge } from "./HealthGauge";
@@ -137,7 +125,7 @@ export const OverviewTab = (props: OverviewTabProps) => {
 
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
-  const alertType: "error" | "warning" | "success" =
+  const alertVariant: "error" | "warning" | "success" =
     verdict.level === "critical" ? "error" : verdict.level === "warning" ? "warning" : "success";
 
   const trendData = (healthTrends?.trend_points ?? []).map((p) => ({
@@ -349,12 +337,7 @@ export const OverviewTab = (props: OverviewTabProps) => {
           daysToCritical={healthTrends?.days_to_critical}
         />
         {rowExists ? (
-          <Alert
-            type={alertType}
-            showIcon
-            title={<strong>{verdict.message}</strong>}
-            style={{ fontSize: 12, flex: 1 }}
-          />
+          <Alert variant={alertVariant} title={verdict.message} className="flex-1 text-xs" />
         ) : null}
       </div>
 
@@ -396,133 +379,122 @@ export const OverviewTab = (props: OverviewTabProps) => {
             if (e.key === "Enter" || e.key === " ") setDiagnosticsOpen((v) => !v);
           }}
         >
-          {diagnosticsOpen ? <DownOutlined /> : <RightOutlined />}
+          {diagnosticsOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
           <span className="td-chart-card-title">Diagnostics</span>
           <span className="td-chart-card-subtitle">Health trend, partitioning, query load, score breakdown</span>
           {triggered.length > 0 ? (
-            <Tag color="warning" style={{ marginLeft: 8 }}>
+            <Badge variant="warning" className="ml-2">
               {triggered.length} triggered
-            </Tag>
+            </Badge>
           ) : null}
         </div>
         {diagnosticsOpen ? (
-          <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
-            <Col xs={24} xl={14}>
-              <Card
-                className={`td-chart-card${trendData.length ? "" : " td-chart-card-quiet"}`}
-                classNames={{ body: "td-chart-card-body" }}
-                style={{ marginBottom: 16 }}
+          <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,14fr)_minmax(0,10fr)]">
+            <div className="flex flex-col gap-4">
+              <ChartCard
+                title="Health Trends"
+                subtitle="30 days"
+                actions={
+                  degradationBadge ? (
+                    <Badge variant="danger">{degradationBadge}</Badge>
+                  ) : undefined
+                }
+                quiet={!trendData.length}
               >
-                <div className="td-chart-card-header">
-                  <span className="td-chart-card-title">Health Trends</span>
-                  <span className="td-chart-card-subtitle">30 days</span>
-                  {degradationBadge ? <Tag color="error">{degradationBadge}</Tag> : null}
-                </div>
-                <div className="td-chart-card-content">
-                  {trendData.length ? (
-                    <div className="chart-frame" style={{ height: 260 }}>
-                      <ResponsiveContainer width="100%" height={260}>
-                        <LineChart data={trendData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
-                          <XAxis
-                            dataKey="timestamp"
-                            tickFormatter={(ts) =>
-                              new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-                            }
-                            tick={{ fontSize: 11 }}
-                            interval="preserveStartEnd"
-                            stroke="var(--muted, #5c667a)"
-                          />
-                          <YAxis
-                            yAxisId="left"
-                            domain={[0, 100]}
-                            tick={{ fontSize: 11 }}
-                            stroke="var(--muted, #5c667a)"
-                            tickLine={false}
-                          />
-                          <YAxis
-                            yAxisId="right"
-                            orientation="right"
-                            tick={{ fontSize: 11 }}
-                            stroke="var(--muted, #5c667a)"
-                            tickLine={false}
-                          />
-                          <RechartsTooltip
-                            {...chartTooltipProps}
-                            labelFormatter={(ts) => new Date(ts).toLocaleString()}
-                            formatter={(value, name) => {
-                              const n = Number(value ?? 0);
-                              const label = String(name);
-                              if (label === "score") return [n.toFixed(1), "Health Score"];
-                              if (label === "small_files") return [n.toLocaleString(), "Small Files"];
-                              if (label === "total_size_gb") return [n.toFixed(1) + " GB", "Size"];
-                              return [n, label];
-                            }}
-                          />
-                          <defs>
-                            <linearGradient id="scoreGrad2" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={cryoColors.gradeA} stopOpacity={0.15} />
-                              <stop offset="100%" stopColor={cryoColors.gradeA} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <Area
-                            yAxisId="left"
-                            type="monotone"
-                            dataKey="score"
-                            fill="url(#scoreGrad2)"
-                            stroke="none"
-                            tooltipType="none"
-                          />
-                          <Line
-                            yAxisId="left"
-                            type="monotone"
-                            dataKey="score"
-                            stroke={cryoColors.gradeA}
-                            strokeWidth={2.5}
-                            dot={false}
-                            name="score"
-                          />
-                          <Line
-                            yAxisId="right"
-                            type="monotone"
-                            dataKey="small_files"
-                            stroke={cryoColors.chartPrimary}
-                            strokeWidth={2}
-                            dot={false}
-                            name="small_files"
-                            strokeDasharray="4 3"
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <EmptyState
-                      title="No trends yet"
-                      description="Health trends appear after multiple scans over time."
-                    />
-                  )}
-                </div>
-              </Card>
-
-              <Card
-                className="td-chart-card"
-                classNames={{ body: "td-chart-card-body" }}
-                style={{ margin: 0 }}
-              >
-                <div className="td-chart-card-header" style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <BranchesOutlined style={{ color: "var(--primary, #3d6fd4)", fontSize: 16 }} />
-                    <span className="td-chart-card-title">Partition Columns Analyzer</span>
+                {trendData.length ? (
+                  <div className="chart-frame" style={{ height: 260 }}>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
+                        <XAxis
+                          dataKey="timestamp"
+                          tickFormatter={(ts) =>
+                            new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                          }
+                          tick={{ fontSize: 11 }}
+                          interval="preserveStartEnd"
+                          stroke="var(--muted, #5c667a)"
+                        />
+                        <YAxis
+                          yAxisId="left"
+                          domain={[0, 100]}
+                          tick={{ fontSize: 11 }}
+                          stroke="var(--muted, #5c667a)"
+                          tickLine={false}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fontSize: 11 }}
+                          stroke="var(--muted, #5c667a)"
+                          tickLine={false}
+                        />
+                        <RechartsTooltip
+                          {...chartTooltipProps}
+                          labelFormatter={(ts) => new Date(ts).toLocaleString()}
+                          formatter={(value, name) => {
+                            const n = Number(value ?? 0);
+                            const label = String(name);
+                            if (label === "score") return [n.toFixed(1), "Health Score"];
+                            if (label === "small_files") return [n.toLocaleString(), "Small Files"];
+                            if (label === "total_size_gb") return [n.toFixed(1) + " GB", "Size"];
+                            return [n, label];
+                          }}
+                        />
+                        <defs>
+                          <linearGradient id="scoreGrad2" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={cryoColors.gradeA} stopOpacity={0.15} />
+                            <stop offset="100%" stopColor={cryoColors.gradeA} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <Area
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="score"
+                          fill="url(#scoreGrad2)"
+                          stroke="none"
+                          tooltipType="none"
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="score"
+                          stroke={cryoColors.gradeA}
+                          strokeWidth={2.5}
+                          dot={false}
+                          name="score"
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="small_files"
+                          stroke={cryoColors.chartPrimary}
+                          strokeWidth={2}
+                          dot={false}
+                          name="small_files"
+                          strokeDasharray="4 3"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
-                  <span className="td-chart-card-subtitle">
-                    Analyzing schema keys, access patterns, and pruning granularity
-                  </span>
-                </div>
+                ) : (
+                  <EmptyState
+                    title="No trends yet"
+                    description="Health trends appear after multiple scans over time."
+                  />
+                )}
+              </ChartCard>
 
-                <div
-                  className="td-chart-card-content"
-                  style={{ display: "flex", flexDirection: "column", gap: 16 }}
-                >
+              <ChartCard
+                title={
+                  <span className="inline-flex items-center gap-2">
+                    <GitBranch className="size-4" style={{ color: "var(--primary, #3d6fd4)" }} />
+                    Partition Columns Analyzer
+                  </span>
+                }
+                subtitle="Analyzing schema keys, access patterns, and pruning granularity"
+                contentClassName="flex flex-col gap-4"
+              >
                   <div
                     style={{
                       display: "grid",
@@ -620,110 +592,88 @@ export const OverviewTab = (props: OverviewTabProps) => {
                     current={granCheck.current}
                     ideal={granCheck.ideal}
                   />
-                </div>
-              </Card>
+              </ChartCard>
 
-              <Card
-                className="td-chart-card"
-                classNames={{ body: "td-chart-card-body" }}
-                style={{ marginTop: 16 }}
-              >
-                <div className="td-chart-card-header">
-                  <span className="td-chart-card-title">Query load</span>
-                  <span className="td-chart-card-subtitle">Last 7 days</span>
-                  {tableQueries && tableQueries.failed_count > 0 ? (
-                    <Tag color="error" className="td-quality-anomaly-tag">
+              <ChartCard
+                title="Query load"
+                subtitle="Last 7 days"
+                actions={
+                  tableQueries && tableQueries.failed_count > 0 ? (
+                    <Badge variant="danger" className="td-quality-anomaly-tag">
                       {tableQueries.failed_count} failed
-                    </Tag>
-                  ) : null}
-                </div>
-                <div className="td-chart-card-content">
-                  {tableQueriesLoading ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Loading query activity…
-                    </Typography.Text>
-                  ) : tableQueries && tableQueries.total > 0 ? (
-                    <>
-                      <div className="td-query-load-stats">
-                        <div className="td-query-load-stat">
-                          <span className="td-query-load-stat-label">Queries</span>
-                          <span className="td-query-load-stat-value">{formatNumber(tableQueries.total)}</span>
-                        </div>
-                        <div className="td-query-load-stat">
-                          <span className="td-query-load-stat-label">P50 latency</span>
-                          <span className="td-query-load-stat-value">{formatDuration(tableQueries.p50_latency_ms)}</span>
-                        </div>
-                        <div className="td-query-load-stat">
-                          <span className="td-query-load-stat-label">P95 latency</span>
-                          <span className="td-query-load-stat-value">{formatDuration(tableQueries.p95_latency_ms)}</span>
-                        </div>
-                        <div className="td-query-load-stat">
-                          <span className="td-query-load-stat-label">P99 latency</span>
-                          <span className="td-query-load-stat-value">{formatDuration(tableQueries.p99_latency_ms)}</span>
-                        </div>
-                        <div className="td-query-load-stat">
-                          <span className="td-query-load-stat-label">Avg bytes scanned</span>
-                          <span className="td-query-load-stat-value">{formatBytesGb(tableQueries.avg_bytes_scanned)}</span>
-                        </div>
-                      </div>
-                      <Table
-                        size="small"
-                        rowKey="query_id"
-                        dataSource={tableQueries.queries.slice(0, 5)}
-                        pagination={false}
-                        className="td-schema-table"
-                        style={{ marginTop: 12 }}
-                        locale={{ emptyText: <AntdEmpty description="No queries" /> }}
-                        columns={[
-                          { title: "Engine", dataIndex: "engine", width: 90 },
-                          { title: "User", dataIndex: "user", ellipsis: true, render: (v) => v ?? "—" },
-                          {
-                            title: "Duration",
-                            dataIndex: "duration_ms",
-                            width: 110,
-                            align: "right" as const,
-                            render: (v) => formatDuration(v)
-                          },
-                          {
-                            title: "Status",
-                            dataIndex: "status",
-                            width: 100,
-                            render: (v: string) => (
-                              <Tag
-                                color={v === "failed" ? "error" : "success"}
-                                className="td-schema-status-tag"
-                              >
-                                {v === "failed" ? "Failed" : "OK"}
-                              </Tag>
-                            )
-                          },
-                          {
-                            title: "Started",
-                            dataIndex: "started_at",
-                            align: "right" as const,
-                            render: (v) => formatTime(v)
-                          }
-                        ]}
-                      />
-                    </>
-                  ) : (
-                    <EmptyState
-                      title="No query activity"
-                      description="No queries against this table were recorded in the last 7 days."
-                    />
-                  )}
-                </div>
-              </Card>
-            </Col>
-            <Col xs={24} xl={10}>
-              <Card
-                className="td-chart-card"
-                classNames={{ body: "td-chart-card-body" }}
-                style={{ height: "100%", margin: 0 }}
+                    </Badge>
+                  ) : undefined
+                }
               >
-                <div className="td-chart-card-header" style={{ marginBottom: 16 }}>
-                  <span className="td-chart-card-title">Score Factors</span>
-                </div>
+                {tableQueriesLoading ? (
+                  <span className="text-xs text-muted-foreground">Loading query activity…</span>
+                ) : tableQueries && tableQueries.total > 0 ? (
+                  <>
+                    <div className="td-query-load-stats">
+                      <div className="td-query-load-stat">
+                        <span className="td-query-load-stat-label">Queries</span>
+                        <span className="td-query-load-stat-value">{formatNumber(tableQueries.total)}</span>
+                      </div>
+                      <div className="td-query-load-stat">
+                        <span className="td-query-load-stat-label">P50 latency</span>
+                        <span className="td-query-load-stat-value">{formatDuration(tableQueries.p50_latency_ms)}</span>
+                      </div>
+                      <div className="td-query-load-stat">
+                        <span className="td-query-load-stat-label">P95 latency</span>
+                        <span className="td-query-load-stat-value">{formatDuration(tableQueries.p95_latency_ms)}</span>
+                      </div>
+                      <div className="td-query-load-stat">
+                        <span className="td-query-load-stat-label">P99 latency</span>
+                        <span className="td-query-load-stat-value">{formatDuration(tableQueries.p99_latency_ms)}</span>
+                      </div>
+                      <div className="td-query-load-stat">
+                        <span className="td-query-load-stat-label">Avg bytes scanned</span>
+                        <span className="td-query-load-stat-value">{formatBytesGb(tableQueries.avg_bytes_scanned)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 overflow-x-auto">
+                      <table className="td-schema-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 90 }}>Engine</th>
+                            <th>User</th>
+                            <th style={{ width: 110, textAlign: "right" }}>Duration</th>
+                            <th style={{ width: 100 }}>Status</th>
+                            <th style={{ textAlign: "right" }}>Started</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableQueries.queries.slice(0, 5).map((q) => (
+                            <tr key={q.query_id}>
+                              <td>{q.engine}</td>
+                              <td className="max-w-[120px] truncate" title={q.user ?? undefined}>
+                                {q.user ?? "—"}
+                              </td>
+                              <td style={{ textAlign: "right" }}>{formatDuration(q.duration_ms)}</td>
+                              <td>
+                                <Badge
+                                  variant={q.status === "failed" ? "danger" : "success"}
+                                  className="td-schema-status-tag"
+                                >
+                                  {q.status === "failed" ? "Failed" : "OK"}
+                                </Badge>
+                              </td>
+                              <td style={{ textAlign: "right" }}>{formatTime(q.started_at)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <EmptyState
+                    title="No query activity"
+                    description="No queries against this table were recorded in the last 7 days."
+                  />
+                )}
+              </ChartCard>
+            </div>
+            <ChartCard title="Score Factors" className="h-full">
                 {rowExists ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div className="td-sidebar-score-bars">
@@ -858,9 +808,8 @@ export const OverviewTab = (props: OverviewTabProps) => {
                 ) : (
                   <EmptyState title="No health details" description="Fetch or scan table to load diagnostics." />
                 )}
-              </Card>
-            </Col>
-          </Row>
+            </ChartCard>
+          </div>
         ) : null}
       </div>
     </div>
@@ -878,6 +827,9 @@ interface PartitionChecklistProps {
   ideal: string;
 }
 
+const tagColorToVariant = (color: "success" | "warning" | "error"): "success" | "warning" | "danger" =>
+  color === "success" ? "success" : color === "warning" ? "warning" : "danger";
+
 const PartitionChecklist = ({
   title,
   status,
@@ -888,7 +840,7 @@ const PartitionChecklist = ({
   current,
   ideal
 }: PartitionChecklistProps) => {
-  const borderLeftColor =
+  const accentColor =
     status === "optimal"
       ? "var(--success, #28a745)"
       : status === "critical"
@@ -898,16 +850,31 @@ const PartitionChecklist = ({
     <div
       style={{
         border: "1px solid var(--line, #e1e6ed)",
-        borderLeft: `4px solid ${borderLeftColor}`,
         backgroundColor: "var(--background, #ffffff)",
-        padding: "16px 20px",
         borderRadius: "8px",
         display: "flex",
-        flexDirection: "column",
-        gap: 14,
+        flexDirection: "row",
+        overflow: "hidden",
         boxShadow: "0 2px 8px rgba(0,0,0,0.02)"
       }}
     >
+      <div
+        aria-hidden
+        style={{
+          width: 3,
+          flexShrink: 0,
+          backgroundColor: accentColor
+        }}
+      />
+      <div
+        style={{
+          flex: 1,
+          padding: "16px 20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14
+        }}
+      >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div
@@ -927,21 +894,22 @@ const PartitionChecklist = ({
             }}
           >
             {status === "optimal" ? (
-              <CheckCircleOutlined style={{ color: "var(--success, #28a745)", fontSize: 13 }} />
+              <CheckCircle2 className="size-3.5" style={{ color: "var(--success, #28a745)" }} />
             ) : status === "critical" ? (
-              <CloseCircleOutlined style={{ color: "var(--error, #dc3545)", fontSize: 13 }} />
+              <XCircle className="size-3.5" style={{ color: "var(--error, #dc3545)" }} />
             ) : (
-              <WarningOutlined style={{ color: "var(--warning, #f0a020)", fontSize: 13 }} />
+              <AlertTriangle className="size-3.5" style={{ color: "var(--warning, #f0a020)" }} />
             )}
           </div>
           <span style={{ color: "var(--foreground, #1a202c)", fontWeight: 600, fontSize: 13 }}>{title}</span>
         </div>
-        <Tag
-          color={tagColor}
-          style={{ margin: 0, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "2px 8px" }}
+        <Badge
+          variant={tagColorToVariant(tagColor)}
+          className="m-0 text-[10px] font-bold"
+          style={{ borderRadius: 4, padding: "2px 8px" }}
         >
           {tagText}
-        </Tag>
+        </Badge>
       </div>
 
       <div
@@ -1011,9 +979,9 @@ const PartitionChecklist = ({
                 Current (already optimal)
               </span>
               <div>
-                <Tag color="success" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>
+                <Badge variant="success" className="m-0 px-2 py-[3px] font-medium">
                   {current}
-                </Tag>
+                </Badge>
               </div>
             </div>
           ) : (
@@ -1031,7 +999,9 @@ const PartitionChecklist = ({
                   Current
                 </span>
                 <div>
-                  <Tag style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>{current}</Tag>
+                  <Badge variant="secondary" className="m-0 px-2 py-[3px] font-medium">
+                    {current}
+                  </Badge>
                 </div>
               </div>
 
@@ -1045,7 +1015,7 @@ const PartitionChecklist = ({
                   paddingBottom: 2
                 }}
               >
-                <ArrowRightOutlined style={{ color: "var(--muted, #5c667a)", opacity: 0.5, fontSize: 12 }} />
+                <ArrowRight className="size-3 opacity-50" style={{ color: "var(--muted, #5c667a)" }} />
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
@@ -1061,21 +1031,16 @@ const PartitionChecklist = ({
                   Target
                 </span>
                 <div>
-                  <Tag color="blue" style={{ margin: 0, padding: "3px 8px", fontWeight: 550 }}>
+                  <Badge variant="default" className="m-0 px-2 py-[3px] font-medium">
                     {ideal}
-                  </Tag>
+                  </Badge>
                 </div>
               </div>
             </>
           )}
         </div>
       </div>
+      </div>
     </div>
   );
 };
-
-// Avoid unused-import lints for icons only referenced inside JSX branches above.
-void InfoCircleOutlined;
-void TableOutlined;
-void PartitionOutlined;
-void DashboardOutlined;

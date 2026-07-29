@@ -1,6 +1,17 @@
-import { cleanup } from "@testing-library/react";
+import { cleanup, render as rtlRender } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { afterEach } from "vitest";
+import { createElement, type ReactElement } from "react";
+import { afterEach, vi } from "vitest";
+import { CryoTooltipProvider } from "../components/ui/tooltip";
+
+vi.mock("@testing-library/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@testing-library/react")>();
+  return {
+    ...actual,
+    render: (ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) =>
+      actual.render(createElement(CryoTooltipProvider, null, ui), options)
+  };
+});
 
 class ResizeObserverMock {
   observe() {}

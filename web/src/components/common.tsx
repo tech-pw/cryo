@@ -1,109 +1,16 @@
-import { InfoCircleOutlined } from "@ant-design/icons";
-import { Alert, Button, Empty, Space, Statistic, Tooltip, Typography } from "antd";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Info } from "lucide-react";
+import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ResponsiveContainer } from "recharts";
+
 import { ApiError } from "../api/client";
-import { PageBreadcrumbs } from "./PageBreadcrumbs";
-import { PageTitle } from "./PageTitle";
+import { Alert } from "./ui/alert";
+import { Button } from "./ui/button";
+import { EmptyState } from "./ui/empty-state";
 
-export const ChartFrame = ({
-  empty,
-  emptyTitle = "No chart data",
-  emptyDescription = "Run a scan to populate this panel.",
-  ariaLabel,
-  size = "md",
-  children
-}: {
-  empty: boolean;
-  emptyTitle?: string;
-  emptyDescription?: string;
-  ariaLabel?: string;
-  /** "xs" is for small fixed-radius charts (e.g. a donut) that don't need a full-size frame. */
-  size?: "md" | "xs";
-  children: React.ReactNode;
-}) => {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [ready, setReady] = useState(false);
+export { ChartFrame } from "./ui/chart-panel";
+export { PageHeader } from "./ui/page-header";
 
-  useEffect(() => {
-    const el = hostRef.current;
-    if (!el) return;
-    const measure = () => setReady(el.clientWidth > 0 && el.clientHeight > 0);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [empty]);
-
-  if (empty) {
-    return <EmptyState title={emptyTitle} description={emptyDescription} />;
-  }
-
-  return (
-    <div
-      ref={hostRef}
-      className={size === "xs" ? "chart-frame xs" : "chart-frame"}
-      role="img"
-      aria-label={ariaLabel}
-    >
-      {ready ? <ResponsiveContainer>{children}</ResponsiveContainer> : null}
-    </div>
-  );
-};
-
-export const PageHeader = ({
-  title,
-  subtitle,
-  actions,
-  breadcrumbs,
-  rootCrumb
-}: {
-  title: string;
-  subtitle?: ReactNode;
-  actions?: ReactNode;
-  breadcrumbs?: ReactNode;
-  rootCrumb?: { label: string; to?: string };
-}) => {
-  const crumbs = breadcrumbs ?? <PageBreadcrumbs root={rootCrumb} />;
-  return (
-    <div>
-      {crumbs}
-      <PageTitle title={title} />
-      <div className="page-header">
-        <div>
-          <Typography.Title level={1} className="page-title">
-            {title}
-          </Typography.Title>
-          {subtitle ? <Typography.Text type="secondary">{subtitle}</Typography.Text> : null}
-        </div>
-        {actions ? <Space wrap>{actions}</Space> : null}
-      </div>
-    </div>
-  );
-};
-
-export const EmptyState = ({
-  title,
-  description,
-  action
-}: {
-  title: string;
-  description?: ReactNode;
-  action?: ReactNode;
-}) => (
-  <Empty
-    className="empty-state"
-    image={Empty.PRESENTED_IMAGE_SIMPLE}
-    description={
-      <Space orientation="vertical" size={4}>
-        <Typography.Text strong>{title}</Typography.Text>
-        {description ? <Typography.Text type="secondary">{description}</Typography.Text> : null}
-        {action}
-      </Space>
-    }
-  />
-);
+export { EmptyState };
 
 export interface StatItem {
   label: string;
@@ -118,12 +25,16 @@ export interface StatItem {
  * on its own (e.g. "Live" bytes, "Precision coverage"). Reused by StatStrip and Descriptions. */
 export const HintLabel = ({ label, tooltip }: { label: ReactNode; tooltip?: string }) =>
   tooltip ? (
-    <Space size={4}>
+    <span className="inline-flex items-center gap-1">
       <span>{label}</span>
-      <Tooltip title={tooltip}>
-        <InfoCircleOutlined style={{ color: "var(--ink-faint, rgba(0,0,0,0.35))" }} />
-      </Tooltip>
-    </Space>
+      <span
+        title={tooltip}
+        className="inline-flex cursor-help text-muted-foreground"
+        aria-label={typeof label === "string" ? `About ${label}` : "More information"}
+      >
+        <Info className="size-3.5" aria-hidden="true" />
+      </span>
+    </span>
   ) : (
     <>{label}</>
   );
@@ -131,12 +42,15 @@ export const HintLabel = ({ label, tooltip }: { label: ReactNode; tooltip?: stri
 export const StatStrip = ({ items }: { items: StatItem[] }) => (
   <div className="stat-strip">
     {items.map((item) => (
-      <Statistic
-        key={item.label}
-        title={<HintLabel label={item.label} tooltip={item.tooltip} />}
-        value={String(item.value)}
-        suffix={item.suffix}
-      />
+      <div key={item.label} className="px-3 py-3">
+        <p className="text-xs text-muted-foreground">
+          <HintLabel label={item.label} tooltip={item.tooltip} />
+        </p>
+        <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+          {item.value}
+          {item.suffix ? <span className="ml-1 text-sm font-normal text-muted-foreground">{item.suffix}</span> : null}
+        </p>
+      </div>
     ))}
   </div>
 );
@@ -159,7 +73,11 @@ export const Sparkline = ({ values }: { values: Array<number | null | undefined>
 };
 
 export const JsonHelpButton = ({ value }: { value: unknown }) => (
-  <Button size="small" onClick={() => navigator.clipboard.writeText(JSON.stringify(value, null, 2))}>
+  <Button
+    size="sm"
+    variant="secondary"
+    onClick={() => void navigator.clipboard.writeText(JSON.stringify(value, null, 2))}
+  >
     Copy JSON
   </Button>
 );
@@ -184,18 +102,15 @@ export const QueryErrorAlert = ({
   return (
     <Alert
       className={className}
-      type="error"
-      showIcon
+      variant="error"
       title={isAuth ? "Authentication or permission error" : title}
       description={
-        <Space orientation="vertical" size={4}>
-          <Typography.Text>{detail}</Typography.Text>
+        <>
+          <p>{detail}</p>
           {isAuth ? (
-            <Typography.Text type="secondary">
-              Sign in again or switch to a role with sufficient permissions in the header.
-            </Typography.Text>
+            <p className="mt-1">Sign in again or switch to a role with sufficient permissions in the header.</p>
           ) : null}
-        </Space>
+        </>
       }
     />
   );
@@ -213,8 +128,7 @@ export const TruncatedResultsBanner = ({
   total > shown ? (
     <Alert
       className="page-alert"
-      type="warning"
-      showIcon
+      variant="warning"
       title={`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${noun}`}
       description="Refine filters or use search to narrow the list — the view is capped for performance."
     />
@@ -226,7 +140,7 @@ export const FirstRunEmptyState = () => (
     description="Connect a catalog source, then run a scan to populate health and cost metrics."
     action={
       <Link to="/connections">
-        <Button type="primary">Connect a catalog</Button>
+        <Button variant="primary">Connect a catalog</Button>
       </Link>
     }
   />
@@ -245,15 +159,13 @@ export const TelemetryRequiredNotice = ({
   surface: string;
 }) => (
   <Alert
-    type="info"
-    showIcon
-    style={{ marginBottom: 16 }}
-    message={`${surface} requires query-log ingestion`}
+    className="mb-4"
+    variant="info"
+    title={`${surface} requires query-log ingestion`}
     description={
       <span>
-        Connect a Trino or Spark access log via <strong>Connections → Query log ingestion</strong>{" "}
-        to populate this view. See the docs for ingestion setup; this view shows empty until at
-        least one telemetry source is wired in.
+        Connect a Trino or Spark access log via <strong>Connections → Query log ingestion</strong> to populate this
+        view. See the docs for ingestion setup; this view shows empty until at least one telemetry source is wired in.
       </span>
     }
   />

@@ -1,16 +1,17 @@
 import {
-  AppstoreOutlined,
-  ClearOutlined,
-  FireOutlined,
-  HistoryOutlined,
-  RadarChartOutlined
-} from "@ant-design/icons";
+  Eraser,
+  Flame,
+  History,
+  LayoutGrid,
+  Radar
+} from "lucide-react";
 import type { ReactNode } from "react";
-import { Button, Card, Space, Tag, Typography } from "antd";
 import type { BenefitScoreResponse, TableSignalsResponse } from "../../api/client";
 import type { TableCostRead } from "../../api/types";
 import { formatBytesGb, formatCurrency, formatNumber } from "../../lib/format";
 import { operationLabels } from "../../lib/theme";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 
 type Confidence = "HIGH" | "MED" | "LOW";
 
@@ -38,11 +39,11 @@ const confidenceFromPrecision = (precision?: string): Confidence => {
 };
 
 const iconForOperation = (operation: string): ReactNode => {
-  if (operation === "optimize") return <FireOutlined />;
-  if (operation === "remove_orphan_files") return <ClearOutlined />;
-  if (operation === "expire_snapshots") return <HistoryOutlined />;
-  if (operation === "optimize_manifests") return <AppstoreOutlined />;
-  return <RadarChartOutlined />;
+  if (operation === "optimize") return <Flame className="size-3.5" />;
+  if (operation === "remove_orphan_files") return <Eraser className="size-3.5" />;
+  if (operation === "expire_snapshots") return <History className="size-3.5" />;
+  if (operation === "optimize_manifests") return <LayoutGrid className="size-3.5" />;
+  return <Radar className="size-3.5" />;
 };
 
 export const RecommendedActions = ({
@@ -75,7 +76,7 @@ export const RecommendedActions = ({
       description: signal.reason,
       savingsUsd: 0,
       confidence: signal.severity === "critical" ? "HIGH" : "MED",
-      icon: <RadarChartOutlined />
+      icon: <Radar className="size-3.5" />
     });
   }
 
@@ -87,7 +88,7 @@ export const RecommendedActions = ({
       description: `${topPartition.partition_value ?? "(table)"} · score ${topPartition.benefit_score.toFixed(3)} · ${formatNumber(topPartition.small_files)} small files`,
       savingsUsd: 0,
       confidence: "MED",
-      icon: <FireOutlined />
+      icon: <Flame className="size-3.5" />
     });
   }
 
@@ -100,24 +101,29 @@ export const RecommendedActions = ({
   return (
     <div className="td-recommended-actions">
       {ranked.map((item, index) => (
-        <Card className={`td-action-card td-action-card-${index === 0 ? "top" : "secondary"}`} key={item.key}>
+        <div
+          className={`td-action-card td-action-card-${index === 0 ? "top" : "secondary"}`}
+          key={item.key}
+        >
           <div className="td-action-card-head">
             <span className="td-action-icon">{item.icon}</span>
-            <Typography.Text strong>{item.title}</Typography.Text>
-            <Tag className={`td-confidence td-confidence-${item.confidence.toLowerCase()}`}>{item.confidence}</Tag>
+            <strong>{item.title}</strong>
+            <Badge className={`td-confidence td-confidence-${item.confidence.toLowerCase()}`}>
+              {item.confidence}
+            </Badge>
           </div>
-          <Typography.Text type="secondary" className="td-action-desc">
-            {item.description}
-          </Typography.Text>
-          <Space size={8} style={{ marginTop: 8 }}>
-            <Button size="small" onClick={onPreview}>Preview</Button>
+          <span className="td-action-desc text-sm text-muted-foreground">{item.description}</span>
+          <div className="mt-2 flex gap-2">
+            <Button type="button" size="sm" variant="secondary" onClick={onPreview}>
+              Preview
+            </Button>
             {index === 0 ? (
-              <Button size="small" type="primary" onClick={onRun}>
+              <Button type="button" size="sm" variant="primary" onClick={onRun}>
                 Run Now
               </Button>
             ) : null}
-          </Space>
-        </Card>
+          </div>
+        </div>
       ))}
     </div>
   );

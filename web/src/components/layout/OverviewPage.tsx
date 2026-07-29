@@ -1,6 +1,6 @@
-import { Skeleton, Space } from "antd";
 import type { ReactNode } from "react";
 import { PageHeader, QueryErrorAlert } from "../common";
+import { Skeleton } from "../ui/skeleton";
 
 interface OverviewPageProps {
   title: string;
@@ -29,13 +29,13 @@ export const OverviewPage = ({
     <PageHeader title={title} subtitle={subtitle} actions={actions} />
     <QueryErrorAlert error={error} title={errorTitle ?? "Failed to load page data"} />
     {loading ? (
-      <Skeleton active />
+      <Skeleton className="mt-4 h-40 w-full" />
     ) : (
-      <Space orientation="vertical" className="full-width" size={12}>
+      <div className="flex w-full flex-col gap-3">
         {preContent}
         {kpis}
         {children}
-      </Space>
+      </div>
     )}
   </div>
 );

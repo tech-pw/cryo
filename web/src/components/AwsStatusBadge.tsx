@@ -1,13 +1,11 @@
 import { useQueries } from "@tanstack/react-query";
-import { Spin, Tag, Tooltip } from "antd";
-import {
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  ExclamationCircleOutlined
-} from "@ant-design/icons";
+import { AlertCircle, CheckCircle2, XCircle } from "lucide-react";
 import { getAwsIntegration } from "../api/client";
 import type { UUID } from "../api/types";
 import { useAuth } from "../lib/auth";
+import { AwsStatusSpinner } from "./CostPrecisionBadge";
+import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export type AwsSourceStatus =
   | { kind: "loading" }
@@ -42,7 +40,6 @@ const statusOf = (
   };
 };
 
-/** Resolve AWS integration status for a batch of source IDs in parallel. */
 export const useAwsSourceStatuses = (sourceIds: UUID[]) => {
   const { api, token } = useAuth();
   const results = useQueries({
@@ -65,47 +62,59 @@ export const useAwsSourceStatuses = (sourceIds: UUID[]) => {
 export const AwsStatusBadge = ({ status }: { status: AwsSourceStatus | undefined }) => {
   if (!status || status.kind === "loading") {
     return (
-      <Tag color="default">
-        <Spin size="small" style={{ marginRight: 4 }} /> AWS
-      </Tag>
+      <Badge variant="secondary" className="gap-1">
+        <AwsStatusSpinner /> AWS
+      </Badge>
     );
   }
   if (status.kind === "missing") {
     return (
-      <Tooltip title="No AWS integration — click Manage on the AWS page to connect.">
-        <Tag>AWS</Tag>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="secondary">AWS</Badge>
+        </TooltipTrigger>
+        <TooltipContent>No AWS integration — click Manage on the AWS page to connect.</TooltipContent>
       </Tooltip>
     );
   }
   if (status.kind === "error") {
     return (
-      <Tooltip title="Could not read AWS integration for this lakehouse.">
-        <Tag icon={<ExclamationCircleOutlined />} color="red">
-          AWS
-        </Tag>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="danger" className="gap-1">
+            <AlertCircle className="size-3" /> AWS
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>Could not read AWS integration for this lakehouse.</TooltipContent>
       </Tooltip>
     );
   }
   if (!status.enabled) {
-    return <Tag color="default">AWS · off</Tag>;
+    return <Badge variant="secondary">AWS · off</Badge>;
   }
   if (status.lastTestOk === false) {
     return (
-      <Tooltip title="Last STS test failed — credentials may be rotated or revoked.">
-        <Tag icon={<CloseCircleOutlined />} color="red">
-          AWS
-        </Tag>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="danger" className="gap-1">
+            <XCircle className="size-3" /> AWS
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>Last STS test failed — credentials may be rotated or revoked.</TooltipContent>
       </Tooltip>
     );
   }
   if (status.lastTestOk === true) {
     return (
-      <Tooltip title="AWS integration connected and verified.">
-        <Tag icon={<CheckCircleOutlined />} color="green">
-          AWS
-        </Tag>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="success" className="gap-1">
+            <CheckCircle2 className="size-3" /> AWS
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>AWS integration connected and verified.</TooltipContent>
       </Tooltip>
     );
   }
-  return <Tag color="processing">AWS · untested</Tag>;
+  return <Badge variant="default">AWS · untested</Badge>;
 };

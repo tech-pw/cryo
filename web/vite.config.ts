@@ -1,16 +1,16 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 const apiProxyTarget = process.env.VITE_PROXY_TARGET || "http://localhost:8000";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     rollupOptions: {
       output: {
         manualChunks: {
           "react-vendor": ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
-          antd: ["antd", "@ant-design/icons"],
           recharts: ["recharts"]
         }
       }

@@ -1,8 +1,8 @@
-import { Tabs } from "antd";
-import { BarChartOutlined, CloudOutlined, DatabaseOutlined } from "@ant-design/icons";
-import { useCallback, useState } from "react";
+import { BarChart3, Cloud, Database } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/common";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { CostOverviewTab } from "./cost/CostOverviewTab";
 import { S3RequestsTab } from "./cost/S3RequestsTab";
 import { AwsIntegrationsTab } from "./cost/AwsIntegrationsTab";
@@ -31,9 +31,9 @@ const TABS: Array<{
   label: string;
   icon: React.ReactNode;
 }> = [
-  { key: "overview", label: "Overview", icon: <BarChartOutlined /> },
-  { key: "s3-requests", label: "S3 requests", icon: <DatabaseOutlined /> },
-  { key: "aws-integrations", label: "AWS integrations", icon: <CloudOutlined /> }
+  { key: "overview", label: "Overview", icon: <BarChart3 className="size-3.5" aria-hidden="true" /> },
+  { key: "s3-requests", label: "S3 requests", icon: <Database className="size-3.5" aria-hidden="true" /> },
+  { key: "aws-integrations", label: "AWS integrations", icon: <Cloud className="size-3.5" aria-hidden="true" /> }
 ];
 
 const isTabKey = (value: string | null): value is CostTabKey =>
@@ -42,11 +42,17 @@ const isTabKey = (value: string | null): value is CostTabKey =>
 export const Cost = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get("tab");
-  const activeTab: CostTabKey = isTabKey(urlTab) ? urlTab : DEFAULT_TAB;
+  const tabFromUrl: CostTabKey = isTabKey(urlTab) ? urlTab : DEFAULT_TAB;
+  const [activeTab, setActiveTab] = useState<CostTabKey>(tabFromUrl);
+
+  useEffect(() => {
+    setActiveTab(tabFromUrl);
+  }, [tabFromUrl]);
 
   const handleTabChange = useCallback(
     (key: string) => {
       if (!isTabKey(key)) return;
+      setActiveTab(key);
       const next = new URLSearchParams(searchParams);
       if (key === DEFAULT_TAB) {
         next.delete("tab");
@@ -64,26 +70,25 @@ export const Cost = () => {
         title="Cost"
         subtitle="Storage, request-cost and AWS integration in one place. Each tab is self-contained -- jump between S3 request counts and storage cost without losing context."
       />
-      <Tabs
-        activeKey={activeTab}
-        onChange={handleTabChange}
-        items={TABS.map((tab) => ({
-          key: tab.key,
-          label: (
-            <span>
-              {tab.icon} {tab.label}
-            </span>
-          ),
-          children:
-            tab.key === "overview" ? (
-              <CostOverviewTab />
-            ) : tab.key === "s3-requests" ? (
-              <S3RequestsTab />
-            ) : (
-              <AwsIntegrationsTab />
-            )
-        }))}
-      />
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.key} value={tab.key} className="gap-1.5">
+              {tab.icon}
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="overview">
+          <CostOverviewTab />
+        </TabsContent>
+        <TabsContent value="s3-requests">
+          <S3RequestsTab />
+        </TabsContent>
+        <TabsContent value="aws-integrations">
+          <AwsIntegrationsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

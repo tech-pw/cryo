@@ -4,3 +4,15 @@ coverage/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Impeccable — local cache + live state (kept under .impeccable/config.json)
+# impeccable-ignore-start
+.impeccable/config.local.json
+.impeccable/hook.cache.json
+.impeccable/hook.pending.json
+.impeccable/*.png
+.impeccable/live/
+.impeccable/critique/*.local.*
+# impeccable-ignore-end
+test-results/
+playwright-report/

@@ -1,8 +1,8 @@
+import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Input, Select, Space, Table, Typography, message as antdMessage } from "antd";
-import type { TablePaginationConfig } from "antd/es/table";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
   assignTables,
   groupTables,
@@ -19,10 +19,14 @@ import {
 import type { Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
-import { EmptyState, HintLabel, Sparkline } from "../../components/common";
+import { HintLabel, Sparkline } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { PlanPreview } from "../../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
+import { Alert } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
+import { DataTable } from "../../components/ui/data-table";
+import { Input } from "../../components/ui/input";
 import { useAuth } from "../../lib/auth";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
@@ -83,12 +87,43 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
 
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
 
-/**
- * Filterable, paginated table explorer section. Lives below CatalogDashboard on the
- * consolidated Catalog page. Body lifted verbatim from the legacy TableExplorer.tsx --
- * preserves the URL `?source=` filter so clicking a catalog row in the dashboard
- * above narrows this section.
- */
+const SortHeader = ({
+  field,
+  label,
+  sort,
+  onSort
+}: {
+  field: string;
+  label: string;
+  sort?: string;
+  onSort: (next: string | undefined) => void;
+}) => {
+  const desc = sort === `-${field}`;
+  const asc = sort === field;
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        if (!asc && !desc) onSort(`-${field}`);
+        else if (desc) onSort(field);
+        else onSort(undefined);
+      }}
+    >
+      {label}
+      {desc ? " ↓" : asc ? " ↑" : null}
+    </button>
+  );
+};
+
+type GroupRow = {
+  group_value: string | null;
+  count: number;
+  total_size_gb: number;
+  total_small_files: number;
+  total_savings_usd_month: number;
+};
+
 export const TableExplorerSection = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -170,6 +205,12 @@ export const TableExplorerSection = () => {
     pageItems
   });
 
+  const rowSelectionState = useMemo<RowSelectionState>(() => {
+    const state: RowSelectionState = {};
+    for (const key of rowSelectedKeys) state[String(key)] = true;
+    return state;
+  }, [rowSelectedKeys]);
+
   const assign = useMutation({
     mutationFn: (presetId: UUID) =>
       assignTables(api, {
@@ -180,10 +221,10 @@ export const TableExplorerSection = () => {
         preset_id: presetId
       }),
     onSuccess: (result) => {
-      antdMessage.success(`Assigned ${result.affected.toLocaleString()} tables`);
+      toast.success(`Assigned ${result.affected.toLocaleString()} tables`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
     },
-    onError: (error) => antdMessage.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const run = useMutation({
@@ -205,8 +246,8 @@ export const TableExplorerSection = () => {
         trigger: "web"
       });
     },
-    onSuccess: (result) => antdMessage.success(`Run queued: ${result.run_id}`),
-    onError: (error) => antdMessage.error((error as Error).message)
+    onSuccess: (result) => toast.success(`Run queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const manifestRewrite = useMutation({
@@ -226,8 +267,8 @@ export const TableExplorerSection = () => {
         trigger: "web-manifest-rewrite"
       });
     },
-    onSuccess: (result) => antdMessage.success(`Manifest rewrite queued: ${result.run_id}`),
-    onError: (error) => antdMessage.error((error as Error).message)
+    onSuccess: (result) => toast.success(`Manifest rewrite queued: ${result.run_id}`),
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const unassign = useMutation({
@@ -241,10 +282,10 @@ export const TableExplorerSection = () => {
       return unassignTables(api, { selection: { mode: "ids", ids: selectedRowKeys } });
     },
     onSuccess: (result) => {
-      antdMessage.success(`Unassigned ${result.affected.toLocaleString()} tables`);
+      toast.success(`Unassigned ${result.affected.toLocaleString()} tables`);
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
     },
-    onError: (error) => antdMessage.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const scan = useMutation({
@@ -266,26 +307,27 @@ export const TableExplorerSection = () => {
       });
     },
     onSuccess: (result) => {
-      antdMessage.success(result.message || `Scan queued: ${result.run_id}`);
+      toast.success(result.message || `Scan queued: ${result.run_id}`);
       clearSelection();
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
       void queryClient.invalidateQueries({ queryKey: ["scanner-status"] });
       navigate(`/scans/${result.run_id}`);
     },
-    onError: (error) => antdMessage.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
+
   const translator = useMutation({
     mutationFn: (query: string) => translateTableFilter(api, { query, use_llm: true }),
     onSuccess: (result) => {
       if (result.errors.length) {
-        antdMessage.warning("Could not apply parts of the NL filter; review error chips.");
+        toast.warning("Could not apply parts of the NL filter; review error chips.");
       }
       setFilters((current) => applyTranslatedFilter(current, result.filter as Record<string, unknown>));
       setPage(1);
       resetSelectionForFilterChange();
     },
-    onError: (error) => antdMessage.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const selectedTables = useMemo(
@@ -304,7 +346,6 @@ export const TableExplorerSection = () => {
       if (filterSourceIds?.length) {
         return filterPresetsForSources(allPresets, dests, filterSourceIds);
       }
-      // Broad filter selection: API rejects incompatible Trino assignments.
       return allPresets;
     }
     if (!selectedRowKeys.length) return allPresets;
@@ -360,11 +401,191 @@ export const TableExplorerSection = () => {
     );
   };
 
+  const applySort = (next: string | undefined) => {
+    setSort(next);
+    setPage(1);
+  };
+
+  const groupColumns = useMemo<ColumnDef<GroupRow, unknown>[]>(
+    () =>
+      groupByField
+        ? [
+            {
+              accessorKey: "group_value",
+              header: groupByLabel(groupByField),
+              cell: ({ getValue }) => (getValue() as string | null) ?? "(not scanned)"
+            },
+            {
+              accessorKey: "count",
+              header: "Tables",
+              cell: ({ getValue }) => <span className="block text-right">{formatNumber(getValue() as number)}</span>
+            },
+            {
+              accessorKey: "total_size_gb",
+              header: "Total Size",
+              cell: ({ getValue }) => <span className="block text-right">{formatGb(getValue() as number)}</span>
+            },
+            {
+              accessorKey: "total_small_files",
+              header: "Small Files",
+              cell: ({ getValue }) => <span className="block text-right">{formatNumber(getValue() as number)}</span>
+            },
+            {
+              accessorKey: "total_savings_usd_month",
+              header: "Savings/mo",
+              cell: ({ getValue }) => <span className="block text-right">{formatCurrency(getValue() as number)}</span>
+            }
+          ]
+        : [],
+    [groupByField]
+  );
+
+  const tableColumns = useMemo<ColumnDef<TableRead, unknown>[]>(
+    () => [
+      {
+        id: "table",
+        header: "Table",
+        size: 280,
+        cell: ({ row }) => {
+          const name = schemaTableName(row.original);
+          const tooltip = tableTooltipName(row.original);
+          return (
+            <Link to={`/tables/${row.original.id}`} className="table-name-link" title={tooltip}>
+              <span className="table-name-cell block max-w-[16rem] truncate font-medium">{name}</span>
+            </Link>
+          );
+        }
+      },
+      {
+        id: "catalog",
+        header: "Catalog",
+        size: 140,
+        cell: ({ row }) => (
+          <span
+            className="block max-w-[8rem] truncate"
+            title={row.original.catalog_name ?? row.original.source_name ?? undefined}
+          >
+            {row.original.catalog_name ?? row.original.source_name ?? "-"}
+          </span>
+        )
+      },
+      {
+        id: "grade",
+        header: () => <SortHeader field="grade" label="Grade" sort={sort} onSort={applySort} />,
+        size: 76,
+        cell: ({ row }) => <GradePill grade={row.original.stats?.grade} />
+      },
+      {
+        id: "compaction_priority",
+        header: () => <SortHeader field="compaction_priority" label="Priority" sort={sort} onSort={applySort} />,
+        size: 104,
+        cell: ({ row }) => <PriorityTag priority={row.original.stats?.compaction_priority} />
+      },
+      {
+        id: "needs",
+        header: "Compaction",
+        size: 142,
+        cell: ({ row }) => <CompactionTag needsCompaction={row.original.stats?.needs_compaction} />
+      },
+      {
+        id: "small_files",
+        header: () => <SortHeader field="small_files_count" label="Small files" sort={sort} onSort={applySort} />,
+        size: 168,
+        cell: ({ row }) => (
+          <span className="metric-with-sparkline numeric-cell sparkline-cell flex items-center justify-end gap-2">
+            <span>{formatNumber(row.original.stats?.small_files_count)}</span>
+            <Sparkline
+              values={[
+                row.original.stats?.total_files,
+                row.original.stats?.small_files_count,
+                row.original.stats?.max_files_per_partition,
+                row.original.stats?.avg_files_per_partition
+              ]}
+            />
+          </span>
+        )
+      },
+      {
+        id: "total_files",
+        header: () => <SortHeader field="total_files" label="Files" sort={sort} onSort={applySort} />,
+        size: 104,
+        cell: ({ row }) => (
+          <span className="numeric-cell block text-right">{formatNumber(row.original.stats?.total_files, true)}</span>
+        )
+      },
+      {
+        id: "total_size_gb",
+        header: () => <SortHeader field="total_size_gb" label="Size" sort={sort} onSort={applySort} />,
+        size: 96,
+        cell: ({ row }) => (
+          <span className="numeric-cell block text-right">{formatGb(row.original.stats?.total_size_gb)}</span>
+        )
+      },
+      {
+        id: "projected_savings_usd_month",
+        header: () => <SortHeader field="projected_savings_usd_month" label="Savings/mo" sort={sort} onSort={applySort} />,
+        size: 120,
+        cell: ({ row }) => (
+          <span className="numeric-cell block text-right">
+            {formatCurrency(row.original.stats?.projected_savings_usd_month)}
+          </span>
+        )
+      },
+      {
+        id: "reclaimable_bytes",
+        header: () => <SortHeader field="reclaimable_bytes" label="Reclaimable" sort={sort} onSort={applySort} />,
+        size: 128,
+        cell: ({ row }) => (
+          <span className="numeric-cell block text-right">
+            {formatBytesGb(row.original.stats?.reclaimable_bytes)}
+          </span>
+        )
+      },
+      {
+        id: "cost_precision",
+        header: () => (
+          <HintLabel
+            label="Savings basis"
+            tooltip="How Cryo calculated savings and reclaimable storage for this table."
+          />
+        ),
+        size: 150,
+        cell: ({ row }) => (
+          <CostPrecisionBadge
+            precision={row.original.stats?.cost_precision}
+            lastFullCostScanAt={row.original.stats?.cost_last_full_scan_at}
+            orphanScanStale={isOrphanScanStale(
+              row.original.stats?.cost_precision,
+              row.original.stats?.cost_last_full_scan_at
+            )}
+          />
+        )
+      },
+      {
+        id: "partition",
+        header: "Partition",
+        size: 156,
+        cell: ({ row }) => (
+          <span className="block max-w-[9rem] truncate" title={row.original.stats?.partition_col ?? undefined}>
+            {row.original.stats?.partition_col ?? "-"}
+          </span>
+        )
+      },
+      {
+        accessorKey: "first_seen_at",
+        header: "Seen",
+        size: 152,
+        cell: ({ getValue }) => formatTime(getValue() as string)
+      }
+    ],
+    [sort]
+  );
+
   return (
     <>
-      <Space style={{ marginBottom: 12 }}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button
-          type={savingsView ? "primary" : "default"}
+          variant={savingsView ? "primary" : "secondary"}
           onClick={() => {
             const next = !savingsView;
             setSavingsView(next);
@@ -373,55 +594,58 @@ export const TableExplorerSection = () => {
         >
           Savings view
         </Button>
-        <Button onClick={exportTablesCsv} disabled={!pageItems.length || Boolean(groupByField)}>
+        <Button variant="secondary" onClick={exportTablesCsv} disabled={!pageItems.length || Boolean(groupByField)}>
           Export CSV
         </Button>
-        <Button onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
+        <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
           Refresh
         </Button>
-        <Select<TableGroupByField | "">
+        <select
+          className="h-[var(--control-height)] w-[200px] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
           value={groupByField ?? ""}
-          style={{ width: 200 }}
-          onChange={(value) => setGroupByField(value ? (value as TableGroupByField) : null)}
-          options={[
-            { label: "No grouping", value: "" },
-            { label: "Group by catalog", value: "catalog" },
-            { label: "Group by schema", value: "schema_name" },
-            { label: "Group by grade", value: "grade" },
-            { label: "Group by priority", value: "compaction_priority" },
-            { label: "Group by compaction", value: "needs_compaction" },
-            { label: "Group by size", value: "size_bucket" }
-          ]}
-        />
-      </Space>
-      <Space direction="vertical" style={{ width: "100%", marginBottom: 10 }} size={6}>
-        <Input.Search
-          allowClear
-          value={nlQuery}
-          placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
-          enterButton="Translate"
-          loading={translator.isPending}
-          onChange={(event) => setNlQuery(event.target.value)}
-          onSearch={(value) => {
-            const queryText = value.trim();
+          onChange={(event) =>
+            setGroupByField(event.target.value ? (event.target.value as TableGroupByField) : null)
+          }
+        >
+          <option value="">No grouping</option>
+          <option value="catalog">Group by catalog</option>
+          <option value="schema_name">Group by schema</option>
+          <option value="grade">Group by grade</option>
+          <option value="compaction_priority">Group by priority</option>
+          <option value="needs_compaction">Group by compaction</option>
+          <option value="size_bucket">Group by size</option>
+        </select>
+      </div>
+      <div className="mb-2.5 flex w-full flex-col gap-1.5">
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const queryText = nlQuery.trim();
             if (!queryText) return;
             translator.mutate(queryText);
           }}
-        />
+        >
+          <Input
+            value={nlQuery}
+            placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
+            onChange={(event) => setNlQuery(event.target.value)}
+          />
+          <Button type="submit" loading={translator.isPending}>
+            Translate
+          </Button>
+        </form>
         {translator.data?.chips.length ? (
-          <Typography.Text type="secondary">
-            Applied: {translator.data.chips.join(" · ")}
-          </Typography.Text>
+          <p className="text-sm text-muted-foreground">Applied: {translator.data.chips.join(" · ")}</p>
         ) : null}
         {translator.data?.errors.length ? (
           <Alert
-            type="warning"
-            showIcon
-            message="Translation issues"
+            variant="warning"
+            title="Translation issues"
             description={translator.data.errors.join(" · ")}
           />
         ) : null}
-      </Space>
+      </div>
       <FilterBar
         value={filters}
         catalogOptions={catalogOptions}
@@ -438,271 +662,58 @@ export const TableExplorerSection = () => {
         }}
       />
       {groupByField ? (
-        <Table
+        <DataTable
           className="datalake-table"
-          size="small"
-          rowKey="group_value"
+          columns={groupColumns}
+          data={(grouped.data?.rows ?? []) as GroupRow[]}
+          density="compact"
           loading={grouped.isLoading}
-          dataSource={grouped.data?.rows ?? []}
-          pagination={false}
-          columns={[
-            {
-              title: groupByLabel(groupByField),
-              dataIndex: "group_value",
-              render: (value: string | null) => value ?? "(not scanned)"
-            },
-            {
-              title: "Tables",
-              dataIndex: "count",
-              align: "right",
-              sorter: (a, b) => a.count - b.count,
-              render: (value: number) => formatNumber(value)
-            },
-            {
-              title: "Total Size",
-              dataIndex: "total_size_gb",
-              align: "right",
-              sorter: (a, b) => a.total_size_gb - b.total_size_gb,
-              render: (value: number) => formatGb(value)
-            },
-            {
-              title: "Small Files",
-              dataIndex: "total_small_files",
-              align: "right",
-              sorter: (a, b) => a.total_small_files - b.total_small_files,
-              render: (value: number) => formatNumber(value)
-            },
-            {
-              title: "Savings/mo",
-              dataIndex: "total_savings_usd_month",
-              align: "right",
-              sorter: (a, b) => a.total_savings_usd_month - b.total_savings_usd_month,
-              render: (value: number) => formatCurrency(value)
-            }
-          ]}
-          locale={{
-            emptyText: (
-              <EmptyState
-                title="No tables match this view"
-                description="Run a scan or clear filters to browse the datalake."
-              />
-            )
-          }}
+          getRowId={(row) => row.group_value ?? "not-scanned"}
+          emptyTitle="No tables match this view"
+          emptyDescription="Run a scan or clear filters to browse the datalake."
         />
       ) : (
         <>
-      <Table<TableRead>
-        className="datalake-table"
-        size="small"
-        rowKey="id"
-        loading={tables.isLoading || isDemotingSelection}
-        dataSource={pageItems}
-        rowSelection={{
-          selectedRowKeys: rowSelectedKeys,
-          preserveSelectedRowKeys: true,
-          onChange: (keys) => {
-            void handleRowSelectionChange(keys);
-          }
-        }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: matchingTotal,
-          showSizeChanger: false,
-          showTotal: (total) => `${total.toLocaleString()} tables`
-        }}
-        onChange={(pagination: TablePaginationConfig, _filters, sorter) => {
-          setPage(pagination.current ?? 1);
-          const sortItem = Array.isArray(sorter) ? sorter[0] : sorter;
-          if (sortItem?.field && sortItem.order) {
-            const field = Array.isArray(sortItem.field)
-              ? String(sortItem.field[sortItem.field.length - 1])
-              : String(sortItem.field);
-            setSort(`${sortItem.order === "descend" ? "-" : ""}${field}`);
-          }
-        }}
-        columns={[
-          {
-            title: "Table",
-            key: "table",
-            fixed: "left",
-            width: 280,
-            className: "table-name-cell",
-            ellipsis: { showTitle: false },
-            render: (_: unknown, row) => {
-              const name = schemaTableName(row);
-              const tooltip = tableTooltipName(row);
-              return (
-                <Link to={`/tables/${row.id}`} className="table-name-link">
-                  <Typography.Text strong ellipsis={{ tooltip }}>
-                    {name}
-                  </Typography.Text>
-                </Link>
-              );
-            }
-          },
-          {
-            title: "Catalog",
-            key: "catalog",
-            width: 140,
-            ellipsis: { showTitle: false },
-            render: (_: unknown, row) => (
-              <Typography.Text
-                ellipsis={{ tooltip: row.catalog_name ?? row.source_name ?? undefined }}
-              >
-                {row.catalog_name ?? row.source_name ?? "-"}
-              </Typography.Text>
-            )
-          },
-          {
-            title: "Grade",
-            dataIndex: "grade",
-            key: "grade",
-            width: 76,
-            align: "center",
-            sorter: true,
-            render: (_: unknown, row) => <GradePill grade={row.stats?.grade} />
-          },
-          {
-            title: "Priority",
-            dataIndex: "compaction_priority",
-            key: "compaction_priority",
-            width: 104,
-            sorter: true,
-            render: (_: unknown, row) => <PriorityTag priority={row.stats?.compaction_priority} />
-          },
-          {
-            title: "Compaction",
-            key: "needs",
-            width: 142,
-            render: (_: unknown, row) => (
-              <CompactionTag needsCompaction={row.stats?.needs_compaction} />
-            )
-          },
-          {
-            title: "Small files",
-            dataIndex: ["stats", "small_files_count"],
-            sorter: true,
-            align: "right",
-            width: 168,
-            className: "numeric-cell sparkline-cell",
-            render: (value, row) => (
-              <span className="metric-with-sparkline">
-                <span>{formatNumber(value)}</span>
-                <Sparkline
-                  values={[
-                    row.stats?.total_files,
-                    row.stats?.small_files_count,
-                    row.stats?.max_files_per_partition,
-                    row.stats?.avg_files_per_partition
-                  ]}
-                />
-              </span>
-            )
-          },
-          {
-            title: "Files",
-            dataIndex: ["stats", "total_files"],
-            sorter: true,
-            align: "right",
-            width: 104,
-            className: "numeric-cell",
-            render: (value) => formatNumber(value, true)
-          },
-          {
-            title: "Size",
-            dataIndex: ["stats", "total_size_gb"],
-            sorter: true,
-            align: "right",
-            width: 96,
-            className: "numeric-cell",
-            render: formatGb
-          },
-          {
-            title: "Savings/mo",
-            dataIndex: ["stats", "projected_savings_usd_month"],
-            sorter: true,
-            align: "right",
-            width: 120,
-            className: "numeric-cell",
-            render: (value) => formatCurrency(value)
-          },
-          {
-            title: "Reclaimable",
-            dataIndex: ["stats", "reclaimable_bytes"],
-            sorter: true,
-            align: "right",
-            width: 128,
-            className: "numeric-cell",
-            render: (value) => formatBytesGb(value)
-          },
-          {
-            title: (
-              <HintLabel
-                label="Savings basis"
-                tooltip="How Cryo calculated savings and reclaimable storage for this table."
-              />
-            ),
-            key: "cost_precision",
-            width: 150,
-            render: (_: unknown, row) => (
-              <CostPrecisionBadge
-                precision={row.stats?.cost_precision}
-                lastFullCostScanAt={row.stats?.cost_last_full_scan_at}
-                orphanScanStale={isOrphanScanStale(
-                  row.stats?.cost_precision,
-                  row.stats?.cost_last_full_scan_at
-                )}
-              />
-            )
-          },
-          {
-            title: "Partition",
-            width: 156,
-            ellipsis: { showTitle: false },
-            render: (_: unknown, row) => (
-              <Typography.Text ellipsis={{ tooltip: row.stats?.partition_col }}>
-                {row.stats?.partition_col ?? "-"}
-              </Typography.Text>
-            )
-          },
-          {
-            title: "Seen",
-            dataIndex: "first_seen_at",
-            width: 152,
-            render: formatTime
-          }
-        ]}
-        locale={{
-          emptyText: (
-            <EmptyState
-              title="No tables match this view"
-              description="Run a scan or clear filters to browse the datalake."
-            />
-          )
-        }}
-        scroll={{ x: 1760 }}
-      />
-      <BulkAssignBar
-        selection={selection}
-        presets={assignablePresets}
-        destinations={destinations.data ?? []}
-        assigning={assign.isPending}
-        running={run.isPending || manifestRewrite.isPending}
-        scanning={scan.isPending}
-        onClear={clearSelection}
-        onAssign={(presetId) => assign.mutate(presetId)}
-        onPreview={() => setPreviewOpen(true)}
-        onRun={(args) => run.mutate(args)}
-        onManifestRewrite={(args) => manifestRewrite.mutate(args)}
-        onUnassign={() => unassign.mutate()}
-        onScan={() => scan.mutate()}
-      />
-      <PlanPreview
-        open={previewOpen}
-        tables={selectedTables}
-        onClose={() => setPreviewOpen(false)}
-      />
+          <DataTable
+            className="datalake-table"
+            columns={tableColumns}
+            data={pageItems}
+            density="compact"
+            loading={tables.isLoading || isDemotingSelection}
+            stickyFirstColumn
+            getRowId={(row) => row.id}
+            enableRowSelection
+            rowSelection={rowSelectionState}
+            onRowSelectionChange={(updater) => {
+              const next = typeof updater === "function" ? updater(rowSelectionState) : updater;
+              const keys = Object.keys(next).filter((key) => next[key]);
+              void handleRowSelectionChange(keys);
+            }}
+            emptyTitle="No tables match this view"
+            emptyDescription="Run a scan or clear filters to browse the datalake."
+            pagination={{
+              pageIndex: page - 1,
+              pageSize,
+              totalRows: matchingTotal,
+              onPageChange: (pageIndex) => setPage(pageIndex + 1)
+            }}
+          />
+          <BulkAssignBar
+            selection={selection}
+            presets={assignablePresets}
+            destinations={destinations.data ?? []}
+            assigning={assign.isPending}
+            running={run.isPending || manifestRewrite.isPending}
+            scanning={scan.isPending}
+            onClear={clearSelection}
+            onAssign={(presetId) => assign.mutate(presetId)}
+            onPreview={() => setPreviewOpen(true)}
+            onRun={(args) => run.mutate(args)}
+            onManifestRewrite={(args) => manifestRewrite.mutate(args)}
+            onUnassign={() => unassign.mutate()}
+            onScan={() => scan.mutate()}
+          />
+          <PlanPreview open={previewOpen} tables={selectedTables} onClose={() => setPreviewOpen(false)} />
         </>
       )}
     </>

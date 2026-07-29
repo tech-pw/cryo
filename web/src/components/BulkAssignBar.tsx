@@ -1,4 +1,3 @@
-import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import type { DestinationRead, Mode, PresetRead, UUID } from "../api/types";
 import type { Predicate } from "../lib/predicate";
@@ -9,6 +8,9 @@ import {
   nativeUnsupportedOpTooltip
 } from "../lib/engines";
 import { ConfirmAction } from "./confirm";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 
 export type BulkSelection =
   | { mode: "ids"; ids: UUID[]; totalSelected: number }
@@ -66,72 +68,61 @@ export const BulkAssignBar = ({
   }));
   const runDisabled = !activePresetId || !activeDestinationId;
   const manifestRewriteDisabled = runDisabled || isNativeDestination(activeDestination);
+  const presetTooltip =
+    activePreset?.description ??
+    "Choose the maintenance preset to assign to the selected tables. Run is disabled until a preset is selected.";
+  const engineTooltip = activeDestination
+    ? `${activeDestination.name} runs maintenance through ${formatEngineLabel(activeDestination.engine, activeDestination.config)}.`
+    : "Choose the engine that will run maintenance.";
 
   return (
     <div className="bulk-bar" data-testid="bulk-assign-bar">
-      <Space orientation="vertical" size={6}>
-        <Space wrap size={8}>
-          {isFilterSelection ? <Tag color="processing">Filter selection</Tag> : null}
-          <Typography.Text strong>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {isFilterSelection ? <Badge variant="default">Filter selection</Badge> : null}
+          <span className="font-semibold">
             {isFilterSelection
               ? `All ${selection.totalSelected.toLocaleString()} matching tables selected`
               : `${selection.totalSelected.toLocaleString()} selected`}
-          </Typography.Text>
-          <Tooltip
-            title={
-              activePreset?.description ??
-              "Choose the maintenance preset to assign to the selected tables. Run is disabled until a preset is selected."
-            }
-          >
-            <Select
-              aria-label="Assign preset"
-              placeholder="Select preset"
-              value={activePresetId}
-              options={presetOptions}
-              optionFilterProp="label"
-              style={{ width: 250 }}
-              allowClear
-              onChange={(next) => {
-                setPresetId(next);
-                if (next) {
-                  onAssign(next);
-                }
-              }}
-              loading={assigning}
-            />
-          </Tooltip>
-          <Tooltip title="Preview the planned maintenance steps before queueing a run.">
-            <Button onClick={onPreview}>Preview</Button>
-          </Tooltip>
+          </span>
+          <Select
+            aria-label="Assign preset"
+            title={presetTooltip}
+            placeholder="Select preset"
+            value={activePresetId}
+            options={presetOptions}
+            allowClear
+            loading={assigning}
+            onChange={(next) => {
+              setPresetId(next);
+              if (next) onAssign(next);
+            }}
+            style={{ width: 250 }}
+          />
+          <Button title="Preview the planned maintenance steps before queueing a run." onClick={onPreview}>
+            Preview
+          </Button>
           {onScan ? (
             <ConfirmAction
               title="Scan selected tables?"
               description="Queue a metadata scan for every table in the current selection."
               onConfirm={onScan}
             >
-              <Tooltip title="Queue a metadata scan for the current selection.">
-                <Button loading={scanning}>Scan selected</Button>
-              </Tooltip>
+              <Button title="Queue a metadata scan for the current selection." loading={scanning}>
+                Scan selected
+              </Button>
             </ConfirmAction>
           ) : null}
-          <Tooltip
-            title={
-              activeDestination
-                ? `${activeDestination.name} runs maintenance through ${formatEngineLabel(activeDestination.engine, activeDestination.config)}.`
-                : "Choose the engine that will run maintenance."
-            }
-          >
-            <Select
-              aria-label="Run engine"
-              placeholder="Run engine"
-              value={activeDestinationId}
-              options={destinationOptions}
-              optionFilterProp="label"
-              style={{ width: 220 }}
-              onChange={setDestinationId}
-              loading={running}
-            />
-          </Tooltip>
+          <Select
+            aria-label="Run engine"
+            title={engineTooltip}
+            placeholder="Run engine"
+            value={activeDestinationId}
+            options={destinationOptions}
+            loading={running}
+            onChange={setDestinationId}
+            style={{ width: 220 }}
+          />
           <ConfirmAction
             title={
               isFilterSelection
@@ -149,13 +140,11 @@ export const BulkAssignBar = ({
                 : undefined
             }
           >
-            <Tooltip title="Queue maintenance for the current selection using the chosen preset and engine.">
-              <span>
-                <Button type="primary" loading={running} disabled={runDisabled}>
-                  Run now
-                </Button>
-              </span>
-            </Tooltip>
+            <span title="Queue maintenance for the current selection using the chosen preset and engine.">
+              <Button variant="primary" loading={running} disabled={runDisabled}>
+                Run now
+              </Button>
+            </span>
           </ConfirmAction>
           {onManifestRewrite ? (
             <ConfirmAction
@@ -174,19 +163,17 @@ export const BulkAssignBar = ({
                   : undefined
               }
             >
-              <Tooltip
+              <span
                 title={
                   manifestRewriteDisabled && isNativeDestination(activeDestination)
                     ? nativeUnsupportedOpTooltip
                     : "Queue manifest rewrite only — no data file compaction."
                 }
               >
-                <span>
-                  <Button loading={running} disabled={manifestRewriteDisabled}>
-                    Manifest rewrite
-                  </Button>
-                </span>
-              </Tooltip>
+                <Button loading={running} disabled={manifestRewriteDisabled}>
+                  Manifest rewrite
+                </Button>
+              </span>
             </ConfirmAction>
           ) : null}
           {onUnassign ? (
@@ -199,21 +186,21 @@ export const BulkAssignBar = ({
               description="Clears manual preset assignments for the selected tables."
               onConfirm={onUnassign}
             >
-              <Tooltip title="Remove preset assignments from the current selection.">
-                <Button loading={assigning}>Unassign</Button>
-              </Tooltip>
+              <Button title="Remove preset assignments from the current selection." loading={assigning}>
+                Unassign
+              </Button>
             </ConfirmAction>
           ) : null}
-          <Tooltip title="Clear the current bulk selection.">
-            <Button onClick={onClear}>Clear</Button>
-          </Tooltip>
-        </Space>
+          <Button title="Clear the current bulk selection." onClick={onClear}>
+            Clear
+          </Button>
+        </div>
         {isFilterSelection ? (
-          <Typography.Text type="secondary" className="bulk-selection-help">
+          <p className="bulk-selection-help text-sm text-muted-foreground">
             Actions now apply to every table matching the current filters, across all pages.
-          </Typography.Text>
+          </p>
         ) : null}
-      </Space>
+      </div>
     </div>
   );
 };

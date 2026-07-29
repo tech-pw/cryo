@@ -1,24 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Input,
-  List,
-  Row,
-  Select,
-  Space,
-  Spin,
-  Statistic,
-  Tag,
-  Typography,
-  message
-} from "antd";
-import { RobotOutlined, ThunderboltOutlined, ToolOutlined } from "@ant-design/icons";
-import { useState } from "react";
+import { Bot, Wrench, Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import {
   aiChat,
   askCopilotNatural,
@@ -32,12 +16,47 @@ import {
   resetBandit,
   searchCopilot
 } from "../api/client";
+import { AsyncBoundary } from "../components/AsyncBoundary";
 import { ConfirmAction } from "../components/confirm";
-import { EmptyState, PageHeader, QueryErrorAlert, TelemetryRequiredNotice } from "../components/common";
+import { EmptyState, PageHeader, TelemetryRequiredNotice } from "../components/common";
+import { Alert } from "../components/ui/alert";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Textarea } from "../components/ui/textarea";
 import { useAuth } from "../lib/auth";
 import { formatNumber } from "../lib/format";
 
-const { TextArea } = Input;
+const JsonBlock = ({ value, title }: { value: string; title?: string }) => (
+  <Card>
+    {title ? (
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+    ) : null}
+    <CardContent>
+      <pre className="inline-json m-0 whitespace-pre-wrap text-xs">{value}</pre>
+    </CardContent>
+  </Card>
+);
+
+const StatPair = ({ label, value }: { label: string; value: ReactNode }) => (
+  <div>
+    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-lg font-semibold [font-variant-numeric:tabular-nums]">{value}</p>
+  </div>
+);
+
+const DescriptionList = ({ items }: { items: Array<{ label: string; value: ReactNode }> }) => (
+  <dl className="space-y-2 text-sm">
+    {items.map((item) => (
+      <div key={item.label} className="flex justify-between gap-4">
+        <dt className="text-muted-foreground">{item.label}</dt>
+        <dd className="font-medium text-right">{item.value}</dd>
+      </div>
+    ))}
+  </dl>
+);
 
 export const Intelligence = () => {
   const { api, role } = useAuth();
@@ -48,7 +67,7 @@ export const Intelligence = () => {
   const [chatContext, setChatContext] = useState("{}");
   const [chatResponse, setChatResponse] = useState<string | null>(null);
   const [chatMeta, setChatMeta] = useState<string | null>(null);
-  const [mcpTool, setMcpTool] = useState<string | undefined>();
+  const [mcpTool, setMcpTool] = useState<string>("");
   const [mcpArgs, setMcpArgs] = useState("{}");
   const [mcpResult, setMcpResult] = useState<string | null>(null);
 
@@ -84,7 +103,7 @@ export const Intelligence = () => {
       setLastAnswer(JSON.stringify(data.result, null, 2));
       setAnswerMeta(`Verified playbook · ${data.question_id}`);
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const embeddingSearch = useMutation({
@@ -101,7 +120,7 @@ export const Intelligence = () => {
         `Source: ${data.source}${data.similarity != null ? ` · similarity ${(data.similarity * 100).toFixed(0)}%` : ""}`
       );
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const naturalAsk = useMutation({
@@ -110,7 +129,7 @@ export const Intelligence = () => {
       setLastAnswer(data.answer);
       setAnswerMeta(`${data.provider} · ${data.model}`);
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const directChat = useMutation({
@@ -127,7 +146,7 @@ export const Intelligence = () => {
       setChatResponse(data.response);
       setChatMeta(`${data.provider} · ${data.model} · ${data.tokens_used} tokens`);
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const mcpCall = useMutation({
@@ -142,16 +161,16 @@ export const Intelligence = () => {
       return callMcpTool(api, { name: mcpTool, arguments: args });
     },
     onSuccess: (data) => setMcpResult(JSON.stringify(data.result, null, 2)),
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const banditReset = useMutation({
     mutationFn: () => resetBandit(api),
     onSuccess: () => {
-      message.success("Bandit state reset to heuristics");
+      toast.success("Bandit state reset to heuristics");
       void bandit.refetch();
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const handleSearch = () => {
@@ -159,349 +178,362 @@ export const Intelligence = () => {
     embeddingSearch.mutate();
   };
 
+  const telemetryEmpty = !questions.isLoading && !questions.error && (questions.data ?? []).length === 0;
+
   return (
     <div>
       <PageHeader
         title="Intelligence"
-        subtitle="Verified copilot answers, embedding search, governor bandit tuning, and learned cost model metrics."
+        subtitle="Verified copilot answers, embedding search, and governor learning signals."
         actions={
           <Link to="/connections">
-            <Button icon={<RobotOutlined />}>AI providers</Button>
+            <Button variant="secondary">
+              <Bot className="size-4" aria-hidden="true" />
+              AI providers
+            </Button>
           </Link>
         }
       />
+
       <Alert
-        className="page-alert"
-        type="info"
-        showIcon
+        className="page-alert mb-4"
+        variant="info"
         title="Operator quick starts: investigate anomalies, estimate savings impact, and pick tables to run next."
       />
 
-      <QueryErrorAlert error={questions.error} title="Failed to load copilot questions" />
-      <QueryErrorAlert error={bandit.error} title="Failed to load governor bandit status" />
-      <QueryErrorAlert error={costModel.error} title="Failed to load cost model evaluation" />
-      {!questions.isLoading && !questions.error && (questions.data ?? []).length === 0 ? (
-        <TelemetryRequiredNotice surface="Intelligence recommendations" />
-      ) : null}
+      {telemetryEmpty ? <TelemetryRequiredNotice surface="Intelligence recommendations" /> : null}
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={14}>
-          <Card title="Cryo copilot">
-            <Space orientation="vertical" className="full-width" size={12}>
-              <TextArea
-                rows={3}
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask about fleet health, compaction backlog, or SLA breaches…"
-                onPressEnter={(e) => {
-                  if (!e.shiftKey) {
-                    e.preventDefault();
-                    handleSearch();
-                  }
-                }}
-              />
-              <Space wrap>
-                <Button
-                  type="primary"
-                  loading={embeddingSearch.isPending}
-                  onClick={handleSearch}
-                  disabled={!question.trim()}
-                >
-                  Search (verified + embeddings)
-                </Button>
-                <Button
-                  icon={<ThunderboltOutlined />}
-                  loading={naturalAsk.isPending}
-                  onClick={() => naturalAsk.mutate()}
-                  disabled={!question.trim()}
-                >
-                  Ask LLM (needs provider)
-                </Button>
-              </Space>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle>Tier 1 · Copilot & search</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Textarea
+              rows={3}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder="Ask about fleet health, compaction backlog, or SLA breaches…"
+              onKeyDown={(e) => {
+                if (!e.shiftKey && e.key === "Enter") {
+                  e.preventDefault();
+                  handleSearch();
+                }
+              }}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                loading={embeddingSearch.isPending}
+                onClick={handleSearch}
+                disabled={!question.trim()}
+              >
+                Search (verified + embeddings)
+              </Button>
+              <Button
+                variant="secondary"
+                loading={naturalAsk.isPending}
+                onClick={() => naturalAsk.mutate()}
+                disabled={!question.trim()}
+              >
+                <Zap className="size-4" aria-hidden="true" />
+                Ask LLM (needs provider)
+              </Button>
+            </div>
 
-              <Typography.Text type="secondary">Verified playbook questions</Typography.Text>
-              {questions.isLoading ? (
-                <Spin />
-              ) : (questions.data ?? []).length ? (
-                <List
-                  size="small"
-                  bordered
-                  dataSource={questions.data ?? []}
-                  renderItem={(item) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          key="ask"
-                          type="link"
-                          size="small"
-                          loading={verifiedAsk.isPending && verifiedAsk.variables === item.id}
-                          onClick={() => verifiedAsk.mutate(item.id)}
+            <p className="text-sm text-muted-foreground">Verified playbook questions</p>
+            <AsyncBoundary
+              isLoading={questions.isLoading}
+              isError={Boolean(questions.error)}
+              error={questions.error}
+              onRetry={() => void questions.refetch()}
+              isEmpty={!telemetryEmpty && (questions.data ?? []).length === 0}
+              emptyTitle="No playbook loaded"
+              emptyDescription="Backend copilot questions unavailable."
+            >
+              <div className="divide-y divide-border rounded-[var(--radius-default)] border border-border">
+                {(questions.data ?? []).map((item) => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                    <span>{item.prompt}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={verifiedAsk.isPending && verifiedAsk.variables === item.id}
+                      onClick={() => verifiedAsk.mutate(item.id)}
+                    >
+                      Run
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </AsyncBoundary>
+
+            {lastAnswer ? (
+              lastAnswer.trim().startsWith("{") || lastAnswer.trim().startsWith("[") ? (
+                <JsonBlock value={lastAnswer} title={answerMeta ?? "Answer"} />
+              ) : (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">{answerMeta ?? "Answer"}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="m-0 whitespace-pre-wrap text-sm">{lastAnswer}</p>
+                  </CardContent>
+                </Card>
+              )
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <details className="rounded-[var(--radius-default)] border border-border">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Tier 2 · More tools (LLM chat & MCP)</summary>
+          <div className="grid gap-4 border-t border-border p-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm">Direct AI chat</CardTitle>
+                <Bot className="size-4 text-muted-foreground" aria-hidden="true" />
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Uses the default AI provider via <code>/ai/chat</code> with optional JSON context.
+                </p>
+                <Textarea
+                  rows={3}
+                  value={chatPrompt}
+                  onChange={(e) => setChatPrompt(e.target.value)}
+                  placeholder="Ask anything about your datalake…"
+                />
+                <Textarea
+                  rows={3}
+                  value={chatContext}
+                  onChange={(e) => setChatContext(e.target.value)}
+                  placeholder='Optional context JSON, e.g. {"table_id": "..."}'
+                  className="mono-input font-mono text-xs"
+                />
+                <Button
+                  variant="primary"
+                  loading={directChat.isPending}
+                  disabled={!chatPrompt.trim()}
+                  onClick={() => directChat.mutate()}
+                >
+                  Send
+                </Button>
+                {chatResponse ? (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">{chatMeta ?? "Response"}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="m-0 whitespace-pre-wrap text-sm">{chatResponse}</p>
+                    </CardContent>
+                  </Card>
+                ) : null}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm">MCP tools</CardTitle>
+                <Wrench className="size-4 text-muted-foreground" aria-hidden="true" />
+              </CardHeader>
+              <CardContent>
+                <AsyncBoundary
+                  isLoading={mcpTools.isLoading}
+                  isError={Boolean(mcpTools.error)}
+                  error={mcpTools.error}
+                  onRetry={() => void mcpTools.refetch()}
+                >
+                  <div className="space-y-3">
+                    <select
+                      className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+                      value={mcpTool}
+                      onChange={(event) => setMcpTool(event.target.value)}
+                    >
+                      <option value="">Select tool</option>
+                      {(mcpTools.data ?? []).map((tool) => (
+                        <option key={tool.name} value={tool.name} title={tool.description}>
+                          {tool.name}
+                        </option>
+                      ))}
+                    </select>
+                    {mcpTool ? (
+                      <p className="text-sm text-muted-foreground">
+                        {(mcpTools.data ?? []).find((tool) => tool.name === mcpTool)?.description}
+                      </p>
+                    ) : null}
+                    <Textarea
+                      rows={4}
+                      value={mcpArgs}
+                      onChange={(e) => setMcpArgs(e.target.value)}
+                      placeholder='{"table_id": "..."}'
+                      className="mono-input font-mono text-xs"
+                    />
+                    <Button
+                      variant="primary"
+                      loading={mcpCall.isPending}
+                      disabled={!mcpTool || role === "viewer"}
+                      onClick={() => mcpCall.mutate()}
+                    >
+                      Call tool
+                    </Button>
+                    {mcpResult ? <JsonBlock value={mcpResult} title="Result" /> : null}
+                  </div>
+                </AsyncBoundary>
+              </CardContent>
+            </Card>
+          </div>
+        </details>
+
+        <details className="rounded-[var(--radius-default)] border border-border">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+            Tier 3 · Advanced telemetry (admin)
+          </summary>
+          <div className="grid gap-4 border-t border-border p-4 lg:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Governor bandit</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AsyncBoundary
+                  isLoading={bandit.isLoading}
+                  isError={Boolean(bandit.error)}
+                  error={bandit.error}
+                  onRetry={() => void bandit.refetch()}
+                  isEmpty={!bandit.data}
+                  emptyTitle="Bandit unavailable"
+                  emptyDescription="Governor state file not readable."
+                >
+                  {bandit.data ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <StatPair label="Observations" value={bandit.data.observations} />
+                        <StatPair
+                          label="Confident"
+                          value={
+                            <span className={bandit.data.confident ? "text-[var(--color-status-success)]" : undefined}>
+                              {bandit.data.confident ? "Yes" : "No"}
+                            </span>
+                          }
+                        />
+                      </div>
+                      <DescriptionList
+                        items={[
+                          { label: "High load ratio", value: bandit.data.config.high_load_ratio?.toFixed(3) ?? "—" },
+                          {
+                            label: "High load fraction",
+                            value: bandit.data.config.high_load_fraction?.toFixed(3) ?? "—"
+                          },
+                          { label: "Per-replica cap", value: formatNumber(bandit.data.config.per_replica_cap) }
+                        ]}
+                      />
+                      {!bandit.data.confident ? (
+                        <Alert
+                          variant="info"
+                          title="Still learning — using heuristic admission until enough outcomes are recorded."
+                        />
+                      ) : null}
+                      {role === "admin" ? (
+                        <ConfirmAction
+                          title="Reset admission bandit?"
+                          description="Clears learned governor bandit state and reverts to static heuristics."
+                          onConfirm={() => banditReset.mutate()}
                         >
-                          Run
-                        </Button>
-                      ]}
-                    >
-                      <List.Item.Meta title={item.prompt} />
-                    </List.Item>
-                  )}
-                />
-              ) : (
-                <EmptyState title="No playbook loaded" description="Backend copilot questions unavailable." />
-              )}
-
-              {lastAnswer ? (
-                <Card size="small" title={answerMeta ?? "Answer"} type="inner">
-                  <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-                    {lastAnswer}
-                  </Typography.Paragraph>
-                </Card>
-              ) : null}
-            </Space>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={10}>
-          <Space orientation="vertical" className="full-width" size={16}>
-            <Card title="Governor bandit" loading={bandit.isLoading}>
-              {bandit.data ? (
-                <>
-                  <Row gutter={16}>
-                    <Col span={12}>
-                      <Statistic title="Observations" value={bandit.data.observations} />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic
-                        title="Confident"
-                        value={bandit.data.confident ? "Yes" : "No"}
-                        styles={{ content: { color: bandit.data.confident ? "#52c41a" : undefined }}}
-                      />
-                    </Col>
-                  </Row>
-                  <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
-                    <Descriptions.Item label="High load ratio">
-                      {bandit.data.config.high_load_ratio?.toFixed(3) ?? "—"}
-                    </Descriptions.Item>
-                    <Descriptions.Item label="High load fraction">
-                      {bandit.data.config.high_load_fraction?.toFixed(3) ?? "—"}
-                    </Descriptions.Item>
-                    <Descriptions.Item label="Per-replica cap">
-                      {formatNumber(bandit.data.config.per_replica_cap)}
-                    </Descriptions.Item>
-                  </Descriptions>
-                  {!bandit.data.confident ? (
-                    <Alert
-                      style={{ marginTop: 12 }}
-                      type="info"
-                      showIcon
-                      title="Still learning — using heuristic admission until enough outcomes are recorded."
-                    />
+                          <Button size="sm" variant="danger" loading={banditReset.isPending}>
+                            Reset bandit
+                          </Button>
+                        </ConfirmAction>
+                      ) : null}
+                    </div>
                   ) : null}
-                  {role === "admin" ? (
-                    <ConfirmAction
-                      title="Reset admission bandit?"
-                      description="Clears learned governor bandit state and reverts to static heuristics."
-                      onConfirm={() => banditReset.mutate()}
-                    >
-                      <Button
-                        size="small"
-                        danger
-                        style={{ marginTop: 12 }}
-                        loading={banditReset.isPending}
-                      >
-                        Reset bandit
-                      </Button>
-                    </ConfirmAction>
-                  ) : null}
-                </>
-              ) : (
-                <EmptyState title="Bandit unavailable" description="Governor state file not readable." />
-              )}
+                </AsyncBoundary>
+              </CardContent>
             </Card>
-
-            <Card title="Learned cost model" loading={costModel.isLoading}>
-              {costModel.data ? (
-                <>
-                  <Row gutter={[16, 16]}>
-                    <Col span={12}>
-                      <Statistic
-                        title="MAE (learned)"
-                        value={costModel.data.mae_learned}
-                        precision={2}
-                        suffix="USD/mo"
-                      />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic
-                        title="MAE (heuristic)"
-                        value={costModel.data.mae_heuristic}
-                        precision={2}
-                        suffix="USD/mo"
-                      />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic title="Training samples" value={costModel.data.n_samples} />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic
-                        title="Conformal coverage"
-                        value={(costModel.data.band_coverage * 100).toFixed(0)}
-                        suffix="%"
-                      />
-                    </Col>
-                  </Row>
-                  <Tag
-                    color={costModel.data.beats_heuristic ? "success" : "default"}
-                    style={{ marginTop: 12 }}
-                  >
-                    {costModel.data.beats_heuristic
-                      ? "Learned model beats heuristic on holdout"
-                      : "Heuristic still competitive — need more outcome labels"}
-                  </Tag>
-                  {costModel.data.n_samples < 10 ? (
-                    <Alert
-                      style={{ marginTop: 12 }}
-                      type="warning"
-                      showIcon
-                      title="Few labeled maintenance outcomes — projections still mostly heuristic."
-                    />
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Learned cost model</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AsyncBoundary
+                  isLoading={costModel.isLoading}
+                  isError={Boolean(costModel.error)}
+                  error={costModel.error}
+                  onRetry={() => void costModel.refetch()}
+                  isEmpty={!costModel.data}
+                  emptyTitle="Cost model unavailable"
+                  emptyDescription="No audit outcomes to evaluate yet."
+                >
+                  {costModel.data ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <StatPair label="MAE (learned)" value={`${costModel.data.mae_learned.toFixed(2)} USD/mo`} />
+                        <StatPair label="MAE (heuristic)" value={`${costModel.data.mae_heuristic.toFixed(2)} USD/mo`} />
+                        <StatPair label="Training samples" value={costModel.data.n_samples} />
+                        <StatPair
+                          label="Conformal coverage"
+                          value={`${(costModel.data.band_coverage * 100).toFixed(0)}%`}
+                        />
+                      </div>
+                      <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
+                        {costModel.data.beats_heuristic
+                          ? "Learned model beats heuristic on holdout"
+                          : "Heuristic still competitive — need more outcome labels"}
+                      </Badge>
+                      {costModel.data.n_samples < 10 ? (
+                        <Alert
+                          variant="warning"
+                          title="Few labeled maintenance outcomes — projections still mostly heuristic."
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
-                </>
-              ) : (
-                <EmptyState title="Cost model unavailable" description="No audit outcomes to evaluate yet." />
-              )}
+                </AsyncBoundary>
+              </CardContent>
             </Card>
-
-            <Card title="Query performance prediction (QPP)" loading={qpp.isLoading}>
-              {qpp.data ? (
-                <>
-                  <Tag color={qpp.data.qpp_enabled ? "success" : "default"}>
-                    {qpp.data.qpp_enabled ? "Admission gating enabled" : "Advisory only — not gating admission"}
-                  </Tag>
-                  <Row gutter={16} style={{ marginTop: 12 }}>
-                    <Col span={12}>
-                      <Statistic title="Observations" value={qpp.data.observations} />
-                    </Col>
-                    <Col span={12}>
-                      <Statistic
-                        title="Confidence"
-                        value={(qpp.data.confidence * 100).toFixed(0)}
-                        suffix="%"
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Query performance prediction (QPP)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AsyncBoundary
+                  isLoading={qpp.isLoading}
+                  isError={Boolean(qpp.error)}
+                  error={qpp.error}
+                  onRetry={() => void qpp.refetch()}
+                  isEmpty={!qpp.data}
+                  emptyTitle="QPP unavailable"
+                  emptyDescription="No query performance predictions recorded yet."
+                >
+                  {qpp.data ? (
+                    <div className="space-y-4">
+                      <Badge variant={qpp.data.qpp_enabled ? "success" : "secondary"}>
+                        {qpp.data.qpp_enabled ? "Admission gating enabled" : "Advisory only — not gating admission"}
+                      </Badge>
+                      <div className="grid grid-cols-2 gap-4">
+                        <StatPair label="Observations" value={qpp.data.observations} />
+                        <StatPair label="Confidence" value={`${(qpp.data.confidence * 100).toFixed(0)}%`} />
+                      </div>
+                      <DescriptionList
+                        items={[
+                          {
+                            label: "Using trained model",
+                            value: qpp.data.using_trained_model ? "Yes" : "No — falling back to defaults"
+                          },
+                          { label: "Min observations to train", value: formatNumber(qpp.data.min_observations) }
+                        ]}
                       />
-                    </Col>
-                  </Row>
-                  <Descriptions size="small" column={1} style={{ marginTop: 16 }}>
-                    <Descriptions.Item label="Using trained model">
-                      {qpp.data.using_trained_model ? "Yes" : "No — falling back to defaults"}
-                    </Descriptions.Item>
-                    <Descriptions.Item label="Min observations to train">
-                      {formatNumber(qpp.data.min_observations)}
-                    </Descriptions.Item>
-                  </Descriptions>
-                  {!qpp.data.using_trained_model ? (
-                    <Alert
-                      style={{ marginTop: 12 }}
-                      type="info"
-                      showIcon
-                      title="Still collecting observations — the governor uses default latency estimates until enough runs are recorded."
-                    />
+                      {!qpp.data.using_trained_model ? (
+                        <Alert
+                          variant="info"
+                          title="Still collecting observations — the governor uses default latency estimates until enough runs are recorded."
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
-                </>
-              ) : (
-                <EmptyState
-                  title="QPP unavailable"
-                  description="No query performance predictions recorded yet."
-                />
-              )}
+                </AsyncBoundary>
+              </CardContent>
             </Card>
-          </Space>
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} lg={12}>
-          <Card title="MCP tools" extra={<ToolOutlined />}>
-            <QueryErrorAlert error={mcpTools.error} title="Failed to load MCP tools" />
-            <Space orientation="vertical" className="full-width" size={12}>
-              <Select
-                placeholder="Select tool"
-                value={mcpTool}
-                loading={mcpTools.isLoading}
-                options={(mcpTools.data ?? []).map((tool) => ({
-                  value: tool.name,
-                  label: tool.name,
-                  title: tool.description
-                }))}
-                onChange={setMcpTool}
-                style={{ width: "100%" }}
-              />
-              {mcpTool ? (
-                <Typography.Text type="secondary">
-                  {(mcpTools.data ?? []).find((tool) => tool.name === mcpTool)?.description}
-                </Typography.Text>
-              ) : null}
-              <Input.TextArea
-                rows={4}
-                value={mcpArgs}
-                onChange={(e) => setMcpArgs(e.target.value)}
-                placeholder='{"table_id": "..."}'
-                className="mono-input"
-              />
-              <Button
-                type="primary"
-                loading={mcpCall.isPending}
-                disabled={!mcpTool || role === "viewer"}
-                onClick={() => mcpCall.mutate()}
-              >
-                Call tool
-              </Button>
-              {mcpResult ? (
-                <Card size="small" type="inner" title="Result">
-                  <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-                    <pre className="inline-json">{mcpResult}</pre>
-                  </Typography.Paragraph>
-                </Card>
-              ) : null}
-            </Space>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Direct AI chat" extra={<RobotOutlined />}>
-            <Space orientation="vertical" className="full-width" size={12}>
-              <Typography.Text type="secondary">
-                Uses the default AI provider via <Typography.Text code>/ai/chat</Typography.Text> with optional JSON context.
-              </Typography.Text>
-              <TextArea
-                rows={3}
-                value={chatPrompt}
-                onChange={(e) => setChatPrompt(e.target.value)}
-                placeholder="Ask anything about your datalake…"
-              />
-              <Input.TextArea
-                rows={3}
-                value={chatContext}
-                onChange={(e) => setChatContext(e.target.value)}
-                placeholder='Optional context JSON, e.g. {"table_id": "..."}'
-                className="mono-input"
-              />
-              <Button
-                type="primary"
-                loading={directChat.isPending}
-                disabled={!chatPrompt.trim()}
-                onClick={() => directChat.mutate()}
-              >
-                Send
-              </Button>
-              {chatResponse ? (
-                <Card size="small" type="inner" title={chatMeta ?? "Response"}>
-                  <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-                    {chatResponse}
-                  </Typography.Paragraph>
-                </Card>
-              ) : null}
-            </Space>
-          </Card>
-        </Col>
-      </Row>
+          </div>
+        </details>
+      </div>
     </div>
   );
 };

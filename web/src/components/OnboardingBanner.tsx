@@ -1,5 +1,6 @@
-import { Alert, Button, Space } from "antd";
 import { Link } from "react-router-dom";
+import { Alert } from "./ui/alert";
+import { Button } from "./ui/button";
 
 interface OnboardingBannerProps {
   sourceCount: number;
@@ -12,32 +13,31 @@ export const OnboardingBanner = ({ sourceCount, scanCount }: OnboardingBannerPro
   const missingScans = scanCount === 0;
   return (
     <Alert
-      type="info"
-      showIcon
-      style={{ marginBottom: 16 }}
-      message="Welcome to Cryo"
+      className="mb-4"
+      variant="info"
+      title="Welcome to Cryo"
       description={
-        <Space direction="vertical" size={6}>
-          <span>
+        <div className="space-y-2">
+          <p>
             {missingSources
               ? "Add a source connection to start discovering Iceberg tables."
               : "Run a scan to populate health, cost, and compaction data."}
-          </span>
-          <Space>
-            {missingSources && (
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {missingSources ? (
               <Link to="/connections">
-                <Button type="primary" size="small">
+                <Button variant="primary" size="sm">
                   Add source
                 </Button>
               </Link>
-            )}
-            {missingScans && (
+            ) : null}
+            {missingScans ? (
               <Link to="/scans">
-                <Button size="small">Run scan</Button>
+                <Button size="sm">Run scan</Button>
               </Link>
-            )}
-          </Space>
-        </Space>
+            ) : null}
+          </div>
+        </div>
       }
     />
   );

@@ -6,12 +6,12 @@
  */
 
 import {
-  AppstoreOutlined,
-  ClearOutlined,
-  HistoryOutlined,
-  ThunderboltOutlined,
-  WarningOutlined
-} from "@ant-design/icons";
+  AlertTriangle,
+  Eraser,
+  History,
+  LayoutGrid,
+  Zap
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 export interface SignalPointerDetail {
@@ -52,12 +52,12 @@ export const provenanceLabel = (provenance?: string | null): string => {
 };
 
 export const actionIcon = (action: string, failed: boolean): ReactNode => {
-  if (failed) return <WarningOutlined />;
+  if (failed) return <AlertTriangle className="size-3.5" />;
   const normalized = action.toLowerCase();
-  if (normalized.includes("orphan")) return <ClearOutlined />;
-  if (normalized.includes("expire")) return <HistoryOutlined />;
-  if (normalized.includes("manifest")) return <AppstoreOutlined />;
-  return <ThunderboltOutlined />;
+  if (normalized.includes("orphan")) return <Eraser className="size-3.5" />;
+  if (normalized.includes("expire")) return <History className="size-3.5" />;
+  if (normalized.includes("manifest")) return <LayoutGrid className="size-3.5" />;
+  return <Zap className="size-3.5" />;
 };
 
 export const getSignalPointerDetail = (

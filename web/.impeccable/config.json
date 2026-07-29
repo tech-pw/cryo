@@ -1,0 +1,27 @@
+{
+  "detector": {
+    "designSystem": { "enabled": true },
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "IBM Plex Sans",
+        "reason": "Cryo brand font per DESIGN.md — configured to avoid the detector flagging the canonical family as generic"
+      },
+      {
+        "rule": "overused-font",
+        "value": "IBM Plex Mono",
+        "reason": "Cryo mono for SQL, JSON, and IDs (per DESIGN.md); do not swap to silence the detector"
+      }
+    ],
+    "ignoreFiles": [
+      "src/styles.css",
+      "src/**/*.test.tsx",
+      "src/**/*.test.ts",
+      "src/lib/theme.ts"
+    ]
+  },
+  "hook": {
+    "enabled": false
+  },
+  "scope": "product"
+}

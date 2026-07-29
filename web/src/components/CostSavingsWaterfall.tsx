@@ -1,10 +1,10 @@
-import { Segmented } from "antd";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from "recharts";
 import type { CostByOperation, OperationType } from "../api/types";
 import { ChartFrame } from "./common";
 import { bytesToGb, formatCurrency, formatGb } from "../lib/format";
 import { chartAxisTick, cryoColors, operationLabels } from "../lib/theme";
+import { Segmented } from "./ui/segmented";
 
 type Measure = "cost" | "storage";
 
@@ -76,11 +76,10 @@ export const CostSavingsWaterfall = ({
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+      <div className="mb-2 flex justify-end">
         <Segmented
-          size="small"
           value={measure}
-          onChange={(value) => setMeasure(value as Measure)}
+          onChange={setMeasure}
           options={[
             { label: "Cost / mo", value: "cost" },
             { label: "Storage", value: "storage" }

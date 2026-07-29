@@ -1,6 +1,7 @@
+import { Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Spin, Typography } from "antd";
+
 import { useAuth } from "../lib/auth";
 
 /** Handles OIDC authorization-code callback and stores the IdP access token. */
@@ -19,16 +20,15 @@ export const LoginCallback = () => {
   }, [completeOidcSignIn, navigate, params]);
 
   return (
-    <div className="login-screen">
-      <Spin size="large" />
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--color-layout-bg)] p-6">
+      <Loader2 className="size-8 animate-spin text-primary" aria-hidden="true" />
+      <p className="sr-only">Completing sign-in</p>
       {error ? (
-        <Typography.Paragraph type="danger" style={{ marginTop: 16 }}>
+        <p className="mt-4 text-sm text-destructive" role="alert">
           {error}
-        </Typography.Paragraph>
+        </p>
       ) : (
-        <Typography.Text type="secondary" style={{ marginTop: 16 }}>
-          Completing sign-in…
-        </Typography.Text>
+        <p className="mt-4 text-sm text-muted-foreground">Completing sign-in…</p>
       )}
     </div>
   );

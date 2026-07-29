@@ -32,11 +32,17 @@ vi.mock("../api/client", () => ({
     cost_by_schema: [],
     drift: []
   }),
+  getFleetTrends: vi.fn().mockResolvedValue({
+    days: 30,
+    health_trend: [],
+    cost_trend: []
+  }),
+  getSmartMaintenanceOverview: vi.fn().mockResolvedValue(null),
   listTables: vi.fn()
 }));
 
 describe("DatalakeHealth page", () => {
-  it("renders the dashboard heading and stat strip", async () => {
+  it("renders the dashboard heading and metric tiles", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
@@ -46,6 +52,7 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
     expect(await screen.findByText("Datalake health")).toBeInTheDocument();
-    expect(await screen.findByText("Tables")).toBeInTheDocument();
+    expect(await screen.findByText("Tracked tables")).toBeInTheDocument();
+    expect(screen.getByText("Tables at grade D/F")).toBeInTheDocument();
   });
 });

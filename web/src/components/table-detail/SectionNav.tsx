@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button } from "antd";
+import { cn } from "../../lib/cn";
 
 export interface TableDetailSection {
   id: string;
@@ -37,20 +37,22 @@ export const SectionNav = ({ sections }: SectionNavProps) => {
   }, [sections]);
 
   return (
-    <div className="td-section-nav" role="navigation" aria-label="Table detail sections">
+    <nav className="td-section-nav-rail" aria-label="Table detail sections">
       {sections.map((section) => (
-        <Button
+        <button
           key={section.id}
-          size="small"
-          type={active === section.id ? "primary" : "default"}
-          className="td-section-nav-chip"
+          type="button"
+          className={cn(
+            "td-section-nav-rail__item",
+            active === section.id && "td-section-nav-rail__item--active"
+          )}
           onClick={() => {
             document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
         >
           {section.label}
-        </Button>
+        </button>
       ))}
-    </div>
+    </nav>
   );
 };

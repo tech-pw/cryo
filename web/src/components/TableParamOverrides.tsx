@@ -1,19 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DeleteOutlined, PlusOutlined, SlidersOutlined } from "@ant-design/icons";
-import { AutoComplete, Button, Card, Input, Space, Table, Tag, Typography, message } from "antd";
+import { Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { getEffectiveParams, patchTableParamOverrides } from "../api/client";
 import type { UUID } from "../api/types";
 import { QueryErrorAlert } from "./common";
 import { useAuth } from "../lib/auth";
+import { Autocomplete } from "./ui/autocomplete";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Input } from "./ui/input";
+import { SimpleTable } from "./ui/simple-table";
 
 interface Props {
   tableId: UUID;
 }
 
-// Common tunables worth surfacing as autocomplete suggestions -- the override set itself is
-// open-ended (cryo/planner/guardrails.py::validate_params only checks a handful of known
-// keys), so free text is still accepted for anything not in this list.
 const SUGGESTED_PARAM_KEYS = [
   "retention_days",
   "retain_last",
@@ -25,9 +28,6 @@ const SUGGESTED_PARAM_KEYS = [
   "group_concurrency"
 ];
 
-// retention_days/retain_last/etc. must round-trip as real JSON numbers -- guardrails.py's
-// _is_number() rejects numeric strings outright, so a value typed as "1" has to become 1,
-// not stay "1", or the PATCH fails validation.
 function parseOverrideValue(raw: string): unknown {
   const trimmed = raw.trim();
   if (trimmed === "true") return true;
@@ -52,12 +52,12 @@ export const TableParamOverrides = ({ tableId }: Props) => {
   const patch = useMutation({
     mutationFn: (overrides: Record<string, unknown>) => patchTableParamOverrides(api, tableId, overrides),
     onSuccess: () => {
-      message.success("Parameter overrides updated");
+      toast.success("Parameter overrides updated");
       setNewKey("");
       setNewValue("");
       void queryClient.invalidateQueries({ queryKey: ["effective-params", tableId] });
     },
-    onError: (error) => message.error((error as Error).message)
+    onError: (error) => toast.error((error as Error).message)
   });
 
   const overrides = effectiveParams.data?.param_overrides ?? {};
@@ -66,7 +66,10 @@ export const TableParamOverrides = ({ tableId }: Props) => {
 
   const keyOptions = useMemo(
     () =>
-      SUGGESTED_PARAM_KEYS.filter((key) => !overrideKeys.includes(key)).map((key) => ({ value: key })),
+      SUGGESTED_PARAM_KEYS.filter((key) => !overrideKeys.includes(key)).map((key) => ({
+        value: key,
+        label: key
+      })),
     [overrideKeys]
   );
 
@@ -88,111 +91,108 @@ export const TableParamOverrides = ({ tableId }: Props) => {
 
   if (effectiveParams.error) {
     return (
-      <Card size="small" style={{ marginTop: 12 }}>
-        <QueryErrorAlert error={effectiveParams.error} title="Failed to load effective parameters" />
+      <Card className="mt-3">
+        <CardContent className="pt-4">
+          <QueryErrorAlert error={effectiveParams.error} title="Failed to load effective parameters" />
+        </CardContent>
       </Card>
     );
   }
 
-  const columns = [
-    { title: "Param", dataIndex: "key", width: 220 },
-    {
-      title: "Preset default",
-      dataIndex: "presetValue",
-      render: (value: unknown) =>
-        value === undefined ? <Typography.Text type="secondary">—</Typography.Text> : String(value)
-    },
-    {
-      title: "Override",
-      dataIndex: "overrideValue",
-      render: (value: unknown) => <Tag color="blue">{String(value)}</Tag>
-    },
-    ...(canEdit
-      ? [
-          {
-            title: "",
-            key: "actions",
-            width: 40,
-            render: (_: unknown, row: { key: string }) => (
-              <Button
-                size="small"
-                type="text"
-                icon={<DeleteOutlined />}
-                onClick={() => handleRemove(row.key)}
-                disabled={patch.isPending}
-              />
-            )
-          }
-        ]
-      : [])
-  ];
-
   return (
-    <Card
-      size="small"
-      style={{ marginTop: 12 }}
-      title={
-        <Space size={6}>
-          <SlidersOutlined />
-          <span>Table parameter overrides</span>
-        </Space>
-      }
-    >
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        Tweak maintenance params for this table only, layered on top of{" "}
-        <strong>{effectiveParams.data.preset_name}</strong> without changing the preset for other tables
-        assigned to it.
-      </Typography.Text>
+    <Card className="mt-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <SlidersHorizontal className="size-4" />
+          Table parameter overrides
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Tweak maintenance params for this table only, layered on top of{" "}
+          <strong>{effectiveParams.data.preset_name}</strong> without changing the preset for other tables assigned to
+          it.
+        </p>
 
-      {overrideKeys.length > 0 ? (
-        <Table
-          size="small"
-          style={{ marginTop: 12 }}
-          pagination={false}
-          rowKey="key"
-          dataSource={overrideKeys.map((key) => ({
-            key,
-            presetValue: presetParams[key],
-            overrideValue: overrides[key]
-          }))}
-          columns={columns}
-        />
-      ) : (
-        <Typography.Text type="secondary" style={{ display: "block", marginTop: 12, fontSize: 12 }}>
-          No overrides — this table uses {effectiveParams.data.preset_name}&rsquo;s params as-is.
-        </Typography.Text>
-      )}
+        {overrideKeys.length > 0 ? (
+          <SimpleTable
+            rowKey={(row) => row.key}
+            dataSource={overrideKeys.map((key) => ({
+              key,
+              presetValue: presetParams[key],
+              overrideValue: overrides[key]
+            }))}
+            columns={[
+              { title: "Param", dataIndex: "key", width: 220 },
+              {
+                title: "Preset default",
+                dataIndex: "presetValue",
+                render: (value) =>
+                  value === undefined ? <span className="text-muted-foreground">—</span> : String(value)
+              },
+              {
+                title: "Override",
+                dataIndex: "overrideValue",
+                render: (value) => <Badge variant="default">{String(value)}</Badge>
+              },
+              ...(canEdit
+                ? [
+                    {
+                      title: "",
+                      key: "actions",
+                      width: 40,
+                      render: (_: unknown, row: { key: string }) => (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Remove ${row.key}`}
+                          onClick={() => handleRemove(row.key)}
+                          disabled={patch.isPending}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      )
+                    }
+                  ]
+                : [])
+            ]}
+          />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No overrides — this table uses {effectiveParams.data.preset_name}&rsquo;s params as-is.
+          </p>
+        )}
 
-      {canEdit ? (
-        <Space style={{ marginTop: 12 }} wrap>
-          <AutoComplete
-            placeholder="Param name"
-            style={{ width: 200 }}
-            value={newKey}
-            onChange={setNewKey}
-            options={keyOptions}
-            filterOption={(input, option) =>
-              (option?.value as string)?.toLowerCase().includes(input.toLowerCase())
-            }
-          />
-          <Input
-            placeholder="Value"
-            style={{ width: 140 }}
-            value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            onPressEnter={handleAdd}
-          />
-          <Button
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={handleAdd}
-            disabled={!newKey.trim() || newValue.trim() === "" || patch.isPending}
-            loading={patch.isPending}
-          >
-            Add override
-          </Button>
-        </Space>
-      ) : null}
+        {canEdit ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Autocomplete
+              value={newKey}
+              onChange={setNewKey}
+              options={keyOptions}
+              placeholder="Param name"
+              className="w-[200px]"
+            />
+            <Input
+              placeholder="Value"
+              className="w-[140px]"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleAdd();
+              }}
+            />
+            <Button
+              size="sm"
+              onClick={handleAdd}
+              disabled={!newKey.trim() || newValue.trim() === "" || patch.isPending}
+              loading={patch.isPending}
+            >
+              <Plus className="size-3.5" />
+              Add override
+            </Button>
+          </div>
+        ) : null}
+      </CardContent>
     </Card>
   );
 };
