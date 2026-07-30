@@ -272,6 +272,11 @@ def test_governor_wave_reaps_stale_running_jobs() -> None:
         store,
         default_config=AdmissionConfig(adaptive_budget=False),
         lock_ttl_seconds=6 * 60 * 60,
+        # This test is fully in-memory (queue/store/lock_store are fakes, "job-1" isn't even a
+        # real UUID) -- Governor's step-ledger lookup for the stale reaper needs a real DB
+        # session factory by default for production use, so opt out of it here rather than
+        # let it try to hit a real Postgres connection.
+        session_factory=None,
     )
     result = governor.run_wave(now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC))
 

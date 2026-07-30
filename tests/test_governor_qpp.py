@@ -63,7 +63,7 @@ class TestHashQueryText:
         h1 = hash_query_text("SELECT * FROM table")
         h2 = hash_query_text("SELECT * FROM table")
         assert h1 == h2
-        assert len(h1) == 64  # SHA-256 hex
+        assert len(h1) == 16  # 16-char SHA-256 hex prefix, see hash_query_text's docstring
 
     def test_hash_query_text_changes(self) -> None:
         h1 = hash_query_text("SELECT 1")
@@ -72,7 +72,7 @@ class TestHashQueryText:
 
     def test_hash_query_text_none(self) -> None:
         h = hash_query_text(None)
-        assert h == "0" * 64
+        assert h == "0" * 16
 
 
 class TestHeuristicPredict:
@@ -163,39 +163,40 @@ class TestQPPModel:
         assert isinstance(pred.exceeds_target(60000.0), bool)
 
     def test_model_train_and_predict(self) -> None:
-        model = QPPModel(min_observations=2)
+        # _fit_linear_regression's normal equation needs >= 4 rows for a 4-feature closed-form
+        # solve (see train()'s "if len(rows) < 4: return" no-op guard) -- fewer than that and
+        # training is a documented no-op, not a bug.
+        model = QPPModel(min_observations=4)
         table_id = uuid.uuid4()
+        # files_scanned, partition_count, and cotenant_load_pct must vary independently of
+        # each other (and of the constant intercept term) -- otherwise X^T X is singular and
+        # _fit_linear_regression correctly refuses to fit (see _solve_4x4's pivot check).
         observations = [
             (
                 QPPFeatures(
-                    query_text_hash="q1",
+                    query_text_hash=f"q{i}",
                     table_id=table_id,
-                    partition_count=10,
-                    files_scanned=100,
+                    partition_count=partition_count,
+                    files_scanned=files_scanned,
                     is_cached=False,
-                    cotenant_load_pct=0.5,
+                    cotenant_load_pct=cotenant_load_pct,
                     hour_of_day=10,
                     day_of_week=1,
                 ),
-                5000.0,
-            ),
-            (
-                QPPFeatures(
-                    query_text_hash="q2",
-                    table_id=table_id,
-                    partition_count=20,
-                    files_scanned=200,
-                    is_cached=False,
-                    cotenant_load_pct=0.5,
-                    hour_of_day=10,
-                    day_of_week=1,
-                ),
-                10000.0,
-            ),
+                actual_p95_ms,
+            )
+            for i, (partition_count, files_scanned, cotenant_load_pct, actual_p95_ms) in enumerate(
+                [
+                    (10, 100, 0.2, 5000.0),
+                    (20, 150, 0.5, 10000.0),
+                    (5, 300, 0.1, 2500.0),
+                    (40, 80, 0.8, 20000.0),
+                ]
+            )
         ]
         model.train(observations)
         assert len(model._weights) >= 4
-        assert model._last_train_size == 2
+        assert model._last_train_size == 4
 
 
 class TestPredictAdmission:
@@ -207,16 +208,42 @@ class TestPredictAdmission:
         assert pred.exceeds_target(3000.0) is True
 
     def test_predict_admission_refuses_high_p95(self) -> None:
-        pred = QPPPrediction(p50_ms=5000.0, p95_ms=20000.0, p99_ms=30000.0, confidence=0.9)
-        admit, predicted = predict_admission(pred, target_p95_ms=10000.0)
+        # predict_admission(model, features, ...) computes the prediction itself via
+        # model.predict(features) -- it doesn't take a precomputed QPPPrediction. Untrained
+        # model falls back to heuristic_predict: p95 = files_scanned * per_file_ms * load *
+        # cache = 1000 * 50 * 1.0 * 1.0 = 50000, well past target(10000) * tolerance(1.5).
+        model = QPPModel()
+        features = QPPFeatures(
+            query_text_hash=hash_query_text("SELECT * FROM big_table"),
+            table_id=uuid.uuid4(),
+            partition_count=50,
+            files_scanned=1000,
+            is_cached=False,
+            cotenant_load_pct=0.0,
+            hour_of_day=10,
+            day_of_week=1,
+        )
+        admit, predicted = predict_admission(model, features, target_p95_ms=10000)
         assert admit is False
-        assert predicted == 20000.0
+        assert predicted.p95_ms == 50000.0
 
     def test_predict_admission_allows_low_p95(self) -> None:
-        pred = QPPPrediction(p50_ms=100.0, p95_ms=500.0, p99_ms=800.0, confidence=0.9)
-        admit, predicted = predict_admission(pred, target_p95_ms=10000.0)
+        # files_scanned=10, is_cached=True -> p95 = 10 * 50 * 1.0 * 0.6 = 300, well under
+        # target(10000) * tolerance(1.5).
+        model = QPPModel()
+        features = QPPFeatures(
+            query_text_hash=hash_query_text("SELECT * FROM small_table"),
+            table_id=uuid.uuid4(),
+            partition_count=1,
+            files_scanned=10,
+            is_cached=True,
+            cotenant_load_pct=0.0,
+            hour_of_day=10,
+            day_of_week=1,
+        )
+        admit, predicted = predict_admission(model, features, target_p95_ms=10000)
         assert admit is True
-        assert predicted == 500.0
+        assert predicted.p95_ms == 300.0
 
 
 class TestEvaluateQppForJob:
