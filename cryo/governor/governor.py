@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from cryo.config import get_settings
 from cryo.db.repositories.run_finalizer import finalize_open_runs
@@ -88,6 +88,7 @@ class Governor:
         lock_ttl_seconds: int = 6 * 60 * 60,
         trigger_evaluator: TriggerEvaluator | None = None,
         enable_signal_triggers: bool = True,
+        session_factory: Any | None = SessionLocal,
     ) -> None:
         self._queue = queue
         self._lock_store = lock_store
@@ -96,7 +97,12 @@ class Governor:
         self._default_config = default_config or AdmissionConfig()
         self._lock_ttl_seconds = lock_ttl_seconds
         self._replica_offsets: dict[str, int] = defaultdict(int)
-        self._session_factory = SessionLocal
+        # Injectable so unit tests can run fully in-memory (queue/store/lock_store are already
+        # fake) without also standing up a real Postgres connection just for the stale-job
+        # reaper's step-ledger lookup. None means "no step ledger available", which
+        # reconcile_stale_running_jobs already treats the same as "nothing found" -- a real
+        # DB-lookup failure is handled separately, defensively, inside that function itself.
+        self._session_factory = session_factory
         self._trigger_evaluator = trigger_evaluator or TriggerEvaluator()
         self._enable_signal_triggers = enable_signal_triggers
         settings = get_settings()
@@ -108,18 +114,20 @@ class Governor:
         wave_start = perf_counter()
         destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         try:
-            finalize_open_runs(self._session_factory)
+            if self._session_factory is not None:
+                finalize_open_runs(self._session_factory)
             current = now or datetime.now(UTC)
             re_enqueued = reconcile_queued_jobs(self._store, self._queue)
             re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
             orphaned = purge_stale_queue_entries(self._store, self._queue)
             step_ledger = None
-            try:
-                from cryo.db.repositories.job_steps import JobStepStore
+            if self._session_factory is not None:
+                try:
+                    from cryo.db.repositories.job_steps import JobStepStore
 
-                step_ledger = JobStepStore(self._session_factory)
-            except Exception:
-                logger.debug("JobStepStore unavailable for stale reaper", exc_info=True)
+                    step_ledger = JobStepStore(self._session_factory)
+                except Exception:
+                    logger.debug("JobStepStore unavailable for stale reaper", exc_info=True)
             reaped = reconcile_stale_running_jobs(
                 self._store,
                 self._queue,

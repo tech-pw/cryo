@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -82,6 +82,11 @@ class TestDefaultSkillset:
 
 class TestRegisterSkillset:
     def test_register_new_skillset(self) -> None:
+        # register_skillset builds a real `select(SkillsetRow).where(SkillsetRow.name == ...)`
+        # expression internally -- patching SkillsetRow itself replaces it with a MagicMock,
+        # which SQLAlchemy's select() rejects outright (not a valid FROM-clause element). The
+        # session is already a full MagicMock (add/flush/commit are no-ops), so there's no need
+        # to mock the ORM class too -- constructing a real SkillsetRow doesn't touch a DB.
         session = MagicMock()
         session.scalar.return_value = None  # no existing version
 
@@ -93,21 +98,10 @@ class TestRegisterSkillset:
             tools=[{"name": "test_tool"}],
             is_active=True,
         )
-        with patch("cryo.ai.skillset.SkillsetRow") as MockRow:
-            mock_row_instance = MagicMock()
-            mock_row_instance.name = "new_skillset"
-            mock_row_instance.version = "1.0.0"
-            mock_row_instance.prompts = {"test": "Test prompt"}
-            mock_row_instance.tools = [{"name": "test_tool"}]
-            mock_row_instance.is_active = True
-            mock_row_instance.metrics = {}
-            mock_row_instance.created_at = datetime.now(UTC)
-            MockRow.return_value = mock_row_instance
-
-            result = register_skillset(session, skillset)
-            assert result.name == "new_skillset"
-            session.add.assert_called_once()
-            session.commit.assert_called()
+        result = register_skillset(session, skillset)
+        assert result.name == "new_skillset"
+        session.add.assert_called_once()
+        session.commit.assert_called()
 
     def test_register_active_deactivates_others(self) -> None:
         session = MagicMock()
@@ -121,20 +115,9 @@ class TestRegisterSkillset:
             tools=[],
             is_active=True,
         )
-        with patch("cryo.ai.skillset.SkillsetRow") as MockRow:
-            mock_row_instance = MagicMock()
-            mock_row_instance.name = "promote_test"
-            mock_row_instance.version = "2.0.0"
-            mock_row_instance.prompts = {"p": "v2"}
-            mock_row_instance.tools = []
-            mock_row_instance.is_active = True
-            mock_row_instance.metrics = {}
-            mock_row_instance.created_at = datetime.now(UTC)
-            MockRow.return_value = mock_row_instance
-
-            register_skillset(session, skillset)
-            # update() should be called to deactivate old versions
-            session.execute.assert_called()
+        register_skillset(session, skillset)
+        # update() should be called to deactivate old versions
+        session.execute.assert_called()
 
 
 class TestSetActiveSkillset:

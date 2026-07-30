@@ -156,12 +156,15 @@ class TestPlanVerifier:
         assert v.location == "table_ref"
 
     def test_verifier_instantiates(self) -> None:
+        # VERIFIER_VERSION is a module-level constant surfaced via PlanVerdict.verifier_version
+        # on each verify() call (see test_verify_returns_verdict below) -- PlanVerifier itself
+        # doesn't carry a per-instance version attribute, so assert what it does carry instead.
         verifier = PlanVerifier(
             session=self._mock_session(),
             settings=self._mock_settings(),
         )
         assert verifier is not None
-        assert verifier._verifier_version == VERIFIER_VERSION
+        assert verifier.registry is VerifierRegistry.get("default")
 
     def test_verify_returns_verdict(self) -> None:
         verifier = PlanVerifier(
@@ -187,6 +190,9 @@ class TestPlanVerifier:
         assert verdict.plan_hash == hash_plan(plan)
 
     def test_verify_tracks_invariants_checked(self) -> None:
+        # Registering into a registry PlanVerifier never sees can't work -- PlanVerifier defaults
+        # to VerifierRegistry.get("default") when no registry kwarg is passed, so the custom
+        # invariant must go into a registry that's actually wired into the verifier instance.
         registry = VerifierRegistry.get("test_checked")
         registry.deregister("test_checked")
 
@@ -195,7 +201,9 @@ class TestPlanVerifier:
 
         registry.register("test_checked", tracking_invariant)
         try:
-            verifier = PlanVerifier(session=self._mock_session(), settings=self._mock_settings())
+            verifier = PlanVerifier(
+                session=self._mock_session(), settings=self._mock_settings(), registry=registry
+            )
             plan = self._mock_plan()
             verdict = verifier.verify(plan)
             assert "test_checked" in verdict.invariants_checked

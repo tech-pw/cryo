@@ -127,9 +127,23 @@ def reconcile_stale_running_jobs(
         if callable(get_owner) and get_owner(job.id):
             logger.debug("Skipping stale reap for job %s: adopt lease held", job.id)
             continue
-        if step_ledger is not None and step_ledger.has_started_step(job.id):
-            logger.debug("Skipping stale reap for job %s: started step open", job.id)
-            continue
+        if step_ledger is not None:
+            try:
+                has_started_step = step_ledger.has_started_step(job.id)
+            except Exception:
+                # A single job's step-ledger lookup failing (DB hiccup, malformed id) must not
+                # abort the reap sweep for every other stale job in this wave -- reaping when
+                # we're not actually sure is the unsafe direction (it force-fails a job that
+                # might still be legitimately running), so treat "couldn't check" the same as
+                # "found an open step": skip reaping, matching the other checks' conservative
+                # default in this loop.
+                logger.warning(
+                    "Skipping stale reap for job %s: step ledger check failed", job.id, exc_info=True
+                )
+                continue
+            if has_started_step:
+                logger.debug("Skipping stale reap for job %s: started step open", job.id)
+                continue
         if callable(engine_activity_checker) and engine_activity_checker(job):
             logger.debug("Skipping stale reap for job %s: engine still active", job.id)
             continue
