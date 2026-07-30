@@ -48,7 +48,10 @@ class TestDetectSilentDataLoss:
             committed_entries=committed,
         )
         assert not report.is_clean()
-        assert "orphan.parquet" in report.orphan_data_files
+        # detect_silent_data_loss diffs full paths (StorageFile.path / CommittedManifestEntry
+        # .path are documented as full storage paths, not basenames) -- an operator needs the
+        # full s3:// path to actually locate and delete the orphan.
+        assert "s3://bucket/data/orphan.parquet" in report.orphan_data_files
         assert report.orphan_size_bytes == 50
         assert report.missing_files == []
         assert report.root_cause == "orphan_files_on_storage"
@@ -68,7 +71,7 @@ class TestDetectSilentDataLoss:
         )
         assert not report.is_clean()
         assert report.orphan_data_files == []
-        assert "missing.parquet" in report.missing_files
+        assert "s3://bucket/data/missing.parquet" in report.missing_files
         assert report.root_cause == "missing_committed_files"
 
     def test_orphans_and_missing_concurrent_drift(self) -> None:
@@ -83,8 +86,8 @@ class TestDetectSilentDataLoss:
             storage_files=storage,
             committed_entries=committed,
         )
-        assert report.orphan_data_files == ["extra.parquet"]
-        assert report.missing_files == ["missing.parquet"]
+        assert report.orphan_data_files == ["s3://bucket/data/extra.parquet"]
+        assert report.missing_files == ["s3://bucket/data/missing.parquet"]
         assert report.root_cause == "concurrent_writer_drift"
 
     def test_trailing_slash_normalized(self) -> None:
@@ -130,7 +133,7 @@ class TestDetectSilentDataLoss:
             storage_files=storage,
             committed_entries=committed,
         )
-        assert "missing.parquet" in report.missing_files
+        assert "s3://bucket/data/missing.parquet" in report.missing_files
         assert report.root_cause == "missing_committed_files"
 
     def test_empty_committed_only_orphans(self) -> None:
@@ -141,7 +144,7 @@ class TestDetectSilentDataLoss:
             storage_files=storage,
             committed_entries=committed,
         )
-        assert "orphan.parquet" in report.orphan_data_files
+        assert "s3://bucket/data/orphan.parquet" in report.orphan_data_files
         assert report.orphan_size_bytes == 100
         assert report.root_cause == "orphan_files_on_storage"
 
