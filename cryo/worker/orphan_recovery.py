@@ -281,6 +281,17 @@ def recover_orphaned_jobs(
                 detail=started.detail,
             )
             resolved += 1
+            # Regression, 2026-07-29: resolving the interrupted step here isn't enough on its
+            # own -- nothing else ever dispatches the job's remaining operations, so it used to
+            # sit at this step forever (confirmed live: 35+ min of "still running; waiting"
+            # after the underlying Spark job had already succeeded). Hand it back to the normal
+            # claim_admitted() dispatch path; process_next()'s statement loop rebuilds the plan
+            # fresh and skips anything already SUCCEEDED/SKIPPED in the ledger, so this either
+            # continues to the next operation or -- if that was the last one -- finalizes the
+            # job correctly.
+            requeue = getattr(queue, "requeue_for_continuation", None)
+            if callable(requeue):
+                requeue(job.id)
             continue
 
         if state is not EngineOpState.FAILED:
