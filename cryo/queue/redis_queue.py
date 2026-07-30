@@ -27,6 +27,8 @@ class MaintenanceQueue(Protocol):
 
     def claim_admitted(self) -> str | None: ...
 
+    def requeue_for_continuation(self, job_id: str) -> None: ...
+
     def mark_running(self, job_id: str) -> None: ...
 
     def complete(self, job_id: str, status: JobStatus | str) -> None: ...
@@ -87,6 +89,10 @@ class InMemoryMaintenanceQueue:
             if self._statuses.get(job_id) is JobStatus.ADMITTED:
                 return job_id
         return None
+
+    def requeue_for_continuation(self, job_id: str) -> None:
+        self._statuses[job_id] = JobStatus.ADMITTED
+        self._admitted.append(job_id)
 
     def mark_running(self, job_id: str) -> None:
         self._statuses[job_id] = JobStatus.RUNNING
@@ -187,6 +193,21 @@ class RedisMaintenanceQueue:
     def claim_admitted(self) -> str | None:
         value = self._redis.lpop(self._admitted_key())
         return _decode(value) if value is not None else None
+
+    def requeue_for_continuation(self, job_id: str) -> None:
+        """Hand an already-admitted RUNNING job back to claim_admitted() for another dispatch
+        pass, without touching its in-flight slot (it never released one -- this isn't a new
+        admission, just re-entering the same job into the claim queue). Used by orphan recovery
+        after resolving an adopted job's interrupted step: process_next()'s own statement loop
+        rebuilds the plan and skips any step already SUCCEEDED/SKIPPED in the ledger, so handing
+        the job back here either dispatches its next operation or -- if that was the last one --
+        correctly finalizes it as SUCCEEDED. Regression, 2026-07-29: without this, a job whose
+        owning worker died mid-step sat stuck forever once orphan recovery resolved that one
+        step; nothing ever dispatched the remaining operations."""
+        pipe = self._redis.pipeline()
+        pipe.hset(self._job_key(job_id), "status", "admitted")
+        pipe.rpush(self._admitted_key(), job_id)
+        pipe.execute()
 
     def mark_running(self, job_id: str) -> None:
         self._redis.hset(self._job_key(job_id), "status", "running")
