@@ -263,7 +263,7 @@ def test_persist_table_analysis_adds_latest_partitions_and_history() -> None:
     stats = next(item for item in session.added if isinstance(item, TableStats))
     assert stats.total_files == 2
     assert stats.raw["partition_fields"][0]["base_column"] == "event_date"
-    assert len(session.executed) == 3
+    assert len(session.executed) == 4
 
 
 def _fake_partition(small_files: int, size_gb: float = 1.0) -> PartitionAnalysis:
@@ -419,6 +419,58 @@ def test_record_table_scan_outcome_tracks_and_resets_consecutive_failures() -> N
         assert table.consecutive_scan_failures == 0
         assert table.last_scan_error is None
         assert table.last_scan_error_at is None
+
+
+def test_upsert_table_survives_concurrent_insert_race() -> None:
+    """Regression, 2026-07-30: two scan chunks can discover the same brand-new table at the
+    same time -- both SELECT, both find nothing, both try to INSERT. The loser used to hit an
+    uncaught IntegrityError on (source_id, schema_name, table_name), which aborted the whole
+    session's transaction and killed the *entire* scan chunk (thousands of assigned tables
+    abandoned, 0 scanned) instead of just skipping this one already-discovered table. Confirmed
+    live: chunk 2 of a fleet scan died this way on cdp.pw_bq.bronze_store_iframe_initialised."""
+    from cryo.scanner.persistence import upsert_table
+
+    _patch_sqlite_incompatible_defaults()
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
+    with engine.begin() as connection:
+        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+        Base.metadata.create_all(connection, tables=[Source.__table__, Table.__table__])
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+
+    source_id = uuid.uuid4()
+    with session_factory() as session:
+        session.add(Source(id=source_id, name="demo", type="rest", config={}))
+        session.commit()
+
+    # Simulate the "winning" concurrent chunk: its insert is already committed by the time
+    # ours runs.
+    with session_factory() as session:
+        session.add(Table(source_id=source_id, schema_name="pw_bq", table_name="bronze_x"))
+        session.commit()
+
+    # Our chunk raced ahead of that commit: its own initial SELECT (faked here) found nothing,
+    # so it proceeds straight to the INSERT, which now genuinely conflicts.
+    with session_factory() as session:
+        real_scalar = session.scalar
+        calls = {"n": 0}
+
+        def _select_misses_once(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None
+            return real_scalar(*args, **kwargs)
+
+        session.scalar = _select_misses_once  # type: ignore[method-assign]
+
+        table = upsert_table(
+            session, source_id=source_id, schema_name="pw_bq", table_name="bronze_x"
+        )
+        assert table is not None
+        assert table.schema_name == "pw_bq"
+        assert table.table_name == "bronze_x"
+        # The session's transaction must still be usable afterward -- not aborted.
+        session.commit()
 
 
 def test_snapshot_info_tracks_first_and_last_commit() -> None:

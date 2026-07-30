@@ -91,6 +91,12 @@ def test_succeeded_step_closed_on_recover(monkeypatch) -> None:
     )
     assert result.resolved_steps == 1
     assert steps.get_step("job-1", 0).status is JobStepStatus.SUCCEEDED
+    # Regression, 2026-07-29: resolving the step used to be the end of the line -- nothing
+    # ever handed the job back for its remaining operations to be dispatched. It must be
+    # requeued so a normal claim_admitted() pass picks it up and continues (or finalizes it,
+    # if that was the last step).
+    assert queue.status("job-1") is JobStatus.ADMITTED
+    assert queue.claim_admitted() == "job-1"
 
 
 def test_probe_engine_op_state_is_quiet_not_uncertain_with_no_prior_dispatch() -> None:

@@ -6,10 +6,13 @@ from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
+    MaintenanceJob,
     Table,
+    TableColumn,
     TableCost,
     TableCostHistory,
     TablePartition,
@@ -58,9 +61,29 @@ def upsert_table(
         )
     )
     if table is None:
-        table = Table(source_id=source_id, schema_name=schema_name, table_name=table_name)
-        session.add(table)
-        session.flush()
+        try:
+            with session.begin_nested():
+                table = Table(source_id=source_id, schema_name=schema_name, table_name=table_name)
+                session.add(table)
+                session.flush()
+        except IntegrityError:
+            # Lost the race: another concurrent scan chunk inserted this exact
+            # (source_id, schema_name, table_name) between our SELECT and INSERT.
+            # Confirmed live, 2026-07-30: this exception, left uncaught, aborted the
+            # whole session's transaction and killed the *entire* scan chunk (thousands
+            # of assigned tables abandoned, 0 scanned) instead of just skipping this one
+            # already-discovered table. The savepoint above scopes the rollback to just
+            # this failed insert attempt; the other transaction's row is already
+            # committed and visible under READ COMMITTED, so a re-select picks it up.
+            table = session.scalar(
+                select(Table).where(
+                    Table.source_id == source_id,
+                    Table.schema_name == schema_name,
+                    Table.table_name == table_name,
+                )
+            )
+            if table is None:
+                raise
     else:
         table.is_active = True
     return table
@@ -155,13 +178,49 @@ def stats_history_for_signals(
         .order_by(TableStatsHistory.scan_at.desc())
         .limit(limit)
     ).all()
-    return [
+    ordered = list(reversed(rows))
+    history = [
         {
             "scan_at": row.scan_at.isoformat() if row.scan_at else None,
             "total_snapshots": _history_snapshot_count(row),
         }
-        for row in reversed(rows)
+        for row in ordered
     ]
+    if len(ordered) >= 2:
+        previous_at, latest_at = ordered[-2].scan_at, ordered[-1].scan_at
+        if previous_at is not None and latest_at is not None:
+            history[-1]["maintenance_job_since_previous"] = _maintenance_job_ran_between(
+                session, table_id, previous_at, latest_at
+            )
+    return history
+
+
+def _maintenance_job_ran_between(
+    session: Session, table_id: uuid.UUID, start: datetime, end: datetime
+) -> bool:
+    """True if a Cryo maintenance job finished for this table in ``(start, end]``.
+
+    ``expire_snapshots``/``optimize``/``optimize_manifests`` each commit their own snapshot,
+    so a completed run inflates the table's own snapshot count independent of any external
+    write activity. Without this check, the commit-velocity ("High velocity streaming")
+    signal in ``detect_streaming_from_history`` misattributes a run's own commits to
+    streaming writes -- confirmed live, 2026-07-27: a single deep run on
+    pw_bq.silver_dbt_pw_launch took total_snapshots 8 -> 36, which the unadjusted heuristic
+    read as 80 commits/day of streaming ingestion.
+    """
+    return (
+        session.scalar(
+            select(MaintenanceJob.id)
+            .where(
+                MaintenanceJob.table_id == table_id,
+                MaintenanceJob.status == "succeeded",
+                MaintenanceJob.finished_at > start,
+                MaintenanceJob.finished_at <= end,
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 def _history_snapshot_count(row: TableStatsHistory) -> int:
@@ -232,6 +291,7 @@ def persist_table_analysis(
     # Scoping the delete to scan_at == analysis.scan_at (idempotent re-run of the same scan)
     # left every prior day's rows in place forever: unbounded growth, ~1.5GB/day in prod.
     session.execute(delete(TablePartition).where(TablePartition.table_id == table_id))
+    session.execute(delete(TableColumn).where(TableColumn.table_id == table_id))
     session.execute(
         delete(TableStatsHistory).where(
             TableStatsHistory.table_id == table_id,
@@ -245,6 +305,7 @@ def persist_table_analysis(
             table_id, analysis, max_partitions=get_settings().scanner_max_partitions_per_table
         )
     )
+    session.add_all(_column_rows(table_id, analysis))
     session.add(
         TableStatsHistory(
             table_id=table_id,
@@ -472,6 +533,40 @@ def _partition_rows(
         )
         for partition in partitions
     ]
+
+
+def _column_rows(table_id: uuid.UUID, analysis: TableAnalysis) -> list[TableColumn]:
+    """Build latest column index rows from scan-time column_quality stats."""
+    raw = analysis.raw if isinstance(analysis.raw, dict) else {}
+    column_quality = raw.get("column_quality") or []
+    rows: list[TableColumn] = []
+    seen: set[str] = set()
+    for col in column_quality:
+        if not isinstance(col, dict):
+            continue
+        name_raw = col.get("column_name")
+        if not name_raw:
+            continue
+        name = str(name_raw)
+        if "\x00" in name:
+            name = name.replace("\x00", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        col_type = col.get("column_type")
+        description_raw = col.get("description")
+        description = str(description_raw) if description_raw else None
+        if description and "\x00" in description:
+            description = description.replace("\x00", "")
+        rows.append(
+            TableColumn(
+                table_id=table_id,
+                column_name=name,
+                data_type=str(col_type) if col_type is not None else "unknown",
+                description=description,
+            )
+        )
+    return rows
 
 
 def partition_to_dict(partition: PartitionAnalysis) -> dict[str, Any]:
