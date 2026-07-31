@@ -319,3 +319,33 @@ def _worker_fixture(
     queue.enqueue("job-1", "dest")
     queue.admit("job-1", "dest", "r1")
     return queue, locks, store
+
+
+def test_default_engine_factory_injects_destination_id_into_config() -> None:
+    """destination.config (the raw DB blob) never carries the destination's own id --
+    engines that need it for K8s Job labeling (native's job_dispatch, Spark-K8s's live
+    capacity probe) read config["destination_id"], so default_engine_factory must inject
+    it rather than leave every engine to rediscover it. Regression for a gap found while
+    wiring Spark-K8s's live capacity probe: SparkK8sEngine had no way to stamp its
+    dispatch Jobs with a destination label without this."""
+    from cryo.worker.worker import default_engine_factory
+
+    destination = DestinationConfig(
+        "dest-abc", engine="spark_emr", config={"submit_mode": "k8s", "slot_cap": 3}
+    )
+    engine = default_engine_factory(destination)
+    assert engine.config["destination_id"] == "dest-abc"
+    # The original destination.config dict itself must stay untouched (no aliasing).
+    assert "destination_id" not in destination.config
+
+
+def test_default_engine_factory_does_not_override_explicit_destination_id() -> None:
+    from cryo.worker.worker import default_engine_factory
+
+    destination = DestinationConfig(
+        "dest-abc",
+        engine="spark_emr",
+        config={"submit_mode": "k8s", "slot_cap": 3, "destination_id": "explicit-override"},
+    )
+    engine = default_engine_factory(destination)
+    assert engine.config["destination_id"] == "explicit-override"

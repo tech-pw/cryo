@@ -1642,7 +1642,13 @@ def _gate_native_optimize_manifests(
 def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintenanceEngine:
     from cryo.engines.factory import create_engine
 
-    return create_engine(destination.engine, destination.config)
+    # destination.config (the raw DB config blob) never carries the destination's own id --
+    # engines that need it for K8s Job labeling (native's job_dispatch, Spark-K8s's capacity
+    # probe) read config.get("destination_id"), so it must be injected here rather than left
+    # for each engine to rediscover. setdefault: an explicit config value (rare) still wins.
+    config = dict(destination.config)
+    config.setdefault("destination_id", destination.id)
+    return create_engine(destination.engine, config)
 
 
 def _try_get_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:

@@ -11,6 +11,7 @@ from cryo.engines.native.job_state import (
     NativeJobStateReader,
     summarize_native_jobs,
 )
+from cryo.engines.spark.job_state import SparkJobStateReader
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.worker.worker import DestinationConfig
 
@@ -163,6 +164,7 @@ class LiveCapacityProvider:
         queue: MaintenanceQueue | None = None,
         *,
         job_state_reader: NativeJobStateReader | None = None,
+        spark_job_state_reader: SparkJobStateReader | None = None,
         k8s_namespace: str | None = None,
     ) -> None:
         self._queue = queue
@@ -173,6 +175,9 @@ class LiveCapacityProvider:
         self._job_state_reader = job_state_reader or NativeJobStateReader(
             namespace=k8s_namespace
         )
+        self._spark_job_state_reader = spark_job_state_reader or SparkJobStateReader(
+            namespace=k8s_namespace
+        )
 
     def probe(self, destination: DestinationConfig) -> Mapping[str, CapacitySnapshot | int]:
         engine_type = EngineType(destination.engine)
@@ -181,9 +186,9 @@ class LiveCapacityProvider:
             return self._probe_trino(destination.config)
         if engine_type is EngineType.SPARK_EMR:
             # submit_mode="k8s" is Cryo's self-managed Spark-on-K8s dispatch (no EMR
-            # application_id to probe) -- static slot cap, same as local/dev Spark.
+            # application_id to probe).
             if str(destination.config.get("submit_mode") or "").strip().lower() == "k8s":
-                return _static_capacity(destination.config)
+                return self._probe_spark_k8s(destination.config, destination_id=destination.id)
             return self._probe_emr(destination.config)
 
         if engine_type is EngineType.NATIVE:
@@ -203,6 +208,35 @@ class LiveCapacityProvider:
             queue=self._queue,
             job_state_reader=self._job_state_reader,
         )
+
+    def _probe_spark_k8s(
+        self,
+        config: Mapping[str, Any],
+        *,
+        destination_id: str | None = None,
+    ) -> Mapping[str, CapacitySnapshot]:
+        """Live-count active Spark-on-K8s dispatch Jobs for this destination (Move 6,
+        Spark side): replaces the old static ``used=0`` stub with what Kubernetes actually
+        reports running, same pattern as ``_probe_native``. Falls back to ``used=0`` (the
+        prior behavior) when live K8s reads aren't available -- e.g. local dev/tests --
+        and fails closed (treats the destination as fully occupied) when reads are
+        available but a specific probe errors, so a flaky K8s API call can't cause
+        over-admission.
+        """
+        slot_cap = int(config.get("slot_cap") or config.get("concurrent_jobs") or 3)
+        used = 0
+        if self._spark_job_state_reader.is_available():
+            jobs = self._spark_job_state_reader.list_active_spark_jobs(
+                destination_id=destination_id
+            )
+            if jobs is not None:
+                used = len(jobs)
+            else:
+                logger.error(
+                    "Spark-on-K8s live capacity read failed; refusing new dispatches"
+                )
+                used = slot_cap
+        return {"default": CapacitySnapshot(capacity=slot_cap, used=used)}
 
     def _probe_trino(self, config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot]:
         from cryo.engines.trino.client import coordinators_from_config
