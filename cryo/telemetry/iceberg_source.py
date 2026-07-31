@@ -43,7 +43,12 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import Source, Table
 from cryo.telemetry.parser import extract_table_from_query, parse_query_predicates
-from cryo.telemetry.patterns import ColumnPatternStats, _upsert_query_patterns
+from cryo.telemetry.patterns import (
+    ColumnPatternStats,
+    _upsert_query_patterns,
+    record_table_query_activity,
+    refresh_query_count_30d,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +182,7 @@ def aggregate_from_iceberg_query_log(
     table_lookup: dict[str, Table] = {f"{t.schema_name}.{t.table_name}".lower(): t for t in tables}
 
     table_stats: defaultdict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(dict)
+    all_query_counts: defaultdict[uuid.UUID, int] = defaultdict(int)
     total_read = 0
     total_matched = 0
     windows_processed = 0
@@ -214,6 +220,12 @@ def aggregate_from_iceberg_query_log(
             )
 
         total_read += len(query_texts)
+        # Per-window, not per-call: a single call can cover several windows (multi-day backlog
+        # catch-up on a source's first run), and query_texts don't carry per-row timestamps
+        # (_read_query_texts only projects the query-text column) -- bucketing every matched
+        # query in this window under window_end's own date is close enough for a 30-day rolling
+        # count and needs no extra column read.
+        window_query_counts: defaultdict[uuid.UUID, int] = defaultdict(int)
         for query_text in query_texts:
             schema_name, table_name = extract_table_from_query(query_text)
             if not schema_name or not table_name:
@@ -222,8 +234,14 @@ def aggregate_from_iceberg_query_log(
             if table is None:
                 continue
             total_matched += 1
+            window_query_counts[table.id] += 1
             predicate_info = parse_query_predicates(query_text)
             _accumulate(table_stats[table.id], predicate_info)
+
+        if window_query_counts:
+            record_table_query_activity(session, window_query_counts, day=window_end.date())
+            for tid, count in window_query_counts.items():
+                all_query_counts[tid] += count
 
         # This window is fully read and accumulated -- safe to advance the watermark past it
         # even if a later window in this call fails or the windows-per-tick budget runs out.
@@ -232,6 +250,8 @@ def aggregate_from_iceberg_query_log(
         windows_processed += 1
 
     updated = _upsert_query_patterns(session, table_stats)
+    if all_query_counts:
+        refresh_query_count_30d(session, set(all_query_counts.keys()), now=now)
     logger.info(
         "Iceberg query log read-through: %s window(s), %s query rows read, %s matched to known "
         "tables, %s patterns updated, watermark now %s",

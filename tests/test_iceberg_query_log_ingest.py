@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.config import get_settings
-from cryo.db.models import Source, Table
+from cryo.db.models import Source, Table, TableQueryActivity, TableStats
 from cryo.telemetry import iceberg_source
 from cryo.telemetry.iceberg_source import (
     IcebergQueryLogConfig,
@@ -246,6 +246,62 @@ def test_aggregate_matches_queries_to_tables_across_windows(session, monkeypatch
     assert updated >= 1
     assert table.id in captured
     assert captured[table.id]["a"].filter_count == 1
+
+
+def test_aggregate_populates_query_count_30d_end_to_end(session, monkeypatch) -> None:
+    """Regression, 2026-07-31: TableStats.query_count_30d was stuck at 0 for every table
+    fleet-wide -- query_patterns (per-column filter/join/projection counts) was never enough
+    to answer "how many queries touched this table", and nothing wrote a real count anywhere
+    else. This is the actual production path (source.config.query_log.mode=iceberg_table) that
+    must now produce a TableQueryActivity row and refresh TableStats.query_count_30d."""
+    _patch_window_hours(monkeypatch, 6)
+    source, table = _seed_source_and_table(session, schema_name="s", table_name="t")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime(2026, 1, 1, tzinfo=UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="C",
+            overall_score=65,
+            total_files=10,
+            small_files_count=1,
+            total_size_gb=1.0,
+            query_count_30d=0,
+        )
+    )
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    source.config = {
+        "query_log": {
+            "mode": "iceberg_table",
+            "table": "s.t",
+            "executed_at_column": "query_date",
+            "last_aggregated_at": (now - timedelta(hours=6)).isoformat(),
+        }
+    }
+    session.commit()
+
+    monkeypatch.setattr(
+        iceberg_source,
+        "_read_query_texts",
+        lambda src, cfg, *, since, until, max_rows: (
+            ["select a from s.t where a = 1", "select b from s.t where b = 2"],
+            False,
+        ),
+    )
+    # _upsert_query_patterns uses a Postgres-only on_conflict_do_update; the test session is
+    # sqlite, and this test is about query_count_30d, not that unrelated upsert.
+    monkeypatch.setattr(iceberg_source, "_upsert_query_patterns", lambda session, stats: len(stats))
+
+    aggregate_from_iceberg_query_log(session, source, now=now)
+
+    activity = (
+        session.query(TableQueryActivity)
+        .filter_by(table_id=table.id, day=now.date())
+        .one()
+    )
+    assert activity.query_count == 2
+    assert session.get(TableStats, table.id).query_count_30d == 2
 
 
 def test_aggregate_stops_early_on_read_failure_without_losing_watermark_progress(
