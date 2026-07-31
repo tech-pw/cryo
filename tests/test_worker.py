@@ -321,6 +321,43 @@ def _worker_fixture(
     return queue, locks, store
 
 
+def test_worker_deactivates_table_when_catalog_reports_it_gone() -> None:
+    """Regression, 2026-07-31: a bulk maintenance run kept scheduling (and failing) against
+    tables already dropped from the catalog, because nothing reconciled Table.is_active
+    against real catalog state. A failure whose error contains a NoSuchTableException-style
+    signature should flip the table inactive so future scans/maintenance skip it."""
+    from cryo.engines.base import ExecCtx
+
+    class _DroppedTableEngine(FakeMaintenanceEngine):
+        def execute(self, stmt, ctx: ExecCtx | None = None):
+            raise RuntimeError(
+                "Spark-on-K8s Job FAILED: ...\nCaused by: "
+                "org.apache.spark.sql.catalyst.analysis.NoSuchTableException: "
+                "[TABLE_OR_VIEW_NOT_FOUND] The table or view x.y cannot be found."
+            )
+
+    queue, locks, store = _worker_fixture()
+    engine = _DroppedTableEngine()
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.FAILED
+    assert "table-1" in store.deactivated_tables
+    assert "NoSuchTableException" in store.deactivated_tables["table-1"]
+
+
+def test_worker_does_not_deactivate_table_on_unrelated_failure() -> None:
+    queue, locks, store = _worker_fixture()
+    engine = FakeMaintenanceEngine(fail_actions={OperationType.OPTIMIZE})
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.FAILED
+    assert store.deactivated_tables == {}
+
+
 def test_default_engine_factory_injects_destination_id_into_config() -> None:
     """destination.config (the raw DB blob) never carries the destination's own id --
     engines that need it for K8s Job labeling (native's job_dispatch, Spark-K8s's live

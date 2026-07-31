@@ -108,6 +108,21 @@ class SQLJobStore:
             job.error = error
             session.commit()
 
+    def deactivate_table(self, table_id: str, reason: str) -> None:
+        """Mark a table inactive after a maintenance job discovers it no longer exists in the
+        catalog (dropped externally, out from under Cryo's own metadata). Without this, a
+        dropped table stays `is_active=true` forever -- nothing else reconciles Cryo's
+        inventory against real catalog state -- so scans and maintenance keep targeting it
+        indefinitely. Confirmed live, 2026-07-31."""
+        with self._session_factory() as session:
+            table = session.get(Table, uuid.UUID(table_id))
+            if table is None:
+                return
+            table.is_active = False
+            table.last_scan_error = reason
+            table.last_scan_error_at = datetime.now(UTC)
+            session.commit()
+
     def set_force_admit(self, job_id: str, value: bool) -> None:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
@@ -372,6 +387,12 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             "small_files_in_partition_count": row.small_files_in_partition_count,
             "partition_size_gb": row.partition_size_gb,
             "files_per_partition": row.files_per_partition,
+            # Delete files are tracked separately from files/small (data-file-only as of
+            # 2026-07-28) so convert_deletes can be scoped by where deletes are actually
+            # concentrated -- a table can have a partition that's already well-compacted on
+            # data files but still carries a pile of stale position-delete files, and that
+            # partition won't show up as "skewed" by small_files_in_partition_count alone.
+            "delete_files_in_partition_count": (row.raw or {}).get("delete_files") or 0,
             "last_write_at": (row.raw or {}).get("last_write_at"),
             # AutoComp (SIGMOD 2025): without these, the planner's benefit/MOOP-aware ranking
             # in _compare_candidates has nothing to rank on and silently falls back to
