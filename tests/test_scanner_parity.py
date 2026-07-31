@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from cryo.config import Settings
-from cryo.scanner.analyze import analyze_table, iter_data_files
+from cryo.scanner.analyze import analyze_catalog_table, analyze_table, iter_data_files
 from cryo.scanner.go_scan import table_analysis_from_go_payload
 from tests.test_scanner import FakeDataFile, FakeSnapshotMeta, FakeTable
 
@@ -49,6 +50,145 @@ def test_analyze_skips_metadata_cost_when_file_count_high() -> None:
     analysis = analyze_table(table, "demo", "events", scan_at=scan_at, settings=settings)
     assert analysis.cost is None
     assert analysis.estimated_monthly_s3_cost_usd >= 0
+
+
+def test_analyze_catalog_table_wires_a_working_table_obj_loader_for_go_engine() -> None:
+    """Regression, 2026-07-31: analyze_catalog_table's Go branch used to hardcode
+    table_obj=None, which is the actual call site that broke Tier-1 cost fleet-wide.
+    Assert the loader it now builds really does call catalog.load_table(schema, table)
+    -- not just that go_scan.py *can* accept one."""
+    sentinel_table = object()
+    catalog = SimpleNamespace(load_table=lambda schema, table: sentinel_table)
+    captured: dict[str, Any] = {}
+
+    def fake_analyze_catalog_table_go(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return SimpleNamespace(cost=None)
+
+    with patch(
+        "cryo.scanner.go_scan.analyze_catalog_table_go",
+        side_effect=fake_analyze_catalog_table_go,
+    ):
+        analyze_catalog_table(
+            catalog,
+            "demo",
+            "events",
+            settings=Settings(scan_engine="go"),
+            source_config={"catalog": "cdp"},
+        )
+
+    assert "table_obj_loader" in captured
+    assert captured["table_obj_loader"]() is sentinel_table
+
+
+def _go_payload_fixture(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": True,
+        "total_files": 4,
+        "total_records": 40,
+        "total_size_bytes": 40 * MB,
+        "health_small_files": 0,
+        "delete_files": 0,
+        "equality_delete_files": 0,
+        "position_delete_files": 0,
+        "delete_bytes": 0,
+        "manifest_count": 1,
+        "manifest_total_bytes": 1024,
+        "total_snapshots": 1,
+        "file_formats": ["PARQUET"],
+        "partition_fields": [],
+        "partitions": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_go_payload_lazily_loads_table_obj_when_eligible() -> None:
+    """Regression, 2026-07-31: analyze_catalog_table_go used to be called with
+    table_obj=None unconditionally, silently disabling Tier-1 cost accounting fleet-wide
+    for every Go-scanned table -- table_cost/table_cost_history stopped getting new rows
+    the day the Go engine became the primary scanner. A lazy loader lets Tier-1 cost run
+    again once the (cheap, already-known) size/manifest thresholds pass."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[FakeDataFile(10 * MB, 10, ("2026-06-29",)) for _ in range(4)],
+        snapshots=[FakeSnapshotMeta(scan_at)],
+    )
+    calls = []
+
+    def loader() -> Any:
+        calls.append(1)
+        return table
+
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(),
+        schema_name="demo",
+        table_name="events",
+        scan_at=scan_at,
+        settings=Settings(cost_scan_tier="metadata"),
+        table_obj_loader=loader,
+    )
+    assert len(calls) == 1
+    assert analysis.cost is not None
+
+
+def test_go_payload_skips_table_obj_loader_when_file_count_too_high() -> None:
+    """A huge table that will be threshold-filtered anyway must never pay for the
+    catalog load -- that's the whole point of making this lazy instead of eager."""
+    calls = []
+
+    def loader() -> Any:
+        calls.append(1)
+        raise AssertionError("loader should not be called for an ineligible table")
+
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(total_files=10),
+        schema_name="demo",
+        table_name="events",
+        scan_at=datetime(2026, 6, 30, tzinfo=UTC),
+        settings=Settings(cost_scan_tier="metadata", cost_metadata_max_files_estimate=3),
+        table_obj_loader=loader,
+    )
+    assert calls == []
+    assert analysis.cost is None
+
+
+def test_go_payload_falls_back_gracefully_when_loader_raises() -> None:
+    """Tier-1 cost is an enhancement, not a requirement -- a catalog hiccup while loading
+    the table handle must degrade to heuristic/no-cost, not fail the whole scan."""
+
+    def loader() -> Any:
+        raise RuntimeError("catalog unreachable")
+
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(),
+        schema_name="demo",
+        table_name="events",
+        scan_at=datetime(2026, 6, 30, tzinfo=UTC),
+        settings=Settings(cost_scan_tier="metadata"),
+        table_obj_loader=loader,
+    )
+    assert analysis.cost is None
+    assert analysis.total_files == 4
+
+
+def test_go_payload_ineligible_tier_never_calls_loader() -> None:
+    calls = []
+
+    def loader() -> Any:
+        calls.append(1)
+        return object()
+
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(),
+        schema_name="demo",
+        table_name="events",
+        scan_at=datetime(2026, 6, 30, tzinfo=UTC),
+        settings=Settings(cost_scan_tier="heuristic"),
+        table_obj_loader=loader,
+    )
+    assert calls == []
+    assert analysis.cost is None
 
 
 def _python_analysis_fixture() -> Any:
@@ -185,6 +325,49 @@ def test_go_payload_mapper_mor_deletes() -> None:
     # binder when a job for this table's single pseudo-partition tries to bind it.
     assert analysis.partition_col is None
     assert analysis.delete_file_pct == pytest.approx(66.67)
+
+
+def test_go_payload_mapper_clamps_delete_file_pct_when_deletes_outnumber_data_files() -> None:
+    """Regression, 2026-07-28: total_files correctly excludes delete files as of the scan.go
+    fix (a table's real data-file count, not inflated by tiny delete files landing under the
+    small-file threshold). On a heavily MOR-fragmented table, delete files can genuinely
+    outnumber data files -- delete_files / total_files must not report e.g. "428.7%"; it's
+    clamped to 100, matching the pattern incremental.py already used for this same ratio."""
+    payload = {
+        "ok": True,
+        "total_files": 2,
+        "total_records": 10,
+        "total_size_bytes": 100,
+        "health_small_files": 2,
+        "delete_files": 10,
+        "equality_delete_files": 0,
+        "position_delete_files": 10,
+        "delete_bytes": 30,
+        "manifest_count": 1,
+        "manifest_total_bytes": 0,
+        "total_snapshots": 1,
+        "file_formats": ["PARQUET"],
+        "partition_fields": [],
+        "partitions": [
+            {
+                "partition_key": "_unpartitioned",
+                "partition_value": "_unpartitioned",
+                "partition_values": {},
+                "files": 2,
+                "small": 2,
+                "size_bytes": 100,
+            }
+        ],
+    }
+    analysis = table_analysis_from_go_payload(
+        payload,
+        schema_name="demo",
+        table_name="mor_heavy",
+        scan_at=datetime(2026, 6, 30, tzinfo=UTC),
+        settings=Settings(cost_scan_tier="heuristic"),
+    )
+    assert analysis.total_delete_files == 10
+    assert analysis.delete_file_pct == 100.0
 
 
 def test_go_payload_mapper_empty_table() -> None:
