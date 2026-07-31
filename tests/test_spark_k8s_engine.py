@@ -87,6 +87,42 @@ def test_execute_failure_returns_error_result() -> None:
     assert "boom" in results[0].error
 
 
+def test_execute_failure_preserves_table_not_found_signature_past_truncation() -> None:
+    """Regression, 2026-07-31: a driver's raw log tail is a full stack trace that can run past
+    15KB, with "Caused by: NoSuchTableException" often well past the ~4000-char head+tail
+    window truncate_error_message keeps -- confirmed live, the signature was in the untruncated
+    log but never reached the stored error, so is_table_not_found_error() downstream never
+    fired. The signature must survive even when it originally sat past both the head and tail
+    cutoffs."""
+    from cryo.engines.base import is_table_not_found_error
+
+    padding = "INFO stack frame noise line\n" * 200
+    state_details = (
+        padding
+        + "Caused by: org.apache.spark.sql.catalyst.analysis.NoSuchTableException: "
+        "[TABLE_OR_VIEW_NOT_FOUND] not found\n"
+        + padding
+    )
+    assert not is_table_not_found_error(state_details[:3500])
+    assert not is_table_not_found_error(state_details[-500:])
+
+    engine = SparkK8sEngine(config={})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-ghi789"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-ghi789",
+        state=JobRunState.FAILED,
+        state_details=state_details,
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_plan())
+    assert len(results) == 1
+    assert not results[0].ok
+    assert len(results[0].error) < 4200
+    assert is_table_not_found_error(results[0].error)
+
+
 def test_execute_submission_exception_is_caught() -> None:
     engine = SparkK8sEngine(config={})
     mock_client = MagicMock()
@@ -97,6 +133,64 @@ def test_execute_submission_exception_is_caught() -> None:
     assert len(results) == 1
     assert not results[0].ok
     assert "k8s api unavailable" in results[0].error
+
+
+def test_execute_truncates_runaway_error_messages() -> None:
+    """Regression, 2026-07-27: no engine's except-block may store an unbounded exception
+    message -- confirmed live on Trino (str(exc) landed a 2.96M-character error). Same
+    truncate_error_message helper applies here for consistency."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = RuntimeError("x" * 20_000)
+    engine._client = mock_client
+
+    results = engine.execute_plan(_plan())
+    assert len(results) == 1
+    assert not results[0].ok
+    assert len(results[0].error) < 4200
+    assert "truncated" in results[0].error
+
+
+def test_with_source_config_fills_in_missing_s3_credentials() -> None:
+    """Regression, 2026-07-28: the native engine has inherited source-configured S3 keys
+    since day one (cryo/engines/native/payload.py), and the worker dispatch loop already
+    calls engine.with_source_config(...) generically on any engine defining it -- Spark-on-K8s
+    just never implemented the hook. Confirmed live: a table whose source had static
+    s3.access-key-id/s3.secret-access-key configured (the operator's deliberate "keys, not
+    IAM role" choice) still fell through to the pod's ambient node IAM role for Spark-K8s
+    jobs, which lacked s3:GetObject on that table's bucket."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    assert engine._k8s_config.s3_access_key is None
+
+    updated = engine.with_source_config(
+        {"s3.access-key-id": "AKIAEXAMPLE", "s3.secret-access-key": "secret123"}
+    )
+    assert updated is not engine
+    assert updated._k8s_config.s3_access_key == "AKIAEXAMPLE"
+    assert updated._k8s_config.s3_secret_key == "secret123"
+    # Original engine instance is untouched.
+    assert engine._k8s_config.s3_access_key is None
+
+
+def test_with_source_config_does_not_override_destinations_own_keys() -> None:
+    """An explicit s3_access_key/s3_secret_key already set on the destination is an operator
+    override (e.g. a maintenance-specific write role) and must win over the table's
+    source-configured read credentials."""
+    engine = SparkK8sEngine(
+        config={"catalog": "cdp", "spark_k8s": {"s3_access_key": "dest-key", "s3_secret_key": "dest-secret"}}
+    )
+    updated = engine.with_source_config(
+        {"s3.access-key-id": "AKIAEXAMPLE", "s3.secret-access-key": "secret123"}
+    )
+    assert updated is engine
+    assert updated._k8s_config.s3_access_key == "dest-key"
+    assert updated._k8s_config.s3_secret_key == "dest-secret"
+
+
+def test_with_source_config_no_op_when_source_has_no_keys() -> None:
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    updated = engine.with_source_config({"uri": "thrift://metastore:9083"})
+    assert updated is engine
 
 
 def test_probe_capacity_uses_slot_cap() -> None:

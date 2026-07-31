@@ -8,7 +8,14 @@ from typing import Any
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
-from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement, truncate_error_message
+from cryo.engines.base import (
+    TABLE_NOT_FOUND_MARKER,
+    ExecCtx,
+    ExecResult,
+    RenderedStatement,
+    is_table_not_found_error,
+    truncate_error_message,
+)
 from cryo.engines.spark.k8s import (
     SUCCESS_STATES,
     SparkK8sClient,
@@ -140,13 +147,22 @@ class SparkK8sEngine:
                     detail=stmt.sql,
                     duration_ms=duration_ms,
                 )
+            state_details = result.state_details or "no details"
+            # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,
+            # with "Caused by: NoSuchTableException" typically buried well past the head+tail
+            # window truncate_error_message keeps -- confirmed live, 2026-07-31: the signature
+            # was in the untruncated log but never reached the stored error, so nothing could
+            # detect "this table was dropped" downstream. Front-load the signature before
+            # truncating so head-first truncation always keeps it, regardless of where in the
+            # original text it actually occurred.
+            if is_table_not_found_error(state_details):
+                state_details = f"{TABLE_NOT_FOUND_MARKER} {state_details}"
             return ExecResult(
                 ok=False,
                 engine_ref=job_id,
                 detail=stmt.sql,
                 error=truncate_error_message(
-                    f"Spark-on-K8s Job {result.state.value}: "
-                    f"{result.state_details or 'no details'}"
+                    f"Spark-on-K8s Job {result.state.value}: {state_details}"
                 ),
                 duration_ms=duration_ms,
             )
