@@ -32,6 +32,7 @@ _IN_CLUSTER_API_SERVER = "https://kubernetes.default.svc:443"
 _DEFAULT_IMAGE = "cryo-spark:latest"
 _DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
 _DEFAULT_TTL_SECONDS = 3600
+_DESTINATION_LABEL = "cryo/destination"
 
 
 class JobRunState(StrEnum):
@@ -133,6 +134,7 @@ class SparkK8sClient:
         *,
         catalog: str,
         job_name: str = "cryo-spark",
+        destination_id: str | None = None,
     ) -> str:
         cfg = self._config
         runner_args = [
@@ -146,7 +148,7 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name)
+        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
 
     def submit_repair_missing_files(
         self,
@@ -154,6 +156,7 @@ class SparkK8sClient:
         *,
         job_name: str = "cryo-repair",
         commit: bool = False,
+        destination_id: str | None = None,
     ) -> str:
         """Dispatch cryo_spark_runner.py --repair-missing-files against table_ref.
 
@@ -180,9 +183,11 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name)
+        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
 
-    def _submit(self, runner_args: list[str], *, job_name: str) -> str:
+    def _submit(
+        self, runner_args: list[str], *, job_name: str, destination_id: str | None = None
+    ) -> str:
         cfg = self._config
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
@@ -264,6 +269,7 @@ class SparkK8sClient:
                 "labels": {
                     "app.kubernetes.io/name": "cryo",
                     "app.kubernetes.io/component": "spark-fallback",
+                    _DESTINATION_LABEL: (destination_id or "default")[:63],
                 },
                 "annotations": {
                     "cryo/driver-pod-name": driver_pod_name,

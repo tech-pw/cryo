@@ -73,11 +73,19 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
             "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')",
             job_name="cryo-optimize-manifests",
             catalog="cdp",
+            destination_id="b377ac3f-7d7f-47f7-985d-7543cd4cd82c",
         )
 
     assert job_id.startswith("cryo-spark-")
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
     assert manifest["metadata"]["namespace"] == "cryo"
+    # Move 6 (Spark side): the live capacity probe filters Jobs by this label -- without
+    # it, LiveCapacityProvider can't distinguish this destination's in-flight Jobs from
+    # any other Spark-K8s destination's.
+    assert (
+        manifest["metadata"]["labels"]["cryo/destination"]
+        == "b377ac3f-7d7f-47f7-985d-7543cd4cd82c"
+    )
     pod_spec = manifest["spec"]["template"]["spec"]
     assert pod_spec["serviceAccountName"] == "cryo-spark"
     assert pod_spec["imagePullSecrets"] == [{"name": "cryo-registry"}]
@@ -101,6 +109,18 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     # Driver/executor pods (created by spark-submit itself, not our Job manifest) also
     # need the same node selector -- this conf flag is how we reach them.
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
+
+
+def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
+    batch_api = MagicMock()
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_spark_sql("SELECT 1", catalog="cdp")
+
+    manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
+    assert manifest["metadata"]["labels"]["cryo/destination"] == "default"
 
 
 def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
