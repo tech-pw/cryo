@@ -9,7 +9,7 @@ from uuid import UUID
 
 from cryo.domain.enums import EngineType, JobStatus, JobStepStatus, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
-from cryo.engines.base import ExecCtx, RenderedStatement
+from cryo.engines.base import ExecCtx, RenderedStatement, is_table_not_found_error
 from cryo.engines.base import ExecResult as BaseExecResult
 from cryo.observability.metrics import worker_job_duration_seconds, worker_job_executions_total
 from cryo.planner.planner import build_plan
@@ -147,6 +147,8 @@ class JobStore(Protocol):
 
     def set_engine_ref(self, job_id: str, engine_ref: str) -> None: ...
 
+    def deactivate_table(self, table_id: str, reason: str) -> None: ...
+
 
 class InMemoryJobStore:
     def __init__(self) -> None:
@@ -154,6 +156,7 @@ class InMemoryJobStore:
         self.destinations: dict[str, DestinationConfig] = {}
         self.tables: dict[str, TableMaintenanceData] = {}
         self.audit: list[AuditRecord] = []
+        self.deactivated_tables: dict[str, str] = {}
 
     def add_destination(self, destination: DestinationConfig) -> None:
         self.destinations[destination.id] = destination
@@ -221,6 +224,9 @@ class InMemoryJobStore:
 
     def set_engine_ref(self, job_id: str, engine_ref: str) -> None:
         self.jobs[job_id].engine_ref = engine_ref
+
+    def deactivate_table(self, table_id: str, reason: str) -> None:
+        self.deactivated_tables[table_id] = reason
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]:
         return [
@@ -769,6 +775,8 @@ class Worker:
             )
 
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
+        if final_status is JobStatus.FAILED and is_table_not_found_error(error):
+            self._deactivate_dropped_table(job.table_id, error)
         safe_publish(
             self._run_events,
             job.run_id,
@@ -807,6 +815,15 @@ class Worker:
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _deactivate_dropped_table(self, table_id: str, error: str | None) -> None:
+        """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to."""
+        try:
+            self._store.deactivate_table(
+                table_id, f"Table not found in catalog during maintenance: {error}"
+            )
+        except Exception:  # noqa: BLE001 - best-effort, job outcome already recorded
+            pass
 
     def _record_job_metrics(
         self,
