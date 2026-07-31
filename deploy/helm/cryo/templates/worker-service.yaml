@@ -1,0 +1,22 @@
+{{- /*
+Exposes the Worker's health server (also serves /scale-metric, see
+keda-worker-scaledobject.yaml) on a stable in-cluster address. Any replica can answer
+/scale-metric correctly -- it queries shared Postgres state, not local process state -- so a
+plain round-robin ClusterIP Service is sufficient; KEDA doesn't need per-pod addressing here.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cryo.fullname" . }}-worker
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "cryo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  ports:
+    - name: health
+      port: 8081
+      targetPort: health
