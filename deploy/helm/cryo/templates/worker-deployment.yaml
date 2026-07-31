@@ -104,4 +104,8 @@ spec:
       containers:
         - name: worker
           command: ["cryo", "worker"]
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
           {{- include "cryo.workerPod" (dict "root" . "resources" .Values.worker.resources) | nindent 10 }}

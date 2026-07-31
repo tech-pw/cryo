@@ -1,10 +1,21 @@
 {{- /*
 KEDA ScaledObject for Worker replicas (native-engine-scoping-research.md §6.2).
 
-Scales the long-lived Worker Deployment against the Redis admitted-job list
-(`cryo:admitted` by default). Workers still create per-chunk Kubernetes Jobs when
-`k8s_dispatch` is enabled — KEDA supplies elastic Worker count, Jobs supply
-elastic compute per chunk.
+Scales the long-lived Worker Deployment against the count of jobs in ADMITTED/RUNNING status
+(cryo.jobs, exposed via each Worker's own /scale-metric endpoint -- see
+cryo/observability/health_server.py and cli.py's _worker_scale_metric). Workers still create
+per-chunk Kubernetes Jobs when `k8s_dispatch` is enabled — KEDA supplies elastic Worker count,
+Jobs supply elastic compute per chunk.
+
+Regression, 2026-07-31: this used to watch the Redis `cryo:admitted` list's *length* instead.
+A worker pops a job off that list within seconds of admission -- long before the job itself
+finishes -- so the list reads ~0 almost continuously even while every replica is saturated for
+hours (worker.py's process_next() runs a job's entire plan synchronously before claiming
+another). KEDA saw "nothing pending" and never scaled up; confirmed live, it also reverted a
+manual scale-up 9 seconds after being applied ("all metrics below target"), killing a worker
+mid-dispatch and orphaning the job it had just claimed. ADMITTED+RUNNING count doesn't have
+this blind spot: it stays elevated for a job's whole duration, so a 1:1 target value maps
+directly onto "how many replicas would let every active job progress concurrently".
 
 Requires the KEDA operator installed in the cluster. Disabled by default.
 */ -}}
@@ -24,12 +35,9 @@ spec:
   pollingInterval: {{ .Values.native.keda.pollingInterval | default 15 }}
   cooldownPeriod: {{ .Values.native.keda.cooldownPeriod | default 60 }}
   triggers:
-    - type: redis
+    - type: metrics-api
       metadata:
-        address: {{ .Values.native.keda.redisAddress | quote }}
-        listName: {{ .Values.native.keda.redisListName | default "cryo:admitted" | quote }}
-        listLength: {{ .Values.native.keda.listLength | default "1" | quote }}
-        {{- if .Values.native.keda.redisPasswordFromSecret }}
-        passwordFromEnv: REDIS_PASSWORD
-        {{- end }}
+        targetValue: {{ .Values.native.keda.listLength | default "1" | quote }}
+        url: "http://{{ include "cryo.fullname" . }}-worker.{{ .Release.Namespace }}.svc.cluster.local:8081/scale-metric"
+        valueLocation: "value"
 {{- end }}
