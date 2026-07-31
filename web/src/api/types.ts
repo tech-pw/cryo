@@ -710,6 +710,56 @@ export interface JobRead {
   force_admit?: boolean;
 }
 
+export interface RunStepRead {
+  step_index: number;
+  operation_type: string;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface TableStatsSnapshotRead {
+  scan_at: string;
+  grade?: string | null;
+  overall_score?: number | null;
+  total_files?: number | null;
+  small_files_count?: number | null;
+  total_size_gb?: number | null;
+  total_delete_files?: number | null;
+  delete_file_pct?: number | null;
+}
+
+export interface RunResourceEstimateRead {
+  engine?: string | null;
+  vcpu_hours?: number | null;
+  memory_gib_hours?: number | null;
+  active_duration_seconds?: number | null;
+}
+
+export interface TableRunRead {
+  job_id: UUID;
+  run_id: UUID;
+  status: string;
+  trigger?: string | null;
+  mode: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_seconds?: number | null;
+  error?: string | null;
+  steps: RunStepRead[];
+  before_stats?: TableStatsSnapshotRead | null;
+  after_stats?: TableStatsSnapshotRead | null;
+  resource_estimate?: RunResourceEstimateRead | null;
+}
+
+export interface TableRunsResponse {
+  table_id: UUID;
+  items: TableRunRead[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface DatalakeDashboard {
   totals?: {
     tables?: number;

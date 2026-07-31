@@ -83,6 +83,7 @@ import type {
   TableAlertSubscriptionRead,
   TableCostRead,
   TableRead,
+  TableRunRead,
   UUID,
   PlanVerdict,
   PlanVerifyRequest,
@@ -240,6 +241,8 @@ export const getTableAudit = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: AuditEntry[] }>(`/tables/${id}/audit`, api).then((payload) => payload.items);
 export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
+export const getTableRuns = (api: ApiOptions, id: UUID) =>
+  apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api).then((payload) => payload.items);
 
 export interface HealthTrendPoint {
   timestamp: string;

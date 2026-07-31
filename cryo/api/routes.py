@@ -102,6 +102,7 @@ from cryo.api.schemas import (
     TablePatch,
     TablePreviewRead,
     TableRead,
+    TableRunsResponse,
     TableStatsHistoryResponse,
     validate_destination_config,
 )
@@ -1175,6 +1176,24 @@ def get_table_audit(
 
 
 @router.get(
+    "/tables/{table_id}/runs",
+    response_model=TableRunsResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def get_table_runs(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, object]:
+    result = datalake.table_runs(session, table_id, limit=limit, offset=offset)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    return result
+
+
+@router.get(
     "/tables/{table_id}/history",
     response_model=TableStatsHistoryResponse,
     dependencies=[Depends(require_viewer)],
@@ -2046,6 +2065,16 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
         JobStatus.QUEUED.value,
         JobStatus.ADMITTED.value,
         JobStatus.RUNNING.value,
+        # DEFERRED jobs (e.g. "table_locked") never held the lock they're waiting on --
+        # acquire_table_lock returned False, which is why they deferred in the first place --
+        # so release_lock is a safe, ownership-checked no-op for them. Regression, 2026-07-28:
+        # cancelling a run whose job was DEFERRED left the job row at status="deferred" even
+        # though the run itself flipped to "cancelled" -- reconcile_deferred_jobs (cryo/queue/
+        # reconcile.py) has no idea the parent run was cancelled and will happily re-admit and
+        # dispatch that job on the next governor tick, silently un-cancelling a run the operator
+        # explicitly stopped. Confirmed live: a cancelled Spark run's deferred job sat un-touched
+        # for hours before this fix.
+        JobStatus.DEFERRED.value,
     }
     for job in jobs:
         release_lock = job.dispatch_id not in active_dispatch_ids

@@ -13,6 +13,8 @@ from cryo.config import Settings
 from cryo.cost.model import bytes_to_usd
 from cryo.db.models import (
     AuditLog,
+    Destination,
+    JobStep,
     MaintenanceJob,
     MaintenanceRun,
     Source,
@@ -729,6 +731,181 @@ def table_audit(
         "limit": limit,
         "offset": offset,
     }
+
+
+def _nearest_stats_snapshot(
+    session: Session, table_id: uuid.UUID, *, before_or_at: datetime | None, after_or_at: datetime | None
+) -> TableStatsHistory | None:
+    """The TableStatsHistory row closest to a job's start (before_or_at) or finish
+    (after_or_at). Exactly one of the two kwargs should be set. No repository helper for this
+    existed before -- table_history()/stats_snapshot() only do exact-match, offset, or range
+    queries, none of which answer "what did the table look like right before/after this run."
+    """
+    query = select(TableStatsHistory).where(TableStatsHistory.table_id == table_id)
+    if before_or_at is not None:
+        query = query.where(TableStatsHistory.scan_at <= before_or_at).order_by(
+            TableStatsHistory.scan_at.desc()
+        )
+    else:
+        query = query.where(TableStatsHistory.scan_at >= after_or_at).order_by(
+            TableStatsHistory.scan_at.asc()
+        )
+    return session.scalars(query.limit(1)).first()
+
+
+def _stats_snapshot_payload(row: TableStatsHistory | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    raw = row.raw or {}
+    return {
+        "scan_at": row.scan_at,
+        "grade": row.grade,
+        "overall_score": row.overall_score,
+        "total_files": row.total_files,
+        "small_files_count": row.small_files_count,
+        "total_size_gb": row.total_size_gb,
+        "total_delete_files": raw.get("total_delete_files"),
+        "delete_file_pct": raw.get("delete_file_pct"),
+    }
+
+
+def _resource_estimate_payload(
+    steps: list[JobStep], destination: Destination | None
+) -> dict[str, object] | None:
+    """Reserved-capacity estimate: configured executor/driver shape x active wall-clock time
+    actually spent on completed steps. This is a config x duration estimate, not measured
+    utilization -- Cryo has no Prometheus/Mimir scraping pipeline wired up (see
+    cryo/observability/metrics.py's unused gauges), so this is the best available signal
+    without one. Only meaningful for the Spark-on-K8s engine today; other engines return None
+    for the numeric fields (still useful to show engine + duration alone).
+    """
+    active_seconds = sum(
+        (step.finished_at - step.started_at).total_seconds()
+        for step in steps
+        if step.started_at is not None and step.finished_at is not None
+    )
+    engine = destination.engine if destination is not None else None
+    if destination is None or engine not in {"spark_emr", "spark_k8s", "spark"}:
+        return {
+            "engine": engine,
+            "vcpu_hours": None,
+            "memory_gib_hours": None,
+            "active_duration_seconds": active_seconds,
+        }
+    spark_cfg = destination.config.get("spark_k8s") if isinstance(destination.config, dict) else None
+    spark_cfg = spark_cfg if isinstance(spark_cfg, dict) else {}
+    executor_instances = int(spark_cfg.get("executor_instances") or 2)
+    executor_cpu_milli = int(spark_cfg.get("executor_cpu_milli") or 2000)
+    executor_mem_mib = int(spark_cfg.get("executor_mem_mib") or 4096)
+    driver_cpu_milli = int(spark_cfg.get("driver_cpu_milli") or 1000)
+    driver_mem_mib = int(spark_cfg.get("driver_mem_mib") or 2048)
+    hours = active_seconds / 3600.0
+    vcpu_hours = (
+        executor_instances * (executor_cpu_milli / 1000.0) + (driver_cpu_milli / 1000.0)
+    ) * hours
+    memory_gib_hours = (
+        executor_instances * (executor_mem_mib / 1024.0) + (driver_mem_mib / 1024.0)
+    ) * hours
+    return {
+        "engine": engine,
+        "vcpu_hours": round(vcpu_hours, 2),
+        "memory_gib_hours": round(memory_gib_hours, 2),
+        "active_duration_seconds": active_seconds,
+    }
+
+
+def table_runs(
+    session: Session, table_id: uuid.UUID, *, limit: int, offset: int
+) -> dict[str, object] | None:
+    """Maintenance runs that touched this table, each enriched with its operations
+    (job_steps), a before/after TableStatsHistory delta, and a resource-usage estimate.
+
+    No endpoint previously scoped runs/jobs by table_id at all (GET /runs has no table_id
+    filter; every frontend caller filtered client-side by preset/kind instead) -- this is the
+    first one that does the join, and the first place before/after stats or resource estimates
+    are computed anywhere in the API layer.
+    """
+    if session.get(Table, table_id) is None:
+        return None
+    filters = [MaintenanceJob.table_id == table_id]
+    total = int(session.scalar(select(func.count(MaintenanceJob.id)).where(*filters)) or 0)
+    jobs = list(
+        session.scalars(
+            select(MaintenanceJob)
+            .where(*filters)
+            .order_by(MaintenanceJob.started_at.desc().nullslast(), MaintenanceJob.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    )
+    if not jobs:
+        return {"table_id": table_id, "items": [], "total": total, "limit": limit, "offset": offset}
+
+    job_ids = [job.id for job in jobs]
+    steps_by_job: dict[uuid.UUID, list[JobStep]] = {job_id: [] for job_id in job_ids}
+    for step in session.scalars(
+        select(JobStep).where(JobStep.job_id.in_(job_ids)).order_by(JobStep.step_index.asc())
+    ):
+        steps_by_job[step.job_id].append(step)
+
+    run_ids = {job.run_id for job in jobs}
+    runs_by_id = {
+        run.id: run
+        for run in session.scalars(select(MaintenanceRun).where(MaintenanceRun.id.in_(run_ids)))
+    }
+    destination_ids = {job.destination_id for job in jobs}
+    destinations_by_id = {
+        dest.id: dest
+        for dest in session.scalars(select(Destination).where(Destination.id.in_(destination_ids)))
+    }
+
+    items: list[dict[str, object]] = []
+    for job in jobs:
+        run = runs_by_id.get(job.run_id)
+        steps = steps_by_job.get(job.id, [])
+        started_at = job.started_at
+        finished_at = job.finished_at
+        duration_seconds = (
+            (finished_at - started_at).total_seconds()
+            if started_at is not None and finished_at is not None
+            else None
+        )
+        before = _nearest_stats_snapshot(session, table_id, before_or_at=started_at, after_or_at=None)
+        after = (
+            _nearest_stats_snapshot(session, table_id, before_or_at=None, after_or_at=finished_at)
+            if finished_at is not None
+            else None
+        )
+        items.append(
+            {
+                "job_id": job.id,
+                "run_id": job.run_id,
+                "status": job.status,
+                "trigger": run.trigger if run is not None else None,
+                "mode": job.mode,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "duration_seconds": duration_seconds,
+                "error": job.error,
+                "steps": [
+                    {
+                        "step_index": step.step_index,
+                        "operation_type": step.operation_type,
+                        "status": step.status,
+                        "started_at": step.started_at,
+                        "finished_at": step.finished_at,
+                    }
+                    for step in steps
+                ],
+                "before_stats": _stats_snapshot_payload(before),
+                "after_stats": _stats_snapshot_payload(after),
+                "resource_estimate": _resource_estimate_payload(
+                    steps, destinations_by_id.get(job.destination_id)
+                ),
+            }
+        )
+
+    return {"table_id": table_id, "items": items, "total": total, "limit": limit, "offset": offset}
 
 
 def table_history(session: Session, table_id: uuid.UUID, *, limit: int) -> dict[str, object] | None:
