@@ -235,6 +235,7 @@ class GovernorRunner(DaemonRunner):
         # restarted governor cannot duplicate a still-running Job whose DB
         # member status had not yet been advanced.
         self._tick_native_watcher(wiring)
+        self._tick_scan_dispatch(wiring)
         result = governor.run_wave(now=datetime.now(UTC))
         if any(
             (result.admitted, result.deferred, result.blocked, result.orphaned, result.re_enqueued)
@@ -269,6 +270,31 @@ class GovernorRunner(DaemonRunner):
                 )
         except Exception as exc:
             self._logger.debug("Native JobWatcher tick skipped: %s", exc)
+
+    def _tick_scan_dispatch(self, wiring: Any) -> None:
+        import os
+
+        from cryo.governor.scan_admit import admit_scan_jobs, scan_job_dispatch_enabled
+
+        if not scan_job_dispatch_enabled():
+            return
+        try:
+            from cryo.db.session import SessionLocal
+            from cryo.queue.scan_queue import RedisScanQueue
+
+            queue = RedisScanQueue(wiring.redis_client)
+            batch_size = int(os.environ.get("CRYO_SCANNER_JOB_DISPATCH_BATCH_SIZE", "1"))
+            with SessionLocal() as session:
+                result = admit_scan_jobs(
+                    queue=queue,
+                    session=session,
+                    session_factory=SessionLocal,
+                    max_dispatch=batch_size,
+                )
+            if result.admitted:
+                self._logger.info("Scan dispatch: admitted=%d", result.admitted)
+        except Exception as exc:
+            self._logger.debug("Scan Job dispatch tick skipped: %s", exc)
 
     def _reconcile_orphaned_table_locks(self, wiring: Any) -> None:
         """Release table locks whose owning job isn't actually running.
@@ -735,6 +761,34 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
     sys.exit(0)
 
 
+def _worker_scale_metric() -> int:
+    """Count of jobs that need a worker to make progress on them right now.
+
+    This is the metric KEDA's cryo-worker ScaledObject scales on (see
+    deploy/helm/cryo/templates/keda-worker-scaledobject.yaml). ADMITTED/RUNNING jobs each
+    occupy exactly one worker for their full duration (worker.py's process_next() executes a
+    job's entire plan synchronously before claiming another) -- so this count maps directly
+    onto "how many worker replicas would let every active job make progress concurrently",
+    which is exactly what a 1:1 target value on this metric gives KEDA.
+
+    Regression, 2026-07-31: the previous trigger watched the Redis `cryo:admitted` list's
+    *length*, which a worker pops within seconds of admission (long before the job itself
+    finishes) -- so the list is back to 0 almost immediately even while every replica stays
+    saturated for hours. KEDA saw "0 pending" and never scaled up, then reverted a manual
+    scale-up 9 seconds after it was applied ("all metrics below target"), killing a worker
+    mid-dispatch and orphaning the job it had just claimed.
+    """
+    from cryo.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        from sqlalchemy import text
+
+        result = session.execute(
+            text("SELECT count(*) FROM cryo.jobs WHERE status IN ('admitted', 'running')")
+        )
+        return int(result.scalar() or 0)
+
+
 def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -> NoReturn:
     settings = get_settings()
     init_tracing(settings, service_name=service_name or runner.name)
@@ -745,6 +799,7 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
             port=settings.health_port,
             service_name=service_name,
             readiness_check=lambda: not runner._stop.is_set(),
+            scale_metric_provider=_worker_scale_metric if service_name == "worker" else None,
         )
 
     def handle_signal(signum: int, frame: object) -> None:
