@@ -194,3 +194,39 @@ def test_table_runs_before_stats_none_when_no_prior_snapshot(session) -> None:
     assert entry["before_stats"] is None
     assert entry["after_stats"] is None  # job hasn't finished yet
     assert entry["duration_seconds"] is None
+
+
+def test_table_runs_queued_job_with_no_started_at_does_not_crash(session) -> None:
+    """A queued job (blocked on a destination's slot_cap, e.g.) has started_at=None -- this hit
+    a real production 500: _nearest_stats_snapshot(before_or_at=None, after_or_at=None) fell
+    through to a `scan_at >= None` comparison, which SQLAlchemy rejects against Postgres."""
+    source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
+    destination = Destination(id=uuid4(), name=f"dest-{uuid4()}", engine="spark_k8s", config={})
+    table = Table(id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events")
+    session.add_all([source, destination, table])
+    session.flush()
+
+    run = MaintenanceRun(id=uuid4(), kind="adhoc", trigger="api", status="queued", summary={})
+    session.add(run)
+    session.flush()
+
+    job = MaintenanceJob(
+        id=uuid4(),
+        run_id=run.id,
+        table_id=table.id,
+        destination_id=destination.id,
+        mode="standard",
+        status="queued",
+        started_at=None,
+        finished_at=None,
+    )
+    session.add(job)
+    session.commit()
+
+    result = datalake.table_runs(session, table.id, limit=50, offset=0)
+
+    entry = result["items"][0]
+    assert entry["status"] == "queued"
+    assert entry["before_stats"] is None
+    assert entry["after_stats"] is None
+    assert entry["duration_seconds"] is None
