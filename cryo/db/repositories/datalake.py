@@ -741,6 +741,8 @@ def _nearest_stats_snapshot(
     existed before -- table_history()/stats_snapshot() only do exact-match, offset, or range
     queries, none of which answer "what did the table look like right before/after this run."
     """
+    if before_or_at is None and after_or_at is None:
+        return None
     query = select(TableStatsHistory).where(TableStatsHistory.table_id == table_id)
     if before_or_at is not None:
         query = query.where(TableStatsHistory.scan_at <= before_or_at).order_by(
