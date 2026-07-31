@@ -45,10 +45,20 @@ def truncate_error_message(
 # with no writes in 60+ days hit two of these -- the table had been dropped from the catalog
 # sometime after Cryo's last scan, but Cryo kept scheduling (and failing) maintenance against it
 # indefinitely since nothing ever reconciled `Table.is_active` against real catalog state.
+#
+# TABLE_NOT_FOUND_MARKER is a second layer: a driver's raw log tail is a full stack trace that
+# can run past 15KB, with "Caused by: NoSuchTableException" often well past the ~4000-char
+# head+tail window truncate_error_message keeps -- confirmed live the same day, the signature
+# was present in the untruncated log but never reached the stored error. An engine that has the
+# raw, untruncated text should check it with this function *before* truncating and, if positive,
+# prepend TABLE_NOT_FOUND_MARKER so head-first truncation always preserves a detectable signature
+# regardless of where the original one landed.
+TABLE_NOT_FOUND_MARKER = "[table not found in catalog]"
 _TABLE_NOT_FOUND_SIGNATURES = (
     "NoSuchTableException",
     "TABLE_OR_VIEW_NOT_FOUND",
     "TableNotFoundException",
+    TABLE_NOT_FOUND_MARKER,
 )
 
 
