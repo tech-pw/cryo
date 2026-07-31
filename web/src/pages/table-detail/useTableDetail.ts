@@ -10,6 +10,7 @@ import {
   getPartitionEvolutionRecommendation,
   getTable,
   getTableAudit,
+  getTableRuns,
   getTableBenefitScores,
   getTableCost,
   getTableHealthTrends,
@@ -140,6 +141,11 @@ export function useTableDetail() {
   const audit = useQuery({
     queryKey: ["table-audit", tableId, token],
     queryFn: () => getTableAudit(api, tableId),
+    retry: 1
+  });
+  const runs = useQuery({
+    queryKey: ["table-runs", tableId, token],
+    queryFn: () => getTableRuns(api, tableId),
     retry: 1
   });
   const healthTrends = useQuery({
@@ -699,6 +705,7 @@ export function useTableDetail() {
     setNewSubscriberEmail,
     table,
     audit,
+    runs,
     healthTrends,
     effectivePreset,
     tableCost,

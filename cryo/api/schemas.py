@@ -752,6 +752,62 @@ class TableAuditResponse(BaseModel):
     offset: int
 
 
+class RunStepRead(BaseModel):
+    step_index: int
+    operation_type: str
+    status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TableStatsSnapshotRead(BaseModel):
+    """A TableStatsHistory row, trimmed to the fields a before/after run delta needs."""
+
+    scan_at: datetime
+    grade: str | None = None
+    overall_score: int | None = None
+    total_files: int | None = None
+    small_files_count: int | None = None
+    total_size_gb: float | None = None
+    total_delete_files: int | None = None
+    delete_file_pct: float | None = None
+
+
+class RunResourceEstimateRead(BaseModel):
+    """Reserved-capacity estimate (config x active wall time), not measured utilization --
+    see cli.py-adjacent notes in table_runs() for why this can't be exact without a real
+    metrics pipeline."""
+
+    engine: str | None = None
+    vcpu_hours: float | None = None
+    memory_gib_hours: float | None = None
+    active_duration_seconds: float | None = None
+
+
+class TableRunRead(BaseModel):
+    job_id: uuid.UUID
+    run_id: uuid.UUID
+    status: str
+    trigger: str | None = None
+    mode: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_seconds: float | None = None
+    error: str | None = None
+    steps: list[RunStepRead] = Field(default_factory=list)
+    before_stats: TableStatsSnapshotRead | None = None
+    after_stats: TableStatsSnapshotRead | None = None
+    resource_estimate: RunResourceEstimateRead | None = None
+
+
+class TableRunsResponse(BaseModel):
+    table_id: uuid.UUID
+    items: list[TableRunRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class DatalakeTotals(BaseModel):
     total_tables: int
     active_tables: int
