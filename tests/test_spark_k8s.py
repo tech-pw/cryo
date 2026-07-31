@@ -11,6 +11,7 @@ from cryo.engines.spark.k8s import (
     JobRunState,
     SparkK8sClient,
     SparkK8sConfig,
+    _read_pod_log_tail,
 )
 
 
@@ -229,6 +230,31 @@ def test_cleanup_credentials_secret_noop_without_annotation() -> None:
         client.cleanup_credentials_secret("cryo-spark-abc")
 
     core_api.delete_namespaced_secret.assert_not_called()
+
+def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
+    """Regression, 2026-07-31: limit_bytes returns bytes from the START of the pod log, not
+    the end -- for any driver with more than ~8KB of startup chatter before the real failure,
+    the old code captured 20 lines of noise nowhere near the actual exception. A
+    NoSuchTableException live in production never reached job.error because of this -- only
+    "Decommissioning not enabled" spam did. tail_lines is the correct API parameter for
+    "last N lines"."""
+    core_api = MagicMock()
+    core_api.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(name="cryo-spark-abc123-driver")
+    )
+    core_api.read_namespaced_pod_log.return_value = (
+        "INFO noise line 1\n" * 500 + "Caused by: NoSuchTableException: table not found"
+    )
+
+    with patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api):
+        tail = _read_pod_log_tail("cryo-spark-abc123-driver", "cryo")
+
+    core_api.read_namespaced_pod_log.assert_called_once_with(
+        name="cryo-spark-abc123-driver", namespace="cryo", tail_lines=200
+    )
+    assert "NoSuchTableException" in tail
+    assert "limit_bytes" not in core_api.read_namespaced_pod_log.call_args.kwargs
+
 
 def test_get_job_run_reads_driver_pod_not_wrapper_job() -> None:
     """The wrapper Job's spark-submit container can exit 0 even when the driver pod's

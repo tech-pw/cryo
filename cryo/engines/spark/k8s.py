@@ -458,6 +458,15 @@ def _read_pod_log_tail(
     Direct name lookup by default (used for the driver pod, whose name is known);
     falls back to a label-selector list when the caller only knows the owning Job
     (the wrapper-pod fallback path, where the pod's generated suffix isn't known).
+
+    Regression, 2026-07-31: this used `limit_bytes=1024*8` then took the last 20 lines of
+    *that* -- but `limit_bytes` on the Kubernetes pod-log API returns bytes from the START
+    of the stream, not the end. For any Spark driver with more than ~8KB of startup/executor-
+    allocation INFO chatter before the real failure (i.e. almost every real failure), the
+    captured "tail" was 20 lines of startup noise nowhere near the actual exception -- e.g. a
+    NoSuchTableException that killed the job never appeared in job.error at all, only
+    "Decommissioning not enabled, skipping shutdown script" spam. `tail_lines` is the
+    correct parameter for "last N lines of a pod's log" and needs no byte-size guessing.
     """
     try:
         core_api = _new_k8s_core_client()
@@ -472,9 +481,9 @@ def _read_pod_log_tail(
                 logs: str = core_api.read_namespaced_pod_log(
                     name=pod.metadata.name,
                     namespace=namespace,
-                    limit_bytes=1024 * 8,
+                    tail_lines=200,
                 )
-                tail = "\n".join(logs.strip().splitlines()[-20:])
+                tail = logs.strip()
                 if tail:
                     return tail
             except Exception:  # noqa: BLE001 - best-effort diagnostics only
