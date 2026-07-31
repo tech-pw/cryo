@@ -6,13 +6,13 @@ import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from cryo.db.models import QueryLog, QueryPattern, Table
+from cryo.db.models import QueryLog, QueryPattern, Table, TableQueryActivity, TableStats
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,35 @@ def aggregate_query_patterns(
 
     updated = _upsert_query_patterns(session, table_stats)
     logger.info(f"Updated {updated} query patterns")
+
+    # This function re-reads the same query_logs rows on every call (no watermark -- the curator
+    # calls it fresh every scheduler tick with the default 30-day window), so day buckets must be
+    # REPLACED with the recomputed truth, not incremented, or every tick would double-count.
+    _replace_table_query_activity_from_query_logs(session, logs)
+    refresh_query_count_30d(session, set(table_stats.keys()))
     return updated
+
+
+def _replace_table_query_activity_from_query_logs(
+    session: Session,
+    logs: list[QueryLog],
+) -> None:
+    day_counts: defaultdict[tuple[uuid.UUID, date], int] = defaultdict(int)
+    for log in logs:
+        if log.table_id is None or log.executed_at is None:
+            continue
+        day_counts[(log.table_id, log.executed_at.date())] += 1
+
+    for (table_id, day), count in day_counts.items():
+        existing = (
+            session.query(TableQueryActivity).filter_by(table_id=table_id, day=day).one_or_none()
+        )
+        if existing is None:
+            session.add(TableQueryActivity(table_id=table_id, day=day, query_count=count))
+        else:
+            existing.query_count = count
+            existing.updated_at = datetime.now(UTC)
+    session.commit()
 
 
 def _upsert_query_patterns(
@@ -164,6 +192,70 @@ def _upsert_query_patterns(
             session.execute(stmt)
             updated += 1
 
+    session.commit()
+    return updated
+
+
+def record_table_query_activity(
+    session: Session,
+    query_counts: dict[uuid.UUID, int],
+    *,
+    day: date | None = None,
+) -> None:
+    """Upsert day-bucketed per-table query counts (see TableQueryActivity's docstring for why
+    this exists separately from query_patterns). Additive on conflict: a table can legitimately
+    be touched by more than one aggregation window/tick on the same day, and each call only
+    knows about the queries *it* just processed, not the day's running total."""
+    if not query_counts:
+        return
+    bucket = day or datetime.now(UTC).date()
+    for table_id, count in query_counts.items():
+        if count <= 0:
+            continue
+        existing = (
+            session.query(TableQueryActivity)
+            .filter_by(table_id=table_id, day=bucket)
+            .one_or_none()
+        )
+        if existing is None:
+            session.add(TableQueryActivity(table_id=table_id, day=bucket, query_count=count))
+        else:
+            existing.query_count += count
+            existing.updated_at = datetime.now(UTC)
+    session.commit()
+
+
+def refresh_query_count_30d(
+    session: Session,
+    table_ids: set[uuid.UUID],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Recompute TableStats.query_count_30d from TableQueryActivity's rolling 30-day sum for
+    the given tables. Only updates tables that already have a TableStats row -- a table with no
+    stats yet gets its query_count_30d set on its next scan instead (scanner/run.py carries the
+    then-current TableStats.query_count_30d forward, so this must run before or independent of
+    that, not depend on it)."""
+    if not table_ids:
+        return 0
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=30)
+    sums = dict(
+        session.execute(
+            select(TableQueryActivity.table_id, func.sum(TableQueryActivity.query_count))
+            .where(
+                TableQueryActivity.table_id.in_(table_ids),
+                TableQueryActivity.day >= cutoff.date(),
+            )
+            .group_by(TableQueryActivity.table_id)
+        ).all()
+    )
+    updated = 0
+    for table_id in table_ids:
+        stats = session.get(TableStats, table_id)
+        if stats is None:
+            continue
+        stats.query_count_30d = int(sums.get(table_id, 0))
+        updated += 1
     session.commit()
     return updated
 

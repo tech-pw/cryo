@@ -33,7 +33,9 @@ from cryo.db.models import (
     Table,
     TableAlertDispatch,
     TableAlertSubscription,
+    TableCostHistory,
     TablePartition,
+    TableQueryActivity,
     TableStatsHistory,
 )
 from cryo.lineage.tracker import LineageEdge  # noqa: F401 — register table metadata
@@ -60,7 +62,15 @@ UUID_ID_MODELS = (
     S3RequestCostDaily,
     SilentDataLossEvent,
 )
-_AUTOINCREMENT_ID_MODELS = (TablePartition, TableStatsHistory, AuditLog, QueryLog, QueryPattern)
+_AUTOINCREMENT_ID_MODELS = (
+    TablePartition,
+    TableStatsHistory,
+    TableCostHistory,
+    TableQueryActivity,
+    AuditLog,
+    QueryLog,
+    QueryPattern,
+)
 _next_autoincrement_id = itertools.count(1)
 
 
