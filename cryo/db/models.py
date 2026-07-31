@@ -240,6 +240,9 @@ class Table(Base):
     partitions: Mapped[list[TablePartition]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
+    columns: Mapped[list[TableColumn]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
     history: Mapped[list[TableStatsHistory]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
@@ -434,6 +437,24 @@ class TablePartition(Base):
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
 
     table: Mapped[Table] = relationship(back_populates="partitions")
+
+
+class TableColumn(TimestampMixin, Base):
+    """Latest per-column schema index populated at scan time for catalog search."""
+
+    __tablename__ = "table_columns"
+    __table_args__ = (Index("ix_table_columns_column_name", "column_name"),)
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    column_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    data_type: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    table: Mapped[Table] = relationship(back_populates="columns")
 
 
 class TableStatsHistory(Base):
@@ -978,6 +999,37 @@ class QueryPattern(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    table: Mapped[Table] = relationship()
+
+
+class TableQueryActivity(Base):
+    """Day-bucketed per-table query counts, the source of truth for TableStats.query_count_30d.
+
+    query_patterns is aggregated per (table, column) -- filter/join/projection counts, not a
+    query-level counter -- so it can't answer "how many queries touched this table" on its own.
+    Both telemetry ingestion paths (legacy query_logs poll and the Iceberg read-through source)
+    increment this once per matched query, independent of how many columns that query touched,
+    so a rolling 30-day sum here is a real distinct-query count. Day-bucketed (not a single
+    running total) so the 30-day window can be computed with a plain SUM(...) WHERE day >= cutoff
+    instead of needing incremental decay logic as old activity ages out.
+    """
+
+    __tablename__ = "table_query_activity"
+    __table_args__ = (
+        UniqueConstraint("table_id", "day", name="uq_table_query_activity_table_day"),
+        Index("ix_table_query_activity_table_id_day", "table_id", "day"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    query_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
@@ -1641,6 +1693,7 @@ __all__ = [
     "Source",
     "Table",
     "TableAssignment",
+    "TableColumn",
     "TableCost",
     "TableCostHistory",
     "TableEmbedding",
