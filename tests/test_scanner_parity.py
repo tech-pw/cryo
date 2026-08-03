@@ -172,6 +172,57 @@ def test_go_payload_falls_back_gracefully_when_loader_raises() -> None:
     assert analysis.total_files == 4
 
 
+def test_go_payload_gets_cost_accounting_for_a_large_but_valuable_table() -> None:
+    """Regression, 2026-08-03: cost_metadata_max_files_estimate's old default (200_000)
+    excluded a real table with 207,511 files (24TB, ~$700/mo) from all cost/reclaim
+    accounting -- table_cost had zero rows for it, ever. The real memory guard is inside
+    account_metadata_cost itself (cost_scan_max_snapshots/max_manifests, checked live, with
+    a graceful fallback either way), so the outer file-count pre-filter only needs to catch
+    truly pathological cases, not tables like this one. Uses the new default directly (no
+    settings override) so a future accidental regression of the default is caught too."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[FakeDataFile(1 * MB, 1, ("2026-06-29",)) for _ in range(250_000)],
+        snapshots=[FakeSnapshotMeta(scan_at)],
+    )
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(total_files=250_000, manifest_count=9),
+        schema_name="unified_bq",
+        table_name="gold_dbt_pw_bq",
+        scan_at=scan_at,
+        settings=Settings(cost_scan_tier="metadata"),
+        table_obj_loader=lambda: table,
+    )
+    assert analysis.cost is not None
+    from cryo.domain.enums import CostPrecision
+
+    assert analysis.cost.precision is CostPrecision.METADATA
+
+
+def test_go_payload_degrades_to_heuristic_not_nothing_when_snapshot_count_is_high() -> None:
+    """A large-but-valuable table that also has many snapshots (past account_metadata_cost's
+    own cost_scan_max_snapshots guard) must still get *some* real cost accounting --
+    CostPrecision.HEURISTIC, not None -- exactly the graceful-degrade path this table
+    (2,137 snapshots after a 2.5-day maintenance run) actually needs."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[FakeDataFile(1 * MB, 1, ("2026-06-29",)) for _ in range(250_000)],
+        snapshots=[FakeSnapshotMeta(scan_at) for _ in range(250)],
+    )
+    analysis = table_analysis_from_go_payload(
+        _go_payload_fixture(total_files=250_000, manifest_count=9),
+        schema_name="unified_bq",
+        table_name="gold_dbt_pw_bq",
+        scan_at=scan_at,
+        settings=Settings(cost_scan_tier="metadata", cost_scan_max_snapshots=200),
+        table_obj_loader=lambda: table,
+    )
+    assert analysis.cost is not None
+    from cryo.domain.enums import CostPrecision
+
+    assert analysis.cost.precision is CostPrecision.HEURISTIC
+
+
 def test_go_payload_ineligible_tier_never_calls_loader() -> None:
     calls = []
 

@@ -358,6 +358,69 @@ def test_worker_does_not_deactivate_table_on_unrelated_failure() -> None:
     assert store.deactivated_tables == {}
 
 
+def test_skip_operations_from_preset_derives_the_complement() -> None:
+    from cryo.worker.worker import _skip_operations_from_preset
+
+    skipped = _skip_operations_from_preset(
+        (OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS)
+    )
+    assert set(skipped) == {"expire_snapshots", "remove_orphan_files"}
+
+
+def test_skip_operations_from_preset_empty_when_no_preset_operations_configured() -> None:
+    """None/() means the preset never explicitly set operations -- must not skip anything,
+    preserving the pre-existing default behavior for every preset that doesn't use this."""
+    from cryo.worker.worker import _skip_operations_from_preset
+
+    assert _skip_operations_from_preset(None) == []
+    assert _skip_operations_from_preset(()) == []
+
+
+def test_worker_derives_skip_operations_from_job_operations_end_to_end() -> None:
+    """A preset that only lists optimize/optimize_manifests must actually produce a plan
+    without expire_snapshots/remove_orphan_files -- not just pass ABAC/PII validation with
+    the field, then silently ignore it at plan-build time."""
+    queue, locks, store = _worker_fixture()
+    store.jobs["job-1"].operations = (OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS)
+    store.jobs["job-1"].mode = Mode.DEEP
+    engine = FakeMaintenanceEngine()
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.plan is not None
+    op_types = [op["type"] for op in result.plan["operations"]]
+    assert "expire_snapshots" not in op_types
+    assert "remove_orphan_files" not in op_types
+
+
+def test_worker_calls_with_table_stats_for_non_native_engines_too() -> None:
+    """Regression, 2026-08-03: this hook was gated to `engine.type is EngineType.NATIVE`, so
+    SparkK8sEngine.with_table_stats (table-size-aware executor sizing -- see its docstring)
+    never actually ran even though the engine defines it. Any engine defining the hook should
+    get it, matching how with_source_config is already applied unconditionally just above."""
+    from cryo.domain.enums import EngineType
+
+    class _SizeAwareFakeEngine(FakeMaintenanceEngine):
+        type = EngineType.SPARK_EMR
+
+        def __init__(self) -> None:
+            super().__init__(engine_type=EngineType.SPARK_EMR)
+            self.received_stats = None
+
+        def with_table_stats(self, stats):
+            self.received_stats = stats
+            return self
+
+    queue, locks, store = _worker_fixture()
+    engine = _SizeAwareFakeEngine()
+
+    Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert engine.received_stats is not None
+    assert engine.received_stats["total_size_gb"] == 10
+
+
 def test_default_engine_factory_injects_destination_id_into_config() -> None:
     """destination.config (the raw DB blob) never carries the destination's own id --
     engines that need it for K8s Job labeling (native's job_dispatch, Spark-K8s's live

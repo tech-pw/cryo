@@ -70,6 +70,25 @@ def test_streaming_detection_from_history() -> None:
     assert commits_per_day > 20
 
 
+def test_streaming_detection_skips_deltas_explained_by_maintenance_jobs() -> None:
+    """Regression, 2026-07-27: a deep run's own expire_snapshots/optimize/optimize_manifests
+    commits inflated pw_bq.silver_dbt_pw_launch's snapshot count 8 -> 36 in minutes, which the
+    unadjusted heuristic read as 80 commits/day of streaming writes. stats_history_for_signals
+    marks the latest row when a Cryo job explains the delta; detect_streaming_from_history must
+    then report no streaming rather than a false positive."""
+    history = [
+        {"scan_at": "2026-07-27T02:00:00+00:00", "total_snapshots": 8},
+        {
+            "scan_at": "2026-07-27T10:00:00+00:00",
+            "total_snapshots": 36,
+            "maintenance_job_since_previous": True,
+        },
+    ]
+    is_streaming, commits_per_day = detect_streaming_from_history(history)
+    assert not is_streaming
+    assert commits_per_day == 0.0
+
+
 def test_metadata_ratio() -> None:
     assert metadata_to_data_ratio(50, 1000) == 0.05
 
@@ -161,3 +180,132 @@ def test_streaming_aware_cadence_opt_out() -> None:
     assert not any("Streaming-aware cadence" in note for note in plan.notes)
     optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
     assert len(optimize_ops) == 1
+
+
+def test_streaming_aware_retention_tightens_expire_snapshots_window() -> None:
+    """Regression, 2026-08-03: unified_bq.gold_dbt_pw_bq went from 666 to 2,137 snapshots
+    *during* a single 2.5-day maintenance run -- expire_snapshots can only remove snapshots
+    older than its retention window, not ones created while the job itself is still running.
+    A high-velocity table should get a tighter window than the 7-day default so repeated
+    runs actually keep pace, mirroring the existing streaming-aware chunk-size cadence."""
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 100,
+        "is_streaming": True,
+        "commits_per_day": 588.0,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert len(expire_ops) == 1
+    assert expire_ops[0].params["retention_days"] == 1
+    assert any("Streaming-aware retention" in note for note in plan.notes)
+    assert any("588.0 commits/day" in note for note in plan.notes)
+
+
+def test_streaming_aware_retention_moderate_velocity_caps_at_three_days() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 100,
+        "is_streaming": True,
+        "commits_per_day": 25.0,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 3
+
+
+def test_streaming_aware_retention_never_tightens_below_an_explicit_shorter_value() -> None:
+    """A caller-configured retention_days shorter than what streaming-awareness would pick
+    must not get *widened* back up -- min() with the configured value, not a flat override."""
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 100,
+        "is_streaming": True,
+        "commits_per_day": 25.0,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 2})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 2
+
+
+def test_streaming_aware_retention_opt_out() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 100,
+        "is_streaming": True,
+        "commits_per_day": 588.0,
+    }
+    plan = build_plan(
+        stats, [], Mode.STANDARD, {"retention_days": 7, "streaming_aware_cadence": False}
+    )
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 7
+    assert not any("Streaming-aware retention" in note for note in plan.notes)
+
+
+def test_skip_operations_drops_named_operations_and_notes_why() -> None:
+    """Regression, discovered 2026-07-31 and fixed 2026-08-03: Preset.operations has always
+    been editable and looked like it controlled what actually runs, but build_plan() never
+    consulted it -- an operator removing expire_snapshots from a preset's operations list had
+    zero effect on the built plan, silently. skip_operations is the mechanism the worker now
+    derives from Preset.operations (via job.operations) to actually honor it."""
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 200,
+        "total_size_gb": 10,
+    }
+    plan = build_plan(
+        stats, [], Mode.DEEP, {"skip_operations": ["expire_snapshots", "remove_orphan_files"]}
+    )
+    op_types = [op.type.value for op in plan.operations]
+    assert "expire_snapshots" not in op_types
+    assert "remove_orphan_files" not in op_types
+    assert "optimize" in op_types
+    assert "optimize_manifests" in op_types
+    assert any("expire_snapshots" in note and "remove_orphan_files" in note for note in plan.notes)
+
+
+def test_skip_operations_applies_to_manifest_only_mode_too() -> None:
+    plan = build_plan(
+        {"schema_name": "demo", "table_name": "events"},
+        [],
+        Mode.MANIFEST_ONLY,
+        {"skip_operations": ["optimize_manifests"]},
+    )
+    assert plan.operations == ()
+
+
+def test_skip_operations_empty_is_a_no_op() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 200,
+        "total_size_gb": 10,
+    }
+    plan = build_plan(stats, [], Mode.DEEP, {})
+    op_types = [op.type.value for op in plan.operations]
+    assert "expire_snapshots" in op_types
+    assert not any("Skipped operation" in note for note in plan.notes)
+
+
+def test_streaming_aware_retention_no_op_when_not_streaming() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 100,
+        "is_streaming": False,
+        "commits_per_day": 0.0,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 7

@@ -177,7 +177,10 @@ def test_with_source_config_does_not_override_destinations_own_keys() -> None:
     override (e.g. a maintenance-specific write role) and must win over the table's
     source-configured read credentials."""
     engine = SparkK8sEngine(
-        config={"catalog": "cdp", "spark_k8s": {"s3_access_key": "dest-key", "s3_secret_key": "dest-secret"}}
+        config={
+            "catalog": "cdp",
+            "spark_k8s": {"s3_access_key": "dest-key", "s3_secret_key": "dest-secret"},
+        }
     )
     updated = engine.with_source_config(
         {"s3.access-key-id": "AKIAEXAMPLE", "s3.secret-access-key": "secret123"}
@@ -191,6 +194,69 @@ def test_with_source_config_no_op_when_source_has_no_keys() -> None:
     engine = SparkK8sEngine(config={"catalog": "cdp"})
     updated = engine.with_source_config({"uri": "thrift://metastore:9083"})
     assert updated is engine
+
+
+def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> None:
+    """Regression, 2026-08-03: every job on a shared Spark-K8s destination got the same
+    static executor profile regardless of table size -- a table with a dozen files reserved
+    the same 76 vCPU / 160 GiB as a concurrently-running 24TB table. Confirmed live via
+    Grafana: 86% of the cryo namespace's cost was "unused" (reserved, not utilized) for
+    exactly this reason."""
+    engine = SparkK8sEngine(
+        config={
+            "catalog": "cdp",
+            "spark_k8s": {
+                "executor_instances": 24,
+                "executor_cpu_milli": 3000,
+                "executor_mem_mib": 6144,
+                "driver_cpu_milli": 4000,
+                "driver_mem_mib": 16384,
+            },
+        }
+    )
+    updated = engine.with_table_stats({"total_size_gb": 0.2})
+    assert updated is not engine
+    assert updated._k8s_config.executor_instances < 24
+    assert updated._k8s_config.executor_cpu_milli < 3000
+    # Original engine instance (and its config) is untouched.
+    assert engine._k8s_config.executor_instances == 24
+
+
+def test_with_table_stats_keeps_full_profile_for_a_huge_table() -> None:
+    engine = SparkK8sEngine(
+        config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}}
+    )
+    updated = engine.with_table_stats({"total_size_gb": 24_000.0})
+    assert updated._k8s_config.executor_instances == 24
+
+
+def test_with_table_stats_no_op_without_stats() -> None:
+    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
+    assert engine.with_table_stats(None) is engine
+
+
+def test_with_table_stats_respects_dynamic_sizing_opt_out() -> None:
+    engine = SparkK8sEngine(
+        config={
+            "catalog": "cdp",
+            "spark_k8s": {"executor_instances": 24, "dynamic_sizing": False},
+        }
+    )
+    updated = engine.with_table_stats({"total_size_gb": 0.2})
+    assert updated is engine
+    assert updated._k8s_config.executor_instances == 24
+
+
+def test_with_table_stats_preserves_prior_with_source_config_state() -> None:
+    """with_source_config runs before with_table_stats in the real dispatch path (see
+    worker.py) -- chaining the two must not lose the first hook's changes."""
+    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
+    with_creds = engine.with_source_config(
+        {"s3.access-key-id": "AKIAEXAMPLE", "s3.secret-access-key": "secret123"}
+    )
+    final = with_creds.with_table_stats({"total_size_gb": 0.2})
+    assert final._k8s_config.s3_access_key == "AKIAEXAMPLE"
+    assert final._k8s_config.executor_instances < 24
 
 
 def test_probe_capacity_uses_slot_cap() -> None:

@@ -21,6 +21,7 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
 )
+from cryo.engines.spark.sizing import scale_executor_profile
 from cryo.engines.spark.sql import render
 
 
@@ -78,6 +79,39 @@ class SparkK8sEngine:
         new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
         new_engine._k8s_config = replace(
             new_engine._k8s_config, s3_access_key=access_key, s3_secret_key=secret_key
+        )
+        return new_engine
+
+    def with_table_stats(self, table_stats: Mapping[str, Any] | None) -> SparkK8sEngine:
+        """Scale this destination's configured executor profile down for small tables.
+
+        Confirmed live, 2026-08-03: the destination's configured executor_instances/cpu/mem
+        is one static profile applied to every job regardless of table size -- a table with
+        a dozen files reserved the same 76 vCPU / 160 GiB as a concurrently-running 24TB
+        table, which is what actually needs that scale. 86% of the cryo namespace's cost
+        showed as "unused" (reserved, not utilized) in Grafana for exactly this reason.
+        Opt out per-destination with spark_k8s.dynamic_sizing=false if a workload needs the
+        full configured profile regardless of table size.
+        """
+        if table_stats is None or self.config.get("spark_k8s", {}).get("dynamic_sizing") is False:
+            return self
+        total_size_gb = table_stats.get("total_size_gb")
+        profile = scale_executor_profile(
+            total_size_gb=float(total_size_gb) if total_size_gb is not None else None,
+            max_executor_instances=self._k8s_config.executor_instances,
+            max_executor_cpu_milli=self._k8s_config.executor_cpu_milli,
+            max_executor_mem_mib=self._k8s_config.executor_mem_mib,
+            max_driver_cpu_milli=self._k8s_config.driver_cpu_milli,
+            max_driver_mem_mib=self._k8s_config.driver_mem_mib,
+        )
+        new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
+        new_engine._k8s_config = replace(
+            self._k8s_config,
+            executor_instances=profile.executor_instances,
+            executor_cpu_milli=profile.executor_cpu_milli,
+            executor_mem_mib=profile.executor_mem_mib,
+            driver_cpu_milli=profile.driver_cpu_milli,
+            driver_mem_mib=profile.driver_mem_mib,
         )
         return new_engine
 

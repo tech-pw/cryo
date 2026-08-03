@@ -393,6 +393,9 @@ class Worker:
                 ),
             )
             plan_params = _execution_plan_params(job.params, destination, table_data.stats)
+            skip_operations = _skip_operations_from_preset(job.operations)
+            if skip_operations:
+                plan_params = {**plan_params, "skip_operations": skip_operations}
             if _destination_is_native(destination):
                 plan_params = _inject_native_derived_chunk(
                     plan_params,
@@ -413,7 +416,11 @@ class Worker:
             engine = self._engine_factory(destination)
             if hasattr(engine, "with_source_config") and table_data.source_config:
                 engine = engine.with_source_config(table_data.source_config)
-            if engine.type is EngineType.NATIVE and hasattr(engine, "with_table_stats"):
+            if hasattr(engine, "with_table_stats"):
+                # Was gated to NATIVE only -- SparkK8sEngine.with_table_stats also exists now
+                # (table-size-aware executor sizing, see its docstring), so any engine that
+                # defines the hook should get it, matching with_source_config's own pattern
+                # just above.
                 engine = engine.with_table_stats(table_data.stats)
 
             native_routing = None
@@ -1344,6 +1351,14 @@ class Worker:
             return JobStatus.FAILED, not_found_error, None, False, True
 
         fallback_engine = self._engine_factory(fallback_destination)
+        # Same two hooks the primary dispatch path applies (see _dispatch_job) -- this path
+        # never called either, so a fallback Spark destination always got the ambient node
+        # IAM role instead of the table's configured S3 keys, and always got the destination's
+        # full static executor profile regardless of table size.
+        if hasattr(fallback_engine, "with_source_config") and table_data.source_config:
+            fallback_engine = fallback_engine.with_source_config(table_data.source_config)
+        if hasattr(fallback_engine, "with_table_stats"):
+            fallback_engine = fallback_engine.with_table_stats(table_data.stats)
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
         engine_ref: str | None = None
@@ -1625,6 +1640,30 @@ def _engine_type_of(engine: EngineType | str) -> EngineType | None:
         return EngineType(engine)
     except ValueError:
         return None
+
+
+# The subset of OperationType that a preset's `operations` list can meaningfully gate --
+# deliberately excludes conditional sub-operations (rewrite_position_deletes, convert_deletes,
+# compute_statistics) that build_plan derives on its own from delete/MOR signals; a preset
+# editor listing ["optimize", "optimize_manifests"] wouldn't think to also enumerate those, and
+# silently dropping them would break delete-compaction for MOR tables that need it.
+_PRESET_GATED_OPERATION_TYPES = (
+    OperationType.EXPIRE_SNAPSHOTS,
+    OperationType.REMOVE_ORPHAN_FILES,
+    OperationType.OPTIMIZE,
+    OperationType.OPTIMIZE_MANIFESTS,
+)
+
+
+def _skip_operations_from_preset(operations: tuple[OperationType, ...] | None) -> list[str]:
+    """Regression, discovered 2026-07-31 and fixed 2026-08-03: Preset.operations has always
+    been editable and looked like it controlled what actually runs, but build_plan() never
+    consulted it. An empty/unset list means "no explicit preset configuration" -- don't skip
+    anything, matching the pre-existing default behavior for presets that never set this."""
+    if not operations:
+        return []
+    requested = set(operations)
+    return [op.value for op in _PRESET_GATED_OPERATION_TYPES if op not in requested]
 
 
 def _gate_native_optimize_manifests(
