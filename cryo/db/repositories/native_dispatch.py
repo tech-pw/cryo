@@ -75,16 +75,25 @@ def mark_dispatch_finished(
     return row
 
 
-def list_active_dispatches(session: Session) -> list[NativeDispatch]:
-    return list(
-        session.scalars(
-            select(NativeDispatch).where(
-                NativeDispatch.status.in_(
-                    ("pending", "running", "cancel_requested", "cancelling")
-                )
-            )
-        ).all()
-    )
+def list_active_dispatches(
+    session: Session, *, limit: int | None = None
+) -> list[NativeDispatch]:
+    """List active dispatches, oldest-created first.
+
+    ``limit`` bounds how many the caller processes in one pass -- NativeJobWatcher.tick()
+    calls read_namespaced_job (a real K8s API round-trip) for each one returned, so an
+    unbounded call here scales the watcher's per-tick cost with however many dispatches
+    happen to be in flight. Oldest-first ordering means a bounded call still makes forward
+    progress every tick: whichever dispatches don't fit this pass are exactly the ones
+    still in the "active" set (and therefore first in line) next tick, rather than being
+    starved by newer dispatches created after them.
+    """
+    stmt = select(NativeDispatch).where(
+        NativeDispatch.status.in_(("pending", "running", "cancel_requested", "cancelling"))
+    ).order_by(NativeDispatch.created_at.asc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(session.scalars(stmt).all())
 
 
 def get_dispatch(session: Session, dispatch_id: uuid.UUID) -> NativeDispatch | None:

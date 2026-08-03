@@ -24,6 +24,7 @@ from cryo.engines.native.job_dispatch import (
     _safe_load_k8s,
 )
 from cryo.engines.native.job_state import current_k8s_namespace
+from cryo.engines.native.optimize_properties import maybe_persist_optimize_properties
 from cryo.engines.native.runner import PROGRESS_PREFIX, split_stdout_lines
 from cryo.queue.locks import LockStore
 from cryo.queue.run_events import build_log_line, safe_publish
@@ -50,6 +51,20 @@ class WatchResult:
     errors: int = 0
 
 
+#  Confirmed live, 2026-08-03: with a single destination's native dispatch backlog in the
+# hundreds, list_active_dispatches(session) returning everything meant tick() made one
+# read_namespaced_job K8s API call per dispatch, every 30s -- real K8s Jobs were completing
+# in 6-12s each, but their DB row stayed status='running' for 20+ minutes because the
+# watcher couldn't finalize them fast enough to keep pace with how many were in flight.
+# Same root-cause shape as the admission-scan bug fixed earlier the same day (unbounded
+# per-tick work scaling with queue/backlog depth), just in the completion path instead of
+# admission. Bounded here rather than left unbounded like admission's `replicas` budget,
+# since there's no natural per-tick capacity signal for "how many dispatches can finish
+# checking within one tick" -- this is a conservative fixed ceiling, tunable if real
+# tick duration under load says otherwise.
+_MAX_DISPATCHES_PER_TICK = 200
+
+
 class NativeJobWatcher:
     """Poll active native_dispatches and finalize MaintenanceJobs on Job completion."""
 
@@ -63,6 +78,7 @@ class NativeJobWatcher:
         namespace: str | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
         run_events: Any | None = None,
+        max_dispatches_per_tick: int = _MAX_DISPATCHES_PER_TICK,
     ) -> None:
         self._session_factory = session_factory
         self._lock_store = lock_store
@@ -71,6 +87,7 @@ class NativeJobWatcher:
         self._namespace = namespace or current_k8s_namespace()
         self._lock_ttl_seconds = lock_ttl_seconds
         self._run_events = run_events
+        self._max_dispatches_per_tick = max_dispatches_per_tick
 
     def tick(self) -> WatchResult:
         k8s_client, _ = _safe_load_k8s()
@@ -96,7 +113,7 @@ class NativeJobWatcher:
         errors = 0
 
         with self._session_factory() as session:
-            active = list_active_dispatches(session)
+            active = list_active_dispatches(session, limit=self._max_dispatches_per_tick)
             for dispatch in active:
                 namespace = dispatch.k8s_namespace or self._namespace
                 if dispatch.status == "cancel_requested":
@@ -224,6 +241,7 @@ class NativeJobWatcher:
             self._record_result_audits(job, entry, fallback_error=error)
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
             if ok:
+                maybe_persist_optimize_properties(session, job)
                 succeeded += 1
             else:
                 failed += 1
