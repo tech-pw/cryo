@@ -161,6 +161,60 @@ def test_governor_defers_heavy_jobs_outside_offpeak() -> None:
     assert store.get_job("job-1").error == "outside_offpeak"
 
 
+def test_governor_bounds_native_k8s_scan_to_replica_budget_not_full_queue() -> None:
+    """Regression, 2026-08-03: a cold-table fleet run queued 11,252 jobs against a single
+    native k8s_dispatch destination. Neither of run_wave's two per-destination passes over
+    job_ids/wave_jobs is naturally bounded for native jobs -- their own `if not replicas`
+    throttle only trips when something pops `replicas`, which never happens on the native
+    path (native jobs are packed on admit, not assigned a worker replica). So both passes
+    walked the *entire* queue every 30s tick regardless of capacity: one store.get_job() call
+    each in the first pass, plus a resource-predictor DB query each in the second. That
+    OOMKilled the Governor at 11k+ depth and, even after a memory bump, still throttled
+    admission to a fraction of what slot_cap should allow at 500 (deferred=18 of 20 in this
+    exact scenario pre-fix -- every job got touched and marked deferred instead of just
+    staying queued). The fix caps the first pass at the replica budget for native
+    destinations, which naturally caps the second pass too since wave_jobs is built from it."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "native-dest",
+            engine="native",
+            config={
+                "k8s_dispatch": True,
+                "replicas": ["r1", "r2"],
+                "per_replica_cap": 1,
+                "adaptive_budget": False,
+            },
+        )
+    )
+    total_jobs = 2000
+    for i in range(total_jobs):
+        job_id = f"job-{i}"
+        store.add_job(
+            MaintenanceJobRecord(
+                id=job_id,
+                run_id="run-1",
+                table_id=f"table-{i}",
+                destination_id="native-dest",
+                mode=Mode.STANDARD,
+            )
+        )
+        queue.enqueue(job_id, "native-dest")
+
+    governor = Governor(queue, locks, store, default_config=AdmissionConfig(adaptive_budget=False))
+    result = governor.run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    # Budget is 2 replica slots (per_replica_cap=1 x 2 replicas): exactly that many admitted,
+    # the scan blocked (not deferred) once it hit budget, and the other ~1998 jobs were never
+    # touched at all this tick -- not scanned, not deferred, just left queued for next time.
+    assert result.admitted == 2
+    assert result.blocked >= 1
+    assert result.deferred == 0
+    assert len(queue.pending("native-dest")) == total_jobs - result.admitted
+
+
 def test_governor_purges_jobs_for_missing_destination() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

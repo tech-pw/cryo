@@ -162,11 +162,35 @@ class Governor:
                     table_uuids: set[uuid.UUID] = set()
                     native_k8s_buffer: list[MaintenanceJobRecord] = []
                     use_native_k8s = destination_uses_k8s_dispatch(destination)
+                    # This job_ids -> wave_jobs pass is a *prefetch*, not itself replica-budget
+                    # bounded: its own `if not replicas` check never trips because nothing pops
+                    # `replicas` here for any destination (that only happens in the second pass
+                    # below, over wave_jobs). For a native k8s_dispatch destination every job in
+                    # job_ids is native, and the second pass's own `if not replicas` check also
+                    # never trips there (native jobs are packed on admit via native_k8s_buffer,
+                    # never assigned a replica) -- so without a cap here, BOTH passes scan the
+                    # *entire* queue every tick regardless of capacity: one get_job() call each in
+                    # this pass, plus a resource-predictor DB query each in the next. Confirmed
+                    # live, 2026-08-03: an 11k+ deep native queue OOMKilled the Governor this way,
+                    # and even after a memory bump, throttled admission to a fraction of what
+                    # slot_cap should allow at 500. Every job in job_ids is native here (a
+                    # destination is uniformly one engine), so capping this pass at len(replicas)
+                    # -- the same budget the non-native path already respects via replicas.pop(0)
+                    # -- is sufficient; wave_jobs naturally carries the cap into the second pass
+                    # too, without touching replicas itself (the fallback-to-worker path below
+                    # still needs it intact).
+                    native_candidates_seen = 0
                     for job_id in job_ids:
                         if not replicas:
                             blocked += 1
                             destination_outcomes[destination_id]["blocked"] += 1
                             break
+                        if use_native_k8s and native_candidates_seen >= len(replicas):
+                            blocked += 1
+                            destination_outcomes[destination_id]["blocked"] += 1
+                            break
+                        if use_native_k8s:
+                            native_candidates_seen += 1
                         try:
                             job = self._store.get_job(job_id)
                         except KeyError:
