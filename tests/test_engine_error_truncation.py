@@ -71,6 +71,35 @@ def test_is_table_not_found_error_false_for_unrelated_or_empty() -> None:
     assert not is_table_not_found_error("")
 
 
+def test_is_table_not_found_error_matches_missing_metadata_json() -> None:
+    """Regression, 2026-08-03: the cold-table native sweep hit dead catalog entries whose
+    current metadata.json no longer exists in S3 -- a different signature than
+    NoSuchTableException but the same unrecoverable outcome."""
+    assert is_table_not_found_error(
+        'failed to load table: blob (key "silver/nuggetoverse/feedback_evolving/metadata/'
+        '00000-83b9b4a4-e928-445f-a72e-c6baf29bb799.metadata.json") (code=NotFound): '
+        "NoSuchKey: The specified key does not exist."
+    )
+
+
+def test_is_table_not_found_error_matches_missing_manifest_file() -> None:
+    assert is_table_not_found_error(
+        "remove_orphan_files preview: failed to get referenced files: failed to read "
+        "manifests for snapshot 354327196169581740: could not open manifest file: "
+        "NoSuchKey: The specified key does not exist."
+    )
+
+
+def test_is_table_not_found_error_does_not_match_bare_nosuchkey() -> None:
+    """A missing *data* file (phantom-manifest-entry corruption, fixable via repair) must
+    not be misclassified as an unrecoverable dead table -- only a missing metadata.json or
+    manifest file (the table's own metadata chain) counts."""
+    assert not is_table_not_found_error(
+        'failed to read data file "silver/x/data/00042.parquet": NoSuchKey: '
+        "The specified key does not exist."
+    )
+
+
 def _plan() -> MaintenancePlan:
     return MaintenancePlan(
         table_ref="glue_catalog.reports.gold_dbt_video_stats_reports_unified",

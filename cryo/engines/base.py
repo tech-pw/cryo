@@ -61,13 +61,30 @@ _TABLE_NOT_FOUND_SIGNATURES = (
     TABLE_NOT_FOUND_MARKER,
 )
 
+# Confirmed live, 2026-08-03: a native-engine cold-table sweep hit a different flavor of the
+# same "table effectively gone" problem -- the catalog's current pointer references a
+# metadata.json or manifest file that no longer exists in S3 (NoSuchKey), rather than the
+# catalog lacking the table entry entirely. Iceberg can't load any state from a missing
+# metadata.json/manifest, so there's nothing a maintenance retry can fix -- same practical
+# outcome as NoSuchTableException. Matched narrowly (NoSuchKey plus a metadata/manifest file
+# reference) so a missing *data* file (the phantom-manifest-entry class of bug, fixable via
+# repair) doesn't get misclassified as an unrecoverable dead table.
+_CATALOG_METADATA_MISSING_PATTERNS = (
+    ("NoSuchKey", "metadata.json"),
+    ("NoSuchKey", "could not open manifest file"),
+)
+
 
 def is_table_not_found_error(message: str | None) -> bool:
     """True when an engine failure means the table no longer exists in the catalog (dropped
     externally), as opposed to a transient/infra failure that a retry might resolve."""
     if not message:
         return False
-    return any(sig in message for sig in _TABLE_NOT_FOUND_SIGNATURES)
+    if any(sig in message for sig in _TABLE_NOT_FOUND_SIGNATURES):
+        return True
+    return any(
+        all(part in message for part in pattern) for pattern in _CATALOG_METADATA_MISSING_PATTERNS
+    )
 
 
 @dataclass(frozen=True)
