@@ -92,12 +92,19 @@ class Settings(BaseSettings):
         description="Optional path to cryo-engine-go; otherwise resolve like native runner.",
     )
     cost_metadata_max_files_estimate: int = Field(
-        default=200_000,
+        default=2_000_000,
         gt=0,
         description=(
-            "Skip Tier-1 metadata cost accounting (all-snapshot path map) when the "
-            "current-snapshot file count meets or exceeds this threshold; fall back "
-            "to heuristic cost to avoid OOM on huge tables."
+            "Cheap pre-filter before even attempting Tier-1 metadata cost accounting: skip "
+            "it when the current-snapshot file count meets or exceeds this threshold. The "
+            "real memory guard is inside account_metadata_cost itself (cost_scan_max_snapshots"
+            "/cost_scan_max_manifests, checked live during the walk, with a graceful heuristic "
+            "fallback either way) -- this is just an outer bound for pathological cases, not "
+            "the primary defense. Confirmed live, 2026-08-03: the previous default (200_000) "
+            "excluded a table with 207,511 files (24TB, ~$700/mo, the single most cost-"
+            "relevant table in the fleet) from all cost/reclaim accounting -- table_cost had "
+            "zero rows for it, ever -- for a file count barely above the threshold and nowhere "
+            "near what the internal walk can actually handle."
         ),
     )
     cost_metadata_max_manifests_current: int = Field(
