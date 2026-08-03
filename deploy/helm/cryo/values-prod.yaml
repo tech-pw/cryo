@@ -78,10 +78,14 @@ governor:
   resources:
     requests:
       cpu: 250m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       cpu: "1"
-      memory: 1Gi
+      # Raised 1Gi -> 3Gi 2026-08-03: OOMKilled 22x in ~3h once a single destination's queue
+      # depth hit 11k+ jobs -- the admission tick's per-table resource-predictor calls scale
+      # with queue size and blew the old limit. Stop-gap; the real fix is bounding the
+      # per-tick admission scan, tracked separately.
+      memory: 3Gi
 
 scheduler:
   replicas: 1
