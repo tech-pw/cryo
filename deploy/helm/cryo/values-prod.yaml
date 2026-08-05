@@ -154,8 +154,8 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-05 from gitlab-main commit eee1788.
-    digest: "sha256:7fc734e872a9d9fc6071c6139a0ae13a8d5c9884a41d4660704e97140dafdd97"
+    # Built + pushed 2026-08-05 from gitlab-main commit e5ac5a5.
+    digest: "sha256:8ee1583f811cc015894ca089c7a7ea01092ebf02687045f034922fe1bcf548e3"
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
