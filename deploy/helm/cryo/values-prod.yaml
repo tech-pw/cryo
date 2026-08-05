@@ -31,8 +31,10 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-05 from gitlab-main commit 6df64f3.
-  digest: "sha256:8d1e4c7696004eccc9840a78fde7750116451c9221ebf10271a34f1d1dc00602"
+  # Built + pushed 2026-08-05 from gitlab-main commit 4d0351d (parallelizes the native
+  # engine's SQL-fallback dispatch, e.g. optimize_manifests, which previously ran one
+  # table at a time regardless of slot_cap -- see native_admit.py::_dispatch_fallback_operations).
+  digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
 
 imagePullSecrets:
   - cryo-registry
@@ -41,7 +43,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8d1e4c7696004eccc9840a78fde7750116451c9221ebf10271a34f1d1dc00602"
+    digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
 
 global:
   envFromSecret: cryo-secrets
@@ -80,7 +82,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8d1e4c7696004eccc9840a78fde7750116451c9221ebf10271a34f1d1dc00602"
+    digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
   keda:
     enabled: true
 
