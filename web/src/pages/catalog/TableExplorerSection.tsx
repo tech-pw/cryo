@@ -5,6 +5,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   assignTables,
+  exportTablesCsv as requestTablesCsv,
   groupTables,
   listDestinations,
   listPresets,
@@ -31,7 +32,7 @@ import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
-import { exportCsv } from "../../lib/exportCsv";
+import { FRESHNESS_LABELS, isFreshnessBucketKey } from "../../lib/freshness";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
 import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
 import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
@@ -109,7 +110,11 @@ export const filtersFromSearchParams = (params: URLSearchParams): TableFilterSta
     minSmallFiles: numberParam(params.get("minSmallFiles")) ?? null,
     minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
     minReclaimableGb: numberParam(params.get("minReclaimableGb")) ?? null,
-    costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null
+    costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null,
+    freshnessBucket: isFreshnessBucketKey(params.get("freshness"))
+      ? params.get("freshness") as TableFilterState["freshnessBucket"]
+      : null,
+    freshnessAsOf: params.get("freshnessAsOf")
   };
 };
 
@@ -132,6 +137,8 @@ export const filtersToSearchParamEntries = (filters: TableFilterState): [string,
   if (typeof filters.minReclaimableGb === "number")
     entries.push(["minReclaimableGb", String(filters.minReclaimableGb)]);
   if (filters.costPrecision) entries.push(["precision", filters.costPrecision]);
+  if (filters.freshnessBucket) entries.push(["freshness", filters.freshnessBucket]);
+  if (filters.freshnessAsOf) entries.push(["freshnessAsOf", filters.freshnessAsOf]);
   return entries;
 };
 
@@ -147,7 +154,9 @@ const FILTER_PARAM_KEYS = [
   "minSmallFiles",
   "minMonthlySavings",
   "minReclaimableGb",
-  "precision"
+  "precision",
+  "freshness",
+  "freshnessAsOf"
 ];
 
 const CATALOG_VIEWS_STORAGE_KEY = "cryo.catalog.views.v1";
@@ -302,6 +311,7 @@ export const TableExplorerSection = () => {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [nlQuery, setNlQuery] = useState("");
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() =>
     readJson(CATALOG_COLUMNS_STORAGE_KEY, {})
@@ -587,43 +597,23 @@ export const TableExplorerSection = () => {
     pageItems
   ]);
 
-  const exportTablesCsv = () => {
-    const rows = pageItems.map((row) => [
-      row.catalog_name ?? "",
-      row.qualified_table_name ?? schemaTableName(row),
-      schemaTableName(row),
-      row.stats?.grade ?? "",
-      row.stats?.compaction_priority ?? "",
-      row.stats?.needs_compaction ? "yes" : "no",
-      row.stats?.small_files_count ?? "",
-      row.stats?.total_files ?? "",
-      row.stats?.total_size_gb ?? "",
-      row.stats?.projected_savings_usd_month ?? "",
-      row.stats?.reclaimable_bytes ?? "",
-      row.stats?.cost_precision ?? "",
-      row.stats?.partition_col ?? "",
-      row.first_seen_at
-    ]);
-    exportCsv(
-      `cryo-tables-page-${page}`,
-      [
-        "catalog",
-        "qualified_table",
-        "table",
-        "grade",
-        "priority",
-        "needs_compaction",
-        "small_files",
-        "total_files",
-        "size_gb",
-        "savings_usd_month",
-        "reclaimable_bytes",
-        "cost_precision",
-        "partition_col",
-        "first_seen_at"
-      ],
-      rows
-    );
+  const exportMatchingTablesCsv = async () => {
+    setExportingCsv(true);
+    try {
+      const csv = await requestTablesCsv(api, { predicate, sort });
+      const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      const suffix = filters.freshnessBucket ?? "filtered";
+      anchor.href = href;
+      anchor.download = `cryo-tables-${suffix}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      toast.success(`Exported ${matchingTotal.toLocaleString()} matching tables`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export matching tables");
+    } finally {
+      setExportingCsv(false);
+    }
   };
 
   const groupColumns = useMemo<ColumnDef<GroupRow, unknown>[]>(
@@ -792,6 +782,25 @@ export const TableExplorerSection = () => {
         )
       },
       {
+        id: "freshness",
+        header: "Last updated",
+        size: 152,
+        cell: ({ row }) =>
+          row.original.stats?.last_snapshot_committed_at
+            ? formatTime(row.original.stats.last_snapshot_committed_at)
+            : "-"
+      },
+      {
+        id: "scan_failures",
+        header: "Scan failures",
+        size: 112,
+        cell: ({ row }) => (
+          <span className="numeric-cell block text-right">
+            {formatNumber(row.original.consecutive_scan_failures ?? 0, true)}
+          </span>
+        )
+      },
+      {
         accessorKey: "first_seen_at",
         header: "Seen",
         size: 152,
@@ -817,8 +826,13 @@ export const TableExplorerSection = () => {
         >
           Savings view
         </Button>
-        <Button variant="secondary" onClick={exportTablesCsv} disabled={!pageItems.length || Boolean(groupByField)}>
-          Export CSV
+        <Button
+          variant="secondary"
+          aria-label="Export CSV"
+          onClick={() => void exportMatchingTablesCsv()}
+          disabled={!matchingTotal || Boolean(groupByField) || exportingCsv}
+        >
+          {exportingCsv ? "Exporting..." : `Export ${matchingTotal.toLocaleString()} CSV`}
         </Button>
         <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
           Refresh
@@ -901,6 +915,14 @@ export const TableExplorerSection = () => {
           />
         ) : null}
       </div>
+      {filters.freshnessBucket ? (
+        <Alert
+          className="mb-3"
+          variant={filters.freshnessBucket === "failed" ? "error" : "info"}
+          title={`Freshness view: ${FRESHNESS_LABELS[filters.freshnessBucket]}`}
+          description="Showing the complete server-filtered table set for this freshness bucket. CSV export includes every match, not only this page."
+        />
+      ) : null}
       <FilterBar
         value={filters}
         catalogOptions={catalogOptions}

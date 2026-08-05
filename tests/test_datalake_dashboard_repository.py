@@ -16,7 +16,7 @@ at all.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -347,6 +347,97 @@ def test_dashboard_datalake_response_matches_api_schema(session) -> None:
     DatalakeDashboardResponse.model_validate(payload)
     assert payload["totals"]["estimated_monthly_s3_cost_usd"] == 20.0
     assert payload["cost_by_schema"][0]["schema_name"] == "analytics"
+
+
+def test_dashboard_freshness_buckets_are_exclusive_and_reconcile(session) -> None:
+    source = _seed_source(session)
+    as_of = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    cases = [
+        ("fresh", timedelta(hours=2), 0, "within_24h"),
+        ("day-boundary", timedelta(days=1), 0, "1_3d"),
+        ("three-day-boundary", timedelta(days=3), 0, "3_7d"),
+        ("week", timedelta(days=6), 0, "3_7d"),
+        ("two-weeks", timedelta(days=14), 0, "7_15d"),
+        ("month", timedelta(days=29), 0, "15_30d"),
+        ("quarter", timedelta(days=89), 0, "1_3m"),
+        ("half-year", timedelta(days=179), 0, "3_6m"),
+        ("year", timedelta(days=364), 0, "6_12m"),
+        ("old", timedelta(days=400), 0, "over_1y"),
+        ("failed-fresh", timedelta(hours=1), 2, "failed"),
+    ]
+    for name, age, failures, _bucket in cases:
+        table_id = uuid.uuid4()
+        session.add(
+            Table(
+                id=table_id,
+                source_id=source.id,
+                schema_name="freshness",
+                table_name=name,
+                first_seen_at=as_of,
+                is_active=True,
+                consecutive_scan_failures=failures,
+            )
+        )
+        session.add(
+            TableStats(
+                table_id=table_id,
+                scan_at=as_of,
+                last_snapshot_committed_at=as_of - age,
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="B",
+                overall_score=80,
+                total_files=1,
+                small_files_count=0,
+                total_size_gb=1,
+                query_count_30d=0,
+            )
+        )
+    unknown_id = uuid.uuid4()
+    session.add(
+        Table(
+            id=unknown_id,
+            source_id=source.id,
+            schema_name="freshness",
+            table_name="unknown",
+            first_seen_at=as_of,
+            is_active=True,
+        )
+    )
+    session.add(
+        TableStats(
+            table_id=unknown_id,
+            scan_at=as_of,
+            last_snapshot_committed_at=None,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="B",
+            overall_score=80,
+            total_files=0,
+            small_files_count=0,
+            total_size_gb=0,
+            query_count_30d=0,
+        )
+    )
+    session.commit()
+
+    payload = dashboard_datalake(session, now=as_of)
+    counts = {item["key"]: item["count"] for item in payload["freshness_distribution"]}
+
+    assert counts == {
+        "within_24h": 1,
+        "1_3d": 1,
+        "3_7d": 2,
+        "7_15d": 1,
+        "15_30d": 1,
+        "1_3m": 1,
+        "3_6m": 1,
+        "6_12m": 1,
+        "over_1y": 1,
+        "unknown": 1,
+        "failed": 1,
+    }
+    assert sum(counts.values()) == payload["totals"]["active_tables"]
 
 
 def test_dashboard_cost_response_matches_api_schema(session, monkeypatch) -> None:

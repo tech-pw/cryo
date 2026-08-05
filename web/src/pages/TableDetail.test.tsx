@@ -355,6 +355,9 @@ describe("TableDetail page", () => {
     expect(await screen.findByText("public.events")).toBeInTheDocument();
     expect((await screen.findAllByText("Cost & Savings")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Health Score")).toBeInTheDocument();
+    expect(screen.getByText("Records")).not.toBeVisible();
+    fireEvent.click(screen.getByText("More table metrics"));
+    expect(await screen.findByText("Records")).toBeVisible();
   }, 15000);
 
   it("requires confirmation before running the silent-data-loss dry-run check, and never claims a repair/commit", async () => {
@@ -551,9 +554,11 @@ describe("TableDetail page", () => {
     expect(await screen.findByText("20.0% small files (20 / 100 total files)")).toBeInTheDocument();
     expect(await screen.findByText("< 20.0% small files ratio")).toBeInTheDocument();
 
-    // Verify the shared Engine preset selector and the Act now button are present
-    expect(await screen.findByText("Engine preset:")).toBeInTheDocument();
+    // Preset assignment has one consistent home in the global action strip.
+    expect(await screen.findByRole("combobox", { name: "Assign preset" })).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox", { name: "Assign preset" })).toHaveLength(1);
     expect(await screen.findByRole("button", { name: "Act now" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Act now" })).toHaveLength(1);
   }, 15000);
 
   it("renders the Partition Columns Analyzer with Check 1 and Check 2 validations", async () => {
