@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from cryo.db.repositories.native_dispatch import (
@@ -58,6 +60,18 @@ from cryo.worker.worker import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Fallback dispatch concurrency default when the SQL fallback destination doesn't set
+# its own slot_cap. _dispatch_fallback_operations used to run once per table, inline
+# and fully sequential, inside the single-leader Governor process -- fine for the
+# "rare/occasional exception" case it was designed for, but a real bottleneck once a
+# whole cohort needs the same fallback op (e.g. optimize_manifests, unsupported by the
+# native engine): observed live, 2026-08-05, ~65-70s per table with near-zero gap
+# between dispatches -- 2,833 tables projected to ~90 hours serialized. Each dispatch
+# creates its own engine/K8s client (no shared mutable state -- see SparkK8sClient,
+# create_engine), so running them concurrently is safe; bounding by the fallback
+# destination's slot_cap keeps it consistent with the capacity the operator configured.
+_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY = 6
 
 
 @dataclass(frozen=True)
@@ -306,6 +320,81 @@ def _dispatch_fallback_operations(
         logger.exception("%s: SQL fallback dispatch raised unexpectedly", table_ref)
 
 
+def _fallback_dispatch_concurrency(
+    destination_config: Mapping[str, Any],
+    *,
+    store: JobStore,
+) -> int:
+    """Resolve how many fallback dispatches to run at once.
+
+    Mirrors the fallback destination's own slot_cap when resolvable (same capacity
+    semantics an operator already configured for that destination), falling back to
+    a conservative default so a misconfigured/missing fallback destination can't
+    blow up concurrency -- this only bounds a thread pool, not real admission, so it
+    fails closed to the default rather than to unlimited.
+    """
+    fallback_id = destination_config.get("sql_fallback_destination_id") or destination_config.get(
+        "fallback_destination_id"
+    )
+    if isinstance(fallback_id, str) and fallback_id.strip():
+        try:
+            fallback_destination = store.get_destination(fallback_id.strip())
+            slot_cap = fallback_destination.config.get("slot_cap")
+            if slot_cap:
+                return max(1, int(slot_cap))
+        except Exception:
+            logger.debug(
+                "Could not resolve slot_cap for fallback destination %s; using default %d",
+                fallback_id,
+                _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY,
+            )
+    return _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
+
+
+def _run_fallback_dispatches_concurrently(
+    dispatches: Sequence[Callable[[], None]],
+    *,
+    destination_config: Mapping[str, Any],
+    store: JobStore,
+) -> None:
+    """Run queued native-unsupported-operation fallback dispatches in parallel.
+
+    Each callable is a bound call to _dispatch_fallback_operations for one table;
+    that function already catches and logs every exception internally and never
+    raises (see its docstring), so running many concurrently via a thread pool is
+    safe -- a stuck/slow table can't block the others, and a failing one can't take
+    down the batch. Previously these ran one at a time, inline, sequentially inside
+    this single-leader Governor process regardless of the fallback destination's
+    configured slot_cap; that was fine for the occasional one-off fallback table but
+    became the dominant bottleneck for any run where a whole cohort needs the same
+    native-unsupported operation (e.g. optimize_manifests) -- confirmed live,
+    2026-08-05: ~65-70s per table, ~1 concurrent, projecting ~90 hours for a
+    2,833-table rollout despite the destination's slot_cap=6 and idle cluster
+    headroom neither of which this path previously consulted.
+    """
+    concurrency = min(
+        _fallback_dispatch_concurrency(destination_config, store=store),
+        len(dispatches),
+    )
+    if concurrency <= 1:
+        for dispatch in dispatches:
+            dispatch()
+        return
+
+    with ThreadPoolExecutor(
+        max_workers=concurrency, thread_name_prefix="fallback-dispatch"
+    ) as executor:
+        futures = [executor.submit(dispatch) for dispatch in dispatches]
+        for future in as_completed(futures):
+            # dispatch() itself never raises (best-effort, logs internally) -- this
+            # is a defensive backstop only, so one truly unexpected exception can't
+            # silently swallow the rest of the batch's futures.
+            try:
+                future.result()
+            except Exception:
+                logger.exception("Fallback dispatch task raised unexpectedly")
+
+
 def cluster_headroom(
     live_capacity: Mapping[str, CapacitySnapshot | int],
     *,
@@ -377,6 +466,8 @@ def admit_native_k8s_jobs(
     admitted = 0
     deferred = 0
     dispatch_ids: list[str] = []
+    # Collected here instead of dispatched inline -- see _run_fallback_dispatches_concurrently.
+    pending_fallback_dispatches: list[Callable[[], None]] = []
 
     for job in jobs:
         try:
@@ -478,14 +569,18 @@ def admit_native_k8s_jobs(
                         budget=budget,
                     )
                     requests.append(built.request)
-                    _dispatch_fallback_operations(
-                        store=store,
-                        fallback_operations=built.fallback_operations,
-                        plan=plan,
-                        destination_config=destination.config,
-                        source_config=prepared_item.table_data.source_config,
-                        table_ref=plan.table_ref,
-                    )
+                    if built.fallback_operations:
+                        pending_fallback_dispatches.append(
+                            partial(
+                                _dispatch_fallback_operations,
+                                store=store,
+                                fallback_operations=built.fallback_operations,
+                                plan=plan,
+                                destination_config=destination.config,
+                                source_config=prepared_item.table_data.source_config,
+                                table_ref=plan.table_ref,
+                            )
+                        )
                 except Exception as exc:
                     logger.exception(
                         "Failed to rebuild plan for job %s with derived chunk: %s",
@@ -611,6 +706,13 @@ def admit_native_k8s_jobs(
                 created.cpu_milli,
                 created.mem_mib,
                 derived_chunk,
+            )
+
+        if pending_fallback_dispatches:
+            _run_fallback_dispatches_concurrently(
+                pending_fallback_dispatches,
+                destination_config=destination.config,
+                store=store,
             )
     except Exception as exc:
         # Anything above that isn't individually guarded (pack_jobs, cluster_headroom,
