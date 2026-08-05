@@ -49,6 +49,9 @@ The authoritative architecture / contract docs live at the repo root:
 
 ### UI / UX
 
+- [`UI_UX_AUDIT_2026-08-04.md`](./UI_UX_AUDIT_2026-08-04.md) — current
+  page-by-page UI/UX scorecard, research-backed path to 10/10, and repeatable
+  behavioral/field evaluation program.
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — cost-savings UI
   patterns.
 - [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md)

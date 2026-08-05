@@ -16,6 +16,7 @@ import { SectionNav } from "./SectionNav";
 import { StructureTabLabel } from "./tableDetailTabLabels";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { chartTooltipProps, cryoColors } from "../../lib/theme";
+import { ChartDataTable } from "../ui/chart-data-table";
 
 export const StructureTabPanel = () => {
   const {
@@ -134,6 +135,30 @@ export const StructureTabPanel = () => {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+            <ChartDataTable
+              caption="Table statistics by scan time"
+              rows={historyPoints}
+              getRowKey={(row, index) => `${row.timestamp}-${index}`}
+              columns={[
+                {
+                  key: "time",
+                  header: "Scan time",
+                  render: (row) => new Date(row.timestamp).toLocaleString()
+                },
+                {
+                  key: "small-files",
+                  header: "Small files",
+                  align: "right",
+                  render: (row) => (row.small_files_count ?? 0).toLocaleString()
+                },
+                {
+                  key: "size",
+                  header: "Size",
+                  align: "right",
+                  render: (row) => `${(row.total_size_gb ?? 0).toFixed(1)} GB`
+                }
+              ]}
+            />
           </AsyncBoundary>
         </ChartCard>
       </div>

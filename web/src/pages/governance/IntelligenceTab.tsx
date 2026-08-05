@@ -6,8 +6,7 @@ import {
   getCostForecast,
   getTableLineage,
   listMaintenanceSignals,
-  listFleetAnomalies,
-  listTables
+  listFleetAnomalies
 } from "../../api/client";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import { EmptyState, QueryErrorAlert, TelemetryRequiredNotice } from "../../components/common";
@@ -17,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { DataTable } from "../../components/ui/data-table";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
-import { qualifiedTableName } from "../../lib/tableLabels";
+import { TableSearchSelect } from "./TableSearchSelect";
 
 const SIGNAL_PAGE_SIZE = 8;
 
@@ -45,10 +44,6 @@ export const IntelligenceTab = () => {
   const forecast = useQuery({
     queryKey: ["cost-forecast", api.token],
     queryFn: () => getCostForecast(api)
-  });
-  const tableOptions = useQuery({
-    queryKey: ["governance-table-picker", api.token],
-    queryFn: () => listTables(api, { limit: 200, offset: 0 })
   });
   const lineage = useQuery({
     queryKey: ["table-lineage", api.token, lineageTableId],
@@ -193,19 +188,12 @@ export const IntelligenceTab = () => {
             <CardTitle>Table lineage</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            <select
-              className="h-[var(--control-height)] max-w-md rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+            <TableSearchSelect
+              className="max-w-md"
               value={lineageTableId}
-              disabled={tableOptions.isLoading}
-              onChange={(event) => setLineageTableId(event.target.value)}
-            >
-              <option value="">Select a table for lineage</option>
-              {(tableOptions.data?.items ?? []).map((table) => (
-                <option key={table.id} value={table.id}>
-                  {qualifiedTableName(table)}
-                </option>
-              ))}
-            </select>
+              onChange={setLineageTableId}
+              placeholder="Select a table for lineage"
+            />
             <QueryErrorAlert error={lineage.error} title="Failed to load lineage" />
             {lineage.data ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

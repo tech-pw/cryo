@@ -11,6 +11,26 @@ const TOKENS: RoleToken[] = ["viewer", "operator", "admin"];
 
 export type AuthMode = "dev" | "oidc";
 
+/**
+ * Distinguishes why an OIDC authorization-code exchange failed so LoginCallback can render
+ * a specific, non-technical recovery outcome instead of one generic error string.
+ * "rejected" covers any non-2xx response from the token endpoint (expired/invalid code,
+ * misconfiguration, etc.); "network" covers the request never reaching the server at all.
+ */
+export type OidcExchangeErrorKind = "rejected" | "network";
+
+export class OidcExchangeError extends Error {
+  readonly kind: OidcExchangeErrorKind;
+  readonly status?: number;
+
+  constructor(kind: OidcExchangeErrorKind, message: string, status?: number) {
+    super(message);
+    this.name = "OidcExchangeError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
 interface OidcPublicConfig {
   client_id: string;
   authorization_endpoint: string;
@@ -71,14 +91,25 @@ async function fetchAccessToken(role: RoleToken, subject: string): Promise<strin
 }
 
 async function exchangeOidcCode(code: string, redirectUri: string): Promise<TokenPayload> {
-  const response = await fetch("/api/v1/auth/oidc/exchange", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code, redirect_uri: redirectUri })
-  });
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/auth/oidc/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, redirect_uri: redirectUri })
+    });
+  } catch {
+    // fetch() rejects only on network/CORS failures, never on HTTP error status codes —
+    // this branch means the request never reached the identity provider.
+    throw new OidcExchangeError("network", "Could not reach the identity provider.");
+  }
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `OIDC exchange failed (${response.status})`);
+    const detail = await response.text().catch(() => "");
+    throw new OidcExchangeError(
+      "rejected",
+      detail || `Sign-in was rejected (${response.status})`,
+      response.status
+    );
   }
   return (await response.json()) as TokenPayload;
 }

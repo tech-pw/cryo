@@ -11,6 +11,7 @@ import {
 import type { PartitionRead } from "../../api/types";
 import { chartTooltipProps } from "../../lib/theme";
 import { formatGb, formatNumber } from "../../lib/format";
+import { ChartDataTable } from "../ui/chart-data-table";
 
 interface PartitionHistogramProps {
   partitions: PartitionRead[];
@@ -67,6 +68,27 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      <ChartDataTable
+        caption="Top partitions by data size and small-file pressure"
+        rows={top}
+        getRowKey={(row) => row.key}
+        columns={[
+          { key: "partition", header: "Partition", render: (row) => row.label },
+          { key: "size", header: "Size", align: "right", render: (row) => formatGb(row.sizeGb) },
+          {
+            key: "small-files",
+            header: "Small files",
+            align: "right",
+            render: (row) => formatNumber(row.smallFiles, true)
+          },
+          {
+            key: "small-rate",
+            header: "Small-file rate",
+            align: "right",
+            render: (row) => `${Math.round(row.smallRate * 100)}%`
+          }
+        ]}
+      />
     </div>
   );
 };

@@ -4,18 +4,19 @@ import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { z } from "zod";
 import {
   approvalAction,
   createApprovalRequest,
   listFleetAnomalies,
   listPendingApprovals,
-  listTables,
   type AnomalyAlertRead,
   type PendingApprovalRead
 } from "../../api/client";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import { ConfirmAction } from "../../components/confirm";
 import { QueryErrorAlert } from "../../components/common";
+import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -28,21 +29,36 @@ import {
   DialogHeader,
   DialogTitle
 } from "../../components/ui/dialog";
-import { FormField, FormProvider, useForm } from "../../components/ui/form";
-import { Input } from "../../components/ui/input";
+import { FormField, FormProvider, useZodForm } from "../../components/ui/form";
+import { FormErrorSummary } from "../../components/ui/form-error-summary";
 import { Textarea } from "../../components/ui/textarea";
 import { useAuth } from "../../lib/auth";
 import { formatTime } from "../../lib/format";
-import { qualifiedTableName } from "../../lib/tableLabels";
+import { TableSearchSelect } from "./TableSearchSelect";
 
 const ANOMALY_PAGE_SIZE = 8;
 const APPROVAL_PAGE_SIZE = 8;
 const APPROVAL_FADE_MS = 180;
 
-type ApprovalFormValues = {
-  table_id: string;
-  operation_type: string;
-  reason?: string;
+const OPERATION_TYPES = [
+  "expire_snapshots",
+  "remove_orphan_files",
+  "optimize",
+  "optimize_manifests"
+] as const;
+
+const approvalFormSchema = z.object({
+  table_id: z.string().min(1, "Select a table"),
+  operation_type: z.enum(OPERATION_TYPES, { message: "Select an operation" }),
+  reason: z.string().optional()
+});
+
+type ApprovalFormValues = z.infer<typeof approvalFormSchema>;
+
+const APPROVAL_FIELD_LABELS: Record<string, string> = {
+  table_id: "Table",
+  operation_type: "Operation",
+  reason: "Reason"
 };
 
 export const AttentionTab = () => {
@@ -55,10 +71,10 @@ export const AttentionTab = () => {
   const [approvalPage, setApprovalPage] = useState(0);
   const [fadingApprovalIds, setFadingApprovalIds] = useState<Set<string>>(() => new Set());
 
-  const approvalForm = useForm<ApprovalFormValues>({
+  const approvalForm = useZodForm(approvalFormSchema, {
     defaultValues: {
       table_id: "",
-      operation_type: "",
+      operation_type: undefined,
       reason: ""
     }
   });
@@ -72,10 +88,6 @@ export const AttentionTab = () => {
     queryKey: ["fleet-anomalies", api.token],
     queryFn: () => listFleetAnomalies(api),
     refetchInterval: 60_000
-  });
-  const tableOptions = useQuery({
-    queryKey: ["governance-table-picker", api.token],
-    queryFn: () => listTables(api, { limit: 200, offset: 0 })
   });
 
   const actOnApproval = useMutation({
@@ -319,7 +331,16 @@ export const AttentionTab = () => {
         </Card>
       </div>
 
-      <Dialog open={approvalModalOpen} onOpenChange={setApprovalModalOpen}>
+      <Dialog
+        open={approvalModalOpen}
+        onOpenChange={(open) => {
+          setApprovalModalOpen(open);
+          if (!open) {
+            requestApproval.reset();
+            approvalForm.reset();
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Request approval</DialogTitle>
@@ -327,33 +348,35 @@ export const AttentionTab = () => {
               Submit a destructive maintenance operation for operator approval before it can run.
             </DialogDescription>
           </DialogHeader>
+          {requestApproval.isError ? (
+            <Alert
+              variant="error"
+              title="Couldn't submit approval request"
+              description={(requestApproval.error as Error).message}
+              onDismiss={() => requestApproval.reset()}
+            />
+          ) : null}
           <FormProvider {...approvalForm}>
             <form
               className="flex flex-col gap-3"
               onSubmit={approvalForm.handleSubmit((values) => requestApproval.mutate(values))}
             >
-              <FormField name="table_id" label="Table">
-                {(field) => (
-                  <select
-                    className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
-                    value={String(field.value ?? "")}
-                    disabled={tableOptions.isLoading}
-                    onChange={(event) => field.onChange(event.target.value)}
-                  >
-                    <option value="">Select table</option>
-                    {(tableOptions.data?.items ?? []).map((table) => (
-                      <option key={table.id} value={table.id}>
-                        {qualifiedTableName(table)}
-                      </option>
-                    ))}
-                  </select>
+              <FormErrorSummary<ApprovalFormValues> labels={APPROVAL_FIELD_LABELS} />
+              <FormField<ApprovalFormValues> name="table_id" label="Table">
+                {(field, meta) => (
+                  <TableSearchSelect
+                    id={meta.id}
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    disabled={requestApproval.isPending}
+                  />
                 )}
               </FormField>
-              <FormField name="operation_type" label="Operation">
+              <FormField<ApprovalFormValues> name="operation_type" label="Operation">
                 {(field) => (
                   <select
                     className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
-                    value={String(field.value ?? "")}
+                    value={field.value ?? ""}
                     onChange={(event) => field.onChange(event.target.value)}
                   >
                     <option value="">Select operation</option>
@@ -364,7 +387,7 @@ export const AttentionTab = () => {
                   </select>
                 )}
               </FormField>
-              <FormField name="reason" label="Reason">
+              <FormField<ApprovalFormValues> name="reason" label="Reason">
                 {(field) => (
                   <Textarea
                     rows={3}

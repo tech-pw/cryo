@@ -109,7 +109,9 @@ export const CatalogDashboard = () => {
             <span
               className={`mt-1.5 size-2 shrink-0 rounded-full ${row.original.enabled ? "bg-[var(--color-status-success)]" : "bg-muted-foreground/40"}`}
               aria-hidden="true"
+              title={row.original.enabled ? "Enabled" : "Disabled"}
             />
+            <span className="sr-only">{row.original.enabled ? "Enabled" : "Disabled"}. </span>
             <span className="flex flex-col gap-0.5">
               <span className="font-medium">{row.original.catalog_name}</span>
               <Badge variant="secondary" className="w-fit text-[10px]">

@@ -11,7 +11,7 @@ const TabsList = forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-[var(--control-height)] items-center justify-center rounded-[var(--radius-default)] bg-[var(--color-surface-sunken)] p-1 text-muted-foreground",
+      "inline-flex h-[var(--control-height)] max-w-full items-center justify-start overflow-x-auto rounded-[var(--radius-default)] bg-[var(--color-surface-sunken)] p-1 text-muted-foreground",
       className
     )}
     {...props}

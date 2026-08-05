@@ -46,6 +46,7 @@ const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ defa
 const SmartMaintenance = lazy(() =>
   import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
 );
+const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
 
 const PageFallback = () => (
   <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-6">
@@ -121,6 +122,7 @@ const AuthenticatedRoutes = () => (
             <Route path="/connections" element={<Connections />} />
             <Route path="/skillsets" element={<SkillsetsRoute />} />
             {import.meta.env.DEV ? <Route path="/dev/styleguide" element={<Styleguide />} /> : null}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </ErrorBoundary>
       </Suspense>

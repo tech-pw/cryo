@@ -47,6 +47,7 @@ import {
   getAwsIntegration,
   getAwsUsage,
   getCostDashboard,
+  getSchemaCost,
   getSourceS3RequestCostRollup,
   listSourceS3LogConfigs,
   listSources,
@@ -110,6 +111,55 @@ describe("Consolidated Cost page", () => {
 
     // Overview tab is selected by default — hero MetricTile for total monthly cost.
     expect(await screen.findByText(/Total monthly S3 cost/i)).toBeInTheDocument();
+  });
+
+  it("Overview shows scan provenance and chart-equivalent data tables", async () => {
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listSourceS3LogConfigs).mockResolvedValue([]);
+    vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue(null as never);
+    const dashboard: CostDashboard = {
+      totals: {
+        current_monthly_cost_usd: 1000,
+        projected_monthly_cost_usd: 700,
+        projected_savings_usd_month: 300,
+        current_storage_bytes: 5_000_000_000,
+        reclaimable_bytes: 1_000_000_000,
+        last_full_cost_scan_at: "2026-07-01T00:00:00Z"
+      },
+      savings_by_operation: [
+        { operation: "optimize", savings_usd_month: 200, reclaimable_bytes: 500_000_000 },
+        { operation: "expire_snapshots", savings_usd_month: 100, reclaimable_bytes: 500_000_000 }
+      ],
+      cost_by_schema: [],
+      top_opportunities: [],
+      trend: [
+        { scan_at: "2026-06-01T00:00:00Z", current_monthly_cost_usd: 1200, projected_savings_usd_month: 250, realized_usd_month: 50 },
+        { scan_at: "2026-07-01T00:00:00Z", current_monthly_cost_usd: 1000, projected_savings_usd_month: 300, realized_usd_month: 120 }
+      ]
+    };
+    vi.mocked(getCostDashboard).mockResolvedValue(dashboard);
+    vi.mocked(deriveCostDashboard).mockReturnValue(dashboard);
+    vi.mocked(listTables).mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    vi.mocked(getSchemaCost).mockResolvedValue([
+      { schema_name: "analytics", cost_usd: 400, size_gb: 200 },
+      { schema_name: "raw", cost_usd: 600, size_gb: 900 }
+    ]);
+    renderPage();
+
+    // Persistent (non-hover) provenance text next to the precision badge.
+    expect(await screen.findByText(/Last full storage-truth scan:/i)).toBeInTheDocument();
+
+    // Each chart pairs with a native <details> chart-equivalent data table (collapsed by
+    // default, but its rows are present in the DOM so assistive tech / find-in-page can reach
+    // them without needing to open the disclosure first).
+    expect(await screen.findByText(/Cost waterfall from current monthly cost/i)).toBeInTheDocument();
+    expect(screen.getByText(/Monthly trend of projected vs realized savings/i)).toBeInTheDocument();
+    expect(screen.getByText(/Estimated monthly S3 cost by schema/i)).toBeInTheDocument();
+
+    // The schema chart's paired table exposes the real row data (schema, cost, size).
+    expect(await screen.findByText("analytics")).toBeInTheDocument();
+    expect(screen.getByText("raw")).toBeInTheDocument();
+    expect(screen.getByText("$600")).toBeInTheDocument();
   });
 
   it("?tab=s3-requests opens the S3 requests tab and renders per-bucket rows", async () => {
@@ -177,7 +227,9 @@ describe("Consolidated Cost page", () => {
 
     expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/s3 requests/i);
     expect(await screen.findByText("lake-bucket")).toBeInTheDocument();
-    expect(screen.getByText(/prod_data/)).toBeInTheDocument();
+    // "prod_data" appears both as the per-bucket source label and inside the
+    // chart-equivalent data table's "prod_data/lake-bucket" bucket identifier.
+    expect(screen.getAllByText(/prod_data/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders one row per bucket, not one summed row per source", async () => {
@@ -258,8 +310,10 @@ describe("Consolidated Cost page", () => {
 
     expect(await screen.findByText("prod-silver-layer")).toBeInTheDocument();
     expect(await screen.findByText("prod-gold-layer")).toBeInTheDocument();
-    expect(screen.getByText("$450")).toBeInTheDocument();
-    expect(screen.getByText("$80")).toBeInTheDocument();
+    // "$450"/"$80" render twice each: once in the per-bucket status table and once in the
+    // chart-equivalent data table paired with the "Top buckets" bar chart.
+    expect(screen.getAllByText("$450").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("$80").length).toBeGreaterThanOrEqual(1);
     // The two source labels (one per bucket row) both render, not deduped into one row.
     expect(screen.getAllByText("cdp")).toHaveLength(2);
   });

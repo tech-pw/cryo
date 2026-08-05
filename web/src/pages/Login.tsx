@@ -1,5 +1,5 @@
 import { Lock, User } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { RoleToken } from "../api/types";
 import { Alert } from "../components/ui/alert";
@@ -10,10 +10,20 @@ import { Label } from "../components/ui/label";
 import { roleOptions, useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
 
+const SIGN_IN_RECOVERY_HINT =
+  "Check your username and role, then try again. Contact your administrator if this continues.";
+
 export const Login = () => {
   const { signIn, startOidcSignIn, loading, error, authMode, devTokenEnabled } = useAuth();
   const [subject, setSubject] = useState("operator");
   const [role, setRole] = useState<RoleToken>("operator");
+  const errorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.focus();
+    }
+  }, [error]);
 
   if (authMode === "oidc") {
     return (
@@ -27,7 +37,22 @@ export const Login = () => {
               Production sign-in uses your organization identity provider. Dev token issuance is
               disabled.
             </p>
-            {error ? <Alert variant="error" title="Sign-in failed" description={error} /> : null}
+            {error ? (
+              <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
+                <Alert
+                  variant="error"
+                  title="Sign-in failed"
+                  description={
+                    <>
+                      <p>{error}</p>
+                      <p className="mt-1">
+                        Try again, or contact your administrator if single sign-on keeps failing.
+                      </p>
+                    </>
+                  }
+                />
+              </div>
+            ) : null}
             <Button variant="primary" loading={loading} className="w-full" onClick={startOidcSignIn}>
               <Lock aria-hidden="true" />
               Sign in with SSO
@@ -58,11 +83,38 @@ export const Login = () => {
             {!devTokenEnabled ? (
               <Alert
                 variant="warning"
-                title="Dev token endpoint disabled"
-                description="Configure OIDC (CRYO_OIDC_ISSUER_URL, CRYO_OIDC_CLIENT_ID) for production sign-in."
+                title="Dev sign-in is disabled"
+                description={
+                  <>
+                    <p>
+                      This deployment requires your organization identity provider. Contact your
+                      administrator if you don't have SSO access yet.
+                    </p>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer select-none">Admin details</summary>
+                      <p className="mt-1">
+                        Configure <code>CRYO_OIDC_ISSUER_URL</code> and <code>CRYO_OIDC_CLIENT_ID</code> to
+                        enable production sign-in.
+                      </p>
+                    </details>
+                  </>
+                }
               />
             ) : null}
-            {error ? <Alert variant="error" title="Sign-in failed" description={error} /> : null}
+            {error ? (
+              <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
+                <Alert
+                  variant="error"
+                  title="Sign-in failed"
+                  description={
+                    <>
+                      <p>{error}</p>
+                      <p className="mt-1">{SIGN_IN_RECOVERY_HINT}</p>
+                    </>
+                  }
+                />
+              </div>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="login-subject">Username</Label>
               <div className="relative">

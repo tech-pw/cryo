@@ -17,6 +17,13 @@ interface WorkflowDetailShellProps {
   runs: ReactNode;
   config: ReactNode;
   defaultTab?: WorkflowTabKey;
+  /**
+   * When provided together with `onTabChange`, the active tab is fully controlled by the
+   * caller (e.g. backed by a URL search param) instead of local component state. This keeps
+   * the selected Overview/Grid/Graph/Runs/Config tab stable across refreshes and shareable.
+   */
+  activeTab?: WorkflowTabKey;
+  onTabChange?: (tab: WorkflowTabKey) => void;
 }
 
 const LazyPane = ({ children }: { children: ReactNode }) => (
@@ -41,13 +48,22 @@ export const WorkflowDetailShell = ({
   graph,
   runs,
   config,
-  defaultTab = "overview"
+  defaultTab = "overview",
+  activeTab: controlledTab,
+  onTabChange
 }: WorkflowDetailShellProps) => {
-  const [activeTab, setActiveTab] = useState<WorkflowTabKey>(defaultTab);
+  const isControlled = controlledTab !== undefined && onTabChange !== undefined;
+  const [uncontrolledTab, setUncontrolledTab] = useState<WorkflowTabKey>(defaultTab);
 
   useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
+    if (!isControlled) setUncontrolledTab(defaultTab);
+  }, [defaultTab, isControlled]);
+
+  const activeTab = isControlled ? (controlledTab as WorkflowTabKey) : uncontrolledTab;
+  const setActiveTab = (tab: WorkflowTabKey) => {
+    if (isControlled) onTabChange?.(tab);
+    else setUncontrolledTab(tab);
+  };
 
   const items = useMemo(() => {
     const all: Array<{ key: WorkflowTabKey; label: string; children: ReactNode }> = [

@@ -38,6 +38,7 @@ import type {
 import { EmptyState } from "../common";
 import { Alert } from "../ui/alert";
 import { Badge } from "../ui/badge";
+import { ChartDataTable } from "../ui/chart-data-table";
 import { HealthScoreBreakdown } from "../HealthScoreBreakdown";
 import { ChartCard } from "./ChartCard";
 import type { ScoreFactor as HealthScoreFactor } from "../HealthScoreBreakdown";
@@ -402,9 +403,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
                 quiet={!trendData.length}
               >
                 {trendData.length ? (
-                  <div className="chart-frame" style={{ height: 260 }}>
-                    <ResponsiveContainer width="100%" height={260}>
-                      <LineChart data={trendData}>
+                  <>
+                    <div className="chart-frame" style={{ height: 260 }}>
+                      <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={trendData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
                         <XAxis
                           dataKey="timestamp"
@@ -474,9 +476,40 @@ export const OverviewTab = (props: OverviewTabProps) => {
                           name="small_files"
                           strokeDasharray="4 3"
                         />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <ChartDataTable
+                      caption="Table health, small-file count, and size over the last 30 days"
+                      rows={trendData}
+                      getRowKey={(row, index) => `${row.timestamp}-${index}`}
+                      columns={[
+                        {
+                          key: "time",
+                          header: "Time",
+                          render: (row) => new Date(row.timestamp).toLocaleString()
+                        },
+                        {
+                          key: "score",
+                          header: "Health score",
+                          align: "right",
+                          render: (row) => row.score.toFixed(1)
+                        },
+                        {
+                          key: "small-files",
+                          header: "Small files",
+                          align: "right",
+                          render: (row) => row.small_files.toLocaleString()
+                        },
+                        {
+                          key: "size",
+                          header: "Size",
+                          align: "right",
+                          render: (row) => `${row.total_size_gb.toFixed(1)} GB`
+                        }
+                      ]}
+                    />
+                  </>
                 ) : (
                   <EmptyState
                     title="No trends yet"

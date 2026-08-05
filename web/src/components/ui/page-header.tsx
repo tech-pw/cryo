@@ -17,15 +17,15 @@ export function PageHeader({ title, subtitle, actions, breadcrumbs, rootCrumb, c
   const crumbs = breadcrumbs ?? <PageBreadcrumbs root={rootCrumb} />;
 
   return (
-    <header className={cn("mb-4", className)}>
+    <header className={cn("cryo-page-header", className)}>
       <PageTitle title={title} />
-      {crumbs ? <div className="mb-3 text-xs text-muted-foreground [&_.ant-breadcrumb]:mb-0">{crumbs}</div> : null}
-      <div className="flex min-h-12 flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 max-w-[68ch]">
-          <h1 className="m-0 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground">{title}</h1>
-          {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
+      {crumbs ? <div className="cryo-page-header__breadcrumbs">{crumbs}</div> : null}
+      <div className="cryo-page-header__body">
+        <div className="cryo-page-header__copy">
+          <h1 className="cryo-page-header__title">{title}</h1>
+          {subtitle ? <p className="cryo-page-header__subtitle">{subtitle}</p> : null}
         </div>
-        {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+        {actions ? <div className="cryo-page-header__actions">{actions}</div> : null}
       </div>
     </header>
   );

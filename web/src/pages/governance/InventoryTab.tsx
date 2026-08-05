@@ -24,6 +24,7 @@ import { formatBytesGb, formatTime } from "../../lib/format";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import { leaf } from "../../lib/predicate";
 import { BROKEN_TABLE_FAILURE_THRESHOLD, FAILURE_CATEGORY_COLORS } from "./constants";
+import { TableSearchSelect } from "./TableSearchSelect";
 
 const BROKEN_PAGE_SIZE = 8;
 
@@ -58,10 +59,6 @@ export const InventoryTab = () => {
   const observationSearch = useQuery({
     queryKey: ["observation-search", api.token, observationFilter],
     queryFn: () => searchObservations(api, { ...observationFilter, limit: 50 })
-  });
-  const tableOptions = useQuery({
-    queryKey: ["governance-table-picker", api.token],
-    queryFn: () => listTables(api, { limit: 200, offset: 0 })
   });
 
   const compactObservationsMutation = useMutation({
@@ -263,24 +260,17 @@ export const InventoryTab = () => {
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            <select
-              className="h-[var(--control-height)] min-w-[260px] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+            <TableSearchSelect
+              className="min-w-[260px]"
               value={observationFilter.table_id ?? ""}
-              disabled={tableOptions.isLoading}
-              onChange={(event) =>
+              onChange={(tableId) =>
                 setObservationFilter((prev) => ({
                   ...prev,
-                  table_id: event.target.value || undefined
+                  table_id: tableId || undefined
                 }))
               }
-            >
-              <option value="">Filter by table</option>
-              {(tableOptions.data?.items ?? []).map((table) => (
-                <option key={table.id} value={table.id}>
-                  {qualifiedTableName(table)}
-                </option>
-              ))}
-            </select>
+              placeholder="Filter by table"
+            />
             <select
               className="h-[var(--control-height)] min-w-[200px] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
               value={observationFilter.event_type ?? ""}

@@ -19,6 +19,9 @@
   body {
     @apply m-0 bg-background text-foreground font-sans;
     font-variant-numeric: tabular-nums;
+    min-height: 100vh;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
 
   :focus-visible {

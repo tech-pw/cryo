@@ -1,18 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { CheckCircle2, Clock, Database, TriangleAlert } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { CheckCircle2, Clock, Copy, Database, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { getQueryPerformanceDashboard, type QueryPerformanceData } from "../api/client";
 import { AsyncBoundary } from "../components/AsyncBoundary";
 import { PageHeader, TelemetryRequiredNotice } from "../components/common";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { DataTable } from "../components/ui/data-table";
+import { Label } from "../components/ui/label";
+import { Select } from "../components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
 import { MetricTile } from "../components/ui/stat";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useAuth } from "../lib/auth";
-import { formatBytesGb, formatDuration } from "../lib/format";
+import { formatBytesGb, formatDuration, formatTime } from "../lib/format";
 
 type QueryRow = QueryPerformanceData["queries"][number];
 
@@ -21,6 +24,20 @@ const durationBadgeVariant = (ms: number): "danger" | "warning" | "success" => {
   if (ms > 5000) return "warning";
   return "success";
 };
+
+const ENGINE_OPTIONS = [
+  { label: "Trino", value: "trino" },
+  { label: "Spark", value: "spark" },
+  { label: "Athena", value: "athena" },
+  { label: "DuckDB", value: "duckdb" }
+];
+
+const HOURS_OPTIONS = [
+  { label: "Last 1 hour", value: "1" },
+  { label: "Last 6 hours", value: "6" },
+  { label: "Last 24 hours", value: "24" },
+  { label: "Last 7 days", value: "168" }
+];
 
 const KpiSkeleton = () => (
   <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
@@ -32,14 +49,65 @@ const KpiSkeleton = () => (
 
 export const QueryPerformance = () => {
   const { api } = useAuth();
-  const [engine, setEngine] = useState<string | undefined>(undefined);
-  const [hours, setHours] = useState(24);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
+
+  const engine = searchParams.get("engine") ?? undefined;
+  const hoursParam = Number(searchParams.get("hours") ?? "24");
+  const hours = HOURS_OPTIONS.some((option) => Number(option.value) === hoursParam) ? hoursParam : 24;
+  const selectedQueryId = searchParams.get("query") ?? undefined;
+
+  const setEngine = (next: string | undefined) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next) params.set("engine", next);
+      else params.delete("engine");
+      return params;
+    });
+  };
+
+  const setHours = (next: number) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("hours", String(next));
+      return params;
+    });
+  };
+
+  const openQueryDetail = (queryId: string) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("query", queryId);
+      return params;
+    });
+  };
+
+  const closeQueryDetail = () => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.delete("query");
+      return params;
+    });
+  };
 
   const { data, isLoading, error, refetch } = useQuery<QueryPerformanceData>({
     queryKey: ["query-performance", api.token, engine, hours],
     queryFn: () => getQueryPerformanceDashboard(api, hours, engine),
     refetchInterval: 30000
   });
+
+  const selectedQuery = useMemo(
+    () => data?.queries.find((row) => row.query_id === selectedQueryId),
+    [data, selectedQueryId]
+  );
+
+  const handleCopyQuery = (text: string) => {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => setCopyStatus("copied"))
+      .catch(() => setCopyStatus("error"));
+    window.setTimeout(() => setCopyStatus("idle"), 2000);
+  };
 
   const columns: ColumnDef<QueryRow, unknown>[] = [
     {
@@ -48,13 +116,17 @@ export const QueryPerformance = () => {
       cell: ({ row }) => {
         const text = row.original.query_text;
         const preview = text ? text.slice(0, 80) + (text.length > 80 ? "..." : "") : "—";
+        if (!text) return <code className="text-[11px] text-muted-foreground">{preview}</code>;
         return (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <code className="text-[11px]">{preview}</code>
-            </TooltipTrigger>
-            {text ? <TooltipContent className="max-w-md break-all">{text}</TooltipContent> : null}
-          </Tooltip>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto whitespace-normal p-0 text-left font-normal"
+            onClick={() => openQueryDetail(row.original.query_id)}
+            aria-label="View full query text and details"
+          >
+            <code className="text-[11px]">{preview}</code>
+          </Button>
         );
       }
     },
@@ -119,6 +191,15 @@ export const QueryPerformance = () => {
           </Link>
         );
       }
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => (
+        <Button variant="outline" size="sm" onClick={() => openQueryDetail(row.original.query_id)}>
+          Details
+        </Button>
+      )
     }
   ];
 
@@ -128,28 +209,27 @@ export const QueryPerformance = () => {
         title="Query performance"
         subtitle="Monitor query latency, throughput, and failure rates."
         actions={
-          <div className="flex flex-wrap gap-2">
-            <select
-              className="h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
-              value={engine ?? ""}
-              onChange={(event) => setEngine(event.target.value || undefined)}
-            >
-              <option value="">All Engines</option>
-              <option value="trino">Trino</option>
-              <option value="spark">Spark</option>
-              <option value="athena">Athena</option>
-              <option value="duckdb">DuckDB</option>
-            </select>
-            <select
-              className="h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
-              value={hours}
-              onChange={(event) => setHours(Number(event.target.value))}
-            >
-              <option value={1}>Last 1 hour</option>
-              <option value={6}>Last 6 hours</option>
-              <option value={24}>Last 24 hours</option>
-              <option value={168}>Last 7 days</option>
-            </select>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="qp-engine-filter">Engine</Label>
+              <Select
+                id="qp-engine-filter"
+                value={engine ?? ""}
+                onChange={setEngine}
+                options={ENGINE_OPTIONS}
+                allowClear
+                placeholder="All engines"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="qp-hours-filter">Time range</Label>
+              <Select
+                id="qp-hours-filter"
+                value={String(hours)}
+                onChange={(next) => setHours(Number(next ?? 24))}
+                options={HOURS_OPTIONS}
+              />
+            </div>
           </div>
         }
       />
@@ -194,6 +274,90 @@ export const QueryPerformance = () => {
           </Card>
         )}
       </AsyncBoundary>
+
+      <Sheet open={Boolean(selectedQueryId)} onOpenChange={(open) => !open && closeQueryDetail()}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+          <SheetHeader>
+            <SheetTitle>Query detail</SheetTitle>
+          </SheetHeader>
+          {selectedQuery ? (
+            <div className="mt-4 flex flex-col gap-4">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">{selectedQuery.engine.toUpperCase()}</Badge>
+                <Badge variant={durationBadgeVariant(selectedQuery.duration_ms)}>
+                  <Clock className="mr-1 size-3" aria-hidden="true" />
+                  {formatDuration(selectedQuery.duration_ms)}
+                </Badge>
+                <Badge variant={selectedQuery.status === "failed" ? "danger" : "success"}>
+                  {selectedQuery.status === "failed" ? (
+                    <TriangleAlert className="mr-1 size-3" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2 className="mr-1 size-3" aria-hidden="true" />
+                  )}
+                  {selectedQuery.status.toUpperCase()}
+                </Badge>
+              </div>
+
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Started</dt>
+                  <dd>{formatTime(selectedQuery.started_at)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">User</dt>
+                  <dd>{selectedQuery.user ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Data scanned</dt>
+                  <dd>{formatBytesGb(selectedQuery.bytes_scanned)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Rows produced</dt>
+                  <dd>{selectedQuery.rows_produced ? selectedQuery.rows_produced.toLocaleString() : "—"}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-xs text-muted-foreground">Table</dt>
+                  <dd>
+                    {selectedQuery.table_name ? (
+                      <Link
+                        to={selectedQuery.table_id ? `/tables/${selectedQuery.table_id}` : "/catalogs"}
+                        className="hover:text-primary"
+                      >
+                        {selectedQuery.table_name}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
+                </div>
+              </dl>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Full query text</span>
+                  {selectedQuery.query_text ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopyQuery(selectedQuery.query_text ?? "")}
+                    >
+                      <Copy className="mr-1 size-3" aria-hidden="true" />
+                      {copyStatus === "copied" ? "Copied" : copyStatus === "error" ? "Copy failed" : "Copy"}
+                    </Button>
+                  ) : null}
+                </div>
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] p-3 text-xs">
+                  {selectedQuery.query_text ?? "No query text captured for this execution."}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">
+              This query is no longer present in the current results window.
+            </p>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 };

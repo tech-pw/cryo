@@ -2094,7 +2094,7 @@ export const repairSilentDataLoss = (
   apiFetch<SilentDataLossRepairResponse>(
     `/advanced/silent-data-loss/${tableId}/repair`,
     api,
-    { method: "POST" }
+    { method: "POST", body: { commit: false } }
   );
 
 // ============================================================================

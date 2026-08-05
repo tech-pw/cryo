@@ -7,6 +7,8 @@ import {
   type NativeEngineImpl
 } from "../../lib/engines";
 import { parseCatalogBindings, type CatalogBindingFormValue } from "../../lib/catalogBindings";
+import { REDACTED_PLACEHOLDER } from "./constants";
+import { isRedactedPlaceholder } from "./helpers";
 
 export interface TrinoCoordinatorFormValue {
   host: string;
@@ -31,6 +33,8 @@ export interface DestinationFormValues {
   use_basic_auth?: boolean;
   auth_username?: string;
   auth_password?: string;
+  /** True when the saved config already has a basic-auth password (not re-sent by the API — see redact.py). */
+  auth_has_password?: boolean;
   application_id?: string;
   execution_role_arn?: string;
   region?: string;
@@ -95,6 +99,13 @@ export const decomposeDestinationConfig = (engine: string, config: Record<string
     };
   });
   const auth = cfg.auth as Record<string, unknown> | undefined;
+  const rawAuthPassword = auth?.password;
+  // Same redaction concern as sourceConfig.ts's s3_secret_access_key: never pre-fill the editable
+  // password input with the literal "***REDACTED***" placeholder the API always sends back once a
+  // basic-auth password has been saved (see cryo/api/redact.py).
+  const auth_has_password = typeof rawAuthPassword === "string" && rawAuthPassword.length > 0;
+  const auth_password =
+    typeof rawAuthPassword === "string" && !isRedactedPlaceholder(rawAuthPassword) ? rawAuthPassword : "";
   const ql = (cfg as Record<string, unknown>).query_log as Record<string, unknown> | undefined;
   const qlCoordinators = Array.isArray(ql?.telemetry_coordinators)
     ? (ql!.telemetry_coordinators as string[]).join("\n")
@@ -107,7 +118,8 @@ export const decomposeDestinationConfig = (engine: string, config: Record<string
     catalog_bindings: parseCatalogBindings(cfg),
     use_basic_auth: Boolean(auth && auth.type === "basic"),
     auth_username: typeof auth?.username === "string" ? auth.username : "",
-    auth_password: typeof auth?.password === "string" ? auth.password : "",
+    auth_password,
+    auth_has_password,
     query_log_enabled: Boolean(ql && ql.enabled),
     query_log_mode: ql?.mode === "read_through" ? "read_through" : "trino_system_runtime",
     query_log_external_table: typeof ql?.external_table === "string" ? ql.external_table : "",
@@ -168,7 +180,17 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
     });
   config.catalog_bindings = bindings;
   if (values.use_basic_auth) {
-    config.auth = { type: "basic", username: values.auth_username, password: values.auth_password };
+    // The `auth` object is always sent in full (unlike the Source's flat config keys, there's no
+    // way to omit just the password here), so a blank password must be resolved explicitly: if a
+    // password was already saved and the field was left untouched, resubmit the redaction
+    // sentinel so the backend's unredact_merge restores the real value instead of overwriting it
+    // with an empty string (see cryo/api/redact.py / patch_destination).
+    const password = values.auth_password
+      ? values.auth_password
+      : values.auth_has_password
+        ? REDACTED_PLACEHOLDER
+        : "";
+    config.auth = { type: "basic", username: values.auth_username, password };
   }
   return config;
 };

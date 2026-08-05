@@ -6,16 +6,21 @@ import { listPresetRules, listPresets, listRuns, simulatePreset } from "../../ap
 import type { RunRead } from "../../api/types";
 import { OperationPipeline, maintenanceOpsToSteps } from "../../components/operations/OperationPipeline";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
+import { describeCronSchedule, nextCronRun } from "../../components/operations/scheduleSummary";
 import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
+import { Skeleton } from "../../components/ui/skeleton";
 import { useAuth } from "../../lib/auth";
 import { formatGb, formatNumber, formatTime } from "../../lib/format";
 import { formatPresetSummary } from "../../lib/presetForm";
 import { shortRunId, targetLabel } from "../../lib/operations";
-import { WorkflowDetailShell } from "./WorkflowDetailShell";
+import { WorkflowDetailShell, type WorkflowTabKey } from "./WorkflowDetailShell";
 import { PresetConfigTab } from "./preset/PresetConfigTab";
+
+const MAINTENANCE_OP_ORDER = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
+const opLabel = (op: string) => op.replaceAll("_", " ");
 
 const PresetRunsTab = ({ presetId }: { presetId: string }) => {
   const { api, token } = useAuth();
@@ -92,6 +97,42 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
   const latest = runs.data?.[0];
   const latestFailed = runs.data?.find((run) => run.status === "failed");
 
+  const scheduleSummary = describeCronSchedule(preset?.schedule_cron);
+  const nextRun = nextCronRun(preset?.schedule_cron);
+  const orderedOps = useMemo(() => {
+    const ops = preset?.operations ?? [];
+    if (ops.length === 0) return [];
+    const known = MAINTENANCE_OP_ORDER.filter((op) => ops.includes(op));
+    const unknown = ops.filter((op) => !MAINTENANCE_OP_ORDER.includes(op));
+    return [...known, ...unknown];
+  }, [preset?.operations]);
+
+  const simulationContent = simulation.isLoading ? (
+    <div className="flex flex-wrap gap-3">
+      <Skeleton className="h-4 w-32" />
+      <Skeleton className="h-4 w-24" />
+    </div>
+  ) : simulation.isError ? (
+    <Alert
+      variant="warning"
+      title="Simulation unavailable"
+      description={
+        <span className="text-sm">
+          Couldn&apos;t compute matched tables/size ({(simulation.error as Error)?.message ?? "unknown error"}). This
+          is not the same as zero matches.
+        </span>
+      }
+    />
+  ) : (
+    <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+      <span>Matched tables: {formatNumber(simulation.data?.matched_count)}</span>
+      <span>Total size: {formatGb(simulation.data?.total_size_gb)}</span>
+      {simulation.data?.matched_count === 0 ? (
+        <span className="text-xs">(No tables currently match this preset&apos;s rules.)</span>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-3">
       <Card>
@@ -103,11 +144,24 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
             <strong>{presetName}</strong> · {formatPresetSummary(preset ?? { operations: [], mode: "standard", params: {} } as never)}
           </p>
           <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-            <span>Schedule: {preset?.schedule_cron ?? "—"}</span>
+            <span>
+              Schedule: {scheduleSummary ?? preset?.schedule_cron ?? "—"}
+              {nextRun ? ` · Next run: ${formatTime(nextRun.toISOString())}` : ""}
+            </span>
             <span>Rules: {rules.data?.length ?? 0}</span>
-            <span>Matched tables: {formatNumber(simulation.data?.matched_count)}</span>
-            <span>Total size: {formatGb(simulation.data?.total_size_gb)}</span>
           </div>
+          {orderedOps.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              <span>Operation order:</span>
+              {orderedOps.map((op, idx) => (
+                <span key={op} className="inline-flex items-center gap-1.5">
+                  <code className="mono-id text-xs">{opLabel(op)}</code>
+                  {idx < orderedOps.length - 1 ? <span aria-hidden>→</span> : null}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {simulationContent}
           {latest ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span>Last run:</span>
@@ -186,9 +240,11 @@ const PresetGraphTab = ({ presetId }: { presetId: string }) => {
   return <OperationPipeline steps={steps} title="Configured operations" />;
 };
 
+const VALID_PRESET_TABS = new Set(["overview", "grid", "graph", "runs", "config"]);
+
 export const PresetDetail = () => {
   const { presetId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { api, token } = useAuth();
   const queryClient = useQueryClient();
 
@@ -199,7 +255,13 @@ export const PresetDetail = () => {
   });
   const preset = presetsQuery.data?.find((item) => item.id === presetId);
 
-  const defaultTab = searchParams.get("tab") === "config" ? "config" : "overview";
+  const rawTab = searchParams.get("tab");
+  const activeTab = (rawTab && VALID_PRESET_TABS.has(rawTab) ? rawTab : "overview") as
+    | "overview"
+    | "grid"
+    | "graph"
+    | "runs"
+    | "config";
 
   if (!presetId) return <Alert variant="error" title="Missing preset id" />;
 
@@ -207,7 +269,18 @@ export const PresetDetail = () => {
     <WorkflowDetailShell
       title={preset?.name ?? "Preset"}
       subtitle={preset?.description ?? "Maintenance workflow"}
-      defaultTab={defaultTab as "overview"}
+      activeTab={activeTab}
+      onTabChange={(tab) => {
+        setSearchParams(
+          (previous) => {
+            const next = new URLSearchParams(previous);
+            if (tab === "overview") next.delete("tab");
+            else next.set("tab", tab);
+            return next;
+          },
+          { replace: true }
+        );
+      }}
       overview={<PresetOverviewTab presetId={presetId} presetName={preset?.name ?? "Preset"} />}
       grid={<PresetGridTab presetId={presetId} />}
       graph={<PresetGraphTab presetId={presetId} />}
