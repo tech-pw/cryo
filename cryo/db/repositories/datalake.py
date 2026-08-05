@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import case, desc, func, literal, select
+from sqlalchemy import and_, case, desc, func, literal, select
 from sqlalchemy.orm import Session, load_only, selectinload
 
 from cryo.api.schemas import TableRead
@@ -36,6 +36,18 @@ _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
     (OperationType.OPTIMIZE, "reclaim_optimize_bytes"),
     (OperationType.OPTIMIZE_MANIFESTS, "reclaim_manifests_bytes"),
 )
+BROKEN_TABLE_FAILURE_THRESHOLD = 2
+_FRESHNESS_BUCKETS: tuple[tuple[str, str, timedelta | None, timedelta | None], ...] = (
+    ("within_24h", "Updated in last 24 hours", None, timedelta(hours=24)),
+    ("1_3d", "Not updated 1-3 days", timedelta(hours=24), timedelta(days=3)),
+    ("3_7d", "Not updated 3-7 days", timedelta(days=3), timedelta(days=7)),
+    ("7_15d", "Not updated 7-15 days", timedelta(days=7), timedelta(days=15)),
+    ("15_30d", "Not updated 15-30 days", timedelta(days=15), timedelta(days=30)),
+    ("1_3m", "Not updated 1-3 months", timedelta(days=30), timedelta(days=90)),
+    ("3_6m", "Not updated 3-6 months", timedelta(days=90), timedelta(days=180)),
+    ("6_12m", "Not updated 6-12 months", timedelta(days=180), timedelta(days=365)),
+    ("over_1y", "Not updated over 1 year", timedelta(days=365), None),
+)
 
 
 def dashboard_datalake(
@@ -44,8 +56,10 @@ def dashboard_datalake(
     top_limit: int = 10,
     drift_limit: int = 30,
     settings: Settings | None = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     settings = settings or Settings()
+    freshness_as_of = now or datetime.now(UTC)
     total_tables = int(session.scalar(select(func.count(Table.id))) or 0)
     active_row = session.execute(
         select(
@@ -81,6 +95,10 @@ def dashboard_datalake(
             .order_by(TableStats.grade)
         )
     ]
+    freshness_distribution = _sql_aggregate_freshness(
+        session,
+        as_of=freshness_as_of,
+    )
 
     top_offenders = [
         {
@@ -166,10 +184,64 @@ def dashboard_datalake(
             "needs_compaction_count": int(active_row[6] or 0),
         },
         "grade_distribution": grade_distribution,
+        "freshness_distribution": freshness_distribution,
+        "freshness_as_of": freshness_as_of,
         "top_offenders": top_offenders,
         "drift": drift,
         "cost_by_schema": cost_by_schema,
     }
+
+
+def _sql_aggregate_freshness(
+    session: Session,
+    *,
+    as_of: datetime,
+) -> list[dict[str, object]]:
+    failed = Table.consecutive_scan_failures >= BROKEN_TABLE_FAILURE_THRESHOLD
+    healthy = Table.consecutive_scan_failures < BROKEN_TABLE_FAILURE_THRESHOLD
+    committed_at = TableStats.last_snapshot_committed_at
+    expressions = []
+    for _key, _label, lower_age, upper_age in _FRESHNESS_BUCKETS:
+        conditions = [healthy, committed_at.is_not(None)]
+        if lower_age is not None:
+            conditions.append(committed_at <= as_of - lower_age)
+        if upper_age is not None:
+            conditions.append(committed_at > as_of - upper_age)
+        expressions.append(func.coalesce(func.sum(case((and_(*conditions), 1), else_=0)), 0))
+    expressions.extend(
+        [
+            func.coalesce(
+                func.sum(case((and_(healthy, committed_at.is_(None)), 1), else_=0)),
+                0,
+            ),
+            func.coalesce(func.sum(case((failed, 1), else_=0)), 0),
+        ]
+    )
+    row = session.execute(
+        select(*expressions)
+        .select_from(Table)
+        .outerjoin(TableStats)
+        .where(Table.is_active.is_(True))
+    ).one()
+    items = [
+        {"key": key, "label": label, "count": int(row[index] or 0)}
+        for index, (key, label, _lower, _upper) in enumerate(_FRESHNESS_BUCKETS)
+    ]
+    items.extend(
+        [
+            {
+                "key": "unknown",
+                "label": "No snapshot timestamp",
+                "count": int(row[len(_FRESHNESS_BUCKETS)] or 0),
+            },
+            {
+                "key": "failed",
+                "label": "Failed / corrupt tables",
+                "count": int(row[len(_FRESHNESS_BUCKETS) + 1] or 0),
+            },
+        ]
+    )
+    return items
 
 
 def dashboard_schema_cost(session: Session, *, limit: int = 50) -> dict[str, object]:

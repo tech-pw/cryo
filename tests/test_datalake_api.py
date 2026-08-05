@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -13,10 +14,10 @@ from cryo.api.app import create_app
 from cryo.api.deps import get_tenant_session
 from cryo.api.schemas import AssignmentSelection, MaintenanceRunRequest
 from cryo.config import Settings
-from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Preset
+from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Preset, Table, TableStats
 from cryo.db.repositories.presets import SelectionResult
+from tests.auth_helpers import ADMIN_HEADERS, VIEWER_HEADERS, ensure_test_jwt_secret
 from tests.auth_helpers import OPERATOR_HEADERS as AUTH_HEADERS
-from tests.auth_helpers import VIEWER_HEADERS, ensure_test_jwt_secret
 
 
 class FakeSession:
@@ -117,6 +118,74 @@ def test_dashboard_endpoints_return_bounded_aggregates(monkeypatch: Any) -> None
     assert datalake_response.json()["top_offenders"][0]["table_id"] == str(table_id)
     assert schema_response.status_code == 200
     assert schema_response.json()["items"][0]["schema_name"] == "analytics"
+
+
+def test_table_csv_export_uses_the_exact_server_filter(api_db: Any) -> None:
+    source_response = api_db.client.post(
+        "/api/v1/sources",
+        headers=ADMIN_HEADERS,
+        json={"name": "freshness-export", "type": "rest", "config": {}},
+    )
+    assert source_response.status_code == 201
+    source_id = uuid.UUID(source_response.json()["id"])
+    as_of = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    with api_db.session_factory() as session:
+        for name, committed_at in [
+            ("stale_orders", datetime(2026, 7, 30, 12, tzinfo=UTC)),
+            ("fresh_orders", datetime(2026, 8, 4, 11, tzinfo=UTC)),
+        ]:
+            table = Table(
+                source_id=source_id,
+                schema_name="analytics",
+                table_name=name,
+                first_seen_at=as_of,
+                is_active=True,
+            )
+            session.add(table)
+            session.flush()
+            session.add(
+                TableStats(
+                    table_id=table.id,
+                    scan_at=as_of,
+                    last_snapshot_committed_at=committed_at,
+                    needs_compaction=False,
+                    compaction_priority="LOW",
+                    grade="B",
+                    overall_score=80,
+                    total_files=1,
+                    small_files_count=0,
+                    total_size_gb=1,
+                    query_count_30d=0,
+                )
+            )
+        session.commit()
+
+    predicate = {
+        "all": [
+            {"field": "is_active", "op": "=", "value": True},
+            {"field": "consecutive_scan_failures", "op": "<", "value": 2},
+            {
+                "field": "last_snapshot_committed_at",
+                "op": "<=",
+                "value": "2026-08-01T12:00:00Z",
+            },
+            {
+                "field": "last_snapshot_committed_at",
+                "op": ">",
+                "value": "2026-07-28T12:00:00Z",
+            },
+        ]
+    }
+    response = api_db.client.get(
+        "/api/v1/tables/export.csv",
+        headers=VIEWER_HEADERS,
+        params={"filter": json.dumps(predicate)},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "analytics.stale_orders" in response.text
+    assert "analytics.fresh_orders" not in response.text
 
 
 def test_cost_dashboard_and_table_cost_endpoints(monkeypatch: Any) -> None:

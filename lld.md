@@ -210,6 +210,7 @@ CREATE TABLE cryo.table_stats (
     total_snapshots                int,
     total_delete_files             int,
     delete_file_pct                double precision,
+    last_snapshot_committed_at     timestamptz,             -- latest Iceberg commit; indexed for freshness
     manifest_count                 int,
     partition_col                  text,
     partition_col_type             text,
@@ -224,6 +225,7 @@ CREATE TABLE cryo.table_stats (
     query_count_30d                bigint DEFAULT 0,        -- from query metrics (ranking)
     raw                            jsonb                    -- full stats dict for forward-compat
 );
+CREATE INDEX ON cryo.table_stats (last_snapshot_committed_at);
 
 -- per-partition rewrite detail (drives the partition-aware planner)
 CREATE TABLE cryo.table_partitions (
