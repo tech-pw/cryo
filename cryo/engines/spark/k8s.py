@@ -8,9 +8,13 @@ dispatch Job's own exit code mirrors the real Spark application's outcome --
 the same "one Job, exit code is the answer" shape as the native engine's
 ``cryo.engines.native.job_dispatch``.
 
-Executor pods are cleaned up by Spark itself once the driver pod is deleted
-(``spark.kubernetes.driver.pod.name`` + owner references); this dispatcher deletes
-the driver pod as part of Job TTL cleanup, which cascades.
+Spark deletes executor pods on termination
+(``spark.kubernetes.executor.deleteOnTermination``), but **keeps the completed
+driver pod** by design (for logs). That driver is created by spark-submit and is
+**not** owned by our wrapper Job, so Job ``ttlSecondsAfterFinished`` does not
+remove it. Callers must invoke :meth:`SparkK8sClient.cleanup_after_run` once the
+run is terminal (see ``SparkK8sEngine.execute``) to delete the driver pod and the
+per-job AWS credentials Secret.
 """
 
 from __future__ import annotations
@@ -222,6 +226,7 @@ class SparkK8sClient:
             ]
 
         credentials_secret_name: str | None = None
+        core_api = None
         if cfg.s3_access_key and cfg.s3_secret_key:
             # secretKeyRef, not a literal --conf value: the pod spec's command array is
             # always visible via `kubectl get pod -o yaml` regardless of RBAC on Secrets,
@@ -235,7 +240,14 @@ class SparkK8sClient:
                 body={
                     "apiVersion": "v1",
                     "kind": "Secret",
-                    "metadata": {"name": credentials_secret_name, "namespace": cfg.namespace},
+                    "metadata": {
+                        "name": credentials_secret_name,
+                        "namespace": cfg.namespace,
+                        "labels": {
+                            "app.kubernetes.io/name": "cryo",
+                            "app.kubernetes.io/component": "spark-fallback",
+                        },
+                    },
                     "stringData": {
                         "access_key_id": cfg.s3_access_key,
                         "secret_access_key": cfg.s3_secret_key,
@@ -309,7 +321,17 @@ class SparkK8sClient:
         }
 
         batch_api = _new_k8s_batch_client()
-        batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
+        created_job = batch_api.create_namespaced_job(
+            body=job_manifest, namespace=cfg.namespace
+        )
+        if credentials_secret_name and core_api is not None:
+            _adopt_credentials_secret(
+                core_api,
+                secret_name=credentials_secret_name,
+                namespace=cfg.namespace,
+                job_name=k8s_job_name,
+                created_job=created_job,
+            )
         logger.info("Created Spark-on-K8s dispatch Job %s (driver=%s)", k8s_job_name, driver_pod_name)
         return k8s_job_name
 
@@ -379,28 +401,82 @@ class SparkK8sClient:
 
     def cancel_job_run(self, job_id: str) -> None:
         batch_api = _new_k8s_batch_client()
-        batch_api.delete_namespaced_job(
-            name=job_id,
-            namespace=self._config.namespace,
-            propagation_policy="Foreground",
-        )
+        try:
+            batch_api.delete_namespaced_job(
+                name=job_id,
+                namespace=self._config.namespace,
+                propagation_policy="Foreground",
+            )
+        finally:
+            # Driver is not owned by the Job -- Foreground delete will not remove it.
+            self.cleanup_after_run(job_id)
+
+    def cleanup_driver_pod(self, job_id: str) -> None:
+        """Delete the Spark driver pod left behind after the application finishes.
+
+        Spark keeps completed drivers for log inspection and does not attach them as
+        children of our wrapper Job, so Job TTL alone never reclaims them. Best-effort:
+        missing/already-deleted is not an error.
+        """
+        driver_pod_name = f"{job_id}-driver"
+        try:
+            core_api = _new_k8s_core_client()
+            core_api.delete_namespaced_pod(
+                name=driver_pod_name,
+                namespace=self._config.namespace,
+            )
+            logger.info("Deleted Spark driver pod %s", driver_pod_name)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+            if _is_not_found(exc):
+                return
+            logger.warning(
+                "Failed to delete Spark driver pod %s: %s",
+                driver_pod_name,
+                exc,
+                exc_info=True,
+            )
 
     def cleanup_credentials_secret(self, job_id: str) -> None:
         """Delete the per-job AWS credentials Secret created by submit_spark_sql, if any.
 
         Best-effort: called after the run reaches a terminal state (or times out/raises)
         so credential Secrets don't accumulate. Missing/already-deleted is not an error.
+        Prefers the Job annotation; falls back to the conventional ``{job_id}-aws`` name
+        when the wrapper Job is already gone (TTL).
         """
+        secret_name: str | None = None
         try:
             batch_api = _new_k8s_batch_client()
             job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
             secret_name = (job.metadata.annotations or {}).get("cryo/credentials-secret-name")
-            if not secret_name:
-                return
+        except Exception as exc:  # noqa: BLE001 - Job may already be TTL-deleted
+            if not _is_not_found(exc):
+                logger.warning(
+                    "Failed to read Job %s while cleaning credentials Secret: %s",
+                    job_id,
+                    exc,
+                    exc_info=True,
+                )
+        if not secret_name:
+            secret_name = f"{job_id}-aws"
+        try:
             core_api = _new_k8s_core_client()
             core_api.delete_namespaced_secret(name=secret_name, namespace=self._config.namespace)
-        except Exception:  # noqa: BLE001 - best-effort cleanup only
-            logger.warning("Failed to clean up credentials Secret for job %s", job_id, exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+            if _is_not_found(exc):
+                return
+            logger.warning(
+                "Failed to clean up credentials Secret %s for job %s: %s",
+                secret_name,
+                job_id,
+                exc,
+                exc_info=True,
+            )
+
+    def cleanup_after_run(self, job_id: str) -> None:
+        """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
+        self.cleanup_driver_pod(job_id)
+        self.cleanup_credentials_secret(job_id)
 
 
 _k8s_config_loaded = False
@@ -442,6 +518,66 @@ def _new_k8s_core_client() -> client.CoreV1Api:
 
     _ensure_k8s_config()
     return client.CoreV1Api()
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    status = getattr(exc, "status", None)
+    if status == 404:
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, str) and "not found" in body.lower():
+        return True
+    return False
+
+
+def _adopt_credentials_secret(
+    core_api: Any,
+    *,
+    secret_name: str,
+    namespace: str,
+    job_name: str,
+    created_job: Any,
+) -> None:
+    """Attach the AWS credentials Secret as a child of the wrapper Job.
+
+    Job TTL then cascades Secret deletion even if ``cleanup_credentials_secret``
+    never runs (e.g. fire-and-forget admin diagnostics). The Spark driver pod
+    still needs an explicit delete -- Spark creates it without ownerReferences.
+    """
+    metadata = getattr(created_job, "metadata", None)
+    uid = getattr(metadata, "uid", None)
+    if not uid:
+        logger.warning(
+            "Created Job %s without UID; credentials Secret needs explicit cleanup",
+            job_name,
+        )
+        return
+    try:
+        core_api.patch_namespaced_secret(
+            name=secret_name,
+            namespace=namespace,
+            body={
+                "metadata": {
+                    "ownerReferences": [
+                        {
+                            "apiVersion": "batch/v1",
+                            "kind": "Job",
+                            "name": job_name,
+                            "uid": str(uid),
+                            "controller": True,
+                            "blockOwnerDeletion": True,
+                        }
+                    ]
+                }
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort; cleanup_after_run still deletes
+        logger.warning(
+            "Failed to attach credentials Secret %s to Job %s: %s",
+            secret_name,
+            job_name,
+            exc,
+        )
 
 
 def _read_pod_log_tail(
