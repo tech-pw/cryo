@@ -330,9 +330,18 @@ until real evidence exists.
       size/file-count/threshold/FIFO/random baselines with regret and confidence; leakage-free
       chronological cost holdout; incompatible-cache rejection; and explicit feature-domain
       abstention are implemented. Delete lifecycle now includes audit-derived bounded
-      minor-to-major escalation and equality-delete-specific major routing. Production 90%
-      lineage, VMY lift, calibrated runtime/rewrite-byte intervals, workload-conditioned lifecycle
-      evidence, and complete decision/simulation UX remain open.
+      minor-to-major escalation and equality-delete-specific major routing. Leakage-free
+      split-conformal runtime and measured rewrite-output-byte intervals now use chronological
+      calibration/holdout slices, per-engine or explicitly pooled scope, finite-sample coverage,
+      and missing/out-of-domain/low-confidence abstention. AutoComp now persists realized
+      prediction/effect/outcome yield and feeds a bounded 0.5-1.5 multiplier back into partition
+      scores only after 20 stable lineage-complete optimize outcomes; sparse or drifting evidence
+      leaves scores unchanged. Delete-lifecycle evaluation now requires complete
+      prediction/effect/post-scan lineage, measured rewrite output, runtime, delete-density change,
+      subsequent p95 latency, and matched engines before comparing minor policy outcomes with a
+      threshold-only cohort. Historical comparisons remain advisory. Production 90% lineage,
+      statistically significant calibration and VMY lift, a controlled lifecycle holdout, and
+      complete decision/simulation UX remain open.
 - [~] Workload-aware layout: PTO B1 now provides operator-only, low-confidence
       `heuristic_v1` shadow recommendations with bounded final ranking,
       cardinality-aware partition candidates, distinct-query evidence gating,
@@ -364,9 +373,22 @@ until real evidence exists.
 - [~] GA/category leadership: a deterministic fail-closed release dossier now
       fingerprints repository evidence and is retained by the signed release
       workflow. Privacy-safe Maintenance Decision Record v1 has a stable schema,
-      compatibility policy, authenticated export, and integrity binding.
-      Production upgrade/restore proof, two qualifying releases, three MDR
-      consumers, external review, and case studies remain open.
+      compatibility policy, authenticated export, and integrity binding. Signed
+      releases now render, fingerprint, and retain the full transaction-wrapped
+      PostgreSQL migration graph in both directions while explicitly refusing to
+      treat offline SQL as deployed proof. Production data-preservation and
+      availability drills, restore proof, two qualifying releases, three MDR
+      consumers, external review, and case studies remain open. The public support
+      policy now documents release coverage, channels, incident severity, safe
+      diagnostics, and capability limits without claiming a commercial SLA.
+      External gates can now be counted only from gate-context-checked, exact-revision
+      Ed25519 attestations under explicitly trusted verifier keys; no missing
+      evidence is synthesized. Wave 6 foundations now include an opt-in
+      k-anonymous aggregate benchmark (10 tables/20 outcomes minimum, coarse
+      rounded cohorts, no automatic transmission) and a versioned ecosystem
+      connector manifest/conformance contract with no dynamic plugin loading.
+      Policy learning, independently maintained integrations, adoption, and
+      category-leadership proof remain evidence-gated.
 
 ---
 

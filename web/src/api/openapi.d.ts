@@ -1840,6 +1840,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/cost-model/runtime-intervals/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evaluate Runtime Rewrite Intervals
+         * @description Chronological-holdout calibration report for I4 runtime/rewrite-byte intervals.
+         *
+         *     This is a locally computed report over whatever maintenance-outcome lineage exists in this
+         *     deployment's audit history. It is not a claim of production accuracy and does not by itself
+         *     satisfy the Section 5.3 exit gate, which additionally requires a representative production
+         *     fleet and a statistically significant sample.
+         */
+        get: operations["evaluate_runtime_rewrite_intervals_api_v1_ai_cost_model_runtime_intervals_evaluate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/delete-lifecycle/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluate Delete Lifecycle Evidence */
+        get: operations["evaluate_delete_lifecycle_evidence_api_v1_ai_delete_lifecycle_evaluate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/health-classification": {
         parameters: {
             query?: never;
@@ -3745,6 +3787,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evidence/aggregate-fleet-benchmark": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Aggregate Fleet Benchmark */
+        get: operations["get_aggregate_fleet_benchmark_api_v1_evidence_aggregate_fleet_benchmark_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5238,6 +5297,40 @@ export interface components {
             /** Query Count 30D */
             query_count_30d: number;
         };
+        /** DeleteCohortMetricsResponse */
+        DeleteCohortMetricsResponse: {
+            /** Cohort */
+            cohort: string;
+            /** Observations */
+            observations: number;
+            /** Median Delete Pct Reduction */
+            median_delete_pct_reduction: number | null;
+            /** Median Duration Ms */
+            median_duration_ms: number | null;
+            /** Median Rewrite Bytes */
+            median_rewrite_bytes: number | null;
+            /** Median Value Per Rewrite Gib */
+            median_value_per_rewrite_gib: number | null;
+            /** Median P95 Latency Reduction Ms */
+            median_p95_latency_reduction_ms: number | null;
+        };
+        /** DeleteLifecycleEvidenceResponse */
+        DeleteLifecycleEvidenceResponse: {
+            /** Schema */
+            schema: string;
+            /** Status */
+            status: string;
+            /** Qualifies Policy Gate */
+            qualifies_policy_gate: boolean;
+            lifecycle: components["schemas"]["DeleteCohortMetricsResponse"];
+            threshold_only: components["schemas"]["DeleteCohortMetricsResponse"];
+            /** Matched Engines */
+            matched_engines: string[];
+            /** Observed Value Lift */
+            observed_value_lift: number | null;
+            /** Blockers */
+            blockers: string[];
+        };
         /** DeployedRewriteConformancePayload */
         DeployedRewriteConformancePayload: {
             /** Fixture Id */
@@ -5829,6 +5922,48 @@ export interface components {
             probability: number;
             /** Method */
             method: string;
+        };
+        /** IntervalEvaluationResponse */
+        IntervalEvaluationResponse: {
+            /** Target */
+            target: string;
+            /** Target Coverage */
+            target_coverage: number;
+            /** N Samples */
+            n_samples: number;
+            /** N Evaluated */
+            n_evaluated: number;
+            /** Abstentions */
+            abstentions: number;
+            /** Abstention Rate */
+            abstention_rate: number;
+            /** Mape Median */
+            mape_median: number | null;
+            /** Mape P90 */
+            mape_p90: number | null;
+            /** Interval Coverage */
+            interval_coverage: number | null;
+            /** By Group */
+            by_group: components["schemas"]["IntervalGroupEvaluationResponse"][];
+        };
+        /** IntervalGroupEvaluationResponse */
+        IntervalGroupEvaluationResponse: {
+            /** Engine */
+            engine: string | null;
+            /** Action */
+            action: string;
+            /** Scope */
+            scope: string | null;
+            /** N Samples */
+            n_samples: number;
+            /** N Evaluated */
+            n_evaluated: number;
+            /** Mape Median */
+            mape_median: number | null;
+            /** Mape P90 */
+            mape_p90: number | null;
+            /** Interval Coverage */
+            interval_coverage: number | null;
         };
         /**
          * JobDetailRead
@@ -7520,6 +7655,17 @@ export interface components {
             started_at?: string | null;
             /** Finished At */
             finished_at?: string | null;
+        };
+        /** RuntimeRewriteIntervalEvaluateResponse */
+        RuntimeRewriteIntervalEvaluateResponse: {
+            rewrite_bytes: components["schemas"]["IntervalEvaluationResponse"];
+            runtime_ms: components["schemas"]["IntervalEvaluationResponse"];
+            /** Lineage Eligible */
+            lineage_eligible: number;
+            /** Lineage Complete */
+            lineage_complete: number;
+            /** Lineage Completeness */
+            lineage_completeness: number;
         };
         /** S3LogConfigCheckResponse */
         S3LogConfigCheckResponse: {
@@ -13033,6 +13179,46 @@ export interface operations {
             };
         };
     };
+    evaluate_runtime_rewrite_intervals_api_v1_ai_cost_model_runtime_intervals_evaluate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeRewriteIntervalEvaluateResponse"];
+                };
+            };
+        };
+    };
+    evaluate_delete_lifecycle_evidence_api_v1_ai_delete_lifecycle_evaluate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteLifecycleEvidenceResponse"];
+                };
+            };
+        };
+    };
     classify_table_health_api_v1_tables__table_id__health_classification_get: {
         parameters: {
             query?: never;
@@ -16387,6 +16573,40 @@ export interface operations {
             path: {
                 intent_id: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_aggregate_fleet_benchmark_api_v1_evidence_aggregate_fleet_benchmark_get: {
+        parameters: {
+            query?: {
+                min_distinct_tables?: number;
+                min_outcomes?: number;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

@@ -178,6 +178,36 @@ seeded-random baselines with one utility objective, regret, and evidence
 confidence. These are local comparison controls. They do not establish
 production VMY lift or pass the Wave 3 calibration gate.
 
+Runtime and measured rewrite-output-byte intervals now use split-conformal ratio
+models over the lineage dataset. Point fitting, interval calibration, and
+chronologically later evaluation use disjoint observations. Models prefer
+per-engine/action evidence, label pooled fallback explicitly, and abstain for
+missing features, insufficient samples, unseen actions, values outside the
+observed feature envelope, or excessively wide bands. Rewrite outcomes come
+from durable effect receipts' `actual_bytes_written`, not reclaimed bytes.
+The authenticated evaluation endpoint reports median/p90 MAPE, interval
+coverage, abstention rate, lineage completeness, and per-group scope. Local
+coverage is not a production calibration claim.
+
+AutoComp's realized-value loop now joins its frozen reclaim prediction to the
+audited realized reclaim and effect receipt's measured output bytes. It reports
+actual-to-predicted reclaim, reclaim per rewritten output byte, temporal ratio
+drift, evidence completeness, and confidence. A bounded 0.5-1.5 calibration
+multiplier affects future partition scores only after at least 20 complete,
+stable optimize outcomes. Sparse, malformed, unknown-schema, or drifting
+feedback resolves to the behavior-safe multiplier 1.0. This local adaptation
+does not establish fleet-level VMY lift.
+
+Delete-lifecycle evidence now joins frozen pre/post observations to measured
+rewrite output, runtime, delete-density reduction, and subsequent p95 query
+latency. The authenticated evaluator compares minor
+`rewrite_position_deletes` outcomes with a threshold-only
+`convert_deletes` cohort only when both have complete lineage and a matched
+engine. Historical cohorts are explicitly advisory and can never satisfy the
+policy gate because they are not randomized counterfactuals; sparse or
+unmatched evidence abstains. A controlled representative holdout remains
+required before claiming lower combined read-plus-maintenance cost.
+
 The first Wave 4 PTO slice is also implemented as an operator-only shadow
 recommendation. It reduces partition/file-size/row-group/strategy candidates,
 rejects high-cardinality identity partitioning, ranks the remaining tuples with
@@ -249,9 +279,32 @@ Wave 5 repository evidence has started. Maintenance Decision Record v1 provides
 a privacy-safe, integrity-bound export of intent, policy, immutable plan,
 attempts, effects, outcomes, and exact capability limitations. A deterministic
 release dossier fingerprints capability, benchmark/fault, safety, SLO/recovery,
-supply-chain, and MDR artifacts; the signed release workflow retains it. The
-dossier deliberately reports every production, external-review, consumer, and
-case-study gate as missing.
+supply-chain, MDR, and upgrade/rollback artifacts; the signed release workflow
+retains it. The same workflow now renders and fingerprints transaction-wrapped
+PostgreSQL SQL for the full Alembic graph in both directions. This proves the
+repository graph renders, not that deployed data and service availability
+survive a migration. The dossier deliberately reports every production,
+external-review, consumer, and case-study gate as missing.
+
+A public support policy defines supported release intent, community channels,
+incident severity, safe diagnostic evidence, and the capability boundary. It
+does not claim a commercial support SLA.
+
+External gates can now enter the release dossier only through revision-bound,
+gate-context-checked Ed25519 attestations from explicitly trusted verifier keys.
+Counted gates deduplicate evidence IDs and retain their required counts. This
+provides a durable route for real evidence; it does not make any currently
+missing drill, review, pilot, consumer, or contributor evidence exist.
+The registry covers every external Wave 0-6 graduation gate rather than only
+the final GA checklist.
+
+Wave 6 foundations are opt-in and non-executing. The aggregate fleet benchmark
+publishes only coarse, rounded cohorts with at least 10 distinct tables and 20
+lineage-complete outcomes, suppresses smaller cohorts, and contains no direct
+identifiers. It is k-anonymous aggregation, not differential privacy, and
+nothing is transmitted automatically. The `cryo.connector/v1` manifest and
+conformance checker give ecosystem source/engine packages a stable protocol
+boundary without dynamic plugin discovery or implied core ownership.
 
 ## Known gaps and non-claims
 
@@ -260,8 +313,9 @@ case-study gate as missing.
 - Native throughput and cost superiority are not established.
 - Flink execution is not implemented.
 - Rust native data-file compaction remains upstream-blocked.
-- Production SLOs, disaster recovery, upgrade rollback, and multi-version
-  migration proof need durable evidence capture and repeated exercises.
+- Production SLOs, disaster recovery, and multi-version migration survival need
+  repeated deployed exercises. Upgrade/rollback rendering is captured, but a
+  production-shaped data-preservation and availability drill remains open.
 - PTO/WAIR recommendations must remain shadow or approval-gated until their
   roadmap evidence gates pass.
 

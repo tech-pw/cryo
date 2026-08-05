@@ -694,11 +694,30 @@ excluded from learned accuracy and interval coverage, and surfaced in the Intell
 views. Production lineage completeness, calibration coverage, VMY lift, and design-partner
 automation evidence remain open.
 
+Runtime and measured rewrite-output-byte intervals are now implemented with split-conformal
+calibration. They use disjoint chronological fit, calibration, and evaluation slices; prefer
+per-engine/action evidence; label pooled fallback; apply the finite-sample conformal rank; and
+abstain outside the observed domain or when bands are too wide. Rewrite-byte outcomes are sourced
+from durable effect receipts' measured `actual_bytes_written`, never mislabeled reclaimed bytes.
+The local evaluation API reports MAPE, coverage, abstention, lineage completeness, and group scope.
+Representative production sample size and the Section 5 calibration thresholds remain open gates.
+
+The AutoComp realized-value loop is also implemented. Per-table feedback joins the frozen reclaim
+prediction to audited realized reclaim and effect-receipt rewrite output, measures temporal drift,
+and persists a versioned evidence record. Future partition scores receive a bounded 0.5-1.5
+multiplier only after at least 20 lineage-complete, stable optimize outcomes; sparse, drifting,
+malformed, or unknown-schema evidence leaves scores unchanged. This closes the repository feedback
+mechanism, not the production VMY-lift gate.
+
 I5 now derives successful minor position-delete runs since the latest major rewrite from the audit
 ledger, escalates after a configurable bounded cycle, and routes equality-delete files directly to
 major rewrite because the minor position-delete action cannot consume them. V3 position-delete
-heuristics still abstain. Workload-conditioned thresholds and production read-plus-maintenance
-cost evidence remain open, so I5 has not passed its exit gate.
+heuristics still abstain. A fail-closed evaluator compares complete, engine-matched minor and
+threshold-only cohorts using delete-density reduction, measured rewrite output, runtime, and
+subsequent p95 query latency. Sparse or unmatched evidence abstains, and historical cohorts always
+remain advisory because they are not randomized counterfactuals. The repository measurement seam
+is complete; a controlled representative holdout remains required before I5 can pass its
+read-plus-maintenance cost gate.
 
 #### Core ordering
 
@@ -956,9 +975,10 @@ Exit gate:
 **Release label:** Intelligent Beta.
 
 **Current status:** in progress. The I1 lineage substrate, I2 baseline comparison machinery, cache
-compatibility boundary, chronological holdout, and cost-model domain abstention are implemented and
-locally verified. The exit gate remains open pending production completeness, statistically
-significant baseline lift, calibrated runtime/rewrite-byte intervals, lifecycle policy evidence,
+compatibility boundary, chronological holdout, cost-model domain abstention, local I4
+runtime/measured-rewrite-byte interval machinery, and fail-closed I5 lifecycle evidence evaluator
+are implemented and locally verified. The exit gate remains open pending production completeness,
+statistically significant baseline lift and calibration, controlled lifecycle-policy evidence,
 critical-task usability results, and design-partner automation evidence.
 
 ### Wave 4: Workload-aware layout optimization (weeks 28-48)
@@ -1040,7 +1060,21 @@ Repository foundation now includes stable privacy-safe Maintenance Decision Reco
 Schema and compatibility policy, plus a deterministic release dossier attached to the signed
 release workflow. The dossier fingerprints repository-owned evidence and fails closed with explicit
 missing statuses for production soaks, restore/upgrade proof, external reviews, case studies,
-independent consumers, and contributors.
+independent consumers, and contributors. Every signed release also renders and fingerprints the
+complete transaction-wrapped PostgreSQL Alembic graph for both `base -> head` and `head -> base`.
+This catches disconnected or non-renderable rollback paths but remains explicitly
+non-production-qualified until a production-shaped drill verifies data preservation, API health,
+availability, and duration in both directions. A public support policy now defines the release
+window, safe support channels, stop-ship classification, diagnostic bundle, and capability
+boundary without inventing a commercial response-time SLA. The dossier can consume external gates
+only as gate-context-checked, exact-revision Ed25519 attestations under explicitly trusted verifier
+keys. It enforces distinct evidence counts for restore drills, case studies, MDR consumers, and
+repeat contributors; altered, stale-revision, self-unsigned, or duplicate evidence cannot graduate
+a gate. The registry includes every Wave 0-6 external graduation dependency: interviews and
+staffing, production baselines, the 10,000-attempt safety campaign, pause/RPO proof, infrastructure
+faults and SLO history, calibration and controlled holdouts, bounded automation, deployed
+conformance/canaries, reviews, qualifying releases, and independent adoption. This completes the
+evidence-ingestion trust path, not any external gate itself.
 
 Exit gate:
 
@@ -1063,6 +1097,15 @@ Candidates, admitted only through evidence:
 - privacy-preserving aggregate fleet benchmarks;
 - ecosystem-maintained connectors;
 - upstream Iceberg contributions that remove native-engine gaps.
+
+**Repository foundation (2026-08-05):** Cryo now has an admin-only, opt-in aggregate fleet
+benchmark that publishes coarse rounded cohorts only after at least 10 distinct tables and 20
+lineage-complete outcomes. Smaller cohorts are suppressed, direct identifiers are excluded, and the
+record explicitly states that it is k-anonymous rather than differentially private. No telemetry is
+sent automatically. `cryo.connector/v1` also defines a stable manifest and protocol-conformance
+boundary for ecosystem source and engine packages without arbitrary plugin discovery or implied
+core ownership. These are contribution and measurement seams, not evidence that policy learning,
+external integrations, adoption, or category leadership has graduated.
 
 Exit gate:
 

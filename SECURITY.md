@@ -21,9 +21,10 @@ patched. Pin your deployment to a tagged release when you need a stable target.
 **Preferred:** Open a [GitHub Security Advisory][gh-sa] against this repository. Advisories are
 visible only to the maintainer team until a fix is published.
 
-**Email (fallback):** `security@shelf-project.example` — replace with the real address once the
-maintainer team configures it (see `docs/OSS_READINESS.md` §6). Do not use this address for
-support questions; route those to GitHub Discussions or Issues.
+No fallback security mailbox is currently published. Use the private advisory
+channel rather than sending sensitive findings to guessed or personal
+addresses. Route non-security support questions according to
+[`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md).
 
 When reporting, please include:
 
