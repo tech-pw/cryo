@@ -248,6 +248,7 @@ class GovernorRunner(DaemonRunner):
                 result.orphaned,
                 result.re_enqueued,
             )
+
     def _tick_native_watcher(self, wiring: Any) -> None:
         try:
             from cryo.db.session import SessionLocal
@@ -380,12 +381,22 @@ class WorkerRunner(DaemonRunner):
             return
 
         try:
+            from cryo.config import get_settings
+            from cryo.db.repositories.intents import IntentStore
             from cryo.db.repositories.job_steps import JobStepStore
             from cryo.db.session import SessionLocal
+            from cryo.worker.intent_reconciler import IntentReconciler
             from cryo.worker.orphan_recovery import default_worker_holder_id, recover_orphaned_jobs
 
             wiring = self._get_wiring()
             step_ledger = JobStepStore(SessionLocal)
+            if get_settings().durable_intents_enabled:
+                IntentReconciler(
+                    intents=IntentStore(SessionLocal),
+                    jobs=wiring.job_store,
+                    queue=wiring.queue,
+                    step_ledger=step_ledger,
+                ).run_once()
             recover_orphaned_jobs(
                 store=wiring.job_store,
                 queue=wiring.queue,
@@ -394,7 +405,7 @@ class WorkerRunner(DaemonRunner):
                 holder_id=default_worker_holder_id(),
             )
         except Exception as exc:
-            self._logger.debug("Orphan recovery tick failed: %s", exc)
+            self._logger.warning("Worker reconciliation tick failed: %s", exc)
 
         job = worker.process_next()
         if job is not None:
@@ -418,6 +429,7 @@ class WorkerRunner(DaemonRunner):
             return self._worker
 
         try:
+            from cryo.db.repositories.intents import IntentStore
             from cryo.db.repositories.job_steps import JobStepStore
             from cryo.db.repositories.run_finalizer import finalize_open_runs
             from cryo.db.session import SessionLocal
@@ -435,6 +447,7 @@ class WorkerRunner(DaemonRunner):
                 on_job_finished=finalize_finished_runs,
                 run_events=wiring.run_events,
                 step_ledger=JobStepStore(SessionLocal),
+                intent_store=IntentStore(SessionLocal),
             )
             return self._worker
         except Exception as exc:

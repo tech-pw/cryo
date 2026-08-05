@@ -9,6 +9,7 @@ import {
   createSource,
   deleteAIProvider,
   deleteSlackConfig,
+  getCapabilities,
   getCatalogLatency,
   listAIProviders,
   listAIProviderTypes,
@@ -119,6 +120,11 @@ export const useConnectionsPage = () => {
   };
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
+  const capabilities = useQuery({
+    queryKey: ["capabilities", token],
+    queryFn: () => getCapabilities(api),
+    staleTime: Number.POSITIVE_INFINITY
+  });
   const awsStatuses = useAwsSourceStatuses((sources.data ?? []).map((s) => s.id));
   const catalogLatency = useQuery({
     queryKey: ["catalog-latency", token, latencySource?.id],
@@ -326,6 +332,7 @@ export const useConnectionsPage = () => {
     api,
     role,
     sources,
+    capabilities,
     awsStatuses,
     destinations,
     aiProviders,

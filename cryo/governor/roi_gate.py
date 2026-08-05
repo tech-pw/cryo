@@ -66,15 +66,21 @@ class ROIGate:
             "delete_file_pct": stats.delete_file_pct,
             "total_size_gb": stats.total_size_gb,
             "projected_savings_usd_month": stats.projected_savings_usd_month,
-            "query_request_savings_usd_month": cost.query_request_savings_usd_month if cost else 0.0,
+            "query_request_savings_usd_month": cost.query_request_savings_usd_month
+            if cost
+            else 0.0,
         }
         breakdown = enhanced_bcr_from_table(
             stats_payload,
             projected_storage_savings_usd_month=(
-                cost.projected_savings_usd_month if cost and cost.projected_savings_usd_month is not None else None
+                cost.projected_savings_usd_month
+                if cost and cost.projected_savings_usd_month is not None
+                else None
             ),
             query_request_savings_usd_month=(
-                cost.query_request_savings_usd_month if cost and cost.query_request_savings_usd_month is not None else None
+                cost.query_request_savings_usd_month
+                if cost and cost.query_request_savings_usd_month is not None
+                else None
             ),
         )
 

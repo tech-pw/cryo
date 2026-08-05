@@ -12,6 +12,21 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram, Summary
 
+# ==================== API SLO Metrics ====================
+
+api_requests_total = Counter(
+    "cryo_api_requests_total",
+    "API requests by bounded route template, method, and status class.",
+    ["route", "method", "status_class"],
+)
+
+api_request_duration_seconds = Histogram(
+    "cryo_api_request_duration_seconds",
+    "API request duration by bounded route template and method.",
+    ["route", "method"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
 # ==================== Governor Metrics ====================
 
 governor_admission_decisions = Counter(
@@ -175,6 +190,22 @@ scheduler_approval_requests_total = Counter(
     ["operation_type", "status"],  # status: pending, approved, rejected, expired
 )
 
+rollout_decisions_total = Counter(
+    "cryo_rollout_decisions_total",
+    "Cohort rollout safety decisions by declared phase.",
+    ["phase", "decision"],
+)
+
+audit_retention_deleted_total = Counter(
+    "cryo_audit_retention_deleted_total",
+    "Maintenance audit rows deleted by the configured retention policy.",
+)
+
+audit_retention_backlog = Gauge(
+    "cryo_audit_retention_backlog",
+    "Maintenance audit rows older than the configured retention cutoff after the last sweep.",
+)
+
 # ==================== Cost Metrics ====================
 
 cost_storage_bytes_total = Gauge(
@@ -221,4 +252,70 @@ llm_budget_denials_total = Counter(
     "cryo_llm_budget_denials_total",
     "Total LLM calls denied by budget guardrails.",
     ["provider", "reason"],
+)
+
+# ==================== Durable Safety Metrics ====================
+
+maintenance_intent_transitions_total = Counter(
+    "cryo_maintenance_intent_transitions_total",
+    "Durable maintenance intent state transitions.",
+    ["from_state", "to_state"],
+)
+
+maintenance_attempts_started_total = Counter(
+    "cryo_maintenance_attempts_started_total",
+    "Durable maintenance attempts started.",
+)
+
+maintenance_attempt_results_total = Counter(
+    "cryo_maintenance_attempt_results_total",
+    "Durable maintenance attempts by terminal outcome.",
+    ["status"],
+)
+
+maintenance_effect_transitions_total = Counter(
+    "cryo_maintenance_effect_transitions_total",
+    "Durable effect receipt transitions by operation and strategy.",
+    ["operation", "strategy", "from_state", "to_state"],
+)
+
+maintenance_pause_changes_total = Counter(
+    "cryo_maintenance_pause_changes_total",
+    "Maintenance pause and resume control changes.",
+    ["scope_type", "action"],
+)
+
+maintenance_pause_blocks_total = Counter(
+    "cryo_maintenance_pause_blocks_total",
+    "Effects blocked after observing an active maintenance pause.",
+    ["scope_type"],
+)
+
+maintenance_pause_propagation_seconds = Histogram(
+    "cryo_maintenance_pause_propagation_seconds",
+    "Time from a pause control update until an effect path observes it.",
+    ["scope_type"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+)
+
+maintenance_reconciliation_duration_seconds = Histogram(
+    "cryo_maintenance_reconciliation_duration_seconds",
+    "Duration of one uncertain-effect reconciliation pass.",
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+)
+
+maintenance_reconciliation_outcomes_total = Counter(
+    "cryo_maintenance_reconciliation_outcomes_total",
+    "Uncertain-effect reconciliation outcomes.",
+    ["outcome"],
+)
+
+maintenance_reconciliation_backlog = Gauge(
+    "cryo_maintenance_reconciliation_backlog",
+    "Effects currently due for reconciliation.",
+)
+
+maintenance_reconciliation_oldest_age_seconds = Gauge(
+    "cryo_maintenance_reconciliation_oldest_age_seconds",
+    "Age of the oldest effect currently due for reconciliation.",
 )

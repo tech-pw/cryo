@@ -6,7 +6,8 @@ phase plan; `P8+` = post-MVP extensions from `research-and-roadmap.md` Part 1 an
 
 Legend: `[ ]` todo · `[~]` in progress / partial · `[x]` done · `(parity)` must match the reference impl.
 
-Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PLAN.md`, codebase).
+Last reconciled: 2026-08-04 (against `docs/current-state.md`,
+`docs/cryo-10-of-10-plan.md`, `docs/EXECUTION_PLAN.md`, and the codebase).
 
 ---
 
@@ -115,7 +116,7 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
       effective-preset resolution (pinned > rule-priority > none); preview renders without executing.
 
 ## P5 — Web UI
-- [x] Vite + TS + AntD + Recharts + TanStack Query scaffold; OpenAPI client generation.
+- [x] Vite + TS + Radix UI + Tailwind CSS + Recharts + TanStack Query/Table; OpenAPI generation.
 - [x] **Table Explorer**: server-side filter/sort/paginate; column filters → predicate grammar;
       `rowSelection` + "select all matching filter"; sticky **BulkAssignBar** (Assign / Run now).
 - [x] **Table Explorer multi-catalog**: catalog column + catalog filter (`source_id` predicate);
@@ -165,8 +166,10 @@ Last reconciled: 2026-07-04 (against `docs/current-state.md`, `docs/EXECUTION_PL
 - [~] `reporting/daily_report.py` + `reporting/slack.py` + `reporting/scheduler.py` — daily anomaly
       report with optional AI summary; full HTML email KPI report from `lld.md` not yet ported.
 - [~] Slack notifier scaffold; in-app drift/cost alerts (`reporting/alerts.py`) not yet complete.
-- [~] Worker **realized savings**: `actual_bytes_freed` captured per op in audit log; predicted-vs-
-      realized trend + model calibration (`query_gets_per_file`, compaction heuristic) pending.
+- [~] Worker **realized savings**: `actual_bytes_freed` captured per op in audit log; versioned
+      intent/plan/pre-scan/effect/post-scan outcome lineage, leakage-free chronological cost
+      holdout, cache compatibility, and domain abstention are implemented. Production calibration
+      and request/compaction-heuristic tuning remain pending.
 - [ ] Prometheus metrics (jobs, admission, live load, scan coverage, datalake grade, cost, drift,
       projected savings by op, reclaimable bytes, realized-vs-projected, orphan bytes + staleness).
 - [ ] Structured JSON logging across services; per-job live log stream (beyond DB polling).
@@ -199,7 +202,8 @@ Per `architecture.md` §1.5 and `docs/native-iceberg-go-compaction-plan.md` Phas
   - [~] `cryo-engine/` Rust crate — expire/orphan only; **deprecated**; remove after Phase E §8 gate.
 - [x] Worker subprocess adapter (`cryo/engines/native/runner.py`) + `CRYO_ENGINE_IMPL` (default `go`).
 - [x] Native preset `default-native-deep` seeded on fresh migrate (`engine_impl=go`).
-- [x] COW + MOR compaction via `Transaction.RewriteDataFiles` (Go).
+- [x] COW compaction via `Transaction.RewriteDataFiles` (Go); tables with delete files route
+      OPTIMIZE to a compatible SQL fallback instead of being rewritten natively.
 - [x] `optimize_manifests` routed to SQL fallback (Go analyze-only manifest count).
 - [x] Optional sort compaction validates table sort order / `sort_columns`; z-order routes to SQL.
 - [x] Web UI: split Native (iceberg-go) / Native (iceberg-rust) engine options; `engine_impl` on
@@ -260,6 +264,132 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
 - [~] Data lineage (`cryo/lineage/tracker.py`) — graph builder; visualization UI TBD.
 - [~] FinOps forecast (`cryo/finops/forecast.py`) — projection logic; dashboard integration TBD.
 
+## P13 — Cryo 10/10 evidence-gated roadmap
+
+Per `docs/cryo-10-of-10-plan.md`. External and time-based gates remain open
+until real evidence exists.
+
+### Wave 0 — Truth, focus, and baseline
+
+- [x] Canonical typed engine-operation capability manifest with exact ownership,
+      limitations, fallbacks, maturity, and evidence.
+- [x] Runtime, authenticated API, Connections UI, generated docs, and CI drift
+      checks consume the capability contract.
+- [x] Current-state, frontend-stack, engine enum, operation enum, native
+      fallback, and PTO citation claims reconciled.
+- [x] Deterministic repository baseline, package/hotspot map, migration support
+      statement, evidence registry, feature freeze, and stop-ship policy.
+- [x] Twelve-interview plan recorded.
+- [ ] Complete the first six design-partner interviews and retain approved,
+      redacted evidence.
+- [ ] Confirm staffing for Waves 1 and 2.
+- [ ] Measure the remaining production SLO, scale, security, workload, and
+      usability baselines; do not substitute local fixtures.
+
+### Wave 1 — Safety kernel
+
+- [x] Bind immutable intent, plan hash, policy/approval, expiry, budgets, and
+      attempt lineage.
+- [x] Add monotonic fencing and destination-specific external-effect strategy.
+- [x] Add level-triggered reconciliation, bounded fairness, and emergency pause.
+- [x] Pass repository crash-point, state-machine, duplicate-delivery, stale-worker, and
+      unknown-effect tests.
+- [ ] Run and retain the production-shaped 10,000-attempt stale/duplicate effect
+      campaign; do not infer this result from unit tests.
+- [ ] Measure deployed p99 pause propagation and prove RPO 0 across the complete
+      crash matrix before enabling durable intents by default.
+
+### Waves 2-6
+
+- [~] Production proof: correlation, SLOs, scale/fault lab, rollout, DR,
+      security, and Control Room.
+  - [x] Durable end-to-end correlation, daemon/API metrics, alerts, dashboard,
+        and documented evidence windows.
+  - [x] Supply-chain baseline: locked production dependencies, pinned base
+        images, verified Spark downloads, image vulnerability gate, SPDX SBOM,
+        provenance, keyless release signatures, digest-aware production Helm,
+        and Go/Rust dependency update coverage.
+  - [x] Bounded configurable audit retention and indexed daily scheduler sweep.
+  - [~] Customer-shaped fleet and control-plane fault evidence: deterministic
+        CryoBench v1 manifest and evidence-linked matrix are implemented. Local
+        rollback/retry, queue reconstruction, and database-time expiry fault
+        models pass; real PostgreSQL failover, Redis process/data loss, and
+        deployed clock-skew scenarios remain explicitly open.
+  - [~] Backup/restore automation: authenticated chunked encryption, checksum
+        manifests, secret-safe pg_dump/pg_restore commands, force-gated restore,
+        scheduled manifest-committed S3 upload, scoped retention, and drill
+        runbook are implemented. Production enablement, upgrade validation, and
+        two retained RTO/RPO drills remain open.
+  - [~] Cohort rollout safety: destination policies, minimum sample gates,
+        durable attempt/effect budgets, audited automatic destination pause,
+        metrics, and critical alert are implemented. Deployed forced-regression
+        and rollback exercises plus remaining Control Room flows remain open.
+  - [ ] External security review, representative 14/30-day soak, three pilots,
+        and deployed SLO history.
+- [~] Calibrated intelligence: versioned outcome lineage and bounded history reads; deterministic
+      size/file-count/threshold/FIFO/random baselines with regret and confidence; leakage-free
+      chronological cost holdout; incompatible-cache rejection; and explicit feature-domain
+      abstention are implemented. Delete lifecycle now includes audit-derived bounded
+      minor-to-major escalation and equality-delete-specific major routing. Leakage-free
+      split-conformal runtime and measured rewrite-output-byte intervals now use chronological
+      calibration/holdout slices, per-engine or explicitly pooled scope, finite-sample coverage,
+      and missing/out-of-domain/low-confidence abstention. AutoComp now persists realized
+      prediction/effect/outcome yield and feeds a bounded 0.5-1.5 multiplier back into partition
+      scores only after 20 stable lineage-complete optimize outcomes; sparse or drifting evidence
+      leaves scores unchanged. Delete-lifecycle evaluation now requires complete
+      prediction/effect/post-scan lineage, measured rewrite output, runtime, delete-density change,
+      subsequent p95 latency, and matched engines before comparing minor policy outcomes with a
+      threshold-only cohort. Historical comparisons remain advisory. Production 90% lineage,
+      statistically significant calibration and VMY lift, a controlled lifecycle holdout, and
+      complete decision/simulation UX remain open.
+- [~] Workload-aware layout: PTO B1 now provides operator-only, low-confidence
+      `heuristic_v1` shadow recommendations with bounded final ranking,
+      cardinality-aware partition candidates, distinct-query evidence gating,
+      explicit abstention, read-only observed-file-touch simulation, and
+      workload-distribution drift detection. WAIR has offline boundary detection
+      and deterministic GB/file-budget selection over bounded file samples from
+      both scanners plus frequency-ranked SQL range evidence. A Trino/Spark
+      differential oracle now fingerprints rendered plans and blocks dropped
+      partition, row-group, and clustering semantics. Operators can persist a
+      versioned, input-bound dossier with an actor-attributed audit event.
+      Versioned partition scopes now prove matching predicates under 10 GiB and
+      500-file ceilings. Spark rewrite-only rendering removes the hidden
+      table-property mismatch while holdout and production safety gates keep all
+      candidates ineligible. Temporal baseline replay now records advisory
+      stability evidence but explicitly refuses to claim causal counterfactual
+      lift. An externally orchestrated controlled-shadow contract can satisfy
+      the holdout blocker only with bound, adequately powered, regression-free
+      evidence. Cross-engine output fixtures verify row/schema/spec/scope
+      invariants but remain synthetic and non-production-qualified.
+      Production safety is now derived from fresh internal rollout, effect,
+      pause, and halt/resume-drill records and invalidates on policy changes.
+      All evidence is rebound to current PTO/scope hashes. A dedicated,
+      non-operator collector role, fresh snapshot/metadata identities, attestation
+      binding, ingestion endpoint, and collection harness now make real deployed
+      output provenance recordable without trusting ordinary operator input. The
+      real deployed run remains open.
+      Holdout evidence, bounded rewrite execution, approved canaries, and
+      production conformance remain open; there is no auto-apply path.
+- [~] GA/category leadership: a deterministic fail-closed release dossier now
+      fingerprints repository evidence and is retained by the signed release
+      workflow. Privacy-safe Maintenance Decision Record v1 has a stable schema,
+      compatibility policy, authenticated export, and integrity binding. Signed
+      releases now render, fingerprint, and retain the full transaction-wrapped
+      PostgreSQL migration graph in both directions while explicitly refusing to
+      treat offline SQL as deployed proof. Production data-preservation and
+      availability drills, restore proof, two qualifying releases, three MDR
+      consumers, external review, and case studies remain open. The public support
+      policy now documents release coverage, channels, incident severity, safe
+      diagnostics, and capability limits without claiming a commercial SLA.
+      External gates can now be counted only from gate-context-checked, exact-revision
+      Ed25519 attestations under explicitly trusted verifier keys; no missing
+      evidence is synthesized. Wave 6 foundations now include an opt-in
+      k-anonymous aggregate benchmark (10 tables/20 outcomes minimum, coarse
+      rounded cohorts, no automatic transmission) and a versioned ecosystem
+      connector manifest/conformance contract with no dynamic plugin loading.
+      Policy learning, independently maintained integrations, adoption, and
+      category-leadership proof remain evidence-gated.
+
 ---
 
 ## Cross-cutting / backlog
@@ -277,7 +407,7 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
 - [x] **Worker step ledger + orphan recovery** — write-ahead `cryo.job_steps`, quiet-window gates for
       dangerous ops, job-owner Redis leases, Trino/Spark engine probes, governor reaper skips leased/
       started/active jobs. See `docs/WORKER_STEP_LEDGER.md`. Migration `20260727_0033`.
-- [ ] Self-host IBM Plex fonts (woff2) instead of Google Fonts CDN (`research-and-roadmap.md` Part 6 §8).
+- [x] Bundle IBM Plex fonts through `@fontsource` instead of a Google Fonts CDN.
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
 - [ ] Native engine production hardening — see `architecture.md` §1.5.
@@ -285,5 +415,5 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
 ## Open decisions to confirm (see `plan.md` §7)
 - [ ] Spark execution target: **EMR Serverless** (assumed, implemented) vs EMR-on-EKS / Livy / Spark Connect.
 - [ ] Auth: local JWT (assumed v1, implemented) vs OIDC/SSO from day one.
-- [x] Frontend: React + AntD (assumed) — **decided and shipped**.
+- [x] Frontend: React + Radix UI + Tailwind CSS — Ant Design migration completed.
 - [ ] Project name (`Cryo` placeholder).

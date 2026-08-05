@@ -36,6 +36,22 @@ Returns:
 {"status": "ok", "environment": "dev"}
 ```
 
+## Capability contract
+
+```http
+GET /api/v1/capabilities
+```
+
+Viewer access is sufficient. The response is the versioned, exhaustive catalog
+and engine-operation contract used by runtime native routing, generated
+documentation, and the Connections capability ledger. Each operation cell
+includes support status, maturity, execution mode, runtime conditions,
+limitations, compatible fallbacks, owner, and exact code/test evidence.
+
+The generated human-readable form is
+[`CAPABILITIES.md`](./CAPABILITIES.md). A configured Destination must not be
+interpreted as support for every operation.
+
 ## Sources
 
 ```http
@@ -326,8 +342,8 @@ POST /api/v1/maintenance/run
 `/maintenance/preview` is stateless and renders Trino or Spark SQL from supplied table stats and
 partitions. It does not execute statements.
 
-`/maintenance/run` creates durable `runs` and `jobs` rows. It does not yet fully enqueue into a
-production long-running governor/worker service path.
+`/maintenance/run` creates durable `runs` and `jobs` rows and enqueues immediately unless
+`scheduled_at` defers dispatch to the Scheduler.
 
 Run by ids:
 
@@ -354,14 +370,38 @@ Run by filter selection:
 }
 ```
 
+### Maintenance safety and control
+
+```http
+GET  /api/v1/maintenance/control
+POST /api/v1/maintenance/control/pause
+POST /api/v1/maintenance/control/resume
+
+GET  /api/v1/maintenance/safety/summary
+GET  /api/v1/maintenance/safety/intents
+GET  /api/v1/maintenance/safety/effects
+POST /api/v1/maintenance/safety/effects/{receipt_id}/resolve
+```
+
+Control state is generation-stamped and scoped to `global`, `tenant`, or
+`destination`. Viewers can inspect visible controls; operators can control their
+tenant/destinations; global pause/resume requires admin.
+
+Safety reads are tenant-scoped. `effects` accepts `state`, `ambiguous_only`, and a
+bounded `limit`. Resolving an ambiguous effect requires an operator outcome
+(`succeeded` or `failed`), reason, and optional immutable engine evidence
+reference. Resolution is audited and returns an eligible job to normal Governor
+admission rather than dispatching it directly.
+
 ## Scans
 
 ```http
 POST /api/v1/scans
 ```
 
-The scan trigger records an accepted placeholder run and returns `queued=false` until the real scanner
-queue path is wired.
+The scan trigger creates a scan run and enqueues bounded scanner chunks when Redis
+is available. Queue failures are returned explicitly instead of being reported as
+successful dispatch.
 
 ## Runs And Jobs
 
@@ -379,14 +419,14 @@ Cancellation marks the run `cancelled` and queued/admitted/running jobs as skipp
 those jobs. Re-cancelling an already-cancelled run is idempotent and re-attempts the same
 Redis cleanup (useful if a prior cancel left a lock behind).
 
-The WebSocket accepts the same viewer role through either an `Authorization: Bearer <token>` header or
-`?token=viewer` for browser clients. It currently emits run/job snapshot messages and can fall back to
-DB polling until Redis live-state fanout is available.
+The WebSocket requires viewer access through either an authorization header or
+the browser `?token=` parameter. It emits run/job snapshots and Redis
+live-state/log events with DB polling fallback.
 
 ## Known Gaps
 
-- `POST /api/v1/scans` is an accepted placeholder and is not yet connected to the scanner queue.
-- WebSocket run console emits DB snapshots; Redis live-state fanout is still pending.
+- Durable maintenance intents are feature-gated off by default until production
+  rollout and recovery evidence passes.
 - Production OIDC/JWT signature verification is not implemented yet.
 - API route tests cover the P5 route surface, but deeper DB-backed transaction tests should be expanded
   before production rollout.

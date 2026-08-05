@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cryo.api.schemas import DestinationCreate, DestinationTestRequest, validate_native_engine_config
+from cryo.api.schemas import (
+    DestinationCreate,
+    DestinationTestRequest,
+    validate_native_engine_config,
+)
 from cryo.domain.enums import EngineType
 
 

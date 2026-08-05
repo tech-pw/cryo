@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: redis
-          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.redis.image | quote }}
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
           ports:
             - name: redis

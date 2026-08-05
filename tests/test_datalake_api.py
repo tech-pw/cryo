@@ -468,9 +468,7 @@ def test_send_run_snapshot_expunges_session_not_just_expires(monkeypatch: Any) -
         },
         "jobs": [],
     }
-    monkeypatch.setattr(
-        routes.datalake, "run_jobs_snapshot", lambda *args, **kwargs: fake_snapshot
-    )
+    monkeypatch.setattr(routes.datalake, "run_jobs_snapshot", lambda *args, **kwargs: fake_snapshot)
 
     sent: list[object] = []
 

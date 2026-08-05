@@ -146,6 +146,20 @@ def approve_request(
     request.approved_at = datetime.now(UTC)
     request.approval_reason = approval_reason
 
+    session.flush()
+    from cryo.config import get_settings
+
+    settings = get_settings()
+    if settings.durable_intents_enabled:
+        from cryo.intents.binding import promote_intents_for_approval
+
+        promote_intents_for_approval(
+            session,
+            table_id=request.table_id,
+            operation=OperationType(request.operation_type),
+            approved_by=approved_by,
+            settings=settings,
+        )
     session.commit()
 
     return request

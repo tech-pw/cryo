@@ -13,7 +13,7 @@ import json
 import urllib.error
 import urllib.request
 
-import pytest
+from prometheus_client import Counter
 
 from cryo.observability.health_server import start_health_server
 
@@ -35,11 +35,14 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _get_raw(port: int, path: str) -> tuple[int, str, str]:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as resp:
+        return resp.status, resp.headers["Content-Type"], resp.read().decode()
+
+
 def test_scale_metric_returns_provider_value() -> None:
     port = _free_port()
-    server = start_health_server(
-        port=port, service_name="worker", scale_metric_provider=lambda: 7
-    )
+    server = start_health_server(port=port, service_name="worker", scale_metric_provider=lambda: 7)
     try:
         status, body = _get(port, "/scale-metric")
         assert status == 200
@@ -75,12 +78,27 @@ def test_scale_metric_503s_on_provider_error() -> None:
 
 def test_healthz_still_works_alongside_scale_metric() -> None:
     port = _free_port()
-    server = start_health_server(
-        port=port, service_name="worker", scale_metric_provider=lambda: 0
-    )
+    server = start_health_server(port=port, service_name="worker", scale_metric_provider=lambda: 0)
     try:
         status, body = _get(port, "/healthz")
         assert status == 200
         assert body == {"status": "ok", "service": "worker"}
+    finally:
+        server.shutdown()
+
+
+def test_metrics_exposes_background_process_registry() -> None:
+    metric = Counter(
+        "cryo_health_server_contract_total",
+        "Contract fixture for the background metrics endpoint.",
+    )
+    metric.inc()
+    port = _free_port()
+    server = start_health_server(port=port, service_name="scheduler")
+    try:
+        status, content_type, body = _get_raw(port, "/metrics")
+        assert status == 200
+        assert content_type.startswith("text/plain")
+        assert "cryo_health_server_contract_total 1.0" in body
     finally:
         server.shutdown()

@@ -8,6 +8,8 @@ import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,15 @@ class _HealthHandler(BaseHTTPRequestHandler):
     scale_metric_provider: Callable[[], int] | None = None
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/metrics":
+            body = generate_latest()
+            self.send_response(200)
+            self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        payload: dict[str, str | int]
         if self.path in {"/healthz", "/healthz/deep"}:
             ok = self.readiness_check()
             payload = {"status": "ok" if ok else "degraded", "service": self.service_name}

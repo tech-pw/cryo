@@ -1,16 +1,34 @@
+import type { components } from "./openapi";
+
 export type UUID = string;
 export type RoleToken = "viewer" | "operator" | "admin";
-export type EngineType = "trino" | "spark_emr" | "native";
+export type EngineType = components["schemas"]["EngineType"];
 export type Mode = "light" | "standard" | "deep" | "manifest_only";
 export type Grade = "A" | "B" | "C" | "D" | "F" | string;
 export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
 export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
-export type OperationType =
-  | "optimize"
-  | "expire_snapshots"
-  | "remove_orphan_files"
-  | "optimize_manifests";
+export type OperationType = components["schemas"]["OperationType"];
+export type MaturityTier = components["schemas"]["MaturityTier"];
+export type CapabilitySupportStatus = components["schemas"]["SupportStatus"];
+export type CapabilityExecutionMode = components["schemas"]["ExecutionMode"];
 export type JsonObject = Record<string, unknown>;
+
+export type CapabilityEvidence = components["schemas"]["CapabilityEvidence"];
+export type MaturityDefinition = components["schemas"]["MaturityDefinition"];
+export type OperationDefinition = components["schemas"]["OperationDefinition"];
+export type EngineCapability = components["schemas"]["EngineCapability"];
+export type CatalogCapability = components["schemas"]["CatalogCapability"];
+export type OperationCapability = components["schemas"]["OperationCapability"];
+export type CapabilityManifest = components["schemas"]["CapabilityManifest"];
+export type MaintenanceControlRead = components["schemas"]["MaintenanceControlRead"];
+export type MaintenanceControlWrite = components["schemas"]["MaintenanceControlWrite"];
+export type MaintenanceIntentRead = components["schemas"]["MaintenanceIntentRead"];
+export type MaintenanceSafetySummary = components["schemas"]["MaintenanceSafetySummary"];
+export type EffectReceiptRead = components["schemas"]["EffectReceiptRead"];
+export type EffectResolutionRead = components["schemas"]["EffectResolutionRead"];
+export type EffectResolutionWrite = components["schemas"]["EffectResolutionWrite"];
+export type EffectBatchResolutionRead = components["schemas"]["EffectBatchResolutionRead"];
+export type EffectBatchResolutionWrite = components["schemas"]["EffectBatchResolutionWrite"];
 
 export interface SourceRead {
   id: UUID;
@@ -209,13 +227,7 @@ export interface BanditStatusResponse {
   config: Record<string, number>;
 }
 
-export interface CostModelEvaluateResponse {
-  mae_learned: number;
-  mae_heuristic: number;
-  beats_heuristic: boolean;
-  band_coverage: number;
-  n_samples: number;
-}
+export type CostModelEvaluateResponse = components["schemas"]["CostModelEvaluateResponse"];
 
 export interface AnomalyRead {
   metric: string;
@@ -235,13 +247,8 @@ export interface ExplainHealthResponse {
   explanation: string;
 }
 
-export interface AutoCompCompareResponse {
-  table_id: UUID;
-  static_order: string[];
-  autocomp_order: string[];
-  improvement_ratio: number;
-  autocomp_wins: boolean;
-}
+export type SchedulingBaselineRead = components["schemas"]["SchedulingBaselineRead"];
+export type AutoCompCompareResponse = components["schemas"]["AutoCompCompareResponse"];
 
 export interface CopilotQuestion {
   id: string;

@@ -373,9 +373,7 @@ def max_bytes_per_group_for_pod_mem(
     target = target_file_size_bytes_from_params(params)
     packing = packing_floor_bytes(params)
     chunk_gb = (
-        float(chunk_size_gb)
-        if chunk_size_gb is not None
-        else chunk_size_gb_for_pod_mem(mem_mib)
+        float(chunk_size_gb) if chunk_size_gb is not None else chunk_size_gb_for_pod_mem(mem_mib)
     )
     chunk_bytes = max(target, int(chunk_gb * (1024**3)))
     budget = compaction_memory_budget_bytes(mem_mib)

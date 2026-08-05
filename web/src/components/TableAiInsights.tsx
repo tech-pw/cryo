@@ -84,7 +84,13 @@ export const TableAiInsights = ({
     onError: (error) => toast.error((error as Error).message)
   });
 
-  const loading = pii.isLoading || similar.isLoading || health.isLoading || anomalies.isLoading || dataQuality.isLoading;
+  const loading =
+    pii.isLoading ||
+    similar.isLoading ||
+    health.isLoading ||
+    anomalies.isLoading ||
+    dataQuality.isLoading ||
+    autocomp.isLoading;
 
   const tabDefs = [
     {
@@ -260,28 +266,58 @@ export const TableAiInsights = ({
       key: "autocomp" as const,
       label: "AutoComp",
       content: autocomp.data ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <p className="text-sm font-medium">Static partition order</p>
-            <ul className="mt-2 list-disc pl-5 text-sm">
-              {autocomp.data.static_order.map((p, index) => (
-                <li key={`static-${index}-${p ?? "none"}`}><code>{p}</code></li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="text-sm font-medium">Benefit-score order</p>
-            <ul className="mt-2 list-disc pl-5 text-sm">
-              {autocomp.data.autocomp_order.map((p, index) => (
-                <li key={`auto-${index}-${p ?? "none"}`}><code>{p}</code></li>
-              ))}
-            </ul>
-          </div>
-          <div className="md:col-span-2">
+        <div className="space-y-4">
+          {!autocomp.data.evidence_sufficient ? (
+            <Alert
+              variant="warning"
+              title="Comparison is directional"
+              description={`Evidence confidence is ${Math.round(autocomp.data.confidence * 100)}%. Cryo will not treat this result as decision-grade until coverage and sample size improve.`}
+            />
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={autocomp.data.autocomp_wins ? "success" : "secondary"}>
-              {autocomp.data.autocomp_wins ? "AutoComp wins" : "Static wins"} · ratio {autocomp.data.improvement_ratio.toFixed(2)}×
+              {autocomp.data.autocomp_wins ? "AutoComp leads file-count" : "File-count baseline leads"}
             </Badge>
+            <span className="text-xs text-muted-foreground">
+              {Math.round(autocomp.data.confidence * 100)}% evidence confidence
+            </span>
           </div>
+          <DataTable
+            columns={[
+              {
+                accessorKey: "name",
+                header: "Policy",
+                cell: ({ getValue }) => String(getValue()).replaceAll("_", " ")
+              },
+              {
+                accessorKey: "utility",
+                header: "Utility",
+                cell: ({ getValue }) => <span className="block text-right">{(getValue() as number).toFixed(2)}</span>
+              },
+              {
+                accessorKey: "regret",
+                header: "Regret",
+                cell: ({ getValue }) => <span className="block text-right">{(getValue() as number).toFixed(2)}</span>
+              },
+              {
+                accessorKey: "regret_ratio",
+                header: "Relative regret",
+                cell: ({ getValue }) => <span className="block text-right">{((getValue() as number) * 100).toFixed(1)}%</span>
+              },
+              {
+                accessorKey: "order",
+                header: "First choice",
+                cell: ({ getValue }) => <code>{((getValue() as string[])[0] ?? "none")}</code>
+              }
+            ]}
+            data={autocomp.data.baselines}
+            getRowId={(row) => row.name}
+            density="compact"
+          />
+          <p className="text-xs text-muted-foreground">
+            Regret measures benefit-score utility AutoComp would leave on the table under the same selection budget.
+            Random ordering is seeded and reproducible.
+          </p>
         </div>
       ) : autocomp.isError ? (
         <EmptyState title="Not enough partitions" description="AutoComp compare needs partition stats." />

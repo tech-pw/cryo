@@ -113,9 +113,7 @@ class FlinkEngine:
             duration_ms=int((time.monotonic() - start) * 1000),
         )
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         """Execute a plan by running each rendered statement.
 
         Flink generates config rather than executing, so this delegates to

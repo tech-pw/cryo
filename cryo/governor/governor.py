@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from cryo.config import get_settings
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal
 from cryo.domain.enums import JobStatus
+from cryo.domain.intents import IntentStatus
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
     AdmissionConfig,
@@ -28,10 +30,12 @@ from cryo.governor.prefetch import (
     batch_job_requires_approval,
     batch_pii_block_reason,
     prefetch_approved_operation_keys,
+    prefetch_paused_destination_ids,
+    prefetch_paused_table_ids,
     prefetch_table_stats,
 )
 from cryo.governor.roi_gate import GateAction, ROIGate
-from cryo.observability.correlation import set_job_id
+from cryo.observability.correlation import clear_context, set_context
 from cryo.observability.metrics import (
     governor_admission_decisions,
     governor_qpp_decisions_total,
@@ -74,6 +78,30 @@ class WaveResult:
     orphaned: int = 0
     re_enqueued: int = 0
     reaped: int = 0
+
+
+def _tenant_round_robin(
+    jobs: list[MaintenanceJobRecord],
+) -> list[MaintenanceJobRecord]:
+    groups: dict[str, deque[MaintenanceJobRecord]] = {}
+    order: list[str] = []
+    for job in jobs:
+        tenant = job.tenant_id or "default"
+        if tenant not in groups:
+            groups[tenant] = deque()
+            order.append(tenant)
+        groups[tenant].append(job)
+    fair: list[MaintenanceJobRecord] = []
+    while groups:
+        for tenant in tuple(order):
+            group = groups.get(tenant)
+            if group is None:
+                continue
+            fair.append(group.popleft())
+            if not group:
+                del groups[tenant]
+                order.remove(tenant)
+    return fair
 
 
 class Governor:
@@ -156,14 +184,30 @@ class Governor:
                 local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
                 budget = compute_admission_budget(live_capacity, local_in_flight, config)
                 replicas = self._round_robin_slots(destination_id, budget.replicas)
+                session_factory = self._session_factory
+                session_context = (
+                    session_factory() if session_factory is not None else nullcontext(None)
+                )
 
-                with self._session_factory() as session:
+                with session_context as session:
                     wave_jobs: list[MaintenanceJobRecord] = []
                     table_uuids: set[uuid.UUID] = set()
                     native_k8s_buffer: list[MaintenanceJobRecord] = []
-                    use_native_k8s = destination_uses_k8s_dispatch(destination)
+                    use_native_k8s = (
+                        destination_uses_k8s_dispatch(destination) and session_factory is not None
+                    )
+                    # Inspect a bounded multiple of available slots, then round-robin that window
+                    # by tenant. This preserves the 11k-fleet OOM fix while giving later tenants a
+                    # chance to use capacity instead of letting one queue prefix monopolize a wave.
+                    candidate_limit = (
+                        len(replicas) if use_native_k8s else max(len(replicas), len(replicas) * 4)
+                    )
                     for job_id in job_ids:
                         if not replicas:
+                            blocked += 1
+                            destination_outcomes[destination_id]["blocked"] += 1
+                            break
+                        if len(wave_jobs) >= candidate_limit:
                             blocked += 1
                             destination_outcomes[destination_id]["blocked"] += 1
                             break
@@ -180,8 +224,39 @@ class Governor:
                         if table_uuid is not None:
                             table_uuids.add(table_uuid)
 
-                    approved_keys = prefetch_approved_operation_keys(session, table_uuids)
-                    stats_cache = prefetch_table_stats(session, table_uuids)
+                    wave_jobs = _tenant_round_robin(wave_jobs)
+                    effect_destination_ids = {
+                        effect_destination_id
+                        for job in wave_jobs
+                        for effect_destination_id in job.intent_effect_destination_ids
+                    }
+                    approved_keys: dict[
+                        tuple[uuid.UUID, str],
+                        list[dict[str, Any]],
+                    ]
+                    stats_cache: dict[uuid.UUID, Any]
+                    paused_table_ids: set[uuid.UUID]
+                    paused_effect_destination_ids: set[str]
+                    if session is None:
+                        approved_keys = {}
+                        stats_cache = {}
+                        paused_table_ids = set()
+                        paused_effect_destination_ids = set()
+                    else:
+                        approved_keys = prefetch_approved_operation_keys(
+                            session,
+                            table_uuids,
+                        )
+                        stats_cache = prefetch_table_stats(session, table_uuids)
+                        paused_table_ids = prefetch_paused_table_ids(
+                            session,
+                            table_uuids,
+                            destination_id=destination_id,
+                        )
+                        paused_effect_destination_ids = prefetch_paused_destination_ids(
+                            session,
+                            effect_destination_ids,
+                        )
                     # AutoComp §A2 "Fleet Decide": computed once per destination over the whole
                     # wave, not per job, so a big low-priority job doesn't block a wave's worth
                     # of higher-MOOP-score jobs from any budget headroom it leaves behind.
@@ -193,23 +268,45 @@ class Governor:
                         if not replicas:
                             break
 
-                        set_job_id(job.id)
+                        set_context(
+                            replace=True,
+                            correlation_id=job.correlation_id or job.id,
+                            run_id=job.run_id,
+                            job_id=job.id,
+                            intent_id=job.intent_id,
+                            table_id=job.table_id,
+                            destination_id=job.destination_id,
+                        )
                         job_id = job.id
                         table_uuid = _job_table_uuid(job)
+                        if table_uuid in paused_table_ids or any(
+                            effect_destination_id in paused_effect_destination_ids
+                            for effect_destination_id in job.intent_effect_destination_ids
+                        ):
+                            reason = "Maintenance execution is paused"
+                            logger.info("Job %s deferred: %s", job_id, reason)
+                            self._defer(job, reason)
+                            deferred += 1
+                            destination_outcomes[destination_id]["deferred"] += 1
+                            continue
                         abac_blocked = False
-                        if table_uuid is not None and job.plan:
+                        if session is not None and table_uuid is not None and job.plan:
                             from cryo.security.abac_enforcement import evaluate_maintenance_allowed
 
                             for op in job.plan.get("operations") or []:
                                 op_type = op.get("type") if isinstance(op, dict) else op
-                                allowed, reason = evaluate_maintenance_allowed(
+                                allowed, abac_reason = evaluate_maintenance_allowed(
                                     session,
                                     table_uuid,
                                     None,
                                     str(op_type),
                                 )
                                 if not allowed:
-                                    logger.warning("Deferring job %s: %s", job_id, reason)
+                                    logger.warning(
+                                        "Deferring job %s: %s",
+                                        job_id,
+                                        abac_reason,
+                                    )
                                     deferred += 1
                                     destination_outcomes[destination_id]["deferred"] += 1
                                     from cryo.governor.bandit_feedback import (
@@ -224,8 +321,34 @@ class Governor:
 
                         plan_operations = job.plan.get("operations") if job.plan else None
 
+                        if job.intent_id is not None:
+                            if job.intent_status != IntentStatus.READY.value:
+                                reason = (
+                                    "Durable intent is not ready "
+                                    f"(status={job.intent_status or 'missing'})"
+                                )
+                                logger.info("Job %s deferred: %s", job_id, reason)
+                                self._defer(job, reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                                continue
+                            if (
+                                job.intent_expires_at is None
+                                or _as_utc(job.intent_expires_at) <= current
+                            ):
+                                reason = "Durable intent expired before admission"
+                                logger.info("Job %s deferred: %s", job_id, reason)
+                                self._defer(job, reason)
+                                deferred += 1
+                                destination_outcomes[destination_id]["deferred"] += 1
+                                continue
+
                         signal_triggered = False
-                        if self._enable_signal_triggers and table_uuid is not None:
+                        if (
+                            session is not None
+                            and self._enable_signal_triggers
+                            and table_uuid is not None
+                        ):
                             try:
                                 trigger_result = self._trigger_evaluator.evaluate(
                                     session,
@@ -246,7 +369,8 @@ class Governor:
                                 )
 
                         if (
-                            not signal_triggered
+                            session is not None
+                            and job.intent_id is None
                             and table_uuid is not None
                             and batch_job_requires_approval(
                                 table_uuid, plan_operations, approved_keys
@@ -261,7 +385,7 @@ class Governor:
                             destination_outcomes[destination_id]["deferred"] += 1
                             continue
 
-                        if table_uuid is not None:
+                        if session is not None and table_uuid is not None:
                             try:
                                 pii_reason = batch_pii_block_reason(
                                     session,
@@ -319,7 +443,7 @@ class Governor:
                                     destination_outcomes[destination_id]["blocked"] += 1
                                 continue
 
-                        if self._roi_gate_enabled:
+                        if self._roi_gate_enabled and session is not None:
                             roi = self._roi_gate.decide(session, _admission_job(job))
                             if roi.shadow:
                                 logger.info(
@@ -395,6 +519,8 @@ class Governor:
                         try:
                             from cryo.ai.resource_predictor import predict_resources_for_table
 
+                            if session is None:
+                                raise ValueError("resource predictor has no database session")
                             if table_uuid is None:
                                 raise ValueError("job has no valid table UUID")
                             sizing = predict_resources_for_table(session, table_uuid)
@@ -432,6 +558,8 @@ class Governor:
                         destination_outcomes[destination_id]["admitted"] += 1
 
                     if native_k8s_buffer:
+                        assert session_factory is not None
+
                         def _defer_native_job(jid: str, reason: str) -> None:
                             self._queue.defer(jid)
                             self._store.mark_status(jid, JobStatus.DEFERRED, error=reason)
@@ -440,7 +568,7 @@ class Governor:
                             jobs=native_k8s_buffer,
                             destination=destination,
                             store=self._store,
-                            session_factory=self._session_factory,
+                            session_factory=session_factory,
                             live_capacity=live_capacity,
                             stats_cache=stats_cache,
                             mark_status=self._store.mark_status,
@@ -457,9 +585,7 @@ class Governor:
                                     continue
                                 replica = replicas.pop(0)
                                 self._queue.admit(job.id, destination_id, replica)
-                                self._store.mark_status(
-                                    job.id, JobStatus.ADMITTED, replica=replica
-                                )
+                                self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
                                 from cryo.governor.bandit_feedback import register_admission
 
                                 register_admission(job.id, config)
@@ -492,6 +618,7 @@ class Governor:
                             outcome=outcome,
                         ).inc(count)
             governor_wave_duration_seconds.observe(perf_counter() - wave_start)
+            clear_context()
 
     def _fail_orphaned_jobs(self, destination_id: str, job_ids: list[str]) -> int:
         logger.warning(
@@ -588,6 +715,10 @@ def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:
         return uuid.UUID(raw) if isinstance(raw, str) else raw
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:

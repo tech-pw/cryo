@@ -7,8 +7,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cryo.config import Settings
-from cryo.scanner.analyze import partition_fields as extract_partition_fields
-from cryo.scanner.analyze import table_location
+from cryo.scanner.analyze import (
+    _table_properties,
+    table_location,
+)
+from cryo.scanner.analyze import (
+    partition_fields as extract_partition_fields,
+)
 from cryo.scanner.cost import _snapshot_timestamp
 from cryo.scanner.signals import detect_format_version
 from tests.test_scanner import (
@@ -146,6 +151,7 @@ def build_fixture_request(
     last = max(committed) if committed else None
     format_version = detect_format_version(table)
     props = getattr(table.metadata, "properties", {}) or {}
+    scan_properties = _table_properties(table)
     target = props.get("write.target-file-size-bytes")
     target_bytes = int(target) if target is not None and str(target).isdigit() else None
     write_mode = props.get("write.distribution-mode")
@@ -181,6 +187,8 @@ def build_fixture_request(
         "write_distribution_mode": write_mode,
         "has_sort_order": has_sort,
         "target_file_size_bytes": target_bytes,
+        "iceberg_properties": scan_properties["iceberg_properties"],
+        "gc_enabled": scan_properties["gc_enabled"],
         "location": table_location(table) or "",
         "format_version": format_version,
         "columns": [

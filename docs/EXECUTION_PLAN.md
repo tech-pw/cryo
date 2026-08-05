@@ -1,5 +1,11 @@
 # Cryo — Master Execution Plan
 
+> **Strategic status (2026-08-04):** Start with the
+> [`Cryo 10/10 Master Plan`](./cryo-10-of-10-plan.md) for current prioritization, evidence gates,
+> non-goals, and release criteria. This file remains the detailed handoff for its original scope.
+> Where future sequencing or status claims conflict, the 10/10 plan wins; root architecture and
+> safety contracts remain authoritative.
+>
 > Written 2026-07-03. **This file is a handoff document.** It exists so that another AI agent (or
 > a human) can pick up this repo with no other context and execute, in order, everything decided
 > during the architecture/feature/AI strategy session that produced the three docs it references.

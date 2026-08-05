@@ -17,6 +17,7 @@ spec:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: governor
       annotations:
+        {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
         # native_admit.py's SQL-fallback dispatch runs synchronously inside the admission
         # wave and blocks it for the full duration of the Spark job (minutes, not seconds,
         # for anything beyond a metadata-only op) -- Karpenter consolidating this pod
@@ -31,21 +32,27 @@ spec:
       {{- end }}
       containers:
         - name: governor
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cryo", "governor"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: CRYO_HEALTH_PORT
+              value: {{ .Values.observability.metricsPort | quote }}
             {{- if .Values.native.enabled }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: CRYO_NATIVE_IMAGE
-              value: "{{ .Values.native.image.repository }}:{{ .Values.native.image.tag }}"
+              value: {{ include "cryo.imageRef" .Values.native.image | quote }}
             - name: CRYO_NATIVE_IMAGE_PULL_POLICY
               value: {{ .Values.native.image.pullPolicy | quote }}
             {{- if .Values.imagePullSecrets }}
@@ -64,6 +71,12 @@ spec:
               value: {{ .Values.native.spot.maxEstimatedDurationSeconds | quote }}
             - name: CRYO_NATIVE_SPOT_REQUIRE_CHECKPOINTING
               value: {{ .Values.native.spot.requireCheckpointing | quote }}
+            {{- if .Values.scanner.jobDispatch.enabled }}
+            - name: CRYO_SCANNER_JOB_DISPATCH_ENABLED
+              value: "true"
+            - name: CRYO_SCANNER_JOB_DISPATCH_BATCH_SIZE
+              value: {{ .Values.scanner.jobDispatch.batchSize | default 1 | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.spark.k8s.enabled }}
             # Governor (not Worker) is what actually calls SparkK8sClient -- native_admit.py's
@@ -75,7 +88,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: CRYO_SPARK_K8S_IMAGE
-              value: "{{ .Values.spark.k8s.image.repository }}:{{ .Values.spark.k8s.image.tag }}"
+              value: {{ include "cryo.imageRef" .Values.spark.k8s.image | quote }}
             - name: CRYO_SPARK_K8S_IMAGE_PULL_POLICY
               value: {{ .Values.spark.k8s.image.pullPolicy | quote }}
             {{- if .Values.imagePullSecrets }}

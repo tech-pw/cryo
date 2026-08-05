@@ -7,33 +7,31 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from cryo.domain.enums import OperationType
+from cryo.capabilities import SupportStatus, capabilities_for_engine, capability_for
+from cryo.domain.enums import EngineType, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 
 _ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 
-NATIVE_BASE_OPERATIONS: tuple[OperationType, ...] = (
-    OperationType.EXPIRE_SNAPSHOTS,
-    OperationType.REMOVE_ORPHAN_FILES,
+NATIVE_BASE_OPERATIONS: tuple[OperationType, ...] = tuple(
+    cell.operation
+    for cell in capabilities_for_engine(EngineType.NATIVE)
+    if cell.support is SupportStatus.SUPPORTED
 )
 
 # Operations the native subprocess never executes itself. They route to a SQL
 # fallback destination (Trino/Spark) when one is configured, otherwise they are
 # recorded as skipped with the reason below. Fixes the silent-drop of
 # COMPUTE_STATISTICS logged as bug #25 in docs/native-iceberg-rust-engine-errors.md.
-NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = (
-    OperationType.CONVERT_DELETES,
-    OperationType.OPTIMIZE_MANIFESTS,
-    OperationType.COMPUTE_STATISTICS,
-    # Okolnychyi minor delete compaction (Iceberg's rewrite_position_delete_files procedure) has
-    # no native (iceberg-go) implementation -- same SQL-fallback-or-skip treatment as the other
-    # ops the native subprocess doesn't execute itself.
-    OperationType.REWRITE_POSITION_DELETES,
+NATIVE_ALWAYS_DISCONNECTED: tuple[OperationType, ...] = tuple(
+    cell.operation
+    for cell in capabilities_for_engine(EngineType.NATIVE)
+    if cell.support is SupportStatus.FALLBACK_REQUIRED
 )
 
 NATIVE_MANIFESTS_DETAIL = (
-    "optimize_manifests is not supported by the native engine (iceberg-go) and is not "
-    "routed to Trino/Spark; skipped"
+    "optimize_manifests is not supported by the native engine (iceberg-go); "
+    "route to a compatible Trino/Spark fallback"
 )
 
 NATIVE_COMPUTE_STATISTICS_DETAIL = (
@@ -42,8 +40,7 @@ NATIVE_COMPUTE_STATISTICS_DETAIL = (
 )
 
 NATIVE_CONVERT_DELETES_DETAIL = (
-    "convert_deletes requires SQL engine rewrite_data_files options; "
-    "route to Spark/Trino fallback"
+    "convert_deletes requires SQL engine rewrite_data_files options; route to Spark/Trino fallback"
 )
 
 NATIVE_REWRITE_POSITION_DELETES_DETAIL = (
@@ -231,6 +228,31 @@ def native_supported_operation_types(
     return frozenset(supported)
 
 
+def native_fallback_supports(
+    engine: EngineType | str,
+    operation: OperationType,
+) -> bool:
+    """Return whether the manifest permits this destination as a native fallback."""
+    try:
+        engine_type = EngineType(engine)
+    except ValueError:
+        return False
+    return engine_type in capability_for(EngineType.NATIVE, operation).fallback_engines
+
+
+def native_fallback_mismatch_detail(
+    engine: EngineType | str,
+    operation: OperationType,
+) -> str:
+    cell = capability_for(EngineType.NATIVE, operation)
+    allowed = ", ".join(item.value for item in cell.fallback_engines) or "none"
+    engine_name = engine.value if isinstance(engine, EngineType) else engine
+    return (
+        f"configured fallback engine {engine_name!r} cannot execute {operation.value}; "
+        f"compatible fallback engines: {allowed}"
+    )
+
+
 def _optimize_requires_sql_fallback(
     operation: Operation, stats: Mapping[str, Any] | None
 ) -> str | None:
@@ -313,6 +335,10 @@ def resolve_native_routing(
                 skipped_ops.append((operation, detail))
             continue
 
+        raise RuntimeError(
+            f"Native capability routing has no behavior for operation {operation.type.value!r}"
+        )
+
     return NativeRoutingResult(
         native_operations=tuple(native_ops),
         fallback_operations=tuple(fallback_ops),
@@ -330,7 +356,5 @@ def filter_native_operations(
 
 
 def _has_sql_fallback(config: Mapping[str, Any]) -> bool:
-    fallback_id = config.get("sql_fallback_destination_id") or config.get(
-        "fallback_destination_id"
-    )
+    fallback_id = config.get("sql_fallback_destination_id") or config.get("fallback_destination_id")
     return isinstance(fallback_id, str) and bool(fallback_id.strip())

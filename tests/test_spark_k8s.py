@@ -11,6 +11,7 @@ from cryo.engines.spark.k8s import (
     JobRunState,
     SparkK8sClient,
     SparkK8sConfig,
+    _read_pod_log_tail,
 )
 
 
@@ -73,11 +74,18 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
             "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')",
             job_name="cryo-optimize-manifests",
             catalog="cdp",
+            destination_id="b377ac3f-7d7f-47f7-985d-7543cd4cd82c",
         )
 
     assert job_id.startswith("cryo-spark-")
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
     assert manifest["metadata"]["namespace"] == "cryo"
+    # Move 6 (Spark side): the live capacity probe filters Jobs by this label -- without
+    # it, LiveCapacityProvider can't distinguish this destination's in-flight Jobs from
+    # any other Spark-K8s destination's.
+    assert (
+        manifest["metadata"]["labels"]["cryo/destination"] == "b377ac3f-7d7f-47f7-985d-7543cd4cd82c"
+    )
     pod_spec = manifest["spec"]["template"]["spec"]
     assert pod_spec["serviceAccountName"] == "cryo-spark"
     assert pod_spec["imagePullSecrets"] == [{"name": "cryo-registry"}]
@@ -95,12 +103,27 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert command[command.index("--deploy-mode") + 1] == "cluster"
     # SQL and catalog args reach the runner script, not swallowed by spark-submit confs.
     assert "--sql" in command
-    assert command[command.index("--sql") + 1] == "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')"
+    assert (
+        command[command.index("--sql") + 1]
+        == "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')"
+    )
     assert "--catalog-uri" in command
     assert command[command.index("--catalog-uri") + 1] == "http://iceberg-rest:8181"
     # Driver/executor pods (created by spark-submit itself, not our Job manifest) also
     # need the same node selector -- this conf flag is how we reach them.
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
+
+
+def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
+    batch_api = MagicMock()
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_spark_sql("SELECT 1", catalog="cdp")
+
+    manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
+    assert manifest["metadata"]["labels"]["cryo/destination"] == "default"
 
 
 def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
@@ -155,7 +178,9 @@ def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
         patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
         patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
     ):
-        client.submit_spark_sql("CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp")
+        client.submit_spark_sql(
+            "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp"
+        )
 
     secret_body = core_api.create_namespaced_secret.call_args.kwargs["body"]
     assert secret_body["stringData"]["access_key_id"] == "AKIA_TEST"
@@ -167,7 +192,9 @@ def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
     # Must precede the script path, not follow it (spark-submit parses everything after
     # the script as the script's own args).
     script_idx = command.index("local:///opt/cryo/cryo_spark_runner.py")
-    driver_conf = f"spark.kubernetes.driver.secretKeyRef.AWS_ACCESS_KEY_ID={secret_name}:access_key_id"
+    driver_conf = (
+        f"spark.kubernetes.driver.secretKeyRef.AWS_ACCESS_KEY_ID={secret_name}:access_key_id"
+    )
     assert driver_conf in command
     assert command.index(driver_conf) < script_idx
     assert manifest["metadata"]["annotations"]["cryo/credentials-secret-name"] == secret_name
@@ -209,6 +236,32 @@ def test_cleanup_credentials_secret_noop_without_annotation() -> None:
         client.cleanup_credentials_secret("cryo-spark-abc")
 
     core_api.delete_namespaced_secret.assert_not_called()
+
+
+def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
+    """Regression, 2026-07-31: limit_bytes returns bytes from the START of the pod log, not
+    the end -- for any driver with more than ~8KB of startup chatter before the real failure,
+    the old code captured 20 lines of noise nowhere near the actual exception. A
+    NoSuchTableException live in production never reached job.error because of this -- only
+    "Decommissioning not enabled" spam did. tail_lines is the correct API parameter for
+    "last N lines"."""
+    core_api = MagicMock()
+    core_api.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(name="cryo-spark-abc123-driver")
+    )
+    core_api.read_namespaced_pod_log.return_value = (
+        "INFO noise line 1\n" * 500 + "Caused by: NoSuchTableException: table not found"
+    )
+
+    with patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api):
+        tail = _read_pod_log_tail("cryo-spark-abc123-driver", "cryo")
+
+    core_api.read_namespaced_pod_log.assert_called_once_with(
+        name="cryo-spark-abc123-driver", namespace="cryo", tail_lines=200
+    )
+    assert "NoSuchTableException" in tail
+    assert "limit_bytes" not in core_api.read_namespaced_pod_log.call_args.kwargs
+
 
 def test_get_job_run_reads_driver_pod_not_wrapper_job() -> None:
     """The wrapper Job's spark-submit container can exit 0 even when the driver pod's
