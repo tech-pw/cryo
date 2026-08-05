@@ -15,12 +15,14 @@ from cryo.security.jwt_tokens import (
 
 
 class Role(StrEnum):
+    EVIDENCE_COLLECTOR = "evidence_collector"
     VIEWER = "viewer"
     OPERATOR = "operator"
     ADMIN = "admin"
 
 
 ROLE_RANK: dict[Role, int] = {
+    Role.EVIDENCE_COLLECTOR: -1,
     Role.VIEWER: 0,
     Role.OPERATOR: 1,
     Role.ADMIN: 2,
@@ -99,6 +101,8 @@ def require_role(principal: Principal, required: Role) -> Principal:
 
 
 def role_allows(actual: Role, required: Role) -> bool:
+    if required is Role.EVIDENCE_COLLECTOR:
+        return actual is Role.EVIDENCE_COLLECTOR
     return ROLE_RANK[actual] >= ROLE_RANK[required]
 
 

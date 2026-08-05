@@ -79,6 +79,15 @@ class Settings(BaseSettings):
             "manifest still materializes its entry list."
         ),
     )
+    scanner_wair_file_sample_size: int = Field(
+        default=1000,
+        ge=0,
+        le=10_000,
+        description=(
+            "Maximum deterministic current-snapshot data-file bound samples retained per table "
+            "for offline WAIR analysis. Zero disables collection."
+        ),
+    )
     scan_engine: Literal["pyiceberg", "go"] = Field(
         default="pyiceberg",
         description=(
@@ -189,7 +198,7 @@ class Settings(BaseSettings):
         default=8081,
         ge=1024,
         le=65535,
-        description="HTTP port for /healthz on worker/governor/scheduler processes.",
+        description="HTTP port for /healthz and /metrics on background services.",
     )
     telemetry_ingest_on_startup: bool = Field(
         default=True,
@@ -252,6 +261,28 @@ class Settings(BaseSettings):
             "(the longest being cryo/tiering/s3_analyzer.py's 90-day default) so purging never "
             "silently starves a feature of data it still needs."
         ),
+    )
+    audit_log_retention_days: int = Field(
+        default=365,
+        ge=90,
+        le=3650,
+        description=(
+            "Days to retain immutable maintenance audit entries in the operational database. "
+            "The leader scheduler prunes older rows in bounded batches. Set a longer value when "
+            "regulatory or incident-response policy requires it; 365 days is the safe default."
+        ),
+    )
+    audit_log_prune_batch_size: int = Field(
+        default=10_000,
+        ge=100,
+        le=100_000,
+        description="Maximum audit rows deleted in one transaction.",
+    )
+    audit_log_prune_max_rows_per_tick: int = Field(
+        default=100_000,
+        ge=100,
+        le=1_000_000,
+        description="Maximum audit rows deleted by one daily leader-scheduler retention tick.",
     )
     query_log_iceberg_window_hours: int = Field(
         default=1,
@@ -576,7 +607,9 @@ class Settings(BaseSettings):
     llm_per_call_max_tokens_default: int = Field(
         default=1200,
         ge=64,
-        description="Default max completion tokens allowed per LLM call when provider budget omits it.",
+        description=(
+            "Default max completion tokens allowed per LLM call when provider budget omits it."
+        ),
     )
     llm_daily_token_cap_default: int = Field(
         default=300_000,
@@ -586,11 +619,16 @@ class Settings(BaseSettings):
     llm_daily_cost_cap_usd_default: float = Field(
         default=15.0,
         ge=0.0,
-        description="Default per-provider daily spend cap in USD (best-effort; derived from provider config pricing).",
+        description=(
+            "Default per-provider daily spend cap in USD "
+            "(best-effort; derived from provider config pricing)."
+        ),
     )
     llm_over_budget_mode: Literal["reject", "abstain"] = Field(
         default="abstain",
-        description="Behavior when an LLM provider exceeds budget: hard reject or abstain-with-fallback.",
+        description=(
+            "Behavior when an LLM provider exceeds budget: hard reject or abstain-with-fallback."
+        ),
     )
     ai_feature_diagnosis_enabled: bool = Field(
         default=True,
@@ -619,6 +657,22 @@ class Settings(BaseSettings):
         description=(
             "When false, /plans/verify and the enqueue-time verifier pass-through return 503. "
             "Lets ops kill the feature without redeploying."
+        ),
+    )
+    durable_intents_enabled: bool = Field(
+        default=False,
+        description=(
+            "Bind new maintenance jobs to immutable plans, monotonic table fences, attempts, and "
+            "effect receipts. Safety-alpha migration flag; legacy jobs remain executable."
+        ),
+    )
+    durable_intent_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        le=168,
+        description=(
+            "Maximum time a bound maintenance intent remains executable. Scheduled intents start "
+            "their TTL at scheduled dispatch time and are also capped by the run deadline."
         ),
     )
 

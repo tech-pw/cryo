@@ -111,7 +111,7 @@ and orchestration move into the platform itself.
 | # | Decision | Rationale |
 |---|----------|-----------|
 | D1 | **Backend = Python 3.12 + FastAPI** | Reuse PyIceberg + trino client + boto3; async API; team familiarity. |
-| D2 | **Frontend = React + TypeScript (Vite) + Ant Design + Recharts + TanStack Query** | AntD `Table` gives production-grade **column filtering + row selection + "select all across pages"** out of the box — a direct fit for the assignment UX. Recharts for health/cost charts. |
+| D2 | **Frontend = React + TypeScript (Vite) + Radix UI + Tailwind CSS + Recharts + TanStack** | The shipped design system uses accessible Radix primitives and a shared TanStack `DataTable`; bulk actions still send the server-side filter spec rather than page IDs. |
 | D3 | **Metadata store = PostgreSQL** (SQLAlchemy + Alembic) | We already operate Postgres for `iceberg_compaction_tasks`; relational fits presets/assignments/jobs; JSONB for flexible stats/plan blobs. |
 | D4 | **Sources ≠ Destinations** (separate entities, configs, tables) | Matches the requirement: catalogs (read) are independent from engines (write). A table is discovered from a Source; maintained on a Destination chosen by its preset. |
 | D5 | **Engine-agnostic Planner + per-engine SQL renderers** | Keep the partition-aware planning in **one** place; keep **Trino SQL** and **Spark SQL** generation in **separate** modules (`engines/trino`, `engines/spark`). |
@@ -184,8 +184,8 @@ Reasonable defaults chosen; flag to change:
    OIDC/SSO. Confirm your SSO if needed.
 4. **Single logical datalake** initially (one primary catalog `cdp`), but the model supports N sources.
 5. **Postgres is provided** (managed/RDS) in prod; local docker-compose ships one for dev.
-6. **Frontend** = React + AntD as in D2. If you'd rather have a Python-only UI (e.g. Streamlit/
-   Reflex) to avoid a JS toolchain, say so — but React gives the best fit for the bulk-select UX.
+6. **Frontend** = React + Radix UI + Tailwind CSS as in D2. The earlier Ant Design assumption was
+   retired after the production UI migration; React remains the fit for filter-based bulk actions.
 7. **Project name** `Cryo` is a placeholder.
 
 ---

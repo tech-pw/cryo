@@ -83,7 +83,7 @@ class PartitionEvolutionRecommendation:
     warnings: list[str] = field(default_factory=list)
 
 
-def _cardinality_hint(column_name: str) -> str:
+def cardinality_hint(column_name: str) -> str:
     """Best-effort cardinality guess from column name alone — "high", "low", or "unknown"."""
     col_lower = column_name.lower()
     if any(kw in col_lower for kw in _HIGH_CARDINALITY_HINTS):
@@ -210,7 +210,7 @@ def analyze_partition_evolution(
     is_partitioned_by_filter_col = filter_column.lower() in current_spec.lower()
 
     if not is_partitioned_by_filter_col and filter_pct >= 80:
-        cardinality = _cardinality_hint(filter_column)
+        cardinality = cardinality_hint(filter_column)
         warnings: list[str] = []
 
         if cardinality == "high":

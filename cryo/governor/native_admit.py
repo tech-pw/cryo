@@ -34,7 +34,6 @@ from cryo.engines.native.packing import (
 from cryo.engines.native.payload import (
     build_execute_request_for_operations,
 )
-from cryo.engines.native.routing import resolve_native_routing
 from cryo.engines.native.resources import (
     MAX_POD_MEM_MIB,
     ResourceCeilings,
@@ -43,6 +42,11 @@ from cryo.engines.native.resources import (
     derive_chunk_params,
     group_concurrency_for_table,
     max_bytes_per_group_for_pod_mem,
+)
+from cryo.engines.native.routing import (
+    native_fallback_mismatch_detail,
+    native_fallback_supports,
+    resolve_native_routing,
 )
 from cryo.planner.planner import build_plan
 from cryo.worker.worker import (
@@ -264,6 +268,13 @@ def _dispatch_fallback_operations(
             _fallback_engine_config(fallback_destination.config, source_config),
         )
         for operation, reason in fallback_operations:
+            if not native_fallback_supports(fallback_engine.type, operation.type):
+                logger.error(
+                    "%s: %s",
+                    table_ref,
+                    native_fallback_mismatch_detail(fallback_engine.type, operation.type),
+                )
+                continue
             fallback_plan = MaintenancePlan(
                 table_ref=plan.table_ref, mode=plan.mode, operations=(operation,)
             )
@@ -413,9 +424,7 @@ def admit_native_k8s_jobs(
 
     try:
         specs = pack_jobs([p.packable for p in prepared], ceilings=ceilings)
-        slots_left, cpu_left, mem_left = cluster_headroom(
-            live_capacity, config=destination.config
-        )
+        slots_left, cpu_left, mem_left = cluster_headroom(live_capacity, config=destination.config)
 
         for spec in specs:
             if slots_left <= 0 or spec.cpu_milli > cpu_left or spec.mem_mib > mem_left:

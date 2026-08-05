@@ -31,7 +31,10 @@ def test_expire_omits_keep_param_when_no_protected_ids() -> None:
 
 def test_trino_renderer_emits_set_snapshots_then_expire() -> None:
     plan = build_plan(
-        _stats(), [], Mode.STANDARD, {"retention_days": 7, "retain_last": 1},
+        _stats(),
+        [],
+        Mode.STANDARD,
+        {"retention_days": 7, "retain_last": 1},
         protected_snapshot_ids=[9, 7],
     )
     rendered = render_trino(plan)
@@ -51,7 +54,10 @@ def test_trino_renderer_skips_set_when_no_protected_ids() -> None:
 
 def test_spark_renderer_emits_set_snapshot_ref_then_expire() -> None:
     plan = build_plan(
-        _stats(), [], Mode.STANDARD, {"retention_days": 7, "retain_last": 1},
+        _stats(),
+        [],
+        Mode.STANDARD,
+        {"retention_days": 7, "retain_last": 1},
         protected_snapshot_ids=[100, 200],
     )
     rendered = render_spark(plan)
@@ -63,7 +69,10 @@ def test_spark_renderer_emits_set_snapshot_ref_then_expire() -> None:
 
 def test_protected_ids_are_sorted_deduped() -> None:
     plan = build_plan(
-        _stats(), [], Mode.STANDARD, {"retention_days": 7, "retain_last": 1},
+        _stats(),
+        [],
+        Mode.STANDARD,
+        {"retention_days": 7, "retain_last": 1},
         protected_snapshot_ids=[9, 7, 9, 3],
     )
     expire_op = next(op for op in plan.operations if op.type is OperationType.EXPIRE_SNAPSHOTS)

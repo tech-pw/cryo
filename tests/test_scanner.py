@@ -108,6 +108,49 @@ def test_analyze_table_supports_fake_manifest_objects() -> None:
     assert analysis.raw["partition_fields"][0]["transform"] == "day"
 
 
+def test_analyze_table_retains_bounded_wair_file_bounds() -> None:
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[
+            FakeDataFile(
+                10 * MB,
+                10,
+                ("2026-06-29",),
+                file_path="s3://bucket/b.parquet",
+                lower_bounds={2: "m"},
+                upper_bounds={2: "z"},
+            ),
+            FakeDataFile(
+                20 * MB,
+                20,
+                ("2026-06-29",),
+                file_path="s3://bucket/a.parquet",
+                lower_bounds={2: "a"},
+                upper_bounds={2: "l"},
+            ),
+        ],
+        snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
+    )
+
+    analysis = analyze_table(
+        table,
+        "demo",
+        "events",
+        scan_at=scan_at,
+        settings=Settings(scanner_wair_file_sample_size=1),
+    )
+
+    assert analysis.raw["wair_file_sample"] == [
+        {
+            "file_path": "s3://bucket/a.parquet",
+            "size_bytes": 20 * MB,
+            "lower_bounds": {"user_id": "a"},
+            "upper_bounds": {"user_id": "l"},
+        }
+    ]
+    assert analysis.raw["wair_file_sample_complete"] is False
+
+
 def _small_file_analysis(scan_at: datetime):
     table = FakeTable(
         files=[
@@ -568,6 +611,9 @@ class FakeDataFile:
     spec_id: int = 0
     null_value_counts: dict[int, int] | None = None
     value_counts: dict[int, int] | None = None
+    file_path: str | None = None
+    lower_bounds: dict[int, Any] | None = None
+    upper_bounds: dict[int, Any] | None = None
 
 
 @dataclass(frozen=True)

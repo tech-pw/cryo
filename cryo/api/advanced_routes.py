@@ -39,12 +39,12 @@ from cryo.api.schemas import (
     PlanVerdictRead,
     PlanVerifyRequest,
     PlanViolationRead,
+    SkillsetActivateRequest,
     SkillsetListResponse,
-    SkillsetPromoteRequest,
     SkillsetOutcomeRead,
     SkillsetOutcomeWrite,
+    SkillsetPromoteRequest,
     SkillsetRead,
-    SkillsetActivateRequest,
     SkillsetRollbackRequest,
     SkillsetWrite,
     UnionableResponse,
@@ -928,9 +928,7 @@ def list_llm_observations(
     if skillset_name:
         stmt = stmt.where(LLMObservation.skillset_name == skillset_name)
     rows = list(
-        session.scalars(
-            stmt.order_by(desc(LLMObservation.recorded_at)).offset(offset).limit(limit)
-        )
+        session.scalars(stmt.order_by(desc(LLMObservation.recorded_at)).offset(offset).limit(limit))
     )
     return LLMObservationListResponse(
         items=[
@@ -1647,5 +1645,7 @@ def spark_diagnostic_query(
         table_id=table_id,
         status="dispatched",
         k8s_job_name=k8s_job_name,
-        message=f"Dispatched to Spark-on-K8s Job {k8s_job_name}. Check its driver pod logs for results.",
+        message=(
+            f"Dispatched to Spark-on-K8s Job {k8s_job_name}. Check its driver pod logs for results."
+        ),
     )

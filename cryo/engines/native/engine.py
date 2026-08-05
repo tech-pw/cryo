@@ -15,7 +15,7 @@ from typing import Any
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
-from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement, truncate_error_message
 from cryo.engines.native.checkpoint import execute_plan_per_chunk
 from cryo.engines.native.job_dispatch import (
     execute_request_via_job,
@@ -287,6 +287,7 @@ class NativeEngine:
             return [
                 ExecResult(
                     ok=False,
+                    outcome_known=False,
                     detail=operation.type.value,
                     error=error,
                     duration_ms=_elapsed_ms(start),
@@ -434,6 +435,7 @@ class NativeEngine:
                 exec_results.append(
                     ExecResult(
                         ok=False,
+                        outcome_known=False,
                         detail=chunk["error"] or "chunk execution failed",
                         error=chunk["error"],
                         duration_ms=chunk["duration_ms"],
@@ -450,6 +452,7 @@ class NativeEngine:
         if not self.source_config:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
                 detail=stmt.sql,
                 error="Native engine requires table source catalog config at execution time",
                 duration_ms=_elapsed_ms(start),
@@ -603,7 +606,7 @@ class NativeEngine:
                 bytes_read=0,
                 bytes_written=0,
                 duration_ms=0,
-                error=str(e),
+                error=truncate_error_message(str(e)),
                 output_paths=[],
             )
 
@@ -831,6 +834,7 @@ def _operation_result_to_exec_result(
             input_files_count=op_result.input_files,
             output_files_count=op_result.output_files,
             actual_bytes_freed=op_result.bytes_removed,
+            actual_bytes_written=op_result.bytes_written,
         )
     if not result.ok or op_result is None or not op_result.success:
         error_detail = result.error or (op_result.error if op_result else None) or detail
@@ -842,6 +846,7 @@ def _operation_result_to_exec_result(
             input_files_count=op_result.input_files if op_result else None,
             output_files_count=op_result.output_files if op_result else None,
             actual_bytes_freed=op_result.bytes_removed if op_result else None,
+            actual_bytes_written=op_result.bytes_written if op_result else None,
             snapshots_expired=op_result.snapshots_expired if op_result else None,
             manifests_rewritten=op_result.manifests_rewritten if op_result else None,
         )
@@ -852,6 +857,7 @@ def _operation_result_to_exec_result(
         input_files_count=op_result.input_files,
         output_files_count=op_result.output_files,
         actual_bytes_freed=op_result.bytes_removed,
+        actual_bytes_written=op_result.bytes_written,
         snapshots_expired=op_result.snapshots_expired,
         manifests_rewritten=op_result.manifests_rewritten,
         engine_ref=op_result.operation,

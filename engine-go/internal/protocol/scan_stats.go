@@ -17,6 +17,8 @@ type ScanStatsRequest struct {
 	HealthSmallFileBytes int64 `json:"health_small_file_bytes,omitempty"`
 	// MaxPartitions caps partitions_to_rewrite / returned partition rows (0 = 5000).
 	MaxPartitions int `json:"max_partitions,omitempty"`
+	// MaxFileSamples caps deterministic file-bound evidence retained for offline WAIR.
+	MaxFileSamples int `json:"max_file_samples,omitempty"`
 }
 
 // ToExecuteRequest adapts scan-stats catalog fields for catalog.LoadTable.
@@ -53,6 +55,11 @@ type ScanStatsPartitionAccum struct {
 	Files           int            `json:"files"`
 	Small           int            `json:"small"`
 	SizeBytes       int64          `json:"size_bytes"`
+	// DeleteFiles is position+equality delete files whose partition value maps to this
+	// partition -- tracked separately from Files/Small (which are data-file-only as of
+	// 2026-07-28) so callers can scope delete-cleanup work by where deletes are actually
+	// concentrated, independent of where small data files are concentrated.
+	DeleteFiles int `json:"delete_files"`
 }
 
 // ScanStatsColumnQuality mirrors analyze.py raw.column_quality entries.
@@ -65,6 +72,13 @@ type ScanStatsColumnQuality struct {
 	NullRate   float64 `json:"null_rate"`
 	LowerBound any     `json:"lower_bound,omitempty"`
 	UpperBound any     `json:"upper_bound,omitempty"`
+}
+
+type ScanStatsFileBoundSample struct {
+	FilePath    string         `json:"file_path"`
+	SizeBytes   int64          `json:"size_bytes"`
+	LowerBounds map[string]any `json:"lower_bounds"`
+	UpperBounds map[string]any `json:"upper_bounds"`
 }
 
 // ScanStatsResponse is stdout JSON for `cryo-engine-go scan-stats`.
@@ -91,48 +105,54 @@ type ScanStatsResponse struct {
 	// TotalPartitions is the full distinct-partition count before MaxPartitions truncation.
 	TotalPartitions int `json:"total_partitions"`
 	// Full-map partition distribution (computed before MaxPartitions truncation).
-	MaxFilesPerPartition  int     `json:"max_files_per_partition"`
-	AvgFilesPerPartition  float64 `json:"avg_files_per_partition"`
-	PartitionSkewRatio    float64 `json:"partition_skew_ratio"`
+	MaxFilesPerPartition int     `json:"max_files_per_partition"`
+	AvgFilesPerPartition float64 `json:"avg_files_per_partition"`
+	PartitionSkewRatio   float64 `json:"partition_skew_ratio"`
 
-	FirstSnapshotAt   *string `json:"first_snapshot_at,omitempty"`
-	LastSnapshotAt    *string `json:"last_snapshot_committed_at,omitempty"`
-	CurrentSnapshotID *int64  `json:"current_snapshot_id,omitempty"`
-	FileFormats       []string `json:"file_formats"`
-	PartitionFields   []ScanStatsPartitionField `json:"partition_fields"`
-	Partitions        []ScanStatsPartitionAccum `json:"partitions"`
-	WriteDistributionMode *string `json:"write_distribution_mode,omitempty"`
-	HasSortOrder          *bool   `json:"has_sort_order,omitempty"`
-	TargetFileSizeBytes   *int64  `json:"target_file_size_bytes,omitempty"`
-	Location              string  `json:"location,omitempty"`
-	FormatVersion         *int    `json:"format_version,omitempty"`
-	ManifestReadErrors    []string `json:"manifest_read_errors,omitempty"`
+	FirstSnapshotAt       *string                   `json:"first_snapshot_at,omitempty"`
+	LastSnapshotAt        *string                   `json:"last_snapshot_committed_at,omitempty"`
+	CurrentSnapshotID     *int64                    `json:"current_snapshot_id,omitempty"`
+	FileFormats           []string                  `json:"file_formats"`
+	PartitionFields       []ScanStatsPartitionField `json:"partition_fields"`
+	Partitions            []ScanStatsPartitionAccum `json:"partitions"`
+	WriteDistributionMode *string                   `json:"write_distribution_mode,omitempty"`
+	HasSortOrder          *bool                     `json:"has_sort_order,omitempty"`
+	TargetFileSizeBytes   *int64                    `json:"target_file_size_bytes,omitempty"`
+	IcebergProperties     map[string]string         `json:"iceberg_properties"`
+	GCEnabled             *bool                     `json:"gc_enabled"`
+	Location              string                    `json:"location,omitempty"`
+	FormatVersion         *int                      `json:"format_version,omitempty"`
+	ManifestReadErrors    []string                  `json:"manifest_read_errors,omitempty"`
 
-	ColumnQuality    []ScanStatsColumnQuality `json:"column_quality,omitempty"`
-	AvgNullRate      *float64                 `json:"avg_null_rate,omitempty"`
-	MaxNullRate      *float64                 `json:"max_null_rate,omitempty"`
-	WorstNullColumn  *string                  `json:"worst_null_column,omitempty"`
+	ColumnQuality          []ScanStatsColumnQuality   `json:"column_quality,omitempty"`
+	AvgNullRate            *float64                   `json:"avg_null_rate,omitempty"`
+	MaxNullRate            *float64                   `json:"max_null_rate,omitempty"`
+	WorstNullColumn        *string                    `json:"worst_null_column,omitempty"`
+	WairFileSample         []ScanStatsFileBoundSample `json:"wair_file_sample,omitempty"`
+	WairFileSampleComplete bool                       `json:"wair_file_sample_complete"`
 }
 
 // AggregateFixtureRequest drives `cryo-engine-go aggregate-fixture` for parity tests
 // without needing a live catalog.
 type AggregateFixtureRequest struct {
-	SchemaName           string                     `json:"schema_name"`
-	TableName            string                     `json:"table_name"`
-	SmallFileMB          float64                    `json:"small_file_mb,omitempty"`
-	HealthSmallFileBytes int64                      `json:"health_small_file_bytes,omitempty"`
-	MaxPartitions        int                        `json:"max_partitions,omitempty"`
-	PartitionFields      []ScanStatsPartitionField  `json:"partition_fields"`
-	Records              []AggregateFixtureRecord   `json:"records"`
-	TotalSnapshots       int                        `json:"total_snapshots"`
-	FirstSnapshotAt      *string                    `json:"first_snapshot_at,omitempty"`
-	LastSnapshotAt       *string                    `json:"last_snapshot_committed_at,omitempty"`
-	CurrentSnapshotID    *int64                     `json:"current_snapshot_id,omitempty"`
-	ManifestCount        int                        `json:"manifest_count"`
-	ManifestTotalBytes   int64                      `json:"manifest_total_bytes"`
+	SchemaName            string                    `json:"schema_name"`
+	TableName             string                    `json:"table_name"`
+	SmallFileMB           float64                   `json:"small_file_mb,omitempty"`
+	HealthSmallFileBytes  int64                     `json:"health_small_file_bytes,omitempty"`
+	MaxPartitions         int                       `json:"max_partitions,omitempty"`
+	PartitionFields       []ScanStatsPartitionField `json:"partition_fields"`
+	Records               []AggregateFixtureRecord  `json:"records"`
+	TotalSnapshots        int                       `json:"total_snapshots"`
+	FirstSnapshotAt       *string                   `json:"first_snapshot_at,omitempty"`
+	LastSnapshotAt        *string                   `json:"last_snapshot_committed_at,omitempty"`
+	CurrentSnapshotID     *int64                    `json:"current_snapshot_id,omitempty"`
+	ManifestCount         int                       `json:"manifest_count"`
+	ManifestTotalBytes    int64                     `json:"manifest_total_bytes"`
 	WriteDistributionMode *string                   `json:"write_distribution_mode,omitempty"`
 	HasSortOrder          *bool                     `json:"has_sort_order,omitempty"`
 	TargetFileSizeBytes   *int64                    `json:"target_file_size_bytes,omitempty"`
+	IcebergProperties     map[string]string         `json:"iceberg_properties"`
+	GCEnabled             *bool                     `json:"gc_enabled"`
 	Location              string                    `json:"location,omitempty"`
 	FormatVersion         *int                      `json:"format_version,omitempty"`
 	Columns               []AggregateFixtureColumn  `json:"columns,omitempty"`
@@ -140,12 +160,12 @@ type AggregateFixtureRequest struct {
 
 // AggregateFixtureRecord is one synthetic data/delete file.
 type AggregateFixtureRecord struct {
-	SizeBytes       int64          `json:"size_bytes"`
-	RecordCount     int64          `json:"record_count"`
-	Content         string         `json:"content"`
-	FileFormat      string         `json:"file_format"`
-	SpecID          int32          `json:"spec_id"`
-	Partition       map[string]any `json:"partition"`
+	SizeBytes       int64            `json:"size_bytes"`
+	RecordCount     int64            `json:"record_count"`
+	Content         string           `json:"content"`
+	FileFormat      string           `json:"file_format"`
+	SpecID          int32            `json:"spec_id"`
+	Partition       map[string]any   `json:"partition"`
 	NullValueCounts map[string]int64 `json:"null_value_counts,omitempty"` // field_id string → count
 	ValueCounts     map[string]int64 `json:"value_counts,omitempty"`
 }

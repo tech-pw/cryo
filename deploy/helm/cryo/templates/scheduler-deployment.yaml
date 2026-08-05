@@ -5,6 +5,8 @@ metadata:
   labels:
     {{- include "cryo.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
+      annotations:
+    {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
 spec:
   replicas: {{ .Values.scheduler.replicas }}
   selector:
@@ -21,14 +23,20 @@ spec:
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: scheduler
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cryo", "scheduler"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: CRYO_HEALTH_PORT
+              value: {{ .Values.observability.metricsPort | quote }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
           resources:

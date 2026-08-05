@@ -28,6 +28,7 @@ from cryo.db.models import (
 from cryo.db.repositories import presets
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.domain.enums import CostPrecision, OperationType
+from cryo.observability.correlation import correlation_summary
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
     (OperationType.EXPIRE_SNAPSHOTS, "reclaim_expire_bytes"),
@@ -734,7 +735,11 @@ def table_audit(
 
 
 def _nearest_stats_snapshot(
-    session: Session, table_id: uuid.UUID, *, before_or_at: datetime | None, after_or_at: datetime | None
+    session: Session,
+    table_id: uuid.UUID,
+    *,
+    before_or_at: datetime | None,
+    after_or_at: datetime | None,
 ) -> TableStatsHistory | None:
     """The TableStatsHistory row closest to a job's start (before_or_at) or finish
     (after_or_at). Exactly one of the two kwargs should be set. No repository helper for this
@@ -794,7 +799,9 @@ def _resource_estimate_payload(
             "memory_gib_hours": None,
             "active_duration_seconds": active_seconds,
         }
-    spark_cfg = destination.config.get("spark_k8s") if isinstance(destination.config, dict) else None
+    spark_cfg = (
+        destination.config.get("spark_k8s") if isinstance(destination.config, dict) else None
+    )
     spark_cfg = spark_cfg if isinstance(spark_cfg, dict) else {}
     executor_instances = int(spark_cfg.get("executor_instances") or 2)
     executor_cpu_milli = int(spark_cfg.get("executor_cpu_milli") or 2000)
@@ -872,7 +879,9 @@ def table_runs(
             if started_at is not None and finished_at is not None
             else None
         )
-        before = _nearest_stats_snapshot(session, table_id, before_or_at=started_at, after_or_at=None)
+        before = _nearest_stats_snapshot(
+            session, table_id, before_or_at=started_at, after_or_at=None
+        )
         after = (
             _nearest_stats_snapshot(session, table_id, before_or_at=None, after_or_at=finished_at)
             if finished_at is not None
@@ -934,18 +943,20 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
         kind="scan",
         trigger=str(payload.get("trigger") or "api"),
         status="accepted",
-        summary={
-            "scope": payload["scope"],
-            "source_id": str(payload["source_id"]) if payload.get("source_id") else None,
-            "table_ids": [str(table_id) for table_id in payload.get("table_ids", [])],
-            "table_names": list(payload.get("table_names", [])),
-            "schema_names": list(payload.get("schema_names", [])),
-            "requested_by": payload.get("requested_by"),
-            "cost_full_scan": bool(payload.get("cost_full_scan")),
-            "full_scan": bool(payload.get("full_scan", True)),
-            "queued": False,
-            "placeholder": False,
-        },
+        summary=correlation_summary(
+            {
+                "scope": payload["scope"],
+                "source_id": str(payload["source_id"]) if payload.get("source_id") else None,
+                "table_ids": [str(table_id) for table_id in payload.get("table_ids", [])],
+                "table_names": list(payload.get("table_names", [])),
+                "schema_names": list(payload.get("schema_names", [])),
+                "requested_by": payload.get("requested_by"),
+                "cost_full_scan": bool(payload.get("cost_full_scan")),
+                "full_scan": bool(payload.get("full_scan", True)),
+                "queued": False,
+                "placeholder": False,
+            }
+        ),
     )
     session.add(run)
     session.commit()

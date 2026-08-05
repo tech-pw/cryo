@@ -7,12 +7,31 @@ from time import perf_counter
 from typing import Any, Protocol, cast
 from uuid import UUID
 
+from cryo.db.repositories.intents import MaintenancePausedError
 from cryo.domain.enums import EngineType, JobStatus, JobStepStatus, Mode, OperationType
-from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
+from cryo.domain.intents import (
+    AttemptStatus,
+    EffectBudgetUsage,
+    EffectState,
+    MaintenanceIntentRecord,
+)
+from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.base import ExecCtx, RenderedStatement, is_table_not_found_error
 from cryo.engines.base import ExecResult as BaseExecResult
+from cryo.engines.native.routing import (
+    native_fallback_mismatch_detail,
+    native_fallback_supports,
+)
+from cryo.intents.validation import (
+    IntentValidationError,
+    validate_effect_budget,
+    validate_execution_intent,
+)
+from cryo.observability.correlation import correlation_scope, set_context
 from cryo.observability.metrics import worker_job_duration_seconds, worker_job_executions_total
-from cryo.planner.planner import build_plan
+from cryo.observability.tracing import trace_operation
+from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
+from cryo.planner.serialization import plan_to_dict
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.queue.run_events import (
@@ -53,6 +72,13 @@ class MaintenanceJobRecord:
     operations: tuple[OperationType, ...] | None = None
     force_admit: bool = False
     dispatch_id: str | None = None
+    intent_id: str | None = None
+    intent_status: str | None = None
+    intent_expires_at: datetime | None = None
+    fencing_epoch: int | None = None
+    tenant_id: str | None = None
+    intent_effect_destination_ids: tuple[str, ...] = ()
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -314,6 +340,7 @@ class Worker:
         lock_ttl_seconds: int = 6 * 60 * 60,
         run_events: RunEventSink | None = None,
         step_ledger: Any | None = None,
+        intent_store: Any | None = None,
         should_stop: Callable[[], bool] | None = None,
         table_activity_probe: Callable[..., Any] | None = None,
         quiet_interval_sec: float = 1.0,
@@ -327,6 +354,7 @@ class Worker:
         self._lock_ttl_seconds = lock_ttl_seconds
         self._run_events = run_events
         self._step_ledger = step_ledger
+        self._intent_store: Any = intent_store
         self._should_stop = should_stop
         self._table_activity_probe = table_activity_probe
         self._quiet_interval_sec = quiet_interval_sec
@@ -337,12 +365,37 @@ class Worker:
         if job_id is None:
             return None
 
-        from cryo.observability.correlation import set_job_id
-
-        set_job_id(job_id)
-
         job_start = perf_counter()
         job = self._store.get_job(job_id)
+        with (
+            correlation_scope(
+                clear=True,
+                correlation_id=job.correlation_id or job.id,
+                run_id=job.run_id,
+                job_id=job.id,
+                intent_id=job.intent_id,
+                table_id=job.table_id,
+                destination_id=job.destination_id,
+            ),
+            trace_operation(
+                "maintenance.job.execute",
+                attributes={
+                    "cryo.run.id": job.run_id,
+                    "cryo.job.id": job.id,
+                    "cryo.intent.id": job.intent_id,
+                    "cryo.table.id": job.table_id,
+                    "cryo.destination.id": job.destination_id,
+                },
+            ),
+        ):
+            return self._process_claimed_job(job, job_start=job_start)
+
+    def _process_claimed_job(
+        self,
+        job: MaintenanceJobRecord,
+        *,
+        job_start: float,
+    ) -> MaintenanceJobRecord:
         destination = _try_get_destination(self._store, job.destination_id)
         if destination is None:
             self._store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
@@ -366,8 +419,13 @@ class Worker:
         engine_ref: str | None = None
         had_success = False
         had_skip = False
+        active_intent: MaintenanceIntentRecord | None = None
+        attempt_id: str | None = None
+        reconciliation_required = False
+        effect_budget_usage = EffectBudgetUsage()
         try:
             table_data = self._store.get_table_data(job.table_id)
+            set_context(snapshot_id=table_data.stats.get("snapshot_watermark"))
             table_ref = _table_ref_from_stats(table_data.stats)
             safe_publish(
                 self._run_events,
@@ -392,26 +450,42 @@ class Worker:
                     message=f"Started maintenance job for {table_ref or job.table_id}",
                 ),
             )
-            plan_params = _execution_plan_params(job.params, destination, table_data.stats)
-            skip_operations = _skip_operations_from_preset(job.operations)
-            if skip_operations:
-                plan_params = {**plan_params, "skip_operations": skip_operations}
-            if _destination_is_native(destination):
-                plan_params = _inject_native_derived_chunk(
-                    plan_params,
-                    table_data.stats,
-                    destination,
-                    operations=job.operations,
+            if job.intent_id is not None:
+                if self._intent_store is None:
+                    raise RuntimeError("durable intent store is unavailable")
+                active_intent = self._intent_store.get(job.intent_id)
+                if active_intent is None:
+                    raise RuntimeError(f"durable intent {job.intent_id} not found")
+                effect_budget_usage = _load_effect_budget_usage(
+                    self._intent_store,
+                    active_intent,
                 )
-            plan = build_plan(
-                table_data.stats,
-                table_data.partitions,
-                job.mode,
-                plan_params,
-                protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
-            )
-            plan = _gate_native_optimize_manifests(plan, job, destination)
-            self._store.save_plan(job.id, plan_to_dict(plan))
+                plan = validate_execution_intent(
+                    active_intent,
+                    job=job,
+                    destination_engine=destination.engine,
+                    stats=dict(table_data.stats),
+                )
+                attempt = self._intent_store.begin_attempt(
+                    job.intent_id,
+                    worker_id=job.replica or "worker",
+                )
+                attempt_id = str(attempt.id)
+                set_context(
+                    attempt_id=attempt_id,
+                    snapshot_id=active_intent.observed_snapshot_id,
+                )
+            else:
+                plan = build_execution_plan(
+                    stats=table_data.stats,
+                    partitions=table_data.partitions,
+                    mode=job.mode,
+                    params=job.params,
+                    destination=destination,
+                    operations=job.operations,
+                    protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
+                )
+                self._store.save_plan(job.id, plan_to_dict(plan))
 
             engine = self._engine_factory(destination)
             if hasattr(engine, "with_source_config") and table_data.source_config:
@@ -427,9 +501,7 @@ class Worker:
             if engine.type is EngineType.NATIVE:
                 from cryo.engines.native.routing import resolve_native_routing
 
-                native_routing = resolve_native_routing(
-                    plan, table_data.stats, destination.config
-                )
+                native_routing = resolve_native_routing(plan, table_data.stats, destination.config)
 
             statements = engine.render(plan)
             safe_publish(
@@ -456,6 +528,7 @@ class Worker:
                     native_engine_ref,
                     native_had_success,
                     native_had_skip,
+                    native_reconciliation_required,
                 ) = self._run_native_plan(
                     engine=engine,
                     plan=plan,
@@ -464,16 +537,31 @@ class Worker:
                     routing=native_routing,
                     destination=destination,
                     table_data=table_data,
+                    active_intent=active_intent,
+                    attempt_id=attempt_id,
                 )
                 final_status = native_status
                 error = native_error
                 engine_ref = native_engine_ref or engine_ref
                 had_success = native_had_success
                 had_skip = native_had_skip
+                reconciliation_required = native_reconciliation_required
             else:
                 for index, statement in enumerate(statements):
+                    existing_budget_error = _effect_budget_error(
+                        active_intent,
+                        effect_budget_usage,
+                    )
+                    if existing_budget_error is not None:
+                        final_status = JobStatus.PARTIAL
+                        error = existing_budget_error
+                        break
                     if self._should_stop is not None and self._should_stop():
-                        return self._store.get_job(job.id)
+                        if active_intent is None:
+                            return self._store.get_job(job.id)
+                        final_status = JobStatus.DEFERRED
+                        error = "worker_stopping_before_next_effect"
+                        break
                     self._renew_table_lock(job)
 
                     existing_step = None
@@ -486,9 +574,7 @@ class Worker:
                             had_success = had_success or (
                                 existing_step.status is JobStepStatus.SUCCEEDED
                             )
-                            had_skip = had_skip or (
-                                existing_step.status is JobStepStatus.SKIPPED
-                            )
+                            had_skip = had_skip or (existing_step.status is JobStepStatus.SKIPPED)
                             continue
                         if (
                             existing_step is not None
@@ -550,6 +636,45 @@ class Worker:
                             detail=statement.sql,
                         )
 
+                    receipt_id: str | None = None
+                    if active_intent is not None and attempt_id is not None:
+                        requirement = next(
+                            (
+                                item
+                                for item in active_intent.capability_requirements
+                                if item.operation is statement.action
+                                and item.executes_effect
+                                and item.engine is EngineType(engine.type)
+                                and str(item.destination_id) == job.destination_id
+                            ),
+                            None,
+                        )
+                        if requirement is None:
+                            raise RuntimeError(
+                                f"intent has no effect contract for {statement.action.value}"
+                            )
+                        receipt = self._intent_store.prepare_effect(
+                            intent_id=str(active_intent.id),
+                            attempt_id=attempt_id,
+                            step_index=index,
+                            operation=statement.action,
+                            strategy=requirement.effect_strategy,
+                            destination_id=job.destination_id,
+                        )
+                        receipt_id = str(receipt.id)
+                        set_context(effect_id=receipt_id)
+                        if receipt.state == EffectState.SUCCEEDED.value:
+                            had_success = True
+                            if self._step_ledger is not None:
+                                self._step_ledger.complete_step(
+                                    job.id,
+                                    index,
+                                    JobStepStatus.SUCCEEDED,
+                                    engine_ref=receipt.external_reference,
+                                    detail="effect receipt already reconciled as succeeded",
+                                )
+                            continue
+
                     started = perf_counter()
                     exec_ctx = ExecContext(
                         job_id=job.id,
@@ -564,12 +689,15 @@ class Worker:
                         *,
                         _job_id: str = job.id,
                         _index: int = index,
+                        _receipt_id: str | None = receipt_id,
                     ) -> None:
                         if self._step_ledger is not None:
                             self._step_ledger.set_step_engine_ref(_job_id, _index, ref)
                         set_ref = getattr(self._store, "set_engine_ref", None)
                         if callable(set_ref):
                             set_ref(_job_id, ref)
+                        if _receipt_id is not None and self._intent_store is not None:
+                            self._intent_store.set_effect_external_reference(_receipt_id, ref)
 
                     safe_publish(
                         self._run_events,
@@ -587,14 +715,32 @@ class Worker:
                             ),
                         ),
                     )
+                    if receipt_id is not None:
+                        self._intent_store.mark_effect_submitted(
+                            receipt_id,
+                            submission={"operation": statement.action.value},
+                        )
                     try:
-                        result = engine.execute(
+                        result = _execute_statement(
+                            engine,
                             statement,
                             _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
+                            effect_id=receipt_id,
+                            destination_id=job.destination_id,
                         )
                     except Exception as exc:
                         duration_ms = int((perf_counter() - started) * 1000)
-                        if self._step_ledger is not None:
+                        if receipt_id is not None:
+                            self._intent_store.resolve_effect(
+                                receipt_id,
+                                EffectState.UNKNOWN,
+                                error={
+                                    "type": type(exc).__name__,
+                                    "message": str(exc),
+                                },
+                            )
+                            reconciliation_required = True
+                        elif self._step_ledger is not None:
                             self._step_ledger.complete_step(
                                 job.id,
                                 index,
@@ -606,7 +752,7 @@ class Worker:
                                 job_id=job.id,
                                 table_id=job.table_id,
                                 action=statement.action,
-                                status="FAILED",
+                                status="UNKNOWN" if receipt_id is not None else "FAILED",
                                 engine=engine.type,
                                 detail=str(exc),
                                 duration_ms=duration_ms,
@@ -629,14 +775,21 @@ class Worker:
                                 message=f"{statement.action.value} failed: {exc}",
                             ),
                         )
-                        final_status = JobStatus.FAILED
-                        error = str(exc)
+                        final_status = (
+                            JobStatus.PARTIAL if receipt_id is not None else JobStatus.FAILED
+                        )
+                        error = f"effect_unknown:{exc}" if receipt_id is not None else str(exc)
                         break
 
                     result_duration_ms = result.duration_ms
                     if result_duration_ms is None:
                         result_duration_ms = int((perf_counter() - started) * 1000)
                     engine_ref = result.engine_ref or engine_ref
+                    set_context(engine_ref=engine_ref)
+                    if receipt_id is not None and result.engine_ref:
+                        self._intent_store.set_effect_external_reference(
+                            receipt_id, result.engine_ref
+                        )
                     if getattr(result, "skipped", False):
                         had_skip = True
                         detail = result.detail or result.error or "operation skipped"
@@ -647,6 +800,12 @@ class Worker:
                                 JobStepStatus.SKIPPED,
                                 engine_ref=result.engine_ref,
                                 detail=detail,
+                            )
+                        if receipt_id is not None:
+                            self._intent_store.resolve_effect(
+                                receipt_id,
+                                EffectState.SUCCEEDED,
+                                result={"skipped": True, "detail": detail},
                             )
                         self._store.record_audit(
                             AuditRecord(
@@ -677,7 +836,10 @@ class Worker:
                         continue
                     if not getattr(result, "ok", True):
                         detail = result.error or result.detail or "engine execution failed"
-                        if self._step_ledger is not None:
+                        outcome_unknown = receipt_id is not None and not getattr(
+                            result, "outcome_known", True
+                        )
+                        if self._step_ledger is not None and not outcome_unknown:
                             self._step_ledger.complete_step(
                                 job.id,
                                 index,
@@ -685,12 +847,20 @@ class Worker:
                                 engine_ref=result.engine_ref,
                                 detail=detail,
                             )
+                        if receipt_id is not None:
+                            self._intent_store.resolve_effect(
+                                receipt_id,
+                                (EffectState.UNKNOWN if outcome_unknown else EffectState.FAILED),
+                                error={"message": detail},
+                            )
+                        if outcome_unknown:
+                            reconciliation_required = True
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
                                 table_id=job.table_id,
                                 action=statement.action,
-                                status="FAILED",
+                                status="UNKNOWN" if outcome_unknown else "FAILED",
                                 engine=engine.type,
                                 detail=detail,
                                 duration_ms=result_duration_ms,
@@ -713,8 +883,8 @@ class Worker:
                                 message=f"{statement.action.value} failed: {detail}",
                             ),
                         )
-                        final_status = JobStatus.FAILED
-                        error = detail
+                        final_status = JobStatus.PARTIAL if outcome_unknown else JobStatus.FAILED
+                        error = f"effect_unknown:{detail}" if outcome_unknown else detail
                         break
                     had_success = True
                     if self._step_ledger is not None:
@@ -725,6 +895,31 @@ class Worker:
                             engine_ref=result.engine_ref,
                             detail=result.detail,
                         )
+                    if receipt_id is not None:
+                        effect_result = {
+                            "engine_ref": result.engine_ref,
+                            "detail": result.detail,
+                            "duration_ms": result_duration_ms,
+                            "input_files_count": getattr(result, "input_files_count", None),
+                            "output_files_count": getattr(result, "output_files_count", None),
+                            "actual_bytes_freed": getattr(result, "actual_bytes_freed", None),
+                            "actual_bytes_written": getattr(result, "actual_bytes_written", None),
+                            "objects_deleted": getattr(result, "objects_deleted", None),
+                        }
+                        self._intent_store.resolve_effect(
+                            receipt_id,
+                            EffectState.SUCCEEDED,
+                            result=effect_result,
+                        )
+                        effect_budget_usage = _add_effect_budget_usage(
+                            effect_budget_usage,
+                            result,
+                            duration_ms=result_duration_ms,
+                        )
+                    budget_error = _effect_budget_error(
+                        active_intent,
+                        effect_budget_usage,
+                    )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
@@ -761,10 +956,31 @@ class Worker:
                             message=success_message,
                         ),
                     )
+                    if budget_error is not None:
+                        final_status = JobStatus.PARTIAL
+                        error = budget_error
+                        break
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
             if error in frozenset({"table_not_quiet", "awaiting_started_step_recovery"}):
-                return self._store.get_job(job.id)
+                if active_intent is None:
+                    return self._store.get_job(job.id)
+                final_status = JobStatus.DEFERRED
+        except MaintenancePausedError as exc:
+            final_status = JobStatus.DEFERRED
+            error = str(exc)
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    level="warning",
+                    message=f"Job deferred: {exc}",
+                ),
+            )
         except Exception as exc:
             final_status = JobStatus.FAILED
             error = str(exc)
@@ -781,6 +997,20 @@ class Worker:
                 ),
             )
 
+        if attempt_id is not None:
+            if reconciliation_required:
+                attempt_status = AttemptStatus.RECONCILE_REQUIRED
+            elif final_status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED}:
+                attempt_status = AttemptStatus.SUCCEEDED
+            elif final_status is JobStatus.DEFERRED:
+                attempt_status = AttemptStatus.DEFERRED
+            else:
+                attempt_status = AttemptStatus.FAILED
+            self._intent_store.finish_attempt(
+                attempt_id,
+                attempt_status,
+                error={"message": error} if error is not None else None,
+            )
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         if final_status is JobStatus.FAILED and is_table_not_found_error(error):
             self._deactivate_dropped_table(job.table_id, error)
@@ -867,9 +1097,7 @@ class Worker:
             return True
         if self._table_activity_probe is None:
             cfg = destination.config or {}
-            if not (
-                cfg.get("coordinators") or cfg.get("hosts") or cfg.get("host")
-            ):
+            if not (cfg.get("coordinators") or cfg.get("hosts") or cfg.get("host")):
                 engine = destination.engine or ""
                 if engine in {
                     EngineType.SPARK_EMR.value,
@@ -936,7 +1164,9 @@ class Worker:
         routing: Any | None = None,
         destination: DestinationConfig | None = None,
         table_data: TableMaintenanceData | None = None,
-    ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
+        active_intent: MaintenanceIntentRecord | None = None,
+        attempt_id: str | None = None,
+    ) -> tuple[JobStatus, str | None, str | None, bool, bool, bool]:
         from cryo.db.session import SessionLocal
         from cryo.engines.native.routing import (
             NATIVE_DELETE_FILES_DETAIL,
@@ -1000,15 +1230,146 @@ class Worker:
         supported_operations = routing.native_operations
         if not supported_operations and not routing.fallback_operations:
             if had_failure and not had_skip:
-                return JobStatus.FAILED, first_error, None, False, False
+                return JobStatus.FAILED, first_error, None, False, False, False
             if had_skip:
-                return JobStatus.SKIPPED, None, None, False, had_skip
-            return JobStatus.SKIPPED, None, None, False, False
+                return JobStatus.SKIPPED, None, None, False, had_skip, False
+            return JobStatus.SKIPPED, None, None, False, False, False
 
         final_status = JobStatus.SUCCEEDED
         error: str | None = first_error
         engine_ref: str | None = None
         had_success = False
+        reconciliation_required = False
+        effect_budget_usage = _load_effect_budget_usage(
+            self._intent_store,
+            active_intent,
+        )
+        existing_budget_error = _effect_budget_error(
+            active_intent,
+            effect_budget_usage,
+        )
+        if existing_budget_error is not None:
+            return (
+                JobStatus.PARTIAL,
+                existing_budget_error,
+                None,
+                False,
+                had_skip,
+                False,
+            )
+        if active_intent is not None and attempt_id is not None and len(supported_operations) > 1:
+            # A bundled native subprocess can execute every operation before returning its
+            # first result. Durable intents run one operation per submission so an observed
+            # budget breach can contain all remaining effects.
+            for operation in supported_operations:
+                (
+                    operation_status,
+                    operation_error,
+                    operation_engine_ref,
+                    operation_had_success,
+                    operation_had_skip,
+                    operation_reconciliation_required,
+                ) = self._run_native_plan(
+                    engine=engine,
+                    plan=plan,
+                    job=job,
+                    table_ref=table_ref,
+                    routing=NativeRoutingResult(
+                        native_operations=(operation,),
+                        fallback_operations=(),
+                        skipped_operations=(),
+                    ),
+                    destination=destination,
+                    table_data=table_data,
+                    active_intent=active_intent,
+                    attempt_id=attempt_id,
+                )
+                had_success = had_success or operation_had_success
+                had_skip = had_skip or operation_had_skip
+                engine_ref = operation_engine_ref or engine_ref
+                set_context(engine_ref=engine_ref)
+                if operation_reconciliation_required or operation_status not in {
+                    JobStatus.SUCCEEDED,
+                    JobStatus.SKIPPED,
+                }:
+                    if operation_status is JobStatus.FAILED and had_success:
+                        operation_status = JobStatus.PARTIAL
+                    return (
+                        operation_status,
+                        operation_error,
+                        engine_ref,
+                        had_success,
+                        had_skip,
+                        operation_reconciliation_required,
+                    )
+            supported_operations = ()
+        native_receipts: dict[int, str] = {}
+        native_operation_indices: dict[int, int] = {}
+
+        if supported_operations:
+            if active_intent is not None and attempt_id is not None:
+                pending_operations: list[Operation] = []
+                used_indices: set[int] = set()
+                for operation in supported_operations:
+                    operation_index = next(
+                        (
+                            index
+                            for index, candidate in enumerate(plan.operations)
+                            if index not in used_indices and candidate == operation
+                        ),
+                        None,
+                    )
+                    if operation_index is None:
+                        raise RuntimeError(
+                            f"native operation {operation.type.value} is outside bound plan"
+                        )
+                    used_indices.add(operation_index)
+                    requirement = next(
+                        (
+                            item
+                            for item in active_intent.capability_requirements
+                            if item.operation is operation.type
+                            and item.executes_effect
+                            and item.engine is EngineType(engine.type)
+                            and str(item.destination_id) == job.destination_id
+                        ),
+                        None,
+                    )
+                    if requirement is None:
+                        raise RuntimeError(
+                            f"intent has no effect contract for {operation.type.value}"
+                        )
+                    if self._step_ledger is not None:
+                        self._step_ledger.begin_step(
+                            job.id,
+                            operation_index,
+                            operation.type,
+                            detail="native bundled execution",
+                        )
+                    receipt = self._intent_store.prepare_effect(
+                        intent_id=str(active_intent.id),
+                        attempt_id=attempt_id,
+                        step_index=operation_index,
+                        operation=operation.type,
+                        strategy=requirement.effect_strategy,
+                        destination_id=job.destination_id,
+                    )
+                    set_context(effect_id=str(receipt.id))
+                    if receipt.state == EffectState.SUCCEEDED.value:
+                        had_success = True
+                        if self._step_ledger is not None:
+                            self._step_ledger.complete_step(
+                                job.id,
+                                operation_index,
+                                JobStepStatus.SUCCEEDED,
+                                engine_ref=receipt.external_reference,
+                                detail="effect receipt already reconciled as succeeded",
+                            )
+                        continue
+                    native_receipts[operation_index] = str(receipt.id)
+                    native_operation_indices[id(operation)] = operation_index
+                    pending_operations.append(operation)
+                supported_operations = tuple(pending_operations)
 
         if supported_operations:
             self._renew_table_lock(job)
@@ -1040,7 +1401,7 @@ class Worker:
                                 message=detail,
                             ),
                         )
-                        return JobStatus.FAILED, detail, None, False, had_skip
+                        return JobStatus.FAILED, detail, None, False, had_skip, False
 
             native_plan = MaintenancePlan(
                 table_ref=plan.table_ref,
@@ -1070,6 +1431,14 @@ class Worker:
                 session_factory = SessionLocal
             else:
                 session_factory = None
+
+            def _on_native_engine_ref(ref: str) -> None:
+                set_ref = getattr(self._store, "set_engine_ref", None)
+                if callable(set_ref):
+                    set_ref(job.id, ref)
+                for receipt_id in native_receipts.values():
+                    self._intent_store.set_effect_external_reference(receipt_id, ref)
+
             exec_ctx = _to_exec_ctx(
                 ExecContext(
                     job_id=job.id,
@@ -1079,6 +1448,7 @@ class Worker:
                     replica=job.replica,
                 ),
                 run_id=job.run_id,
+                on_engine_ref=_on_native_engine_ref,
                 on_progress=_native_progress_callback(
                     self._run_events,
                     job=job,
@@ -1088,16 +1458,33 @@ class Worker:
                 session_factory=session_factory,
                 chunk_checkpointing=chunk_checkpointing,
             )
+            for operation_index, receipt_id in native_receipts.items():
+                operation = plan.operations[operation_index]
+                self._intent_store.mark_effect_submitted(
+                    receipt_id,
+                    submission={
+                        "operation": operation.type.value,
+                        "execution": "native_bundle",
+                    },
+                )
             try:
-                results = engine.execute_plan(native_plan, exec_ctx)
+                results = _execute_native_plan(
+                    engine,
+                    native_plan,
+                    exec_ctx,
+                    effect_count=len(native_receipts),
+                    destination_id=job.destination_id,
+                )
             except Exception as exc:
                 duration_ms = int((perf_counter() - started) * 1000)
+                for receipt_id in native_receipts.values():
+                    self._intent_store.resolve_effect(
+                        receipt_id,
+                        EffectState.UNKNOWN,
+                        error={"type": type(exc).__name__, "message": str(exc)},
+                    )
                 fail_action = next(
-                    (
-                        op.type
-                        for op in supported_operations
-                        if op.type is OperationType.OPTIMIZE
-                    ),
+                    (op.type for op in supported_operations if op.type is OperationType.OPTIMIZE),
                     supported_operations[0].type,
                 )
                 self._store.record_audit(
@@ -1105,7 +1492,7 @@ class Worker:
                         job_id=job.id,
                         table_id=job.table_id,
                         action=fail_action,
-                        status="FAILED",
+                        status="UNKNOWN" if native_receipts else "FAILED",
                         engine=engine.type,
                         detail=str(exc),
                         duration_ms=duration_ms,
@@ -1125,16 +1512,52 @@ class Worker:
                         message=f"Native plan failed: {exc}",
                     ),
                 )
-                return JobStatus.FAILED, str(exc), None, False, had_skip
+                return (
+                    JobStatus.PARTIAL if native_receipts else JobStatus.FAILED,
+                    f"effect_unknown:{exc}" if native_receipts else str(exc),
+                    None,
+                    False,
+                    had_skip,
+                    bool(native_receipts),
+                )
 
+            resolved_native_receipts: set[str] = set()
             for operation, result in zip(supported_operations, results, strict=False):
+                operation_index = native_operation_indices.get(id(operation))
+                if operation_index is None:
+                    operation_index = next(
+                        index
+                        for index, candidate in enumerate(plan.operations)
+                        if candidate is operation
+                    )
+                native_receipt_id = native_receipts.get(operation_index)
                 result_duration_ms = result.duration_ms
                 if result_duration_ms is None:
                     result_duration_ms = int((perf_counter() - started) * 1000)
                 engine_ref = result.engine_ref or engine_ref
+                set_context(engine_ref=engine_ref)
+                if native_receipt_id is not None and result.engine_ref:
+                    self._intent_store.set_effect_external_reference(
+                        native_receipt_id, result.engine_ref
+                    )
                 if getattr(result, "skipped", False):
                     had_skip = True
                     detail = result.detail or result.error or "operation skipped"
+                    if native_receipt_id is not None:
+                        self._intent_store.resolve_effect(
+                            native_receipt_id,
+                            EffectState.SUCCEEDED,
+                            result={"skipped": True, "detail": detail},
+                        )
+                        resolved_native_receipts.add(native_receipt_id)
+                    if self._step_ledger is not None:
+                        self._step_ledger.complete_step(
+                            job.id,
+                            operation_index,
+                            JobStepStatus.SKIPPED,
+                            engine_ref=result.engine_ref,
+                            detail=detail,
+                        )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
@@ -1163,16 +1586,37 @@ class Worker:
                     )
                     continue
                 if not getattr(result, "ok", True):
-                    had_failure = True
                     detail = result.error or result.detail or "engine execution failed"
                     if first_error is None:
                         first_error = detail
+                    outcome_unknown = native_receipt_id is not None and not getattr(
+                        result, "outcome_known", True
+                    )
+                    if native_receipt_id is not None:
+                        self._intent_store.resolve_effect(
+                            native_receipt_id,
+                            (EffectState.UNKNOWN if outcome_unknown else EffectState.FAILED),
+                            error={"message": detail},
+                        )
+                        resolved_native_receipts.add(native_receipt_id)
+                    if outcome_unknown:
+                        reconciliation_required = True
+                    else:
+                        had_failure = True
+                    if self._step_ledger is not None and not outcome_unknown:
+                        self._step_ledger.complete_step(
+                            job.id,
+                            operation_index,
+                            JobStepStatus.FAILED,
+                            engine_ref=result.engine_ref,
+                            detail=detail,
+                        )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
                             table_id=job.table_id,
                             action=operation.type,
-                            status="FAILED",
+                            status="UNKNOWN" if outcome_unknown else "FAILED",
                             engine=engine.type,
                             detail=detail,
                             duration_ms=result_duration_ms,
@@ -1197,10 +1641,51 @@ class Worker:
                             message=f"{operation.type.value} failed: {detail}",
                         ),
                     )
-                    if not chunk_checkpointing:
-                        return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+                    if not chunk_checkpointing and not outcome_unknown:
+                        return (
+                            JobStatus.FAILED,
+                            detail,
+                            engine_ref,
+                            had_success,
+                            had_skip,
+                            False,
+                        )
                     continue
                 had_success = True
+                if native_receipt_id is not None:
+                    effect_result = {
+                        "engine_ref": result.engine_ref,
+                        "detail": result.detail,
+                        "duration_ms": result_duration_ms,
+                        "input_files_count": getattr(result, "input_files_count", None),
+                        "output_files_count": getattr(result, "output_files_count", None),
+                        "actual_bytes_freed": getattr(result, "actual_bytes_freed", None),
+                        "actual_bytes_written": getattr(result, "actual_bytes_written", None),
+                        "objects_deleted": getattr(result, "objects_deleted", None),
+                    }
+                    self._intent_store.resolve_effect(
+                        native_receipt_id,
+                        EffectState.SUCCEEDED,
+                        result=effect_result,
+                    )
+                    resolved_native_receipts.add(native_receipt_id)
+                    effect_budget_usage = _add_effect_budget_usage(
+                        effect_budget_usage,
+                        result,
+                        duration_ms=result_duration_ms,
+                    )
+                budget_error = _effect_budget_error(
+                    active_intent,
+                    effect_budget_usage,
+                )
+                if self._step_ledger is not None:
+                    self._step_ledger.complete_step(
+                        job.id,
+                        operation_index,
+                        JobStepStatus.SUCCEEDED,
+                        engine_ref=result.engine_ref,
+                        detail=result.detail,
+                    )
                 self._store.record_audit(
                     AuditRecord(
                         job_id=job.id,
@@ -1247,6 +1732,42 @@ class Worker:
                         message=success_message,
                     ),
                 )
+                if budget_error is not None:
+                    return (
+                        JobStatus.PARTIAL,
+                        budget_error,
+                        engine_ref,
+                        had_success,
+                        had_skip,
+                        False,
+                    )
+            unresolved_receipts = set(native_receipts.values()) - resolved_native_receipts
+            if unresolved_receipts:
+                detail = "native engine returned no result for one or more submitted effects"
+                for receipt_id in unresolved_receipts:
+                    self._intent_store.resolve_effect(
+                        receipt_id,
+                        EffectState.UNKNOWN,
+                        error={"message": detail},
+                    )
+                return (
+                    JobStatus.PARTIAL,
+                    f"effect_unknown:{detail}",
+                    engine_ref,
+                    had_success,
+                    had_skip,
+                    True,
+                )
+
+            if reconciliation_required:
+                return (
+                    JobStatus.PARTIAL,
+                    f"effect_unknown:{first_error or 'native effect outcome is unknown'}",
+                    engine_ref,
+                    had_success,
+                    had_skip,
+                    True,
+                )
 
         if routing.fallback_operations and destination is not None and table_data is not None:
             (
@@ -1255,6 +1776,7 @@ class Worker:
                 fallback_engine_ref,
                 fallback_had_success,
                 fallback_had_skip,
+                fallback_reconciliation_required,
             ) = self._run_sql_fallback_operations(
                 operations=routing.fallback_operations,
                 plan=plan,
@@ -1262,6 +1784,8 @@ class Worker:
                 table_ref=table_ref,
                 destination=destination,
                 table_data=table_data,
+                active_intent=active_intent,
+                attempt_id=attempt_id,
             )
             if fallback_had_success:
                 had_success = True
@@ -1269,8 +1793,25 @@ class Worker:
                 had_skip = True
             if fallback_engine_ref:
                 engine_ref = fallback_engine_ref
-            if fallback_status is JobStatus.FAILED:
-                return fallback_status, fallback_error, engine_ref, had_success, had_skip
+                set_context(engine_ref=engine_ref)
+            if fallback_reconciliation_required:
+                return (
+                    JobStatus.PARTIAL,
+                    fallback_error,
+                    engine_ref,
+                    had_success,
+                    had_skip,
+                    True,
+                )
+            if fallback_status in {JobStatus.FAILED, JobStatus.PARTIAL}:
+                return (
+                    fallback_status,
+                    fallback_error,
+                    engine_ref,
+                    had_success,
+                    had_skip,
+                    False,
+                )
             if fallback_status is JobStatus.SKIPPED and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
 
@@ -1283,7 +1824,7 @@ class Worker:
 
         if error is None and first_error is not None:
             error = first_error
-        return final_status, error, engine_ref, had_success, had_skip
+        return final_status, error, engine_ref, had_success, had_skip, False
 
     def _record_native_skipped(
         self,
@@ -1330,12 +1871,14 @@ class Worker:
         table_ref: str | None,
         destination: DestinationConfig,
         table_data: TableMaintenanceData,
-    ) -> tuple[JobStatus, str | None, str | None, bool, bool]:
+        active_intent: MaintenanceIntentRecord | None = None,
+        attempt_id: str | None = None,
+    ) -> tuple[JobStatus, str | None, str | None, bool, bool, bool]:
         fallback_id = destination.config.get("sql_fallback_destination_id")
         if not isinstance(fallback_id, str) or not fallback_id.strip():
             fallback_id = destination.config.get("fallback_destination_id")
         if not isinstance(fallback_id, str) or not fallback_id.strip():
-            return JobStatus.SKIPPED, None, None, False, False
+            return JobStatus.SKIPPED, None, None, False, False, False
 
         fallback_destination = _try_get_destination(self._store, fallback_id.strip())
         if fallback_destination is None:
@@ -1348,7 +1891,7 @@ class Worker:
                     operation=operation,
                     detail=f"{detail}; {not_found_error}",
                 )
-            return JobStatus.FAILED, not_found_error, None, False, True
+            return JobStatus.FAILED, not_found_error, None, False, True, False
 
         fallback_engine = self._engine_factory(fallback_destination)
         # Same two hooks the primary dispatch path applies (see _dispatch_job) -- this path
@@ -1364,9 +1907,39 @@ class Worker:
         engine_ref: str | None = None
         had_success = False
         had_skip = False
+        effect_budget_usage = _load_effect_budget_usage(
+            self._intent_store,
+            active_intent,
+        )
+        existing_budget_error = _effect_budget_error(
+            active_intent,
+            effect_budget_usage,
+        )
+        if existing_budget_error is not None:
+            return (
+                JobStatus.PARTIAL,
+                existing_budget_error,
+                None,
+                False,
+                False,
+                False,
+            )
 
         for operation, route_reason in operations:
             self._renew_table_lock(job)
+            if not native_fallback_supports(fallback_engine.type, operation.type):
+                had_skip = True
+                self._record_native_skipped(
+                    job=job,
+                    table_ref=table_ref,
+                    engine=fallback_engine,
+                    operation=operation,
+                    detail=native_fallback_mismatch_detail(
+                        fallback_engine.type,
+                        operation.type,
+                    ),
+                )
+                continue
             fallback_plan = MaintenancePlan(
                 table_ref=plan.table_ref,
                 mode=plan.mode,
@@ -1402,10 +1975,90 @@ class Worker:
                 ),
             )
 
-            for statement in statements:
+            operation_index = next(
+                index for index, candidate in enumerate(plan.operations) if candidate == operation
+            )
+            for statement_index, statement in enumerate(statements):
+                receipt_id: str | None = None
+                effect_index = operation_index * 1000 + statement_index
+                if active_intent is not None and attempt_id is not None:
+                    requirement = next(
+                        (
+                            item
+                            for item in active_intent.capability_requirements
+                            if item.operation is operation.type
+                            and item.executes_effect
+                            and item.engine is EngineType(fallback_engine.type)
+                            and str(item.destination_id) == fallback_destination.id
+                        ),
+                        None,
+                    )
+                    if requirement is None:
+                        raise RuntimeError(
+                            f"intent has no effect contract for {operation.type.value}"
+                        )
+                    if self._step_ledger is not None:
+                        self._step_ledger.begin_step(
+                            job.id,
+                            effect_index,
+                            statement.action,
+                            detail=f"SQL fallback: {route_reason}",
+                        )
+                    receipt = self._intent_store.prepare_effect(
+                        intent_id=str(active_intent.id),
+                        attempt_id=attempt_id,
+                        step_index=effect_index,
+                        operation=statement.action,
+                        strategy=requirement.effect_strategy,
+                        destination_id=fallback_destination.id,
+                    )
+                    receipt_id = str(receipt.id)
+                    set_context(
+                        effect_id=receipt_id,
+                        destination_id=fallback_destination.id,
+                    )
+                    if receipt.state == EffectState.SUCCEEDED.value:
+                        had_success = True
+                        continue
+                    self._intent_store.mark_effect_submitted(
+                        receipt_id,
+                        submission={
+                            "operation": statement.action.value,
+                            "execution": "sql_fallback",
+                            "destination_id": fallback_destination.id,
+                        },
+                    )
                 started = perf_counter()
+
+                def _on_fallback_engine_ref(
+                    ref: str,
+                    *,
+                    _receipt_id: str | None = receipt_id,
+                ) -> None:
+                    set_ref = getattr(self._store, "set_engine_ref", None)
+                    if callable(set_ref):
+                        set_ref(job.id, ref)
+                    if _receipt_id is not None:
+                        self._intent_store.set_effect_external_reference(_receipt_id, ref)
+
                 try:
-                    result = fallback_engine.execute(statement)
+                    result = _execute_statement(
+                        fallback_engine,
+                        statement,
+                        _to_exec_ctx(
+                            ExecContext(
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                destination_id=fallback_destination.id,
+                                statement_index=statement_index,
+                                replica=job.replica,
+                            ),
+                            run_id=job.run_id,
+                            on_engine_ref=_on_fallback_engine_ref,
+                        ),
+                        effect_id=receipt_id,
+                        destination_id=fallback_destination.id,
+                    )
                 except Exception as exc:
                     duration_ms = int((perf_counter() - started) * 1000)
                     detail = str(exc)
@@ -1414,23 +2067,53 @@ class Worker:
                             job_id=job.id,
                             table_id=job.table_id,
                             action=statement.action,
-                            status="FAILED",
+                            status="UNKNOWN" if receipt_id is not None else "FAILED",
                             engine=fallback_engine.type,
                             detail=detail,
                             duration_ms=duration_ms,
                             actor=job.actor,
                         )
                     )
-                    return JobStatus.FAILED, detail, None, had_success, had_skip
+                    if receipt_id is not None:
+                        self._intent_store.resolve_effect(
+                            receipt_id,
+                            EffectState.UNKNOWN,
+                            error={"type": type(exc).__name__, "message": detail},
+                        )
+                    return (
+                        JobStatus.PARTIAL if receipt_id is not None else JobStatus.FAILED,
+                        f"effect_unknown:{detail}" if receipt_id is not None else detail,
+                        None,
+                        had_success,
+                        had_skip,
+                        receipt_id is not None,
+                    )
 
                 result_duration_ms = result.duration_ms
                 if result_duration_ms is None:
                     result_duration_ms = int((perf_counter() - started) * 1000)
                 engine_ref = result.engine_ref or engine_ref
+                set_context(engine_ref=engine_ref)
+                if receipt_id is not None and result.engine_ref:
+                    self._intent_store.set_effect_external_reference(receipt_id, result.engine_ref)
 
                 if getattr(result, "skipped", False):
                     had_skip = True
                     detail = result.detail or result.error or route_reason
+                    if receipt_id is not None:
+                        self._intent_store.resolve_effect(
+                            receipt_id,
+                            EffectState.SUCCEEDED,
+                            result={"skipped": True, "detail": detail},
+                        )
+                    if self._step_ledger is not None:
+                        self._step_ledger.complete_step(
+                            job.id,
+                            effect_index,
+                            JobStepStatus.SKIPPED,
+                            engine_ref=result.engine_ref,
+                            detail=detail,
+                        )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
@@ -1447,12 +2130,29 @@ class Worker:
 
                 if not getattr(result, "ok", True):
                     detail = result.error or result.detail or "engine execution failed"
+                    outcome_unknown = receipt_id is not None and not getattr(
+                        result, "outcome_known", True
+                    )
+                    if receipt_id is not None:
+                        self._intent_store.resolve_effect(
+                            receipt_id,
+                            (EffectState.UNKNOWN if outcome_unknown else EffectState.FAILED),
+                            error={"message": detail},
+                        )
+                    if self._step_ledger is not None and not outcome_unknown:
+                        self._step_ledger.complete_step(
+                            job.id,
+                            effect_index,
+                            JobStepStatus.FAILED,
+                            engine_ref=result.engine_ref,
+                            detail=detail,
+                        )
                     self._store.record_audit(
                         AuditRecord(
                             job_id=job.id,
                             table_id=job.table_id,
                             action=statement.action,
-                            status="FAILED",
+                            status="UNKNOWN" if outcome_unknown else "FAILED",
                             engine=fallback_engine.type,
                             detail=detail,
                             duration_ms=result_duration_ms,
@@ -1461,9 +2161,47 @@ class Worker:
                             actor=job.actor,
                         )
                     )
-                    return JobStatus.FAILED, detail, engine_ref, had_success, had_skip
+                    return (
+                        JobStatus.PARTIAL if outcome_unknown else JobStatus.FAILED,
+                        f"effect_unknown:{detail}" if outcome_unknown else detail,
+                        engine_ref,
+                        had_success,
+                        had_skip,
+                        outcome_unknown,
+                    )
 
                 had_success = True
+                if receipt_id is not None:
+                    effect_result = {
+                        "engine_ref": result.engine_ref,
+                        "detail": result.detail,
+                        "duration_ms": result_duration_ms,
+                        "output_files_count": getattr(result, "output_files_count", None),
+                        "actual_bytes_written": getattr(result, "actual_bytes_written", None),
+                        "objects_deleted": getattr(result, "objects_deleted", None),
+                    }
+                    self._intent_store.resolve_effect(
+                        receipt_id,
+                        EffectState.SUCCEEDED,
+                        result=effect_result,
+                    )
+                    effect_budget_usage = _add_effect_budget_usage(
+                        effect_budget_usage,
+                        result,
+                        duration_ms=result_duration_ms,
+                    )
+                budget_error = _effect_budget_error(
+                    active_intent,
+                    effect_budget_usage,
+                )
+                if self._step_ledger is not None:
+                    self._step_ledger.complete_step(
+                        job.id,
+                        effect_index,
+                        JobStepStatus.SUCCEEDED,
+                        engine_ref=result.engine_ref,
+                        detail=result.detail,
+                    )
                 self._store.record_audit(
                     AuditRecord(
                         job_id=job.id,
@@ -1481,6 +2219,15 @@ class Worker:
                         actor=job.actor,
                     )
                 )
+                if budget_error is not None:
+                    return (
+                        JobStatus.PARTIAL,
+                        budget_error,
+                        engine_ref,
+                        had_success,
+                        had_skip,
+                        False,
+                    )
                 success_message = (
                     f"Completed {statement.action.value} via {fallback_engine.type.value} "
                     f"in {result_duration_ms}ms"
@@ -1501,7 +2248,89 @@ class Worker:
 
         if had_skip and not had_success:
             final_status = JobStatus.SKIPPED
-        return final_status, error, engine_ref, had_success, had_skip
+        return final_status, error, engine_ref, had_success, had_skip, False
+
+
+def _execute_statement(
+    engine: ExecutableMaintenanceEngine,
+    statement: RenderedStatement,
+    context: ExecCtx,
+    *,
+    effect_id: str | None,
+    destination_id: str,
+) -> BaseExecResult:
+    with trace_operation(
+        "maintenance.effect.execute",
+        attributes={
+            "cryo.effect.id": effect_id,
+            "cryo.operation": statement.action.value,
+            "cryo.engine": engine.type.value,
+            "cryo.destination.id": destination_id,
+        },
+    ):
+        return engine.execute(statement, context)
+
+
+def _execute_native_plan(
+    engine: ExecutableMaintenanceEngine,
+    plan: MaintenancePlan,
+    context: ExecCtx,
+    *,
+    effect_count: int,
+    destination_id: str,
+) -> list[BaseExecResult]:
+    with trace_operation(
+        "maintenance.effects.execute_native",
+        attributes={
+            "cryo.effect.count": effect_count,
+            "cryo.operation.count": len(plan.operations),
+            "cryo.engine": engine.type.value,
+            "cryo.destination.id": destination_id,
+        },
+    ):
+        return engine.execute_plan(plan, context)
+
+
+def _load_effect_budget_usage(
+    intent_store: Any | None,
+    intent: MaintenanceIntentRecord | None,
+) -> EffectBudgetUsage:
+    if intent_store is None or intent is None:
+        return EffectBudgetUsage()
+    getter = getattr(intent_store, "budget_usage", None)
+    if not callable(getter):
+        return EffectBudgetUsage()
+    usage = getter(str(intent.id))
+    if not isinstance(usage, EffectBudgetUsage):
+        raise TypeError("intent budget_usage() returned an invalid value")
+    return usage
+
+
+def _add_effect_budget_usage(
+    usage: EffectBudgetUsage,
+    result: BaseExecResult,
+    *,
+    duration_ms: int,
+) -> EffectBudgetUsage:
+    return usage.add(
+        output_bytes=getattr(result, "actual_bytes_written", None),
+        output_files=getattr(result, "output_files_count", None),
+        duration_ms=duration_ms,
+        objects_deleted=getattr(result, "objects_deleted", None),
+    )
+
+
+def _effect_budget_error(
+    intent: MaintenanceIntentRecord | None,
+    usage: EffectBudgetUsage,
+) -> str | None:
+    if intent is None:
+        return None
+    try:
+        validate_effect_budget(intent, usage)
+    except IntentValidationError as exc:
+        return f"intent_budget_exceeded:{exc.code}:{exc.detail}"
+    return None
 
 
 def _metric_status(status: JobStatus) -> str:
@@ -1526,77 +2355,6 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _destination_is_native(destination: DestinationConfig) -> bool:
-    engine = destination.engine
-    if isinstance(engine, EngineType):
-        return engine is EngineType.NATIVE
-    return str(engine).lower() in {"native", "enginetype.native"}
-
-
-def _inject_native_derived_chunk(
-    params: Mapping[str, Any],
-    stats: Mapping[str, Any],
-    destination: DestinationConfig,
-    *,
-    operations: tuple[OperationType, ...] | None = None,
-) -> dict[str, Any]:
-    """Size a virtual pod from stats, then set chunk_size_gb to fill that budget."""
-    from cryo.engines.native.resources import (
-        ResourceCeilings,
-        derive_chunk_params,
-        estimate_table_resources,
-    )
-
-    ceilings = ResourceCeilings.from_config(destination.config)
-    base = {k: v for k, v in dict(params).items() if k != "chunk_size_gb"}
-    estimate = estimate_table_resources(
-        stats,
-        operations=operations,
-        params=base,
-        ceilings=ceilings,
-    )
-    return derive_chunk_params(estimate.mem_mib, stats, base)
-
-
-def _execution_plan_params(
-    params: Mapping[str, Any],
-    destination: DestinationConfig,
-    stats: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Merge destination Trino/Spark catalog into planner params for rendered SQL."""
-    from cryo.engines.trino.catalog_bindings import resolve_trino_catalog
-
-    merged = dict(params)
-    # Native chunk size is derived at runtime — never trust a leftover preset key.
-    if _destination_is_native(destination):
-        merged.pop("chunk_size_gb", None)
-    engine = destination.engine
-    engine_value = engine.value if isinstance(engine, EngineType) else str(engine)
-    source_catalog = stats.get("catalog") or stats.get("catalog_name")
-    source_catalog_name = source_catalog if isinstance(source_catalog, str) else None
-    source_id = stats.get("source_id")
-
-    if engine_value == EngineType.TRINO.value:
-        catalog = resolve_trino_catalog(
-            destination.config,
-            source_id=source_id if isinstance(source_id, (str, UUID)) else None,
-            source_catalog_name=source_catalog_name,
-        )
-    else:
-        catalog = destination.config.get("catalog") or destination.config.get("catalog_name")
-        if not isinstance(catalog, str) or not catalog:
-            catalog = None
-
-    if not isinstance(catalog, str) or not catalog:
-        return merged
-    merged["catalog"] = catalog
-    schema = stats.get("schema_name")
-    table = stats.get("table_name")
-    if schema and table:
-        merged["table_ref"] = f"{catalog}.{schema}.{table}"
-    return merged
-
-
 def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
     """Return snapshot IDs tagged as protected for a table.
 
@@ -1619,11 +2377,15 @@ def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
         table_uuid = table_id
     try:
         with SessionLocal() as session:
-            return sorted(
-                ProtectedSnapshotRepository(session).list_snapshot_ids(table_uuid)
-            )
+            return sorted(ProtectedSnapshotRepository(session).list_snapshot_ids(table_uuid))
     except Exception:
         return []
+
+
+def _skip_operations_from_preset(
+    operations: tuple[OperationType, ...] | None,
+) -> list[str]:
+    return skip_operations_from_preset(operations)
 
 
 def _job_operation_type(job: MaintenanceJobRecord) -> str:
@@ -1631,68 +2393,6 @@ def _job_operation_type(job: MaintenanceJobRecord) -> str:
     if isinstance(mode, Mode):
         return mode.value
     return str(mode)
-
-
-def _engine_type_of(engine: EngineType | str) -> EngineType | None:
-    if isinstance(engine, EngineType):
-        return engine
-    try:
-        return EngineType(engine)
-    except ValueError:
-        return None
-
-
-# The subset of OperationType that a preset's `operations` list can meaningfully gate --
-# deliberately excludes conditional sub-operations (rewrite_position_deletes, convert_deletes,
-# compute_statistics) that build_plan derives on its own from delete/MOR signals; a preset
-# editor listing ["optimize", "optimize_manifests"] wouldn't think to also enumerate those, and
-# silently dropping them would break delete-compaction for MOR tables that need it.
-_PRESET_GATED_OPERATION_TYPES = (
-    OperationType.EXPIRE_SNAPSHOTS,
-    OperationType.REMOVE_ORPHAN_FILES,
-    OperationType.OPTIMIZE,
-    OperationType.OPTIMIZE_MANIFESTS,
-)
-
-
-def _skip_operations_from_preset(operations: tuple[OperationType, ...] | None) -> list[str]:
-    """Regression, discovered 2026-07-31 and fixed 2026-08-03: Preset.operations has always
-    been editable and looked like it controlled what actually runs, but build_plan() never
-    consulted it. An empty/unset list means "no explicit preset configuration" -- don't skip
-    anything, matching the pre-existing default behavior for presets that never set this."""
-    if not operations:
-        return []
-    requested = set(operations)
-    return [op.value for op in _PRESET_GATED_OPERATION_TYPES if op not in requested]
-
-
-def _gate_native_optimize_manifests(
-    plan: MaintenancePlan,
-    job: MaintenanceJobRecord,
-    destination: DestinationConfig,
-) -> MaintenancePlan:
-    """Drop optimize_manifests from a native plan unless the preset configured it.
-
-    The native engine cannot rewrite manifests and optimize_manifests is never routed to
-    Trino/Spark. For native destinations we therefore only keep the operation when it is
-    explicitly listed in the preset's operations; otherwise it is removed so it never runs.
-    """
-    if _engine_type_of(destination.engine) is not EngineType.NATIVE:
-        return plan
-    if all(op.type is not OperationType.OPTIMIZE_MANIFESTS for op in plan.operations):
-        return plan
-    configured = job.operations
-    if configured is not None and OperationType.OPTIMIZE_MANIFESTS in configured:
-        return plan
-    filtered = tuple(
-        op for op in plan.operations if op.type is not OperationType.OPTIMIZE_MANIFESTS
-    )
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
-        operations=filtered,
-        notes=plan.notes,
-    )
 
 
 def default_engine_factory(destination: DestinationConfig) -> ExecutableMaintenanceEngine:
@@ -1715,43 +2415,6 @@ def _try_get_destination(store: JobStore, destination_id: str) -> DestinationCon
         return store.get_destination(destination_id)
     except KeyError:
         return None
-
-
-def plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:
-    return {
-        "table_ref": plan.table_ref,
-        "mode": plan.mode.value,
-        "operations": [_operation_to_dict(operation) for operation in plan.operations],
-        "notes": list(plan.notes),
-    }
-
-
-def _operation_to_dict(operation: Operation) -> dict[str, Any]:
-    return {
-        "type": operation.type.value,
-        "params": dict(operation.params),
-        "predicates": None
-        if operation.predicates is None
-        else [_predicate_to_dict(predicate) for predicate in operation.predicates],
-    }
-
-
-def _predicate_to_dict(predicate: PartitionPredicate) -> dict[str, Any]:
-    return {
-        "unsupported_reason": predicate.unsupported_reason,
-        "terms": [
-            {
-                "base_column": term.base_column,
-                "transform": term.transform.value,
-                "value": term.value,
-                "col_type": term.col_type,
-                "transform_param": term.transform_param,
-                "partition_field": term.partition_field,
-                "unsupported_reason": term.unsupported_reason,
-            }
-            for term in predicate.terms
-        ],
-    }
 
 
 def _to_exec_ctx(
@@ -1826,8 +2489,7 @@ def _native_progress_message(event: dict[str, Any]) -> str:
     bytes_processed = event.get("bytes_processed")
     if pct is not None:
         return (
-            f"{operation}: {event_name} {pct}%"
-            f" ({files or 0} files, {bytes_processed or 0} bytes)"
+            f"{operation}: {event_name} {pct}% ({files or 0} files, {bytes_processed or 0} bytes)"
         )
     if event.get("message"):
         return str(event["message"])

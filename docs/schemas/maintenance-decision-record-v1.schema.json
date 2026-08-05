@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryo.dev/schemas/maintenance-decision-record-v1.schema.json",
+  "title": "Cryo Maintenance Decision Record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "privacy",
+    "decision",
+    "plan",
+    "attempts",
+    "effects",
+    "outcomes",
+    "capabilities",
+    "integrity"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cryo.maintenance-decision-record/v1"
+    },
+    "record_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["mode", "actor_id_sha256", "table_ref_sha256", "omitted_fields"],
+      "properties": {
+        "mode": { "const": "redacted" },
+        "actor_id_sha256": { "$ref": "#/$defs/sha256" },
+        "table_ref_sha256": { "$ref": "#/$defs/sha256" },
+        "omitted_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "intent_id",
+        "job_id",
+        "table_id",
+        "destination_id",
+        "actor_type",
+        "status",
+        "version",
+        "policy",
+        "approval_bindings",
+        "expires_at",
+        "containment_action"
+      ],
+      "properties": {
+        "intent_id": { "$ref": "#/$defs/uuid" },
+        "job_id": { "$ref": "#/$defs/uuid" },
+        "tenant_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+        "table_id": { "$ref": "#/$defs/uuid" },
+        "destination_id": { "$ref": "#/$defs/uuid" },
+        "actor_type": { "type": "string" },
+        "status": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "parent_intent_id": {
+          "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
+        },
+        "observed_snapshot_id": { "type": ["integer", "null"] },
+        "policy": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "version": { "type": ["string", "null"] }
+          }
+        },
+        "approval_bindings": { "type": "array", "items": { "type": "object" } },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "containment_action": { "type": "string" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "hash",
+        "canonical_redacted",
+        "operation_scope",
+        "budget",
+        "capability_requirements",
+        "fencing_epoch"
+      ],
+      "properties": {
+        "hash": { "$ref": "#/$defs/sha256" },
+        "canonical_redacted": { "type": "object" },
+        "operation_scope": { "type": "array", "items": { "type": "string" } },
+        "budget": { "type": "object" },
+        "capability_requirements": { "type": "array", "items": { "type": "object" } },
+        "fencing_epoch": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["attempt_id", "number", "status", "fencing_epoch", "started_at"],
+        "properties": {
+          "attempt_id": { "$ref": "#/$defs/uuid" },
+          "number": { "type": "integer", "minimum": 1 },
+          "status": { "type": "string" },
+          "fencing_epoch": { "type": "integer", "minimum": 0 },
+          "started_at": { "type": "string", "format": "date-time" },
+          "completed_at": { "type": ["string", "null"], "format": "date-time" },
+          "error_class": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "effects": { "type": "array", "items": { "type": "object" } },
+    "outcomes": { "type": "array", "items": { "type": "object" } },
+    "capabilities": { "type": "array", "items": { "type": "object" } },
+    "integrity": {
+      "type": "object",
+      "required": ["record_sha256", "canonicalization"],
+      "properties": {
+        "record_sha256": { "$ref": "#/$defs/sha256" },
+        "canonicalization": { "const": "sorted compact JSON" }
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

@@ -56,7 +56,9 @@ def test_go_engine_emits_progress_prefix() -> None:
         "catalog_uri": "http://127.0.0.1:1",
         "warehouse": "s3://warehouse/",
         "mode": "execute",
-        "operations": [{"type": "expire_snapshots", "params": {"retention_days": 7, "retain_last": 1}}],
+        "operations": [
+            {"type": "expire_snapshots", "params": {"retention_days": 7, "retain_last": 1}}
+        ],
     }
     proc = subprocess.run(
         [str(GO_BINARY), "execute"],
@@ -70,7 +72,9 @@ def test_go_engine_emits_progress_prefix() -> None:
     assert any('"event":"started"' in line for line in progress_lines)
 
 
-@pytest.mark.skipif(os.getenv("CRYO_RUN_GO_PROTOCOL_E2E") != "1", reason="set CRYO_RUN_GO_PROTOCOL_E2E=1")
+@pytest.mark.skipif(
+    os.getenv("CRYO_RUN_GO_PROTOCOL_E2E") != "1", reason="set CRYO_RUN_GO_PROTOCOL_E2E=1"
+)
 def test_go_engine_unknown_subcommand_exit_2() -> None:
     if not GO_BINARY.is_file():
         pytest.skip("cryo-engine-go binary not built")

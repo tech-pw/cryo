@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import QueryLog, Source, Table
-from cryo.telemetry.parser import parse_query_predicates
+from cryo.telemetry.parser import extract_query_ranges, parse_query_predicates
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,7 @@ async def ingest_from_query_events(
 
         # Parse predicates
         predicate_info = parse_query_predicates(query_text) if query_text else None
+        query_ranges = extract_query_ranges(query_text) if query_text else []
 
         # Match table
         schema_name = event.get("schema_name")
@@ -275,7 +276,13 @@ async def ingest_from_query_events(
             files_read=event.get("files_read"),
             files_pruned=event.get("files_pruned"),
             user_name=event.get("user"),
-            raw=event.get("raw"),
+            raw={
+                **dict(event.get("raw") or {}),
+                "query_ranges": [
+                    {"column": item.column, "lower": item.lower, "upper": item.upper}
+                    for item in query_ranges
+                ],
+            },
         )
 
         session.add(log_entry)

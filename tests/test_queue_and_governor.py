@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+from sqlalchemy.orm import Session, sessionmaker
+
+from cryo.db.repositories.intents import set_pause_state
 from cryo.domain.enums import JobStatus, Mode
+from cryo.domain.intents import IntentStatus
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
 from cryo.queue.locks import InMemoryLockStore
@@ -75,6 +80,142 @@ def test_governor_admits_wave_round_robin_across_replicas() -> None:
     assert queue.local_in_flight_by_replica("dest") == {"r1": 1, "r2": 1}
     assert locks.is_table_locked("table-1")
     assert locks.is_table_locked("table-2")
+
+
+def test_governor_round_robins_bounded_candidate_window_by_tenant() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            config={
+                "replicas": ["r1", "r2"],
+                "per_replica_cap": 1,
+                "adaptive_budget": False,
+            },
+        )
+    )
+    jobs = [
+        ("tenant-a-1", "tenant-a"),
+        ("tenant-a-2", "tenant-a"),
+        ("tenant-b-1", "tenant-b"),
+        ("tenant-b-2", "tenant-b"),
+    ]
+    for job_id, tenant_id in jobs:
+        store.add_job(
+            MaintenanceJobRecord(
+                id=job_id,
+                run_id="run-1",
+                table_id=f"table-{job_id}",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                tenant_id=tenant_id,
+            )
+        )
+        queue.enqueue(job_id, "dest")
+
+    result = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+    ).run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    assert result.admitted == 2
+    assert store.get_job("tenant-a-1").status is JobStatus.ADMITTED
+    assert store.get_job("tenant-b-1").status is JobStatus.ADMITTED
+    assert store.get_job("tenant-a-2").status is not JobStatus.ADMITTED
+
+
+def test_governor_defers_expired_durable_intent() -> None:
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            config={"replicas": ["r1"], "adaptive_budget": False},
+        )
+    )
+    job = MaintenanceJobRecord(
+        id="expired-job",
+        run_id="run-1",
+        table_id="table-1",
+        destination_id="dest",
+        mode=Mode.STANDARD,
+        intent_id="intent-1",
+        intent_status=IntentStatus.READY.value,
+        intent_expires_at=datetime(2026, 6, 29, 19, 59, tzinfo=UTC),
+    )
+    store.add_job(job)
+    queue.enqueue(job.id, "dest")
+
+    result = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+    ).run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    assert result.deferred == 1
+    assert store.get_job(job.id).status is JobStatus.DEFERRED
+    assert store.get_job(job.id).error == "Durable intent expired before admission"
+
+
+def test_governor_defers_when_fallback_effect_destination_is_paused(
+    session: Session,
+) -> None:
+    fallback_destination_id = str(uuid4())
+    set_pause_state(
+        session,
+        scope_type="destination",
+        scope_id=fallback_destination_id,
+        paused=True,
+        changed_by="test-admin",
+        reason="fallback engine incident",
+    )
+    session.commit()
+    session_factory = sessionmaker(
+        bind=session.get_bind(),
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "native-dest",
+            engine="native",
+            config={"replicas": ["r1"], "adaptive_budget": False},
+        )
+    )
+    job = MaintenanceJobRecord(
+        id="fallback-job",
+        run_id="run-1",
+        table_id="table-1",
+        destination_id="native-dest",
+        mode=Mode.STANDARD,
+        intent_id="intent-1",
+        intent_status=IntentStatus.READY.value,
+        intent_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        intent_effect_destination_ids=(fallback_destination_id,),
+    )
+    store.add_job(job)
+    queue.enqueue(job.id, "native-dest")
+
+    result = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+        session_factory=session_factory,
+    ).run_wave(now=datetime.now(UTC))
+
+    assert result.deferred == 1
+    assert store.get_job(job.id).status is JobStatus.DEFERRED
+    assert store.get_job(job.id).error == "Maintenance execution is paused"
 
 
 def test_governor_fleet_budget_admits_highest_moop_score_first() -> None:

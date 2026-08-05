@@ -3,6 +3,8 @@
 image:
   repository: cryo
   tag: latest
+  # Production releases should set an immutable sha256 digest; tag remains a readable fallback.
+  digest: ""
   # Always, not IfNotPresent: without a CI pipeline minting immutable per-build tags, "latest"
   # is a mutable tag most self-hosted deployments will reuse across rebuilds. IfNotPresent skips
   # re-pulling whenever a node already has *any* image cached under that tag string (it doesn't
@@ -23,6 +25,10 @@ global:
     CRYO_SCAN_ENGINE: go
   envFromSecret: ""
   envFromConfigMap: ""
+
+observability:
+  prometheusScrape: true
+  metricsPort: 8081
 
 api:
   replicas: 2
@@ -109,6 +115,28 @@ scanner:
     limits:
       cpu: "2"
       memory: 4Gi
+  jobDispatch:
+    # When true (requires native.enabled too -- reuses its image/ServiceAccount/RBAC):
+    # Governor claims ad-hoc scan chunks from the Redis scan queue (DB-stranded
+    # fallback included) and dispatches each as its own sized Kubernetes Job instead
+    # of leaving them to the always-on scannerWorker Deployment. See
+    # cryo/governor/scan_admit.py. Off by default -- validate in dev before prod.
+    enabled: false
+    batchSize: 1
+
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  s3Uri: ""
+  retentionDays: 30
+  serviceAccount: default
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
 
 native:
   # When true: Helm renders Governor + Worker (legacy path) Job/Secret RBAC; Governor
@@ -118,6 +146,7 @@ native:
   image:
     repository: cryo
     tag: latest
+    digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
   # Overridden to the chart-managed SA when enabled=true (see worker/governor templates).
   serviceAccount: default
@@ -148,6 +177,22 @@ native:
   karpenter:
     # When true, install a ConfigMap with recommended NodePool notes (no CRDs).
     installNotes: true
+    # When true, install a REAL dedicated NodePool + EC2NodeClass for native-engine /
+    # scan Jobs (see templates/karpenter-nodepool.yaml) -- requires Karpenter CRDs
+    # already installed cluster-wide, and the subnet/SG/role values below set to
+    # match your cluster (they are cluster-specific; there is no safe cross-cluster
+    # default). Off by default: stand this up once native.enabled/scanner.jobDispatch
+    # are producing real Job traffic to size nodes for, not before.
+    installNodePool: false
+    instanceProfileRole: ""
+    subnetTagKey: "Name"
+    subnetTagValue: ""
+    securityGroupTagKey: ""
+    securityGroupTagValue: ""
+    consolidateAfter: "5m"
+    expireAfter: "720h"
+    limitCpu: "64"
+    limitMemory: "256Gi"
 
 spark:
   # Cryo-managed Spark-on-Kubernetes (cryo.engines.spark.k8s) -- no cloud Spark
@@ -161,6 +206,7 @@ spark:
       # this project's registry with the "web-latest" tag.
       repository: cryo
       tag: spark-latest
+      digest: ""
       pullPolicy: IfNotPresent
     # Overridden to the chart-managed SA when enabled=true (see rbac-spark.yaml).
     serviceAccount: default
@@ -177,6 +223,7 @@ redis:
   image:
     repository: redis
     tag: "7-alpine"
+    digest: ""
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -190,6 +237,7 @@ migration:
   image:
     repository: cryo
     tag: latest
+    digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
 
 web:
@@ -198,6 +246,7 @@ web:
   image:
     repository: cryo-web
     tag: latest
+    digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
   resources:
     requests:

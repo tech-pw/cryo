@@ -138,7 +138,9 @@ def reconcile_stale_running_jobs(
                 # "found an open step": skip reaping, matching the other checks' conservative
                 # default in this loop.
                 logger.warning(
-                    "Skipping stale reap for job %s: step ledger check failed", job.id, exc_info=True
+                    "Skipping stale reap for job %s: step ledger check failed",
+                    job.id,
+                    exc_info=True,
                 )
                 continue
             if has_started_step:

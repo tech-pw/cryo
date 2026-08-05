@@ -30,9 +30,7 @@ class ProtectedSnapshotRepository:
         return list(self._session.scalars(stmt).all())
 
     def list_snapshot_ids(self, table_id: uuid.UUID) -> set[int]:
-        stmt = select(ProtectedSnapshot.snapshot_id).where(
-            ProtectedSnapshot.table_id == table_id
-        )
+        stmt = select(ProtectedSnapshot.snapshot_id).where(ProtectedSnapshot.table_id == table_id)
         return {row[0] for row in self._session.execute(stmt).all()}
 
     def protect(

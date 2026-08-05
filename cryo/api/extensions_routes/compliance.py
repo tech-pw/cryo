@@ -267,9 +267,7 @@ def list_protected_snapshots(
             ProtectedSnapshotEntry(
                 snapshot_id=row.snapshot_id,
                 label=row.label,
-                protected_at=row.protected_at.isoformat()
-                if row.protected_at is not None
-                else "",
+                protected_at=row.protected_at.isoformat() if row.protected_at is not None else "",
             )
             for row in rows
         ],

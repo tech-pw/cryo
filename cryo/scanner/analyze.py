@@ -182,6 +182,7 @@ def analyze_table(
     file_formats: set[str] = set()
     schema = _call_or_attr(table_obj, "schema", default=None)
     quality_accum = ColumnQualityAccumulator(schema)
+    wair_file_samples: dict[str, dict[str, Any]] = {}
 
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
     manifest_read_errors: list[str] = []
@@ -231,6 +232,12 @@ def analyze_table(
         if file_size < HEALTH_SMALL_FILE_BYTES:
             health_small_files += 1
         quality_accum.add(data_file)
+        if settings.scanner_wair_file_sample_size:
+            sample = quality_accum.file_bound_sample(data_file)
+            if sample is not None:
+                wair_file_samples[sample["file_path"]] = sample
+                if len(wair_file_samples) > settings.scanner_wair_file_sample_size:
+                    del wair_file_samples[max(wair_file_samples)]
 
         values = data_file_partition_values(data_file, fields)
         key = partition_key(values)
@@ -427,6 +434,8 @@ def analyze_table(
         "location": table_location(table_obj),
         "iceberg_properties": props["iceberg_properties"],
         "gc_enabled": props["gc_enabled"],
+        "wair_file_sample": [wair_file_samples[path] for path in sorted(wair_file_samples)],
+        "wair_file_sample_complete": len(wair_file_samples) == total_files,
     }
     for signal_key in (
         "format_version",

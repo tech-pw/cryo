@@ -54,6 +54,8 @@ class SchedulerService:
         self._last_ml_drift_check: datetime | None = None
         self._last_telemetry_ingest: datetime | None = None
         self._last_query_log_purge: datetime | None = None
+        self._last_audit_log_prune: datetime | None = None
+        self._last_rollout_safety_check: datetime | None = None
         self._last_silent_loss_sweep: datetime | None = None
         self._silent_loss_cursor: Any | None = None
 
@@ -68,6 +70,8 @@ class SchedulerService:
         self._maybe_check_ml_drift(current)
         self._maybe_ingest_telemetry(current)
         self._maybe_purge_query_logs(current)
+        self._maybe_prune_audit_logs(current)
+        self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -399,6 +403,74 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Query log purge tick failed: %s", exc)
+
+    def _maybe_prune_audit_logs(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        if self._last_audit_log_prune is not None:
+            if current - self._last_audit_log_prune < timedelta(days=1):
+                return
+
+        try:
+            from cryo.config import get_settings
+            from cryo.db.repositories.audit_retention import prune_audit_logs
+            from cryo.observability.metrics import (
+                audit_retention_backlog,
+                audit_retention_deleted_total,
+            )
+
+            settings = get_settings()
+            with SessionLocal() as session:
+                result = prune_audit_logs(
+                    session,
+                    settings.audit_log_retention_days,
+                    now=current,
+                    batch_size=settings.audit_log_prune_batch_size,
+                    max_rows=settings.audit_log_prune_max_rows_per_tick,
+                )
+            audit_retention_deleted_total.inc(result.deleted)
+            audit_retention_backlog.set(result.remaining)
+
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Audit retention tick: %s rows deleted, %s expired rows remain",
+                result.deleted,
+                result.remaining,
+            )
+            self._last_audit_log_prune = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Audit retention tick failed: %s", exc)
+
+    def _maybe_check_rollout_safety(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        if self._last_rollout_safety_check is not None:
+            if current - self._last_rollout_safety_check < timedelta(minutes=1):
+                return
+
+        try:
+            from cryo.rollout.safety import run_rollout_safety_tick
+
+            with SessionLocal() as session:
+                result = run_rollout_safety_tick(session, now=current)
+
+            import logging
+
+            if result.halted or result.invalid:
+                logging.getLogger(__name__).warning(
+                    "Rollout safety tick: evaluated=%s halted=%s invalid=%s",
+                    result.evaluated,
+                    result.halted,
+                    result.invalid,
+                )
+            self._last_rollout_safety_check = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Rollout safety tick failed: %s", exc)
 
     def _maybe_silent_data_loss_sweep(self, current: datetime) -> None:
         """Periodically run the silent-data-loss detector for a rotating slice of the fleet.

@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	defaultSmallFileMB         = 89.6
+	defaultSmallFileMB          = 89.6
 	defaultHealthSmallFileBytes = 8 * 1024 * 1024
-	defaultMaxPartitions       = 5000
-	mb                         = 1024 * 1024
+	defaultMaxPartitions        = 5000
+	defaultMaxFileSamples       = 1000
+	mb                          = 1024 * 1024
 )
 
 // FileRecord is a synthetic manifest entry for unit tests / parity fixtures.
@@ -59,6 +60,7 @@ type Options struct {
 	SmallFileMB          float64
 	HealthSmallFileBytes int64
 	MaxPartitions        int
+	MaxFileSamples       int
 }
 
 func (o Options) withDefaults() Options {
@@ -70,6 +72,11 @@ func (o Options) withDefaults() Options {
 	}
 	if o.MaxPartitions <= 0 {
 		o.MaxPartitions = defaultMaxPartitions
+	}
+	if o.MaxFileSamples < 0 {
+		o.MaxFileSamples = 0
+	} else if o.MaxFileSamples == 0 {
+		o.MaxFileSamples = defaultMaxFileSamples
 	}
 	return o
 }
@@ -91,6 +98,7 @@ func Run(ctx context.Context, req *protocol.ScanStatsRequest) protocol.ScanStats
 		SmallFileMB:          req.SmallFileMB,
 		HealthSmallFileBytes: req.HealthSmallFileBytes,
 		MaxPartitions:        req.MaxPartitions,
+		MaxFileSamples:       req.MaxFileSamples,
 	})
 }
 
@@ -110,6 +118,8 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 
 	fields := partitionFields(tbl)
 	acc := newAccumulator(fields, opts)
+	acc.columnDefs = columnDefsFromSchema(tbl.Schema())
+	acc.columnTypes = columnTypesFromSchema(tbl.Schema())
 
 	fs, err := tbl.FS(ctx)
 	if err != nil {
@@ -154,6 +164,8 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 	resp.WriteDistributionMode = props.writeDistributionMode
 	resp.HasSortOrder = props.hasSortOrder
 	resp.TargetFileSizeBytes = props.targetFileSizeBytes
+	resp.IcebergProperties = props.icebergProperties
+	resp.GCEnabled = props.gcEnabled
 	resp.FormatVersion = formatVersion
 	return resp
 }
@@ -197,11 +209,42 @@ type propInfo struct {
 	writeDistributionMode *string
 	hasSortOrder          *bool
 	targetFileSizeBytes   *int64
+	icebergProperties     map[string]string
+	gcEnabled             *bool
+}
+
+var trackedIcebergPropertyKeys = []string{
+	"write.target-file-size-bytes",
+	"write.distribution-mode",
+	"write.sort-order",
+	"write.metadata.delete-after-commit.enabled",
+	"write.metadata.previous-versions-max",
+	"commit.retry.num-retries",
+	"commit.retry.min-wait-ms",
+	"commit.retry.max-wait-ms",
+	"write.parquet.compression-codec",
+	"write.delete-mode",
+	"write.update-mode",
+	"write.merge-mode",
+	"history.expire.max-snapshot-age-ms",
+	"history.expire.min-snapshots-to-keep",
+	"gc.enabled",
+	"format-version",
 }
 
 func tableProps(tbl *table.Table) propInfo {
 	props := tbl.Properties()
-	out := propInfo{}
+	out := propInfo{icebergProperties: make(map[string]string)}
+	for _, key := range trackedIcebergPropertyKeys {
+		if value, ok := props[key]; ok {
+			out.icebergProperties[key] = value
+		}
+	}
+	for key, value := range props {
+		if strings.HasPrefix(key, "write.parquet.bloom-filter-enabled.column.") {
+			out.icebergProperties[key] = value
+		}
+	}
 	if v, ok := props["write.distribution-mode"]; ok && v != "" {
 		out.writeDistributionMode = &v
 	}
@@ -217,7 +260,23 @@ func tableProps(tbl *table.Table) propInfo {
 			out.targetFileSizeBytes = &n
 		}
 	}
+	if v, ok := props["gc.enabled"]; ok {
+		out.gcEnabled = parseBoolProperty(v)
+	}
 	return out
+}
+
+func parseBoolProperty(value string) *bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		parsed := true
+		return &parsed
+	case "false", "0", "no":
+		parsed := false
+		return &parsed
+	default:
+		return nil
+	}
 }
 
 func detectFormatVersion(tbl *table.Table) *int {
@@ -263,6 +322,49 @@ func partitionFields(tbl *table.Table) []protocol.ScanStatsPartitionField {
 	return out
 }
 
+// columnDefsFromSchema resolves every column's name/type by field ID from the table's
+// full schema, not just its partition fields. Without this, addColumnStats' per-column
+// accumulator (columns[id]) has no way to name/type a column on the live scan path --
+// only AggregateFromFixture (Python<->Go parity tests) ever populated columnDefs, via a
+// column list handed in by the test itself. Live scans looked up a.columnDefs[id], always
+// missed, and fell back to name=strconv.Itoa(id) ("1", "10", "11"...) and colType="" --
+// confirmed live, 2026-07-29: every column on a Go-engine-scanned table rendered its raw
+// Iceberg field ID as the name and "unknown" as the type in the Structure tab, because
+// nothing upstream of addColumnStats ever had the schema to resolve either from.
+func columnDefsFromSchema(schema *iceberg.Schema) map[int]protocol.AggregateFixtureColumn {
+	defs := map[int]protocol.AggregateFixtureColumn{}
+	if schema == nil {
+		return defs
+	}
+	fieldsIt, err := schema.FlatFields()
+	if err != nil {
+		return defs
+	}
+	for field := range fieldsIt {
+		defs[field.ID] = protocol.AggregateFixtureColumn{
+			FieldID:    field.ID,
+			ColumnName: field.Name,
+			ColumnType: field.Type.String(),
+		}
+	}
+	return defs
+}
+
+func columnTypesFromSchema(schema *iceberg.Schema) map[int]iceberg.Type {
+	types := map[int]iceberg.Type{}
+	if schema == nil {
+		return types
+	}
+	fieldsIt, err := schema.FlatFields()
+	if err != nil {
+		return types
+	}
+	for field := range fieldsIt {
+		types[field.ID] = field.Type
+	}
+	return types
+}
+
 func transformParam(transformRaw string) *int {
 	var digits strings.Builder
 	found := false
@@ -285,11 +387,12 @@ func transformParam(transformRaw string) *int {
 }
 
 type partAccum struct {
-	values    map[string]any
-	specID    *int32
-	files     int
-	small     int
-	sizeBytes int64
+	values      map[string]any
+	specID      *int32
+	files       int
+	small       int
+	sizeBytes   int64
+	deleteFiles int
 }
 
 type columnAccum struct {
@@ -317,28 +420,38 @@ type accumulator struct {
 	manifestErrors      []string
 	columnDefs          map[int]protocol.AggregateFixtureColumn
 	columns             map[int]*columnAccum
+	columnTypes         map[int]iceberg.Type
+	fileSamples         map[string]protocol.ScanStatsFileBoundSample
 }
 
 func newAccumulator(fields []protocol.ScanStatsPartitionField, opts Options) *accumulator {
 	return &accumulator{
-		fields:     fields,
-		opts:       opts,
-		partitions: make(map[string]*partAccum),
+		fields:      fields,
+		opts:        opts,
+		partitions:  make(map[string]*partAccum),
 		fileFormats: make(map[string]struct{}),
-		columnDefs: make(map[int]protocol.AggregateFixtureColumn),
-		columns:    make(map[int]*columnAccum),
+		columnDefs:  make(map[int]protocol.AggregateFixtureColumn),
+		columns:     make(map[int]*columnAccum),
+		columnTypes: make(map[int]iceberg.Type),
+		fileSamples: make(map[string]protocol.ScanStatsFileBoundSample),
 	}
 }
 
 func (a *accumulator) addRecord(rec FileRecord) {
-	a.totalFiles++
-	a.totalSizeBytes += rec.SizeBytes
-	a.totalRecords += rec.RecordCount
 	if rec.FileFormat != "" {
 		a.fileFormats[strings.ToUpper(rec.FileFormat)] = struct{}{}
 	}
 	kind := deleteKind(rec.Content)
 	if kind != "" {
+		// Delete files (position/equality) are tracked here, in deleteFiles/deleteBytes/
+		// *DeleteFiles -- they must NOT also fall into totalFiles/totalSizeBytes/totalRecords
+		// or the per-partition files/small/sizeBytes tallies below. Regression, 2026-07-28:
+		// a table with 34,176 position-delete files (each a few KB, so always "small") had
+		// every one of them double-counted as a small DATA file too, inflating total_files,
+		// small_files_count, files_per_partition, small_files_in_partition_count, and
+		// partition_skew_ratio -- the planner then picked partitions for OPTIMIZE based on
+		// delete-file counts, not actual small-data-file counts, and rewrite_data_files
+		// (which doesn't touch delete files directly) predictably moved nothing.
 		a.deleteFiles++
 		a.deleteBytes += rec.SizeBytes
 		if kind == "equality" {
@@ -346,13 +459,35 @@ func (a *accumulator) addRecord(rec FileRecord) {
 		} else {
 			a.positionDeleteFiles++
 		}
+		// Still attribute the delete file to its partition's deleteFiles count (a distinct
+		// counter from files/small, which stay data-file-only per the fix above). Without
+		// this, convert_deletes' partition-skew scoping (planner.py's
+		// _skewed_partition_predicates) has no way to find partitions where delete files are
+		// concentrated but data files are already well-compacted -- confirmed live,
+		// 2026-07-28: a table's 34,176 position-delete files sat in 4 partitions that, after
+		// an earlier optimize pass, had only 5-7 data files each and so no longer looked
+		// "skewed" by data-file count, silently starving them of convert_deletes forever.
+		values := map[string]any{}
+		for k, v := range rec.Partition {
+			values[k] = jsonable(v)
+		}
+		key := partitionKey(values)
+		acc := a.partitions[key]
+		if acc == nil {
+			specID := rec.SpecID
+			acc = &partAccum{values: values, specID: &specID}
+			a.partitions[key] = acc
+		}
+		acc.deleteFiles++
+		return
 	}
+	a.totalFiles++
+	a.totalSizeBytes += rec.SizeBytes
+	a.totalRecords += rec.RecordCount
 	if rec.SizeBytes < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
 	}
-	if kind == "" {
-		a.addColumnStats(rec.NullValueCounts, rec.ValueCounts)
-	}
+	a.addColumnStats(rec.NullValueCounts, rec.ValueCounts)
 	values := map[string]any{}
 	for k, v := range rec.Partition {
 		values[k] = jsonable(v)
@@ -404,14 +539,20 @@ func (a *accumulator) addColumnStats(nulls, vals map[int]int64) {
 
 func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanStatsPartitionField) {
 	size := df.FileSizeBytes()
-	a.totalFiles++
-	a.totalSizeBytes += size
-	a.totalRecords += df.Count()
 	if fmt := string(df.FileFormat()); fmt != "" {
 		a.fileFormats[strings.ToUpper(fmt)] = struct{}{}
 	}
 	kind := deleteKindFromContent(df.ContentType())
 	if kind != "" {
+		// Delete files (position/equality) are tracked here, in deleteFiles/deleteBytes/
+		// *DeleteFiles -- they must NOT also fall into totalFiles/totalSizeBytes/totalRecords
+		// or the per-partition files/small/sizeBytes tallies below. Regression, 2026-07-28:
+		// a table with 34,176 position-delete files (each a few KB, so always "small") had
+		// every one of them double-counted as a small DATA file too, inflating total_files,
+		// small_files_count, files_per_partition, small_files_in_partition_count, and
+		// partition_skew_ratio -- the planner then picked partitions for OPTIMIZE based on
+		// delete-file counts, not actual small-data-file counts, and rewrite_data_files
+		// (which doesn't touch delete files directly) predictably moved nothing.
 		a.deleteFiles++
 		a.deleteBytes += size
 		if kind == "equality" {
@@ -419,7 +560,32 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 		} else {
 			a.positionDeleteFiles++
 		}
+		// Still attribute the delete file to its partition's deleteFiles count -- see the
+		// matching comment in addRecord above for why convert_deletes' skew scoping needs
+		// this. readDataFileMaps recovers from the same nil-partition-value panic as the
+		// data-file path; only `values` is needed here, nulls/vals are discarded since
+		// column stats never apply to delete-kind entries.
+		_, _, values, note := readDataFileMaps(
+			df.NullValueCounts,
+			df.ValueCounts,
+			func() map[string]any { return partitionValues(df, fields) },
+		)
+		if note != "" {
+			a.noteManifestError(note)
+		}
+		key := partitionKey(values)
+		acc := a.partitions[key]
+		if acc == nil {
+			specID := df.SpecID()
+			acc = &partAccum{values: values, specID: &specID}
+			a.partitions[key] = acc
+		}
+		acc.deleteFiles++
+		return
 	}
+	a.totalFiles++
+	a.totalSizeBytes += size
+	a.totalRecords += df.Count()
 	if size < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
 	}
@@ -434,9 +600,8 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	if note != "" {
 		a.noteManifestError(note)
 	}
-	if kind == "" {
-		a.addColumnStats(nulls, vals)
-	}
+	a.addColumnStats(nulls, vals)
+	a.addFileSample(df)
 	key := partitionKey(values)
 	acc := a.partitions[key]
 	if acc == nil {
@@ -449,6 +614,57 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	if float64(size) < a.opts.SmallFileMB*float64(mb) {
 		acc.small++
 	}
+}
+
+func (a *accumulator) addFileSample(df iceberg.DataFile) {
+	if a.opts.MaxFileSamples <= 0 || df.FilePath() == "" {
+		return
+	}
+	lower := decodeBounds(df.LowerBoundValues(), a.columnDefs, a.columnTypes)
+	upper := decodeBounds(df.UpperBoundValues(), a.columnDefs, a.columnTypes)
+	if len(lower) == 0 || len(upper) == 0 {
+		return
+	}
+	a.fileSamples[df.FilePath()] = protocol.ScanStatsFileBoundSample{
+		FilePath:    df.FilePath(),
+		SizeBytes:   df.FileSizeBytes(),
+		LowerBounds: lower,
+		UpperBounds: upper,
+	}
+	if len(a.fileSamples) <= a.opts.MaxFileSamples {
+		return
+	}
+	var largest string
+	for path := range a.fileSamples {
+		if path > largest {
+			largest = path
+		}
+	}
+	delete(a.fileSamples, largest)
+}
+
+func decodeBounds(
+	bounds map[int][]byte,
+	defs map[int]protocol.AggregateFixtureColumn,
+	types map[int]iceberg.Type,
+) map[string]any {
+	result := map[string]any{}
+	for id, encoded := range bounds {
+		typ, ok := types[id]
+		if !ok {
+			continue
+		}
+		literal, err := iceberg.LiteralFromBytes(typ, encoded)
+		if err != nil {
+			continue
+		}
+		name := strconv.Itoa(id)
+		if def, found := defs[id]; found {
+			name = def.ColumnName
+		}
+		result[name] = jsonable(literal.Any())
+	}
+	return result
 }
 
 // readDataFileMaps loads column count maps and partition values, recovering from
@@ -535,6 +751,7 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 			Files:           acc.files,
 			Small:           acc.small,
 			SizeBytes:       acc.sizeBytes,
+			DeleteFiles:     acc.deleteFiles,
 		})
 	}
 	sort.Slice(parts, func(i, j int) bool {
@@ -611,33 +828,42 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 	}
 
 	resp := protocol.ScanStatsResponse{
-		OK:                  true,
-		SchemaName:          schemaName,
-		TableName:           tableName,
-		TotalFiles:          a.totalFiles,
-		TotalRecords:        a.totalRecords,
-		TotalSizeBytes:      a.totalSizeBytes,
-		HealthSmallFiles:    a.healthSmallFiles,
-		SmallFilesCount:     smallFilesCount,
-		DeleteFiles:         a.deleteFiles,
-		EqualityDeleteFiles: a.equalityDeleteFiles,
-		PositionDeleteFiles: a.positionDeleteFiles,
-		DeleteBytes:         a.deleteBytes,
-		ManifestCount:       a.manifestCount,
-		ManifestTotalBytes:    a.manifestTotalBytes,
-		TotalPartitions:       totalPartitions,
-		MaxFilesPerPartition:  maxFiles,
-		AvgFilesPerPartition:  avgFiles,
-		PartitionSkewRatio:    skew,
-		FileFormats:           formats,
-		PartitionFields:     a.fields,
-		Partitions:          parts,
-		ManifestReadErrors:  a.manifestErrors,
-		ColumnQuality:       columnQuality,
-		AvgNullRate:         avgNull,
-		MaxNullRate:         maxNull,
-		WorstNullColumn:     worst,
+		OK:                   true,
+		SchemaName:           schemaName,
+		TableName:            tableName,
+		TotalFiles:           a.totalFiles,
+		TotalRecords:         a.totalRecords,
+		TotalSizeBytes:       a.totalSizeBytes,
+		HealthSmallFiles:     a.healthSmallFiles,
+		SmallFilesCount:      smallFilesCount,
+		DeleteFiles:          a.deleteFiles,
+		EqualityDeleteFiles:  a.equalityDeleteFiles,
+		PositionDeleteFiles:  a.positionDeleteFiles,
+		DeleteBytes:          a.deleteBytes,
+		ManifestCount:        a.manifestCount,
+		ManifestTotalBytes:   a.manifestTotalBytes,
+		TotalPartitions:      totalPartitions,
+		MaxFilesPerPartition: maxFiles,
+		AvgFilesPerPartition: avgFiles,
+		PartitionSkewRatio:   skew,
+		FileFormats:          formats,
+		PartitionFields:      a.fields,
+		Partitions:           parts,
+		ManifestReadErrors:   a.manifestErrors,
+		ColumnQuality:        columnQuality,
+		AvgNullRate:          avgNull,
+		MaxNullRate:          maxNull,
+		WorstNullColumn:      worst,
 	}
+	samplePaths := make([]string, 0, len(a.fileSamples))
+	for path := range a.fileSamples {
+		samplePaths = append(samplePaths, path)
+	}
+	sort.Strings(samplePaths)
+	for _, path := range samplePaths {
+		resp.WairFileSample = append(resp.WairFileSample, a.fileSamples[path])
+	}
+	resp.WairFileSampleComplete = int64(len(a.fileSamples)) == a.totalFiles
 	if meta != nil {
 		resp.TotalSnapshots = meta.totalSnapshots
 		resp.FirstSnapshotAt = meta.firstSnapshotAt
