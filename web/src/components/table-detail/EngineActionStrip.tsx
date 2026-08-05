@@ -4,6 +4,7 @@ import { ConfirmAction } from "../confirm";
 import { Button } from "../ui/button";
 import { Select } from "../ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { formatEngineLabel } from "../../lib/engines";
 import { provenanceLabel } from "./helpers";
 
 interface EngineActionStripProps {
@@ -20,6 +21,7 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
   const {
     row,
     effectivePreset,
+    effectiveDestination,
     assignPresetOptions,
     assign,
     unassign,
@@ -54,6 +56,9 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
         <span className="text-[11px] text-muted-foreground">
           Active: <strong>{effectivePreset.data?.preset_name}</strong> (
           {provenanceLabel(effectivePreset.data?.provenance)})
+          {effectiveDestination ? (
+            <> · {effectiveDestination.name} ({formatEngineLabel(effectiveDestination.engine)})</>
+          ) : null}
         </span>
       ) : null}
 

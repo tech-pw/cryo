@@ -141,6 +141,8 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
       empty = all namespaces; scanner + scheduler + ad-hoc runs honor the filter.
 - [x] **UI/UX polish** per `research-and-roadmap.md` Part 6: dark theme toggle, always-dark sidebar,
       IBM Plex typography, focus rings, reduced-motion, log-line animation.
+- [x] **Health freshness drill-down**: exclusive snapshot-age and failed/corrupt buckets, accessible
+      horizontal chart/table, URL-backed Catalog lists, and complete server-filtered CSV export.
 - [x] WebSocket endpoint `/ws/runs/{id}` streams run snapshots plus Redis-backed live log events.
 - [x] **Log streaming** for scan runs and maintenance runs — live log tail with replay and polling
       fallback; wired into `/scans` and `/runs` consoles/drawers.

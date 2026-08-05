@@ -31,6 +31,12 @@ vi.mock("../api/client", () => ({
       { grade: "B", count: 1 },
       { grade: "D", count: 1 }
     ],
+    freshness_distribution: [
+      { key: "within_24h", label: "Updated in last 24 hours", count: 1 },
+      { key: "3_7d", label: "Not updated 3-7 days", count: 1 },
+      { key: "failed", label: "Failed / corrupt tables", count: 0 }
+    ],
+    freshness_as_of: "2026-08-04T12:00:00Z",
     top_offenders: [],
     cost_by_schema: [],
     drift: []
@@ -114,5 +120,33 @@ describe("DatalakeHealth page", () => {
     // "Tracked tables" (top grid) must not be repeated as its own tile inside the "Health" grid.
     expect(screen.getAllByText("Tracked tables")).toHaveLength(1);
     expect(screen.getAllByText("Tables at grade D/F")).toHaveLength(1);
+  });
+
+  it("renders freshness counts with keyboard-operable Catalog drill-downs", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("Table freshness and staleness")).toBeInTheDocument();
+    const staleLink = screen.getByRole("link", { name: "Not updated 3-7 days" });
+    expect(staleLink).toHaveAttribute(
+      "href",
+      "/catalogs?freshness=3_7d&freshnessAsOf=2026-08-04T12%3A00%3A00Z"
+    );
+    expect(screen.getByText(/mutually exclusive snapshot freshness bucket/i)).toBeInTheDocument();
+    const chartBarLink = screen.getByRole("link", {
+      name: "Not updated 3-7 days: 1 table. Open matching tables."
+    });
+    expect(chartBarLink).toHaveAttribute(
+      "href",
+      "/catalogs?freshness=3_7d&freshnessAsOf=2026-08-04T12%3A00%3A00Z"
+    );
+    chartBarLink.focus();
+    expect(chartBarLink).toHaveFocus();
   });
 });

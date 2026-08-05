@@ -88,6 +88,7 @@ def apply_commit_delta(
 
     stats.snapshot_watermark = delta.snapshot_id
     stats.scan_at = observed_now
+    stats.last_snapshot_committed_at = committed_at
     stats.total_files = max(
         0, _safe_int(stats.total_files) + delta.files_added - delta.files_removed
     )
@@ -157,5 +158,6 @@ def apply_commit_delta(
     )
     raw["smart_maintenance"] = smart_payload
     raw["commit_event_history"] = history
+    raw["last_snapshot_committed_at"] = committed_at.isoformat()
     stats.raw = raw
     return True
