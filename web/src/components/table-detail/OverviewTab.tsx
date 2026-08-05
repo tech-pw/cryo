@@ -66,11 +66,7 @@ interface OverviewTabProps {
   statsRaw: Record<string, unknown>;
   reclaimableBytes: number;
   savingsUsd: number;
-  presetOptions: { label: string; value: string }[];
-  presetsLoading: boolean;
   effectivePresetId?: string;
-  onAssignPreset: (presetId: string) => void;
-  assignPending: boolean;
   onRun: () => void;
   runPending: boolean;
   queuedMaintenanceRunId?: string | null;
@@ -104,11 +100,7 @@ export const OverviewTab = (props: OverviewTabProps) => {
     statsRaw,
     reclaimableBytes,
     savingsUsd,
-    presetOptions,
-    presetsLoading,
     effectivePresetId,
-    onAssignPreset,
-    assignPending,
     onRun,
     runPending,
     queuedMaintenanceRunId,
@@ -330,55 +322,54 @@ export const OverviewTab = (props: OverviewTabProps) => {
 
   return (
     <div className="td-tab-content">
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <HealthGauge
-          score={score}
-          trendDirection={trendDirection}
-          trendLabel={trendLabel}
-          daysToCritical={healthTrends?.days_to_critical}
-        />
-        {rowExists ? (
-          <Alert variant={alertVariant} title={verdict.message} className="flex-1 text-xs" />
-        ) : null}
+      <div className="td-overview-summary">
+        <section className="td-overview-priority" aria-label="Priority actions">
+          <ActNowSection
+            signals={tableSignals}
+            signalsLoading={tableSignalsLoading}
+            signalsError={tableSignalsError}
+            costView={costView}
+            benefitScores={benefitScores}
+            stats={stats ?? undefined}
+            statsRaw={statsRaw}
+            reclaimableBytes={reclaimableBytes}
+            savingsUsd={savingsUsd}
+            effectivePresetId={effectivePresetId}
+            onRun={onRun}
+            runPending={runPending}
+            queuedMaintenanceRunId={queuedMaintenanceRunId}
+            lastRunSkipNotes={lastRunSkipNotes}
+            onOpenRun={onOpenRun}
+            onPreview={onPreview}
+            onSchedule={onSchedule}
+            schedulePending={schedulePending}
+            tableLabel={tableLabel}
+          />
+        </section>
+        <aside className="td-health-summary" aria-label="Current health">
+          <div>
+            <h2 className="td-chart-card-title">Current health</h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Latest scan and 30-day direction</p>
+          </div>
+          <HealthGauge
+            score={score}
+            trendDirection={trendDirection}
+            trendLabel={trendLabel}
+            daysToCritical={healthTrends?.days_to_critical}
+          />
+          {rowExists ? <Alert variant={alertVariant} title={verdict.message} className="w-full text-xs" /> : null}
+        </aside>
       </div>
-
-      <ActNowSection
-        signals={tableSignals}
-        signalsLoading={tableSignalsLoading}
-        signalsError={tableSignalsError}
-        costView={costView}
-        benefitScores={benefitScores}
-        stats={stats ?? undefined}
-        statsRaw={statsRaw}
-        reclaimableBytes={reclaimableBytes}
-        savingsUsd={savingsUsd}
-        presetOptions={presetOptions}
-        presetsLoading={presetsLoading}
-        effectivePresetId={effectivePresetId}
-        onAssignPreset={onAssignPreset}
-        assignPending={assignPending}
-        onRun={onRun}
-        runPending={runPending}
-        queuedMaintenanceRunId={queuedMaintenanceRunId}
-        lastRunSkipNotes={lastRunSkipNotes}
-        onOpenRun={onOpenRun}
-        onPreview={onPreview}
-        onSchedule={onSchedule}
-        schedulePending={schedulePending}
-        tableLabel={tableLabel}
-      />
 
       <div style={{ marginBottom: 16 }} />
 
       <div>
-        <div
+        <button
+          type="button"
           className="td-diagnostics-toggle"
-          role="button"
-          tabIndex={0}
           onClick={() => setDiagnosticsOpen((v) => !v)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") setDiagnosticsOpen((v) => !v);
-          }}
+          aria-expanded={diagnosticsOpen}
+          aria-controls="table-diagnostics"
         >
           {diagnosticsOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
           <span className="td-chart-card-title">Diagnostics</span>
@@ -388,9 +379,9 @@ export const OverviewTab = (props: OverviewTabProps) => {
               {triggered.length} triggered
             </Badge>
           ) : null}
-        </div>
+        </button>
         {diagnosticsOpen ? (
-          <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,14fr)_minmax(0,10fr)]">
+          <div id="table-diagnostics" className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,14fr)_minmax(0,10fr)]">
             <div className="flex flex-col gap-4">
               <ChartCard
                 title="Health Trends"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import uuid
@@ -14,6 +16,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -166,6 +169,7 @@ SORT_FIELDS = {
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
     "consecutive_scan_failures": Table.consecutive_scan_failures,
+    "last_snapshot_committed_at": TableStats.last_snapshot_committed_at,
     "total_size_gb": TableStats.total_size_gb,
     "small_files_count": TableStats.small_files_count,
     "total_files": TableStats.total_files,
@@ -933,6 +937,94 @@ def list_tables(
         offset=actual_offset,
         cursor=next_cursor,
         has_more=has_more,
+    )
+
+
+@router.get(
+    "/tables/export.csv",
+    response_class=Response,
+    dependencies=[Depends(require_viewer)],
+)
+def export_tables_csv(
+    session: SessionDep,
+    filter: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
+) -> Response:
+    predicate = _parse_filter(filter)
+    tenant_id = require_tenant(session)
+    stmt = (
+        select(
+            Source.name,
+            Table.schema_name,
+            Table.table_name,
+            Table.owner_email,
+            Table.consecutive_scan_failures,
+            Table.last_scan_error,
+            Table.last_scan_error_at,
+            TableStats.last_snapshot_committed_at,
+            TableStats.scan_at,
+            TableStats.grade,
+            TableStats.overall_score,
+            TableStats.total_size_gb,
+            TableStats.small_files_count,
+            TableStats.total_files,
+        )
+        .select_from(Table)
+        .join(Source, Source.id == Table.source_id)
+        .outerjoin(TableStats)
+        .outerjoin(TableCost)
+        .outerjoin(TableAssignment)
+    )
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    stmt = stmt.order_by(*_sort_clauses(sort))
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "source",
+            "qualified_table",
+            "schema",
+            "table",
+            "last_snapshot_committed_at",
+            "last_scanned_at",
+            "consecutive_scan_failures",
+            "last_scan_error",
+            "last_scan_error_at",
+            "grade",
+            "health_score",
+            "size_gb",
+            "small_files",
+            "total_files",
+            "owner",
+        ]
+    )
+    for row in session.execute(stmt):
+        writer.writerow(
+            [
+                row[0],
+                f"{row[1]}.{row[2]}",
+                row[1],
+                row[2],
+                row[7].isoformat() if row[7] else "",
+                row[8].isoformat() if row[8] else "",
+                row[4],
+                row[5] or "",
+                row[6].isoformat() if row[6] else "",
+                row[9] or "",
+                row[10] if row[10] is not None else "",
+                row[11] if row[11] is not None else "",
+                row[12] if row[12] is not None else "",
+                row[13] if row[13] is not None else "",
+                row[3] or "",
+            ]
+        )
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="cryo-tables.csv"'},
     )
 
 

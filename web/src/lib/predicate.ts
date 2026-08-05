@@ -1,3 +1,10 @@
+import type { FreshnessBucketKey } from "../api/types";
+import {
+  BROKEN_TABLE_FAILURE_THRESHOLD,
+  FRESHNESS_LABELS,
+  freshnessAgeBoundsDays
+} from "./freshness";
+
 export type PredicateOp = "=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "like" | "glob";
 
 export interface PredicateLeaf {
@@ -30,6 +37,8 @@ export interface TableFilterState {
   minMonthlySavings?: number | null;
   minReclaimableGb?: number | null;
   costPrecision?: CostPrecision | null;
+  freshnessBucket?: FreshnessBucketKey | null;
+  freshnessAsOf?: string | null;
   activeOnly?: boolean;
 }
 
@@ -86,8 +95,38 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
     typeof filters.minReclaimableGb === "number" && Number.isFinite(filters.minReclaimableGb)
       ? leaf("reclaimable_bytes", ">=", Math.round(filters.minReclaimableGb * 1024 ** 3))
       : null,
-    filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null
+    filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null,
+    freshnessPredicate(filters.freshnessBucket, filters.freshnessAsOf)
   ]);
+
+const freshnessPredicate = (
+  bucket: FreshnessBucketKey | null | undefined,
+  asOfValue: string | null | undefined
+): Predicate | null => {
+  if (!bucket) return null;
+  if (bucket === "failed") {
+    return leaf("consecutive_scan_failures", ">=", BROKEN_TABLE_FAILURE_THRESHOLD);
+  }
+  const healthy = leaf("consecutive_scan_failures", "<", BROKEN_TABLE_FAILURE_THRESHOLD);
+  if (bucket === "unknown") {
+    return all([healthy, leaf("last_snapshot_committed_at", "=", null)]);
+  }
+  const asOf = new Date(asOfValue || Date.now());
+  if (Number.isNaN(asOf.getTime())) return null;
+  const bounds = freshnessAgeBoundsDays(bucket);
+  if (!bounds) return null;
+  const timestamp = (days: number) =>
+    new Date(asOf.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  return all([
+    healthy,
+    typeof bounds.min === "number"
+      ? leaf("last_snapshot_committed_at", "<=", timestamp(bounds.min))
+      : null,
+    typeof bounds.max === "number"
+      ? leaf("last_snapshot_committed_at", ">", timestamp(bounds.max))
+      : null
+  ]);
+};
 
 const presetFilterPredicate = (presetFilter: string[] | undefined): Predicate | null => {
   if (!presetFilter?.length) return null;
@@ -141,7 +180,8 @@ export const predicateSummary = (
       : null,
     filters.costPrecision
       ? `Cost: ${filters.costPrecision === "heuristic" ? "estimated" : filters.costPrecision.replace("_", " ")}`
-      : null
+      : null,
+    filters.freshnessBucket ? `Freshness: ${FRESHNESS_LABELS[filters.freshnessBucket]}` : null
   ].filter(Boolean);
 
   if (parts.length) {

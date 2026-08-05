@@ -141,6 +141,7 @@ export interface TableStatsRead {
   total_size_gb?: number;
   avg_file_size_mb?: number;
   total_snapshots?: number;
+  last_snapshot_committed_at?: string | null;
   total_delete_files?: number;
   equality_delete_files?: number;
   position_delete_files?: number;
@@ -780,6 +781,8 @@ export interface DatalakeDashboard {
     running_jobs?: number;
   };
   grade_distribution?: Array<{ grade: string; count: number }>;
+  freshness_distribution?: FreshnessDistributionItem[];
+  freshness_as_of?: string | null;
   cost_by_schema?: Array<{
     schema_name: string;
     cost_usd?: number;
@@ -789,6 +792,25 @@ export interface DatalakeDashboard {
   }>;
   top_offenders?: TableRead[];
   drift?: Array<HistoryPoint & { table_id?: UUID; schema_name?: string; table_name?: string }>;
+}
+
+export type FreshnessBucketKey =
+  | "within_24h"
+  | "1_3d"
+  | "3_7d"
+  | "7_15d"
+  | "15_30d"
+  | "1_3m"
+  | "3_6m"
+  | "6_12m"
+  | "over_1y"
+  | "unknown"
+  | "failed";
+
+export interface FreshnessDistributionItem {
+  key: FreshnessBucketKey;
+  label: string;
+  count: number;
 }
 
 export interface FleetHealthTrendPoint {

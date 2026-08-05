@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 SUPPORTED_FIELDS = frozenset(
@@ -11,6 +12,7 @@ SUPPORTED_FIELDS = frozenset(
         "table_name",
         "is_active",
         "consecutive_scan_failures",
+        "last_snapshot_committed_at",
         "needs_compaction",
         "compaction_priority",
         "grade",
@@ -118,13 +120,29 @@ def _child(value: Any) -> Mapping[str, Any]:
 
 
 def _numeric_compare(actual: Any, expected: Any) -> int:
-    left = float(actual)
-    right = float(expected)
+    try:
+        return _ordered_compare(float(actual), float(expected))
+    except (TypeError, ValueError):
+        return _ordered_compare(_datetime_value(actual), _datetime_value(expected))
+
+
+def _ordered_compare(left: Any, right: Any) -> int:
     if left < right:
         return -1
     if left > right:
         return 1
     return 0
+
+
+def _datetime_value(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Unsupported ordered predicate value: {value!r}")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Unsupported ordered predicate value: {value!r}") from exc
 
 
 def _like_matches(actual: Any, expected: Any) -> bool:

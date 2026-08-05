@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, not_, or_, true
@@ -22,6 +23,7 @@ FIELD_MAP = {
     "table_name": Table.table_name,
     "is_active": Table.is_active,
     "consecutive_scan_failures": Table.consecutive_scan_failures,
+    "last_snapshot_committed_at": TableStats.last_snapshot_committed_at,
     "needs_compaction": TableStats.needs_compaction,
     "compaction_priority": TableStats.compaction_priority,
     "grade": TableStats.grade,
@@ -67,6 +69,11 @@ def _compile_leaf(predicate: Mapping[str, Any]) -> ColumnElement[bool]:
     field_name = _field(predicate)
     op = _operator(predicate)
     value = predicate.get("value")
+    if field_name == "last_snapshot_committed_at" and isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("last_snapshot_committed_at must be an ISO-8601 timestamp") from exc
     column = FIELD_MAP.get(field_name)
     if column is None:
         raise ValueError(f"Unsupported filter field: {field_name}")

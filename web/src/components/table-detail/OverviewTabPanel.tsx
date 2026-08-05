@@ -32,11 +32,7 @@ export const OverviewTabPanel = () => {
           statsRaw={ctx.statsRaw}
           reclaimableBytes={ctx.reclaimableBytes}
           savingsUsd={ctx.savingsUsd}
-          presetOptions={ctx.assignPresetOptions}
-          presetsLoading={ctx.presets.isLoading || ctx.compatiblePresets.isLoading}
           effectivePresetId={ctx.effectivePreset.data?.preset_id ?? undefined}
-          onAssignPreset={(presetId) => ctx.assign.mutate(presetId)}
-          assignPending={ctx.assign.isPending}
           onRun={() => ctx.run.mutate()}
           runPending={ctx.run.isPending}
           queuedMaintenanceRunId={ctx.queuedMaintenanceRunId}
@@ -51,8 +47,8 @@ export const OverviewTabPanel = () => {
           tableQueriesLoading={ctx.tableQueries.isLoading}
           pointDeductions={ctx.pointDeductions}
         />
-        <TableParamOverrides tableId={ctx.tableId} />
-        <div style={{ marginTop: 16 }}>
+        <div className="td-overview-supporting">
+          <TableParamOverrides tableId={ctx.tableId} />
           <ComplianceOwnershipSummary />
         </div>
       </div>

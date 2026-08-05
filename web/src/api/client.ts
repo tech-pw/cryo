@@ -211,6 +211,18 @@ export const listTables = (
     signal: args.signal
   });
 
+export const exportTablesCsv = (
+  api: ApiOptions,
+  args: { predicate?: Predicate | null; sort?: string; signal?: AbortSignal }
+) =>
+  apiFetch<string>("/tables/export.csv", api, {
+    query: {
+      filter: serializePredicate(args.predicate),
+      sort: args.sort
+    },
+    signal: args.signal
+  });
+
 export const groupTables = (
   api: ApiOptions,
   args: { field: TableGroupByField; predicate?: Predicate | null; signal?: AbortSignal }
@@ -609,6 +621,8 @@ interface RawDatalakeDashboard {
     needs_compaction_count: number;
   };
   grade_distribution: Array<{ grade: string; count: number }>;
+  freshness_distribution?: DatalakeDashboard["freshness_distribution"];
+  freshness_as_of?: string | null;
   top_offenders: Array<{
     table_id: UUID;
     schema_name: string;
@@ -649,6 +663,8 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
     needs_compaction: payload.totals.needs_compaction_count
   },
   grade_distribution: payload.grade_distribution,
+  freshness_distribution: payload.freshness_distribution,
+  freshness_as_of: payload.freshness_as_of,
   top_offenders: payload.top_offenders.map((item) => ({
     id: item.table_id,
     source_id: "",
