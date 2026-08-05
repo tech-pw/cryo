@@ -55,9 +55,15 @@ before representative-operator evidence:
   visible grouped search controls/counts, retry, live result status, same-route query synchronization,
   and URL-backed pagination. [R10, R11, R16, R19, R20]
 - **Health, Catalog, and cost:** scoped health-to-Catalog links, de-duplicated KPIs, built-in/saved
-  Catalog views and column visibility, shareable Catalog state, corrected chart data keys, exact
-  chart tables, URL-backed attribution month, semantic totals, and honest experimental/deep-link
-  limits. [R2, R9, R11, R13–R15, R18, R24, R25]
+  Catalog views and column visibility, shareable Catalog state, an exclusive snapshot-freshness
+  distribution with failed-table isolation, keyboard and pointer drill-downs, full matching-set CSV
+  export, corrected chart data keys, exact chart tables, URL-backed attribution month, semantic
+  totals, and honest experimental/deep-link limits. [R2, R9, R11, R13–R15, R18, R24, R25]
+- **Table Detail hierarchy:** four decision-critical metrics replace the former 13-item strip;
+  secondary storage and metadata metrics use progressive disclosure; preset assignment and
+  table-wide run controls each have one consistent home; findings are contained cards beside a
+  dedicated health summary; and low-frequency ownership/override controls form a supporting layer.
+  [R3–R6, R9–R12, R16, R18, R24]
 - **Operational workflows:** factual not-run states, explained unavailable actions, URL-backed
   workflow state, richer scan review and schedule summaries, explicit simulation states, searchable
   and downloadable logs, restrained progress announcements, query detail inspection, SLA incident
@@ -530,16 +536,19 @@ For every chart:
 
 - Clear executive health framing, first-run guidance, actionable alerts, scan freshness, grade
   breakdown, compact trend charts, and a good progression from status to table detail.
+- Snapshot freshness uses mutually exclusive time buckets based on the latest committed Iceberg
+  snapshot; repeated scan failures and missing timestamps remain explicit. Every bucket opens an
+  exact, URL-backed Catalog list whose CSV export includes the complete server-filtered result.
 - Empty and not-yet-scanned states explain the next step.
 
 **To reach 10/10**
 
 1. Remove or consolidate repeated compaction/savings numbers so each KPI answers one decision;
    reserve the strongest emphasis for health, risk, and required action. [R14, R15, R22]
-2. Add accessible data tables or ranked lists for every trend/grade visualization and make every
-   status understandable without color. [R2, R9, R24]
-3. Add keyboard-accessible shortcuts from critical/warning summaries to the already-filtered
-   Catalog view, preserving the active health scope in the URL. [R11, R13, R21]
+2. Validate the accessible data-table equivalents and freshness drill-down comprehension with
+   representative operators rather than treating implementation as usability evidence. [R2, R9, R24]
+3. Measure whether operators correctly distinguish table freshness from Cryo scan freshness and
+   recognize repeated scan failures as a separate condition. [R11, R13, R21]
 4. Announce scan freshness transitions and new critical conditions without announcing every poll.
    [R11, R16, R21]
 

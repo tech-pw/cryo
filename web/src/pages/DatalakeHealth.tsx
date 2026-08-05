@@ -11,7 +11,13 @@ import {
 } from "recharts";
 import { Link } from "react-router-dom";
 import { getDatalakeDashboard, getFleetTrends, getSmartMaintenanceOverview, listTables } from "../api/client";
-import type { DatalakeDashboard, FleetCostTrendPoint, FleetHealthTrendPoint, TableRead } from "../api/types";
+import type {
+  DatalakeDashboard,
+  FleetCostTrendPoint,
+  FleetHealthTrendPoint,
+  FreshnessBucketKey,
+  TableRead
+} from "../api/types";
 import {
   ChartFrame,
   EmptyState,
@@ -32,6 +38,11 @@ import { MetricTile } from "../components/ui/stat";
 import { useAuth } from "../lib/auth";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
+import {
+  BROKEN_TABLE_FAILURE_THRESHOLD,
+  FRESHNESS_LABELS,
+  freshnessCatalogHref
+} from "../lib/freshness";
 import { qualifiedTableName } from "../lib/tableLabels";
 
 const TOP_OFFENDERS_LIMIT = 50;
@@ -147,6 +158,15 @@ export const DatalakeHealth = () => {
     label: formatTrendDay(point.day)
   }));
   const gradeDistribution = data.grade_distribution ?? [];
+  const freshnessAsOf = data.freshness_as_of ?? new Date().toISOString();
+  const freshnessDistribution = data.freshness_distribution ?? [];
+  const freshnessTotal = freshnessDistribution.reduce((sum, bucket) => sum + bucket.count, 0);
+  const freshnessChartData = freshnessDistribution.map((bucket) => ({
+    ...bucket,
+    percentage: freshnessTotal ? (bucket.count / freshnessTotal) * 100 : 0,
+    href: freshnessCatalogHref(bucket.key, freshnessAsOf)
+  }));
+  const freshnessMaxCount = Math.max(...freshnessChartData.map((bucket) => bucket.count), 1);
   const gradeDfCount = gradeDistribution
     .filter((entry) => entry.grade === "D" || entry.grade === "F")
     .reduce((sum, entry) => sum + entry.count, 0);
@@ -268,6 +288,94 @@ export const DatalakeHealth = () => {
               }
             />
           </MetricGrid>
+          <Card className="mb-4">
+            <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 pb-3">
+              <div>
+                <CardTitle className="text-sm font-semibold">Table freshness and staleness</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Exclusive buckets based on each table&apos;s latest committed Iceberg snapshot. Select a bar to inspect
+                  and export every matching table.
+                </p>
+              </div>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                As of {formatTime(freshnessAsOf)}
+              </span>
+            </CardHeader>
+            <CardContent>
+              {freshnessChartData.length && freshnessTotal ? (
+                <>
+                  <div
+                    role="group"
+                    aria-label="Active tables grouped by snapshot freshness and scan failure status"
+                    className="space-y-1.5"
+                  >
+                    {freshnessChartData.map((bucket) => (
+                      <Link
+                        key={bucket.key}
+                        to={bucket.href}
+                        className="group flex min-w-0 items-center gap-3 rounded-[var(--radius-sm)] px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={`${bucket.label}: ${formatNumber(bucket.count, true)} ${bucket.count === 1 ? "table" : "tables"}. Open matching tables.`}
+                      >
+                        <span className="w-[184px] shrink-0 truncate text-muted-foreground max-sm:w-[120px]">
+                          {bucket.label}
+                        </span>
+                        <span className="h-6 min-w-0 flex-1 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)]">
+                          <span
+                            className="block h-full rounded-[var(--radius-sm)] transition-opacity group-hover:opacity-80"
+                            style={{
+                              width: `${(bucket.count / freshnessMaxCount) * 100}%`,
+                              backgroundColor:
+                                bucket.key === "failed"
+                                  ? cryoColors.gradeF
+                                  : bucket.key === "unknown"
+                                    ? cryoColors.inkFaint
+                                    : cryoColors.chartPrimary
+                            }}
+                          />
+                        </span>
+                        <strong className="w-10 shrink-0 text-right [font-variant-numeric:tabular-nums]">
+                          {formatNumber(bucket.count, true)}
+                        </strong>
+                      </Link>
+                    ))}
+                  </div>
+                  <ChartDataTable
+                    caption="Table counts and fleet share by mutually exclusive snapshot freshness bucket. Each row links to the matching Catalog table list."
+                    rows={freshnessChartData}
+                    getRowKey={(row) => row.key}
+                    columns={[
+                      {
+                        key: "bucket",
+                        header: "Freshness bucket",
+                        render: (row) => (
+                          <Link to={row.href} className="font-medium text-primary hover:underline">
+                            {row.label}
+                          </Link>
+                        )
+                      },
+                      {
+                        key: "count",
+                        header: "Tables",
+                        align: "right",
+                        render: (row) => formatNumber(row.count, true)
+                      },
+                      {
+                        key: "share",
+                        header: "Share",
+                        align: "right",
+                        render: (row) => `${row.percentage.toFixed(1)}%`
+                      }
+                    ]}
+                  />
+                </>
+              ) : (
+                <EmptyState
+                  title="Freshness appears after tables are scanned"
+                  description="Run a catalog scan to classify tables by their latest committed snapshot."
+                />
+              )}
+            </CardContent>
+          </Card>
           <div className="mb-2 flex items-center justify-between gap-3">
             <h2 className="m-0 text-sm font-semibold text-foreground">Cost</h2>
             <Link to="/cost" className="text-sm text-primary hover:underline">
@@ -523,6 +631,10 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
   let savings = 0;
   let reclaimable = 0;
   let needsCompaction = 0;
+  const freshnessAsOf = new Date();
+  const freshness = new Map<FreshnessBucketKey, number>(
+    (Object.keys(FRESHNESS_LABELS) as FreshnessBucketKey[]).map((key) => [key, 0])
+  );
 
   tables.forEach((table) => {
     const stats = table.stats;
@@ -538,6 +650,8 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
     savings += sav;
     reclaimable += stats?.reclaimable_bytes ?? 0;
     if (stats?.needs_compaction) needsCompaction += 1;
+    const freshnessKey = tableFreshnessBucket(table, freshnessAsOf);
+    freshness.set(freshnessKey, (freshness.get(freshnessKey) ?? 0) + 1);
     const schema =
       schemaCosts.get(table.schema_name) ??
       { schema_name: table.schema_name, cost_usd: 0, projected_usd: 0, savings_usd: 0, size_gb: 0 };
@@ -560,6 +674,12 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
       needs_compaction: needsCompaction
     },
     grade_distribution: Array.from(grades.entries()).map(([grade, count]) => ({ grade, count })),
+    freshness_distribution: (Object.keys(FRESHNESS_LABELS) as FreshnessBucketKey[]).map((key) => ({
+      key,
+      label: FRESHNESS_LABELS[key],
+      count: freshness.get(key) ?? 0
+    })),
+    freshness_as_of: freshnessAsOf.toISOString(),
     cost_by_schema: Array.from(schemaCosts.values())
       .map((item) => ({
         schema_name: item.schema_name,
@@ -571,4 +691,23 @@ const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
       .sort((a, b) => (b.savings_usd || b.cost_usd) - (a.savings_usd || a.cost_usd)),
     top_offenders: [...tables].sort((a, b) => (b.stats?.small_files_count ?? 0) - (a.stats?.small_files_count ?? 0)).slice(0, 10)
   };
+};
+
+const tableFreshnessBucket = (table: TableRead, asOf: Date): FreshnessBucketKey => {
+  if ((table.consecutive_scan_failures ?? 0) >= BROKEN_TABLE_FAILURE_THRESHOLD) return "failed";
+  const rawTimestamp = table.stats?.raw?.last_snapshot_committed_at;
+  const value = table.stats?.last_snapshot_committed_at ?? (typeof rawTimestamp === "string" ? rawTimestamp : null);
+  if (!value) return "unknown";
+  const committedAt = new Date(value);
+  if (Number.isNaN(committedAt.getTime())) return "unknown";
+  const ageDays = (asOf.getTime() - committedAt.getTime()) / (24 * 60 * 60 * 1000);
+  if (ageDays < 1) return "within_24h";
+  if (ageDays < 3) return "1_3d";
+  if (ageDays < 7) return "3_7d";
+  if (ageDays < 15) return "7_15d";
+  if (ageDays < 30) return "15_30d";
+  if (ageDays < 90) return "1_3m";
+  if (ageDays < 180) return "3_6m";
+  if (ageDays < 365) return "6_12m";
+  return "over_1y";
 };

@@ -297,6 +297,9 @@ class TableStats(Base):
     delete_file_pct: Mapped[float | None] = mapped_column(Float)
     detection_tier: Mapped[str | None] = mapped_column(Text)
     snapshot_watermark: Mapped[int | None] = mapped_column(BigInteger)
+    last_snapshot_committed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), index=True
+    )
     last_full_reconcile_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     manifest_count: Mapped[int | None] = mapped_column(Integer)
     partition_col: Mapped[str | None] = mapped_column(Text)

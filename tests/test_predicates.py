@@ -15,6 +15,7 @@ BASE_ROW: dict[str, Any] = {
     "table_name": "orders_daily",
     "is_active": True,
     "consecutive_scan_failures": 3,
+    "last_snapshot_committed_at": "2026-08-01T12:00:00Z",
     "needs_compaction": True,
     "compaction_priority": "critical",
     "grade": "F",
@@ -57,6 +58,14 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
         (
             {"field": "consecutive_scan_failures", "op": ">=", "value": 2},
             {"consecutive_scan_failures": 0},
+        ),
+        (
+            {
+                "field": "last_snapshot_committed_at",
+                "op": "<=",
+                "value": "2026-08-02T12:00:00Z",
+            },
+            {"last_snapshot_committed_at": "2026-08-03T12:00:00Z"},
         ),
         ({"field": "overall_score", "op": "<", "value": 60}, {"overall_score": 60}),
         ({"field": "overall_score", "op": "<=", "value": 55}, {"overall_score": 56}),

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ChevronDown,
   Columns3,
   Copy,
   Database,
@@ -19,8 +20,6 @@ import { toast } from "sonner";
 import { CompactionTag, GradePill, PriorityTag, healthScoreColor } from "../status";
 import { formatBytesGb, formatGb, formatNumber, formatTime } from "../../lib/format";
 import { qualifiedTableName } from "../../lib/tableLabels";
-import { formatEngineLabel } from "../../lib/engines";
-import { provenanceLabel } from "./helpers";
 import type { TableDetailState } from "../../pages/table-detail/useTableDetail";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -31,8 +30,6 @@ type AssetHeaderProps = Pick<
   | "row"
   | "stats"
   | "sourceName"
-  | "effectivePreset"
-  | "effectiveDestination"
   | "lastSnapshotCommittedAt"
   | "score"
   | "savingsDisplay"
@@ -49,8 +46,6 @@ export const AssetHeader = ({
   row,
   stats,
   sourceName,
-  effectivePreset,
-  effectiveDestination,
   lastSnapshotCommittedAt,
   score,
   savingsDisplay,
@@ -85,23 +80,15 @@ export const AssetHeader = ({
 
     <div className="td-header-row">
       <div className="td-header-info">
-        <h3 className="td-header-title">{row ? qualifiedTableName(row) : "Loading..."}</h3>
-        <div className="td-header-tags">
-          {stats?.grade ? <GradePill grade={stats.grade} /> : null}
-          {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}
-          <CompactionTag needsCompaction={stats?.needs_compaction} />
+        <div className="td-header-primary">
+          <h1 className="td-header-title">{row ? qualifiedTableName(row) : "Loading..."}</h1>
+          <div className="td-header-tags">
+            {stats?.grade ? <GradePill grade={stats.grade} /> : null}
+            {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}
+            <CompactionTag needsCompaction={stats?.needs_compaction} />
+          </div>
         </div>
         <div className="td-hero-meta">
-          <span>
-            Preset: <strong>{effectivePreset.data?.preset_name ?? "None"}</strong>
-            <span className="td-meta-faint"> ({provenanceLabel(effectivePreset.data?.provenance)})</span>
-            {effectiveDestination ? (
-              <span className="td-meta-faint">
-                {" "}
-                · {effectiveDestination.name} ({formatEngineLabel(effectiveDestination.engine)})
-              </span>
-            ) : null}
-          </span>
           {stats?.scan_at ? (
             <span>
               Last scan: <strong>{formatTime(stats.scan_at)}</strong>
@@ -163,113 +150,112 @@ export const AssetHeader = ({
       </div>
     </div>
 
-    <div
-      className="td-quick-attribution-bar"
-      style={{ display: "flex", gap: "16px", padding: "10px 16px", overflowX: "auto" }}
-    >
-      <AttributionItem
-        icon={<Heart style={{ color: healthScoreColor(score) }} className="size-3.5" />}
-        label="Health Score"
-        value={formatNumber(score)}
-        valueClassName="td-health-score"
-        valueStyle={{ color: healthScoreColor(score) }}
-      />
-      <AttributionDivider />
-      <AttributionItem icon={<Database className="size-3.5" />} label="Total Size" value={formatGb(stats?.total_size_gb)} />
-      <AttributionDivider />
-      <AttributionItem icon={<Table className="size-3.5" />} label="Records" value={formatNumber(stats?.total_records, true)} />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<Columns3 className="size-3.5" />}
-        label="Partition col"
-        value={
-          <>
-            {partitionColLabel}
-            {stats?.partition_col_type ? (
-              <span className="td-attribution-subtle">({stats.partition_col_type})</span>
-            ) : null}
-          </>
-        }
-        title={partitionColLabel}
-      />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<DollarSign className="size-3.5" />}
-        iconBg="rgba(30, 142, 90, 0.06)"
-        iconColor="var(--savings, #1e8e5a)"
-        label="Savings / Mo"
-        value={
-          <>
-            {savingsDisplay}
-            {reclaimableBytes > 0 ? (
-              <span className="td-attribution-subtle">{formatBytesGb(reclaimableBytes)} rec.</span>
-            ) : null}
-          </>
-        }
-        valueClassName="td-savings-value"
-      />
-      {!hideSinglePartitionKpi ? (
-        <>
-          <AttributionDivider />
+    <section className="td-metrics-panel" aria-label="Table summary">
+      <div className="td-key-metrics">
+        <AttributionItem
+          icon={<Heart style={{ color: healthScoreColor(score) }} className="size-3.5" />}
+          label="Health Score"
+          value={formatNumber(score)}
+          valueClassName="td-health-score"
+          valueStyle={{ color: healthScoreColor(score) }}
+        />
+        <AttributionItem
+          icon={<AlertTriangle className="size-3.5" />}
+          label="Small files"
+          iconBg={stats?.small_files_count ? "rgba(240, 160, 32, 0.08)" : undefined}
+          iconColor={stats?.small_files_count ? "var(--warning, #f0a020)" : undefined}
+          value={
+           <>
+             {formatNumber(stats?.small_files_count, true)}
+             {stats?.total_files && stats.small_files_count != null ? (
+               <span className="td-attribution-subtle">
+                 {((stats.small_files_count / stats.total_files) * 100).toFixed(0)}%
+               </span>
+             ) : null}
+           </>
+          }
+        />
+        <AttributionItem
+          icon={<DollarSign className="size-3.5" />}
+          iconBg="rgba(30, 142, 90, 0.06)"
+          iconColor="var(--savings, #1e8e5a)"
+          label="Potential savings"
+          value={savingsDisplay}
+          valueClassName="td-savings-value"
+        />
+        <AttributionItem
+          icon={<Database className="size-3.5" />}
+          label="Total size"
+          value={formatGb(stats?.total_size_gb)}
+        />
+      </div>
+      <details className="td-metrics-disclosure">
+        <summary>
+          <span>More table metrics</span>
+          <span className="td-metrics-summary-hint">
+           {reclaimableBytes > 0
+             ? `${formatBytesGb(reclaimableBytes)} reclaimable`
+             : "Storage, partitioning and metadata"}
+          </span>
+          <ChevronDown className="size-3.5" />
+        </summary>
+        <div className="td-secondary-metrics">
+          <AttributionItem icon={<Table className="size-3.5" />} label="Records" value={formatNumber(stats?.total_records, true)} />
+          <AttributionItem
+           icon={<Columns3 className="size-3.5" />}
+           label="Partition column"
+           value={
+             <>
+               {partitionColLabel}
+               {stats?.partition_col_type ? (
+                 <span className="td-attribution-subtle">({stats.partition_col_type})</span>
+               ) : null}
+             </>
+           }
+           title={partitionColLabel}
+          />
+          {!hideSinglePartitionKpi ? (
           <AttributionItem
             icon={<LayoutGrid className="size-3.5" />}
             label="Partitions"
             value={formatNumber(stats?.total_partitions)}
           />
-          <AttributionDivider />
-        </>
-      ) : null}
-      <AttributionItem icon={<FileText className="size-3.5" />} label="Files" value={formatNumber(stats?.total_files, true)} />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<AlertTriangle className="size-3.5" />}
-        label="Small Files"
-        iconBg={stats?.small_files_count ? "rgba(240, 160, 32, 0.08)" : undefined}
-        iconColor={stats?.small_files_count ? "var(--warning, #f0a020)" : undefined}
-        value={
-          <>
-            {formatNumber(stats?.small_files_count, true)}
-            {stats?.total_files && stats.small_files_count != null ? (
-              <span className="td-attribution-subtle">
-                {((stats.small_files_count / stats.total_files) * 100).toFixed(0)}%
-              </span>
-            ) : null}
-          </>
-        }
-      />
-      <AttributionDivider />
-      <AttributionItem icon={<History className="size-3.5" />} label="Snapshots" value={formatNumber(stats?.total_snapshots)} />
-      <AttributionDivider />
-      <AttributionItem icon={<GitBranch className="size-3.5" />} label="Manifests" value={formatNumber(stats?.manifest_count)} />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<Trash2 className="size-3.5" />}
-        label="Delete files"
-        iconBg={stats?.total_delete_files ? "rgba(220, 53, 69, 0.08)" : undefined}
-        iconColor={stats?.total_delete_files ? "var(--error, #dc3545)" : undefined}
-        value={formatNumber(stats?.total_delete_files)}
-      />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<Info className="size-3.5" />}
-        label="Avg file size"
-        value={stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}
-      />
-      <AttributionDivider />
-      <AttributionItem
-        icon={<SlidersHorizontal className="size-3.5" />}
-        label="Partition skew"
-        iconBg={stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "rgba(240, 160, 32, 0.08)" : undefined}
-        iconColor={
-          stats?.partition_skew_ratio && stats.partition_skew_ratio > 4 ? "var(--warning, #f0a020)" : undefined
-        }
-        value={stats?.partition_skew_ratio != null ? `${stats.partition_skew_ratio.toFixed(2)}x` : "-"}
-      />
-    </div>
+          ) : null}
+          <AttributionItem icon={<FileText className="size-3.5" />} label="Files" value={formatNumber(stats?.total_files, true)} />
+          <AttributionItem icon={<History className="size-3.5" />} label="Snapshots" value={formatNumber(stats?.total_snapshots)} />
+          <AttributionItem icon={<GitBranch className="size-3.5" />} label="Manifests" value={formatNumber(stats?.manifest_count)} />
+          <AttributionItem
+           icon={<Trash2 className="size-3.5" />}
+           label="Delete files"
+           iconBg={stats?.total_delete_files ? "rgba(220, 53, 69, 0.08)" : undefined}
+           iconColor={stats?.total_delete_files ? "var(--error, #dc3545)" : undefined}
+           value={formatNumber(stats?.total_delete_files)}
+          />
+          <AttributionItem
+           icon={<Info className="size-3.5" />}
+           label="Average file size"
+           value={stats?.avg_file_size_mb ? `${stats.avg_file_size_mb.toFixed(1)} MB` : "-"}
+          />
+          <AttributionItem
+           icon={<SlidersHorizontal className="size-3.5" />}
+           label="Partition skew"
+           iconBg={
+             stats?.partition_skew_ratio && stats.partition_skew_ratio > 4
+               ? "rgba(240, 160, 32, 0.08)"
+               : undefined
+           }
+           iconColor={
+             stats?.partition_skew_ratio && stats.partition_skew_ratio > 4
+               ? "var(--warning, #f0a020)"
+               : undefined
+           }
+           value={stats?.partition_skew_ratio != null ? `${stats.partition_skew_ratio.toFixed(2)}x` : "-"}
+          />
+        </div>
+      </details>
+    </section>
   </>
 );
-
-const AttributionDivider = () => <div className="td-attribution-divider" style={{ alignSelf: "center" }} />;
 
 const AttributionItem = ({
   icon,
@@ -290,27 +276,14 @@ const AttributionItem = ({
   iconBg?: string;
   iconColor?: string;
 }) => (
-  <div
-    className="td-attribution-item"
-    style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10, minWidth: 110 }}
-  >
+  <div className="td-attribution-item">
     <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 28,
-        height: 28,
-        borderRadius: "6px",
-        backgroundColor: iconBg ?? "rgba(92, 102, 122, 0.05)",
-        color: iconColor ?? "var(--muted, #5c667a)",
-        fontSize: 13,
-        flexShrink: 0
-      }}
+      className="td-attribution-icon"
+      style={{ backgroundColor: iconBg, color: iconColor }}
     >
       {icon}
     </div>
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div className="td-attribution-content">
       <span className="td-attribution-label">{label}</span>
       <span className={`td-attribution-value${valueClassName ? ` ${valueClassName}` : ""}`} style={valueStyle} title={title}>
         {value}
