@@ -179,3 +179,60 @@ def test_scan_orphans_does_not_skip_s3a_locations(mock_client: MagicMock) -> Non
 
     assert result.skipped_reason is None
     assert result.orphan_bytes == 50
+
+
+@patch("cryo.scanner.orphans.boto3.client")
+def test_scan_orphans_matches_referenced_paths_across_s3_schemes(
+    mock_client: MagicMock,
+) -> None:
+    """Regression, found in production 2026-08-05: manifest file_path entries preserve
+    whatever scheme the writer used (s3a:// for this deployment's Spark-written tables), but
+    the orphan-scan comparison reconstructed listed objects as hardcoded "s3://" -- so no
+    listed object ever matched anything in referenced_file_paths, regardless of what was
+    actually referenced. Every table with a completed orphan scan showed exactly
+    orphan_bytes == listed_bytes (11,281 tables, ~296TB), because 100% of every table's real,
+    live, referenced files were being counted as orphan garbage. This table has two listed
+    objects, one genuinely referenced (by an s3a:// manifest path) and one genuinely orphaned;
+    only the orphan should be counted."""
+    scan_at = datetime(2026, 7, 3, tzinfo=UTC)
+    s3 = MagicMock()
+    mock_client.return_value = s3
+    paginator = MagicMock()
+    s3.get_paginator.return_value = paginator
+    paginator.paginate.return_value = [
+        {
+            "Contents": [
+                {
+                    "Key": "gold/revenue/t/data/live.parquet",
+                    "Size": 100,
+                    "LastModified": scan_at - timedelta(days=5),
+                },
+                {
+                    "Key": "gold/revenue/t/data/orphan.parquet",
+                    "Size": 50,
+                    "LastModified": scan_at - timedelta(days=5),
+                },
+            ]
+        }
+    ]
+
+    class FakeTable:
+        def location(self) -> str:
+            return "s3a://acme-lake-gold/gold/revenue/t"
+
+    result = scan_orphans(
+        FakeTable(),
+        source_config={
+            "s3.endpoint": "http://localhost:9000",
+            "s3.access-key-id": "minioadmin",
+            "s3.secret-access-key": "minioadmin",
+        },
+        referenced_file_paths={
+            "s3a://acme-lake-gold/gold/revenue/t/data/live.parquet": 100,
+        },
+        scan_at=scan_at,
+        settings=Settings(),
+    )
+
+    assert result.listed_bytes == 150
+    assert result.orphan_bytes == 50
