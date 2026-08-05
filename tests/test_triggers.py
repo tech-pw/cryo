@@ -147,12 +147,8 @@ def test_evaluate_batch_sorts_signal_triggered_first() -> None:
         return session
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(
-            "cryo.triggers.evaluator.check_all_signals", fake_check
-        )
-        results = evaluator.evaluate_batch(
-            session, [t1, t2], schedule_map={t1: False, t2: True}
-        )
+        mp.setattr("cryo.triggers.evaluator.check_all_signals", fake_check)
+        results = evaluator.evaluate_batch(session, [t1, t2], schedule_map={t1: False, t2: True})
     # Only admitted tables are returned, with signal-triggered first.
     assert [r.table_id for r in results] == [t1, t2]
     assert results[0].trigger_type is TriggerType.QUERY_LATENCY
@@ -169,18 +165,13 @@ def test_evaluate_batch_drops_not_admitted() -> None:
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("cryo.triggers.evaluator.check_all_signals", fake_check)
-        results = evaluator.evaluate_batch(
-            session, [t1, t2], schedule_map={t1: False, t2: False}
-        )
+        results = evaluator.evaluate_batch(session, [t1, t2], schedule_map={t1: False, t2: False})
     assert results == []
 
 
 def test_any_signal_triggered_helper() -> None:
     assert (
-        any_signal_triggered(
-            [SignalResult(triggered=False, signal_name="x", reason="ok")]
-        )
-        is False
+        any_signal_triggered([SignalResult(triggered=False, signal_name="x", reason="ok")]) is False
     )
     assert (
         any_signal_triggered(
@@ -242,9 +233,7 @@ def _anomaly_alert(table_id: uuid.UUID, severity: str) -> AnomalyAlert:
 def test_anomaly_signal_triggers_on_high_severity_alert() -> None:
     table_id = _table_id()
     alert = _anomaly_alert(table_id, "high")
-    with patch(
-        "cryo.ml.anomaly_detector.detect_table_anomalies", return_value=[alert]
-    ):
+    with patch("cryo.ml.anomaly_detector.detect_table_anomalies", return_value=[alert]):
         signal = AnomalySignal()
         result = signal.evaluate(MagicMock(), table_id)
     assert result.triggered is True

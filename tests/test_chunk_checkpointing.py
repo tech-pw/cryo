@@ -157,9 +157,7 @@ class TestEnginePerChunkDispatch:
         session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
         session_factory.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "cryo.engines.native.checkpoint.execute_request"
-        ) as mock_exec:
+        with patch("cryo.engines.native.checkpoint.execute_request") as mock_exec:
             mock_exec.return_value = NativeExecuteResult(
                 ok=True,
                 table_ref="db.tbl",
@@ -194,9 +192,7 @@ class TestEnginePerChunkDispatch:
         plan = MaintenancePlan(
             table_ref="db.tbl",
             mode=Mode.DEEP,
-            operations=(
-                Operation(type=OperationType.OPTIMIZE, params={}, predicates=None),
-            ),
+            operations=(Operation(type=OperationType.OPTIMIZE, params={}, predicates=None),),
         )
         session_factory = MagicMock()
 
@@ -205,9 +201,7 @@ class TestEnginePerChunkDispatch:
         session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
         session_factory.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "cryo.engines.native.checkpoint.execute_request"
-        ) as mock_exec:
+        with patch("cryo.engines.native.checkpoint.execute_request") as mock_exec:
             mock_exec.return_value = NativeExecuteResult(
                 ok=True,
                 table_ref="db.tbl",
@@ -241,9 +235,7 @@ class TestEnginePerChunkDispatch:
         plan = MaintenancePlan(
             table_ref="db.tbl",
             mode=Mode.DEEP,
-            operations=(
-                Operation(type=OperationType.OPTIMIZE, params={}, predicates=None),
-            ),
+            operations=(Operation(type=OperationType.OPTIMIZE, params={}, predicates=None),),
         )
         session_factory = MagicMock()
 
@@ -252,9 +244,7 @@ class TestEnginePerChunkDispatch:
         session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
         session_factory.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "cryo.engines.native.checkpoint.execute_request"
-        ) as mock_exec:
+        with patch("cryo.engines.native.checkpoint.execute_request") as mock_exec:
             mock_exec.return_value = NativeExecuteResult(
                 ok=False,
                 table_ref="db.tbl",

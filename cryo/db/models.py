@@ -15,7 +15,9 @@ from sqlalchemy import (
     Numeric,
     Text,
     UniqueConstraint,
+    event,
     func,
+    inspect,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -763,6 +765,13 @@ class MaintenanceJob(Base):
     # whether the plan was proof-checked at enqueue time, and reproduce the verdict hash.
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     plan_hash: Mapped[str | None] = mapped_column(Text)
+    current_intent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_intents.id", use_alter=True),
+        nullable=True,
+        index=True,
+    )
+    intent_version: Mapped[int | None] = mapped_column(Integer)
     verifier_version: Mapped[str | None] = mapped_column(Text)
     verifier_violations: Mapped[JsonList | None] = mapped_column(JSONB)
     dispatch_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -784,9 +793,234 @@ class MaintenanceJob(Base):
     destination: Mapped[Destination] = relationship(back_populates="jobs")
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
     dispatch: Mapped[NativeDispatch | None] = relationship(back_populates="jobs")
-    steps: Mapped[list[JobStep]] = relationship(
-        back_populates="job", cascade="all, delete-orphan"
+    steps: Mapped[list[JobStep]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class MaintenanceIntent(TimestampMixin, Base):
+    __tablename__ = "maintenance_intents"
+    __table_args__ = (
+        UniqueConstraint("job_id", "version", name="uq_maintenance_intents_job_version"),
+        UniqueConstraint("idempotency_key", name="uq_maintenance_intents_idempotency_key"),
+        Index("ix_maintenance_intents_table_status", "table_id", "status"),
+        Index("ix_maintenance_intents_status_expires", "status", "expires_at"),
     )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    parent_intent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_intents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id"), nullable=False
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+    )
+    table_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.destinations.id"), nullable=False
+    )
+    operation_scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    observed_snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    policy_id: Mapped[str | None] = mapped_column(Text)
+    policy_version: Mapped[str | None] = mapped_column(Text)
+    canonical_plan: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    plan_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    approval_bindings: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    fencing_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    budget: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    capability_requirements: Mapped[JsonList] = mapped_column(JSONB, nullable=False)
+    containment_action: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+
+class MaintenanceFence(TimestampMixin, Base):
+    __tablename__ = "maintenance_fences"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    owner_intent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_intents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+class MaintenanceAttempt(TimestampMixin, Base):
+    __tablename__ = "maintenance_attempts"
+    __table_args__ = (
+        UniqueConstraint("intent_id", "attempt_number", name="uq_attempts_intent_number"),
+        Index("ix_maintenance_attempts_status_heartbeat", "status", "heartbeat_at"),
+        Index(
+            "uq_maintenance_attempts_active_intent",
+            "intent_id",
+            unique=True,
+            postgresql_where=text("status = 'started'"),
+            sqlite_where=text("status = 'started'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    intent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_intents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    worker_id: Mapped[str] = mapped_column(Text, nullable=False)
+    fencing_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+
+class EffectReceipt(TimestampMixin, Base):
+    __tablename__ = "effect_receipts"
+    __table_args__ = (
+        UniqueConstraint("intent_id", "step_index", name="uq_effect_receipts_intent_step"),
+        UniqueConstraint("idempotency_key", name="uq_effect_receipts_idempotency_key"),
+        Index("ix_effect_receipts_state_probe", "state", "next_probe_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    intent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_intents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.maintenance_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.destinations.id"),
+        nullable=False,
+        index=True,
+    )
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    external_reference: Mapped[str | None] = mapped_column(Text)
+    submission: Mapped[JsonDict | None] = mapped_column(JSONB)
+    result: Mapped[JsonDict | None] = mapped_column(JSONB)
+    error: Mapped[JsonDict | None] = mapped_column(JSONB)
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    probe_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    next_probe_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class MaintenanceControlState(TimestampMixin, Base):
+    __tablename__ = "maintenance_control_state"
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", name="uq_control_state_scope"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    scope_type: Mapped[str] = mapped_column(Text, nullable=False)
+    scope_id: Mapped[str] = mapped_column(Text, nullable=False)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    reason: Mapped[str | None] = mapped_column(Text)
+    changed_by: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+_IMMUTABLE_INTENT_FIELDS = (
+    "tenant_id",
+    "job_id",
+    "parent_intent_id",
+    "version",
+    "actor_type",
+    "actor_id",
+    "source_id",
+    "table_id",
+    "table_ref",
+    "destination_id",
+    "operation_scope",
+    "observed_snapshot_id",
+    "policy_id",
+    "policy_version",
+    "canonical_plan",
+    "plan_hash",
+    "idempotency_key",
+    "approval_bindings",
+    "fencing_epoch",
+    "budget",
+    "capability_requirements",
+    "containment_action",
+    "expires_at",
+)
+
+
+@event.listens_for(MaintenanceIntent, "before_update")
+def _reject_maintenance_intent_rebinding(
+    _mapper: object,
+    _connection: object,
+    target: MaintenanceIntent,
+) -> None:
+    state = inspect(target)
+    changed = [
+        field for field in _IMMUTABLE_INTENT_FIELDS if state.attrs[field].history.has_changes()
+    ]
+    if changed:
+        raise ValueError("maintenance intent bound fields are immutable: " + ", ".join(changed))
 
 
 class JobStep(Base):
@@ -905,9 +1139,16 @@ class ChunkCheckpoint(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
-    __table_args__ = (Index("ix_audit_log_table_ts", "table_id", "ts"),)
+    __table_args__ = (
+        Index("ix_audit_log_table_ts", "table_id", "ts"),
+        Index("ix_audit_log_ts", "ts"),
+    )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
     ts: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )

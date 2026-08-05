@@ -131,10 +131,9 @@ def test_bucket_transform_via_derived_column_still_works():
 
 
 def test_coverage_ratio_and_trustworthy_threshold():
-    queries = (
-        [f"SELECT * FROM t WHERE event_date = DATE '2025-05-02'"] * 3
-        + ["SELECT * FROM t WHERE label = 'x'"] * 17
-    )
+    queries = ["SELECT * FROM t WHERE event_date = DATE '2025-05-02'"] * 3 + [
+        "SELECT * FROM t WHERE label = 'x'"
+    ] * 17
     result = compute_partition_affinity(queries, _DAY_FIELD, _KNOWN_DAYS)
     assert result.total_queries == 20
     assert result.resolved_queries == 3

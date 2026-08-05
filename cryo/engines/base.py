@@ -8,7 +8,8 @@ from uuid import UUID
 from cryo.domain.enums import EngineType, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 
-# Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on reports.gold_dbt_video_stats_reports_unified
+# Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on
+# reports.gold_dbt_video_stats_reports_unified
 # (a 1.5 TB, 44k-file table) serialized its full DataFileWithDeleteFiles split list into the
 # exception message -- str(exc) alone landed a 2,962,267-character error in MaintenanceJob.error.
 # Every engine's except-block must cap this before it reaches ExecResult.error, or one adversarial
@@ -116,6 +117,7 @@ class ExecCtx:
 @dataclass(frozen=True)
 class ExecResult:
     ok: bool
+    outcome_known: bool = True
     engine_ref: str | None = None
     detail: str | None = None
     rows: tuple[tuple[object, ...], ...] = ()
@@ -124,6 +126,8 @@ class ExecResult:
     input_files_count: int | None = None
     output_files_count: int | None = None
     actual_bytes_freed: int | None = None
+    actual_bytes_written: int | None = None
+    objects_deleted: int | None = None
     snapshots_expired: int | None = None
     manifests_rewritten: int | None = None
     skipped: bool = False

@@ -226,6 +226,24 @@ def test_build_plan_orders_optimize_chunks_by_moop_score_over_small_files() -> N
     assert first_chunk_terms[0].value == "2025-05-19"  # MOOP-preferred partition chunked first
 
 
+def test_standard_mode_notes_the_deep_only_operations_it_skipped() -> None:
+    """Regression, 2026-07-27: a standard-mode run on a real 1.5 TB production table only
+    planned expire_snapshots + optimize, silently dropping remove_orphan_files and
+    optimize_manifests with zero explanation in plan.notes -- indistinguishable from the
+    planner having failed to build them. Both are deep-only by design; the plan must say so."""
+    stats = {"schema_name": "demo", "table_name": "events", "small_files_count": 0}
+
+    standard_plan = build_plan(stats, [], Mode.STANDARD, {})
+    light_plan = build_plan(stats, [], Mode.LIGHT, {})
+    deep_plan = build_plan(stats, [], Mode.DEEP, {})
+
+    assert any("deep-only" in note for note in standard_plan.notes)
+    assert any("deep-only" in note for note in light_plan.notes)
+    assert not any("deep-only" in note for note in deep_plan.notes)
+    assert not any(op.type is OperationType.REMOVE_ORPHAN_FILES for op in standard_plan.operations)
+    assert any(op.type is OperationType.REMOVE_ORPHAN_FILES for op in deep_plan.operations)
+
+
 def test_planner_skips_hot_partitions_with_recent_writes() -> None:
     """Move 14: 'no writes in N hours' filter keeps actively-written partitions alone."""
     from datetime import UTC, datetime, timedelta
@@ -451,6 +469,91 @@ def test_planner_escalates_to_major_rewrite_above_threshold_even_with_few_positi
     ]
 
 
+def test_planner_escalates_repeated_minor_delete_compactions_to_major() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 80,
+            "position_delete_files": 80,
+            "delete_file_pct": 3.0,
+            "delete_minor_runs_since_major": 5,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "delete_minor_file_threshold": 50,
+            "delete_major_pct_threshold": 10.0,
+            "delete_max_minor_runs_before_major": 5,
+        },
+    )
+
+    assert [operation.type for operation in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.CONVERT_DELETES,
+    ]
+    assert any("after 5 successful minor" in note for note in plan.notes)
+
+
+def test_planner_routes_equality_deletes_to_major_rewrite() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 60,
+            "position_delete_files": 0,
+            "equality_delete_files": 60,
+            "delete_file_pct": 2.0,
+            "total_size_gb": 5,
+            "format_version": 2,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "delete_equality_file_threshold": 50,
+        },
+    )
+
+    assert [operation.type for operation in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.CONVERT_DELETES,
+    ]
+
+
+def test_planner_uses_opt_in_hot_table_minor_cycle() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 80,
+            "position_delete_files": 80,
+            "delete_file_pct": 3.0,
+            "delete_minor_runs_since_major": 2,
+            "query_count_30d": 10_000,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "delete_max_minor_runs_before_major": 5,
+            "delete_hot_query_count_30d": 5_000,
+            "delete_hot_max_minor_runs_before_major": 2,
+        },
+    )
+
+    assert [operation.type for operation in plan.operations] == [
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.CONVERT_DELETES,
+    ]
+
+
 def test_convert_deletes_scopes_to_skewed_partitions() -> None:
     """Regression, 2026-07-22: rewrite_data_files with no `where` clause self-selects file
     groups across the whole table using its own binpack heuristics. On a table with a small
@@ -460,9 +563,10 @@ def test_convert_deletes_scopes_to_skewed_partitions() -> None:
     convert_deletes touch the same 46 files and remove zero deletes across three attempts,
     including one with 4x the Spark executors. The skewed partitions were never reached."""
     partitions = [
-        {"partition_value": str(20485 + i), "small_files_in_partition_count": 750}
-        for i in range(3)
-    ] + [{"partition_value": str(20500 + i), "small_files_in_partition_count": 19} for i in range(50)]
+        {"partition_value": str(20485 + i), "small_files_in_partition_count": 750} for i in range(3)
+    ] + [
+        {"partition_value": str(20500 + i), "small_files_in_partition_count": 19} for i in range(50)
+    ]
     plan = build_plan(
         {
             "schema_name": "cdp",
@@ -494,6 +598,162 @@ def test_convert_deletes_scopes_to_skewed_partitions() -> None:
     scoped_values = {term.value for predicate in convert_op.predicates for term in predicate.terms}
     assert scoped_values == {"20485", "20486", "20487"}
     assert any("Scoped convert_deletes to 3 skewed partition" in note for note in plan.notes)
+
+
+def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted() -> None:
+    """Regression, 2026-07-28: a table's 34,176 position-delete files sat in 4 partitions that
+    an earlier optimize pass had already reduced to 5-7 well-sized data files each -- looking
+    "skewed" by small_files_in_partition_count alone, those partitions are indistinguishable
+    from any other well-compacted partition, so _skewed_partition_predicates silently starved
+    exactly the partitions holding the deletes across every convert_deletes attempt. Scoping
+    must also consider delete_files_in_partition_count, independent of small-file skew.
+
+    Superseded in part by test_planner_routes_pathological_delete_skew_to_minor_rewrite below
+    (2026-07-29): this exact partition shape (well-sized data files, extreme delete-per-file
+    ratio) turned out to make convert_deletes a no-op even once correctly scoped -- confirmed
+    live, removed_delete_files_count=0 across every attempt -- so the planner now routes it to
+    rewrite_position_delete_files instead. This test keeps a milder ratio (8000/6 partition
+    replaced with a below-pathological-threshold shape) purely to keep convert_deletes' own
+    scoping-by-delete-skew logic covered independent of the minor-path escape hatch.
+    """
+    partitions = [
+        {
+            "partition_value": str(20485 + i),
+            "small_files_in_partition_count": 0,
+            "files_per_partition": 500,
+            "delete_files_in_partition_count": 8000,
+        }
+        for i in range(4)
+    ] + [
+        {
+            "partition_value": str(20500 + i),
+            "small_files_in_partition_count": 20,
+            "delete_files_in_partition_count": 0,
+        }
+        for i in range(50)
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "cdp",
+            "table_name": "load_test_basefact",
+            "small_files_count": 1000,
+            "total_delete_files": 32000,
+            "delete_file_pct": 96.0,
+            "total_size_gb": 5,
+            "partition_fields": [
+                {
+                    "base_column": "_date",
+                    "partition_field": "_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 10,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    convert_op = next(op for op in plan.operations if op.type is OperationType.CONVERT_DELETES)
+    assert convert_op.predicates is not None
+    scoped_values = {term.value for predicate in convert_op.predicates for term in predicate.terms}
+    # The 4 delete-heavy partitions must be scoped in, even though they have zero small files.
+    assert scoped_values == {"20485", "20486", "20487", "20488"}
+    assert any("delete-file count" in note for note in plan.notes)
+
+
+def test_planner_routes_pathological_delete_skew_to_minor_rewrite() -> None:
+    """Live incident, 2026-07-29: partition 20400 had 7 data files (already well-sized, 0 small
+    files) but 11,845 position-delete files. convert_deletes -> rewrite_data_files (BIN-PACK)
+    selects candidates by file *size*; despite delete-file-threshold=1 and correct partition
+    scoping, it formed zero rewrite groups for this partition three separate times
+    (removed_delete_files_count=0). rewrite_position_delete_files, run directly against the same
+    table, cleared all 34,176 dangling deletes in one pass. The planner must route a table with
+    this partition shape to the minor path regardless of overall delete_file_pct (100% here,
+    far above the major-rewrite threshold that would normally force convert_deletes)."""
+    partitions = [
+        {
+            "partition_value": str(20399 + i),
+            "small_files_in_partition_count": 0,
+            "files_per_partition": 7,
+            "delete_files_in_partition_count": 10000 + i,
+        }
+        for i in range(4)
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "cdp",
+            "table_name": "gold_dbt_video_stats_reports_unified",
+            "small_files_count": 2,
+            "total_delete_files": 34176,
+            "position_delete_files": 34176,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 1500,
+            "partition_fields": [
+                {
+                    "base_column": "session_date",
+                    "partition_field": "session_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 20,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    assert OperationType.REWRITE_POSITION_DELETES in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
+    assert any("extreme delete-per-file ratio" in note for note in plan.notes)
+
+
+def test_planner_does_not_misfire_pathological_skew_when_data_still_fragmented() -> None:
+    """A partition with many deletes but ALSO many small files still needs its data rewritten --
+    convert_deletes can (and does) reach it via ordinary size-based selection, so the
+    pathological-skew escape hatch must not steal it away from the major path."""
+    partitions = [
+        {
+            "partition_value": "20485",
+            "small_files_in_partition_count": 500,
+            "files_per_partition": 500,
+            "delete_files_in_partition_count": 10000,
+        }
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 500,
+            "total_delete_files": 10000,
+            "position_delete_files": 10000,
+            "delete_file_pct": 95.0,
+            "total_size_gb": 5,
+            "partition_fields": [
+                {
+                    "base_column": "_date",
+                    "partition_field": "_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 10,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    assert OperationType.CONVERT_DELETES in [op.type for op in plan.operations]
+    assert OperationType.REWRITE_POSITION_DELETES not in [op.type for op in plan.operations]
 
 
 def test_convert_deletes_stays_table_wide_without_skew() -> None:

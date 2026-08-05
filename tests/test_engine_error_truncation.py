@@ -1,6 +1,7 @@
-"""Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on reports.gold_dbt_video_stats_reports_unified
-(1.5 TB, 44,818 files) serialized its full split-assignment file list into the exception
-message. str(exc) alone produced a 2,962,267-character error, stored verbatim in
+"""Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on
+reports.gold_dbt_video_stats_reports_unified (1.5 TB, 44,818 files) serialized its full
+split-assignment file list into the exception message. str(exc) alone produced a
+2,962,267-character error, stored verbatim in
 MaintenanceJob.error -- bloating the jobs table row, the audit log, and every API response
 that includes it, while burying the one-line actionable root cause inside megabytes of Java
 object dumps. Every engine's except-block must cap this via truncate_error_message before it
@@ -47,7 +48,10 @@ def test_truncate_error_message_preserves_tail_not_just_head() -> None:
     part an operator (or Cryo itself, on the next diagnosis pass) actually needs. Confirmed
     live: a remove_orphan_files ClassNotFoundException was completely invisible in the stored
     error until this fix."""
-    message = "INFO block manager registration chatter " * 200 + "Caused by: ClassNotFoundException: real cause"
+    message = (
+        "INFO block manager registration chatter " * 200
+        + "Caused by: ClassNotFoundException: real cause"
+    )
     result = truncate_error_message(message)
 
     assert "ClassNotFoundException: real cause" in result

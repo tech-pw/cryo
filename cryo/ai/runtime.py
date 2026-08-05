@@ -66,9 +66,7 @@ def _provider_budget(provider: AIProvider) -> dict[str, Any]:
         "per_call_max_tokens": int(
             budget.get("per_call_max_tokens", settings.llm_per_call_max_tokens_default)
         ),
-        "daily_token_cap": int(
-            budget.get("daily_token_cap", settings.llm_daily_token_cap_default)
-        ),
+        "daily_token_cap": int(budget.get("daily_token_cap", settings.llm_daily_token_cap_default)),
         "daily_cost_cap_usd": float(
             budget.get("daily_cost_cap_usd", settings.llm_daily_cost_cap_usd_default)
         ),

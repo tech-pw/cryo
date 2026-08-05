@@ -73,7 +73,10 @@ def test_v3_partitioned_deletion_vectors_gate() -> None:
             "format_version": 3,
             "partition_col": "event_date",
             "delete_files": [
-                {"file_path": "s3://bucket/metadata/deletion-vector-abc.puffin", "content": "POSITION_DELETES"}
+                {
+                    "file_path": "s3://bucket/metadata/deletion-vector-abc.puffin",
+                    "content": "POSITION_DELETES",
+                }
             ],
         },
     }
@@ -87,7 +90,9 @@ def test_v3_partitioned_deletion_vectors_gate() -> None:
         "raw": {
             "format_version": 3,
             "partition_col": "event_date",
-            "delete_files": [{"file_path": "s3://bucket/data/del.parquet", "content": "POSITION_DELETES"}],
+            "delete_files": [
+                {"file_path": "s3://bucket/data/del.parquet", "content": "POSITION_DELETES"}
+            ],
         },
     }
     assert not has_v3_partitioned_deletion_vectors(mor_v3_pos)
@@ -165,9 +170,7 @@ def test_resolve_native_routing_v3_dv_routes_optimize_to_fallback(
         "raw": {
             "format_version": 3,
             "partition_col": "event_date",
-            "delete_files": [
-                {"file_path": "s3://bucket/metadata/deletion-vector-abc.puffin"}
-            ],
+            "delete_files": [{"file_path": "s3://bucket/metadata/deletion-vector-abc.puffin"}],
         },
     }
     routing = resolve_native_routing(
@@ -276,9 +279,7 @@ def test_convert_deletes_routes_to_sql_fallback(monkeypatch: pytest.MonkeyPatch)
     plan = MaintenancePlan(
         table_ref="rest.demo.orders",
         mode=Mode.STANDARD,
-        operations=(
-            Operation(OperationType.CONVERT_DELETES, {"delete_file_threshold": 1}),
-        ),
+        operations=(Operation(OperationType.CONVERT_DELETES, {"delete_file_threshold": 1}),),
     )
     routing = resolve_native_routing(
         plan,

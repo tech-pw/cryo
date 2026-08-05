@@ -466,10 +466,25 @@ export const Intelligence = () => {
                       <div className="grid grid-cols-2 gap-4">
                         <StatPair label="MAE (learned)" value={`${costModel.data.mae_learned.toFixed(2)} USD/mo`} />
                         <StatPair label="MAE (heuristic)" value={`${costModel.data.mae_heuristic.toFixed(2)} USD/mo`} />
-                        <StatPair label="Training samples" value={costModel.data.n_samples} />
+                        <StatPair
+                          label="Evaluated holdout"
+                          value={`${costModel.data.n_evaluated} / ${costModel.data.n_samples}`}
+                        />
                         <StatPair
                           label="Conformal coverage"
                           value={`${(costModel.data.band_coverage * 100).toFixed(0)}%`}
+                        />
+                        <StatPair
+                          label="Outcome lineage"
+                          value={`${(costModel.data.lineage_completeness * 100).toFixed(0)}%`}
+                        />
+                        <StatPair
+                          label="Complete / eligible"
+                          value={`${costModel.data.lineage_complete} / ${costModel.data.lineage_eligible}`}
+                        />
+                        <StatPair
+                          label="Domain abstention"
+                          value={`${(costModel.data.abstention_rate * 100).toFixed(0)}%`}
                         />
                       </div>
                       <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
@@ -481,6 +496,18 @@ export const Intelligence = () => {
                         <Alert
                           variant="warning"
                           title="Few labeled maintenance outcomes — projections still mostly heuristic."
+                        />
+                      ) : null}
+                      {costModel.data.lineage_completeness < 0.9 ? (
+                        <Alert
+                          variant="warning"
+                          title="Outcome lineage is below the 90% evidence gate. Missing post-scans are excluded from calibration."
+                        />
+                      ) : null}
+                      {costModel.data.abstentions > 0 ? (
+                        <Alert
+                          variant="info"
+                          title={`${costModel.data.abstentions} holdout outcomes were outside the training domain and excluded from learned-model accuracy.`}
                         />
                       ) : null}
                     </div>

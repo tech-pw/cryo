@@ -166,14 +166,10 @@ class ObservationLakehouse:
         matches: list[ObservationEvent] = []
         for path in self._all_files():
             since_marker = (
-                f"_events-{since_utc.strftime('%Y%m%d%H')}.jsonl"
-                if since_utc is not None
-                else None
+                f"_events-{since_utc.strftime('%Y%m%d%H')}.jsonl" if since_utc is not None else None
             )
             until_marker = (
-                f"_events-{until_utc.strftime('%Y%m%d%H')}.jsonl"
-                if until_utc is not None
-                else None
+                f"_events-{until_utc.strftime('%Y%m%d%H')}.jsonl" if until_utc is not None else None
             )
             if since_marker is not None and path.name < since_marker:
                 continue

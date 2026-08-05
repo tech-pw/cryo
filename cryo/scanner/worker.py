@@ -11,6 +11,12 @@ from sqlalchemy.orm import Session
 from cryo.db.models import MaintenanceRun
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.session import SessionLocal
+from cryo.observability.correlation import (
+    correlation_id_from_summary,
+    correlation_scope,
+    set_context,
+)
+from cryo.observability.tracing import trace_operation
 from cryo.queue.run_events import (
     RunEventSink,
     build_log_line,
@@ -46,6 +52,13 @@ class ScanWorker:
         self._run_events = run_events
 
     def process_next(self) -> ScanWorkResult | None:
+        with (
+            correlation_scope(clear=True),
+            trace_operation("scanner.chunk.execute"),
+        ):
+            return self._process_next()
+
+    def _process_next(self) -> ScanWorkResult | None:
         payload = self._queue.claim() or self._claim_accepted_run()
         if payload is None:
             return None
@@ -65,6 +78,10 @@ class ScanWorker:
             if run is None:
                 logger.warning("Discarding scan queue payload for missing run %s", run_id)
                 return ScanWorkResult(run_id=run_id, status="missing")
+            set_context(
+                correlation_id=correlation_id_from_summary(run.summary) or run_id,
+                run_id=run_id,
+            )
 
             chunk_id = _int_value(payload.get("chunk_id"), default=0)
             # Prefer the run's established chunk count over a stale/missing queue payload so

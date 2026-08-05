@@ -207,8 +207,9 @@ tests" means there is at least one test exercising the core logic of each paper'
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector),
   PyIceberg, trino-python-client, boto3 (EMR Serverless), Redis, structlog.
-- **Frontend** — React 19 + TypeScript (Vite), Ant Design, Recharts, TanStack Query. Types are
-  generated from the backend's OpenAPI schema (`npm run gen:api`).
+- **Frontend** — React 19 + TypeScript (Vite), Radix UI primitives, Tailwind CSS, Recharts,
+  TanStack Table, and TanStack Query. Types are generated from the backend's OpenAPI schema
+  (`npm run gen:api`).
 - **AI** — pgvector for table/column embeddings; a pluggable provider interface (Anthropic /
   OpenAI / local); versioned skillsets for prompts and tools.
 - **Observability** — OpenTelemetry tracing, Prometheus metrics, Loki logs.

@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -130,12 +132,55 @@ def aggregate_query_patterns(
     # REPLACED with the recomputed truth, not incremented, or every tick would double-count.
     _replace_table_query_activity_from_query_logs(session, logs)
     refresh_query_count_30d(session, set(table_stats.keys()))
+    _refresh_wair_query_ranges(session, logs)
     return updated
+
+
+def _refresh_wair_query_ranges(session: Session, logs: Sequence[QueryLog]) -> None:
+    grouped: defaultdict[uuid.UUID, dict[tuple[str, str, str], dict[str, Any]]] = defaultdict(dict)
+    for log in logs:
+        raw = getattr(log, "raw", None)
+        if log.table_id is None or not isinstance(raw, dict):
+            continue
+        ranges = raw.get("query_ranges")
+        if not isinstance(ranges, list):
+            continue
+        for item in ranges:
+            if not isinstance(item, dict):
+                continue
+            column = item.get("column")
+            lower = item.get("lower")
+            upper = item.get("upper")
+            if not isinstance(column, str) or lower is None or upper is None:
+                continue
+            key = (column, repr(lower), repr(upper))
+            aggregate = grouped[log.table_id].setdefault(
+                key,
+                {"column": column, "lower": lower, "upper": upper, "frequency": 0},
+            )
+            aggregate["frequency"] += 1
+
+    for target_table_id, ranges_by_key in grouped.items():
+        stats = session.get(TableStats, target_table_id)
+        if stats is None:
+            continue
+        ranked = sorted(
+            ranges_by_key.values(),
+            key=lambda item: (
+                -int(item["frequency"]),
+                str(item["column"]),
+                repr(item["lower"]),
+                repr(item["upper"]),
+            ),
+        )[:100]
+        stats.raw = {**dict(stats.raw or {}), "wair_query_ranges": ranked}
+    if grouped:
+        session.commit()
 
 
 def _replace_table_query_activity_from_query_logs(
     session: Session,
-    logs: list[QueryLog],
+    logs: Sequence[QueryLog],
 ) -> None:
     day_counts: defaultdict[tuple[uuid.UUID, date], int] = defaultdict(int)
     for log in logs:
@@ -213,9 +258,7 @@ def record_table_query_activity(
         if count <= 0:
             continue
         existing = (
-            session.query(TableQueryActivity)
-            .filter_by(table_id=table_id, day=bucket)
-            .one_or_none()
+            session.query(TableQueryActivity).filter_by(table_id=table_id, day=bucket).one_or_none()
         )
         if existing is None:
             session.add(TableQueryActivity(table_id=table_id, day=bucket, query_count=count))
@@ -239,16 +282,15 @@ def refresh_query_count_30d(
     if not table_ids:
         return 0
     cutoff = (now or datetime.now(UTC)) - timedelta(days=30)
-    sums = dict(
-        session.execute(
-            select(TableQueryActivity.table_id, func.sum(TableQueryActivity.query_count))
-            .where(
-                TableQueryActivity.table_id.in_(table_ids),
-                TableQueryActivity.day >= cutoff.date(),
-            )
-            .group_by(TableQueryActivity.table_id)
-        ).all()
-    )
+    rows = session.execute(
+        select(TableQueryActivity.table_id, func.sum(TableQueryActivity.query_count))
+        .where(
+            TableQueryActivity.table_id.in_(table_ids),
+            TableQueryActivity.day >= cutoff.date(),
+        )
+        .group_by(TableQueryActivity.table_id)
+    ).all()
+    sums: dict[uuid.UUID, int] = {table_id: int(query_count or 0) for table_id, query_count in rows}
     updated = 0
     for table_id in table_ids:
         stats = session.get(TableStats, table_id)

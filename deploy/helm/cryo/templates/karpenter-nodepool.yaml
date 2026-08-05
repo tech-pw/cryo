@@ -1,0 +1,91 @@
+{{- /*
+Real Karpenter NodePool + EC2NodeClass for native-engine / scan Jobs (native-engine-
+scoping-research.md §6.2-6.3) -- unlike karpenter-nodepool-notes.yaml (a notes-only
+ConfigMap), this actually provisions nodes. Kept behind its own flag, separate from
+`installNotes`, so a chart consumer not ready to hand Karpenter CRD ownership to this
+chart can keep just the documentation.
+
+Dedicated on purpose: these Jobs are bursty and short-lived, so sharing nodes with
+steady-state api/web/worker pods would mean Karpenter can't consolidate/scale this
+capacity down independently, and blends this workload's node cost into the shared
+pool on cost dashboards (see the split-cost-allocation Grafana board this rollout
+was scoped from). The `cryo.io/workload=native-engine` label + taint pairing is the
+same one already documented in karpenter-nodepool-notes.yaml; create_native_job's
+node_selector/toleration only opt into it when `k8s_dedicated_nodepool` is set on
+the destination config, so default behavior (shared node pool) is unchanged.
+
+Requires the Karpenter CRDs already installed in-cluster -- this chart cannot
+bootstrap Karpenter itself. Subnet/security-group tags are cluster-specific; set
+them via native.karpenter.subnetTag / securityGroupTag / instanceProfileRole for
+your cluster before enabling.
+*/ -}}
+{{- if and .Values.native.enabled .Values.native.karpenter.installNodePool }}
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: {{ include "cryo.fullname" . }}-native-engine
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+spec:
+  role: {{ .Values.native.karpenter.instanceProfileRole | quote }}
+  amiSelectorTerms:
+    - alias: bottlerocket@latest
+  subnetSelectorTerms:
+    - tags:
+        {{ .Values.native.karpenter.subnetTagKey }}: {{ .Values.native.karpenter.subnetTagValue | quote }}
+  securityGroupSelectorTerms:
+    - tags:
+        {{ .Values.native.karpenter.securityGroupTagKey }}: {{ .Values.native.karpenter.securityGroupTagValue | quote }}
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  tags:
+    created-by: karpenter
+    workload: native-engine
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ include "cryo.fullname" . }}-native-engine
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: native-engine
+spec:
+  disruption:
+    # WhenEmpty (not WhenEmptyOrUnderutilized): these Jobs are single-purpose, short-
+    # lived pods -- consolidating a node mid-Job would kill it the same way Karpenter
+    # already evicted the Governor pod itself once (see governor-deployment.yaml's
+    # do-not-disrupt annotation comment). Only reclaim a node once nothing is on it.
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: {{ .Values.native.karpenter.consolidateAfter | default "5m" | quote }}
+  limits:
+    cpu: {{ .Values.native.karpenter.limitCpu | default "64" | quote }}
+    memory: {{ .Values.native.karpenter.limitMemory | default "256Gi" | quote }}
+  template:
+    metadata:
+      labels:
+        cryo.io/workload: native-engine
+    spec:
+      expireAfter: {{ .Values.native.karpenter.expireAfter | default "720h" | quote }}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: {{ include "cryo.fullname" . }}-native-engine
+      taints:
+        - key: cryo.io/workload
+          value: native-engine
+          effect: NoSchedule
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand", "spot"]
+{{- end }}

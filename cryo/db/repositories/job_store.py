@@ -12,6 +12,7 @@ from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import (
     AuditLog,
     Destination,
+    MaintenanceIntent,
     MaintenanceJob,
     MaintenanceRun,
     Table,
@@ -19,6 +20,7 @@ from cryo.db.models import (
     TablePartition,
 )
 from cryo.domain.enums import JobStatus, Mode, OperationType
+from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
     AuditRecord,
     DestinationConfig,
@@ -59,6 +61,10 @@ class SQLJobStore:
             if table is None:
                 raise KeyError(f"table not found: {table_id}")
             stats = _stats_dict(table)
+            stats["delete_minor_runs_since_major"] = _minor_delete_runs_since_major(
+                session,
+                table.id,
+            )
             partitions = _latest_partitions(session, table.id)
             source_config = dict(table.source.config) if table.source is not None else {}
             return TableMaintenanceData(
@@ -70,6 +76,8 @@ class SQLJobStore:
     def save_plan(self, job_id: str, plan: dict[str, Any]) -> None:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
+            if job.current_intent_id is not None and job.plan != plan:
+                raise RuntimeError("cannot replace the plan of a job bound to a durable intent")
             job.plan = plan
             session.commit()
 
@@ -271,6 +279,11 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         params.setdefault("benefit_score", autocomp["benefit_score"])
         if autocomp["moop_score"] is not None:
             params.setdefault("moop_score", autocomp["moop_score"])
+    intent = (
+        session.get(MaintenanceIntent, job.current_intent_id)
+        if job.current_intent_id is not None
+        else None
+    )
     return MaintenanceJobRecord(
         id=str(job.id),
         run_id=str(job.run_id),
@@ -292,7 +305,38 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         operations=operations,
         force_admit=bool(job.force_admit),
         dispatch_id=str(job.dispatch_id) if job.dispatch_id is not None else None,
+        intent_id=str(intent.id) if intent is not None else None,
+        intent_status=intent.status if intent is not None else None,
+        intent_expires_at=intent.expires_at if intent is not None else None,
+        fencing_epoch=intent.fencing_epoch if intent is not None else None,
+        tenant_id=(
+            str(intent.tenant_id)
+            if intent is not None and intent.tenant_id is not None
+            else (
+                str(job.table.tenant_id)
+                if job.table is not None and job.table.tenant_id is not None
+                else None
+            )
+        ),
+        intent_effect_destination_ids=_intent_effect_destination_ids(intent),
+        correlation_id=correlation_id_from_summary(summary),
     )
+
+
+def _intent_effect_destination_ids(intent: MaintenanceIntent | None) -> tuple[str, ...]:
+    if intent is None:
+        return ()
+    destination_ids: list[str] = []
+    for requirement in intent.capability_requirements or []:
+        if not isinstance(requirement, dict) or requirement.get("executes_effect", True) is False:
+            continue
+        destination_id = requirement.get("destination_id")
+        if destination_id is None:
+            continue
+        value = str(destination_id)
+        if value not in destination_ids:
+            destination_ids.append(value)
+    return tuple(destination_ids)
 
 
 def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
@@ -350,6 +394,7 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "total_partitions": stats.total_partitions,
         "total_size_gb": stats.total_size_gb,
         "total_delete_files": stats.total_delete_files,
+        "snapshot_watermark": stats.snapshot_watermark,
         # Okolnychyi (VLDB'24) minor/major delete policy needs these two to distinguish
         # "many small position-delete files, cheap minor compaction fixes it" from "delete
         # volume is already high, needs a full major rewrite" -- previously missing here
@@ -357,12 +402,31 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "position_delete_files": stats.position_delete_files,
         "equality_delete_files": stats.equality_delete_files,
         "delete_file_pct": stats.delete_file_pct,
+        "query_count_30d": stats.query_count_30d,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),
     }
+
+
+def _minor_delete_runs_since_major(session: Session, table_id: uuid.UUID) -> int:
+    last_major_id = session.scalar(
+        select(func.max(AuditLog.id)).where(
+            AuditLog.table_id == table_id,
+            AuditLog.action == OperationType.CONVERT_DELETES.value,
+            AuditLog.status == "OK",
+        )
+    )
+    conditions = [
+        AuditLog.table_id == table_id,
+        AuditLog.action == OperationType.REWRITE_POSITION_DELETES.value,
+        AuditLog.status == "OK",
+    ]
+    if last_major_id is not None:
+        conditions.append(AuditLog.id > last_major_id)
+    return int(session.scalar(select(func.count(AuditLog.id)).where(*conditions)) or 0)
 
 
 def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mapping[str, Any]]:

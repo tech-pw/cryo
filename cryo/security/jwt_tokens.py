@@ -12,7 +12,7 @@ from cryo.config import get_settings
 
 _ALGORITHM = "HS256"
 _DEFAULT_TTL_HOURS = 24
-_VALID_ROLES = frozenset({"viewer", "operator", "admin"})
+_VALID_ROLES = frozenset({"evidence_collector", "viewer", "operator", "admin"})
 
 
 def jwt_secret() -> str:

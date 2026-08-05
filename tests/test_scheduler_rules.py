@@ -75,9 +75,7 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
         PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
     ]
 
-    effective = effective_preset(
-        table, [standard, large, manual, default_native], rules
-    )
+    effective = effective_preset(table, [standard, large, manual, default_native], rules)
     assert effective is not None
     assert effective.preset.id == "large"
     assert effective.provenance == "rule"
@@ -93,9 +91,7 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
     assert assigned.provenance == "assignment"
 
     # No rules, no assignment -> None even with an is_default preset present.
-    unassigned = effective_preset(
-        table, [standard, large, manual, default_native], rules=()
-    )
+    unassigned = effective_preset(table, [standard, large, manual, default_native], rules=())
     assert unassigned is None
 
 

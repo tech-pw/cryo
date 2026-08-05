@@ -18,7 +18,7 @@ iceberg_compactor/                  # repo root (codename: Cryo)
 ├── deploy/
 │   └── helm/cryo/                  # Helm chart (api, web, scheduler, governor, worker, scanner, redis)
 ├── migrations/                     # Alembic migrations
-├── web/                            # React + TS + Vite + AntD frontend
+├── web/                            # React + TS + Vite + Radix/Tailwind frontend
 │   ├── src/
 │   │   ├── api/                    # generated client + hooks (TanStack Query)
 │   │   ├── pages/                  # DatalakeHealth, TableExplorer, TableDetail, Presets, Runs, Settings
@@ -352,9 +352,9 @@ params include `retain_last = 4`; `chunk_size_gb` is derived at runtime from pod
 ```sql
 CREATE TABLE cryo.runs (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    kind          text NOT NULL,                 -- 'scheduled' | 'adhoc'
+    kind          text NOT NULL,                 -- see RunKind taxonomy below
     preset_id     uuid REFERENCES cryo.presets(id),
-    trigger       text,                          -- user / cron
+    trigger       text,                          -- user / cron / scan / mcp / api / layout-recommendation-apply
     status        text NOT NULL DEFAULT 'running',
     deadline_at   timestamptz,
     created_at    timestamptz NOT NULL DEFAULT now(),
@@ -393,6 +393,37 @@ CREATE TABLE cryo.audit_log (
 CREATE INDEX ON cryo.audit_log (table_id, ts);
 ```
 
+#### 3.4.1 `MaintenanceRun.kind` — canonical taxonomy
+
+The `runs.kind` column is a free-text label written by the originating subsystem.
+Verified observed values (live production, July 2026):
+
+| `kind` value | Origin | Display in UI | Counted as |
+|---|---|---|---|
+| `"adhoc"` | Operator-triggered via API, MCP, layout-recommendation-apply (`cryo/api/routes.py:1469`, `cryo/api/extensions_helpers.py:267`, `cryo/api/routes_smart_maintenance.py:520`) | "Ad hoc" | Maintenance |
+| `"scheduled"` | Cron-tick emission from the Scheduler (`cryo/db/repositories/scheduler_store.py:102`, `lld.md` §9 loop) | "Scheduled" | Maintenance |
+| `"scan"` | Scanner-triggered batch (`cryo/db/repositories/datalake.py:753`) | "Scan" | Scan |
+
+**Important:** `kind` is **not** an enum. Adding new values (e.g. a future
+`"workflow"` for multi-step composite jobs) is non-breaking at the DB layer
+because the column is `text NOT NULL` with no CHECK constraint. The UI must
+therefore treat unknown values as "Other" rather than throwing.
+
+**Display contract** (`web/src/components/status.tsx` and
+`web/src/lib/operations.ts`): every operator-facing surface that renders a run
+must look `kind` up through a single shared `formatRunKind(kind: string)`
+helper so the label, color token, and icon stay consistent. The frontend
+"Operations" IA merger (Part 1G of the frontend revamp plan) unified scan and
+maintenance runs under `/operations/runs/:runId` — the distinction between
+`"scan"` and `"adhoc"`/`"scheduled"` is preserved by the helper so the unified
+page can show the correct workflow breadcrumb (`Operations › Scanner › Run …`
+vs `Operations › {preset name} › Run …`).
+
+**Filter taxonomy** (Operations Home run feed, `/operations`):
+- `kind = scan` → "Scanner"
+- `kind IN (adhoc, scheduled)` → "Maintenance"
+- Default operator filter during incidents: `status = failed` (no `kind` filter, per Part 1E)
+
 ---
 
 ## 4. Domain enums & DTOs (`cryo/domain`)
@@ -401,12 +432,17 @@ CREATE INDEX ON cryo.audit_log (table_id, ts);
 class OperationType(str, Enum):
     EXPIRE_SNAPSHOTS = "expire_snapshots"
     REMOVE_ORPHAN_FILES = "remove_orphan_files"
+    CONVERT_DELETES = "convert_deletes"
     OPTIMIZE = "optimize"                 # = rewrite_data_files
     OPTIMIZE_MANIFESTS = "optimize_manifests"  # = rewrite_manifests
+    COMPUTE_STATISTICS = "compute_statistics"
+    REWRITE_POSITION_DELETES = "rewrite_position_deletes"
 
 class EngineType(str, Enum):
     TRINO = "trino"
     SPARK_EMR = "spark_emr"
+    NATIVE = "native"
+    FLINK = "flink"
 
 class Mode(str, Enum):
     LIGHT = "light"; STANDARD = "standard"; DEEP = "deep"
@@ -684,13 +720,24 @@ finalize run summary
 job = claim_admitted_job()
 acquire per-table lock (already held by governor handoff)
 stats, partitions = load_latest(job.table_id)
-plan = planner.build_plan(stats, partitions, job.mode, preset.params)
-persist plan to jobs.plan
-engine = engine_factory(job.destination)
-for stmt in engine.render(plan):
-    res = engine.execute(stmt, ctx)
-    audit_log(table, action=stmt.action, status=OK/FAILED, engine, duration)
-    stream_progress_to_redis(job, stmt)
+if durable intents enabled:
+    intent = load immutable current intent
+    reject expired, superseded, stale-fence, changed-snapshot, changed-plan,
+           changed-capability, or changed-approval execution
+    plan = deserialize intent.canonical_plan       # never replan a bound intent
+    attempt = begin_attempt(intent, fencing_epoch)
+else:
+    plan = planner.build_plan(stats, partitions, job.mode, preset.params)
+    persist plan to jobs.plan
+for effect in render_per_effect(plan):
+    assert global/tenant/every-effect-destination pause is clear
+    assert persisted cumulative intent budget allows another effect
+    prepare effect receipt before submission
+    execute exactly one external effect
+    persist destination reference and observed result
+    if outcome ambiguous: mark reconcile_required and stop without replay
+    account observed duration/files/bytes/deletions; contain on budget breach
+    audit and stream progress
 mark job succeeded/failed; release lock; update live counters
 ```
 Failure on one statement/table is caught, audited, and isolated (run continues). Engine ref (Trino
@@ -716,6 +763,29 @@ When a native destination has `config.k8s_dispatch=true` and the Governor is in-
 Ops covered in the pod: `expire_snapshots`, `remove_orphan_files`, `optimize` (rewrite).
 `optimize_manifests` remains routed off-native.
 
+### 11.2 Durable intent and external-effect contract
+
+Migration `20260804_0036` adds:
+
+- `maintenance_intents`: immutable, versioned plan/policy/approval/budget/capability binding;
+- `maintenance_fences`: monotonic table epoch and current intent owner;
+- `maintenance_attempts`: worker lineage, heartbeat, epoch, and terminal status;
+- `effect_receipts`: write-ahead per-effect identity, submission reference, result, and probe state;
+- `maintenance_control_state`: generation-stamped global/tenant/destination pause state.
+
+Intent idempotency covers the full non-temporal execution contract; expiry is deliberately excluded so
+retrying the same scheduled job does not silently renew authority. A new scheduled job is the renewal
+boundary. Receipt reuse verifies intent step, operation, destination, and effect strategy.
+
+`prepared` receipts are reclaimable after a crash because no submission was recorded. `submitted` or
+`unknown` receipts are not replayable: the level-triggered reconciler probes the destination when the
+capability has a safe probe strategy, otherwise an operator must attest the outcome. A resolved current
+intent re-enters normal Governor admission; reconciliation never dispatches directly.
+
+Budgets are cumulative across receipts and attempts. Native plans and SQL fallback bundles execute one
+operation/statement per submission so the Worker can enforce output-file, output-byte, duration, and
+object-deletion containment between external effects.
+
 ---
 
 ## 12. API surface (FastAPI) — `cryo/api/routers`
@@ -728,6 +798,7 @@ filter/sort/paginate using the §6.2 predicate grammar.
 GET/POST/PATCH/DELETE  /api/v1/sources
 GET/POST/PATCH/DELETE  /api/v1/destinations
 POST                   /api/v1/destinations/{id}/test         # health check / probe
+GET                    /api/v1/capabilities                   # canonical support contract
 
 # Datalake & health
 GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=
@@ -761,6 +832,13 @@ POST  /api/v1/maintenance/preview                             # dry-run -> per-t
         # plan-accurate SavingsProjection (current/projected cost, savings by op) for the payload
 POST  /api/v1/maintenance/run                                 # create adhoc run + jobs
         # body accepts either table_ids:[...] OR selection:{mode:"filter", filter:<predicate>}
+GET   /api/v1/maintenance/control                             # visible global/tenant/destination controls
+POST  /api/v1/maintenance/control/pause                       # operator; global requires admin
+POST  /api/v1/maintenance/control/resume
+GET   /api/v1/maintenance/safety/summary
+GET   /api/v1/maintenance/safety/intents
+GET   /api/v1/maintenance/safety/effects                      # filter by state/ambiguous_only
+POST  /api/v1/maintenance/safety/effects/{receipt_id}/resolve # audited operator attestation
 
 # Runs & live monitoring
 GET   /api/v1/runs                  GET /api/v1/runs/{id}      GET /api/v1/runs/{id}/jobs
@@ -777,10 +855,9 @@ assign" is one transactional call that stays correct even as the datalake change
 
 ## 13. Frontend specifics (`web/`)
 
-- **Table Explorer**: AntD `<Table>` with `rowSelection` (`selectedRowKeys` + "select all matching
-  filter" custom action that sends the *filter*, not page IDs), server-side `onChange` →
-  `/api/v1/tables`. Column filters map to the predicate grammar. A sticky **BulkAssignBar** shows
-  "N tables match → [Assign preset ▼] [Run now]".
+- **Table Explorer**: shared TanStack `DataTable` with row selection and a "select all matching
+  filter" action that sends the *filter*, not page IDs. Column filters map to the predicate
+  grammar. A sticky **BulkAssignBar** exposes assign and run actions.
 - **PlanPreview**: modal showing per-table rendered SQL (Trino/Spark) + chunk/partition/load estimate
   **and the plan-accurate projected savings by operation** before any execution.
 - **RunConsole**: WebSocket-driven; per-engine concurrency gauges (Trino active OPTIMIZEs by replica,
@@ -791,6 +868,9 @@ assign" is one transactional call that stays correct even as the datalake change
   by schema, ranked "biggest savings opportunities" (→ select all → Run), precision-coverage badge.
 - **TableDetail**: health card + partition table + snapshot/manifest stats + audit timeline +
   **cost breakdown & projected savings by operation** + "Run".
+- **Connections / Capabilities**: renders the versioned engine-operation matrix from
+  `GET /api/v1/capabilities`; conditional, fallback-only, configuration-only, and blocked paths
+  remain visibly distinct.
 - Data layer: TanStack Query; types generated from the OpenAPI schema.
 
 ---

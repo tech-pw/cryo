@@ -168,4 +168,3 @@ def test_spark_alter_targets_correct_catalog_schema_table(session) -> None:
     stmt = recs[0].spark_alter_statement
     assert stmt.startswith("ALTER TABLE iceberg.analytics.events SET TBLPROPERTIES")
     assert "order_uuid" in stmt
-

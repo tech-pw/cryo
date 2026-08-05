@@ -1,11 +1,17 @@
 # Workload-Aware Optimization — Implementation Spec
 
+Deployed Trino/Spark output evidence is collected through the isolated collector contract described
+in [`../DEPLOYED_CONFORMANCE.md`](../DEPLOYED_CONFORMANCE.md). Operator-submitted fixtures remain
+synthetic and cannot qualify a canary.
+
 > Written 2026-07-20. Implementation specification (docs only — no code landed with this file).
 > Grounds three research tracks in the **actual Cryo codebase**, not greenfield redesigns.
 >
 > **Primary papers**
 > - AutoComp — [arXiv:2504.04186](https://arxiv.org/abs/2504.04186) (SIGMOD 2025, LinkedIn / OpenHouse)
-> - PTO — [DOI 10.1145/3786681](https://doi.org/10.1145/3786681) / [author page](https://vamsikrishna1902.github.io/publication/SIGMOD-2026) (SIGMOD 2026)
+> - PTO — [author page](https://vamsikrishna1902.github.io/publication/SIGMOD-2026),
+>   DOI [`10.1145/3786681`](https://doi.org/10.1145/3786681). Crossref metadata was rechecked on
+>   2026-08-04 and identifies this DOI as PTO; the earlier mismatch warning was incorrect.
 > - WAIR — [arXiv:2602.23289](https://arxiv.org/abs/2602.23289)
 > - Okolnychyi et al. — [VLDB 2024 PDF](https://vldb.org/pvldb/vol17/p4159-okolnychyi.pdf)
 > - Qd-tree — Yang et al., SIGMOD 2020 (prior art only)
@@ -24,7 +30,7 @@ Cryo already has substantial scaffolding. **Do not rebuild** what exists; close 
 |------|-----------------|----------|
 | AutoComp scoring | **Part A (A1–A3) shipped 2026-07-20.** [`cryo/planner/partition_query_affinity.py`](../../cryo/planner/partition_query_affinity.py) (per-partition query attribution, coverage-gated fallback to table-broadcast); [`compute_moop_scores`](../../cryo/planner/benefit_score.py) (MOOP trait normalization + scalarization, `table_partitions.autocomp_traits`); [`pack_fleet_budget`](../../cryo/governor/admission.py) (fleet top-k GB-budget pack) + `min_moop_score`/`fleet_budget_gb` admission gates with `below_moop_score`/`budget_exhausted` skip reasons; [`update_table_effectiveness`](../../cryo/planner/benefit_score.py) persisting effectiveness onto `table_stats.raw`; `GET /tables/{id}/autocomp/candidates`; ROI drawer effectiveness + top-5 MOOP partitions; Table Detail candidates table with MOOP column + skip reasons + delete-policy chip. Also fixed 3 dead-wiring gaps found while landing this (score/traits never reached the planner's candidate dicts; `AdmissionJob.estimated_benefit_score` never populated from a live per-table signal; a double-`/api/v1` prefix bug that made 5 route files' endpoints unreachable). | Fleet-wide (cross-table) MOOP normalization batch (current implementation normalizes per-table, which the paper allows as a valid variant); file-entropy trait (`file_entropy` column exists, scanner doesn't populate it yet — T3 weight redistributes to T1/T4 when absent, see `benefit_score.py`); no dedicated fleet-wide "Compaction queue" UI tab (per-table view only) |
 | Layout | [`cryo/optimizer/layout_analyzer.py`](../../cryo/optimizer/layout_analyzer.py), [`partition_analyzer.py`](../../cryo/optimizer/partition_analyzer.py), [`clustering.py`](../../cryo/optimizer/clustering.py), Smart Maintenance approve/execute, TableDetail bloom + partition tips | No PTO search-space reduction + sampling + GBT; no joint optimization of partition × target file size × row group × strategy |
-| Delete ops | **§C2 shipped 2026-07-20.** `OperationType.REWRITE_POSITION_DELETES`; planner `_delete_compaction_policy` (minor/major/skip, format-version-3-aware); Spark `rewrite_position_delete_files`; Trino raises a clear unsupported error (no equivalent procedure) instead of silently downgrading to a full rewrite; native engine routes to SQL fallback or skips-with-note via the existing `NATIVE_ALWAYS_DISCONNECTED` mechanism; Table Detail delete-file health chip. | No `iterations_since_major` tracking (doc's `major_pct_threshold OR iterations_since_major >= N` — only the percentage clause is implemented; no persisted minor-run counter yet); no equality-delete-specific handling (only position deletes) |
+| Delete ops | **§C2 shipped and extended through 2026-08-04.** `OperationType.REWRITE_POSITION_DELETES`; planner `_delete_compaction_policy` (minor/major/skip, format-version-3-aware); audit-derived successful minor-run count with bounded major escalation; equality-delete files route directly to major rewrite because the position-delete action cannot consume them; Spark `rewrite_position_delete_files`; Trino raises a clear unsupported error (no equivalent procedure) instead of silently downgrading to a full rewrite; native engine routes to SQL fallback or skips-with-note via the existing `NATIVE_ALWAYS_DISCONNECTED` mechanism; Table Detail delete-file health chip. | Production read-plus-maintenance cost comparison against threshold-only control and workload-conditioned thresholds remain open. |
 | WAIR | Hot/cold skip via `partition_write_idle_hours` in planner | No boundary micro-partition identification or incremental reclustering cost model |
 
 ```mermaid
@@ -246,7 +252,7 @@ Add `effectiveness` and top-5 partition `moop_score` list to `details`.
 | `cryo/scheduler/service.py` | Cadence already updates benefit scores; call MOOP refresh |
 | `cryo/api/extensions.py` / smart maintenance routes | Candidates endpoint |
 | `web/src/pages/SmartMaintenance.tsx` | Compaction queue tab |
-| `web/src/pages/TableDetailRedesign.tsx` | AutoComp tab enrichment |
+| `web/src/pages/TableDetail.tsx` and `web/src/pages/table-detail/` | AutoComp tab enrichment |
 | `tests/test_benefit_score*.py`, new affinity tests | Formulas + mapping |
 
 ## A.7 Phases
@@ -263,7 +269,8 @@ Add `effectiveness` and top-5 partition `moop_score` list to `details`.
 
 ## B.1 Paper mapping
 
-PTO (IBM Research, SIGMOD 2026) jointly chooses lakehouse layout parameters for Iceberg/Presto:
+PTO (IBM Research; the author page reports SIGMOD 2026, but publication metadata remains
+provisional) jointly chooses lakehouse layout parameters for Iceberg/Presto:
 
 - Partitioning columns
 - Target file size
@@ -279,7 +286,8 @@ Exhaustive search is intractable (each full rewrite at TB scale takes hours; par
 3. Use **table sampling + Gradient Boosting Trees** to predict relative scan cost for remaining parameter tuples.
 4. Emit the best combination without rewriting every candidate.
 
-Reported gains (paper): ~11% TPC-H / ~36% TPC-DS average latency at SF 10K; long scan-heavy queries up to ~3.4× / ~11×.
+Reported gains (author page, not independently verified): ~11% TPC-H / ~36% TPC-DS average latency
+at SF 10K; long scan-heavy queries up to ~3.4× / ~11×.
 
 ## B.2 Cryo adaptation (control-plane only)
 
@@ -326,6 +334,11 @@ Cryo must **not** fork Presto. Map PTO to:
 
 Emit `CandidateTuple` list capped at e.g. 64 after pruning.
 
+**Implemented B1 note:** candidate generation remains a small deterministic superset so the cap
+cannot accidentally remove every candidate for a later partition option. The heuristic scorer
+applies the final configured cap after evaluating that superset. This preserves partition-strategy
+diversity while bounding persisted and returned rankings.
+
 ### B3.3 Scoring without GBT (B1 heuristic joint score)
 
 Until enough labeled outcomes exist:
@@ -348,6 +361,12 @@ Without rewriting the table:
 2. Replay historical filter predicates against sample → estimated files touched.
 3. Compare to baseline files touched → `estimated_prune_improvement`.
 4. Store simulation in `detail.pto_simulation`.
+
+**Implemented shadow subset:** the read-only API currently replays aggregate historical
+`files_read`/`files_pruned` observations against the candidate's heuristic scan fraction and
+returns an explicitly uncalibrated interval. It never changes recommendation state and abstains
+without enough observations. Manifest-bound predicate replay and persisted simulation labels remain
+open; this aggregate estimator must not be represented as that stronger evidence.
 
 ### B3.5 Gradient Boosting (B3)
 
@@ -486,6 +505,65 @@ within a time/GB window.
    Engine SQL renderers must support file-list or equivalent filter; if engine cannot, fall back to partition predicates covering those files and note degraded mode.
 5. Chunk with existing GB budget / max partitions (or max files) caps.
 
+**Implemented C1.a subset:** the pure boundary detector, deterministic GB/file-budget selector, and
+operator-only offline report are implemented. The report reads `wair_file_sample` and
+`wair_query_ranges` from the `TableStats.raw` evidence contract and abstains if either is missing. Scanner
+population is now implemented in both Python and Go: each retains the lexicographically smallest
+bounded set of current-snapshot file paths with decoded column bounds, independent of manifest
+completion order. Telemetry extracts only concrete two-sided SQL ranges and persists the top 100
+frequency-ranked ranges per table. Planner/engine execution remains open.
+
+The differential oracle renders PTO intent through both Trino and Spark and records SHA-256
+fingerprints without returning executable SQL. It fails closed when either renderer ignores a
+requested semantic. `partition-scope/v1` accepts only non-empty identity/day/month/year partition
+predicates with positive evidence estimates capped at 10 GiB and 500 files. The oracle separately
+proves normalized predicate equivalence, so a matching scope cannot conceal other engine effects.
+At present, Trino does not render sort/z-order clustering, neither renderer evolves partition specs
+or applies the requested row-group size. Spark keeps its existing property-persistence default, but
+the renderer now supports an explicit rewrite-only mode used by the oracle so scoped binpack
+semantics can match Trino without a hidden table mutation. Equivalent approved scopes are still
+hard-blocked by `missing_holdout_evidence` and `production_safety_gates_not_passed`.
+
+`POST /api/v1/tables/{table_id}/pto/holdout` records `pto-holdout/v1` evidence from a
+chronological 50/50 replay of at least 40 historical file-touch observations. It reports baseline
+stability and candidate-implied improvement on the later split. This is a leakage-resistant
+stability check, not causal validation: because neither split observes the candidate layout, the
+report always sets `qualifies_for_canary=false` with
+`counterfactual_labels_unavailable`. The differential oracle therefore changes its blocker from
+missing evidence to `holdout_evidence_not_qualified`; it does not unlock a canary.
+
+`POST /api/v1/tables/{table_id}/pto/controlled-shadow` accepts evidence from an externally
+orchestrated isolated-clone experiment. `pto-controlled-shadow/v1` is bound to the exact
+`layout-differential/v2` PTO-parameter and rewrite-scope fingerprints. It requires query-signature
+randomization, identical per-arm query-signature-set fingerprints, at least 30 observations per
+arm, at least 5% scan-byte improvement, no p95 latency regression above 10%, and no error-rate
+increase above 0.5 percentage points. A passing report may satisfy the holdout blocker, but it
+cannot satisfy output provenance or production safety gates and does not create an execution path.
+
+`rewrite-output-conformance/v1` checks row count, row multiset, schema, partition spec, and touched
+scope fingerprints for Trino and Spark against a common baseline. The initial accepted provenance
+is intentionally only `synthetic_fixture`; conformant fixtures are audited as advisory and always
+set `qualifies_production_gate=false`.
+
+`POST /api/v1/tables/{table_id}/pto/production-safety/{destination_id}` derives
+`production-safety/v1` from internal durable records; callers do not submit a pass/fail payload.
+Qualification requires an enabled `canary` rollout policy, a healthy cohort meeting its minimum
+attempt count, at least the same minimum number of effect receipts, no active destination pause,
+and an automatic rollout-controller halt followed by a resume within 30 days. The stored proof is
+valid for 15 minutes and is invalidated by any rollout-policy hash change.
+
+The differential gate re-hashes the current PTO parameters and rewrite scope on every evaluation.
+Recorded differential, controlled-shadow, and output-conformance evidence must bind to those
+current hashes. This prevents an older successful dossier from authorizing a modified
+recommendation. Production safety is independently freshness- and policy-bound.
+
+`POST /api/v1/tables/{table_id}/layout-differential/record` is operator-only and stores the latest
+`layout-differential/v2` dossier under the PTO recommendation. The dossier binds the result to
+separate SHA-256 fingerprints of the exact PTO parameters and rewrite scope, and records only
+rendered SQL fingerprints, never the SQL text. Every recording appends an actor-attributed audit
+event. The viewer-safe GET remains read-only and recomputes the current report without changing
+durable evidence.
+
 ### UI
 
 Table Detail / Smart Maintenance **Clustering health** card:
@@ -607,6 +685,10 @@ CREATE TABLE IF NOT EXISTS cryo.wair_boundary_snapshots (
 | `wair_rewrite_gb_budget` | 50 | C1 |
 | `delete_minor_file_threshold` | 50 | C2 |
 | `delete_major_pct_threshold` | 10.0 | C2 |
+| `delete_max_minor_runs_before_major` | 5 | C2 |
+| `delete_equality_file_threshold` | 50 | C2 |
+| `delete_hot_query_count_30d` | unset (disabled) | C2 |
+| `delete_hot_max_minor_runs_before_major` | half the normal cycle when enabled | C2 |
 
 ---
 
@@ -661,7 +743,7 @@ Reuse existing Ant Design + TanStack Query patterns. No new design system. Prefe
 └─────────────────────────────────────────────────────────────
 ```
 
-## E.2 Table Detail — [`web/src/pages/TableDetailRedesign.tsx`](../../web/src/pages/TableDetailRedesign.tsx)
+## E.2 Table Detail — [`web/src/pages/TableDetail.tsx`](../../web/src/pages/TableDetail.tsx)
 
 **AutoComp tab (exists stub / visibleTabs includes `autocomp`):**
 
@@ -771,7 +853,8 @@ Extend [`web/src/api/client.ts`](../../web/src/api/client.ts):
 # Appendix H — References
 
 - AutoComp: https://arxiv.org/abs/2504.04186
-- PTO: https://doi.org/10.1145/3786681 — https://vamsikrishna1902.github.io/publication/SIGMOD-2026
+- PTO: https://vamsikrishna1902.github.io/publication/SIGMOD-2026 — provisional author page; its
+  linked DOI resolved to the unrelated Unity Catalog paper when verified on 2026-08-04
 - WAIR: https://arxiv.org/abs/2602.23289
 - Petabyte-Scale Row-Level Operations: https://vldb.org/pvldb/vol17/p4159-okolnychyi.pdf
 - Qd-tree: Yang et al., SIGMOD 2020

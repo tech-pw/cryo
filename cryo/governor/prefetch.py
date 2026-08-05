@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.compliance.pii_gate import maintenance_blocked_for_untagged_pii
-from cryo.db.models import TableStats
+from cryo.db.models import MaintenanceControlState, Table, TableStats
 from cryo.workflows.approvals import ApprovalRequest as ApprovalRequestModel
 from cryo.workflows.approvals import ApprovalStatus, _parse_operation_type, requires_approval
 
@@ -25,6 +26,74 @@ def prefetch_table_stats(
     return {row.table_id: row for row in rows}
 
 
+def prefetch_paused_table_ids(
+    session: Session,
+    table_ids: set[uuid.UUID],
+    *,
+    destination_id: str,
+) -> set[uuid.UUID]:
+    if not table_ids:
+        return set()
+    global_or_destination_pause = session.scalar(
+        select(MaintenanceControlState.id).where(
+            MaintenanceControlState.paused.is_(True),
+            (
+                (MaintenanceControlState.scope_type == "global")
+                & (MaintenanceControlState.scope_id == "global")
+            )
+            | (
+                (MaintenanceControlState.scope_type == "destination")
+                & (MaintenanceControlState.scope_id == destination_id)
+            ),
+        )
+    )
+    if global_or_destination_pause is not None:
+        return set(table_ids)
+    paused_tenants = list(
+        session.scalars(
+            select(MaintenanceControlState.scope_id).where(
+                MaintenanceControlState.paused.is_(True),
+                MaintenanceControlState.scope_type == "tenant",
+            )
+        )
+    )
+    if not paused_tenants:
+        return set()
+    tenant_ids: list[uuid.UUID] = []
+    for raw in paused_tenants:
+        try:
+            tenant_ids.append(uuid.UUID(raw))
+        except ValueError:
+            continue
+    if not tenant_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(Table.id).where(
+                Table.id.in_(table_ids),
+                Table.tenant_id.in_(tenant_ids),
+            )
+        )
+    )
+
+
+def prefetch_paused_destination_ids(
+    session: Session,
+    destination_ids: set[str],
+) -> set[str]:
+    if not destination_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(MaintenanceControlState.scope_id).where(
+                MaintenanceControlState.paused.is_(True),
+                MaintenanceControlState.scope_type == "destination",
+                MaintenanceControlState.scope_id.in_(destination_ids),
+            )
+        )
+    )
+
+
 def prefetch_approved_operation_keys(
     session: Session,
     table_ids: set[uuid.UUID],
@@ -36,6 +105,8 @@ def prefetch_approved_operation_keys(
         ApprovalRequestModel.table_id.in_(table_ids),
         ApprovalRequestModel.status == ApprovalStatus.APPROVED,
         ApprovalRequestModel.executed_at.is_(None),
+        ApprovalRequestModel.expires_at.is_not(None),
+        ApprovalRequestModel.expires_at > datetime.now(UTC),
     )
     result: dict[tuple[uuid.UUID, str], list[dict[str, Any]]] = {}
     for row in session.scalars(stmt):

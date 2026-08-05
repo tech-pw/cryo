@@ -99,7 +99,6 @@ def test_autocomp_candidates_endpoint_ranks_and_flags_below_threshold(api_db) ->
     assert by_value["2025-05-02"]["eligible"] is True
     assert by_value["2025-05-02"]["skip_reason"] is None
     assert by_value["2025-05-02"]["moop_score"] == 0.9
-
     assert by_value["2025-05-03"]["eligible"] is False
     assert by_value["2025-05-03"]["skip_reason"] == "below_min_benefit"
 
@@ -109,6 +108,28 @@ def test_autocomp_candidates_endpoint_ranks_and_flags_below_threshold(api_db) ->
     assert body["effectiveness"]["effectiveness"] == "good"
     assert "compare" in body
     assert "autocomp_wins" in body["compare"]
+
+
+def test_autocomp_compare_endpoint_reports_baseline_regret_and_confidence(api_db) -> None:
+    table_id = _seed_table_with_partitions(api_db.session_factory)
+
+    response = api_db.client.get(
+        f"/api/v1/tables/{table_id}/autocomp/compare",
+        headers=VIEWER_HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [baseline["name"] for baseline in body["baselines"]] == [
+        "size_only",
+        "file_count",
+        "threshold",
+        "fifo",
+        "random",
+    ]
+    assert all(baseline["regret"] >= 0 for baseline in body["baselines"])
+    assert body["confidence"] == 0.2
+    assert body["evidence_sufficient"] is False
 
 
 def test_autocomp_candidates_endpoint_empty_table_has_no_items(api_db) -> None:

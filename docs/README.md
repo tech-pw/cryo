@@ -17,6 +17,9 @@ The authoritative architecture / contract docs live at the repo root:
 
 ### Onboarding & orientation
 
+- [`cryo-10-of-10-plan.md`](./cryo-10-of-10-plan.md) — evidence-gated master
+  plan for product, architecture, maintenance intelligence, UX, engineering,
+  production maturity, and category leadership.
 - [`EXECUTION_PLAN.md`](./EXECUTION_PLAN.md) — ordered actionable plan.
 - [`architecture.md`](./architecture.md) — architecture & AI strategy.
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — recommendations,
@@ -32,6 +35,9 @@ The authoritative architecture / contract docs live at the repo root:
   P0 reverification log.
 - [`current-state.md`](./current-state.md) — snapshot of what works /
   what doesn't today.
+- [`WAVE_0_BASELINE.md`](./WAVE_0_BASELINE.md) — reproducible baseline,
+  hotspot map, migration support, evidence registry, interview plan, and
+  stop-ship policy.
 
 ### Operations
 
@@ -46,6 +52,8 @@ The authoritative architecture / contract docs live at the repo root:
 ### API & backend
 
 - [`api.md`](./api.md) — REST API reference.
+- [`CAPABILITIES.md`](./CAPABILITIES.md) — generated catalog and engine-operation
+  support contract, including maturity, runtime conditions, fallbacks, and evidence.
 
 ### UI / UX
 

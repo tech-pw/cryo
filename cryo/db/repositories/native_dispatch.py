@@ -75,9 +75,7 @@ def mark_dispatch_finished(
     return row
 
 
-def list_active_dispatches(
-    session: Session, *, limit: int | None = None
-) -> list[NativeDispatch]:
+def list_active_dispatches(session: Session, *, limit: int | None = None) -> list[NativeDispatch]:
     """List active dispatches, oldest-created first.
 
     ``limit`` bounds how many the caller processes in one pass -- NativeJobWatcher.tick()
@@ -88,9 +86,11 @@ def list_active_dispatches(
     still in the "active" set (and therefore first in line) next tick, rather than being
     starved by newer dispatches created after them.
     """
-    stmt = select(NativeDispatch).where(
-        NativeDispatch.status.in_(("pending", "running", "cancel_requested", "cancelling"))
-    ).order_by(NativeDispatch.created_at.asc())
+    stmt = (
+        select(NativeDispatch)
+        .where(NativeDispatch.status.in_(("pending", "running", "cancel_requested", "cancelling")))
+        .order_by(NativeDispatch.created_at.asc())
+    )
     if limit is not None:
         stmt = stmt.limit(limit)
     return list(session.scalars(stmt).all())

@@ -150,6 +150,8 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
+from cryo.intents.binding import build_and_bind_job_intent
+from cryo.observability.correlation import correlation_summary
 from cryo.planner.guardrails import validate_guardrails, validate_operation_order, validate_params
 from cryo.planner.planner import build_plan
 from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
@@ -236,7 +238,6 @@ def get_table_cost(table_id: uuid.UUID, session: SessionDep) -> dict[str, object
     if payload is None:
         raise HTTPException(status_code=404, detail="Table cost not found")
     return payload
-
 
 
 @router.get(
@@ -1243,7 +1244,9 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         raise HTTPException(status_code=404, detail="Table not found")
     effective = presets.resolve_effective_preset(session, table)
     assignment = session.get(TableAssignment, table_id)
-    overrides = dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
+    overrides = (
+        dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
+    )
     preset_params = dict(effective.preset.params) if effective else {}
     return EffectiveParamsResponse(
         table_id=table_id,
@@ -1490,7 +1493,7 @@ def create_maintenance_run(
         trigger=payload.trigger,
         status="scheduled" if payload.scheduled_at is not None else "queued",
         scheduled_at=payload.scheduled_at,
-        summary={"actor": principal.subject},
+        summary=correlation_summary({"actor": principal.subject}),
     )
     session.add(run)
     session.flush()
@@ -1499,7 +1502,8 @@ def create_maintenance_run(
     # params.operations (Planner-emitted), run the verifier once per table before enqueue and
     # persist the verdict onto the job. If the verifier reports a critical violation, refuse
     # to enqueue.
-    verifier_enabled = get_settings().plan_verifier_enabled
+    settings = get_settings()
+    verifier_enabled = settings.plan_verifier_enabled
     jobs: list[MaintenanceJob] = []
     for table_id in selection.table_ids:
         if preset is not None and requested_ops:
@@ -1516,7 +1520,11 @@ def create_maintenance_run(
                 )
                 if not allowed:
                     raise HTTPException(status_code=403, detail=reason)
-        plan_for_verifier = _build_plan_for_table(session, table_id, preset, payload.mode)
+        plan_for_verifier = (
+            None
+            if settings.durable_intents_enabled
+            else _build_plan_for_table(session, table_id, preset, payload.mode)
+        )
         verified_flag = True
         plan_hash_value: str | None = None
         verifier_version_value: str | None = None
@@ -1560,6 +1568,15 @@ def create_maintenance_run(
             verifier_violations=violations_value or None,
         )
         session.add(job)
+        session.flush()
+        if settings.durable_intents_enabled:
+            build_and_bind_job_intent(
+                session,
+                job_id=str(job.id),
+                settings=settings,
+                actor_type="api",
+                actor_id=principal.subject,
+            )
         jobs.append(job)
     session.commit()
     wiring = build_runtime_wiring()
@@ -2047,9 +2064,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
         session.scalars(
             select(NativeDispatch).where(
                 NativeDispatch.run_id == run_id,
-                NativeDispatch.status.in_(
-                    ("pending", "running", "cancel_requested", "cancelling")
-                ),
+                NativeDispatch.status.in_(("pending", "running", "cancel_requested", "cancelling")),
             )
         )
     )
@@ -2113,10 +2128,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
             wiring = build_runtime_wiring()
             for job_id, destination_id, prior_status, table_id, release_lock in release:
                 queue_status = wiring.queue.status(job_id)
-                if (
-                    prior_status == JobStatus.QUEUED.value
-                    or queue_status is JobStatus.QUEUED
-                ):
+                if prior_status == JobStatus.QUEUED.value or queue_status is JobStatus.QUEUED:
                     wiring.queue.cancel_pending(job_id, destination_id)
                 elif queue_status in {JobStatus.ADMITTED, JobStatus.RUNNING}:
                     # ADMITTED / RUNNING held an in-flight slot via queue.admit().

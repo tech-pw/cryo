@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from cryo.scanner.property_recommendations import count_suboptimal_property_issues
+
 HEALTH_THRESHOLDS = {
     "small_file_pct_warn": 20,
     "small_file_pct_crit": 50,
@@ -229,13 +231,7 @@ def compute_health_score(
             }
         )
 
-    props_issues = 0
-    if stats.get("write_distribution_mode", "none") == "none":
-        props_issues += 1
-    if not stats.get("has_sort_order", False):
-        props_issues += 1
-    if not stats.get("target_file_size_bytes"):
-        props_issues += 1
+    props_issues = count_suboptimal_property_issues(stats)
     if props_issues:
         score -= 8
         deductions.append(
@@ -243,7 +239,10 @@ def compute_health_score(
                 "label": "Suboptimal properties",
                 "deduction": 8,
                 "severity": "warning",
-                "reason": "Missing sort order, distribution mode, or target file size settings",
+                "reason": (
+                    f"{props_issues} alterable property gap(s) — missing sort order, "
+                    "distribution mode, or target file size settings"
+                ),
             }
         )
 

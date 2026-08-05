@@ -72,7 +72,12 @@ class SparkK8sEngine:
         """
         access_key = source_config.get("s3.access-key-id")
         secret_key = source_config.get("s3.secret-access-key")
-        if not (isinstance(access_key, str) and access_key and isinstance(secret_key, str) and secret_key):
+        if not (
+            isinstance(access_key, str)
+            and access_key
+            and isinstance(secret_key, str)
+            and secret_key
+        ):
             return self
         if self._k8s_config.s3_access_key and self._k8s_config.s3_secret_key:
             return self
@@ -125,9 +130,7 @@ class SparkK8sEngine:
     def session_setup(self) -> list[str]:
         return []
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         results: list[ExecResult] = []
         for stmt in self.render(plan):
             result = self.execute(stmt, ctx)
@@ -203,6 +206,8 @@ class SparkK8sEngine:
         except TimeoutError as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_id,
                 detail=stmt.sql,
                 error=truncate_error_message(str(exc)),
                 duration_ms=_elapsed_ms(start),
@@ -210,6 +215,8 @@ class SparkK8sEngine:
         except Exception as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_id,
                 detail=stmt.sql,
                 error=truncate_error_message(f"Spark-on-K8s submission failed: {exc}"),
                 duration_ms=_elapsed_ms(start),

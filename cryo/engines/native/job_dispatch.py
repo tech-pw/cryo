@@ -181,36 +181,49 @@ def _float_cfg(cfg: Mapping[str, Any], key: str, env_key: str, *, default: float
 def _capacity_scheduling(
     *,
     use_spot: bool,
+    dedicated_nodepool: bool = False,
 ) -> tuple[dict[str, str], list[dict[str, str]], dict[str, str]]:
-    """Return (node_selector extras, tolerations, annotations) for capacity type."""
+    """Return (node_selector extras, tolerations, annotations) for capacity type.
+
+    ``dedicated_nodepool`` opts into the cryo.io/workload=native-engine label +
+    taint pairing (see deploy/helm/cryo/templates/karpenter-nodepool.yaml) so
+    these Jobs land on their own Karpenter-managed nodes instead of sharing
+    the default node pool -- off by default so existing scheduling is
+    unaffected until that NodePool is actually installed for a cluster.
+    """
     annotations = {
         "cryo.io/capacity-type": "spot" if use_spot else "on-demand",
     }
+    node_selector: dict[str, str] = {
+        "karpenter.sh/capacity-type": "spot" if use_spot else "on-demand"
+    }
+    tolerations: list[dict[str, str]] = []
     if not use_spot:
         annotations["karpenter.sh/do-not-disrupt"] = "true"
-        return (
-            {"karpenter.sh/capacity-type": "on-demand"},
-            [],
-            annotations,
-        )
-    return (
-        {"karpenter.sh/capacity-type": "spot"},
-        [
+    else:
+        tolerations.append(
             {
                 "key": "karpenter.sh/capacity-type",
                 "operator": "Equal",
                 "value": "spot",
                 "effect": "NoSchedule",
             }
-        ],
-        annotations,
-    )
+        )
+    if dedicated_nodepool:
+        node_selector["cryo.io/workload"] = "native-engine"
+        tolerations.append(
+            {
+                "key": "cryo.io/workload",
+                "operator": "Equal",
+                "value": "native-engine",
+                "effect": "NoSchedule",
+            }
+        )
+    return (node_selector, tolerations, annotations)
 
 
 def _resolve_image_pull_secrets(config: Mapping[str, Any]) -> list[str]:
-    raw = config.get("k8s_image_pull_secrets") or os.environ.get(
-        "CRYO_NATIVE_IMAGE_PULL_SECRETS"
-    )
+    raw = config.get("k8s_image_pull_secrets") or os.environ.get("CRYO_NATIVE_IMAGE_PULL_SECRETS")
     if isinstance(raw, str):
         return [s.strip() for s in raw.split(",") if s.strip()]
     if isinstance(raw, (list, tuple)):
@@ -229,6 +242,7 @@ def create_native_job(
     run_id: str | None = None,
     table_refs: Sequence[str] | None = None,
     timeout_seconds: int | None = None,
+    command: Sequence[str] | None = None,
 ) -> JobCreateResult:
     """Create a Kubernetes Job without waiting for completion.
 
@@ -292,7 +306,12 @@ def create_native_job(
     # so the decision reflects actual job size even when the caller didn't pass one.
     estimated_chunk_gb = chunk_size_gb_for_pod_mem(mem_mib)
     use_spot = spot_allowed_for_job(chunk_size_gb=estimated_chunk_gb, config=config)
-    node_extras, tolerations, capacity_annotations = _capacity_scheduling(use_spot=use_spot)
+    dedicated_nodepool = _bool_cfg(
+        dict(config), "k8s_dedicated_nodepool", "CRYO_NATIVE_DEDICATED_NODEPOOL", default=False
+    )
+    node_extras, tolerations, capacity_annotations = _capacity_scheduling(
+        use_spot=use_spot, dedicated_nodepool=dedicated_nodepool
+    )
     if not use_spot and _bool_cfg(
         dict(config), "k8s_spot_allow", "CRYO_NATIVE_SPOT_ALLOW", default=False
     ):
@@ -303,15 +322,21 @@ def create_native_job(
     node_selector: dict[str, str] = {"kubernetes.io/arch": "amd64"}
     node_selector.update(node_extras)
 
-    # Prefer Python batch entrypoint so multi-table serial pods work without
-    # changing the Go binary contract. Single-table batches still work.
-    use_batch_entrypoint = bool(payload.get("batch")) or bool(
-        config.get("k8s_batch_entrypoint", True)
-    )
-    if use_batch_entrypoint:
-        command = ["python", "-m", "cryo.engines.native.batch"]
+    if command is not None:
+        # Caller-supplied entrypoint (e.g. scan Jobs via cryo.scanner.job_dispatch) --
+        # reuses this manifest/Secret/scheduling machinery with a different container
+        # command instead of the native engine binary.
+        command = list(command)
     else:
-        command = [binary, "execute"]
+        # Prefer Python batch entrypoint so multi-table serial pods work without
+        # changing the Go binary contract. Single-table batches still work.
+        use_batch_entrypoint = bool(payload.get("batch")) or bool(
+            config.get("k8s_batch_entrypoint", True)
+        )
+        if use_batch_entrypoint:
+            command = ["python", "-m", "cryo.engines.native.batch"]
+        else:
+            command = [binary, "execute"]
 
     primary_ref = "batch"
     if table_refs:

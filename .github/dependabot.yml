@@ -42,7 +42,25 @@ updates:
           - antd
       react-query:
         patterns:
-          - @tanstack/react-query
+          - "@tanstack/react-query"
       recharts:
         patterns:
           - recharts
+
+  - package-ecosystem: gomod
+    directory: /engine-go
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-request-limit: 10
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: cargo
+    directory: /cryo-engine
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-request-limit: 10
+    commit-message:
+      prefix: chore

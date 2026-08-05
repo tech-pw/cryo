@@ -3,16 +3,17 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, sessionmaker
 
 from cryo.api.deps import SessionDep, require_editor, require_operator, require_viewer
 from cryo.api.schemas import MaintenanceRunResponse
 from cryo.api.security import Principal
+from cryo.config import get_settings
 from cryo.db.models import (
     Destination,
     LayoutRecommendation,
@@ -24,18 +25,26 @@ from cryo.db.models import (
     TableStats,
 )
 from cryo.db.repositories import presets
+from cryo.db.repositories.intents import IntentStore
 from cryo.domain.enums import EngineType, Mode, OperationType
+from cryo.domain.intents import AttemptStatus, EffectState, MaintenanceIntentRecord
 from cryo.domain.models import MaintenancePlan, Operation
-from cryo.engines.base import RenderedStatement
+from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
 from cryo.engines.spark.k8s_engine import SparkK8sEngine
 from cryo.governor.admission import AdmissionJob
 from cryo.governor.native_admit import _fallback_engine_config
 from cryo.governor.roi_gate import ROIGate
+from cryo.intents.binding import bind_explicit_job_intent
+from cryo.intents.validation import IntentValidationError, validate_effect_budget
+from cryo.observability.correlation import correlation_summary
 from cryo.scheduler.forecaster import WorkloadForecaster
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/smart-maintenance", tags=["smart-maintenance"])
+ViewerPrincipalDep = Annotated[Principal, Depends(require_viewer)]
+OperatorPrincipalDep = Annotated[Principal, Depends(require_operator)]
+EditorPrincipalDep = Annotated[Principal, Depends(require_editor)]
 
 
 class TierSummary(BaseModel):
@@ -140,7 +149,7 @@ class ExecuteLayoutRecommendationRequest(BaseModel):
 @router.get("/overview", response_model=SmartMaintenanceOverview)
 def smart_maintenance_overview(
     session: SessionDep,
-    _principal: Principal = Depends(require_viewer),
+    _principal: ViewerPrincipalDep,
 ) -> SmartMaintenanceOverview:
     # Aggregated in SQL rather than `select(TableStats)).all()` -- materializing every table's
     # full row (including the `raw` JSONB blob) into Python OOM'd the api pod once the catalog
@@ -186,8 +195,6 @@ def smart_maintenance_overview(
     if pending_layout is None:
         pending_layout = 0
 
-    from cryo.config import get_settings
-
     settings = get_settings()
     return SmartMaintenanceOverview(
         generated_at=datetime.now(UTC),
@@ -202,8 +209,8 @@ def smart_maintenance_overview(
 @router.get("/detection-tiers", response_model=DetectionTierResponse)
 def list_detection_tiers(
     session: SessionDep,
+    _principal: ViewerPrincipalDep,
     limit: int = 200,
-    _principal: Principal = Depends(require_viewer),
 ) -> DetectionTierResponse:
     rows = session.scalars(
         select(Table)
@@ -237,7 +244,7 @@ def list_detection_tiers(
 def get_table_roi(
     table_id: uuid.UUID,
     session: SessionDep,
-    _principal: Principal = Depends(require_viewer),
+    _principal: ViewerPrincipalDep,
 ) -> ROIBreakdownRead:
     stats = session.get(TableStats, table_id)
     if stats is None:
@@ -266,8 +273,7 @@ def get_table_roi(
     top_moop_partitions: list[dict[str, Any]] = []
     if latest_scan is not None:
         top_rows = session.scalars(
-            select(TablePartition)
-            .where(
+            select(TablePartition).where(
                 TablePartition.table_id == table_id,
                 TablePartition.scan_at == latest_scan,
                 TablePartition.autocomp_traits.isnot(None),
@@ -308,7 +314,9 @@ def get_table_roi(
             "request_benefit_usd_month": decision.breakdown.request_benefit_usd_month,
             "opportunity_benefit_usd_month": decision.breakdown.opportunity_benefit_usd_month,
             "rewrite_compute_cost_usd_month": decision.breakdown.rewrite_compute_cost_usd_month,
-            "write_amplification_cost_usd_month": decision.breakdown.write_amplification_cost_usd_month,
+            "write_amplification_cost_usd_month": (
+                decision.breakdown.write_amplification_cost_usd_month
+            ),
             "opportunity_cost_usd_month": decision.breakdown.opportunity_cost_usd_month,
         },
         effectiveness=effectiveness,
@@ -320,11 +328,13 @@ def get_table_roi(
 def table_workload_forecast(
     table_id: uuid.UUID,
     session: SessionDep,
+    _principal: ViewerPrincipalDep,
     horizon_hours: int = 24,
-    _principal: Principal = Depends(require_viewer),
 ) -> WorkloadForecastRead:
     forecaster = WorkloadForecaster()
-    forecast = forecaster.forecast(session, table_id, horizon_hours=max(1, min(horizon_hours, 7 * 24)))
+    forecast = forecaster.forecast(
+        session, table_id, horizon_hours=max(1, min(horizon_hours, 7 * 24))
+    )
     return WorkloadForecastRead(
         table_id=forecast.table_id,
         generated_at=forecast.generated_at,
@@ -340,10 +350,12 @@ def table_workload_forecast(
 @router.get("/layout-recommendations", response_model=LayoutRecommendationListRead)
 def list_layout_recommendations(
     session: SessionDep,
+    _principal: ViewerPrincipalDep,
     status: str | None = None,
-    _principal: Principal = Depends(require_viewer),
 ) -> LayoutRecommendationListRead:
-    stmt = select(LayoutRecommendation, Table).join(Table, Table.id == LayoutRecommendation.table_id)
+    stmt = select(LayoutRecommendation, Table).join(
+        Table, Table.id == LayoutRecommendation.table_id
+    )
     if status:
         stmt = stmt.where(LayoutRecommendation.status == status)
     rows = session.execute(stmt.order_by(LayoutRecommendation.updated_at.desc()).limit(500)).all()
@@ -368,12 +380,14 @@ def list_layout_recommendations(
     return LayoutRecommendationListRead(items=items)
 
 
-@router.post("/layout-recommendations/{recommendation_id}/approve", response_model=LayoutRecommendationRead)
+@router.post(
+    "/layout-recommendations/{recommendation_id}/approve", response_model=LayoutRecommendationRead
+)
 def approve_layout_recommendation(
     recommendation_id: uuid.UUID,
     payload: ApproveLayoutRecommendationRequest,
     session: SessionDep,
-    principal: Principal = Depends(require_operator),
+    principal: OperatorPrincipalDep,
 ) -> LayoutRecommendationRead:
     recommendation = session.get(LayoutRecommendation, recommendation_id)
     if recommendation is None:
@@ -406,12 +420,14 @@ def approve_layout_recommendation(
     )
 
 
-@router.post("/layout-recommendations/{recommendation_id}/dismiss", response_model=LayoutRecommendationRead)
+@router.post(
+    "/layout-recommendations/{recommendation_id}/dismiss", response_model=LayoutRecommendationRead
+)
 def dismiss_layout_recommendation(
     recommendation_id: uuid.UUID,
     payload: DismissLayoutRecommendationRequest,
     session: SessionDep,
-    principal: Principal = Depends(require_operator),
+    principal: OperatorPrincipalDep,
 ) -> LayoutRecommendationRead:
     recommendation = session.get(LayoutRecommendation, recommendation_id)
     if recommendation is None:
@@ -449,7 +465,7 @@ def execute_layout_recommendation(
     recommendation_id: uuid.UUID,
     payload: ExecuteLayoutRecommendationRequest,
     session: SessionDep,
-    principal: Principal = Depends(require_editor),
+    principal: EditorPrincipalDep,
 ) -> MaintenanceRunResponse:
     """Apply a layout recommendation's specific sort/z-order strategy.
 
@@ -469,7 +485,10 @@ def execute_layout_recommendation(
     if recommendation.status != "approved":
         raise HTTPException(
             status_code=400,
-            detail=f"Recommendation must be approved before executing (status={recommendation.status!r})",
+            detail=(
+                "Recommendation must be approved before executing "
+                f"(status={recommendation.status!r})"
+            ),
         )
     if recommendation.recommended_strategy not in ("sort", "zorder"):
         raise HTTPException(
@@ -512,9 +531,7 @@ def execute_layout_recommendation(
         raise HTTPException(status_code=422, detail="Table's source not found")
     catalog_name = (source.config or {}).get("catalog_name")
     if not isinstance(catalog_name, str) or not catalog_name:
-        raise HTTPException(
-            status_code=422, detail="Table's source has no catalog_name configured"
-        )
+        raise HTTPException(status_code=422, detail="Table's source has no catalog_name configured")
     table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
 
     run = MaintenanceRun(
@@ -522,14 +539,19 @@ def execute_layout_recommendation(
         preset_id=None,
         trigger="layout-recommendation-apply",
         status="running",
-        summary={"actor": principal.subject, "layout_recommendation_id": str(recommendation.id)},
+        summary=correlation_summary(
+            {
+                "actor": principal.subject,
+                "layout_recommendation_id": str(recommendation.id),
+            }
+        ),
     )
     session.add(run)
     session.flush()
     job = MaintenanceJob(
         run_id=run.id,
         table_id=table.id,
-        destination_id=destination.id,
+        destination_id=fallback_destination.id,
         mode=payload.mode,
         status="running",
         started_at=datetime.now(UTC),
@@ -537,7 +559,11 @@ def execute_layout_recommendation(
     session.add(job)
     session.flush()
 
-    op_params: dict[str, Any] = {"strategy": recommendation.recommended_strategy, "rewrite_all": True}
+    op_params: dict[str, Any] = {
+        "strategy": recommendation.recommended_strategy,
+        "rewrite_all": True,
+        "persist_sort_order": recommendation.recommended_strategy == "sort",
+    }
     if recommendation.recommended_strategy == "zorder":
         op_params["zorder_columns"] = columns
     else:
@@ -547,25 +573,174 @@ def execute_layout_recommendation(
         mode=Mode(payload.mode),
         operations=(Operation(OperationType.OPTIMIZE, op_params),),
     )
+    settings = get_settings()
+    bound_intent = None
+    if settings.durable_intents_enabled:
+        bound = bind_explicit_job_intent(
+            session,
+            job_id=str(job.id),
+            plan=plan,
+            settings=settings,
+            actor_type="layout-recommendation",
+            actor_id=principal.subject,
+            policy_id=str(recommendation.id),
+        )
+        bound_intent = bound.intent
+        session.commit()
 
     merged_config = _fallback_engine_config(fallback_destination.config, source.config)
     engine = SparkK8sEngine(config=merged_config)
-    results = engine.execute_plan(plan)
+    intent_store = (
+        IntentStore(
+            sessionmaker(
+                bind=session.get_bind(),
+                autoflush=False,
+                expire_on_commit=False,
+            )
+        )
+        if bound_intent is not None
+        else None
+    )
+    intent_record = (
+        intent_store.get(str(bound_intent.id))
+        if intent_store is not None and bound_intent is not None
+        else None
+    )
+    if intent_store is not None and intent_record is None:
+        raise RuntimeError("bound layout maintenance intent could not be reloaded")
+    attempt = (
+        intent_store.begin_attempt(
+            str(intent_record.id),
+            worker_id=f"api:{principal.subject}",
+        )
+        if intent_store is not None and intent_record is not None
+        else None
+    )
+    receipt = None
+    if intent_store is not None and attempt is not None and intent_record is not None:
+        requirement = intent_record.capability_requirements[0]
+        receipt = intent_store.prepare_effect(
+            intent_id=str(intent_record.id),
+            attempt_id=str(attempt.id),
+            step_index=0,
+            operation=OperationType.OPTIMIZE,
+            strategy=requirement.effect_strategy,
+            destination_id=str(fallback_destination.id),
+        )
+        intent_store.mark_effect_submitted(
+            str(receipt.id),
+            submission={
+                "operation": OperationType.OPTIMIZE.value,
+                "execution": "layout_recommendation",
+                "recommendation_id": str(recommendation.id),
+                "continuation": "manual_review",
+            },
+        )
+
+    def _track_effect_reference(reference: str) -> None:
+        job.engine_ref = reference
+        if intent_store is not None and receipt is not None:
+            intent_store.set_effect_external_reference(str(receipt.id), reference)
+
+    try:
+        results = engine.execute_plan(
+            plan,
+            ExecCtx(
+                job_id=job.id,
+                table_id=table.id,
+                run_id=str(run.id),
+                on_engine_ref=_track_effect_reference,
+            ),
+        )
+    except Exception as exc:
+        if intent_store is not None and attempt is not None and receipt is not None:
+            intent_store.resolve_effect(
+                str(receipt.id),
+                EffectState.UNKNOWN,
+                error={"type": type(exc).__name__, "message": str(exc)},
+            )
+            intent_store.finish_attempt(
+                str(attempt.id),
+                AttemptStatus.RECONCILE_REQUIRED,
+                error={"message": str(exc)},
+            )
+            job.status = "partial"
+            job.error = f"effect_unknown:{exc}"
+            job.finished_at = datetime.now(UTC)
+            run.status = "partial"
+            run.finished_at = datetime.now(UTC)
+            session.commit()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Layout rewrite outcome is unknown and requires reconciliation (run {run.id})",
+        ) from exc
     rewrite_result = results[0] if results else None
+    if (
+        intent_store is not None
+        and receipt is not None
+        and rewrite_result is not None
+        and rewrite_result.engine_ref
+    ):
+        intent_store.set_effect_external_reference(
+            str(receipt.id),
+            rewrite_result.engine_ref,
+        )
 
     if rewrite_result is None or not rewrite_result.ok:
         error = rewrite_result.error if rewrite_result else "No result from Spark dispatch"
-        job.status = "failed"
+        outcome_unknown = rewrite_result is None or not rewrite_result.outcome_known
+        if intent_store is not None and attempt is not None and receipt is not None:
+            intent_store.resolve_effect(
+                str(receipt.id),
+                EffectState.UNKNOWN if outcome_unknown else EffectState.FAILED,
+                error={"message": error},
+            )
+            intent_store.finish_attempt(
+                str(attempt.id),
+                (AttemptStatus.RECONCILE_REQUIRED if outcome_unknown else AttemptStatus.FAILED),
+                error={"message": error},
+            )
+        job.status = "partial" if outcome_unknown else "failed"
         job.error = error
         job.engine_ref = rewrite_result.engine_ref if rewrite_result else None
         job.finished_at = datetime.now(UTC)
-        run.status = "failed"
+        run.status = "partial" if outcome_unknown else "failed"
         run.finished_at = datetime.now(UTC)
         session.commit()
         raise HTTPException(
             status_code=502,
             detail=f"{recommendation.recommended_strategy} rewrite failed: {error} (run {run.id})",
         )
+
+    if intent_store is not None and receipt is not None:
+        intent_store.resolve_effect(
+            str(receipt.id),
+            EffectState.SUCCEEDED,
+            result=_layout_effect_result(rewrite_result),
+        )
+        assert intent_record is not None
+        budget_error = _layout_budget_error(intent_store, intent_record)
+        if budget_error is not None:
+            assert attempt is not None
+            intent_store.finish_attempt(
+                str(attempt.id),
+                AttemptStatus.FAILED,
+                error={"message": budget_error},
+            )
+            job.status = "partial"
+            job.error = budget_error
+            job.engine_ref = rewrite_result.engine_ref
+            job.finished_at = datetime.now(UTC)
+            run.status = "partial"
+            run.finished_at = datetime.now(UTC)
+            session.commit()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Layout rewrite completed but exceeded its bound effect budget: "
+                    f"{budget_error} (run {run.id})"
+                ),
+            )
 
     persisted_sort_order = False
     persist_error: str | None = None
@@ -577,8 +752,126 @@ def execute_layout_recommendation(
             engine=EngineType.SPARK_EMR,
             metadata={"catalog": catalog_name},
         )
-        alter_result = engine.execute(alter_stmt)
+        persist_receipt = None
+        if intent_store is not None and attempt is not None and intent_record is not None:
+            requirement = next(
+                item
+                for item in intent_record.capability_requirements
+                if item.executes_effect
+                and item.operation is OperationType.OPTIMIZE
+                and item.destination_id == fallback_destination.id
+            )
+            persist_receipt = intent_store.prepare_effect(
+                intent_id=str(intent_record.id),
+                attempt_id=str(attempt.id),
+                step_index=1,
+                operation=OperationType.OPTIMIZE,
+                strategy=requirement.effect_strategy,
+                destination_id=str(fallback_destination.id),
+            )
+            intent_store.mark_effect_submitted(
+                str(persist_receipt.id),
+                submission={
+                    "operation": OperationType.OPTIMIZE.value,
+                    "execution": "persist_sort_order",
+                    "recommendation_id": str(recommendation.id),
+                    "continuation": "manual_review",
+                },
+            )
+
+        def _track_persist_reference(reference: str) -> None:
+            if intent_store is not None and persist_receipt is not None:
+                intent_store.set_effect_external_reference(
+                    str(persist_receipt.id),
+                    reference,
+                )
+
+        try:
+            alter_result = engine.execute(
+                alter_stmt,
+                ExecCtx(
+                    job_id=job.id,
+                    table_id=table.id,
+                    run_id=str(run.id),
+                    statement_index=1,
+                    on_engine_ref=_track_persist_reference,
+                ),
+            )
+        except Exception as exc:
+            if intent_store is not None and persist_receipt is not None:
+                intent_store.resolve_effect(
+                    str(persist_receipt.id),
+                    EffectState.UNKNOWN,
+                    error={"type": type(exc).__name__, "message": str(exc)},
+                )
+                assert attempt is not None
+                intent_store.finish_attempt(
+                    str(attempt.id),
+                    AttemptStatus.RECONCILE_REQUIRED,
+                    error={"message": str(exc)},
+                )
+            job.status = "partial"
+            job.error = f"effect_unknown:{exc}"
+            job.finished_at = datetime.now(UTC)
+            run.status = "partial"
+            run.finished_at = datetime.now(UTC)
+            session.commit()
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Sort-order persistence outcome is unknown and requires "
+                    f"reconciliation (run {run.id})"
+                ),
+            ) from exc
+
+        if intent_store is not None and persist_receipt is not None and alter_result.engine_ref:
+            intent_store.set_effect_external_reference(
+                str(persist_receipt.id),
+                alter_result.engine_ref,
+            )
+        if (
+            not alter_result.ok
+            and not alter_result.outcome_known
+            and intent_store is not None
+            and persist_receipt is not None
+        ):
+            intent_store.resolve_effect(
+                str(persist_receipt.id),
+                EffectState.UNKNOWN,
+                error={"message": alter_result.error or "sort-order outcome unknown"},
+            )
+            assert attempt is not None
+            intent_store.finish_attempt(
+                str(attempt.id),
+                AttemptStatus.RECONCILE_REQUIRED,
+                error={"message": alter_result.error or "sort-order outcome unknown"},
+            )
+            job.status = "partial"
+            job.error = f"effect_unknown:{alter_result.error or 'sort-order outcome unknown'}"
+            job.engine_ref = alter_result.engine_ref or rewrite_result.engine_ref
+            job.finished_at = datetime.now(UTC)
+            run.status = "partial"
+            run.finished_at = datetime.now(UTC)
+            session.commit()
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Sort-order persistence outcome is unknown and requires "
+                    f"reconciliation (run {run.id})"
+                ),
+            )
         persisted_sort_order = alter_result.ok
+        if intent_store is not None and persist_receipt is not None:
+            intent_store.resolve_effect(
+                str(persist_receipt.id),
+                (EffectState.SUCCEEDED if persisted_sort_order else EffectState.FAILED),
+                result=(_layout_effect_result(alter_result) if persisted_sort_order else None),
+                error=(
+                    None
+                    if persisted_sort_order
+                    else {"message": alter_result.error or "sort-order persistence failed"}
+                ),
+            )
         if not alter_result.ok:
             persist_error = alter_result.error
             logger.warning(
@@ -587,6 +880,29 @@ def execute_layout_recommendation(
                 recommendation.id,
                 persist_error,
             )
+        elif intent_store is not None and intent_record is not None:
+            budget_error = _layout_budget_error(intent_store, intent_record)
+            if budget_error is not None:
+                assert attempt is not None
+                intent_store.finish_attempt(
+                    str(attempt.id),
+                    AttemptStatus.FAILED,
+                    error={"message": budget_error},
+                )
+                job.status = "partial"
+                job.error = budget_error
+                job.engine_ref = alter_result.engine_ref or rewrite_result.engine_ref
+                job.finished_at = datetime.now(UTC)
+                run.status = "partial"
+                run.finished_at = datetime.now(UTC)
+                session.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Sort-order persistence completed but exceeded its bound effect "
+                        f"budget: {budget_error} (run {run.id})"
+                    ),
+                )
 
     notes = []
     if recommendation.recommended_strategy == "sort":
@@ -599,12 +915,15 @@ def execute_layout_recommendation(
     job.status = "succeeded"
     job.finished_at = datetime.now(UTC)
     job.engine_ref = rewrite_result.engine_ref
-    job.plan = {
-        "table_ref": table_ref,
-        "mode": payload.mode,
-        "operations": [{"type": "optimize", "params": op_params}],
-        "notes": notes,
-    }
+    if bound_intent is None:
+        job.plan = {
+            "table_ref": table_ref,
+            "mode": payload.mode,
+            "operations": [{"type": "optimize", "params": op_params}],
+            "notes": notes,
+        }
+    else:
+        run.summary = {**(run.summary or {}), "layout_notes": notes}
     run.status = "succeeded"
     run.finished_at = datetime.now(UTC)
 
@@ -619,9 +938,36 @@ def execute_layout_recommendation(
         )
     )
     recommendation.baseline_scan_bytes = int((baseline or 0.0) * 1024 * 1024)
+    if intent_store is not None and attempt is not None:
+        intent_store.finish_attempt(str(attempt.id), AttemptStatus.SUCCEEDED)
     session.commit()
 
     return MaintenanceRunResponse(run_id=run.id, job_ids=[job.id], status=run.status)
+
+
+def _layout_effect_result(result: ExecResult) -> dict[str, Any]:
+    return {
+        "engine_ref": result.engine_ref,
+        "detail": result.detail,
+        "duration_ms": result.duration_ms,
+        "output_files_count": getattr(result, "output_files_count", None),
+        "actual_bytes_written": getattr(result, "actual_bytes_written", None),
+        "objects_deleted": getattr(result, "objects_deleted", None),
+    }
+
+
+def _layout_budget_error(
+    intent_store: IntentStore,
+    intent: MaintenanceIntentRecord,
+) -> str | None:
+    try:
+        validate_effect_budget(
+            intent,
+            intent_store.budget_usage(str(intent.id)),
+        )
+    except IntentValidationError as exc:
+        return f"intent_budget_exceeded:{exc.code}:{exc.detail}"
+    return None
 
 
 def _normalize_recommended_columns(raw: Any) -> list[str]:

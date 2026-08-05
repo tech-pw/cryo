@@ -40,9 +40,7 @@ def test_orphan_and_expire_peak_not_sum() -> None:
         operations=(OperationType.EXPIRE_SNAPSHOTS, OperationType.REMOVE_ORPHAN_FILES),
     )
     assert est.mem_mib <= MAX_POD_MEM_MIB
-    assert "orphan_files" in " ".join(est.reasons) or any(
-        "orphan" in r for r in est.reasons
-    )
+    assert "orphan_files" in " ".join(est.reasons) or any("orphan" in r for r in est.reasons)
 
 
 def test_rewrite_scales_with_table_size_not_preset_chunk() -> None:
@@ -201,8 +199,8 @@ def test_max_bytes_never_below_custom_target() -> None:
 def test_max_bytes_capped_below_old_slack_but_keeps_packing_floor() -> None:
     """Regression: no 2 GiB slack groups; still ≥2× target after packing bump."""
     from cryo.engines.native.resources import (
-        mem_mib_for_group_packing,
         max_bytes_per_group_for_pod_mem,
+        mem_mib_for_group_packing,
     )
 
     target = 256 * 1024 * 1024
@@ -241,6 +239,7 @@ def test_derive_preserves_explicit_max_bytes_override() -> None:
     )
     assert params["max_bytes_per_group"] == override
     assert params["chunk_size_gb"] >= MIN_CHUNK_GB
+
 
 def test_group_concurrency_flat_default_for_no_partition_stats() -> None:
     assert group_concurrency_for_table(None) == 2

@@ -51,3 +51,18 @@ def test_require_role_rejects_insufficient_roles() -> None:
         require_role(principal, Role.OPERATOR)
 
     assert exc.value.status_code == 403
+
+
+def test_evidence_collector_is_not_an_operator_and_admin_cannot_impersonate_it() -> None:
+    ensure_test_jwt_secret()
+    collector = principal_from_token(
+        issue_access_token(subject="spiffe://cryo/evidence-collector", roles=["evidence_collector"])
+    )
+    admin = principal_from_token(issue_access_token(subject="admin", roles=["admin"]))
+
+    assert collector is not None
+    assert admin is not None
+    assert collector.can(Role.EVIDENCE_COLLECTOR)
+    assert not collector.can(Role.VIEWER)
+    assert not collector.can(Role.OPERATOR)
+    assert not admin.can(Role.EVIDENCE_COLLECTOR)

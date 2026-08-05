@@ -44,7 +44,10 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
     elif operation.type is OperationType.CONVERT_DELETES:
         sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
-        sql = f"CALL {catalog}.system.rewrite_position_delete_files(table => '{catalog}.{table_name}')"
+        sql = (
+            f"CALL {catalog}.system.rewrite_position_delete_files("
+            f"table => '{catalog}.{table_name}')"
+        )
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
@@ -70,7 +73,8 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
         )
     expire_call = (
         f"CALL {catalog}.system.expire_snapshots("
-        f"table => '{catalog}.{table_name}', older_than => {older_than}, retain_last => {retain_last})"
+        f"table => '{catalog}.{table_name}', older_than => {older_than}, "
+        f"retain_last => {retain_last})"
     )
     return f"{set_clause}{expire_call}"
 
@@ -147,6 +151,8 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     # was tuned to and can reintroduce the exact fragmentation optimize just fixed. hash
     # distribution groups same-partition rows together during writes, Iceberg's own general
     # guidance for partitioned tables; it's a no-op for unpartitioned ones, not harmful.
+    if not operation.params.get("persist_target_file_size", True):
+        return rewrite_call
     properties_stmt = (
         f"ALTER TABLE {catalog}.{table_name} SET TBLPROPERTIES ("
         f"'write.target-file-size-bytes' = '{target_bytes}', "

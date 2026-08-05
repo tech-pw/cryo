@@ -28,9 +28,7 @@ logger = logging.getLogger(__name__)
 
 _NATIVE_JOB_LABEL = "app.kubernetes.io/component=native-engine"
 _DESTINATION_LABEL = "cryo/destination"
-_SERVICE_ACCOUNT_NAMESPACE = Path(
-    "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-)
+_SERVICE_ACCOUNT_NAMESPACE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 
 
 _MILLI_RE = re.compile(r"^\s*(\d+)\s*m\s*$")

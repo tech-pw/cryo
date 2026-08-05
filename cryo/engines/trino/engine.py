@@ -9,7 +9,7 @@ from typing import Any
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
-from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement, truncate_error_message
 from cryo.engines.trino.client import TrinoCoordinator, connect, coordinators_from_config
 from cryo.engines.trino.load import probe_capacity as probe_trino_capacity
 from cryo.engines.trino.sql import render, session_setup
@@ -45,9 +45,7 @@ class TrinoEngine:
     def session_setup(self) -> list[str]:
         return session_setup()
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         """Execute each rendered statement in order, short-circuiting on failure."""
         results: list[ExecResult] = []
         for stmt in self.render(plan):
@@ -114,6 +112,7 @@ class TrinoEngine:
             )
         except Exception as exc:
             engine_ref = _query_id(cursor)
+            error_message = truncate_error_message(str(exc))
             logger.warning(
                 "Trino %s failed coordinator=%s table_id=%s query_id=%s duration_ms=%d error=%s",
                 stmt.action.value,
@@ -121,13 +120,14 @@ class TrinoEngine:
                 table_id,
                 engine_ref,
                 _elapsed_ms(start),
-                exc,
+                error_message,
             )
             return ExecResult(
                 ok=False,
+                outcome_known=False,
                 engine_ref=engine_ref,
                 detail=stmt.sql,
-                error=str(exc),
+                error=error_message,
                 duration_ms=_elapsed_ms(start),
             )
         finally:

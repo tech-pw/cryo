@@ -172,9 +172,7 @@ class LiveCapacityProvider:
         # Kubernetes state is required to prevent every wave from admitting a
         # fresh slot_cap worth of Jobs. NativeJobStateReader resolves the namespace
         # itself (POD_NAMESPACE/CRYO_K8S_NAMESPACE/in-cluster file) when not given.
-        self._job_state_reader = job_state_reader or NativeJobStateReader(
-            namespace=k8s_namespace
-        )
+        self._job_state_reader = job_state_reader or NativeJobStateReader(namespace=k8s_namespace)
         self._spark_job_state_reader = spark_job_state_reader or SparkJobStateReader(
             namespace=k8s_namespace
         )
@@ -232,9 +230,7 @@ class LiveCapacityProvider:
             if jobs is not None:
                 used = len(jobs)
             else:
-                logger.error(
-                    "Spark-on-K8s live capacity read failed; refusing new dispatches"
-                )
+                logger.error("Spark-on-K8s live capacity read failed; refusing new dispatches")
                 used = slot_cap
         return {"default": CapacitySnapshot(capacity=slot_cap, used=used)}
 

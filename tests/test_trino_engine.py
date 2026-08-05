@@ -121,6 +121,42 @@ def test_trino_engine_captures_execution_errors() -> None:
     assert result.error == "boom"
 
 
+def test_trino_engine_truncates_runaway_error_messages() -> None:
+    """Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on a 1.5 TB, 44k-file table
+    serialized its full split list into the exception message -- str(exc) alone produced a
+    2,962,267-character error that got stored verbatim in MaintenanceJob.error. One runaway
+    upstream exception must not be able to bloat the jobs table, the audit log, and every API
+    response that includes it."""
+    huge_message = "GENERIC_INTERNAL_ERROR: splitsInfo already set to [" + "x" * 50_000 + "]"
+    cursor = FakeCursor(fail_on="optimize")
+
+    def failing_execute(sql: str) -> None:
+        cursor.executed.append(sql)
+        if "optimize" in sql:
+            raise RuntimeError(huge_message)
+
+    cursor.execute = failing_execute  # type: ignore[method-assign]
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert len(result.error) < 4200
+    assert result.error.startswith("GENERIC_INTERNAL_ERROR: splitsInfo already set to")
+    assert "truncated" in result.error
+    assert "50,053 chars total" in result.error or "chars total" in result.error
+
+
 def test_trino_engine_logs_submission_and_completion(caplog) -> None:
     """A long-running OPTIMIZE blocks synchronously on cursor.execute() with no other output --
     without these log lines, a genuinely in-progress query is indistinguishable from a hung one

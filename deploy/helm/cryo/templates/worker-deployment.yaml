@@ -1,18 +1,20 @@
 {{- define "cryo.workerPod" -}}
-image: "{{ .root.Values.image.repository }}:{{ .root.Values.image.tag }}"
+image: {{ include "cryo.imageRef" .root.Values.image | quote }}
 imagePullPolicy: {{ .root.Values.image.pullPolicy }}
 env:
   {{- range $k, $v := .root.Values.global.env }}
   - name: {{ $k }}
     value: {{ $v | quote }}
   {{- end }}
+  - name: CRYO_HEALTH_PORT
+    value: {{ .root.Values.observability.metricsPort | quote }}
   {{- if .root.Values.native.enabled }}
   - name: POD_NAMESPACE
     valueFrom:
       fieldRef:
         fieldPath: metadata.namespace
   - name: CRYO_NATIVE_IMAGE
-    value: "{{ .root.Values.native.image.repository }}:{{ .root.Values.native.image.tag }}"
+    value: {{ include "cryo.imageRef" .root.Values.native.image | quote }}
   - name: CRYO_NATIVE_IMAGE_PULL_POLICY
     value: {{ .root.Values.native.image.pullPolicy | quote }}
   {{- if .root.Values.imagePullSecrets }}
@@ -38,7 +40,7 @@ env:
       fieldRef:
         fieldPath: metadata.namespace
   - name: CRYO_SPARK_K8S_IMAGE
-    value: "{{ .root.Values.spark.k8s.image.repository }}:{{ .root.Values.spark.k8s.image.tag }}"
+    value: {{ include "cryo.imageRef" .root.Values.spark.k8s.image | quote }}
   - name: CRYO_SPARK_K8S_IMAGE_PULL_POLICY
     value: {{ .root.Values.spark.k8s.image.pullPolicy | quote }}
   {{- if .root.Values.imagePullSecrets }}
@@ -91,6 +93,8 @@ spec:
       labels:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
+      annotations:
+        {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
@@ -106,6 +110,6 @@ spec:
           command: ["cryo", "worker"]
           ports:
             - name: health
-              containerPort: 8081
+              containerPort: {{ .Values.observability.metricsPort }}
               protocol: TCP
           {{- include "cryo.workerPod" (dict "root" . "resources" .Values.worker.resources) | nindent 10 }}

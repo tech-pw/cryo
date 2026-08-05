@@ -98,10 +98,8 @@ def test_execute_failure_preserves_table_not_found_signature_past_truncation() -
 
     padding = "INFO stack frame noise line\n" * 200
     state_details = (
-        padding
-        + "Caused by: org.apache.spark.sql.catalyst.analysis.NoSuchTableException: "
-        "[TABLE_OR_VIEW_NOT_FOUND] not found\n"
-        + padding
+        padding + "Caused by: org.apache.spark.sql.catalyst.analysis.NoSuchTableException: "
+        "[TABLE_OR_VIEW_NOT_FOUND] not found\n" + padding
     )
     assert not is_table_not_found_error(state_details[:3500])
     assert not is_table_not_found_error(state_details[-500:])
@@ -223,9 +221,7 @@ def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> Non
 
 
 def test_with_table_stats_keeps_full_profile_for_a_huge_table() -> None:
-    engine = SparkK8sEngine(
-        config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}}
-    )
+    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
     updated = engine.with_table_stats({"total_size_gb": 24_000.0})
     assert updated._k8s_config.executor_instances == 24
 

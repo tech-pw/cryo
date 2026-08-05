@@ -98,7 +98,9 @@ def deterministic_translate(query: str) -> TranslationResult:
         except ValueError:
             warnings.append("Could not parse small-files threshold.")
 
-    size_match = re.search(r"(?:size|larger than|bigger than)[^\d]*([\d,]+(?:\.\d+)?\s*(?:gb|tb)?)", lower)
+    size_match = re.search(
+        r"(?:size|larger than|bigger than)[^\d]*([\d,]+(?:\.\d+)?\s*(?:gb|tb)?)", lower
+    )
     if size_match:
         parsed_size = _normalize_number(size_match.group(1))
         if parsed_size is not None:
@@ -142,9 +144,7 @@ def validate_filter_spec(filter_spec: dict[str, Any]) -> tuple[dict[str, Any], l
                 errors.append("grades must be an array")
         elif key == "priorities":
             if isinstance(value, list):
-                priorities = [
-                    str(v).upper() for v in value if str(v).upper() in _VALID_PRIORITIES
-                ]
+                priorities = [str(v).upper() for v in value if str(v).upper() in _VALID_PRIORITIES]
                 if priorities:
                     out[key] = sorted(set(priorities))
                 else:
@@ -198,7 +198,8 @@ async def translate_with_optional_llm(
 
     prompt = (
         "Convert this request into JSON for Cryo TableFilterState.\n"
-        "Allowed keys only: activeOnly(boolean), grades(array of A-F), priorities(array of HIGH|MED|LOW), "
+        "Allowed keys only: activeOnly(boolean), grades(array of A-F), "
+        "priorities(array of HIGH|MED|LOW), "
         "needsCompaction(boolean), schemaSearch(string), minSizeGb(number), minSmallFiles(number), "
         "minMonthlySavings(number), minReclaimableGb(number).\n"
         "Return JSON object only.\n"

@@ -370,6 +370,7 @@ class QueryLogCurator:
                         "iceberg_snapshot_id": row.get("_iceberg_snapshot_id"),
                         "state": row.get("state"),
                         "error_code": row.get("error_code"),
+                        "query_ranges": _query_ranges(row.get("query_text")),
                     },
                 )
             )
@@ -492,6 +493,17 @@ class QueryLogCurator:
         self._destination.query_log_watermark = advance_to
         session.add(self._destination)
         session.commit()
+
+
+def _query_ranges(query_text: object) -> list[dict[str, object]]:
+    if not isinstance(query_text, str) or not query_text:
+        return []
+    from cryo.telemetry.parser import extract_query_ranges
+
+    return [
+        {"column": item.column, "lower": item.lower, "upper": item.upper}
+        for item in extract_query_ranges(query_text)
+    ]
 
 
 def curator_for_destination(

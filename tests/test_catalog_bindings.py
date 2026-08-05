@@ -83,10 +83,7 @@ def test_resolve_trino_catalog_override_and_fallback() -> None:
         ],
     }
     assert (
-        resolve_trino_catalog(
-            config, source_id=source_id, source_catalog_name="rest"
-        )
-        == "iceberg"
+        resolve_trino_catalog(config, source_id=source_id, source_catalog_name="rest") == "iceberg"
     )
 
     config_no_override = {
@@ -94,9 +91,7 @@ def test_resolve_trino_catalog_override_and_fallback() -> None:
         "catalog_bindings": [{"source_id": str(source_id)}],
     }
     assert (
-        resolve_trino_catalog(
-            config_no_override, source_id=source_id, source_catalog_name="rest"
-        )
+        resolve_trino_catalog(config_no_override, source_id=source_id, source_catalog_name="rest")
         == "rest"
     )
 
