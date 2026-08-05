@@ -32,7 +32,7 @@ image:
   repository: registry.example.com/cryo
   tag: latest
   # Built + pushed 2026-08-05 from gitlab-main commit 6df64f3.
-  digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
+  digest: "sha256:a81de6370d03531c4016afe7f3420d8cb640fe1553dd7eece9cd8d311fe02b3b"
 
 imagePullSecrets:
   - cryo-registry
@@ -41,7 +41,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
+    digest: "sha256:a81de6370d03531c4016afe7f3420d8cb640fe1553dd7eece9cd8d311fe02b3b"
 
 global:
   envFromSecret: cryo-secrets
@@ -80,7 +80,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
+    digest: "sha256:a81de6370d03531c4016afe7f3420d8cb640fe1553dd7eece9cd8d311fe02b3b"
   keda:
     enabled: true
 
