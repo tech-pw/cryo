@@ -236,6 +236,18 @@ upstream-gated. Trino/Spark remain the production-safe choice for OPTIMIZE until
 - Governor stale reaper skips jobs with adopt lease, open started step, or live engine activity
 - Contract: `docs/WORKER_STEP_LEDGER.md`
 
+## Spark-on-K8s driver cleanup (2026-08-05)
+
+Spark keeps completed **driver** pods by design; they are not owned by Cryo's wrapper Job, so
+Job `ttlSecondsAfterFinished` never reclaims them (live: ~1000 orphaned `cryo-spark-*-driver`
+pods on data-platform). Fix:
+
+- `SparkK8sClient.cleanup_after_run` deletes `{job}-driver` + the per-job AWS Secret after a
+  terminal/cancelled run; `SparkK8sEngine.execute` always calls it in `finally`.
+- Credentials Secrets are also `ownerReference`d to the wrapper Job so TTL cascades Secret
+  deletion for fire-and-forget admin dispatches.
+- Worker/Governor Roles gain `pods/delete` so in-cluster cleanup is allowed.
+
 ## Verification Snapshot
 
 Recent checks from implementation sessions:
