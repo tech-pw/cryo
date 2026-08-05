@@ -4,6 +4,19 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from cryo.scanner.property_recommendations import count_suboptimal_property_issues
+
+# Must match cryo/planner/planner.py's own `min_small_files` default (the count below which
+# the planner decides OPTIMIZE isn't worth scheduling at all -- see planner.py:180). Grading a
+# table critical for small-file fragmentation while the planner will never schedule a fix for
+# it produces a permanent, unfixable grade: a 3-file table where all 3 are "small" is 100%
+# small-file-by-percentage, but merging 3 files isn't worth a compaction job. Found via a real
+# fleet-wide before/after (2026-08-05, PDAE-8274): 76% of D-graded tables had fewer total files
+# than this floor, and clearing this one deduction alone moved 99.6% of the whole D bucket to
+# C or better -- confirming the deduction, not the table, was the actual problem for most of
+# them.
+MIN_SMALL_FILES_FOR_COMPACTION = 128
+
 HEALTH_THRESHOLDS = {
     "small_file_pct_warn": 20,
     "small_file_pct_crit": 50,
@@ -91,16 +104,17 @@ def compute_health_score(
     deductions: list[HealthDeduction] = []
     score = 100
     total_files = int(stats.get("total_files") or 0)
-    small_pct = (health_small_file_count / max(total_files, 1)) * 100
-    score = _deduct(
-        score,
-        deductions,
-        small_pct,
-        "small_file_pct",
-        "Small-file fragmentation",
-        thresholds,
-        lambda value, limit: f"{value:.1f}% small files (exceeds threshold of {limit:.0f}%)",
-    )
+    if health_small_file_count >= MIN_SMALL_FILES_FOR_COMPACTION:
+        small_pct = (health_small_file_count / max(total_files, 1)) * 100
+        score = _deduct(
+            score,
+            deductions,
+            small_pct,
+            "small_file_pct",
+            "Small-file fragmentation",
+            thresholds,
+            lambda value, limit: f"{value:.1f}% small files (exceeds threshold of {limit:.0f}%)",
+        )
     score = _deduct(
         score,
         deductions,
@@ -229,13 +243,7 @@ def compute_health_score(
             }
         )
 
-    props_issues = 0
-    if stats.get("write_distribution_mode", "none") == "none":
-        props_issues += 1
-    if not stats.get("has_sort_order", False):
-        props_issues += 1
-    if not stats.get("target_file_size_bytes"):
-        props_issues += 1
+    props_issues = count_suboptimal_property_issues(stats)
     if props_issues:
         score -= 8
         deductions.append(
@@ -243,7 +251,10 @@ def compute_health_score(
                 "label": "Suboptimal properties",
                 "deduction": 8,
                 "severity": "warning",
-                "reason": "Missing sort order, distribution mode, or target file size settings",
+                "reason": (
+                    f"{props_issues} alterable property gap(s) — missing sort order, "
+                    "distribution mode, or target file size settings"
+                ),
             }
         )
 

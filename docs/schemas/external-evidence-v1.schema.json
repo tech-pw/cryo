@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryo.dev/schemas/external-evidence-v1.schema.json",
+  "title": "Cryo independently signed external evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "gate",
+    "subject_revision",
+    "environment",
+    "collected_at",
+    "verifier",
+    "artifact_uri",
+    "artifact_sha256",
+    "result",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": "cryo.external-evidence/v1" },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{1,127}$"
+    },
+    "gate": { "type": "string", "minLength": 1 },
+    "subject_revision": { "type": "string", "minLength": 1 },
+    "environment": { "enum": ["production", "external"] },
+    "collected_at": { "type": "string", "format": "date-time" },
+    "verifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$" },
+    "artifact_uri": { "type": "string", "pattern": "^(https|s3)://" },
+    "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "result": { "const": "passed" },
+    "signature": { "type": "string", "minLength": 1 }
+  }
+}

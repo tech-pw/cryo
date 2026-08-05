@@ -368,8 +368,14 @@ export const CostOverviewTab = () => {
                     {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
                   </Badge>
                   <span className="text-muted-foreground">
-                    {costModel.data.n_samples} labeled outcomes · {(costModel.data.band_coverage * 100).toFixed(0)}%
-                    conformal coverage
+                    {costModel.data.n_evaluated}/{costModel.data.n_samples} holdout outcomes evaluated ·{" "}
+                    {(costModel.data.band_coverage * 100).toFixed(0)}% conformal coverage
+                  </span>
+                  <span className="text-muted-foreground">
+                    {(costModel.data.lineage_completeness * 100).toFixed(0)}% complete lineage
+                  </span>
+                  <span className="text-muted-foreground">
+                    {(costModel.data.abstention_rate * 100).toFixed(0)}% outside training domain
                   </span>
                   <Link to="/ai" className="text-primary hover:underline">
                     Governor & copilot →

@@ -77,7 +77,8 @@ def get_checkpoint_summary(
             ChunkCheckpoint.output_files,
             ChunkCheckpoint.bytes_removed,
             ChunkCheckpoint.duration_ms,
-        ).where(ChunkCheckpoint.run_id == run_id)
+        )
+        .where(ChunkCheckpoint.run_id == run_id)
         .order_by(ChunkCheckpoint.chunk_index)
     ).all()
     total_input = sum(r.input_files or 0 for r in rows)

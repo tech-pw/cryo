@@ -48,16 +48,49 @@ def test_health_score_uses_warn_and_critical_deductions() -> None:
         "file_formats": ["PARQUET"],
     }
 
+    # health_small_file_count=25 is below MIN_SMALL_FILES_FOR_COMPACTION (128) -- the planner
+    # would never schedule OPTIMIZE for this table (see planner.py's min_small_files gate), so
+    # the health score must not deduct for small-file percentage here either. Real-fleet
+    # evidence for this behavior: PDAE-8274/2026-08-05 found 76% of D-graded tables had fewer
+    # total files than this floor, and this exact deduction alone accounted for 99.6% of the
+    # bucket's unfixable-critical grades.
     score, grade, deductions = compute_health_score(stats, health_small_file_count=25, now=now)
 
-    assert score == 76
+    assert score == 84
     assert grade == "B"
     assert sum(d["deduction"] for d in deductions) == 100 - score
     assert {d["label"] for d in deductions} == {
-        "Small-file fragmentation",
         "Snapshot retention buildup",
         "Stale table commits",
     }
+
+
+def test_health_score_still_deducts_small_file_pct_above_compaction_floor() -> None:
+    """Same shape as the test above, but with enough small files (>=128) that the planner
+    would actually schedule OPTIMIZE for this table -- the percentage deduction must still
+    apply here, otherwise the exemption would silently swallow real, fixable fragmentation."""
+    now = datetime(2026, 6, 30, tzinfo=UTC)
+    stats = {
+        "total_files": 500,
+        "delete_file_pct": 0,
+        "total_delete_files": 0,
+        "total_snapshots": 5,
+        "first_updated_at": now,
+        "manifest_count": 0,
+        "total_partitions": 0,
+        "partition_skew_ratio": 0,
+        "avg_files_per_partition": 0,
+        "write_distribution_mode": "hash",
+        "has_sort_order": True,
+        "target_file_size_bytes": 268_435_456,
+        "file_formats": ["PARQUET"],
+    }
+
+    score, grade, deductions = compute_health_score(stats, health_small_file_count=130, now=now)
+
+    # 130/500 = 26% -- above the 20% warn threshold, below the 50% critical threshold.
+    assert score == 92
+    assert {d["label"] for d in deductions} == {"Small-file fragmentation"}
 
 
 def test_storage_cost_includes_snapshot_overhead() -> None:
@@ -106,6 +139,49 @@ def test_analyze_table_supports_fake_manifest_objects() -> None:
     assert analysis.partitions[0].small_files_in_partition_count == 3
     assert analysis.partitions[0].compaction_status == "F"
     assert analysis.raw["partition_fields"][0]["transform"] == "day"
+
+
+def test_analyze_table_retains_bounded_wair_file_bounds() -> None:
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[
+            FakeDataFile(
+                10 * MB,
+                10,
+                ("2026-06-29",),
+                file_path="s3://bucket/b.parquet",
+                lower_bounds={2: "m"},
+                upper_bounds={2: "z"},
+            ),
+            FakeDataFile(
+                20 * MB,
+                20,
+                ("2026-06-29",),
+                file_path="s3://bucket/a.parquet",
+                lower_bounds={2: "a"},
+                upper_bounds={2: "l"},
+            ),
+        ],
+        snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
+    )
+
+    analysis = analyze_table(
+        table,
+        "demo",
+        "events",
+        scan_at=scan_at,
+        settings=Settings(scanner_wair_file_sample_size=1),
+    )
+
+    assert analysis.raw["wair_file_sample"] == [
+        {
+            "file_path": "s3://bucket/a.parquet",
+            "size_bytes": 20 * MB,
+            "lower_bounds": {"user_id": "a"},
+            "upper_bounds": {"user_id": "l"},
+        }
+    ]
+    assert analysis.raw["wair_file_sample_complete"] is False
 
 
 def _small_file_analysis(scan_at: datetime):
@@ -568,6 +644,9 @@ class FakeDataFile:
     spec_id: int = 0
     null_value_counts: dict[int, int] | None = None
     value_counts: dict[int, int] | None = None
+    file_path: str | None = None
+    lower_bounds: dict[int, Any] | None = None
+    upper_bounds: dict[int, Any] | None = None
 
 
 @dataclass(frozen=True)

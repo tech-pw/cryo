@@ -7,7 +7,7 @@ from typing import Any
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
-from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement, truncate_error_message
 from cryo.engines.spark.emr import (
     SUCCESS_STATES,
     EMRServerlessClient,
@@ -62,9 +62,7 @@ class SparkEMREngine:
         """No session setup needed for EMR Serverless - config is in spark-submit."""
         return []
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         """Execute each rendered statement in order, short-circuiting on failure."""
         results: list[ExecResult] = []
         for stmt in self.render(plan):
@@ -78,6 +76,7 @@ class SparkEMREngine:
         """Submit SQL to EMR Serverless and wait for completion."""
         job_name = _build_job_name(stmt, ctx)
         start = time.monotonic()
+        job_run_id: str | None = None
 
         try:
             job_run_id = self.emr_client.submit_spark_sql(
@@ -101,21 +100,27 @@ class SparkEMREngine:
                 ok=False,
                 engine_ref=job_run_id,
                 detail=stmt.sql,
-                error=f"EMR job {result.state.value}: {result.state_details or 'no details'}",
+                error=truncate_error_message(
+                    f"EMR job {result.state.value}: {result.state_details or 'no details'}"
+                ),
                 duration_ms=duration_ms,
             )
         except TimeoutError as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_run_id,
                 detail=stmt.sql,
-                error=str(exc),
+                error=truncate_error_message(str(exc)),
                 duration_ms=_elapsed_ms(start),
             )
         except Exception as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_run_id,
                 detail=stmt.sql,
-                error=f"EMR submission failed: {exc}",
+                error=truncate_error_message(f"EMR submission failed: {exc}"),
                 duration_ms=_elapsed_ms(start),
             )
 

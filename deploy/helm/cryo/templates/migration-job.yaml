@@ -25,7 +25,7 @@ spec:
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: migrate
-          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.migration.image | quote }}
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
           command: ["alembic", "upgrade", "head"]
           env:

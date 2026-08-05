@@ -66,6 +66,8 @@ func AggregateFromFixture(req *protocol.AggregateFixtureRequest) protocol.ScanSt
 	resp.WriteDistributionMode = req.WriteDistributionMode
 	resp.HasSortOrder = req.HasSortOrder
 	resp.TargetFileSizeBytes = req.TargetFileSizeBytes
+	resp.IcebergProperties = req.IcebergProperties
+	resp.GCEnabled = req.GCEnabled
 	resp.FormatVersion = req.FormatVersion
 	return resp
 }

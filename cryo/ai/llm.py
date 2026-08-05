@@ -69,6 +69,7 @@ def _resolve_model(
         return fallback
     return model
 
+
 # System prompt for Cryo Copilot
 CRYO_SYSTEM_PROMPT = """You are Cryo Copilot, an AI assistant for Apache Iceberg table maintenance.
 
@@ -174,9 +175,7 @@ class OpenAIClient(LLMClient):
         if api_base:
             base = api_base.rstrip("/")
             self.api_url = (
-                base
-                if base.endswith("/chat/completions")
-                else f"{base}/chat/completions"
+                base if base.endswith("/chat/completions") else f"{base}/chat/completions"
             )
         else:
             self.api_url = OPENAI_API_URL

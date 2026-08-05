@@ -130,9 +130,7 @@ def list_compatible_presets(session: Session, table: Table) -> list[Preset]:
 
     presets = list(
         session.scalars(
-            select(Preset)
-            .options(selectinload(Preset.destination))
-            .order_by(Preset.name)
+            select(Preset).options(selectinload(Preset.destination)).order_by(Preset.name)
         )
     )
     return [
@@ -158,15 +156,11 @@ def assert_preset_compatible_with_tables(
     if not table_ids:
         return
     preset = session.scalar(
-        select(Preset)
-        .where(Preset.id == preset_id)
-        .options(selectinload(Preset.destination))
+        select(Preset).where(Preset.id == preset_id).options(selectinload(Preset.destination))
     )
     if preset is None:
         raise ValueError("Preset does not exist")
-    tables = list(
-        session.scalars(select(Table).where(Table.id.in_(list(table_ids))))
-    )
+    tables = list(session.scalars(select(Table).where(Table.id.in_(list(table_ids)))))
     found = {table.id for table in tables}
     missing = [str(tid) for tid in table_ids if tid not in found]
     if missing:

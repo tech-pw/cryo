@@ -46,7 +46,7 @@ def build_plan(
         return MaintenancePlan(
             table_ref=_table_ref(stats, params),
             mode=resolved_mode,
-            operations=tuple(operations),
+            operations=_apply_skip_operations(operations, params, notes),
             notes=tuple(notes),
         )
 
@@ -55,7 +55,10 @@ def build_plan(
             Operation(
                 OperationType.EXPIRE_SNAPSHOTS,
                 _expire_params(
-                    params, protected_snapshot_ids=list(protected_snapshot_ids or [])
+                    params,
+                    stats,
+                    protected_snapshot_ids=list(protected_snapshot_ids or []),
+                    notes=notes,
                 ),
             )
         )
@@ -65,22 +68,63 @@ def build_plan(
 
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
         optimize_ops = _optimize_operations(stats, partitions, params, notes)
-        if _delete_compaction_policy(stats, params) == "minor":
+        pathological_skew = _has_pathological_delete_skew(partitions, params)
+        delete_policy = _delete_compaction_policy(stats, partitions, params)
+        if delete_policy == "minor":
             operations.append(_rewrite_position_deletes_operation(params))
-            notes.append(
-                f"Planned rewrite_position_deletes (minor): "
-                f"{int(stats.get('position_delete_files') or 0)} position-delete files, "
-                f"delete_file_pct {float(stats.get('delete_file_pct') or 0):.2f}% below the "
-                f"major-rewrite threshold."
-            )
+            if pathological_skew:
+                notes.append(
+                    f"Planned rewrite_position_deletes (minor): "
+                    f"{int(stats.get('position_delete_files') or 0)} position-delete files "
+                    f"concentrated on already-compacted partitions with an extreme delete-per-file "
+                    f"ratio -- convert_deletes cannot reach these regardless of delete_file_pct "
+                    f"({float(stats.get('delete_file_pct') or 0):.2f}%)."
+                )
+            else:
+                notes.append(
+                    f"Planned rewrite_position_deletes (minor): "
+                    f"{int(stats.get('position_delete_files') or 0)} position-delete files, "
+                    f"delete_file_pct {float(stats.get('delete_file_pct') or 0):.2f}% below the "
+                    f"major-rewrite threshold."
+                )
         else:
-            convert_op = _convert_deletes_operation(stats, partitions, params, optimize_ops, notes)
+            convert_params = params
+            if delete_policy == "major":
+                convert_params = {
+                    **params,
+                    "force_convert_deletes": True,
+                    "convert_deletes_threshold_pct": 0.0,
+                }
+                notes.append(
+                    "Escalated delete maintenance to a major data rewrite after "
+                    f"{int(stats.get('delete_minor_runs_since_major') or 0)} successful minor "
+                    "delete compactions since the last major rewrite."
+                )
+            convert_op = _convert_deletes_operation(
+                stats,
+                partitions,
+                convert_params,
+                optimize_ops,
+                notes,
+            )
             if convert_op is not None:
                 operations.append(convert_op)
         operations.extend(optimize_ops)
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+    elif resolved_mode in {Mode.LIGHT, Mode.STANDARD}:
+        # Regression, 2026-07-27: a standard-mode run on
+        # reports.gold_dbt_video_stats_reports_unified only ran expire_snapshots + optimize,
+        # silently dropping remove_orphan_files and
+        # optimize_manifests with zero explanation in plan.notes -- an operator (or an agent)
+        # reading the run afterward had no way to tell "skipped by design for this mode" apart
+        # from "the planner failed to build them." Both are correctly mode-gated to deep (orphan
+        # scanning needs a full S3 LIST; manifest rewrite is a secondary pass) -- just say so.
+        notes.append(
+            f"remove_orphan_files and optimize_manifests are deep-only and were not planned for "
+            f"mode={resolved_mode.value}."
+        )
 
     # Puffin statistics: always last, after manifests, so new file stats are current.
     # Only runs when at least one OPTIMIZE was planned (stats would be stale otherwise).
@@ -94,9 +138,37 @@ def build_plan(
     return MaintenancePlan(
         table_ref=_table_ref(stats, params),
         mode=resolved_mode,
-        operations=tuple(operations),
+        operations=_apply_skip_operations(operations, params, notes),
         notes=tuple(notes),
     )
+
+
+def _apply_skip_operations(
+    operations: list[Operation],
+    params: Mapping[str, Any],
+    notes: list[str],
+) -> tuple[Operation, ...]:
+    """Drop operations named in params["skip_operations"] (a list of OperationType values).
+
+    Regression, discovered 2026-07-31 and fixed 2026-08-03: Preset.operations has always
+    been editable and looked like it controlled what actually runs, but build_plan() never
+    consulted it -- only ABAC/PII validation read it. An operator removing expire_snapshots
+    from a preset's operations list had no effect on the built plan at all, with no error or
+    warning. cryo.worker.worker derives skip_operations from job.operations (itself sourced
+    from Preset.operations) before calling build_plan, so this is the one place that
+    actually has to honor it.
+    """
+    skip = {str(s) for s in (params.get("skip_operations") or [])}
+    if not skip:
+        return tuple(operations)
+    kept = [op for op in operations if op.type.value not in skip]
+    dropped = [op.type.value for op in operations if op.type.value in skip]
+    if dropped:
+        notes.append(
+            "Skipped operation(s) not in the preset's configured operations list: "
+            f"{', '.join(sorted(set(dropped)))}."
+        )
+    return tuple(kept)
 
 
 def _optimize_operations(
@@ -228,23 +300,58 @@ def _optimize_operation(
     return Operation(OperationType.OPTIMIZE, dict(params), predicates)
 
 
-def _delete_compaction_policy(stats: Mapping[str, Any], params: Mapping[str, Any]) -> str | None:
+def _delete_compaction_policy(
+    stats: Mapping[str, Any],
+    partitions: Sequence[Mapping[str, Any]],
+    params: Mapping[str, Any],
+) -> str | None:
     """Okolnychyi et al. ("Petabyte-Scale Row-Level Operations", VLDB'24): minor position-delete
     compaction is much cheaper than a full major rewrite and restores most of the read-side
     cost of accumulated deletes -- prefer it while the table hasn't crossed into "needs a real
     rewrite" territory.
 
     Returns ``"minor"`` when a cheap rewrite_position_deletes pass should substitute for
-    convert_deletes this cycle, or ``None`` to defer to the existing convert_deletes gate
-    (its own delete_file_pct threshold decides "major" from there -- this function only ever
-    claims the "minor" branch, so it stays purely additive to prior behavior).
+    convert_deletes, ``"major"`` when repeated minor passes require a bounded escalation, or
+    ``None`` to defer to the existing convert_deletes gate.
     """
+    equality_delete_files = int(stats.get("equality_delete_files") or 0)
+    equality_major_threshold = int(params.get("delete_equality_file_threshold", 50))
+    if equality_major_threshold > 0 and equality_delete_files >= equality_major_threshold:
+        return "major"
     format_version = stats.get("format_version")
     if format_version is not None and int(format_version) >= 3:
         # V3 deletion-vector tables don't accumulate position-delete *files* the same way --
         # DV-aware maintenance is a different lever this policy doesn't implement; do not
         # misapply V2-shaped file-count heuristics to it.
         return None
+    if _has_pathological_delete_skew(partitions, params):
+        # convert_deletes (rewrite_data_files/BIN-PACK) selects candidates by *file size* --
+        # even with delete-file-threshold set, it does not reliably form a rewrite group for a
+        # partition whose data files are already well-sized but carry an extreme delete-to-data
+        # ratio, because the underlying Iceberg action's file-group selection is size-driven.
+        # Confirmed live, 2026-07-29: a partition with 7 data files and 11,845 position-delete
+        # files produced zero rewrite groups via convert_deletes (removed_delete_files_count=0,
+        # three separate attempts across this table's 4 worst partitions), while
+        # rewrite_position_delete_files -- run directly against the same table -- cleared all
+        # 34,176 dangling deletes in one pass (rewritten_delete_files_count=34176,
+        # added_delete_files_count=0: every one of them was fully stale). Once any partition
+        # looks like this, prefer minor regardless of overall delete_file_pct -- convert_deletes
+        # provably cannot reach it, no matter how high delete_file_pct climbs.
+        return "minor"
+    minor_runs = int(stats.get("delete_minor_runs_since_major") or 0)
+    max_minor_runs = int(params.get("delete_max_minor_runs_before_major", 5))
+    hot_query_threshold = params.get("delete_hot_query_count_30d")
+    if hot_query_threshold is not None and int(stats.get("query_count_30d") or 0) >= int(
+        hot_query_threshold
+    ):
+        max_minor_runs = int(
+            params.get(
+                "delete_hot_max_minor_runs_before_major",
+                max(1, max_minor_runs // 2),
+            )
+        )
+    if max_minor_runs > 0 and minor_runs >= max_minor_runs:
+        return "major"
     delete_pct = float(stats.get("delete_file_pct") or 0.0)
     major_pct = float(params.get("delete_major_pct_threshold", 10.0))
     if delete_pct >= major_pct:
@@ -254,6 +361,29 @@ def _delete_compaction_policy(stats: Mapping[str, Any], params: Mapping[str, Any
     if position_delete_files >= minor_threshold:
         return "minor"
     return None
+
+
+def _has_pathological_delete_skew(
+    partitions: Sequence[Mapping[str, Any]], params: Mapping[str, Any]
+) -> bool:
+    """True if any partition has so few (already well-sized) data files relative to its delete
+    count that rewrite_data_files' size-driven selection cannot reach it -- see
+    _delete_compaction_policy for the live incident this codifies."""
+    min_ratio = float(params.get("delete_per_file_pathological_ratio", 20.0))
+    min_deletes = int(params.get("delete_pathological_min_files", 200))
+    for row in partitions:
+        deletes = _delete_files(row)
+        if deletes < min_deletes:
+            continue
+        small_files = int(row.get("small_files_in_partition_count") or 0)
+        if small_files > 0:
+            continue  # data itself is still fragmented -- convert_deletes can still help here
+        data_files = int(row.get("files_per_partition") or 0)
+        if data_files <= 0:
+            continue
+        if deletes / data_files >= min_ratio:
+            return True
+    return False
 
 
 def _rewrite_position_deletes_operation(params: Mapping[str, Any]) -> Operation:
@@ -299,6 +429,38 @@ def _convert_deletes_operation(
     return Operation(OperationType.CONVERT_DELETES, convert_params, predicates=predicates or None)
 
 
+def _delete_files(row: Mapping[str, Any]) -> int:
+    return int(row.get("delete_files_in_partition_count") or 0)
+
+
+def _skewed_rows_by(
+    partitions: Sequence[Mapping[str, Any]],
+    *,
+    metric: Any,
+    multiplier: float,
+    min_count: int,
+    max_partitions: int,
+) -> tuple[list[Mapping[str, Any]], float]:
+    # Average over ALL partitions, not just the ones with count > 0: when only a handful of
+    # partitions carry any of this metric at all (e.g. delete files concentrated in a few
+    # already-data-compacted partitions, everything else genuinely at 0), averaging over just
+    # those handful makes them average against themselves and never look "skewed" relative to
+    # their own value, no matter how disproportionate they are versus the rest of the table.
+    # Confirmed in testing, 2026-07-28: 4 partitions uniformly at 8,000 delete files each,
+    # amid 50 partitions at 0, failed the multiplier check when averaged over just the 4.
+    if not partitions:
+        return [], 0.0
+    counts = [(metric(row), row) for row in partitions]
+    average = sum(count for count, _ in counts) / len(counts)
+    threshold = max(min_count, multiplier * average)
+    skewed = sorted(
+        (row for count, row in counts if count > 0 and count >= threshold),
+        key=metric,
+        reverse=True,
+    )
+    return skewed[:max_partitions], threshold
+
+
 def _skewed_partition_predicates(
     stats: Mapping[str, Any],
     partitions: Sequence[Mapping[str, Any]],
@@ -315,49 +477,110 @@ def _skewed_partition_predicates(
     across three separate attempts, including one with 4x the Spark executors -- the skewed
     partitions were never reached. Only kicks in when a real skew is detected; otherwise
     returns empty and the call stays table-wide (unchanged prior behavior).
+
+    Scopes by BOTH small-data-file skew and delete-file skew, unioned. These are independent
+    signals: a partition can be well-compacted on data files (few, large files -- not skewed
+    by small_files_in_partition_count) while still carrying a pile of stale position-delete
+    files that no data-file-count heuristic would ever surface. Confirmed live, 2026-07-28: a
+    table's 34,176 position-delete files sat in 4 partitions that an earlier optimize pass had
+    already reduced to 5-7 data files each -- small-file-only scoping silently starved exactly
+    those partitions across every convert_deletes attempt, identical in shape to the 2026-07-22
+    incident this function was originally written for, just on the opposite axis.
     """
     if len(partitions) < 2:
         return ()
     fields = partition_fields_from_stats(stats, params)
     if not fields or all(field.transform is PartitionTransform.UNPARTITIONED for field in fields):
         return ()
-    counts = [(_small_files(row), row) for row in partitions]
-    counts = [(count, row) for count, row in counts if count > 0]
-    if not counts:
-        return ()
-    total = sum(count for count, _ in counts)
-    average = total / len(counts)
     skew_multiplier = float(params.get("convert_deletes_skew_multiplier", 3.0))
     min_files = int(params.get("convert_deletes_skew_min_files", 50))
-    skew_threshold = max(min_files, skew_multiplier * average)
-    skewed = sorted(
-        (row for count, row in counts if count >= skew_threshold),
-        key=lambda row: _small_files(row),
-        reverse=True,
+    max_partitions = int(params.get("convert_deletes_skew_max_partitions", 20))
+    by_small_files, small_threshold = _skewed_rows_by(
+        partitions,
+        metric=_small_files,
+        multiplier=skew_multiplier,
+        min_count=min_files,
+        max_partitions=max_partitions,
     )
+    min_deletes = int(params.get("convert_deletes_skew_min_delete_files", 50))
+    by_delete_files, delete_threshold = _skewed_rows_by(
+        partitions,
+        metric=_delete_files,
+        multiplier=skew_multiplier,
+        min_count=min_deletes,
+        max_partitions=max_partitions,
+    )
+    seen: set[str] = set()
+    skewed: list[Mapping[str, Any]] = []
+    for row in [*by_small_files, *by_delete_files]:
+        key = str(row.get("partition_value") or row.get("partition_key") or id(row))
+        if key in seen:
+            continue
+        seen.add(key)
+        skewed.append(row)
     if not skewed:
         return ()
-    max_partitions = int(params.get("convert_deletes_skew_max_partitions", 20))
     skewed = skewed[:max_partitions]
     predicates = tuple(build_predicate(fields, row) for row in skewed)
     predicates = tuple(p for p in predicates if not any(t.unsupported_reason for t in p.terms))
     if not predicates:
         return ()
+    parts_desc = []
+    if by_small_files:
+        parts_desc.append(f"{len(by_small_files)} by small-file count (>= {small_threshold:.0f})")
+    if by_delete_files:
+        parts_desc.append(
+            f"{len(by_delete_files)} by delete-file count (>= {delete_threshold:.0f})"
+        )
     notes.append(
         f"Scoped convert_deletes to {len(predicates)} skewed partition(s) "
-        f"(>= {skew_threshold:.0f} small files, {skew_multiplier:g}x the {average:.0f}-file "
-        "table average) instead of a table-wide rewrite."
+        f"({', '.join(parts_desc)}, {skew_multiplier:g}x table average) instead of a "
+        "table-wide rewrite."
     )
     return predicates
 
 
 def _expire_params(
     params: Mapping[str, Any],
+    stats: Mapping[str, Any],
     *,
     protected_snapshot_ids: list[int] | None = None,
+    notes: list[str] | None = None,
 ) -> dict[str, Any]:
+    retention_days = int(params.get("retention_days", 7))
+
+    # Streaming-aware retention: a table this actively written accumulates new snapshots
+    # faster than a long retention window ever clears them, no matter how compaction-heavy
+    # the rest of the run is -- confirmed live, 2026-08-03: unified_bq.gold_dbt_pw_bq went
+    # from 666 to 2,137 snapshots *during* a single 2.5-day maintenance run, since
+    # expire_snapshots can only remove snapshots older than the window, not ones created
+    # while the job itself was still running. Tightening the window at least bounds how far
+    # back irrelevant history persists between runs. Same opt-out and detection signal as
+    # _optimize_operations' streaming-aware chunk sizing (detect_streaming_from_history).
+    # This mitigates but does not fully solve unbounded growth for extremely high-velocity
+    # tables -- that needs a recurring schedule (Preset.schedule_cron), not a shorter window
+    # on a one-shot run, which is why the note below says so explicitly.
+    is_streaming = bool(stats.get("is_streaming"))
+    commits_per_day = float(stats.get("commits_per_day") or 0.0)
+    streaming_aware = params.get("streaming_aware_cadence", True)
+    if is_streaming and streaming_aware and commits_per_day > 0:
+        original_retention = retention_days
+        if commits_per_day >= 100:
+            retention_days = 1
+        elif commits_per_day >= 20:
+            retention_days = max(1, min(retention_days, 3))
+        if retention_days != original_retention and notes is not None:
+            notes.append(
+                f"Streaming-aware retention: table flagged as streaming "
+                f"({commits_per_day:.1f} commits/day) — tightened retention_days "
+                f"{original_retention} → {retention_days} so expire_snapshots can keep pace. "
+                "A table this active will keep re-accumulating snapshots between runs; a "
+                "recurring schedule (Preset.schedule_cron) gives more control than a "
+                "shorter window on a one-shot run."
+            )
+
     out: dict[str, Any] = {
-        "retention_days": int(params.get("retention_days", 7)),
+        "retention_days": retention_days,
         "retain_last": int(params.get("retain_last", 1)),
     }
     if protected_snapshot_ids:

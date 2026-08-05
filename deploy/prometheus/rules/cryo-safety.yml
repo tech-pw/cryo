@@ -1,0 +1,60 @@
+groups:
+  - name: cryo-safety-slos
+    rules:
+      - alert: CryoPausePropagationSlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(cryo_maintenance_pause_propagation_seconds_bucket[10m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cryo pause propagation exceeds the 5 second p99 objective"
+          runbook: "docs/SLOS.md#pause-propagation"
+
+      - alert: CryoReconciliationRPOBreached
+        expr: cryo_maintenance_reconciliation_oldest_age_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "An uncertain maintenance effect has remained unresolved for over 15 minutes"
+          runbook: "docs/SLOS.md#uncertain-effect-recovery"
+
+      - alert: CryoReconciliationStalled
+        expr: |
+          cryo_maintenance_reconciliation_backlog > 0
+          and
+          sum(increase(cryo_maintenance_reconciliation_outcomes_total{
+            outcome=~"resumed|manual_review|superseded"
+          }[15m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cryo has a reconciliation backlog with no terminal progress"
+          runbook: "docs/SLOS.md#uncertain-effect-recovery"
+
+      - alert: CryoApiErrorBudgetBurn
+        expr: |
+          (
+            sum(rate(cryo_api_requests_total{status_class="5xx"}[10m]))
+            /
+            clamp_min(sum(rate(cryo_api_requests_total[10m])), 0.001)
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cryo API 5xx ratio is above 1 percent"
+          runbook: "docs/SLOS.md#control-plane-api"
+
+      - alert: CryoRolloutAutomaticallyHalted
+        expr: increase(cryo_rollout_decisions_total{decision="halt"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cryo automatically halted a maintenance rollout cohort"
+          runbook: "docs/SAFE_ROLLOUT.md"

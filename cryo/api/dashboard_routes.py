@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import case, desc, func, select
-from sqlalchemy.orm import contains_eager, selectinload
+from sqlalchemy.orm import Session, contains_eager, selectinload
 
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.api.sla import sla_from_guardrails
@@ -21,12 +21,12 @@ from cryo.db.models import (
     QueryLog,
     Source,
     Table,
+    TableCostHistory,
     TableStats,
     TableStatsHistory,
 )
 from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
-from cryo.domain.enums import JobStatus
 from cryo.scheduler.rules import effective_preset
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
@@ -198,6 +198,7 @@ class QueryPerformanceRead(BaseModel):
     status: str
     started_at: datetime
     table_name: str | None
+    table_id: UUID | None = None
 
 
 class QueryPerformanceResponse(BaseModel):
@@ -311,7 +312,133 @@ class CostAttributionResponse(BaseModel):
     month: str
 
 
+class FleetHealthTrendPoint(BaseModel):
+    """Fleet-wide daily health aggregate."""
+
+    day: date
+    avg_health_score: float
+    tables_at_grade_df: int
+
+
+class FleetCostTrendPoint(BaseModel):
+    """Fleet-wide daily cost aggregate."""
+
+    day: date
+    total_monthly_cost_usd: float
+    projected_savings_usd_month: float
+
+
+class FleetTrendsResponse(BaseModel):
+    """Response for fleet health and cost trend charts."""
+
+    days: int
+    health_trend: list[FleetHealthTrendPoint]
+    cost_trend: list[FleetCostTrendPoint]
+
+
+def _scan_day_bucket(session: Session, column: Any) -> Any:
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        return func.date_trunc("day", column)
+    return func.date(column)
+
+
+def aggregate_fleet_health_trend(
+    session: Session,
+    *,
+    since: datetime,
+    tenant_id: UUID,
+) -> list[FleetHealthTrendPoint]:
+    day_bucket = _scan_day_bucket(session, TableStatsHistory.scan_at).label("day")
+    stmt = (
+        select(
+            day_bucket,
+            func.avg(TableStatsHistory.overall_score).label("avg_score"),
+            func.sum(
+                case(
+                    (TableStatsHistory.grade.in_(("D", "F")), 1),
+                    else_=0,
+                )
+            ).label("df_count"),
+        )
+        .join(Table, TableStatsHistory.table_id == Table.id)
+        .where(TableStatsHistory.scan_at >= since)
+        .group_by(day_bucket)
+        .order_by(day_bucket)
+    )
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    rows = session.execute(stmt).all()
+    points: list[FleetHealthTrendPoint] = []
+    for day_value, avg_score, df_count in rows:
+        if day_value is None:
+            continue
+        day = day_value.date() if isinstance(day_value, datetime) else day_value
+        points.append(
+            FleetHealthTrendPoint(
+                day=day,
+                avg_health_score=round(float(avg_score or 0.0), 2),
+                tables_at_grade_df=int(df_count or 0),
+            )
+        )
+    return points
+
+
+def aggregate_fleet_cost_trend(
+    session: Session,
+    *,
+    since: datetime,
+    tenant_id: UUID,
+) -> list[FleetCostTrendPoint]:
+    day_bucket = _scan_day_bucket(session, TableCostHistory.scan_at).label("day")
+    stmt = (
+        select(
+            day_bucket,
+            func.coalesce(func.sum(TableCostHistory.current_monthly_cost_usd), 0.0).label(
+                "total_cost"
+            ),
+            func.coalesce(func.sum(TableCostHistory.projected_savings_usd_month), 0.0).label(
+                "total_savings"
+            ),
+        )
+        .join(Table, TableCostHistory.table_id == Table.id)
+        .where(TableCostHistory.scan_at >= since)
+        .group_by(day_bucket)
+        .order_by(day_bucket)
+    )
+    stmt = scope_by_tenant(stmt, Table, tenant_id)
+    rows = session.execute(stmt).all()
+    points: list[FleetCostTrendPoint] = []
+    for day_value, total_cost, total_savings in rows:
+        if day_value is None:
+            continue
+        day = day_value.date() if isinstance(day_value, datetime) else day_value
+        points.append(
+            FleetCostTrendPoint(
+                day=day,
+                total_monthly_cost_usd=round(float(total_cost or 0.0), 4),
+                projected_savings_usd_month=round(float(total_savings or 0.0), 4),
+            )
+        )
+    return points
+
+
 # ===================== Endpoints =====================
+
+
+@router.get("/dashboard/fleet-trends", response_model=FleetTrendsResponse, tags=["dashboards"])
+def get_fleet_trends(
+    session: SessionDep,
+    _principal: Annotated[dict, Depends(require_viewer)],
+    days: Annotated[int, Query(description="Days of history to fetch", ge=1, le=90)] = 30,
+) -> FleetTrendsResponse:
+    """Aggregate fleet-wide health and cost trends by day."""
+    tenant_id = require_tenant(session)
+    since = datetime.now(UTC) - timedelta(days=days)
+    return FleetTrendsResponse(
+        days=days,
+        health_trend=aggregate_fleet_health_trend(session, since=since, tenant_id=tenant_id),
+        cost_trend=aggregate_fleet_cost_trend(session, since=since, tenant_id=tenant_id),
+    )
 
 
 @router.get("/query-performance", response_model=QueryPerformanceResponse, tags=["dashboards"])
@@ -382,6 +509,7 @@ def get_query_performance(
                 status=_query_status(q),
                 started_at=q.executed_at,
                 table_name=qualified_table_name(q.table) if q.table else None,
+                table_id=q.table_id,
             )
             for q in queries
         ],

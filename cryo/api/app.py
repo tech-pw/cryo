@@ -9,17 +9,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.auth_routes import router as auth_router
+from cryo.api.capabilities import router as capabilities_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
 from cryo.api.cost_insights_routes import router as cost_insights_router
 from cryo.api.dashboard_routes import router as dashboard_router
+from cryo.api.evidence_routes import router as evidence_router
 from cryo.api.extensions import router as extensions_router
+from cryo.api.maintenance_control import router as maintenance_control_router
+from cryo.api.maintenance_safety import router as maintenance_safety_router
 from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
+from cryo.api.routes_property_recommendations import router as property_recommendations_router
 from cryo.api.routes_smart_maintenance import router as smart_maintenance_router
 from cryo.api.routes_sources import router as sources_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
+from cryo.api.search_routes import router as search_router
 from cryo.config import Settings, get_settings
 from cryo.observability.logging import configure_logging
 from cryo.observability.tracing import init_tracing, instrument_fastapi, shutdown_tracing
@@ -46,9 +52,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_tags=[
             {"name": "health", "description": "Service health checks."},
             {"name": "dashboards", "description": "Aggregated datalake health and cost views."},
+            {"name": "search", "description": "Global catalog search across sources and tables."},
+            {
+                "name": "capabilities",
+                "description": "Versioned catalog and maintenance-engine support contract.",
+            },
             {"name": "tables", "description": "Iceberg table inventory and detail views."},
             {"name": "scans", "description": "Scanner trigger requests."},
             {"name": "runs", "description": "Maintenance run and job tracking."},
+            {
+                "name": "maintenance-control",
+                "description": "Durable emergency pause and resume controls.",
+            },
+            {
+                "name": "maintenance-safety",
+                "description": "Intent, attempt, effect, and reconciliation state.",
+            },
             {"name": "ai", "description": "Anomaly detection, explain, Copilot, and MCP tools."},
             {
                 "name": "compliance",
@@ -75,6 +94,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
             },
             {"name": "observability", "description": "Prometheus metrics and health checks."},
+            {
+                "name": "evidence",
+                "description": "Stable privacy-safe maintenance and release evidence exports.",
+            },
         ],
     )
     if settings.cors_allow_origins:
@@ -103,16 +126,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ready", "environment": settings.environment}
 
     app.include_router(api_router)
+    app.include_router(property_recommendations_router)
     app.include_router(smart_maintenance_router)
     app.include_router(sources_router)
     app.include_router(auth_router)
     app.include_router(extensions_router)
     app.include_router(phase8_router)
     app.include_router(dashboard_router)
+    app.include_router(search_router)
+    app.include_router(capabilities_router)
     app.include_router(advanced_router)
     app.include_router(metrics_router)
+    app.include_router(maintenance_control_router)
+    app.include_router(maintenance_safety_router)
     app.include_router(cost_insights_router)
     app.include_router(s3_log_config_router)
+    app.include_router(evidence_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup

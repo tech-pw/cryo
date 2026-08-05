@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryo.dev/schemas/aggregate-fleet-benchmark-v1.schema.json",
+  "title": "Cryo aggregate fleet benchmark v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "privacy_model",
+    "min_distinct_tables",
+    "min_outcomes",
+    "eligible_outcomes",
+    "published_cohorts",
+    "suppressed_cohorts",
+    "contains_direct_identifiers",
+    "differential_privacy"
+  ],
+  "properties": {
+    "schema_version": { "const": "cryo.aggregate-fleet-benchmark/v1" },
+    "privacy_model": { "type": "string" },
+    "min_distinct_tables": { "type": "integer", "minimum": 2 },
+    "min_outcomes": { "type": "integer", "minimum": 2 },
+    "eligible_outcomes": { "type": "integer", "minimum": 0 },
+    "suppressed_cohorts": { "type": "integer", "minimum": 0 },
+    "contains_direct_identifiers": { "const": false },
+    "differential_privacy": { "const": false },
+    "published_cohorts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "engine",
+          "action",
+          "table_size_bucket",
+          "distinct_tables",
+          "outcomes",
+          "median_runtime_ms",
+          "median_rewrite_gib",
+          "median_reclaim_gib",
+          "median_reclaim_ratio",
+          "median_p95_latency_change_ms"
+        ],
+        "properties": {
+          "engine": { "type": "string" },
+          "action": { "type": "string" },
+          "table_size_bucket": {
+            "enum": ["lt_10_gib", "10_100_gib", "100_gib_1_tib", "1_10_tib", "gte_10_tib"]
+          },
+          "distinct_tables": { "type": "integer", "minimum": 2 },
+          "outcomes": { "type": "integer", "minimum": 2 },
+          "median_runtime_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "median_rewrite_gib": { "type": ["number", "null"], "minimum": 0 },
+          "median_reclaim_gib": { "type": "number", "minimum": 0 },
+          "median_reclaim_ratio": { "type": ["number", "null"], "minimum": 0 },
+          "median_p95_latency_change_ms": { "type": ["integer", "null"] }
+        }
+      }
+    }
+  }
+}

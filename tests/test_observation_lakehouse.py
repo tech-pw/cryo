@@ -141,10 +141,7 @@ class TestObservationLakehouseFiles:
             for e in evts:
                 lakehouse.append(e)
 
-        threads = [
-            threading.Thread(target=write_batch, args=(events[i::4],))
-            for i in range(4)
-        ]
+        threads = [threading.Thread(target=write_batch, args=(events[i::4],)) for i in range(4)]
         for t in threads:
             t.start()
         for t in threads:
@@ -282,7 +279,8 @@ class TestObservationLakehouseFiles:
     def test_read_file_skips_malformed_lines(self, tmp_path: pytest.ChdirFixture) -> None:
         bad_file = tmp_path / "_events-2026070800.jsonl"
         valid_row = (
-            '{"id":"' + str(uuid.uuid4())
+            '{"id":"'
+            + str(uuid.uuid4())
             + '","event_type":"ok","level":"info","subject":"ok","payload":{}}\n'
         )
         bad_file.write_text("valid json\n{invalid not json}\n" + valid_row)

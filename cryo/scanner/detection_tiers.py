@@ -40,7 +40,8 @@ def classify_detection_tier(inputs: TierInputs, now: datetime | None = None) -> 
     if inputs.last_scan_at is not None:
         staleness_days = max(
             0.0,
-            (current - inputs.last_scan_at.astimezone(UTC)).total_seconds() / timedelta(days=1).total_seconds(),
+            (current - inputs.last_scan_at.astimezone(UTC)).total_seconds()
+            / timedelta(days=1).total_seconds(),
         )
 
     score = (

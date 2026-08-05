@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +19,7 @@ from cryo.api.deps import get_tenant_session
 from cryo.config import Settings
 from cryo.db.base import Base
 from cryo.db.models import (
+    AuditLog,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -27,7 +29,9 @@ from cryo.db.models import (
     Table,
     TableAlertDispatch,
     TableAlertSubscription,
+    TableCostHistory,
     TableStats,
+    TableStatsHistory,
 )
 from tests.auth_helpers import (
     ADMIN_HEADERS,
@@ -47,6 +51,9 @@ UUID_ID_MODELS = (
     TableAlertSubscription,
     TableAlertDispatch,
 )
+
+_AUTOINCREMENT_ID_MODELS = (AuditLog, TableStatsHistory, TableCostHistory)
+_next_autoincrement_id = itertools.count(1)
 
 
 @compiles(JSONB, "sqlite")
@@ -80,6 +87,7 @@ def api_db() -> Iterator[ApiDb]:
         expire_on_commit=False,
     )
     event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+    event.listen(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
 
     def override_session() -> Iterator[Session]:
         with session_factory() as session:
@@ -91,7 +99,25 @@ def api_db() -> Iterator[ApiDb]:
         yield ApiDb(client=client, session_factory=session_factory)
 
     event.remove(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+    event.remove(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
     engine.dispose()
+
+
+def _assign_missing_autoincrement_primary_keys(
+    session: Session,
+    flush_context: object,
+    instances: object,
+) -> None:
+    for item in session.new:
+        if not isinstance(item, _AUTOINCREMENT_ID_MODELS):
+            continue
+        mapper = inspect(item.__class__)
+        pk_cols = mapper.primary_key
+        if len(pk_cols) != 1:
+            continue
+        pk_attr = pk_cols[0].key
+        if getattr(item, pk_attr) is None:
+            setattr(item, pk_attr, next(_next_autoincrement_id))
 
 
 def test_source_destination_preset_crud_and_rules(api_db: ApiDb) -> None:
@@ -325,9 +351,7 @@ def test_table_param_overrides_layer_on_preset_and_are_admin_gated(api_db: ApiDb
     )
     assert assign_response.status_code == 200
 
-    baseline = client.get(
-        f"/api/v1/tables/{hot_table_id}/effective-params", headers=VIEWER_HEADERS
-    )
+    baseline = client.get(f"/api/v1/tables/{hot_table_id}/effective-params", headers=VIEWER_HEADERS)
     assert baseline.status_code == 200
     assert baseline.json()["param_overrides"] == {}
     assert baseline.json()["effective_params"] == {"min_small_files": 10, "retention_days": 7}
@@ -497,6 +521,69 @@ def test_cancel_releases_table_lock_and_is_idempotent(
     assert re_cancel.status_code == 200
     assert not locks.is_table_locked(str(hot_table_id))
     assert complete_calls == 1
+
+
+def test_cancel_terminates_deferred_jobs_not_just_active_ones(
+    api_db: ApiDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression, 2026-07-28: cancel_run's `cancellable` set only covered QUEUED/ADMITTED/
+    RUNNING, so a job sitting DEFERRED (e.g. error="table_locked", waiting for another job's
+    lock to clear) was left completely untouched by cancel -- the run flipped to "cancelled"
+    but the job row stayed status="deferred". reconcile_deferred_jobs (cryo/queue/reconcile.py)
+    has no notion of the parent run's status and re-evaluates every DEFERRED job on each
+    governor tick, so that "cancelled" run could silently resurrect and dispatch for real once
+    the lock it was waiting on freed up. Confirmed live: a Spark run stayed deferred/uncancelled
+    for hours after the operator cancelled it."""
+    from cryo.api import routes
+    from cryo.domain.enums import JobStatus
+    from cryo.queue.locks import InMemoryLockStore
+    from cryo.queue.redis_queue import InMemoryMaintenanceQueue
+
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    run_id = run_response.json()["run_id"]
+    job_id = run_response.json()["job_ids"][0]
+
+    with api_db.session_factory() as session:
+        job = session.get(MaintenanceJob, uuid.UUID(job_id))
+        assert job is not None
+        job.status = JobStatus.DEFERRED.value
+        job.error = "table_locked"
+        session.commit()
+
+    locks = InMemoryLockStore()
+    queue = InMemoryMaintenanceQueue()
+
+    class _Wiring:
+        def __init__(self) -> None:
+            self.queue = queue
+            self.lock_store = locks
+
+    monkeypatch.setattr(routes, "build_runtime_wiring", lambda: _Wiring())
+
+    cancel_response = client.post(f"/api/v1/runs/{run_id}/cancel", headers=OPERATOR_HEADERS)
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    job_response = client.get(f"/api/v1/jobs/{job_id}", headers=VIEWER_HEADERS)
+    assert job_response.json()["status"] == "skipped"
+    assert job_response.json()["error"] == "cancelled"
 
 
 def test_maintenance_run_with_scheduled_at_creates_scheduled_status(api_db: ApiDb) -> None:

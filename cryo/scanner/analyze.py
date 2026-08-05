@@ -96,6 +96,7 @@ class _PartitionAccum:
     files: int = 0
     small: int = 0
     size_bytes: int = 0
+    delete_files: int = 0
 
 
 def analyze_catalog_table(
@@ -118,6 +119,16 @@ def analyze_catalog_table(
             raise ValueError("source_config is required when CRYO_SCAN_ENGINE=go")
         from cryo.scanner.go_scan import analyze_catalog_table_go
 
+        # Regression, discovered 2026-07-31: this used to pass table_obj=None
+        # unconditionally, which silently disabled Tier-1 cost accounting for every
+        # Go-scanned table fleet-wide (run_metadata_cost requires table_obj is not
+        # None) -- table_cost/table_cost_history stopped getting any new rows the
+        # day the Go engine became the primary scanner, and nothing surfaced the
+        # gap since analyze_catalog_table_go/_go_payload degrade to cost=None
+        # rather than raising. A lazy loader (not an eager load_table() call) so
+        # the catalog fetch only happens for tables that already pass the cheap
+        # size/manifest thresholds computed from the Go engine's own payload --
+        # huge tables that would be threshold-filtered anyway never pay for it.
         return analyze_catalog_table_go(
             source_config=source_config,
             schema_name=schema_name,
@@ -125,7 +136,9 @@ def analyze_catalog_table(
             scan_at=scan_at,
             settings=effective_settings,
             stats_history=stats_history,
-            table_obj=None,
+            table_obj_loader=lambda: cast(_LoadableCatalog, catalog).load_table(
+                schema_name, table_name
+            ),
         )
     table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     result = analyze_table(
@@ -169,6 +182,7 @@ def analyze_table(
     file_formats: set[str] = set()
     schema = _call_or_attr(table_obj, "schema", default=None)
     quality_accum = ColumnQualityAccumulator(schema)
+    wair_file_samples: dict[str, dict[str, Any]] = {}
 
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
     manifest_read_errors: list[str] = []
@@ -179,25 +193,51 @@ def analyze_table(
         max_workers=max_workers,
         manifest_errors=manifest_read_errors,
     ):
-        total_files += 1
         file_size = int(_attr(data_file, "file_size_in_bytes", 0) or 0)
-        total_size_bytes += file_size
-        total_records += int(_attr(data_file, "record_count", 0) or 0)
         file_format = _attr(data_file, "file_format", None)
         if file_format:
             file_formats.add(str(file_format).upper())
         delete_kind = _delete_file_kind(data_file)
         if delete_kind is not None:
+            # Delete files (position/equality) are tracked in delete_files/delete_bytes/
+            # *_delete_files -- they must NOT also fall into total_files/total_size_bytes/
+            # total_records or the per-partition files/small/size_bytes tallies below.
+            # Mirrors the identical fix in engine-go/internal/scanstats/scan.go (2026-07-28):
+            # a table with 34,176 position-delete files (each a few KB, so always "small") had
+            # every one of them double-counted as a small DATA file too. Still attributed to
+            # its partition's own delete_files count, separate from files/small, so
+            # convert_deletes can be scoped by where deletes concentrate independent of where
+            # small data files concentrate.
             delete_files += 1
             delete_bytes += file_size
             if delete_kind == "equality":
                 equality_delete_files += 1
             elif delete_kind == "position":
                 position_delete_files += 1
+            values = data_file_partition_values(data_file, fields)
+            key = partition_key(values)
+            accum = partitions.setdefault(
+                key,
+                _PartitionAccum(
+                    values=values,
+                    fields=list(fields),
+                    spec_id=_optional_int(_attr(data_file, "spec_id", None)),
+                ),
+            )
+            accum.delete_files += 1
+            continue
+        total_files += 1
+        total_size_bytes += file_size
+        total_records += int(_attr(data_file, "record_count", 0) or 0)
         if file_size < HEALTH_SMALL_FILE_BYTES:
             health_small_files += 1
-        if delete_kind is None:
-            quality_accum.add(data_file)
+        quality_accum.add(data_file)
+        if settings.scanner_wair_file_sample_size:
+            sample = quality_accum.file_bound_sample(data_file)
+            if sample is not None:
+                wair_file_samples[sample["file_path"]] = sample
+                if len(wair_file_samples) > settings.scanner_wair_file_sample_size:
+                    del wair_file_samples[max(wair_file_samples)]
 
         values = data_file_partition_values(data_file, fields)
         key = partition_key(values)
@@ -258,7 +298,11 @@ def analyze_table(
     )
     stats_for_health = {
         "total_files": total_files,
-        "delete_file_pct": round((delete_files / max(total_files, 1)) * 100, 2),
+        # Clamped to 100: delete_files can outnumber total_files on a heavily MOR-fragmented
+        # table (total_files correctly excludes delete files as of 2026-07-28 -- see
+        # engine-go/internal/scanstats/scan.go), so this ratio is no longer bounded at 100%
+        # by construction. incremental.py already clamped this same ratio; this just matches.
+        "delete_file_pct": round(min(100.0, (delete_files / max(total_files, 1)) * 100), 2),
         "total_delete_files": delete_files,
         "total_snapshots": snapshot_info["total_snapshots"],
         "first_snapshot_at": snapshot_info["first_snapshot_at"],
@@ -388,6 +432,10 @@ def analyze_table(
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
         "location": table_location(table_obj),
+        "iceberg_properties": props["iceberg_properties"],
+        "gc_enabled": props["gc_enabled"],
+        "wair_file_sample": [wair_file_samples[path] for path in sorted(wair_file_samples)],
+        "wair_file_sample_complete": len(wair_file_samples) == total_files,
     }
     for signal_key in (
         "format_version",
@@ -591,7 +639,7 @@ def partition_row(key: str, accum: _PartitionAccum) -> PartitionAnalysis:
         small_files_in_partition_count=accum.small,
         partition_size_gb=round(accum.size_bytes / GB, 6),
         compaction_status="F" if accum.small > 1 and accum.files > 1 else "T",
-        raw={"partition_values": dict(accum.values)},
+        raw={"partition_values": dict(accum.values), "delete_files": accum.delete_files},
     )
 
 
@@ -662,6 +710,39 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
     }
 
 
+_ICEBERG_PROPERTY_KEYS = (
+    "write.target-file-size-bytes",
+    "write.distribution-mode",
+    "write.sort-order",
+    "write.metadata.delete-after-commit.enabled",
+    "write.metadata.previous-versions-max",
+    "commit.retry.num-retries",
+    "commit.retry.min-wait-ms",
+    "commit.retry.max-wait-ms",
+    "write.parquet.compression-codec",
+    "write.delete-mode",
+    "write.update-mode",
+    "write.merge-mode",
+    "history.expire.max-snapshot-age-ms",
+    "history.expire.min-snapshots-to-keep",
+    "gc.enabled",
+    "format-version",
+)
+
+
+def _parse_bool_property(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    lowered = str(value).strip().lower()
+    if lowered in {"true", "1", "yes"}:
+        return True
+    if lowered in {"false", "0", "no"}:
+        return False
+    return None
+
+
 def _table_properties(table_obj: object) -> dict[str, Any]:
     metadata = _attr(table_obj, "metadata", None)
     properties = _attr(table_obj, "properties", None) or _attr(metadata, "properties", None) or {}
@@ -669,6 +750,14 @@ def _table_properties(table_obj: object) -> dict[str, Any]:
         properties = properties()
     if not isinstance(properties, Mapping):
         properties = {}
+    iceberg_properties: dict[str, str] = {}
+    for key in _ICEBERG_PROPERTY_KEYS:
+        if key in properties:
+            iceberg_properties[key] = str(properties[key])
+    for key, value in properties.items():
+        key_str = str(key)
+        if key_str.startswith("write.parquet.bloom-filter-enabled.column."):
+            iceberg_properties[key_str] = str(value)
     target = properties.get("write.target-file-size-bytes")
     return {
         "write_distribution_mode": properties.get("write.distribution-mode"),
@@ -676,6 +765,8 @@ def _table_properties(table_obj: object) -> dict[str, Any]:
         "target_file_size_bytes": int(target)
         if target is not None and str(target).isdigit()
         else None,
+        "iceberg_properties": iceberg_properties,
+        "gc_enabled": _parse_bool_property(properties.get("gc.enabled")),
     }
 
 

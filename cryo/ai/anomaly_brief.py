@@ -84,7 +84,8 @@ def build_evidence(session: Session, table_id: uuid.UUID) -> list[str]:
         delta_small = int(newest.small_files_count or 0) - int(previous.small_files_count or 0)
         delta_score = float(newest.overall_score or 0) - float(previous.overall_score or 0)
         evidence.append(
-            f"Small files changed by {delta_small:+d}; score changed by {delta_score:+.1f} between latest scans."
+            f"Small files changed by {delta_small:+d}; score changed by "
+            f"{delta_score:+.1f} between latest scans."
         )
         raw_new = dict(newest.raw or {})
         raw_old = dict(previous.raw or {})
@@ -154,9 +155,9 @@ async def compose_root_cause_brief(session: Session, table_id: uuid.UUID) -> Roo
 
     prompt = (
         "Given deterministic evidence facts, produce up to 3 ranked hypotheses as JSON.\n"
-        "Schema: {\"hypotheses\":[{\"title\":str,\"confidence\":0..1,\"because\":str}]}.\n"
+        'Schema: {"hypotheses":[{"title":str,"confidence":0..1,"because":str}]}.\n'
         "Never invent facts; because must cite only provided evidence.\n"
-        f"Evidence:\n- " + "\n- ".join(evidence[:10])
+        "Evidence:\n- " + "\n- ".join(evidence[:10])
     )
     response, observation = await complete_with_budget_and_observation(
         session,

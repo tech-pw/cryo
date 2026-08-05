@@ -25,20 +25,38 @@ DIAGNOSIS_CLASSES = {
 RUNBOOK_STEPS: dict[str, str] = {
     "commit_conflict": "Retry with jitter; verify table lock contention and concurrent writers.",
     "engine_oom": "Lower chunk size / partitions per chunk and increase engine memory limits.",
-    "catalog_timeout_or_ratelimit": "Check catalog health, metastore latency, and API rate limits before retry.",
+    "catalog_timeout_or_ratelimit": (
+        "Check catalog health, metastore latency, and API rate limits before retry."
+    ),
     "permission": "Verify destination credentials and catalog/table IAM or RBAC grants.",
-    "sql_or_dialect": "Inspect rendered SQL/native statements and validate engine-specific syntax support.",
-    "storage_error": "Check object-store connectivity, bucket policy, and missing/corrupt object paths.",
+    "sql_or_dialect": (
+        "Inspect rendered SQL/native statements and validate engine-specific syntax support."
+    ),
+    "storage_error": (
+        "Check object-store connectivity, bucket policy, and missing/corrupt object paths."
+    ),
     "unknown": "Escalate with run/job evidence; gather coordinator logs before rerun.",
 }
 
 _HEURISTIC_RULES: list[tuple[str, str, float]] = [
     (r"(commit conflict|concurrent.*commit|optimistic.*lock)", "commit_conflict", 0.86),
     (r"(out of memory|oom|memory limit|gc overhead)", "engine_oom", 0.9),
-    (r"(timeout|timed out|rate limit|429|metastore.*unavailable|catalog.*timeout)", "catalog_timeout_or_ratelimit", 0.82),
+    (
+        r"(timeout|timed out|rate limit|429|metastore.*unavailable|catalog.*timeout)",
+        "catalog_timeout_or_ratelimit",
+        0.82,
+    ),
     (r"(permission denied|access denied|unauthorized|forbidden|not authorized)", "permission", 0.9),
-    (r"(syntax error|parse error|cannot resolve|column .* not found|dialect)", "sql_or_dialect", 0.84),
-    (r"(s3|object storage|i/o error|io error|file not found|path does not exist)", "storage_error", 0.8),
+    (
+        r"(syntax error|parse error|cannot resolve|column .* not found|dialect)",
+        "sql_or_dialect",
+        0.84,
+    ),
+    (
+        r"(s3|object storage|i/o error|io error|file not found|path does not exist)",
+        "storage_error",
+        0.8,
+    ),
 ]
 
 
@@ -79,19 +97,23 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     if not text:
         return None
     try:
-        return json.loads(text)
+        decoded = json.loads(text)
+        return decoded if isinstance(decoded, dict) else None
     except json.JSONDecodeError:
         pass
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
         return None
     try:
-        return json.loads(match.group(0))
+        decoded = json.loads(match.group(0))
+        return decoded if isinstance(decoded, dict) else None
     except json.JSONDecodeError:
         return None
 
 
-def _coerce_llm_result(payload: dict[str, Any], evidence_lines: list[str]) -> DiagnosisResult | None:
+def _coerce_llm_result(
+    payload: dict[str, Any], evidence_lines: list[str]
+) -> DiagnosisResult | None:
     klass = str(payload.get("class", "unknown")).strip().lower()
     if klass not in DIAGNOSIS_CLASSES:
         klass = "unknown"
@@ -100,7 +122,9 @@ def _coerce_llm_result(payload: dict[str, Any], evidence_lines: list[str]) -> Di
     if not isinstance(evidence, list):
         evidence = evidence_lines[:6]
     evidence_norm = [str(line) for line in evidence][:6]
-    runbook_step = str(payload.get("runbook_step") or RUNBOOK_STEPS.get(klass, RUNBOOK_STEPS["unknown"]))
+    runbook_step = str(
+        payload.get("runbook_step") or RUNBOOK_STEPS.get(klass, RUNBOOK_STEPS["unknown"])
+    )
     summary = str(payload.get("summary") or f"Likely {klass.replace('_', ' ')}.")
     return DiagnosisResult(
         diagnosis_class=klass,

@@ -18,5 +18,5 @@ spec:
     app.kubernetes.io/component: worker
   ports:
     - name: health
-      port: 8081
+      port: {{ .Values.observability.metricsPort }}
       targetPort: health

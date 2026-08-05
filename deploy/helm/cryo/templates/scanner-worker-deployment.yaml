@@ -21,19 +21,27 @@ spec:
       labels:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: scanner-worker
+      annotations:
+        {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: scanner-worker
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cryo", "scanner"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
           env:
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: CRYO_HEALTH_PORT
+              value: {{ .Values.observability.metricsPort | quote }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
           resources:

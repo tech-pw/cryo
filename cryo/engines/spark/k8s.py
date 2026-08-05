@@ -32,6 +32,7 @@ _IN_CLUSTER_API_SERVER = "https://kubernetes.default.svc:443"
 _DEFAULT_IMAGE = "cryo-spark:latest"
 _DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
 _DEFAULT_TTL_SECONDS = 3600
+_DESTINATION_LABEL = "cryo/destination"
 
 
 class JobRunState(StrEnum):
@@ -71,7 +72,8 @@ class SparkK8sConfig:
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
         import os
 
-        spark_cfg = config.get("spark_k8s") if isinstance(config.get("spark_k8s"), Mapping) else {}
+        raw_spark_cfg = config.get("spark_k8s")
+        spark_cfg: Mapping[str, Any] = raw_spark_cfg if isinstance(raw_spark_cfg, Mapping) else {}
 
         def _get(key: str, default: Any = None) -> Any:
             # config > CRYO_SPARK_K8S_<KEY> env (chart-injected default) > default.
@@ -133,12 +135,16 @@ class SparkK8sClient:
         *,
         catalog: str,
         job_name: str = "cryo-spark",
+        destination_id: str | None = None,
     ) -> str:
         cfg = self._config
         runner_args = [
-            "--sql", sql,
-            "--catalog", catalog,
-            "--catalog-impl", cfg.catalog_impl,
+            "--sql",
+            sql,
+            "--catalog",
+            catalog,
+            "--catalog-impl",
+            cfg.catalog_impl,
         ]
         if cfg.catalog_uri:
             runner_args += ["--catalog-uri", cfg.catalog_uri]
@@ -146,7 +152,7 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name)
+        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
 
     def submit_repair_missing_files(
         self,
@@ -154,6 +160,7 @@ class SparkK8sClient:
         *,
         job_name: str = "cryo-repair",
         commit: bool = False,
+        destination_id: str | None = None,
     ) -> str:
         """Dispatch cryo_spark_runner.py --repair-missing-files against table_ref.
 
@@ -180,30 +187,47 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name)
+        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
 
-    def _submit(self, runner_args: list[str], *, job_name: str) -> str:
+    def _submit(
+        self, runner_args: list[str], *, job_name: str, destination_id: str | None = None
+    ) -> str:
         cfg = self._config
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
         spark_submit_cmd = [
             "/opt/spark/bin/spark-submit",
-            "--master", _IN_CLUSTER_API_SERVER.replace("https://", "k8s://https://"),
-            "--deploy-mode", "cluster",
-            "--name", job_name,
-            "--conf", f"spark.kubernetes.namespace={cfg.namespace}",
-            "--conf", f"spark.kubernetes.container.image={cfg.image}",
-            "--conf", f"spark.kubernetes.container.image.pullPolicy={cfg.image_pull_policy}",
-            "--conf", f"spark.kubernetes.authenticate.driver.serviceAccountName={cfg.service_account}",
-            "--conf", f"spark.kubernetes.driver.pod.name={driver_pod_name}",
-            "--conf", f"spark.driver.cores={max(1, cfg.driver_cpu_milli // 1000)}",
-            "--conf", f"spark.driver.memory={cfg.driver_mem_mib}m",
-            "--conf", f"spark.executor.instances={cfg.executor_instances}",
-            "--conf", f"spark.executor.cores={max(1, cfg.executor_cpu_milli // 1000)}",
-            "--conf", f"spark.executor.memory={cfg.executor_mem_mib}m",
-            "--conf", "spark.kubernetes.executor.deleteOnTermination=true",
-            "--conf", "spark.kubernetes.submission.waitAppCompletion=true",
+            "--master",
+            _IN_CLUSTER_API_SERVER.replace("https://", "k8s://https://"),
+            "--deploy-mode",
+            "cluster",
+            "--name",
+            job_name,
+            "--conf",
+            f"spark.kubernetes.namespace={cfg.namespace}",
+            "--conf",
+            f"spark.kubernetes.container.image={cfg.image}",
+            "--conf",
+            f"spark.kubernetes.container.image.pullPolicy={cfg.image_pull_policy}",
+            "--conf",
+            f"spark.kubernetes.authenticate.driver.serviceAccountName={cfg.service_account}",
+            "--conf",
+            f"spark.kubernetes.driver.pod.name={driver_pod_name}",
+            "--conf",
+            f"spark.driver.cores={max(1, cfg.driver_cpu_milli // 1000)}",
+            "--conf",
+            f"spark.driver.memory={cfg.driver_mem_mib}m",
+            "--conf",
+            f"spark.executor.instances={cfg.executor_instances}",
+            "--conf",
+            f"spark.executor.cores={max(1, cfg.executor_cpu_milli // 1000)}",
+            "--conf",
+            f"spark.executor.memory={cfg.executor_mem_mib}m",
+            "--conf",
+            "spark.kubernetes.executor.deleteOnTermination=true",
+            "--conf",
+            "spark.kubernetes.submission.waitAppCompletion=true",
             # Driver/executor pods must land on the same Karpenter on-demand capacity as
             # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
             # that node pool's instance profile is what actually has S3 access to the
@@ -211,14 +235,16 @@ class SparkK8sClient:
             # against data-platform-cluster, 2026-07-21: AccessDeniedException on
             # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
             # aren't checkpointed, so on-demand only, matching the native engine's own rule.
-            "--conf", "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand",
+            "--conf",
+            "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand",
             "local:///opt/cryo/cryo_spark_runner.py",
             *runner_args,
         ]
         if cfg.image_pull_secrets:
             secrets_csv = ",".join(cfg.image_pull_secrets)
             spark_submit_cmd[1:1] = [
-                "--conf", f"spark.kubernetes.container.image.pullSecrets={secrets_csv}",
+                "--conf",
+                f"spark.kubernetes.container.image.pullSecrets={secrets_csv}",
             ]
 
         credentials_secret_name: str | None = None
@@ -264,6 +290,7 @@ class SparkK8sClient:
                 "labels": {
                     "app.kubernetes.io/name": "cryo",
                     "app.kubernetes.io/component": "spark-fallback",
+                    _DESTINATION_LABEL: (destination_id or "default")[:63],
                 },
                 "annotations": {
                     "cryo/driver-pod-name": driver_pod_name,
@@ -310,7 +337,9 @@ class SparkK8sClient:
 
         batch_api = _new_k8s_batch_client()
         batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
-        logger.info("Created Spark-on-K8s dispatch Job %s (driver=%s)", k8s_job_name, driver_pod_name)
+        logger.info(
+            "Created Spark-on-K8s dispatch Job %s (driver=%s)", k8s_job_name, driver_pod_name
+        )
         return k8s_job_name
 
     def get_job_run(self, job_id: str) -> JobRunResult:
@@ -330,7 +359,9 @@ class SparkK8sClient:
         from kubernetes.client.exceptions import ApiException
 
         try:
-            pod = core_api.read_namespaced_pod(name=driver_pod_name, namespace=self._config.namespace)
+            pod = core_api.read_namespaced_pod(
+                name=driver_pod_name, namespace=self._config.namespace
+            )
         except ApiException as exc:
             if exc.status == 404:
                 # Driver pod not created yet (still starting) or submission failed before
@@ -354,7 +385,9 @@ class SparkK8sClient:
         job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
         status = job.status
         if status.failed and status.failed >= 1:
-            detail = _read_pod_log_tail(job_id, self._config.namespace, label_selector=f"job-name={job_id}")
+            detail = _read_pod_log_tail(
+                job_id, self._config.namespace, label_selector=f"job-name={job_id}"
+            )
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         if status.succeeded and status.succeeded >= 1:
             # Wrapper finished but we never saw a driver pod -- don't trust that as success.
@@ -400,7 +433,9 @@ class SparkK8sClient:
             core_api = _new_k8s_core_client()
             core_api.delete_namespaced_secret(name=secret_name, namespace=self._config.namespace)
         except Exception:  # noqa: BLE001 - best-effort cleanup only
-            logger.warning("Failed to clean up credentials Secret for job %s", job_id, exc_info=True)
+            logger.warning(
+                "Failed to clean up credentials Secret for job %s", job_id, exc_info=True
+            )
 
 
 _k8s_config_loaded = False
@@ -452,6 +487,15 @@ def _read_pod_log_tail(
     Direct name lookup by default (used for the driver pod, whose name is known);
     falls back to a label-selector list when the caller only knows the owning Job
     (the wrapper-pod fallback path, where the pod's generated suffix isn't known).
+
+    Regression, 2026-07-31: this used `limit_bytes=1024*8` then took the last 20 lines of
+    *that* -- but `limit_bytes` on the Kubernetes pod-log API returns bytes from the START
+    of the stream, not the end. For any Spark driver with more than ~8KB of startup/executor-
+    allocation INFO chatter before the real failure (i.e. almost every real failure), the
+    captured "tail" was 20 lines of startup noise nowhere near the actual exception -- e.g. a
+    NoSuchTableException that killed the job never appeared in job.error at all, only
+    "Decommissioning not enabled, skipping shutdown script" spam. `tail_lines` is the
+    correct parameter for "last N lines of a pod's log" and needs no byte-size guessing.
     """
     try:
         core_api = _new_k8s_core_client()
@@ -466,9 +510,9 @@ def _read_pod_log_tail(
                 logs: str = core_api.read_namespaced_pod_log(
                     name=pod.metadata.name,
                     namespace=namespace,
-                    limit_bytes=1024 * 8,
+                    tail_lines=200,
                 )
-                tail = "\n".join(logs.strip().splitlines()[-20:])
+                tail = logs.strip()
                 if tail:
                     return tail
             except Exception:  # noqa: BLE001 - best-effort diagnostics only

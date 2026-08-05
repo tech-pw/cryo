@@ -34,9 +34,7 @@ def test_no_fallback_operations_is_a_noop() -> None:
 
 def test_missing_fallback_destination_id_logs_and_returns() -> None:
     store = InMemoryJobStore()
-    fallback_ops = (
-        (Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),
-    )
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
     with patch("cryo.engines.factory.create_engine") as create_engine:
         _dispatch_fallback_operations(
             store=store,
@@ -67,9 +65,7 @@ def test_dispatches_each_fallback_operation_to_the_configured_engine() -> None:
     store.add_destination(
         DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"submit_mode": "k8s"})
     )
-    fallback_ops = (
-        (Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),
-    )
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
@@ -169,10 +165,13 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
 
     passed_config = create_engine.call_args.args[1]
     assert passed_config["catalog"] == "hive"
-    assert passed_config["spark_k8s"]["catalog_uri"] == "thrift://trino-metastore-v2.penpencil.co:9083"
+    assert (
+        passed_config["spark_k8s"]["catalog_uri"] == "thrift://trino-metastore-v2.penpencil.co:9083"
+    )
     assert passed_config["spark_k8s"]["catalog_warehouse"] == "s3://pw-data-cdp-dev-bronze-layer/"
     # catalog_impl wasn't overridden (source doesn't carry one) -- the destination's default
-    # correctly still applies since both this source and the "cdp" default are Hive-Metastore-backed.
+    # correctly still applies since both this source and the "cdp" default are
+    # Hive-Metastore-backed.
     assert passed_config["spark_k8s"]["catalog_impl"] == "hive"
     # Original destination config in the store must be untouched (never persisted).
     assert store.get_destination("spark-1").config["catalog"] == "cdp"

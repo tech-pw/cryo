@@ -31,19 +31,22 @@ describe("engines", () => {
       "Trino",
       "Spark EMR",
       "Native (iceberg-go)",
-      "Native (iceberg-rust)"
+      "Native (iceberg-rust)",
+      "Flink (config only)"
     ]);
     expect(ENGINE_VIRTUAL_OPTIONS.map((option) => option.value)).toEqual([
       "trino",
       "spark_emr",
       "native:go",
-      "native:rust"
+      "native:rust",
+      "flink"
     ]);
   });
 
   it("formats engine labels with native implementation", () => {
     expect(formatEngineLabel("trino")).toBe("Trino");
     expect(formatEngineLabel("spark_emr")).toBe("Spark EMR");
+    expect(formatEngineLabel("flink")).toBe("Flink (config only)");
     expect(formatEngineLabel("native")).toBe("Native (iceberg-go)");
     expect(formatEngineLabel("native", { engine_impl: "go" })).toBe("Native (iceberg-go)");
     expect(formatEngineLabel("native", { engine_impl: "rust" })).toBe("Native (iceberg-rust)");
@@ -67,6 +70,8 @@ describe("engines", () => {
     expect(nativeSupportsOperation("expire_snapshots", "go")).toBe(true);
     expect(nativeSupportsOperation("optimize", "go")).toBe(true);
     expect(nativeSupportsOperation("optimize_manifests", "go")).toBe(false);
+    expect(nativeSupportsOperation("compute_statistics", "go")).toBe(false);
+    expect(nativeSupportsOperation("rewrite_position_deletes", "go")).toBe(false);
     expect(nativeSupportsOperation("optimize", "rust")).toBe(false);
   });
 
@@ -75,12 +80,14 @@ describe("engines", () => {
     expect(engineVirtualFromDestination("native", { engine_impl: "rust" })).toBe("native:rust");
     expect(parseEngineVirtual("native:go")).toEqual({ engine: "native", engine_impl: "go" });
     expect(parseEngineVirtual("trino")).toEqual({ engine: "trino" });
+    expect(parseEngineVirtual("flink")).toEqual({ engine: "flink" });
   });
 
   it("maps tag colors per engine", () => {
     expect(engineTagColor("trino")).toBe("blue");
     expect(engineTagColor("spark_emr")).toBe("orange");
     expect(engineTagColor("native")).toBe("purple");
+    expect(engineTagColor("flink")).toBe("gray");
   });
 
   it("detects native pseudo-sql statements", () => {

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any

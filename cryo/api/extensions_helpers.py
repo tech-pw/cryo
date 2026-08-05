@@ -13,9 +13,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.ai.explain import explain_health_change
+from cryo.ai.filter_translate import (
+    build_filter_chips,
+    deterministic_translate,
+    validate_filter_spec,
+)
 from cryo.api.preview_cost import savings_projection_from_stats, savings_projection_to_dict
 from cryo.api.serializers import table_to_read
-from cryo.ai.filter_translate import build_filter_chips, deterministic_translate, validate_filter_spec
 from cryo.config import get_settings
 from cryo.db.models import (
     AuditLog,
@@ -29,7 +33,9 @@ from cryo.db.models import (
 )
 from cryo.domain.enums import Mode
 from cryo.infra.wiring import build_runtime_wiring
+from cryo.intents.binding import build_and_bind_job_intent
 from cryo.mcp.server import CryoMcpServer, build_default_mcp_server
+from cryo.observability.correlation import correlation_summary
 
 
 def provider_api_key(stored: str | None) -> str | None:
@@ -181,9 +187,7 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
         if before is None or after is None:
             raise KeyError("insufficient history")
         return {
-            "explanation": explain_health_change(
-                before, after, preset_name=args.get("preset_name")
-            )
+            "explanation": explain_health_change(before, after, preset_name=args.get("preset_name"))
         }
 
     def simulate_preset(args: dict[str, Any]) -> dict[str, Any]:
@@ -269,6 +273,7 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             preset_id=preset_id,
             trigger="mcp",
             status="queued",
+            summary=correlation_summary({"actor": "mcp-client"}),
         )
         session.add(run)
         session.flush()
@@ -280,6 +285,15 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             status="queued",
         )
         session.add(job)
+        session.flush()
+        if settings.durable_intents_enabled:
+            build_and_bind_job_intent(
+                session,
+                job_id=str(job.id),
+                settings=settings,
+                actor_type="mcp",
+                actor_id="mcp-client",
+            )
         session.commit()
         wiring = build_runtime_wiring()
         wiring.queue.enqueue(str(job.id), str(destination_id))

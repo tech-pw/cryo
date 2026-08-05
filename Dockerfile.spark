@@ -10,24 +10,57 @@
 # pairing iceberg-spark-runtime-4.0 with a 4.2.0 base threw
 # IncompatibleClassChangeError: SparkView does not implement View (confirmed live against
 # data-platform-cluster, 2026-07-21). Keep both pinned to the same minor.
-FROM apache/spark:4.1.2-python3
+FROM apache/spark:4.1.2-python3@sha256:e334db9626cb9c5a3e72928c2c2f0efc668769a0b605f116afe6ea7adb38f546
 
 ARG ICEBERG_VERSION=1.11.0
 ARG ICEBERG_SPARK_MINOR=4.1
+# Must match the Hadoop version this Spark base image bundles (check
+# /opt/spark/jars/hadoop-client-api-*.jar) and its declared AWS SDK v2 dependency
+# (org/apache/hadoop/hadoop-project/<HADOOP_VERSION>/hadoop-project-<HADOOP_VERSION>.pom,
+# property aws-java-sdk-v2.version) -- a mismatched pair throws NoSuchMethodError deep in
+# the S3A connector at runtime, not at image build time.
+ARG HADOOP_VERSION=3.4.2
+ARG HADOOP_AWS_SDK_VERSION=2.29.52
+ARG ICEBERG_SPARK_RUNTIME_SHA256=d6ea6c5d099288daeb7d5a92061bd3d7d8f296492632b42378e5f2f0e3066242
+ARG ICEBERG_AWS_BUNDLE_SHA256=38f01da7e96850cdd05e6616d758b77b43314b712a8808e3f9a824d56976162f
+ARG HADOOP_AWS_SHA256=d2d24e6b715b5656b9d238bf13b6682a07e2004dd36aad74a73aeb854319f4d9
+ARG HADOOP_AWS_SDK_SHA256=62638f33045690c6bc5e496b54b0b2e89a9ad38cbedacdf6e017fea6bc85f55c
+ARG BOTO3_VERSION=1.43.0
 USER root
 
 # Iceberg's Spark runtime (Iceberg core + Spark integration, shaded) and the AWS bundle
 # (S3FileIO + AWS SDK v2, for s3a:// warehouses) -- both official Apache Iceberg release
 # artifacts from Maven Central, not vendored/rebuilt.
+#
+# hadoop-aws + its AWS SDK v2 bundle are a second, separate S3 code path: Spark 4.1.2 ships
+# hadoop-client-api/-runtime (Hadoop's minimal shaded client jars) but deliberately excludes
+# cloud-connector modules like hadoop-aws -- callers add the one they need. Iceberg's own
+# actions mostly go through S3FileIO (iceberg-aws-bundle covers that), but
+# DeleteOrphanFilesSparkAction lists the warehouse directory via the classic Hadoop
+# FileSystem API (FileSystemWalker.listDirRecursivelyWithHadoop), which requires
+# org.apache.hadoop.fs.s3a.S3AFileSystem -- missing without hadoop-aws, confirmed live,
+# 2026-07-28: remove_orphan_files failed with ClassNotFoundException while optimize/
+# expire_snapshots (S3FileIO-only) succeeded on the same table. iceberg-aws-bundle's copy
+# of the AWS SDK is shaded/relocated (org.apache.iceberg.shaded.software.amazon.awssdk), so
+# it does not satisfy or conflict with hadoop-aws's unrelocated software.amazon.awssdk
+# dependency -- both bundles are required side by side.
 RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar \
       "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar" \
     && curl -fsSL -o /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar \
-      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar"
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/hadoop-aws-${HADOOP_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_VERSION}/hadoop-aws-${HADOOP_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/aws-sdk-bundle-${HADOOP_AWS_SDK_VERSION}.jar \
+      "https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/${HADOOP_AWS_SDK_VERSION}/bundle-${HADOOP_AWS_SDK_VERSION}.jar" \
+    && echo "${ICEBERG_SPARK_RUNTIME_SHA256}  /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${ICEBERG_AWS_BUNDLE_SHA256}  /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${HADOOP_AWS_SHA256}  /opt/spark/jars/hadoop-aws-${HADOOP_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${HADOOP_AWS_SDK_SHA256}  /opt/spark/jars/aws-sdk-bundle-${HADOOP_AWS_SDK_VERSION}.jar" | sha256sum --check --strict
 
 COPY cryo_spark_runner.py /opt/cryo/cryo_spark_runner.py
 
 # boto3 for the missing-file repair mode's S3 existence checks (cryo_spark_runner.py
 # --repair-missing-files) -- not needed for the SQL-CALL path, but negligible weight.
-RUN pip install --no-cache-dir boto3
+RUN pip install --no-cache-dir "boto3==${BOTO3_VERSION}"
 
 USER 185

@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
 from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
-from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+from cryo.engines.base import (
+    TABLE_NOT_FOUND_MARKER,
+    ExecCtx,
+    ExecResult,
+    RenderedStatement,
+    is_table_not_found_error,
+    truncate_error_message,
+)
 from cryo.engines.spark.k8s import (
     SUCCESS_STATES,
     SparkK8sClient,
     SparkK8sConfig,
 )
+from cryo.engines.spark.sizing import scale_executor_profile
 from cryo.engines.spark.sql import render
 
 
@@ -38,12 +47,78 @@ class SparkK8sEngine:
         catalog = self.config.get("catalog")
         self._catalog = str(catalog) if catalog else None
         self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
+        destination_id = self.config.get("destination_id")
+        self._destination_id = str(destination_id) if destination_id else None
 
     @property
     def k8s_client(self) -> SparkK8sClient:
         if self._client is None:
             self._client = SparkK8sClient(self._k8s_config)
         return self._client
+
+    def with_source_config(self, source_config: Mapping[str, Any]) -> SparkK8sEngine:
+        """Fall back to the table's source-configured S3 keys when this destination has none.
+
+        The native engine has done this since day one (cryo/engines/native/payload.py's
+        source_catalog_config) and the worker dispatch loop already calls
+        engine.with_source_config(...) generically on any engine that defines it (see
+        cryo.worker.worker._dispatch_job) -- Spark-on-K8s just never implemented the hook.
+        Confirmed live, 2026-07-28: a table whose source was configured with static
+        s3.access-key-id/s3.secret-access-key (the operator's deliberate "keys, not IAM role"
+        choice) still had its Spark-K8s jobs fall through to the pod's ambient node IAM role,
+        which lacked s3:GetObject on that table's bucket -- AccessDeniedException. An explicit
+        s3_access_key/s3_secret_key already set on this destination's own config is an operator
+        override and wins; this only fills the gap when the destination has none configured.
+        """
+        access_key = source_config.get("s3.access-key-id")
+        secret_key = source_config.get("s3.secret-access-key")
+        if not (
+            isinstance(access_key, str)
+            and access_key
+            and isinstance(secret_key, str)
+            and secret_key
+        ):
+            return self
+        if self._k8s_config.s3_access_key and self._k8s_config.s3_secret_key:
+            return self
+        new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
+        new_engine._k8s_config = replace(
+            new_engine._k8s_config, s3_access_key=access_key, s3_secret_key=secret_key
+        )
+        return new_engine
+
+    def with_table_stats(self, table_stats: Mapping[str, Any] | None) -> SparkK8sEngine:
+        """Scale this destination's configured executor profile down for small tables.
+
+        Confirmed live, 2026-08-03: the destination's configured executor_instances/cpu/mem
+        is one static profile applied to every job regardless of table size -- a table with
+        a dozen files reserved the same 76 vCPU / 160 GiB as a concurrently-running 24TB
+        table, which is what actually needs that scale. 86% of the cryo namespace's cost
+        showed as "unused" (reserved, not utilized) in Grafana for exactly this reason.
+        Opt out per-destination with spark_k8s.dynamic_sizing=false if a workload needs the
+        full configured profile regardless of table size.
+        """
+        if table_stats is None or self.config.get("spark_k8s", {}).get("dynamic_sizing") is False:
+            return self
+        total_size_gb = table_stats.get("total_size_gb")
+        profile = scale_executor_profile(
+            total_size_gb=float(total_size_gb) if total_size_gb is not None else None,
+            max_executor_instances=self._k8s_config.executor_instances,
+            max_executor_cpu_milli=self._k8s_config.executor_cpu_milli,
+            max_executor_mem_mib=self._k8s_config.executor_mem_mib,
+            max_driver_cpu_milli=self._k8s_config.driver_cpu_milli,
+            max_driver_mem_mib=self._k8s_config.driver_mem_mib,
+        )
+        new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
+        new_engine._k8s_config = replace(
+            self._k8s_config,
+            executor_instances=profile.executor_instances,
+            executor_cpu_milli=profile.executor_cpu_milli,
+            executor_mem_mib=profile.executor_mem_mib,
+            driver_cpu_milli=profile.driver_cpu_milli,
+            driver_mem_mib=profile.driver_mem_mib,
+        )
+        return new_engine
 
     def probe_capacity(self) -> CapacitySnapshot:
         """Static slot cap -- big-table fallback jobs are rare/occasional, not a hot path."""
@@ -55,9 +130,7 @@ class SparkK8sEngine:
     def session_setup(self) -> list[str]:
         return []
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         results: list[ExecResult] = []
         for stmt in self.render(plan):
             result = self.execute(stmt, ctx)
@@ -97,6 +170,7 @@ class SparkK8sEngine:
                 stmt.sql,
                 job_name=job_name,
                 catalog=str(catalog),
+                destination_id=self._destination_id,
             )
             if ctx is not None and ctx.on_engine_ref is not None:
                 ctx.on_engine_ref(job_id)
@@ -110,28 +184,41 @@ class SparkK8sEngine:
                     detail=stmt.sql,
                     duration_ms=duration_ms,
                 )
+            state_details = result.state_details or "no details"
+            # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,
+            # with "Caused by: NoSuchTableException" typically buried well past the head+tail
+            # window truncate_error_message keeps -- confirmed live, 2026-07-31: the signature
+            # was in the untruncated log but never reached the stored error, so nothing could
+            # detect "this table was dropped" downstream. Front-load the signature before
+            # truncating so head-first truncation always keeps it, regardless of where in the
+            # original text it actually occurred.
+            if is_table_not_found_error(state_details):
+                state_details = f"{TABLE_NOT_FOUND_MARKER} {state_details}"
             return ExecResult(
                 ok=False,
                 engine_ref=job_id,
                 detail=stmt.sql,
-                error=(
-                    f"Spark-on-K8s Job {result.state.value}: "
-                    f"{result.state_details or 'no details'}"
+                error=truncate_error_message(
+                    f"Spark-on-K8s Job {result.state.value}: {state_details}"
                 ),
                 duration_ms=duration_ms,
             )
         except TimeoutError as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_id,
                 detail=stmt.sql,
-                error=str(exc),
+                error=truncate_error_message(str(exc)),
                 duration_ms=_elapsed_ms(start),
             )
         except Exception as exc:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
+                engine_ref=job_id,
                 detail=stmt.sql,
-                error=f"Spark-on-K8s submission failed: {exc}",
+                error=truncate_error_message(f"Spark-on-K8s submission failed: {exc}"),
                 duration_ms=_elapsed_ms(start),
             )
         finally:

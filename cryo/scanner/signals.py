@@ -40,7 +40,14 @@ def detect_streaming_from_history(
     commits_per_day_threshold: float = 24.0,
     window_hours: int = 24,
 ) -> tuple[bool, float]:
-    """Derive commits/day from consecutive snapshot-count deltas in stats history."""
+    """Derive commits/day from consecutive snapshot-count deltas in stats history.
+
+    Skips the inference entirely when a Cryo maintenance job completed between the two
+    samples (``maintenance_job_since_previous`` on the latest row, set by
+    ``stats_history_for_signals``) -- expire_snapshots/optimize/optimize_manifests each
+    commit their own snapshot, so the delta is explained by Cryo's own run, not external
+    write velocity.
+    """
     if len(history) < 2:
         return False, 0.0
 
@@ -50,6 +57,8 @@ def detect_streaming_from_history(
     )
     latest = ordered[-1]
     previous = ordered[-2]
+    if latest.get("maintenance_job_since_previous"):
+        return False, 0.0
     latest_at = _as_datetime(latest.get("scan_at"))
     previous_at = _as_datetime(previous.get("scan_at"))
     if latest_at is None or previous_at is None:

@@ -13,8 +13,6 @@ time so this file rarely needs to grow when a new check is added.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -24,12 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.domain.enums import OperationType, PartitionTransform
-from cryo.domain.models import (
-    MaintenancePlan,
-    Operation,
-    PartitionPredicate,
-    PartitionPredicateTerm,
-)
+from cryo.domain.models import MaintenancePlan
+from cryo.planner.serialization import canonical_plan_bytes, hash_plan
 
 if TYPE_CHECKING:
     from cryo.config import Settings
@@ -79,71 +73,6 @@ class InvariantContext:
 
 
 InvariantFn = Callable[[InvariantContext], None]
-
-
-# ----- plan hashing -----
-
-
-def canonical_plan_bytes(plan: MaintenancePlan) -> bytes:
-    return json.dumps(_plan_to_dict(plan), sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def hash_plan(plan: MaintenancePlan) -> str:
-    return hashlib.sha256(canonical_plan_bytes(plan)).hexdigest()
-
-
-def _plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:
-    return {
-        "table_ref": plan.table_ref,
-        "mode": str(plan.mode),
-        "operations": [_operation_to_dict(op) for op in plan.operations],
-        "notes": list(plan.notes),
-    }
-
-
-def _operation_to_dict(op: Operation) -> dict[str, Any]:
-    return {
-        "type": str(op.type),
-        "params": _sorted_dict(op.params),
-        "predicates": [_predicate_to_dict(pred) for pred in (op.predicates or ())],
-    }
-
-
-def _predicate_to_dict(pred: PartitionPredicate) -> dict[str, Any]:
-    return {
-        "terms": [_term_to_dict(term) for term in pred.terms],
-        "unsupported_reason": pred.unsupported_reason,
-    }
-
-
-def _term_to_dict(term: PartitionPredicateTerm) -> dict[str, Any]:
-    return {
-        "base_column": term.base_column,
-        "transform": str(term.transform),
-        "value": _jsonable(term.value),
-        "col_type": term.col_type,
-        "transform_param": term.transform_param,
-        "partition_field": term.partition_field,
-        "unsupported_reason": term.unsupported_reason,
-    }
-
-
-def _sorted_dict(value: dict[str, Any] | None) -> dict[str, Any]:
-    if not value:
-        return {}
-    return {k: _jsonable(v) for k, v in sorted(value.items())}
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in sorted(value.items())}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    if isinstance(value, set):
-        return sorted(_jsonable(v) for v in value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
 
 
 # ----- registry -----
@@ -542,9 +471,9 @@ def _resolve_table(session: Session, table_ref: str) -> Any:
     try:
         from uuid import UUID
 
-        row = session.get(Table, UUID(table_ref))
-        if row is not None:
-            return row
+        table_by_id = session.get(Table, UUID(table_ref))
+        if table_by_id is not None:
+            return table_by_id
     except (ValueError, TypeError):
         return None
     return None

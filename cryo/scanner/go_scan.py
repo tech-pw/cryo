@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import statistics
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,12 +42,15 @@ def analyze_catalog_table_go(
     settings: Settings | None = None,
     stats_history: Sequence[Mapping[str, Any]] | None = None,
     table_obj: object | None = None,
+    table_obj_loader: Callable[[], object] | None = None,
 ) -> TableAnalysis:
     """Run cryo-engine-go scan-stats and map the result into TableAnalysis.
 
-    Health scoring and optional Tier-1 cost still run in Python. When ``table_obj``
-    is provided and cost tier is metadata, cost accounting uses the PyIceberg
-    table handle (historical walk); otherwise cost stays heuristic/Tier-0 only.
+    Health scoring and optional Tier-1 cost still run in Python. When a table
+    handle is available (``table_obj`` directly, or lazily via
+    ``table_obj_loader`` once size/manifest thresholds are known to pass) and
+    cost tier is metadata, cost accounting uses the PyIceberg table handle
+    (historical walk); otherwise cost stays heuristic/Tier-0 only.
     """
     settings = settings or get_settings()
     scan_time = scan_at or datetime.now(UTC)
@@ -69,6 +72,7 @@ def analyze_catalog_table_go(
         settings=settings,
         stats_history=stats_history,
         table_obj=table_obj,
+        table_obj_loader=table_obj_loader,
     )
 
 
@@ -125,6 +129,7 @@ def table_analysis_from_go_payload(
     settings: Settings,
     stats_history: Sequence[Mapping[str, Any]] | None = None,
     table_obj: object | None = None,
+    table_obj_loader: Callable[[], object] | None = None,
 ) -> TableAnalysis:
     fields = list(payload.get("partition_fields") or [])
     # Drop Go-only field_id from persisted partition_fields shape.
@@ -234,7 +239,11 @@ def table_analysis_from_go_payload(
 
     stats_for_health: dict[str, Any] = {
         "total_files": total_files,
-        "delete_file_pct": round((delete_files / max(total_files, 1)) * 100, 2),
+        # Clamped to 100: delete_files can outnumber total_files on a heavily MOR-fragmented
+        # table (total_files correctly excludes delete files as of 2026-07-28 -- see
+        # engine-go/internal/scanstats/scan.go), so this ratio is no longer bounded at 100%
+        # by construction. incremental.py already clamped this same ratio; this just matches.
+        "delete_file_pct": round(min(100.0, (delete_files / max(total_files, 1)) * 100), 2),
         "total_delete_files": delete_files,
         "total_snapshots": total_snapshots,
         "first_snapshot_at": first_snapshot_at,
@@ -254,15 +263,30 @@ def table_analysis_from_go_payload(
 
     cost_analysis = None
     metadata_accounting = None
-    run_metadata_cost = (
+    # Check tier + size eligibility (cheap: settings + the Go engine's own payload, already
+    # computed) before ever resolving a table handle -- a huge table that will just get
+    # filtered out below shouldn't pay for a catalog load it can't use.
+    eligible_for_metadata_cost = (
         settings.cost_scan_tier in {"metadata", "storage_truth"}
-        and table_obj is not None
         and total_files < settings.cost_metadata_max_files_estimate
         and manifest_count < settings.cost_metadata_max_manifests_current
     )
+    resolved_table_obj = table_obj
+    if eligible_for_metadata_cost and resolved_table_obj is None and table_obj_loader is not None:
+        try:
+            resolved_table_obj = table_obj_loader()
+        except Exception as exc:  # noqa: BLE001 - Tier-1 cost is an enhancement, not required
+            logger.warning(
+                "Failed to load table handle for Tier-1 cost accounting on %s.%s: %s",
+                schema_name,
+                table_name,
+                exc,
+            )
+            resolved_table_obj = None
+    run_metadata_cost = eligible_for_metadata_cost and resolved_table_obj is not None
     if run_metadata_cost:
         metadata_accounting = account_metadata_cost(
-            table_obj,
+            resolved_table_obj,
             scan_at=scan_at,
             settings=settings,
             small_file_bytes=small_file_bytes,
@@ -314,11 +338,16 @@ def table_analysis_from_go_payload(
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
         "location": location,
+        "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
+        "gc_enabled": payload.get("gc_enabled"),
         "manifest_stats": {
             "manifest_count": manifest_count,
             "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
         },
         "scan_engine": "go",
+        "wair_file_sample": list(payload.get("wair_file_sample") or []),
+        "wair_file_sample_complete": total_files == 0
+        or bool(payload.get("wair_file_sample_complete")),
     }
     if payload.get("manifest_read_errors"):
         raw["manifest_read_errors"] = list(payload["manifest_read_errors"])
@@ -377,6 +406,7 @@ def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) ->
     key = str(part.get("partition_key") or "_unpartitioned")
     files = int(part.get("files") or 0)
     small = int(part.get("small") or 0)
+    delete_files = int(part.get("delete_files") or 0)
     size_bytes = int(part.get("size_bytes") or 0)
     primary = fields[0] if fields else {}
     spec_id = part.get("partition_spec_id")
@@ -397,7 +427,7 @@ def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) ->
         small_files_in_partition_count=small,
         partition_size_gb=round(size_bytes / GB, 6),
         compaction_status="F" if small > 1 and files > 1 else "T",
-        raw={"partition_values": values},
+        raw={"partition_values": values, "delete_files": delete_files},
     )
 
 
@@ -416,6 +446,9 @@ def _build_scan_stats_request(
         "small_file_mb": settings.scan_small_file_mb,
         "health_small_file_bytes": HEALTH_SMALL_FILE_BYTES,
         "max_partitions": settings.scanner_max_partitions_per_table,
+        "max_file_samples": settings.scanner_wair_file_sample_size
+        if settings.scanner_wair_file_sample_size
+        else -1,
     }
     return request
 

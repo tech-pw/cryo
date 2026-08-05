@@ -5,12 +5,24 @@ global:
     cluster: 'cryo-local'
     environment: 'development'
 
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
+
 scrape_configs:
   - job_name: 'cryo-api'
     static_configs:
       - targets: ['cryo-api:8000', 'host.docker.internal:8000']
     metrics_path: '/metrics'
-  
+
+  - job_name: 'cryo-background-services'
+    static_configs:
+      - targets:
+          - 'cryo-worker:8081'
+          - 'cryo-governor:8081'
+          - 'cryo-scheduler:8081'
+          - 'cryo-scanner:8081'
+    metrics_path: '/metrics'
+
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']

@@ -198,6 +198,8 @@ S3 **request** rollups (`get_requests_30d`, …) come from
 | `current_snapshot_id` | `int` | watermark source |
 | `equality_delete_files` / `position_delete_files` | `int` | |
 | `location` | `str` | `s3://bucket/warehouse/db/table` |
+| `iceberg_properties` | `dict[str, str]` | maintenance-relevant table properties, including per-column Parquet bloom-filter settings |
+| `gc_enabled` | `bool \| None` | parsed `gc.enabled`; `None` when absent or invalid |
 | `manifest_read_errors` | `list[str]` | optional |
 | `manifest_stats` | `dict` | `{manifest_count, avg_files_per_manifest}` |
 | `puffin_blobs` | `list` | optional sketch locators |

@@ -13,7 +13,9 @@ from cryo.config import Settings
 from cryo.db.models import Source, Table, TableStats
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.bandit_feedback import finalize_admission, register_admission
+from cryo.intelligence.outcomes import OUTCOME_SCHEMA_VERSION
 from cryo.mcp.server import build_default_mcp_server
+from cryo.ml.cost_integration import COST_MODEL_CACHE_VERSION, load_cached_cost_model
 
 
 def test_pii_gate_blocks_untagged_email_column(session, tmp_path, monkeypatch) -> None:
@@ -123,9 +125,13 @@ def test_learned_cost_enriches_projection(tmp_path, monkeypatch) -> None:
     cache.write_text(
         json.dumps(
             {
+                "cache_version": COST_MODEL_CACHE_VERSION,
+                "outcome_schema_version": OUTCOME_SCHEMA_VERSION,
                 "weights": [0.5, 0.1, 0.1, 0.0, 0.0, 1.0, 0.0],
                 "bias": 0.01,
                 "residual_quantile": 0.05,
+                "feature_min": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "feature_max": [10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
                 "n_samples": 20,
             }
         )
@@ -137,7 +143,23 @@ def test_learned_cost_enriches_projection(tmp_path, monkeypatch) -> None:
         "raw": {"reclaim_optimize_bytes": 1_073_741_824},
     }
     base = savings_projection_from_stats(stats, Settings())
-    assert "learned_cost" in base.assumptions or base.projected_savings_usd_month >= 0
+    assert "learned_cost" in base.assumptions
+
+
+def test_legacy_answer_leaking_cost_cache_is_rejected(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CRYO_STATE_DIR", str(tmp_path))
+    (tmp_path / "cost_model_cache.json").write_text(
+        json.dumps(
+            {
+                "weights": [0.5, 0.1, 0.1, 0.0, 0.0, 1.0, 0.0],
+                "bias": 0.01,
+                "residual_quantile": 0.05,
+                "n_samples": 20,
+            }
+        )
+    )
+
+    assert load_cached_cost_model() is None
 
 
 def test_mcp_server_includes_schema_and_snapshot_tools() -> None:

@@ -83,6 +83,36 @@ class ColumnQualityAccumulator:
             if high is not None and (accum.max_value is None or high > accum.max_value):
                 accum.max_value = high
 
+    def file_bound_sample(self, data_file: object) -> dict[str, Any] | None:
+        path = getattr(data_file, "file_path", None)
+        if callable(path):
+            path = path()
+        if not isinstance(path, str) or not path:
+            return None
+        size = getattr(data_file, "file_size_in_bytes", 0)
+        if callable(size):
+            size = size()
+        lower_bounds = _raw_mapping(getattr(data_file, "lower_bounds", None))
+        upper_bounds = _raw_mapping(getattr(data_file, "upper_bounds", None))
+        lower: dict[str, Any] = {}
+        upper: dict[str, Any] = {}
+        for field_id in sorted(set(lower_bounds) | set(upper_bounds)):
+            name = self._resolve_name(field_id)
+            low = self._decode_bound(field_id, lower_bounds.get(field_id))
+            high = self._decode_bound(field_id, upper_bounds.get(field_id))
+            if low is not None:
+                lower[name] = _jsonable(low)
+            if high is not None:
+                upper[name] = _jsonable(high)
+        if not lower or not upper:
+            return None
+        return {
+            "file_path": path,
+            "size_bytes": max(0, int(size or 0)),
+            "lower_bounds": lower,
+            "upper_bounds": upper,
+        }
+
     def _resolve_name(self, field_id: int) -> str:
         if field_id in self._name_cache:
             return self._name_cache[field_id]

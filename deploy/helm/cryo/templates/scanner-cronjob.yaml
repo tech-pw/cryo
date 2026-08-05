@@ -21,7 +21,7 @@ spec:
           {{- include "cryo.nodeSelector" . | nindent 10 }}
           containers:
             - name: scanner
-              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              image: {{ include "cryo.imageRef" .Values.image | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["python", "-m", "cryo.scanner.run"]
               env:

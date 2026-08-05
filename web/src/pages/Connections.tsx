@@ -4,6 +4,7 @@ import { Alert } from "../components/ui/alert";
 import { PageHeader } from "../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { AiProvidersTab, AiProvidersTabLabel } from "./connections/AiProvidersTab";
+import { CapabilitiesTab } from "./connections/CapabilitiesTab";
 import { CatalogLatencyModal } from "./connections/CatalogLatencyModal";
 import { ConnectionDrawers } from "./connections/ConnectionDrawers";
 import { ConnectionsKpiRow } from "./connections/ConnectionsKpiRow";
@@ -16,7 +17,14 @@ import { SlackTab, SlackTabLabel } from "./connections/SlackTab";
 
 export { formatSourceTestSuccessMessage } from "./connections/helpers";
 
-const CONNECTIONS_TAB_KEYS = ["sources", "destinations", "ai-providers", "slack", "ops"] as const;
+const CONNECTIONS_TAB_KEYS = [
+  "sources",
+  "destinations",
+  "capabilities",
+  "ai-providers",
+  "slack",
+  "ops"
+] as const;
 type ConnectionsTabKey = (typeof CONNECTIONS_TAB_KEYS)[number];
 const DEFAULT_CONNECTIONS_TAB: ConnectionsTabKey = "sources";
 
@@ -60,6 +68,7 @@ const ConnectionsTabs = () => {
         <TabsList>
           <TabsTrigger value="sources">Lakehouses</TabsTrigger>
           <TabsTrigger value="destinations">Engines</TabsTrigger>
+          <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
           <TabsTrigger value="ai-providers">
             <AiProvidersTabLabel />
           </TabsTrigger>
@@ -74,6 +83,9 @@ const ConnectionsTabs = () => {
         </TabsList>
         <TabsContent value="sources">{activeTab === "sources" ? <LakehousesTab /> : null}</TabsContent>
         <TabsContent value="destinations">{activeTab === "destinations" ? <EnginesTab /> : null}</TabsContent>
+        <TabsContent value="capabilities">
+          {activeTab === "capabilities" ? <CapabilitiesTab /> : null}
+        </TabsContent>
         <TabsContent value="ai-providers">{activeTab === "ai-providers" ? <AiProvidersTab /> : null}</TabsContent>
         <TabsContent value="slack">{activeTab === "slack" ? <SlackTab /> : null}</TabsContent>
         {isAdmin ? (

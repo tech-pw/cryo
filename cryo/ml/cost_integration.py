@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.config import Settings
-from cryo.db.models import AuditLog, TableStats
 from cryo.domain.enums import OperationType
 from cryo.domain.models import SavingsProjection
+from cryo.intelligence.outcomes import OUTCOME_SCHEMA_VERSION, build_outcome_dataset
 from cryo.ml.cost_model import _RidgeModel, predict_savings, train_cost_model
 
-_STATE_DIR = Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo"))
-_MODEL_CACHE = _STATE_DIR / "cost_model_cache.json"
+logger = logging.getLogger(__name__)
+
+COST_MODEL_CACHE_VERSION = "cryo.cost-model-cache/v2"
+_EXPECTED_WEIGHT_COUNT = 7
 
 
 def _state_dir() -> Path:
@@ -34,41 +38,36 @@ def _ensure_state_dir() -> None:
 
 def refresh_cost_model_cache(session: Session, settings: Settings) -> bool:
     """Retrain from audit_log realized savings and persist to disk."""
-    rows = session.execute(
-        select(AuditLog, TableStats)
-        .join(TableStats, TableStats.table_id == AuditLog.table_id)
-        .where(AuditLog.actual_bytes_freed.isnot(None))
-        .order_by(AuditLog.ts.desc())
-        .limit(500)
-    )
-    training: list[dict[str, Any]] = []
-    for audit, stats in rows:
-        training.append(
-            {
-                "action": audit.action,
-                "actual_bytes_freed": audit.actual_bytes_freed,
-                "predicted_bytes_freed": audit.actual_bytes_freed,
-                "small_files_count": stats.small_files_count,
-                "total_size_gb": stats.total_size_gb,
-                "delete_file_pct": stats.delete_file_pct,
-                "input_files_count": audit.input_files_count,
-            }
-        )
+    dataset = build_outcome_dataset(session)
+    training = dataset.calibration_rows()
     model = train_cost_model(training, price_per_gb_month=settings.cost_price_per_gb_month)
     if model is None:
         return False
     _ensure_state_dir()
-    _model_cache_path().write_text(
-        json.dumps(
-            {
-                "weights": model.weights,
-                "bias": model.bias,
-                "residual_quantile": model.residual_quantile,
-                "n_samples": len(training),
-            }
-        ),
+    payload = {
+        "cache_version": COST_MODEL_CACHE_VERSION,
+        "weights": model.weights,
+        "bias": model.bias,
+        "residual_quantile": model.residual_quantile,
+        "feature_min": model.feature_min,
+        "feature_max": model.feature_max,
+        "n_samples": len(training),
+        "outcome_schema_version": OUTCOME_SCHEMA_VERSION,
+        "lineage_eligible": dataset.eligible_count,
+        "lineage_complete": dataset.complete_count,
+        "lineage_completeness": dataset.completeness,
+    }
+    with NamedTemporaryFile(
+        mode="w",
         encoding="utf-8",
-    )
+        dir=_state_dir(),
+        prefix=".cost-model-",
+        suffix=".tmp",
+        delete=False,
+    ) as temporary:
+        temporary.write(json.dumps(payload))
+        temporary_path = Path(temporary.name)
+    temporary_path.replace(_model_cache_path())
     return True
 
 
@@ -79,14 +78,42 @@ def load_cached_cost_model() -> _RidgeModel | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
+        logger.warning("Cost model cache is unreadable; learned predictions are disabled")
+        return None
+    if (
+        payload.get("cache_version") != COST_MODEL_CACHE_VERSION
+        or payload.get("outcome_schema_version") != OUTCOME_SCHEMA_VERSION
+    ):
+        logger.warning("Cost model cache schema is incompatible; retraining is required")
         return None
     weights = payload.get("weights")
-    if not isinstance(weights, list):
+    if not isinstance(weights, list) or len(weights) != _EXPECTED_WEIGHT_COUNT:
+        logger.warning("Cost model cache has an invalid feature vector; retraining is required")
+        return None
+    try:
+        numeric_weights = [float(weight) for weight in weights]
+        bias = float(payload["bias"])
+        residual_quantile = float(payload["residual_quantile"])
+        feature_min = [float(value) for value in payload["feature_min"]]
+        feature_max = [float(value) for value in payload["feature_max"]]
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Cost model cache contains invalid coefficients; retraining is required")
+        return None
+    if len(feature_min) != _EXPECTED_WEIGHT_COUNT or len(feature_max) != _EXPECTED_WEIGHT_COUNT:
+        logger.warning("Cost model cache has invalid domain bounds; retraining is required")
+        return None
+    if not all(
+        math.isfinite(value)
+        for value in [*numeric_weights, bias, residual_quantile, *feature_min, *feature_max]
+    ):
+        logger.warning("Cost model cache contains non-finite coefficients; retraining is required")
         return None
     return _RidgeModel(
-        weights=[float(w) for w in weights],
-        bias=float(payload.get("bias", 0)),
-        residual_quantile=float(payload.get("residual_quantile", 0)),
+        weights=numeric_weights,
+        bias=bias,
+        residual_quantile=residual_quantile,
+        feature_min=feature_min,
+        feature_max=feature_max,
     )
 
 
@@ -132,6 +159,7 @@ def apply_learned_cost(
         "learned_optimize_usd": pred.predicted_usd,
         "lower_usd": pred.lower_usd,
         "upper_usd": pred.upper_usd,
+        "abstention_reason": pred.abstention_reason,
     }
 
     return SavingsProjection(

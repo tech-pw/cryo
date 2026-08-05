@@ -14,22 +14,29 @@ export const ENGINE_TYPE_OPTIONS: EngineTypeOption[] = [
   { label: "Trino", value: "trino" },
   { label: "Spark EMR", value: "spark_emr" },
   { label: "Native (iceberg-go)", value: "native", nativeImpl: "go" },
-  { label: "Native (iceberg-rust)", value: "native", nativeImpl: "rust" }
+  { label: "Native (iceberg-rust)", value: "native", nativeImpl: "rust" },
+  { label: "Flink (config only)", value: "flink" }
 ];
 
 export const ENGINE_VIRTUAL_OPTIONS = [
   { label: "Trino", value: "trino" },
   { label: "Spark EMR", value: "spark_emr" },
   { label: "Native (iceberg-go)", value: "native:go" },
-  { label: "Native (iceberg-rust)", value: "native:rust" }
+  { label: "Native (iceberg-rust)", value: "native:rust" },
+  { label: "Flink (config only)", value: "flink" }
 ] as const;
 
 export type EngineVirtualValue = (typeof ENGINE_VIRTUAL_OPTIONS)[number]["value"];
 
-export const NATIVE_UNSUPPORTED_OPS = ["optimize_manifests"] as const;
+export const NATIVE_UNSUPPORTED_OPS = [
+  "convert_deletes",
+  "optimize_manifests",
+  "compute_statistics",
+  "rewrite_position_deletes"
+] as const;
 
 export const nativeUnsupportedOpTooltip =
-  "Not supported on the native engine; use a Trino or Spark preset for manifest rewrite.";
+  "Not executed by the native engine; configure a compatible Trino or Spark fallback.";
 
 export const nativeRustOptimizeTooltip =
   "Compaction is not available on iceberg-rust; use Native (iceberg-go) or Trino/Spark.";
@@ -51,7 +58,8 @@ export function hasSqlFallbackConfigured(config: JsonObject | null | undefined):
 const ENGINE_TAG_COLORS: Record<EngineType, string> = {
   trino: "blue",
   spark_emr: "orange",
-  native: "purple"
+  native: "purple",
+  flink: "gray"
 };
 
 export const resolveNativeEngineImpl = (config?: JsonObject | null): NativeEngineImpl => {
@@ -70,6 +78,7 @@ export const formatEngineLabel = (
   if (!engine) return "—";
   if (engine === "trino") return "Trino";
   if (engine === "spark_emr") return "Spark EMR";
+  if (engine === "flink") return "Flink (config only)";
   if (engine === "native") {
     return `Native (${formatNativeImplLabel(resolveNativeEngineImpl(config))})`;
   }
@@ -86,7 +95,7 @@ export const nativeSupportsOperation = (
   operation: string,
   impl: NativeEngineImpl = NATIVE_ENGINE_IMPL_DEFAULT
 ): boolean => {
-  if (operation === "optimize_manifests") return false;
+  if ((NATIVE_UNSUPPORTED_OPS as readonly string[]).includes(operation)) return false;
   if (operation === "optimize" && impl === "rust") return false;
   return true;
 };
