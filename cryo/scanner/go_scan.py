@@ -338,11 +338,16 @@ def table_analysis_from_go_payload(
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
         "location": location,
+        "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
+        "gc_enabled": payload.get("gc_enabled"),
         "manifest_stats": {
             "manifest_count": manifest_count,
             "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
         },
         "scan_engine": "go",
+        "wair_file_sample": list(payload.get("wair_file_sample") or []),
+        "wair_file_sample_complete": total_files == 0
+        or bool(payload.get("wair_file_sample_complete")),
     }
     if payload.get("manifest_read_errors"):
         raw["manifest_read_errors"] = list(payload["manifest_read_errors"])
@@ -441,6 +446,9 @@ def _build_scan_stats_request(
         "small_file_mb": settings.scan_small_file_mb,
         "health_small_file_bytes": HEALTH_SMALL_FILE_BYTES,
         "max_partitions": settings.scanner_max_partitions_per_table,
+        "max_file_samples": settings.scanner_wair_file_sample_size
+        if settings.scanner_wair_file_sample_size
+        else -1,
     }
     return request
 

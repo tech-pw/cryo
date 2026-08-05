@@ -70,7 +70,7 @@ See `lld.md` §1 for the full tree. Quick map:
 | Reporting | `cryo/reporting/` | HTML/email/Slack + alerts. |
 | API | `cryo/api/` | FastAPI app + routers. |
 | Queue/locks | `cryo/queue/` | Redis queue + leader/per-table locks. |
-| Frontend | `web/` | React + TS + Vite + Ant Design + Recharts + TanStack Query. |
+| Frontend | `web/` | React + TS + Vite + Radix UI + Tailwind + Recharts + TanStack. |
 | Deploy | `deploy/helm/cryo/` | Helm chart per service. |
 
 ---
@@ -99,7 +99,8 @@ See `lld.md` §1 for the full tree. Quick map:
 ### Frontend
 - TypeScript strict; functional components + hooks; TanStack Query for data; types generated from
   the backend OpenAPI schema (don't hand-write API types).
-- Use Ant Design components (esp. `<Table>` selection/filtering) rather than rolling custom ones.
+- Reuse `web/src/components/ui/` Radix primitives and the shared TanStack `DataTable`; do not add
+  Ant Design or one-off table implementations.
 - Bulk selection sends a **filter spec**, never a list of page IDs (see `lld.md` §12/§13).
 
 ### Database

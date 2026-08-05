@@ -67,7 +67,9 @@ def _count_since(history: list[str], now: datetime, window: timedelta) -> int:
     return count
 
 
-def apply_commit_delta(session: Session, delta: CommitDelta, *, now: datetime | None = None) -> bool:
+def apply_commit_delta(
+    session: Session, delta: CommitDelta, *, now: datetime | None = None
+) -> bool:
     """Apply a commit delta to TableStats with idempotent snapshot watermarking.
 
     Returns ``False`` when this event is stale (``snapshot_id`` already applied) or when
@@ -86,7 +88,9 @@ def apply_commit_delta(session: Session, delta: CommitDelta, *, now: datetime | 
 
     stats.snapshot_watermark = delta.snapshot_id
     stats.scan_at = observed_now
-    stats.total_files = max(0, _safe_int(stats.total_files) + delta.files_added - delta.files_removed)
+    stats.total_files = max(
+        0, _safe_int(stats.total_files) + delta.files_added - delta.files_removed
+    )
 
     existing_total_bytes = int((stats.total_size_gb or 0.0) * 1024**3)
     updated_total_bytes = max(0, existing_total_bytes + delta.bytes_added - delta.bytes_removed)
@@ -105,7 +109,9 @@ def apply_commit_delta(session: Session, delta: CommitDelta, *, now: datetime | 
     )
 
     if stats.total_files > 0:
-        stats.delete_file_pct = min(100.0, max(0.0, (stats.total_delete_files / stats.total_files) * 100.0))
+        stats.delete_file_pct = min(
+            100.0, max(0.0, (stats.total_delete_files / stats.total_files) * 100.0)
+        )
     else:
         stats.delete_file_pct = 0.0
 

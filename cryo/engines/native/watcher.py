@@ -132,9 +132,7 @@ class NativeJobWatcher:
                     except Exception as exc:
                         if _is_not_found(exc):
                             self._finalize_cancelled(session, dispatch.id)
-                            _delete_payload_secret(
-                                core_api, dispatch.k8s_job_name, namespace
-                            )
+                            _delete_payload_secret(core_api, dispatch.k8s_job_name, namespace)
                             finalized += 1
                         else:
                             logger.warning(
@@ -165,9 +163,7 @@ class NativeJobWatcher:
                         _delete_payload_secret(core_api, dispatch.k8s_job_name, namespace)
                         finalized += 1
                         continue
-                    logger.warning(
-                        "Failed to read Job %s: %s", dispatch.k8s_job_name, exc
-                    )
+                    logger.warning("Failed to read Job %s: %s", dispatch.k8s_job_name, exc)
                     errors += 1
                     continue
 
@@ -207,16 +203,12 @@ class NativeJobWatcher:
                 if dispatch.status == "pending":
                     dispatch.status = "running"
                 self._mark_active_jobs(session, dispatch.id, dispatch.k8s_job_name)
-                self._publish_incremental_progress(
-                    core_api, dispatch, namespace
-                )
+                self._publish_incremental_progress(core_api, dispatch, namespace)
                 still_running += 1
 
             session.commit()
 
-        return WatchResult(
-            finalized=finalized, still_running=still_running, errors=errors
-        )
+        return WatchResult(finalized=finalized, still_running=still_running, errors=errors)
 
     def _finalize_success(
         self,
@@ -441,9 +433,7 @@ def _parse_batch_results(stdout: str | None) -> dict[str, dict[str, Any]]:
         if isinstance(item, dict) and item.get("job_id"):
             by_job[str(item["job_id"])] = item
 
-    aggregate_lines = [
-        line for line in lines if not line.startswith(TABLE_RESULT_PREFIX)
-    ]
+    aggregate_lines = [line for line in lines if not line.startswith(TABLE_RESULT_PREFIX)]
     if not aggregate_lines:
         return by_job
     try:
@@ -504,12 +494,13 @@ def _read_recent_pod_logs(
     """
     for pod in pods:
         try:
-            return core_api.read_namespaced_pod_log(
+            logs = core_api.read_namespaced_pod_log(
                 name=pod.metadata.name,
                 namespace=pod.metadata.namespace,
                 container=container_name,
                 since_seconds=since_seconds,
             )
+            return logs if isinstance(logs, str) else None
         except Exception:
             continue
     return None
@@ -584,10 +575,14 @@ def _line_to_log_events(line: str, *, run_id: Any) -> list[dict[str, Any]]:
             return []
         operation = str(event.get("operation") or "native")
         event_name = str(event.get("event") or "progress")
-        message = event.get("message")
-        if not message:
+        raw_message = event.get("message")
+        if raw_message:
+            progress_message = str(raw_message)
+        else:
             pct = event.get("progress_pct")
-            message = f"{operation}: {event_name}" + (f" {pct}%" if pct is not None else "")
+            progress_message = f"{operation}: {event_name}" + (
+                f" {pct}%" if pct is not None else ""
+            )
         return [
             build_log_line(
                 run_id=run_id,
@@ -597,7 +592,7 @@ def _line_to_log_events(line: str, *, run_id: Any) -> list[dict[str, Any]]:
                 operation=operation,
                 engine="native",
                 level="error" if event_name == "failed" else "info",
-                message=str(message),
+                message=progress_message,
             )
         ]
 

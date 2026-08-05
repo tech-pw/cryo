@@ -4,8 +4,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apache/iceberg-go"
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
+
+func TestDecodeBoundsUsesSchemaTypesAndNames(t *testing.T) {
+	encoded, err := iceberg.NewLiteral[int64](42).MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal literal: %v", err)
+	}
+
+	result := decodeBounds(
+		map[int][]byte{7: encoded},
+		map[int]protocol.AggregateFixtureColumn{
+			7: {FieldID: 7, ColumnName: "account_id", ColumnType: "long"},
+		},
+		map[int]iceberg.Type{7: iceberg.PrimitiveTypes.Int64},
+	)
+
+	if got := result["account_id"]; got != int64(42) {
+		t.Fatalf("decoded bound = %#v, want int64(42)", got)
+	}
+}
 
 func TestAggregateFromRecordsDayPartitioned(t *testing.T) {
 	const mb = 1024 * 1024
@@ -74,11 +94,169 @@ func TestAggregateFromRecordsDeletesAndUnpartitioned(t *testing.T) {
 	}
 }
 
+// Regression, 2026-07-28: a table with 34,176 tiny position-delete files had every one of
+// them double-counted as a small DATA file in total_files/small_files_count and each
+// partition's files/small tallies (delete files are almost always under the small-file
+// threshold). This made the planner select partitions for OPTIMIZE based on delete-file
+// counts rather than actual small-data-file counts -- rewrite_data_files (which doesn't
+// touch delete files directly) then predictably rewrote nothing, and the table's health
+// score never moved despite maintenance jobs reporting success. Delete files must land only
+// in DeleteFiles/PositionDeleteFiles/EqualityDeleteFiles, never in TotalFiles or any
+// partition's Files/Small.
+func TestAggregateFromRecordsDeletesDoNotInflateFileCounts(t *testing.T) {
+	const mb = 1024 * 1024
+	fields := []protocol.ScanStatsPartitionField{
+		{BaseColumn: "event_date", PartitionField: "event_date_day", Transform: "day", ColType: "date"},
+	}
+	records := []FileRecord{
+		{SizeBytes: 200 * mb, RecordCount: 100, Content: "DATA", FileFormat: "PARQUET", Partition: map[string]any{"event_date_day": "2026-06-29"}},
+	}
+	// 50 tiny position-delete files all landing in the same partition as the one real data file.
+	for i := 0; i < 50; i++ {
+		records = append(records, FileRecord{
+			SizeBytes: 4 * 1024, RecordCount: 5, Content: "POSITION_DELETES", FileFormat: "PARQUET",
+			Partition: map[string]any{"event_date_day": "2026-06-29"},
+		})
+	}
+
+	resp := AggregateFromRecords(records, fields, Options{})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error=%v", resp.Error)
+	}
+	if resp.TotalFiles != 1 {
+		t.Fatalf("total_files=%d, want 1 (delete files must not count as data files)", resp.TotalFiles)
+	}
+	if resp.SmallFilesCount != 0 {
+		t.Fatalf("small_files_count=%d, want 0 (the one data file is 200MB, not small)", resp.SmallFilesCount)
+	}
+	if resp.TotalRecords != 100 {
+		t.Fatalf("total_records=%d, want 100 (delete-entry row counts are deletions, not data rows)", resp.TotalRecords)
+	}
+	if resp.PositionDeleteFiles != 50 {
+		t.Fatalf("position_delete_files=%d, want 50", resp.PositionDeleteFiles)
+	}
+	if len(resp.Partitions) != 1 {
+		t.Fatalf("partitions=%d, want 1", len(resp.Partitions))
+	}
+	p := resp.Partitions[0]
+	if p.Files != 1 {
+		t.Fatalf("partition files=%d, want 1 (50 delete files must not inflate this)", p.Files)
+	}
+	if p.Small != 0 {
+		t.Fatalf("partition small=%d, want 0", p.Small)
+	}
+}
+
+// Regression, 2026-07-28: convert_deletes' partition-skew scoping (planner.py's
+// _skewed_partition_predicates) picks partitions by small-DATA-file count. On a table where
+// an earlier optimize pass already compacted the delete-heavy partitions' data files (leaving
+// them with only a handful of large files), those partitions no longer look "skewed" by data-
+// file count, so convert_deletes silently skipped exactly the partitions holding the delete
+// files -- confirmed live, a table's 34,176 position-delete files sat in 4 partitions with
+// only 5-7 data files each after an earlier optimize round, and three consecutive
+// convert_deletes runs never touched them. DeleteFiles must be tracked per partition,
+// independent of Files/Small, so scoping can be done by delete-file concentration instead.
+func TestAggregateFromRecordsTracksDeleteFilesPerPartition(t *testing.T) {
+	const mb = 1024 * 1024
+	fields := []protocol.ScanStatsPartitionField{
+		{BaseColumn: "event_date", PartitionField: "event_date_day", Transform: "day", ColType: "date"},
+	}
+	records := []FileRecord{
+		// Partition A: a handful of well-sized data files, but a pile of stale position deletes.
+		{SizeBytes: 200 * mb, RecordCount: 100, Content: "DATA", FileFormat: "PARQUET", Partition: map[string]any{"event_date_day": "2025-11-08"}},
+		{SizeBytes: 200 * mb, RecordCount: 100, Content: "DATA", FileFormat: "PARQUET", Partition: map[string]any{"event_date_day": "2025-11-08"}},
+		// Partition B: no deletes at all.
+		{SizeBytes: 200 * mb, RecordCount: 100, Content: "DATA", FileFormat: "PARQUET", Partition: map[string]any{"event_date_day": "2025-11-09"}},
+	}
+	for i := 0; i < 5; i++ {
+		records = append(records, FileRecord{
+			SizeBytes: 4 * 1024, RecordCount: 3, Content: "POSITION_DELETES", FileFormat: "PARQUET",
+			Partition: map[string]any{"event_date_day": "2025-11-08"},
+		})
+	}
+
+	resp := AggregateFromRecords(records, fields, Options{})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error=%v", resp.Error)
+	}
+	byKey := map[string]int{}
+	for _, p := range resp.Partitions {
+		byKey[p.PartitionValue] = p.DeleteFiles
+	}
+	if byKey["2025-11-08"] != 5 {
+		t.Fatalf("partition 2025-11-08 delete_files=%d, want 5", byKey["2025-11-08"])
+	}
+	if byKey["2025-11-09"] != 0 {
+		t.Fatalf("partition 2025-11-09 delete_files=%d, want 0", byKey["2025-11-09"])
+	}
+	// Delete files must not have inflated the data-file counts (already covered by
+	// TestAggregateFromRecordsDeletesDoNotInflateFileCounts, re-asserted here for this
+	// specific mixed-partition shape).
+	partA := resp.Partitions[0]
+	if partA.PartitionValue != "2025-11-08" {
+		for _, p := range resp.Partitions {
+			if p.PartitionValue == "2025-11-08" {
+				partA = p
+				break
+			}
+		}
+	}
+	if partA.Files != 2 || partA.Small != 0 {
+		t.Fatalf("partition 2025-11-08 files=%d small=%d, want files=2 small=0", partA.Files, partA.Small)
+	}
+}
+
 func TestAggregateFromRecordsEmpty(t *testing.T) {
 	resp := AggregateFromRecords(nil, nil, Options{})
 	if !resp.OK || resp.TotalFiles != 0 || len(resp.Partitions) != 0 {
 		t.Fatalf("unexpected empty response: %+v", resp)
 	}
+}
+
+func TestAggregateFromFixturePreservesTableProperties(t *testing.T) {
+	gcEnabled := false
+	req := &protocol.AggregateFixtureRequest{
+		SchemaName: "demo",
+		TableName:  "events",
+		IcebergProperties: map[string]string{
+			"gc.enabled":                      "false",
+			"write.parquet.compression-codec": "zstd",
+			"write.target-file-size-bytes":    "268435456",
+		},
+		GCEnabled: &gcEnabled,
+	}
+
+	resp := AggregateFromFixture(req)
+
+	if got := resp.IcebergProperties["write.parquet.compression-codec"]; got != "zstd" {
+		t.Fatalf("compression codec=%q, want zstd", got)
+	}
+	if resp.GCEnabled == nil || *resp.GCEnabled {
+		t.Fatalf("gc_enabled=%v, want false", resp.GCEnabled)
+	}
+}
+
+func TestParseBoolProperty(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  *bool
+	}{
+		{value: "yes", want: boolPointer(true)},
+		{value: " 0 ", want: boolPointer(false)},
+		{value: "invalid", want: nil},
+	} {
+		got := parseBoolProperty(test.value)
+		if got == nil && test.want == nil {
+			continue
+		}
+		if got == nil || test.want == nil || *got != *test.want {
+			t.Fatalf("parseBoolProperty(%q)=%v, want %v", test.value, got, test.want)
+		}
+	}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func TestAggregateCapsPartitions(t *testing.T) {

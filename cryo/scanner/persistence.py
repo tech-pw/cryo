@@ -19,8 +19,8 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
-from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
+from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
 
 
 def _json_safe(value: Any) -> Any:
@@ -250,7 +250,11 @@ def persist_table_analysis(
 
     existing_stats = session.get(TableStats, table_id)
     stats_values = _stats_values(table_id, analysis)
-    previous_raw = dict(existing_stats.raw or {}) if existing_stats and isinstance(existing_stats.raw, dict) else {}
+    previous_raw = (
+        dict(existing_stats.raw or {})
+        if existing_stats and isinstance(existing_stats.raw, dict)
+        else {}
+    )
     previous_history = previous_raw.get("commit_event_history")
     if isinstance(previous_history, list):
         raw_payload = dict(stats_values.get("raw") or {})
@@ -260,8 +264,16 @@ def persist_table_analysis(
             raw_payload["smart_maintenance"] = previous_smart
         stats_values["raw"] = raw_payload
 
-    scan_at = analysis.scan_at.astimezone(UTC) if analysis.scan_at.tzinfo else analysis.scan_at.replace(tzinfo=UTC)
-    history = stats_values.get("raw", {}).get("commit_event_history") if isinstance(stats_values.get("raw"), dict) else None
+    scan_at = (
+        analysis.scan_at.astimezone(UTC)
+        if analysis.scan_at.tzinfo
+        else analysis.scan_at.replace(tzinfo=UTC)
+    )
+    history = (
+        stats_values.get("raw", {}).get("commit_event_history")
+        if isinstance(stats_values.get("raw"), dict)
+        else None
+    )
     commits_7d = _count_commits_in_window(history, scan_at, days=7)
     commits_24h = _count_commits_in_window(history, scan_at, hours=24)
     query_count_7d = 0
@@ -339,6 +351,11 @@ def persist_table_analysis(
                     # profiler (cryo/quality/profiler.py) needs per-column history for baseline
                     # comparison and schema-drift detection, not just the table-level rollup.
                     "column_quality": (analysis.raw or {}).get("column_quality"),
+                    "wair_file_sample": (analysis.raw or {}).get("wair_file_sample"),
+                    "wair_file_sample_complete": (analysis.raw or {}).get(
+                        "wair_file_sample_complete"
+                    ),
+                    "wair_query_ranges": (analysis.raw or {}).get("wair_query_ranges"),
                 }
             ),
         )

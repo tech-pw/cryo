@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, TypeVar
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, select
@@ -11,8 +11,6 @@ from sqlalchemy.orm import Session
 
 from cryo.config import get_settings
 from cryo.db.models import Destination, Preset, Source, Table
-
-T = TypeVar("T")
 
 TENANT_SCOPED = (Source, Destination, Table, Preset)
 
@@ -44,9 +42,11 @@ def require_tenant(session: Session) -> uuid.UUID:
     return uuid.UUID(int=0)  # sentinel: no filter when isolation disabled
 
 
-def scope_by_tenant[T](
-    stmt: Select[tuple[T]], model: type[Any], tenant_id: uuid.UUID
-) -> Select[tuple[T]]:
+def scope_by_tenant[RowT: tuple[Any, ...]](
+    stmt: Select[RowT],
+    model: type[Any],
+    tenant_id: uuid.UUID,
+) -> Select[RowT]:
     if tenant_id.int != 0 and hasattr(model, "tenant_id"):
         return stmt.where(model.tenant_id == tenant_id)
     return stmt

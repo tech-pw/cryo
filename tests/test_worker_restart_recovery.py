@@ -95,9 +95,7 @@ def test_restart_does_not_start_orphan_while_expire_started(monkeypatch) -> None
         "probe_engine_op_state",
         lambda *a, **k: EngineOpState.RUNNING,
     )
-    recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-b"
-    )
+    recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-b")
     assert steps.get_started_step("job-1") is not None
 
     # Simulate reclaim: re-queue and continue — started expire must not re-run,

@@ -97,9 +97,7 @@ class DeletionTrackingRepository:
         stmt = (
             select(
                 DeletionTracking.table_id,
-                func.coalesce(func.sum(DeletionTracking.pending_rows), 0).label(
-                    "rows"
-                ),
+                func.coalesce(func.sum(DeletionTracking.pending_rows), 0).label("rows"),
                 func.min(DeletionTracking.soft_deleted_at).label("earliest"),
                 DeletionTracking.blocked_until,
                 DeletionTracking.reason,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -20,7 +21,14 @@ from cryo.ai.explain import explain_health_change
 from cryo.ai.llm import SUPPORTED_PROVIDERS, create_llm_client
 from cryo.ai.pii import classify_table_columns
 from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
-from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
+from cryo.api.deps import (
+    CurrentPrincipal,
+    SessionDep,
+    require_admin,
+    require_evidence_collector,
+    require_operator,
+    require_viewer,
+)
 from cryo.api.extensions_helpers import (
     build_mcp_server,
     gather_copilot_context,
@@ -38,7 +46,6 @@ from cryo.api.schemas import JsonDict
 from cryo.api.validators import validate_cron_field
 from cryo.db.models import (
     AIProvider,
-    AuditLog,
     SlackConfig,
     Table,
     TableStats,
@@ -443,6 +450,12 @@ class CostModelEvaluateResponse(BaseModel):
     beats_heuristic: bool
     band_coverage: float
     n_samples: int
+    n_evaluated: int
+    abstentions: int
+    abstention_rate: float
+    lineage_eligible: int
+    lineage_complete: int
+    lineage_completeness: float
 
 
 @router.get(
@@ -453,44 +466,37 @@ class CostModelEvaluateResponse(BaseModel):
 )
 def evaluate_learned_cost_model(session: SessionDep) -> CostModelEvaluateResponse:
     from cryo.config import get_settings
-    from cryo.ml.cost_integration import load_cached_cost_model, refresh_cost_model_cache
+    from cryo.intelligence.outcomes import build_outcome_dataset
     from cryo.ml.cost_model import evaluate_model, train_cost_model
 
-    rows = session.execute(
-        select(AuditLog, TableStats)
-        .join(TableStats, TableStats.table_id == AuditLog.table_id)
-        .where(AuditLog.actual_bytes_freed.isnot(None))
-        .limit(500)
-    )
-    training: list[dict[str, Any]] = []
-    for audit, stats in rows:
-        training.append(
-            {
-                "action": audit.action,
-                "actual_bytes_freed": audit.actual_bytes_freed,
-                "predicted_bytes_freed": audit.actual_bytes_freed,
-                "small_files_count": stats.small_files_count,
-                "total_size_gb": stats.total_size_gb,
-                "delete_file_pct": stats.delete_file_pct,
-                "input_files_count": audit.input_files_count,
-            }
-        )
+    dataset = build_outcome_dataset(session)
+    observations = dataset.calibration_rows()
     settings = get_settings()
-    refresh_cost_model_cache(session, settings)
-    model = load_cached_cost_model()
-    if model is None:
-        model = train_cost_model(training, price_per_gb_month=settings.cost_price_per_gb_month)
+    split = max(1, int(len(observations) * 0.75))
+    training = observations[:split]
+    holdout = observations[split:]
+    model = train_cost_model(training, price_per_gb_month=settings.cost_price_per_gb_month)
     if model is None:
         return CostModelEvaluateResponse(
             mae_learned=0.0,
             mae_heuristic=0.0,
             beats_heuristic=False,
             band_coverage=0.0,
-            n_samples=len(training),
+            n_samples=len(holdout),
+            n_evaluated=0,
+            abstentions=len(holdout),
+            abstention_rate=1.0 if holdout else 0.0,
+            lineage_eligible=dataset.eligible_count,
+            lineage_complete=dataset.complete_count,
+            lineage_completeness=dataset.completeness,
         )
-    holdout = training[-max(1, len(training) // 4) :]
     metrics = evaluate_model(holdout, model, price_per_gb_month=settings.cost_price_per_gb_month)
-    return CostModelEvaluateResponse(**metrics)
+    return CostModelEvaluateResponse(
+        **metrics,
+        lineage_eligible=dataset.eligible_count,
+        lineage_complete=dataset.complete_count,
+        lineage_completeness=dataset.completeness,
+    )
 
 
 class HealthClassifierResponse(BaseModel):
@@ -552,12 +558,23 @@ def classify_table_health(
     )
 
 
+class SchedulingBaselineRead(BaseModel):
+    name: str
+    order: list[str]
+    utility: float
+    regret: float
+    regret_ratio: float
+
+
 class AutoCompCompareResponse(BaseModel):
     table_id: uuid.UUID
     static_order: list[str]
     autocomp_order: list[str]
     improvement_ratio: float
     autocomp_wins: bool
+    confidence: float
+    evidence_sufficient: bool
+    baselines: list[SchedulingBaselineRead]
 
 
 @router.get(
@@ -574,6 +591,485 @@ def compare_autocomp_scheduling(
 
     result = compare_scheduling_strategies(session, table_id)
     return AutoCompCompareResponse(table_id=table_id, **result)
+
+
+class PtoShadowRecommendationResponse(BaseModel):
+    table_id: uuid.UUID
+    recommendation_id: uuid.UUID | None = None
+    status: str
+    shadow: bool = True
+    model: str = "heuristic_v1"
+    abstention_reason: str | None = None
+    candidates_considered: int
+    pto_params: JsonDict | None = None
+    predicted_prune_improvement_pct: float | None = None
+    estimated_rewrite_gb: float | None = None
+
+
+@router.post(
+    "/tables/{table_id}/pto/recommend",
+    response_model=PtoShadowRecommendationResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def refresh_pto_shadow_recommendation(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> PtoShadowRecommendationResponse:
+    from cryo.optimizer.pto import generate_pto_recommendation
+
+    try:
+        result = generate_pto_recommendation(session, table_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    recommendation = result.recommendation
+    if recommendation is None:
+        return PtoShadowRecommendationResponse(
+            table_id=table_id,
+            status="abstained",
+            abstention_reason=result.abstention_reason,
+            candidates_considered=result.candidates_considered,
+        )
+    detail = dict(recommendation.detail or {})
+    return PtoShadowRecommendationResponse(
+        table_id=table_id,
+        recommendation_id=recommendation.id,
+        status=recommendation.status,
+        candidates_considered=result.candidates_considered,
+        pto_params=detail.get("pto_params"),
+        predicted_prune_improvement_pct=detail.get("predicted_prune_improvement_pct"),
+        estimated_rewrite_gb=detail.get("estimated_rewrite_gb"),
+    )
+
+
+class PtoSimulationResponse(BaseModel):
+    table_id: uuid.UUID
+    recommendation_id: uuid.UUID | None = None
+    status: str
+    method: str
+    observations: int
+    baseline_scan_fraction: float | None = None
+    candidate_scan_fraction: float | None = None
+    estimated_improvement_pct: float | None = None
+    improvement_interval_pct: tuple[float, float] | None = None
+    abstention_reason: str | None = None
+
+
+@router.post(
+    "/tables/{table_id}/pto/simulate",
+    response_model=PtoSimulationResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def simulate_pto_shadow_recommendation(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> PtoSimulationResponse:
+    from cryo.optimizer.pto import simulate_pto_recommendation
+
+    result = simulate_pto_recommendation(session, table_id)
+    return PtoSimulationResponse(table_id=table_id, **dataclasses.asdict(result))
+
+
+class PtoHoldoutResponse(BaseModel):
+    table_id: uuid.UUID
+    recommendation_id: uuid.UUID | None = None
+    status: str
+    method: str
+    train_observations: int
+    holdout_observations: int
+    train_scan_fraction: float | None = None
+    holdout_scan_fraction: float | None = None
+    stability_delta: float | None = None
+    holdout_improvement_pct: float | None = None
+    qualifies_for_canary: bool
+    qualification_reason: str
+    abstention_reason: str | None = None
+
+
+@router.post(
+    "/tables/{table_id}/pto/holdout",
+    response_model=PtoHoldoutResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def record_pto_shadow_holdout(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> PtoHoldoutResponse:
+    from cryo.optimizer.pto import record_pto_holdout
+
+    result = record_pto_holdout(session, table_id, actor=principal.subject)
+    return PtoHoldoutResponse(table_id=table_id, **dataclasses.asdict(result))
+
+
+class CounterfactualArmPayload(BaseModel):
+    query_count: int = Field(ge=0)
+    query_signature_set_sha256: str
+    total_scan_bytes: int = Field(ge=0)
+    total_files_read: int = Field(ge=0)
+    error_count: int = Field(ge=0)
+    p95_latency_ms: float = Field(gt=0)
+
+
+class CounterfactualExperimentPayload(BaseModel):
+    experiment_id: str
+    workload_sha256: str
+    dataset_sha256: str
+    pto_params_sha256: str
+    rewrite_scope_sha256: str
+    control: CounterfactualArmPayload
+    candidate: CounterfactualArmPayload
+    isolated_clone: bool
+    randomization_unit: str = "query_signature"
+
+
+class CounterfactualReportResponse(BaseModel):
+    table_id: uuid.UUID
+    status: str
+    experiment_id: str
+    scan_improvement_pct: float | None
+    file_read_improvement_pct: float | None
+    p95_latency_change_pct: float | None
+    control_error_rate: float | None
+    candidate_error_rate: float | None
+    qualifies_for_canary: bool
+    reasons: tuple[str, ...]
+
+
+@router.post(
+    "/tables/{table_id}/pto/controlled-shadow",
+    response_model=CounterfactualReportResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def record_pto_controlled_shadow(
+    table_id: uuid.UUID,
+    payload: CounterfactualExperimentPayload,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> CounterfactualReportResponse:
+    from cryo.optimizer.pto import (
+        CounterfactualArm,
+        CounterfactualExperiment,
+        record_counterfactual_experiment,
+    )
+
+    experiment = CounterfactualExperiment(
+        experiment_id=payload.experiment_id,
+        workload_sha256=payload.workload_sha256,
+        dataset_sha256=payload.dataset_sha256,
+        pto_params_sha256=payload.pto_params_sha256,
+        rewrite_scope_sha256=payload.rewrite_scope_sha256,
+        control=CounterfactualArm(**payload.control.model_dump()),
+        candidate=CounterfactualArm(**payload.candidate.model_dump()),
+        isolated_clone=payload.isolated_clone,
+        randomization_unit=payload.randomization_unit,
+    )
+    try:
+        report = record_counterfactual_experiment(
+            session,
+            table_id,
+            experiment,
+            actor=principal.subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CounterfactualReportResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+class ProductionSafetyResponse(BaseModel):
+    table_id: uuid.UUID
+    status: str
+    destination_id: uuid.UUID
+    policy_sha256: str | None
+    attempts: int
+    failed_attempts: int
+    effects: int
+    unknown_effects: int
+    failure_rate: float | None
+    unknown_effect_rate: float | None
+    rollback_drill_at: str | None
+    current_destination_paused: bool
+    qualifies_for_canary: bool
+    reasons: tuple[str, ...]
+
+
+@router.post(
+    "/tables/{table_id}/pto/production-safety/{destination_id}",
+    response_model=ProductionSafetyResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def record_pto_production_safety(
+    table_id: uuid.UUID,
+    destination_id: uuid.UUID,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> ProductionSafetyResponse:
+    from cryo.optimizer.production_safety import record_production_safety
+
+    try:
+        report = record_production_safety(
+            session,
+            table_id,
+            destination_id,
+            actor=principal.subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ProductionSafetyResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+class PtoDriftResponse(BaseModel):
+    table_id: uuid.UUID
+    recommendation_id: uuid.UUID | None = None
+    status: str
+    distance: float | None = None
+    threshold: float
+    abstention_reason: str | None = None
+
+
+@router.get(
+    "/tables/{table_id}/pto/drift",
+    response_model=PtoDriftResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["analytics"],
+)
+def get_pto_drift(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> PtoDriftResponse:
+    from cryo.optimizer.pto import assess_pto_drift
+
+    result = assess_pto_drift(session, table_id)
+    return PtoDriftResponse(table_id=table_id, **dataclasses.asdict(result))
+
+
+class WairBoundaryReportResponse(BaseModel):
+    table_id: uuid.UUID
+    status: str
+    boundary_file_count: int
+    selected_file_count: int
+    proposed_rewrite_gb: float
+    selected_file_paths: tuple[str, ...]
+    skipped_oversize: int
+    truncated: bool
+    abstention_reason: str | None = None
+
+
+class EngineRewriteSemanticsResponse(BaseModel):
+    engine: str
+    supported: bool
+    strategy: str
+    target_file_size_mb: int
+    clustering_columns: tuple[str, ...]
+    rendered_sql_sha256: str | None
+    limitations: tuple[str, ...]
+
+
+class RewriteScopeSemanticsResponse(BaseModel):
+    bounded: bool
+    equivalent: bool
+    estimated_bytes: int | None
+    file_count: int | None
+    predicate_count: int
+    normalized_predicates_sha256: str | None
+    limitations: tuple[str, ...]
+
+
+class RewriteOutputSnapshotPayload(BaseModel):
+    engine: str
+    row_count: int = Field(ge=0)
+    row_multiset_sha256: str
+    schema_sha256: str
+    partition_spec_sha256: str
+    touched_scope_sha256: tuple[str, ...]
+    snapshot_id: int | None = Field(default=None, ge=1)
+    metadata_location_sha256: str | None = None
+
+
+class RewriteConformancePayload(BaseModel):
+    fixture_id: str
+    provenance: str = "synthetic_fixture"
+    baseline: RewriteOutputSnapshotPayload
+    trino: RewriteOutputSnapshotPayload
+    spark: RewriteOutputSnapshotPayload
+    allowed_scope_sha256: tuple[str, ...]
+
+
+class DeployedRewriteConformancePayload(RewriteConformancePayload):
+    provenance: str = "deployed_collector/v1"
+    collected_at: datetime
+    deployment_id: str = Field(min_length=1, max_length=256)
+    environment: str
+    pto_params_sha256: str
+    rewrite_scope_sha256: str
+    attestation_sha256: str
+
+
+class RewriteConformanceResponse(BaseModel):
+    table_id: uuid.UUID
+    status: str
+    fixture_id: str
+    provenance: str
+    conformant: bool
+    invariant_checks: tuple[str, ...]
+    reasons: tuple[str, ...]
+    qualifies_production_gate: bool
+    qualification_reason: str
+
+
+class DifferentialOracleResponse(BaseModel):
+    table_id: uuid.UUID
+    recommendation_id: uuid.UUID | None
+    status: str
+    equivalent: bool
+    canary_eligible: bool
+    trino: EngineRewriteSemanticsResponse | None
+    spark: EngineRewriteSemanticsResponse | None
+    scope: RewriteScopeSemanticsResponse | None
+    reasons: tuple[str, ...]
+
+
+@router.get(
+    "/tables/{table_id}/layout-differential",
+    response_model=DifferentialOracleResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["analytics"],
+)
+def get_layout_differential(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> DifferentialOracleResponse:
+    from cryo.optimizer.differential import evaluate_layout_recommendation
+
+    try:
+        report = evaluate_layout_recommendation(session, table_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return DifferentialOracleResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+@router.post(
+    "/tables/{table_id}/layout-differential/record",
+    response_model=DifferentialOracleResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def record_layout_differential(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> DifferentialOracleResponse:
+    from cryo.optimizer.differential import record_layout_differential as record
+
+    try:
+        report = record(session, table_id, actor=principal.subject)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return DifferentialOracleResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+@router.post(
+    "/tables/{table_id}/layout-conformance/record",
+    response_model=RewriteConformanceResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def record_layout_conformance(
+    table_id: uuid.UUID,
+    payload: RewriteConformancePayload,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> RewriteConformanceResponse:
+    from cryo.optimizer.conformance import (
+        RewriteConformanceFixture,
+        RewriteOutputSnapshot,
+        record_rewrite_conformance,
+    )
+
+    fixture = RewriteConformanceFixture(
+        fixture_id=payload.fixture_id,
+        provenance=payload.provenance,
+        baseline=RewriteOutputSnapshot(**payload.baseline.model_dump()),
+        trino=RewriteOutputSnapshot(**payload.trino.model_dump()),
+        spark=RewriteOutputSnapshot(**payload.spark.model_dump()),
+        allowed_scope_sha256=payload.allowed_scope_sha256,
+    )
+    try:
+        report = record_rewrite_conformance(session, table_id, fixture, actor=principal.subject)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RewriteConformanceResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+@router.post(
+    "/tables/{table_id}/layout-conformance/deployed",
+    response_model=RewriteConformanceResponse,
+    dependencies=[Depends(require_evidence_collector)],
+    tags=["analytics"],
+)
+def record_deployed_layout_conformance(
+    table_id: uuid.UUID,
+    payload: DeployedRewriteConformancePayload,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> RewriteConformanceResponse:
+    from cryo.optimizer.conformance import (
+        DeployedRewriteEvidence,
+        RewriteConformanceFixture,
+        RewriteOutputSnapshot,
+        record_deployed_rewrite_conformance,
+    )
+
+    fixture = RewriteConformanceFixture(
+        fixture_id=payload.fixture_id,
+        provenance=payload.provenance,
+        baseline=RewriteOutputSnapshot(**payload.baseline.model_dump()),
+        trino=RewriteOutputSnapshot(**payload.trino.model_dump()),
+        spark=RewriteOutputSnapshot(**payload.spark.model_dump()),
+        allowed_scope_sha256=payload.allowed_scope_sha256,
+    )
+    evidence = DeployedRewriteEvidence(
+        fixture=fixture,
+        collected_at=payload.collected_at,
+        deployment_id=payload.deployment_id,
+        environment=payload.environment,
+        pto_params_sha256=payload.pto_params_sha256,
+        rewrite_scope_sha256=payload.rewrite_scope_sha256,
+        attestation_sha256=payload.attestation_sha256,
+    )
+    try:
+        report = record_deployed_rewrite_conformance(
+            session,
+            table_id,
+            evidence,
+            collector_id=principal.subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RewriteConformanceResponse(table_id=table_id, **dataclasses.asdict(report))
+
+
+@router.post(
+    "/tables/{table_id}/wair/analyze",
+    response_model=WairBoundaryReportResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["analytics"],
+)
+def analyze_wair_boundary_report(
+    table_id: uuid.UUID,
+    session: SessionDep,
+) -> WairBoundaryReportResponse:
+    from cryo.optimizer.wair import analyze_wair_boundaries
+
+    try:
+        report = analyze_wair_boundaries(session, table_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return WairBoundaryReportResponse(**dataclasses.asdict(report))
 
 
 class NaturalLanguageRequest(BaseModel):
@@ -1353,5 +1849,3 @@ def check_table_signals(
         ],
         any_triggered=any_signal_triggered(results),
     )
-
-

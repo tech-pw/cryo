@@ -29,6 +29,8 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
+  # Required before deployment: set to the release image's sha256 digest.
+  digest: ""
 
 imagePullSecrets:
   - cryo-registry
@@ -37,6 +39,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
+    digest: ""
 
 global:
   envFromSecret: cryo-secrets
@@ -51,7 +54,31 @@ global:
     # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.
     # Anyone reaching the UI can self-grant any role while this is true -- turn off once OIDC
     # is set up.
-    CRYO_ALLOW_DEV_TOKEN_IN_PROD: "true"
+    CRYO_ALLOW_DEV_TOKEN_IN_PROD: "false"
+
+# Enabled 2026-07-29 (see cost-driven-autoscaling plan, #devops-data): turns on the
+# already-built Governor -> sized-per-table K8s Job dispatch path for maintenance jobs
+# (rewrite/expire/orphan), replacing static always-on Worker capacity with ephemeral,
+# resource-sized Jobs. KEDA + Karpenter CRDs confirmed already installed on this cluster.
+# native.spot.allow stays false (inherited from values.yaml) until the on-demand path is
+# proven -- do not flip that here without validating spot checkpointing first.
+# Rollout is deliberately staged per-destination: the one live destination with
+# k8s_dispatch=true (native-datafusion) had its slot_cap dropped 5->1 in the DB before this
+# was applied, so the first dispatch is a single job to watch closely, not a burst of 5.
+native:
+  enabled: true
+  keda:
+    enabled: true
+
+# Enabled 2026-07-29 for a controlled prod test (see cost-driven-autoscaling plan): the
+# always-on 8-replica scannerWorker Deployment is temporarily scaled to 0 for the duration
+# of this test only (see rollout notes) so the new Governor-driven per-chunk dispatch has
+# an uncontested claim -- restore scannerWorker.replicas before leaving this enabled
+# long-term, or the two paths just race for the same queue (harmless, but pointless).
+scanner:
+  jobDispatch:
+    enabled: true
+    batchSize: 1
 
 api:
   replicas: 2
@@ -113,6 +140,7 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
+    digest: ""
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
@@ -123,6 +151,7 @@ spark:
     image:
       repository: registry.example.com/cryo
       tag: spark-latest
+      digest: ""
       pullPolicy: Always
     driverCpuMilli: 1000
     driverMemMib: 2048

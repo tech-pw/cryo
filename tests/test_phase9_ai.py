@@ -103,12 +103,41 @@ def test_learned_cost_model_beats_heuristic_on_synthetic_data() -> None:
     assert model is not None
     metrics = evaluate_model(rows[-5:], model)
     assert metrics["n_samples"] == 5
+    assert metrics["n_evaluated"] == 5
+    assert metrics["abstentions"] == 0
 
 
 def test_cost_prediction_falls_back_without_model() -> None:
     pred = predict_savings({"predicted_bytes_freed": 1_073_741_824}, None)
     assert pred.used_learned is False
     assert pred.predicted_usd == pred.heuristic_usd
+    assert pred.abstention_reason == "model_unavailable"
+
+
+def test_cost_prediction_abstains_outside_training_domain() -> None:
+    rows = [
+        {
+            "action": "optimize",
+            "predicted_bytes_freed": (index + 1) * 1_073_741_824,
+            "actual_bytes_freed": (index + 1) * 900_000_000,
+            "small_files_count": 100 + index,
+            "total_size_gb": 10 + index,
+            "delete_file_pct": 5,
+            "input_files_count": 50 + index,
+        }
+        for index in range(15)
+    ]
+    model = train_cost_model(rows)
+    assert model is not None
+
+    outside = {**rows[-1], "predicted_bytes_freed": 100 * 1_073_741_824}
+    prediction = predict_savings(outside, model)
+    metrics = evaluate_model([outside], model)
+
+    assert prediction.used_learned is False
+    assert prediction.abstention_reason == "outside_training_domain"
+    assert metrics["n_evaluated"] == 0
+    assert metrics["abstention_rate"] == 1.0
 
 
 def test_health_classifier_few_shot_knn() -> None:

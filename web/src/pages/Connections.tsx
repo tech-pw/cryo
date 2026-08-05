@@ -2,6 +2,7 @@ import { Alert } from "../components/ui/alert";
 import { PageHeader } from "../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { AiProvidersTab, AiProvidersTabLabel } from "./connections/AiProvidersTab";
+import { CapabilitiesTab } from "./connections/CapabilitiesTab";
 import { CatalogLatencyModal } from "./connections/CatalogLatencyModal";
 import { ConnectionDrawers } from "./connections/ConnectionDrawers";
 import { ConnectionsKpiRow } from "./connections/ConnectionsKpiRow";
@@ -31,6 +32,7 @@ const ConnectionsTabs = () => {
         <TabsList>
           <TabsTrigger value="sources">Lakehouses</TabsTrigger>
           <TabsTrigger value="destinations">Engines</TabsTrigger>
+          <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
           <TabsTrigger value="ai-providers">
             <AiProvidersTabLabel />
           </TabsTrigger>
@@ -48,6 +50,9 @@ const ConnectionsTabs = () => {
         </TabsContent>
         <TabsContent value="destinations">
           <EnginesTab />
+        </TabsContent>
+        <TabsContent value="capabilities">
+          <CapabilitiesTab />
         </TabsContent>
         <TabsContent value="ai-providers">
           <AiProvidersTab />

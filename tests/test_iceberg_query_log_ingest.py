@@ -295,11 +295,7 @@ def test_aggregate_populates_query_count_30d_end_to_end(session, monkeypatch) ->
 
     aggregate_from_iceberg_query_log(session, source, now=now)
 
-    activity = (
-        session.query(TableQueryActivity)
-        .filter_by(table_id=table.id, day=now.date())
-        .one()
-    )
+    activity = session.query(TableQueryActivity).filter_by(table_id=table.id, day=now.date()).one()
     assert activity.query_count == 2
     assert session.get(TableStats, table.id).query_count_30d == 2
 

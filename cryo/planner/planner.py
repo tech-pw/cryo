@@ -69,7 +69,8 @@ def build_plan(
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
         optimize_ops = _optimize_operations(stats, partitions, params, notes)
         pathological_skew = _has_pathological_delete_skew(partitions, params)
-        if _delete_compaction_policy(stats, partitions, params) == "minor":
+        delete_policy = _delete_compaction_policy(stats, partitions, params)
+        if delete_policy == "minor":
             operations.append(_rewrite_position_deletes_operation(params))
             if pathological_skew:
                 notes.append(
@@ -87,7 +88,25 @@ def build_plan(
                     f"major-rewrite threshold."
                 )
         else:
-            convert_op = _convert_deletes_operation(stats, partitions, params, optimize_ops, notes)
+            convert_params = params
+            if delete_policy == "major":
+                convert_params = {
+                    **params,
+                    "force_convert_deletes": True,
+                    "convert_deletes_threshold_pct": 0.0,
+                }
+                notes.append(
+                    "Escalated delete maintenance to a major data rewrite after "
+                    f"{int(stats.get('delete_minor_runs_since_major') or 0)} successful minor "
+                    "delete compactions since the last major rewrite."
+                )
+            convert_op = _convert_deletes_operation(
+                stats,
+                partitions,
+                convert_params,
+                optimize_ops,
+                notes,
+            )
             if convert_op is not None:
                 operations.append(convert_op)
         operations.extend(optimize_ops)
@@ -292,10 +311,13 @@ def _delete_compaction_policy(
     rewrite" territory.
 
     Returns ``"minor"`` when a cheap rewrite_position_deletes pass should substitute for
-    convert_deletes this cycle, or ``None`` to defer to the existing convert_deletes gate
-    (its own delete_file_pct threshold decides "major" from there -- this function only ever
-    claims the "minor" branch, so it stays purely additive to prior behavior).
+    convert_deletes, ``"major"`` when repeated minor passes require a bounded escalation, or
+    ``None`` to defer to the existing convert_deletes gate.
     """
+    equality_delete_files = int(stats.get("equality_delete_files") or 0)
+    equality_major_threshold = int(params.get("delete_equality_file_threshold", 50))
+    if equality_major_threshold > 0 and equality_delete_files >= equality_major_threshold:
+        return "major"
     format_version = stats.get("format_version")
     if format_version is not None and int(format_version) >= 3:
         # V3 deletion-vector tables don't accumulate position-delete *files* the same way --
@@ -316,6 +338,20 @@ def _delete_compaction_policy(
         # looks like this, prefer minor regardless of overall delete_file_pct -- convert_deletes
         # provably cannot reach it, no matter how high delete_file_pct climbs.
         return "minor"
+    minor_runs = int(stats.get("delete_minor_runs_since_major") or 0)
+    max_minor_runs = int(params.get("delete_max_minor_runs_before_major", 5))
+    hot_query_threshold = params.get("delete_hot_query_count_30d")
+    if hot_query_threshold is not None and int(stats.get("query_count_30d") or 0) >= int(
+        hot_query_threshold
+    ):
+        max_minor_runs = int(
+            params.get(
+                "delete_hot_max_minor_runs_before_major",
+                max(1, max_minor_runs // 2),
+            )
+        )
+    if max_minor_runs > 0 and minor_runs >= max_minor_runs:
+        return "major"
     delete_pct = float(stats.get("delete_file_pct") or 0.0)
     major_pct = float(params.get("delete_major_pct_threshold", 10.0))
     if delete_pct >= major_pct:

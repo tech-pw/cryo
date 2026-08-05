@@ -260,9 +260,7 @@ def test_fetch_s3_request_prices_partial_response_uses_live_tier_and_fallback_fo
     """Only the GET (Tier2) SKU comes back -- PUT must use the configured fallback, not 0.0,
     and .source must distinguish this from a fully-live fetch."""
     mock_pricing = MagicMock()
-    mock_pricing.get_products.return_value = {
-        "PriceList": [_price_list_item("Tier2", "0.00044")]
-    }
+    mock_pricing.get_products.return_value = {"PriceList": [_price_list_item("Tier2", "0.00044")]}
     mock_session = MagicMock()
     mock_session.client.return_value = mock_pricing
 

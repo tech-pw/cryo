@@ -23,6 +23,7 @@ class CostPrediction:
     upper_usd: float
     used_learned: bool
     confidence: float
+    abstention_reason: str | None = None
 
 
 @dataclass
@@ -30,12 +31,27 @@ class _RidgeModel:
     weights: list[float]
     bias: float
     residual_quantile: float
+    feature_min: list[float] | None = None
+    feature_max: list[float] | None = None
 
     def predict(self, features: list[float]) -> float:
         total = self.bias
         for w, x in zip(self.weights, features, strict=True):
             total += w * x
         return max(0.0, total)
+
+    def contains(self, features: list[float]) -> bool:
+        if self.feature_min is None or self.feature_max is None:
+            return False
+        return all(
+            lower <= value <= upper
+            for value, lower, upper in zip(
+                features,
+                self.feature_min,
+                self.feature_max,
+                strict=True,
+            )
+        )
 
 
 def extract_features(row: dict[str, Any]) -> list[float]:
@@ -86,7 +102,13 @@ def train_cost_model(
     idx = int(_CONFIDENCE_COVERAGE * (len(residuals) - 1))
     q = residuals[idx] if residuals else 0.0
 
-    return _RidgeModel(weights=weights, bias=bias, residual_quantile=q)
+    return _RidgeModel(
+        weights=weights,
+        bias=bias,
+        residual_quantile=q,
+        feature_min=[min(row[index] for row in feature_rows) for index in range(dim)],
+        feature_max=[max(row[index] for row in feature_rows) for index in range(dim)],
+    )
 
 
 def predict_savings(
@@ -108,9 +130,20 @@ def predict_savings(
             upper_usd=heuristic_usd,
             used_learned=False,
             confidence=0.0,
+            abstention_reason="model_unavailable",
         )
 
     features = extract_features(row)
+    if not model.contains(features):
+        return CostPrediction(
+            predicted_usd=heuristic_usd,
+            heuristic_usd=heuristic_usd,
+            lower_usd=heuristic_usd,
+            upper_usd=heuristic_usd,
+            used_learned=False,
+            confidence=0.0,
+            abstention_reason="outside_training_domain",
+        )
     learned = round(model.predict(features), 4)
     band = model.residual_quantile
     lower = round(max(0.0, learned - band), 4)
@@ -129,6 +162,7 @@ def predict_savings(
         upper_usd=upper if use_learned else heuristic_usd,
         used_learned=use_learned,
         confidence=confidence,
+        abstention_reason=None if use_learned else "low_confidence",
     )
 
 
@@ -145,21 +179,34 @@ def evaluate_model(
     learned_errors: list[float] = []
     heuristic_errors: list[float] = []
     in_band = 0
+    abstentions = 0
 
     for row in rows:
         actual = (float(row.get("actual_bytes_freed") or 0) / GIB) * price_per_gb_month
-        pred = predict_savings(row, model, price_per_gb_month=price_per_gb_month)
-        learned_errors.append(abs(actual - pred.predicted_usd))
-        heuristic_errors.append(abs(actual - pred.heuristic_usd))
-        if pred.lower_usd <= actual <= pred.upper_usd:
+        heuristic = (float(row.get("predicted_bytes_freed") or 0) / GIB) * price_per_gb_month
+        heuristic_errors.append(abs(actual - heuristic))
+        features = extract_features(row)
+        if not model.contains(features):
+            abstentions += 1
+            continue
+        learned = model.predict(features)
+        learned_errors.append(abs(actual - learned))
+        if (
+            max(0.0, learned - model.residual_quantile)
+            <= actual
+            <= (learned + model.residual_quantile)
+        ):
             in_band += 1
 
-    mae_learned = sum(learned_errors) / len(learned_errors)
+    mae_learned = sum(learned_errors) / len(learned_errors) if learned_errors else 0.0
     mae_heuristic = sum(heuristic_errors) / len(heuristic_errors)
     return {
         "mae_learned": round(mae_learned, 4),
         "mae_heuristic": round(mae_heuristic, 4),
-        "beats_heuristic": mae_learned < mae_heuristic,
-        "band_coverage": round(in_band / len(rows), 4),
+        "beats_heuristic": bool(learned_errors) and mae_learned < mae_heuristic,
+        "band_coverage": round(in_band / len(learned_errors), 4) if learned_errors else 0.0,
         "n_samples": len(rows),
+        "n_evaluated": len(learned_errors),
+        "abstentions": abstentions,
+        "abstention_rate": round(abstentions / len(rows), 4),
     }

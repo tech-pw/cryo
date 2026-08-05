@@ -21,9 +21,7 @@ from cryo.db.models import Destination, Preset, Source, Table, TableAssignment
 
 def _seed(session, *, source_config: dict, fallback_config: dict) -> object:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config=source_config)
-    main_destination = Destination(
-        id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={}
-    )
+    main_destination = Destination(id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={})
     fallback_destination = Destination(
         id=uuid4(), name=f"fallback-{uuid4()}", engine="spark_emr", config=fallback_config
     )
@@ -37,9 +35,7 @@ def _seed(session, *, source_config: dict, fallback_config: dict) -> object:
     session.add_all([source, main_destination, fallback_destination, table])
     session.flush()
 
-    main_destination.config = {
-        "sql_fallback_destination_id": str(fallback_destination.id)
-    }
+    main_destination.config = {"sql_fallback_destination_id": str(fallback_destination.id)}
     preset = Preset(
         id=uuid4(),
         name=f"preset-{uuid4()}",

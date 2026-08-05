@@ -22,7 +22,7 @@ spec:
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       containers:
         - name: web
-          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          image: {{ include "cryo.imageRef" .Values.web.image | quote }}
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
           ports:
             - name: http
