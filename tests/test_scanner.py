@@ -48,16 +48,49 @@ def test_health_score_uses_warn_and_critical_deductions() -> None:
         "file_formats": ["PARQUET"],
     }
 
+    # health_small_file_count=25 is below MIN_SMALL_FILES_FOR_COMPACTION (128) -- the planner
+    # would never schedule OPTIMIZE for this table (see planner.py's min_small_files gate), so
+    # the health score must not deduct for small-file percentage here either. Real-fleet
+    # evidence for this behavior: PDAE-8274/2026-08-05 found 76% of D-graded tables had fewer
+    # total files than this floor, and this exact deduction alone accounted for 99.6% of the
+    # bucket's unfixable-critical grades.
     score, grade, deductions = compute_health_score(stats, health_small_file_count=25, now=now)
 
-    assert score == 76
+    assert score == 84
     assert grade == "B"
     assert sum(d["deduction"] for d in deductions) == 100 - score
     assert {d["label"] for d in deductions} == {
-        "Small-file fragmentation",
         "Snapshot retention buildup",
         "Stale table commits",
     }
+
+
+def test_health_score_still_deducts_small_file_pct_above_compaction_floor() -> None:
+    """Same shape as the test above, but with enough small files (>=128) that the planner
+    would actually schedule OPTIMIZE for this table -- the percentage deduction must still
+    apply here, otherwise the exemption would silently swallow real, fixable fragmentation."""
+    now = datetime(2026, 6, 30, tzinfo=UTC)
+    stats = {
+        "total_files": 500,
+        "delete_file_pct": 0,
+        "total_delete_files": 0,
+        "total_snapshots": 5,
+        "first_updated_at": now,
+        "manifest_count": 0,
+        "total_partitions": 0,
+        "partition_skew_ratio": 0,
+        "avg_files_per_partition": 0,
+        "write_distribution_mode": "hash",
+        "has_sort_order": True,
+        "target_file_size_bytes": 268_435_456,
+        "file_formats": ["PARQUET"],
+    }
+
+    score, grade, deductions = compute_health_score(stats, health_small_file_count=130, now=now)
+
+    # 130/500 = 26% -- above the 20% warn threshold, below the 50% critical threshold.
+    assert score == 92
+    assert {d["label"] for d in deductions} == {"Small-file fragmentation"}
 
 
 def test_storage_cost_includes_snapshot_overhead() -> None:

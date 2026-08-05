@@ -201,6 +201,9 @@ tests" means there is at least one test exercising the core logic of each paper'
 | [`todo.md`](./todo.md) | Phased, checkbox task breakdown (P0–P7) |
 | [`docs/`](./docs/) | Execution plan, recommendations, competitive analysis — start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md). Full index in [`docs/README.md`](./docs/README.md) |
 | [`docs/local-docker-compose.md`](./docs/local-docker-compose.md) | Three-file Compose layout (Cryo / dev datalake / observability) |
+| [`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md) | Supported releases, triage severity, channels, and safe diagnostic bundle |
+| [`docs/EXTERNAL_EVIDENCE_ATTESTATION.md`](./docs/EXTERNAL_EVIDENCE_ATTESTATION.md) | Signed external gate evidence and release-dossier trust boundary |
+| [`docs/ECOSYSTEM_CONNECTORS.md`](./docs/ECOSYSTEM_CONNECTORS.md) | Versioned ecosystem source/engine conformance contract |
 | [`docs/RATING_2026.md`](./docs/RATING_2026.md) | 2026-07-07 deep rating of the codebase across 25 attributes (UI / a11y / usability / engineering / experience) |
 
 ## Tech stack

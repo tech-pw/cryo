@@ -10,8 +10,6 @@ metadata:
   labels:
     {{- include "cryo.labels" . | nindent 4 }}
     app.kubernetes.io/component: scanner-worker
-      annotations:
-    {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
 spec:
   replicas: {{ .Values.scannerWorker.replicas }}
   selector:
@@ -23,6 +21,8 @@ spec:
       labels:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: scanner-worker
+      annotations:
+        {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
