@@ -40,6 +40,23 @@ def test_execute_success_returns_ok_result() -> None:
     assert results[0].engine_ref == "cryo-spark-abc123"
     mock_client.submit_spark_sql.assert_called_once()
     assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "cdp"
+    mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-abc123")
+
+
+def test_execute_cleans_up_driver_even_on_failure() -> None:
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-fail1"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-fail1",
+        state=JobRunState.FAILED,
+        state_details="boom",
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_plan())
+    assert not results[0].ok
+    mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-fail1")
 
 
 def test_execute_uses_the_statements_own_catalog_over_the_destination_default() -> None:

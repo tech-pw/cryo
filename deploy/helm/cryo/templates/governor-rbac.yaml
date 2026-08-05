@@ -27,7 +27,9 @@ rules:
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    # delete: same as rbac-native -- reclaim Spark driver pods after SQL-fallback
+    # runs the Governor dispatches directly (native_admit fallback path).
+    verbs: ["get", "list", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
