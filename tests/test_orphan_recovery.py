@@ -38,12 +38,8 @@ def test_adopt_race_only_one_winner() -> None:
     store.add_destination(DestinationConfig(id="dest", engine=EngineType.TRINO))
     store.add_job(_running_job())
     steps.begin_step("job-1", 0, OperationType.EXPIRE_SNAPSHOTS, detail="ALTER ...")
-    r1 = recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-a"
-    )
-    r2 = recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-b"
-    )
+    r1 = recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
+    r2 = recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-b")
     assert r1.adopted == 1
     assert r2.adopted == 0
     assert locks.get_job_owner("job-1") == "worker-a"
@@ -62,14 +58,10 @@ def test_uncertain_dangerous_step_does_not_complete(monkeypatch) -> None:
         "probe_engine_op_state",
         lambda *a, **k: EngineOpState.UNCERTAIN,
     )
-    result = recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-a"
-    )
+    result = recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
     assert result.waiting == 1
     assert steps.get_started_step("job-1") is not None
-    assert locks.is_table_locked("table-1") or locks.acquire_table_lock(
-        "table-1", "job-1", 60
-    )
+    assert locks.is_table_locked("table-1") or locks.acquire_table_lock("table-1", "job-1", 60)
 
 
 def test_succeeded_step_closed_on_recover(monkeypatch) -> None:
@@ -86,9 +78,7 @@ def test_succeeded_step_closed_on_recover(monkeypatch) -> None:
         "probe_engine_op_state",
         lambda *a, **k: EngineOpState.SUCCEEDED,
     )
-    result = recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-a"
-    )
+    result = recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
     assert result.resolved_steps == 1
     assert steps.get_step("job-1", 0).status is JobStepStatus.SUCCEEDED
     # Regression, 2026-07-29: resolving the step used to be the end of the line -- nothing
@@ -108,7 +98,9 @@ def test_probe_engine_op_state_is_quiet_not_uncertain_with_no_prior_dispatch() -
     fresh job held forever at "holding for quiet window" and never dispatched anything.
     Confirmed live: this blocked every fresh Spark-K8s and native job after the quiet-window
     safety gate (f2af45a) was deployed."""
-    spark_dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
+    spark_dest = DestinationConfig(
+        id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"}
+    )
     assert (
         probe_engine_op_state(spark_dest, table_ref="cdp.reports.t", engine_ref=None)
         is EngineOpState.SUCCEEDED
@@ -174,16 +166,10 @@ def test_native_live_dispatch_skipped() -> None:
     locks = InMemoryLockStore()
     store = InMemoryJobStore()
     steps = InMemoryJobStepStore()
-    store.add_destination(
-        DestinationConfig(id="dest", engine=EngineType.NATIVE, config={})
-    )
-    store.add_job(
-        _running_job(engine_ref="cryo-native-abc", dispatch_id="disp-1")
-    )
+    store.add_destination(DestinationConfig(id="dest", engine=EngineType.NATIVE, config={}))
+    store.add_job(_running_job(engine_ref="cryo-native-abc", dispatch_id="disp-1"))
     steps.begin_step("job-1", 0, OperationType.OPTIMIZE)
-    result = recover_orphaned_jobs(
-        store, queue, locks, steps, holder_id="worker-a"
-    )
+    result = recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
     assert result.adopted == 0
     assert result.skipped >= 1
 
@@ -193,9 +179,7 @@ def test_reaper_skips_started_step() -> None:
     locks = InMemoryLockStore()
     store = InMemoryJobStore()
     steps = InMemoryJobStepStore()
-    store.add_job(
-        _running_job(started_at=datetime(2026, 7, 1, tzinfo=UTC))
-    )
+    store.add_job(_running_job(started_at=datetime(2026, 7, 1, tzinfo=UTC)))
     steps.begin_step("job-1", 0, OperationType.EXPIRE_SNAPSHOTS)
     locks.acquire_job_owner("job-1", "worker-a", 60)
     reaped = reconcile_stale_running_jobs(

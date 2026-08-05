@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  CapabilityManifest,
   CostDashboard,
   DatalakeDashboard,
   FleetTrendsResponse,
@@ -8,10 +9,19 @@ import type {
   EffectiveParamsResponse,
   EffectivePresetResponse,
   EngineType,
+  EffectReceiptRead,
+  EffectResolutionRead,
+  EffectResolutionWrite,
+  EffectBatchResolutionRead,
+  EffectBatchResolutionWrite,
   JobRead,
   JsonObject,
+  MaintenanceControlRead,
+  MaintenanceControlWrite,
+  MaintenanceIntentRead,
   MaintenancePreviewResponse,
   MaintenanceRunResponse,
+  MaintenanceSafetySummary,
   Mode,
   OperationType,
   PaginatedTables,
@@ -123,14 +133,20 @@ export interface ApiOptions {
 export class ApiError extends Error {
   readonly status: number;
   readonly detail?: unknown;
+  readonly correlationId?: string;
 
-  constructor(status: number, message: string, detail?: unknown) {
-    super(message);
+  constructor(status: number, message: string, detail?: unknown, correlationId?: string | null) {
+    const normalizedCorrelationId = correlationId?.trim() || undefined;
+    super(normalizedCorrelationId ? `${message} · Correlation ${normalizedCorrelationId}` : message);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+    this.correlationId = normalizedCorrelationId;
   }
 }
+
+const responseError = (response: Response, message: string, detail?: unknown): ApiError =>
+  new ApiError(response.status, message, detail, response.headers.get("x-correlation-id"));
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
@@ -152,6 +168,7 @@ export const apiFetch = async <T>(
   const response = await fetch(`${url.pathname}${url.search}`, {
     method: options.method ?? "GET",
     headers: {
+      "X-Correlation-ID": crypto.randomUUID(),
       Authorization: `Bearer ${token}`,
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" })
     },
@@ -166,7 +183,7 @@ export const apiFetch = async <T>(
 
   if (!response.ok) {
     const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
-    throw new ApiError(response.status, String(detail || response.statusText), detail);
+    throw responseError(response, String(detail || response.statusText), detail);
   }
 
   return payload as T;
@@ -284,6 +301,57 @@ export const patchTableParamOverrides = (
   });
 
 export const listSources = (api: ApiOptions) => apiFetch<SourceRead[]>("/sources", api);
+export const getCapabilities = (api: ApiOptions) =>
+  apiFetch<CapabilityManifest>("/capabilities", api);
+export const getMaintenanceSafetySummary = (api: ApiOptions) =>
+  apiFetch<MaintenanceSafetySummary>("/maintenance/safety/summary", api);
+export const listMaintenanceIntents = (
+  api: ApiOptions,
+  options: { status?: string; limit?: number } = {}
+) =>
+  apiFetch<MaintenanceIntentRead[]>("/maintenance/safety/intents", api, {
+    query: options
+  });
+export const listMaintenanceEffects = (
+  api: ApiOptions,
+  options: { state?: string; ambiguousOnly?: boolean; limit?: number } = {}
+) =>
+  apiFetch<EffectReceiptRead[]>("/maintenance/safety/effects", api, {
+    query: {
+      state: options.state,
+      ambiguous_only: options.ambiguousOnly,
+      limit: options.limit
+    }
+  });
+export const resolveMaintenanceEffect = (
+  api: ApiOptions,
+  receiptId: UUID,
+  body: EffectResolutionWrite
+) =>
+  apiFetch<EffectResolutionRead>(`/maintenance/safety/effects/${receiptId}/resolve`, api, {
+    method: "POST",
+    body
+  });
+export const resolveMaintenanceEffectsBatch = (
+  api: ApiOptions,
+  body: EffectBatchResolutionWrite
+) =>
+  apiFetch<EffectBatchResolutionRead>("/maintenance/safety/effects/resolve-batch", api, {
+    method: "POST",
+    body
+  });
+export const listMaintenanceControls = (api: ApiOptions) =>
+  apiFetch<MaintenanceControlRead[]>("/maintenance/control", api);
+export const pauseMaintenance = (api: ApiOptions, body: MaintenanceControlWrite) =>
+  apiFetch<MaintenanceControlRead>("/maintenance/control/pause", api, {
+    method: "POST",
+    body
+  });
+export const resumeMaintenance = (api: ApiOptions, body: MaintenanceControlWrite) =>
+  apiFetch<MaintenanceControlRead>("/maintenance/control/resume", api, {
+    method: "POST",
+    body
+  });
 export const createSource = (api: ApiOptions, body: SourceWrite) =>
   apiFetch<SourceRead>("/sources", api, { method: "POST", body });
 export const patchSource = (api: ApiOptions, id: UUID, body: Partial<SourceWrite>) =>
@@ -786,12 +854,12 @@ export const testSlackConfigValues = (
 
 export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
   const bySchema = new Map<string, { current_usd: number; projected_usd: number; savings_usd: number }>();
-  const ops: Record<OperationType, number> = {
+  const ops = {
     optimize: 0,
     expire_snapshots: 0,
     remove_orphan_files: 0,
     optimize_manifests: 0
-  };
+  } satisfies Partial<Record<OperationType, number>>;
   let current = 0;
   let projected = 0;
   let savings = 0;
@@ -1221,7 +1289,7 @@ async function dashboardFetch<T>(path: string, api: ApiOptions): Promise<T> {
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
-    throw new ApiError(response.status, String(detail || response.statusText), detail);
+    throw responseError(response, String(detail || response.statusText), detail);
   }
   return payload as T;
 }
@@ -1789,7 +1857,7 @@ export const getShallowHealth = async (): Promise<{ status: string }> => {
   const response = await fetch("/healthz");
   const payload = await response.json();
   if (!response.ok) {
-    throw new ApiError(response.status, "Health check failed", payload);
+    throw responseError(response, "Health check failed", payload);
   }
   return payload as { status: string };
 };
@@ -1798,7 +1866,7 @@ export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
   const response = await fetch("/healthz/deep");
   const payload = await response.json();
   if (!response.ok) {
-    throw new ApiError(response.status, "Deep health check failed", payload);
+    throw responseError(response, "Deep health check failed", payload);
   }
   return payload as DeepHealthResponse;
 };
@@ -1807,7 +1875,7 @@ export const getMetricsText = async (maxLines = 60): Promise<string> => {
   const response = await fetch("/metrics");
   const text = await response.text();
   if (!response.ok) {
-    throw new ApiError(response.status, "Failed to fetch metrics", text);
+    throw responseError(response, "Failed to fetch metrics", text);
   }
   const lines = text.split("\n");
   if (lines.length <= maxLines) return text;
@@ -1832,7 +1900,7 @@ export const triggerGitOpsWebhook = async (
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
-    throw new ApiError(response.status, String(detail || response.statusText), detail);
+    throw responseError(response, String(detail || response.statusText), detail);
   }
   return payload as JsonObject;
 };

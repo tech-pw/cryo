@@ -38,6 +38,6 @@ spec:
     - type: metrics-api
       metadata:
         targetValue: {{ .Values.native.keda.listLength | default "1" | quote }}
-        url: "http://{{ include "cryo.fullname" . }}-worker.{{ .Release.Namespace }}.svc.cluster.local:8081/scale-metric"
+        url: "http://{{ include "cryo.fullname" . }}-worker.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.observability.metricsPort }}/scale-metric"
         valueLocation: "value"
 {{- end }}

@@ -20,6 +20,7 @@ from cryo.db.models import (
     TablePartition,
 )
 from cryo.db.repositories.job_store import SQLJobStore
+from cryo.domain.enums import OperationType
 
 
 def _seed_table_with_job(session) -> tuple[Table, MaintenanceJob]:
@@ -79,6 +80,18 @@ def test_get_table_data_includes_benefit_score_and_moop_traits(session):
     row = data.partitions[0]
     assert row["compaction_benefit_score"] == 42.5
     assert row["autocomp_traits"]["s_c"] == 0.75
+
+
+def test_get_job_carries_durable_run_correlation_id(session):
+    _table, job = _seed_table_with_job(session)
+    run = session.get(MaintenanceRun, job.run_id)
+    assert run is not None
+    run.summary = {"correlation_id": "api-request-42"}
+    session.commit()
+
+    record = SQLJobStore(lambda: session).get_job(str(job.id))
+
+    assert record.correlation_id == "api-request-42"
 
 
 def test_get_job_injects_live_benefit_and_moop_score_into_params(session):
@@ -285,6 +298,7 @@ def test_get_table_data_stats_include_delete_policy_fields(session):
             position_delete_files=80,
             equality_delete_files=10,
             delete_file_pct=3.5,
+            query_count_30d=4_200,
             raw={"format_version": 2},
         )
     )
@@ -296,3 +310,43 @@ def test_get_table_data_stats_include_delete_policy_fields(session):
     assert data.stats["position_delete_files"] == 80
     assert data.stats["equality_delete_files"] == 10
     assert data.stats["format_version"] == 2
+    assert data.stats["query_count_30d"] == 4_200
+
+
+def test_get_table_data_counts_successful_minor_delete_runs_after_latest_major(session):
+    from cryo.db.models import AuditLog
+
+    table, job = _seed_table_with_job(session)
+    session.add_all(
+        [
+            AuditLog(
+                table_id=table.id,
+                job_id=job.id,
+                action=OperationType.REWRITE_POSITION_DELETES.value,
+                status="OK",
+            ),
+            AuditLog(
+                table_id=table.id,
+                job_id=job.id,
+                action=OperationType.CONVERT_DELETES.value,
+                status="OK",
+            ),
+            AuditLog(
+                table_id=table.id,
+                job_id=job.id,
+                action=OperationType.REWRITE_POSITION_DELETES.value,
+                status="FAILED",
+            ),
+            AuditLog(
+                table_id=table.id,
+                job_id=job.id,
+                action=OperationType.REWRITE_POSITION_DELETES.value,
+                status="OK",
+            ),
+        ]
+    )
+    session.commit()
+
+    data = SQLJobStore(lambda: session).get_table_data(str(table.id))
+
+    assert data.stats["delete_minor_runs_since_major"] == 1

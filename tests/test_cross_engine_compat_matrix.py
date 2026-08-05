@@ -37,8 +37,7 @@ CROSS_ENGINE_COMPAT_MATRIX: tuple[CompatCase, ...] = (
         reader_after_native="trino",
         expected="partial",
         notes=(
-            "Differential e2e covers unpartitioned + identity; "
-            "day partition still flaky upstream"
+            "Differential e2e covers unpartitioned + identity; day partition still flaky upstream"
         ),
     ),
     CompatCase(

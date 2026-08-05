@@ -18,9 +18,7 @@ def _seed_job(session, *, status: str) -> None:
     destination = Destination(
         id=uuid4(), name=f"dest-{uuid4()}", engine="trino", config={"host": "trino"}
     )
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events"
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events")
     run = MaintenanceRun(id=uuid4(), kind="adhoc", trigger="api", status="queued", summary={})
     session.add_all([source, destination, table, run])
     session.flush()
@@ -44,7 +42,9 @@ def test_counts_only_admitted_and_running_jobs(session, monkeypatch) -> None:
     test_session_factory = sessionmaker(bind=session.get_bind(), expire_on_commit=False)
     monkeypatch.setattr("cryo.db.session.SessionLocal", test_session_factory)
 
-    assert _worker_scale_metric() == 3  # 1 admitted + 2 running; queued/succeeded/failed/skipped excluded
+    assert (
+        _worker_scale_metric() == 3
+    )  # 1 admitted + 2 running; queued/succeeded/failed/skipped excluded
 
 
 def test_zero_when_nothing_active(session, monkeypatch) -> None:

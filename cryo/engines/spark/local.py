@@ -36,9 +36,7 @@ class SparkLocalEngine:
     def session_setup(self) -> list[str]:
         return []
 
-    def execute_plan(
-        self, plan: MaintenancePlan, ctx: ExecCtx | None = None
-    ) -> list[ExecResult]:
+    def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
         """Execute each rendered statement in order, short-circuiting on failure."""
         results: list[ExecResult] = []
         for stmt in self.render(plan):
@@ -90,6 +88,7 @@ class SparkLocalEngine:
         except subprocess.TimeoutExpired:
             return ExecResult(
                 ok=False,
+                outcome_known=False,
                 detail=stmt.sql,
                 error="local Spark execution timed out",
                 duration_ms=int((time.monotonic() - start) * 1000),

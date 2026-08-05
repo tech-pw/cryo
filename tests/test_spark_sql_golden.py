@@ -178,6 +178,38 @@ def test_spark_renders_optimize_persists_target_file_size_and_distribution_mode(
     assert "'target-file-size-bytes', '134217728'" in statements[1]
 
 
+def test_spark_can_render_scoped_rewrite_without_persisting_table_properties() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    "file_size_mb": 128,
+                    "persist_target_file_size": False,
+                },
+                (
+                    _predicate(
+                        PartitionPredicateTerm(
+                            "event_date",
+                            PartitionTransform.DAY,
+                            "2026-08-04",
+                            "date",
+                        )
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    sql = render(plan)[0].sql
+
+    assert not sql.startswith("ALTER TABLE")
+    assert sql.startswith("CALL iceberg.system.rewrite_data_files(")
+    assert "where => '(event_date >= DATE ''2026-08-04''" in sql
+
+
 def test_spark_renders_expire_snapshots_default_retention_as_literal_timestamp() -> None:
     """Regression, 2026-07-24: with no explicit older_than/cutoff_timestamp, the retention
     fallback used to render `current_timestamp() - INTERVAL 7 DAYS` -- a SQL expression, not

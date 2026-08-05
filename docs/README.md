@@ -17,6 +17,9 @@ The authoritative architecture / contract docs live at the repo root:
 
 ### Onboarding & orientation
 
+- [`cryo-10-of-10-plan.md`](./cryo-10-of-10-plan.md) — evidence-gated master
+  plan for product, architecture, maintenance intelligence, UX, engineering,
+  production maturity, and category leadership.
 - [`EXECUTION_PLAN.md`](./EXECUTION_PLAN.md) — ordered actionable plan.
 - [`architecture.md`](./architecture.md) — architecture & AI strategy.
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — recommendations,
@@ -32,12 +35,21 @@ The authoritative architecture / contract docs live at the repo root:
   P0 reverification log.
 - [`current-state.md`](./current-state.md) — snapshot of what works /
   what doesn't today.
+- [`WAVE_0_BASELINE.md`](./WAVE_0_BASELINE.md) — reproducible baseline,
+  hotspot map, migration support, evidence registry, interview plan, and
+  stop-ship policy.
 
 ### Operations
 
 - [`operator-guide.md`](./operator-guide.md) — deployment + day-2 ops
   procedures (production deployment, runbooks).
 - [`GOVERNANCE.md`](./GOVERNANCE.md) — governance policy and process.
+- [`SUPPORT_POLICY.md`](./SUPPORT_POLICY.md) — release support, triage,
+  safe diagnostics, and capability boundaries.
+- [`UPGRADE_ROLLBACK.md`](./UPGRADE_ROLLBACK.md) — migration-render evidence
+  and the remaining deployed-drill boundary.
+- [`EXTERNAL_EVIDENCE_ATTESTATION.md`](./EXTERNAL_EVIDENCE_ATTESTATION.md) —
+  independently signed external-gate manifests.
 - [`LOCAL_DEV_ONLY_INVENTORY.md`](./LOCAL_DEV_ONLY_INVENTORY.md) —
   ad-hoc local datalake components that must not ship to prod. Update
   this in the same PR when adding new dev-only scripts or compose
@@ -46,6 +58,12 @@ The authoritative architecture / contract docs live at the repo root:
 ### API & backend
 
 - [`api.md`](./api.md) — REST API reference.
+- [`CAPABILITIES.md`](./CAPABILITIES.md) — generated catalog and engine-operation
+  support contract, including maturity, runtime conditions, fallbacks, and evidence.
+- [`ECOSYSTEM_CONNECTORS.md`](./ECOSYSTEM_CONNECTORS.md) — versioned connector
+  manifest and conformance contract.
+- [`PRIVACY_PRESERVING_BENCHMARKS.md`](./PRIVACY_PRESERVING_BENCHMARKS.md) —
+  opt-in k-anonymous aggregate outcome export.
 
 ### UI / UX
 

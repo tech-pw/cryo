@@ -40,9 +40,7 @@ def test_dev_token_disabled_in_prod_by_default() -> None:
 
 def test_dev_token_enabled_in_prod_with_explicit_opt_in() -> None:
     with patch("cryo.api.auth_routes.get_settings") as mock_settings:
-        mock_settings.return_value = _settings(
-            environment="prod", allow_dev_token_in_prod=True
-        )
+        mock_settings.return_value = _settings(environment="prod", allow_dev_token_in_prod=True)
         response = _client().post("/api/v1/auth/token", json={"role": "admin"})
 
     assert response.status_code == 200
@@ -51,9 +49,7 @@ def test_dev_token_enabled_in_prod_with_explicit_opt_in() -> None:
 
 def test_dev_token_enabled_outside_prod_regardless_of_flag() -> None:
     with patch("cryo.api.auth_routes.get_settings") as mock_settings:
-        mock_settings.return_value = _settings(
-            environment="dev", allow_dev_token_in_prod=False
-        )
+        mock_settings.return_value = _settings(environment="dev", allow_dev_token_in_prod=False)
         response = _client().post("/api/v1/auth/token", json={"role": "viewer"})
 
     assert response.status_code == 200
@@ -66,8 +62,6 @@ def test_auth_config_reports_dev_token_enabled_matches_actual_gate() -> None:
     assert prod_response.json()["dev_token_enabled"] is False
 
     with patch("cryo.api.auth_routes.get_settings") as mock_settings:
-        mock_settings.return_value = _settings(
-            environment="prod", allow_dev_token_in_prod=True
-        )
+        mock_settings.return_value = _settings(environment="prod", allow_dev_token_in_prod=True)
         opted_in_response = _client().get("/api/v1/auth/config")
     assert opted_in_response.json()["dev_token_enabled"] is True

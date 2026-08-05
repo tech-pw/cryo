@@ -14,9 +14,7 @@ from cryo.worker.worker import DestinationConfig
 
 
 def test_destination_uses_k8s_dispatch() -> None:
-    assert not destination_uses_k8s_dispatch(
-        DestinationConfig(id="d1", engine="native", config={})
-    )
+    assert not destination_uses_k8s_dispatch(DestinationConfig(id="d1", engine="native", config={}))
     assert destination_uses_k8s_dispatch(
         DestinationConfig(id="d1", engine="native", config={"k8s_dispatch": True})
     )

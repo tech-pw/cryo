@@ -93,9 +93,7 @@ def _normalize_raw(raw: dict[str, Any]) -> dict[str, Any]:
                         "base_column_type": row.get("base_column_type"),
                         "transform": row.get("transform"),
                         "files_per_partition": row.get("files_per_partition"),
-                        "small_files_in_partition_count": row.get(
-                            "small_files_in_partition_count"
-                        ),
+                        "small_files_in_partition_count": row.get("small_files_in_partition_count"),
                         "partition_size_gb": row.get("partition_size_gb"),
                         "compaction_status": row.get("compaction_status"),
                         "raw": dict(row.get("raw") or {}),
@@ -136,8 +134,7 @@ def _normalize_value(value: Any) -> Any:
         return round(value, 10)
     if isinstance(value, dict):
         return {
-            str(k): _normalize_value(v)
-            for k, v in sorted(value.items(), key=lambda i: str(i[0]))
+            str(k): _normalize_value(v) for k, v in sorted(value.items(), key=lambda i: str(i[0]))
         }
     if isinstance(value, list):
         return [_normalize_value(v) for v in value]

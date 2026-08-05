@@ -47,6 +47,9 @@ const SmartMaintenance = lazy(() =>
   import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
 );
 const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
+const ControlRoom = lazy(() =>
+  import("./pages/ControlRoom").then((m) => ({ default: m.ControlRoom }))
+);
 
 const PageFallback = () => (
   <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-6">
@@ -115,6 +118,7 @@ const AuthenticatedRoutes = () => (
             <Route path="/search" element={<SearchResults />} />
             <Route path="/optimize" element={<Navigate to="/smart-maintenance" replace />} />
             <Route path="/smart-maintenance" element={<SmartMaintenance />} />
+            <Route path="/control-room" element={<ControlRoom />} />
             <Route path="/presets" element={<Navigate to="/operations" replace />} />
             <Route path="/runs" element={<Navigate to="/operations?tab=runs" replace />} />
             <Route path="/runs/:runId" element={<RunsRunRedirect />} />

@@ -152,9 +152,7 @@ def test_preview_renders_native_payload_statements(monkeypatch) -> None:
     assert batch["engine"] == "native"
     assert batch["payload"]["table_ref"] == "iceberg.fixtures.fixture_small"
     assert batch["payload"]["mode"] == "deep"
-    optimize = next(
-        op for op in batch["payload"]["operations"] if op["type"] == "optimize"
-    )
+    optimize = next(op for op in batch["payload"]["operations"] if op["type"] == "optimize")
     assert optimize["params"]["min_small_files"] == 10
 
 

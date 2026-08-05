@@ -13,23 +13,33 @@
 # pre-install hook will fail until it's created; `CREATE DATABASE cryo;` as the postgres user
 # is sufficient, same as was done for dev.)
 #
-# Image: platform-ops builds their own image from this repo's root Dockerfile and pushes it to
-# their own ECR repository, rather than pulling the GitLab-registry image used by dev/prod.
-# Uncomment and fill in below once that ECR repo exists -- without this override the chart
-# falls back to its placeholder image (repository: cryo, tag: latest) and pods will fail to
-# pull. cryo.imagePullSecrets (_helpers.tpl) expects a plain list of strings, e.g.
-# `imagePullSecrets: [my-ecr-pull-secret]` -- NOT the `- name: ...` k8s object form. Most EKS
-# setups don't need an explicit pull secret for ECR at all if the node/service account already
-# has IAM pull access (IRSA or node role) -- only add one if that's not the case here.
-#
-# image:
-#   repository: <account-id>.dkr.ecr.<region>.amazonaws.com/<your-ecr-repo>
-#   tag: <your-tag>
-# migration:
-#   image:
-#     repository: <account-id>.dkr.ecr.<region>.amazonaws.com/<your-ecr-repo>
-#     tag: <your-tag>
-# imagePullSecrets: []   # only if ECR pulls need an explicit secret -- see note above
+# Image: stage mirrors dev/prod and pulls from the same GitLab container registry project
+# (`registry.example.com/cryo`). prod's values file
+# is the canonical reference for the tag matrix:
+#   - main + migration: tag `latest`
+#   - web:              tag `web-latest`
+#   - spark k8s:        tag `spark-latest` (not used on stage -- spark.k8s.enabled stays false
+#                       per the base chart's default)
+# stage has no scanning/maintenance write-path so the main image is only consumed by the api
+# Deployment. web is enabled per the block below.
+image:
+  repository: registry.example.com/cryo
+  tag: latest
+
+migration:
+  image:
+    repository: registry.example.com/cryo
+    tag: latest
+
+web:
+  enabled: true
+  replicas: 1
+  image:
+    repository: registry.example.com/cryo
+    tag: web-latest
+
+imagePullSecrets:
+  - cryo-registry
 
 global:
   env:
@@ -44,10 +54,6 @@ api:
     limits:
       cpu: 500m
       memory: 1Gi
-
-web:
-  enabled: true
-  replicas: 1
 
 # No scanning/maintenance write-path on stage -- nothing for it to do without real sources,
 # and running it would just be idle daemons burning cluster resources.

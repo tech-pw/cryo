@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Lightbulb,
   Plug,
+  RadioTower,
   Shield,
   Zap,
   type LucideIcon
@@ -42,7 +43,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       { href: "/operations", label: "Operations", icon: Activity },
-      { href: "/smart-maintenance", label: "Smart Maintenance", icon: Cloud }
+      { href: "/smart-maintenance", label: "Smart Maintenance", icon: Cloud },
+      { href: "/control-room", label: "Control Room", icon: RadioTower }
     ]
   },
   {

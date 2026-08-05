@@ -10,12 +10,14 @@
 # CRYO_ENVIRONMENT was live-set to "dev" on this deployment before the split was identified --
 # this file corrects that.
 #
-# governor/scheduler/scannerWorker/worker are currently scaled to 0 replicas on the live
-# deployment (imperative `kubectl scale`, done mid-migration to data-dev-eks -- see prior
-# session notes) even though Helm's own values still say 1/1/8/2. This file's replica counts
-# below are the INTENDED state once revived -- applying this file will bring those daemons back
-# up. Do not apply until explicitly confirmed; reviving the write-path here means real
-# maintenance jobs will start firing against the real fleet again.
+# Stale note, corrected 2026-08-05: an earlier draft of this file described governor/
+# scheduler/scannerWorker/worker as scaled to 0 (imperative `kubectl scale`, mid-migration to
+# data-dev-eks) with this file's 1/1/8/2 replica counts as an intended-but-not-yet-applied
+# revival. That's no longer accurate -- the write path has been live and running real
+# maintenance jobs against the real fleet for the entirety of this session (verified directly:
+# governor 1/1, scheduler 1/1, scannerWorker 8/8, worker 2/2, all running, real jobs completed).
+# This file's replica counts already match observed live state; applying it reconciles Helm's
+# managed state to reality, it does not revive anything dormant.
 #
 # Resource limits bumped from what's live today, matching what data-dev-eks needed at the same
 # fleet scale (12,938 tables, 3.18M partitions, one outlier table at 397k partitions) earlier
@@ -29,6 +31,8 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
+  # Built + pushed 2026-08-05 from gitlab-main commit 6df64f3.
+  digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
 
 imagePullSecrets:
   - cryo-registry
@@ -37,6 +41,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
+    digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
 
 global:
   envFromSecret: cryo-secrets
@@ -49,9 +54,45 @@ global:
     # Explicit, deliberate bridge until real OIDC (CRYO_OIDC_ISSUER_URL/CLIENT_ID) is
     # configured -- re-enables the dev sign-in form (self-declared role, no real identity
     # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.
-    # Anyone reaching the UI can self-grant any role while this is true -- turn off once OIDC
-    # is set up.
+    # Anyone reaching the UI can self-grant any role while this is true.
+    #
+    # Re-enabled 2026-08-05: briefly turned off in the same deploy that shipped this comment,
+    # which (correctly, per this comment's own warning) locked every human out of the web UI
+    # since OIDC was never configured -- turned back on as an explicit, deliberate choice to
+    # keep UI access working, not an oversight. Turn off again once real OIDC
+    # (CRYO_OIDC_ISSUER_URL/CRYO_OIDC_CLIENT_ID) is actually configured -- see
+    # docs/deployment.md or ask before flipping this back off, since it will re-lock the UI.
     CRYO_ALLOW_DEV_TOKEN_IN_PROD: "true"
+
+# Enabled 2026-07-29 (see cost-driven-autoscaling plan, #devops-data): turns on the
+# already-built Governor -> sized-per-table K8s Job dispatch path for maintenance jobs
+# (rewrite/expire/orphan), replacing static always-on Worker capacity with ephemeral,
+# resource-sized Jobs. KEDA + Karpenter CRDs confirmed already installed on this cluster.
+# native.spot.allow stays false (inherited from values.yaml) until the on-demand path is
+# proven -- do not flip that here without validating spot checkpointing first.
+# Rollout is deliberately staged per-destination: the one live destination with
+# k8s_dispatch=true (native-datafusion) had its slot_cap dropped 5->1 in the DB before this
+# was applied, so the first dispatch is a single job to watch closely, not a burst of 5.
+native:
+  enabled: true
+  # The native engine binary ships inside the same main image (engine-go build stage in the
+  # root Dockerfile) -- not a separate image. Same repo/tag/digest as `image:` above.
+  image:
+    repository: registry.example.com/cryo
+    tag: latest
+    digest: "sha256:1076549c98a30956cd4d24bdb3791eb9fc741e7bfbd43a87c9dfe4e29165ec83"
+  keda:
+    enabled: true
+
+# Enabled 2026-07-29 for a controlled prod test (see cost-driven-autoscaling plan): the
+# always-on 8-replica scannerWorker Deployment is temporarily scaled to 0 for the duration
+# of this test only (see rollout notes) so the new Governor-driven per-chunk dispatch has
+# an uncontested claim -- restore scannerWorker.replicas before leaving this enabled
+# long-term, or the two paths just race for the same queue (harmless, but pointless).
+scanner:
+  jobDispatch:
+    enabled: true
+    batchSize: 1
 
 api:
   replicas: 2
@@ -78,10 +119,14 @@ governor:
   resources:
     requests:
       cpu: 250m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       cpu: "1"
-      memory: 1Gi
+      # Raised 1Gi -> 3Gi 2026-08-03: OOMKilled 22x in ~3h once a single destination's queue
+      # depth hit 11k+ jobs -- the admission tick's per-table resource-predictor calls scale
+      # with queue size and blew the old limit. Stop-gap; the real fix is bounding the
+      # per-tick admission scan, tracked separately.
+      memory: 3Gi
 
 scheduler:
   replicas: 1
@@ -109,6 +154,8 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
+    # Built + pushed 2026-08-05 from gitlab-main commit eee1788.
+    digest: "sha256:7fc734e872a9d9fc6071c6139a0ae13a8d5c9884a41d4660704e97140dafdd97"
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
@@ -119,6 +166,8 @@ spark:
     image:
       repository: registry.example.com/cryo
       tag: spark-latest
+      # Built + pushed 2026-08-05 from gitlab-main commit eee1788.
+      digest: "sha256:7c508fbb330b5af493187c58c20c3180f9dd173ecd25f32c5ea6e528da3bf7fb"
       pullPolicy: Always
     driverCpuMilli: 1000
     driverMemMib: 2048
@@ -127,3 +176,8 @@ spark:
     executorInstances: 2
     activeDeadlineSeconds: 7200
     ttlSecondsAfterFinished: 3600
+
+redis:
+  image:
+    # Pinned 2026-08-05, upstream redis:7-alpine manifest-list digest at time of deploy.
+    digest: "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2"

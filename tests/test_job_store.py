@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 from cryo.db.models import Destination
-from cryo.db.repositories.job_store import _destination_config
+from cryo.db.repositories.job_store import (
+    _destination_config,
+    _intent_effect_destination_ids,
+)
 from cryo.domain.enums import Mode
 from cryo.governor.admission import AdmissionConfig, AdmissionJob, decide_job_admission
 from cryo.governor.governor import _admission_config_from_destination
@@ -58,9 +62,7 @@ def test_destination_config_prefers_explicit_config_json_offpeak_values() -> Non
 def test_destination_config_offpeak_columns_drive_governor_admission() -> None:
     destination = _destination(offpeak_start=15, offpeak_end=5)
     destination_config = _destination_config(destination)
-    admission_config = _admission_config_from_destination(
-        destination_config, AdmissionConfig()
-    )
+    admission_config = _admission_config_from_destination(destination_config, AdmissionConfig())
 
     decision = decide_job_admission(
         AdmissionJob(
@@ -70,9 +72,7 @@ def test_destination_config_offpeak_columns_drive_governor_admission() -> None:
             mode=Mode.DEEP,
         ),
         admission_config,
-        now=__import__("datetime").datetime(
-            2026, 7, 6, 18, 30, tzinfo=__import__("datetime").UTC
-        ),
+        now=__import__("datetime").datetime(2026, 7, 6, 18, 30, tzinfo=__import__("datetime").UTC),
     )
 
     assert decision.admissible is True
@@ -81,9 +81,7 @@ def test_destination_config_offpeak_columns_drive_governor_admission() -> None:
 def test_destination_without_offpeak_allows_deep_anytime() -> None:
     destination = _destination()
     destination_config = _destination_config(destination)
-    admission_config = _admission_config_from_destination(
-        destination_config, AdmissionConfig()
-    )
+    admission_config = _admission_config_from_destination(destination_config, AdmissionConfig())
 
     assert "offpeak_start_ist" not in destination_config.config
     assert "offpeak_end_ist" not in destination_config.config
@@ -98,9 +96,33 @@ def test_destination_without_offpeak_allows_deep_anytime() -> None:
             mode=Mode.DEEP,
         ),
         admission_config,
-        now=__import__("datetime").datetime(
-            2026, 6, 30, 8, 0, tzinfo=__import__("datetime").UTC
-        ),
+        now=__import__("datetime").datetime(2026, 6, 30, 8, 0, tzinfo=__import__("datetime").UTC),
     )
 
     assert decision.admissible is True
+
+
+def test_intent_effect_destinations_exclude_routing_only_requirements() -> None:
+    primary_id = uuid.uuid4()
+    fallback_id = uuid.uuid4()
+    intent = SimpleNamespace(
+        capability_requirements=[
+            {
+                "destination_id": str(primary_id),
+                "operation": "optimize",
+                "executes_effect": False,
+            },
+            {
+                "destination_id": str(fallback_id),
+                "operation": "optimize",
+                "executes_effect": True,
+            },
+            {
+                "destination_id": str(fallback_id),
+                "operation": "optimize_manifests",
+                "executes_effect": True,
+            },
+        ]
+    )
+
+    assert _intent_effect_destination_ids(intent) == (str(fallback_id),)

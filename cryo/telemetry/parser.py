@@ -33,6 +33,13 @@ class PredicateInfo:
     query_type: Literal["SELECT", "INSERT", "UPDATE", "DELETE", "OTHER"] = "OTHER"
 
 
+@dataclass(frozen=True)
+class QueryRange:
+    column: str
+    lower: bool | int | float | str
+    upper: bool | int | float | str
+
+
 # Patterns for SQL parsing
 _EQUALITY_OPS = {"=", "==", "<>", "!=", "IN", "NOT IN"}
 _RANGE_OPS = {"<", ">", "<=", ">=", "BETWEEN", "NOT BETWEEN"}
@@ -63,6 +70,83 @@ def parse_query_predicates(sql: str) -> PredicateInfo:
     if sqlglot_result is not None:
         return sqlglot_result
     return _parse_with_regex(sql)
+
+
+def extract_query_ranges(sql: str) -> list[QueryRange]:
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except ImportError:
+        return []
+    try:
+        parsed = sqlglot.parse_one(sql, read="trino")
+    except Exception:
+        return []
+
+    bounds: dict[str, dict[str, bool | int | float | str]] = {}
+    for between in parsed.find_all(exp.Between):
+        if not isinstance(between.this, exp.Column):
+            continue
+        low = _literal_value(between.args.get("low"))
+        high = _literal_value(between.args.get("high"))
+        if low is not None and high is not None:
+            bounds[between.this.name] = {"lower": low, "upper": high}
+
+    comparisons = (
+        (exp.GT, "lower"),
+        (exp.GTE, "lower"),
+        (exp.LT, "upper"),
+        (exp.LTE, "upper"),
+    )
+    for comparison_type, side in comparisons:
+        for comparison in parsed.find_all(comparison_type):
+            column, value, effective_side = _comparison_parts(comparison, side)
+            if column is not None and value is not None:
+                bounds.setdefault(column, {})[effective_side] = value
+    return [
+        QueryRange(column, values["lower"], values["upper"])
+        for column, values in sorted(bounds.items())
+        if "lower" in values and "upper" in values
+    ]
+
+
+def _comparison_parts(
+    comparison: object,
+    side: str,
+) -> tuple[str | None, bool | int | float | str | None, str]:
+    from sqlglot import exp
+
+    if not isinstance(comparison, exp.Expression):
+        return None, None, side
+    left = comparison.this
+    right = comparison.expression
+    if isinstance(left, exp.Column):
+        return left.name, _literal_value(right), side
+    if isinstance(right, exp.Column):
+        reverse_side = "upper" if side == "lower" else "lower"
+        return right.name, _literal_value(left), reverse_side
+    return None, None, side
+
+
+def _literal_value(expression: object) -> bool | int | float | str | None:
+    from sqlglot import exp
+
+    while isinstance(expression, exp.Cast | exp.Paren):
+        expression = expression.this
+    if isinstance(expression, exp.Boolean):
+        return bool(expression.this)
+    if not isinstance(expression, exp.Literal):
+        return None
+    if expression.is_string:
+        return str(expression.this)
+    raw = str(expression.this)
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return float(raw)
+        except ValueError:
+            return None
 
 
 def _parse_with_sqlglot(sql: str) -> PredicateInfo | None:

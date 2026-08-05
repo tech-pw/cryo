@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from cryo.config import get_settings
 from cryo.db.models import (
     Destination,
     MaintenanceJob,
@@ -24,6 +25,8 @@ from cryo.db.repositories.presets import (
     table_to_candidate,
 )
 from cryo.db.repositories.sources import table_in_source_scope
+from cryo.intents.binding import build_and_bind_job_intent
+from cryo.observability.correlation import correlation_summary
 from cryo.scheduler.rules import (
     PresetConfig,
     TableCandidate,
@@ -106,20 +109,32 @@ class SQLSchedulerStore:
                 trigger=run.trigger,
                 status="queued",
                 deadline_at=run.deadline_at,
-                summary={"actor": "system:scheduler"},
+                summary=correlation_summary({"actor": "system:scheduler"}),
             )
             session.add(db_run)
+            db_jobs: list[MaintenanceJob] = []
             for job in run.jobs:
-                session.add(
-                    MaintenanceJob(
-                        id=uuid.UUID(job.id),
-                        run_id=uuid.UUID(run.id),
-                        table_id=uuid.UUID(job.table_id),
-                        destination_id=uuid.UUID(job.destination_id),
-                        mode=job.mode.value if hasattr(job.mode, "value") else str(job.mode),
-                        status=job.status.value,
-                    )
+                db_job = MaintenanceJob(
+                    id=uuid.UUID(job.id),
+                    run_id=uuid.UUID(run.id),
+                    table_id=uuid.UUID(job.table_id),
+                    destination_id=uuid.UUID(job.destination_id),
+                    mode=job.mode.value if hasattr(job.mode, "value") else str(job.mode),
+                    status=job.status.value,
                 )
+                session.add(db_job)
+                db_jobs.append(db_job)
+            session.flush()
+            settings = get_settings()
+            if settings.durable_intents_enabled:
+                for db_job in db_jobs:
+                    build_and_bind_job_intent(
+                        session,
+                        job_id=str(db_job.id),
+                        settings=settings,
+                        actor_type="scheduler",
+                        actor_id="system:scheduler",
+                    )
             session.commit()
 
     def mark_preset_run(self, preset_id: str, run_at: datetime) -> None:

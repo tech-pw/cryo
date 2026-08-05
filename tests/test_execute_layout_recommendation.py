@@ -8,6 +8,7 @@ sort, and only marking "applied" when the rewrite genuinely succeeds.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -19,14 +20,20 @@ from cryo.api.routes_smart_maintenance import (
     execute_layout_recommendation,
 )
 from cryo.api.security import Principal, Role
+from cryo.config import get_settings
 from cryo.db.models import (
     Destination,
+    EffectReceipt,
     LayoutRecommendation,
+    MaintenanceIntent,
     Preset,
     Source,
     Table,
     TableAssignment,
+    TableStats,
 )
+from cryo.domain.enums import EngineType
+from cryo.engines.base import ExecResult, RenderedStatement
 from cryo.engines.spark.k8s import JobRunResult, JobRunState
 
 PRINCIPAL = Principal(subject="test-operator", roles=frozenset({Role.OPERATOR}))
@@ -38,6 +45,7 @@ def _seed(
     recommended_strategy: str = "sort",
     recommended_columns: list[str] | None = None,
     status: str = "approved",
+    total_files: int | None = None,
 ):
     source = Source(
         id=uuid4(),
@@ -83,11 +91,28 @@ def _seed(
         id=uuid4(),
         table_id=table.id,
         recommended_strategy=recommended_strategy,
-        recommended_columns=recommended_columns if recommended_columns is not None else ["event_date"],
+        recommended_columns=recommended_columns
+        if recommended_columns is not None
+        else ["event_date"],
         confidence=0.8,
         status=status,
     )
     session.add(recommendation)
+    if total_files is not None:
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="C",
+                overall_score=60,
+                total_files=total_files,
+                small_files_count=total_files,
+                total_partitions=1,
+                total_size_gb=1.0,
+            )
+        )
     session.commit()
     return recommendation.id
 
@@ -135,7 +160,9 @@ def test_execute_applies_sort_strategy_and_persists_write_sort_order(session, mo
 
 
 def test_execute_applies_zorder_strategy_without_sort_order_persist(session, monkeypatch) -> None:
-    rec_id = _seed(session, recommended_strategy="zorder", recommended_columns=["tenant_id", "event_date"])
+    rec_id = _seed(
+        session, recommended_strategy="zorder", recommended_columns=["tenant_id", "event_date"]
+    )
     mock_client = _mock_spark_client(monkeypatch, [_success("rewrite")])
 
     response = execute_layout_recommendation(
@@ -156,7 +183,9 @@ def test_execute_rejects_when_not_approved(session, monkeypatch) -> None:
     mock_client = _mock_spark_client(monkeypatch, [])
 
     with pytest.raises(HTTPException) as exc_info:
-        execute_layout_recommendation(rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL)
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
 
     assert exc_info.value.status_code == 400
     assert "approved" in exc_info.value.detail
@@ -170,14 +199,18 @@ def test_execute_rejects_strategy_with_no_actionable_rewrite(session, monkeypatc
     mock_client = _mock_spark_client(monkeypatch, [])
 
     with pytest.raises(HTTPException) as exc_info:
-        execute_layout_recommendation(rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL)
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
 
     assert exc_info.value.status_code == 400
     assert "No actionable rewrite" in exc_info.value.detail
     mock_client.submit_spark_sql.assert_not_called()
 
 
-def test_execute_marks_failed_on_rewrite_failure_and_does_not_mark_applied(session, monkeypatch) -> None:
+def test_execute_marks_failed_on_rewrite_failure_and_does_not_mark_applied(
+    session, monkeypatch
+) -> None:
     """This is the exact regression this route was rewritten to fix: previously any dispatch
     (even a failed or entirely wrong one) unconditionally flipped the recommendation to
     "applied". A failed rewrite must surface as an error and leave the recommendation alone."""
@@ -185,7 +218,9 @@ def test_execute_marks_failed_on_rewrite_failure_and_does_not_mark_applied(sessi
     _mock_spark_client(monkeypatch, [_failure("rewrite", "rewrite_data_files failed: boom")])
 
     with pytest.raises(HTTPException) as exc_info:
-        execute_layout_recommendation(rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL)
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
 
     assert exc_info.value.status_code == 502
     assert "boom" in exc_info.value.detail
@@ -202,7 +237,8 @@ def test_execute_succeeds_even_if_sort_order_persist_fails(session, monkeypatch)
     rewrite or block marking the recommendation applied."""
     rec_id = _seed(session, recommended_strategy="sort", recommended_columns=["event_date"])
     _mock_spark_client(
-        monkeypatch, [_success("rewrite"), _failure("persist", "ALTER TABLE failed: permission denied")]
+        monkeypatch,
+        [_success("rewrite"), _failure("persist", "ALTER TABLE failed: permission denied")],
     )
 
     response = execute_layout_recommendation(
@@ -212,3 +248,161 @@ def test_execute_succeeds_even_if_sort_order_persist_fails(session, monkeypatch)
     assert response.status == "succeeded"
     recommendation = session.get(LayoutRecommendation, rec_id)
     assert recommendation.status == "applied"
+
+
+def test_durable_execute_tracks_rewrite_and_sort_order_effects(
+    session,
+    monkeypatch,
+) -> None:
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+    )
+    _mock_spark_client(monkeypatch, [_success("rewrite"), _success("persist")])
+    settings = get_settings().model_copy(
+        update={
+            "durable_intents_enabled": True,
+            "plan_verifier_enabled": False,
+        }
+    )
+    monkeypatch.setattr(
+        "cryo.api.routes_smart_maintenance.get_settings",
+        lambda: settings,
+    )
+
+    response = execute_layout_recommendation(
+        rec_id,
+        ExecuteLayoutRecommendationRequest(),
+        session,
+        PRINCIPAL,
+    )
+
+    intent = session.query(MaintenanceIntent).one()
+    receipts = session.query(EffectReceipt).order_by(EffectReceipt.step_index).all()
+    assert response.status == "succeeded"
+    assert intent.status == "succeeded"
+    assert intent.canonical_plan["operations"][0]["params"]["persist_sort_order"] is True
+    assert [receipt.state for receipt in receipts] == ["succeeded", "succeeded"]
+    assert [receipt.step_index for receipt in receipts] == [0, 1]
+    assert all(receipt.destination_id == intent.destination_id for receipt in receipts)
+
+
+def test_durable_execute_does_not_replay_unknown_sort_order_effect(
+    session,
+    monkeypatch,
+) -> None:
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+    )
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = ["rewrite-job", "persist-job"]
+    mock_client.wait_for_completion.side_effect = [
+        _success("rewrite-job"),
+        TimeoutError("persist response timed out"),
+    ]
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s_engine.SparkK8sClient",
+        lambda config: mock_client,
+    )
+    settings = get_settings().model_copy(
+        update={
+            "durable_intents_enabled": True,
+            "plan_verifier_enabled": False,
+        }
+    )
+    monkeypatch.setattr(
+        "cryo.api.routes_smart_maintenance.get_settings",
+        lambda: settings,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        execute_layout_recommendation(
+            rec_id,
+            ExecuteLayoutRecommendationRequest(),
+            session,
+            PRINCIPAL,
+        )
+
+    assert exc_info.value.status_code == 502
+    session.expire_all()
+    recommendation = session.get(LayoutRecommendation, rec_id)
+    assert recommendation.status == "approved"
+    intent = session.query(MaintenanceIntent).one()
+    receipts = session.query(EffectReceipt).order_by(EffectReceipt.step_index).all()
+    assert intent.status == "reconcile_required"
+    assert [receipt.state for receipt in receipts] == ["succeeded", "unknown"]
+    assert receipts[1].external_reference == "persist-job"
+
+
+def test_durable_layout_stops_after_post_effect_budget_breach(
+    session,
+    monkeypatch,
+) -> None:
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+        total_files=1,
+    )
+    executed: list[RenderedStatement] = []
+
+    class BudgetBreachEngine:
+        type = EngineType.SPARK_EMR
+
+        def execute_plan(self, plan, ctx=None):
+            statement = RenderedStatement(
+                action=plan.operations[0].type,
+                sql="rewrite",
+                engine=EngineType.SPARK_EMR,
+            )
+            executed.append(statement)
+            return [
+                ExecResult(
+                    ok=True,
+                    engine_ref="rewrite-budget",
+                    detail="rewrite",
+                    duration_ms=100,
+                    output_files_count=2,
+                )
+            ]
+
+        def execute(self, statement, ctx=None):
+            executed.append(statement)
+            return ExecResult(ok=True, engine_ref="persist-budget", detail=statement.sql)
+
+    monkeypatch.setattr(
+        "cryo.api.routes_smart_maintenance.SparkK8sEngine",
+        lambda config: BudgetBreachEngine(),
+    )
+    settings = get_settings().model_copy(
+        update={
+            "durable_intents_enabled": True,
+            "plan_verifier_enabled": False,
+        }
+    )
+    monkeypatch.setattr(
+        "cryo.api.routes_smart_maintenance.get_settings",
+        lambda: settings,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        execute_layout_recommendation(
+            rec_id,
+            ExecuteLayoutRecommendationRequest(),
+            session,
+            PRINCIPAL,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "output_files_budget_exceeded" in exc_info.value.detail
+    assert len(executed) == 1
+    session.expire_all()
+    recommendation = session.get(LayoutRecommendation, rec_id)
+    intent = session.query(MaintenanceIntent).one()
+    receipt = session.query(EffectReceipt).one()
+    assert recommendation.status == "approved"
+    assert intent.status == "failed"
+    assert receipt.state == "succeeded"

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 from cryo.config import Settings, get_settings
@@ -76,3 +78,23 @@ def get_tracer(name: str) -> Any:
     from opentelemetry import trace
 
     return trace.get_tracer(name)
+
+
+@contextmanager
+def trace_operation(
+    name: str,
+    *,
+    attributes: Mapping[str, str | int | float | bool | None] | None = None,
+) -> Iterator[Any | None]:
+    """Create an explicit service span without requiring tracing in local/test runs."""
+    if not get_settings().otel_enabled:
+        yield None
+        return
+    clean_attributes = {
+        key: value for key, value in (attributes or {}).items() if value is not None
+    }
+    with get_tracer("cryo.operations").start_as_current_span(
+        name,
+        attributes=clean_attributes,
+    ) as span:
+        yield span

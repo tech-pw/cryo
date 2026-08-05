@@ -11,12 +11,13 @@ Score = (small_files × query_frequency) / estimated_rewrite_cost_factor
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -33,6 +34,15 @@ _QUERY_WINDOW_HOURS = 168  # 7 days
 
 # Minimum benefit score to be eligible for compaction (below this = skip)
 DEFAULT_MIN_BENEFIT_SCORE = 1.0
+
+
+class _SchedulingBaseline(TypedDict):
+    name: str
+    order: list[str]
+    utility: float
+    regret: float
+    regret_ratio: float
+
 
 # Cost factor: relative cost estimate of rewriting N GB
 # (pure heuristic: 1 GB ≈ cost_factor=1 unit)
@@ -387,6 +397,13 @@ def update_partition_benefit_scores(
     if not partitions:
         return 0
 
+    from cryo.intelligence.autocomp_feedback import realized_value_multiplier
+
+    table_stats = session.get(TableStats, table_id)
+    feedback_multiplier = realized_value_multiplier(
+        table_stats.raw if table_stats is not None else None
+    )
+
     total_queries = (
         session.scalar(
             select(func.count(QueryLog.id)).where(
@@ -433,10 +450,14 @@ def update_partition_benefit_scores(
         size_gb = partition.partition_size_gb or 0.1
         frequency = frequencies[i]
 
-        score = compute_benefit_score(
-            small_files=small_files,
-            query_frequency=frequency,
-            partition_size_gb=size_gb,
+        score = round(
+            compute_benefit_score(
+                small_files=small_files,
+                query_frequency=frequency,
+                partition_size_gb=size_gb,
+            )
+            * feedback_multiplier,
+            4,
         )
 
         partition.query_frequency = frequency
@@ -492,9 +513,19 @@ def update_table_effectiveness(session: Session, table_id: uuid.UUID) -> bool:
     if stats is None:
         return False
     effectiveness = get_compaction_effectiveness_stats(session, table_id)
+    from cryo.intelligence.autocomp_feedback import build_autocomp_realized_value
+    from cryo.intelligence.outcomes import build_outcome_dataset
+
+    realized_value = build_autocomp_realized_value(
+        build_outcome_dataset(session, table_id=table_id, limit=200)
+    )
     raw = dict(stats.raw or {})
     raw["compaction_effectiveness"] = {
         **effectiveness,
+        "computed_at": datetime.now(UTC).isoformat(),
+    }
+    raw["autocomp_realized_value"] = {
+        **realized_value.to_dict(),
         "computed_at": datetime.now(UTC).isoformat(),
     }
     stats.raw = raw
@@ -548,14 +579,22 @@ def compare_scheduling_strategies(
     *,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Compare static small-files ordering vs AutoComp benefit-score ordering."""
+    """Compare AutoComp against deterministic, interpretable scheduling baselines."""
     from cryo.db.models import TablePartition
 
     latest_scan = session.scalar(
         select(func.max(TablePartition.scan_at)).where(TablePartition.table_id == table_id)
     )
     if not latest_scan:
-        return {"static_order": [], "autocomp_order": [], "improvement_ratio": 0.0}
+        return {
+            "static_order": [],
+            "autocomp_order": [],
+            "improvement_ratio": 0.0,
+            "autocomp_wins": False,
+            "confidence": 0.0,
+            "evidence_sufficient": False,
+            "baselines": [],
+        }
 
     partitions = list(
         session.scalars(
@@ -566,30 +605,79 @@ def compare_scheduling_strategies(
         )
     )
 
-    static_sorted = sorted(
-        partitions,
-        key=lambda p: p.small_files_in_partition_count or 0,
-        reverse=True,
-    )[:limit]
+    candidate_limit = min(10, limit)
     autocomp_sorted = sorted(
         partitions,
         key=lambda p: p.compaction_benefit_score or 0.0,
         reverse=True,
-    )[:limit]
-
-    static_score = sum(p.small_files_in_partition_count or 0 for p in static_sorted[:10])
-    autocomp_score = sum(
-        (p.compaction_benefit_score or 0.0) * (p.small_files_in_partition_count or 0)
-        for p in autocomp_sorted[:10]
+    )[:candidate_limit]
+    baseline_orders = {
+        "size_only": sorted(
+            partitions,
+            key=lambda partition: partition.partition_size_gb or 0.0,
+            reverse=True,
+        )[:candidate_limit],
+        "file_count": sorted(
+            partitions,
+            key=lambda partition: partition.small_files_in_partition_count or 0,
+            reverse=True,
+        )[:candidate_limit],
+        "threshold": sorted(
+            [
+                partition
+                for partition in partitions
+                if (partition.small_files_in_partition_count or 0) >= 10
+            ],
+            key=lambda partition: partition.small_files_in_partition_count or 0,
+            reverse=True,
+        )[:candidate_limit],
+        "fifo": sorted(partitions, key=lambda partition: str(partition.id))[:candidate_limit],
+        "random": sorted(
+            partitions,
+            key=lambda partition: hashlib.sha256(
+                f"{table_id}:{partition.partition_value}".encode()
+            ).digest(),
+        )[:candidate_limit],
+    }
+    autocomp_utility = _selection_utility(autocomp_sorted)
+    baseline_reports: list[_SchedulingBaseline] = []
+    for name, order in baseline_orders.items():
+        utility = _selection_utility(order)
+        regret = max(0.0, autocomp_utility - utility)
+        baseline_reports.append(
+            {
+                "name": name,
+                "order": [str(partition.partition_value) for partition in order],
+                "utility": round(utility, 4),
+                "regret": round(regret, 4),
+                "regret_ratio": round(regret / max(abs(autocomp_utility), 0.0001), 4),
+            }
+        )
+    file_count_utility = next(
+        report["utility"] for report in baseline_reports if report["name"] == "file_count"
     )
-    improvement = autocomp_score / max(static_score, 1.0)
+    improvement = autocomp_utility / max(float(file_count_utility), 0.0001)
+    score_coverage = (
+        sum(partition.compaction_benefit_score is not None for partition in partitions)
+        / len(partitions)
+        if partitions
+        else 0.0
+    )
+    confidence = round(score_coverage * min(1.0, len(partitions) / 10.0), 4)
 
     return {
-        "static_order": [str(p.partition_value) for p in static_sorted[:10]],
-        "autocomp_order": [str(p.partition_value) for p in autocomp_sorted[:10]],
+        "static_order": baseline_reports[1]["order"],
+        "autocomp_order": [str(partition.partition_value) for partition in autocomp_sorted],
         "improvement_ratio": round(improvement, 4),
-        "autocomp_wins": improvement > 1.0,
+        "autocomp_wins": autocomp_utility > float(file_count_utility),
+        "confidence": confidence,
+        "evidence_sufficient": confidence >= 0.8 and len(partitions) >= 5,
+        "baselines": baseline_reports,
     }
+
+
+def _selection_utility(partitions: Sequence[TablePartition]) -> float:
+    return sum(float(partition.compaction_benefit_score or 0.0) for partition in partitions)
 
 
 def get_compaction_effectiveness_stats(
@@ -621,7 +709,7 @@ def get_compaction_effectiveness_stats(
         ).where(
             AuditLog.table_id == table_id,
             AuditLog.action == "optimize",
-            AuditLog.status == "ok",
+            func.upper(AuditLog.status) == "OK",
             AuditLog.ts >= since,
             AuditLog.input_files_count.isnot(None),
         )
