@@ -870,7 +870,16 @@ def _rebuild_cost_analysis(
         precision=precision,
         live_s3_get_price_per_1k=live_s3_get_price_per_1k,
     )
-    return replace(analysis, cost=new_cost)
+    # Must also refresh raw["cost"], not just the `.cost` object: `_stats_values()` persists
+    # `TableStats.reclaimable_bytes` from `analysis.cost.reclaimable_bytes` but the detailed
+    # by-operation/metadata breakdown shown in the UI comes from `analysis.raw["cost"]`. Without
+    # this, that breakdown permanently reflects the pre-orphan-scan state (from the original
+    # analyze_catalog_table call, before this function's carried-forward or freshly-scanned
+    # orphan bytes were folded in) while the scalar total moves on -- the two silently disagree
+    # in every persisted row from here on, exactly the drift found in production 2026-08-05.
+    new_raw = dict(analysis.raw)
+    new_raw["cost"] = new_cost.raw
+    return replace(analysis, cost=new_cost, raw=new_raw)
 
 
 if __name__ == "__main__":

@@ -276,6 +276,40 @@ def test_rebuild_cost_analysis_live_price_changes_savings_and_is_tagged() -> Non
     assert live.cost.raw["assumptions"]["s3_get_price_source"] == "live"
 
 
+def test_rebuild_cost_analysis_keeps_raw_cost_in_sync_with_reclaimable_bytes() -> None:
+    """Regression, found in production 2026-08-05: this function updated `analysis.cost` (which
+    TableStats.reclaimable_bytes gets persisted from) but returned the *original* `analysis.raw`
+    unchanged, via `replace(analysis, cost=new_cost)` -- so `raw["cost"]["by_operation"]` (the
+    detailed breakdown the UI reads) permanently kept showing the pre-orphan-scan state while the
+    scalar total moved on with newly-folded-in orphan bytes. Every table where orphan-scan
+    carry-forward applied (i.e. almost every table, since full orphan rescans are infrequent by
+    design) ended up with a `reclaimable_bytes` column that silently disagreed with its own row's
+    detailed breakdown -- which read as "nothing to reclaim" while the headline number claimed
+    otherwise, by up to 129x the table's actual size in the worst production cases."""
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    analysis = _small_file_analysis(scan_at)
+    assert analysis.cost is not None
+
+    rebuilt = _rebuild_cost_analysis(
+        analysis,
+        settings=Settings(),
+        orphan_bytes=5_000_000_000,
+        listed_bytes=5_000_000_000,
+        last_full_cost_scan_at=scan_at,
+        precision=CostPrecision.STORAGE_TRUTH,
+    )
+
+    assert rebuilt.cost is not None
+    assert rebuilt.cost.reclaimable_bytes > 0
+    assert rebuilt.raw["cost"] == rebuilt.cost.raw
+    persisted_reclaim_total = sum(rebuilt.raw["cost"]["by_operation"].values())
+    assert persisted_reclaim_total > 0, (
+        "raw['cost']['by_operation'] must reflect the same nonzero reclaim the scalar "
+        "reclaimable_bytes column claims -- a UI reading this row's detailed breakdown must "
+        "see the same conclusion as the headline number, not a stale, disagreeing one"
+    )
+
+
 def test_analyze_table_computes_zero_scan_column_quality() -> None:
     scan_at = datetime(2026, 6, 30, tzinfo=UTC)
     table = FakeTable(

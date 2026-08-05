@@ -131,6 +131,12 @@ def scan_orphans(
     listed_keys = 0
     paginator = client.get_paginator("list_objects_v2")
 
+    # Scheme-agnostic (see _normalize_s3_path) -- referenced_file_paths keys come from manifest
+    # file_path entries, which preserve whatever scheme the writer used (s3a/s3n are common for
+    # Spark-written tables); comparing against a hardcoded "s3://" reconstruction here would
+    # silently fail to match anything for those tables. Built once, not per-object.
+    normalized_referenced = {_normalize_s3_path(path) for path in referenced_file_paths}
+
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             listed_keys += 1
@@ -153,8 +159,7 @@ def scan_orphans(
                 if modified > min_modified:
                     continue
             listed_bytes += size
-            full_path = f"s3://{bucket}/{key}"
-            if full_path not in referenced_file_paths:
+            if f"{bucket}/{key}" not in normalized_referenced:
                 orphan_bytes += size
 
     return OrphanScanResult(
@@ -197,6 +202,28 @@ def table_location(table_obj: object) -> str | None:
 
 
 _S3_SCHEMES = {"s3", "s3a", "s3n"}
+
+
+def _normalize_s3_path(path: str) -> str:
+    """Scheme-agnostic ``bucket/key`` form of an S3 URI, for equality comparison only.
+
+    Manifest ``file_path`` entries preserve whatever scheme the writer used verbatim (s3a/s3n
+    are the Hadoop/Spark-ecosystem conventions, common for Hive Metastore-backed tables written
+    via Spark rather than AWS-native tooling -- see ``parse_s3_location``'s docstring, which
+    already documents this exact scheme-equivalence issue for bucket/prefix discovery). Comparing
+    a listed object's reconstructed URI against ``referenced_file_paths`` only works if both
+    sides use the *same* scheme string; hardcoding one side to a single scheme silently breaks
+    the comparison for every table using a different one -- every listed file then looks
+    unreferenced, producing a false 100% "orphan" rate. Found 2026-08-05: every table with a
+    completed orphan scan in production (11,281 tables, ~296TB) showed exactly
+    ``orphan_bytes == listed_bytes``, i.e. this comparison was silently failing for 100% of
+    objects on every scan, because the deployment's tables use ``s3a://`` while the listing side
+    reconstructed ``s3://`` unconditionally.
+    """
+    parsed = urlparse(path)
+    if parsed.scheme in _S3_SCHEMES:
+        return f"{parsed.netloc}/{parsed.path.lstrip('/')}"
+    return path
 
 
 def parse_s3_location(location: str) -> tuple[str | None, str]:
