@@ -1,9 +1,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Info } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   approveSmartLayoutRecommendation,
   dismissSmartLayoutRecommendation,
@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { MetricTile } from "../components/ui/stat";
 import { useCommitEventStream } from "../hooks/useCommitEventStream";
 import { useAuth } from "../lib/auth";
+import { formatPercent, formatTime } from "../lib/format";
 
 const TIERING_HELP_CONTENT = (
   <div className="max-w-sm space-y-2 text-sm">
@@ -123,7 +124,42 @@ export function SmartMaintenance() {
   const { api, token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [inspectTable, setInspectTable] = useState<DetectionTierRowRead | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") === "tiers" ? "tiers" : "overview";
+  const inspectTableId = searchParams.get("inspect");
+
+  const setActiveTab = (tab: string) => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (tab === "overview") next.delete("tab");
+        else next.set("tab", tab);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
+  const openInspect = (row: DetectionTierRowRead) => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set("inspect", row.table_id);
+        return next;
+      },
+      { replace: false }
+    );
+  };
+  const closeInspect = () => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete("inspect");
+        return next;
+      },
+      { replace: false }
+    );
+  };
 
   useCommitEventStream({
     onTick: () => {
@@ -145,7 +181,6 @@ export function SmartMaintenance() {
     queryFn: () => listSmartLayoutRecommendations(api)
   });
 
-  const inspectTableId = inspectTable?.table_id ?? null;
   const roi = useQuery({
     queryKey: ["smart-maintenance-roi", inspectTableId],
     queryFn: () => getTableRoiBreakdown(api, inspectTableId as string),
@@ -160,6 +195,10 @@ export function SmartMaintenance() {
   const recommendationItems = recommendations.data?.items ?? [];
   const recStats = useMemo(() => recommendationCounts(recommendationItems), [recommendationItems]);
   const tierItems = tiers.data?.items ?? [];
+  const inspectTable = useMemo(
+    () => (inspectTableId ? (tierItems.find((row) => row.table_id === inspectTableId) ?? null) : null),
+    [inspectTableId, tierItems]
+  );
 
   const refreshQueries = async () => {
     await Promise.all([
@@ -196,6 +235,13 @@ export function SmartMaintenance() {
     onError: (error: Error) => toast.error(error.message)
   });
 
+  const recStatusTimestamp = (rec: SmartLayoutRecommendationRead): string | null => {
+    if (rec.status === "applied" && rec.applied_at) return `Applied ${formatTime(rec.applied_at)}`;
+    if (rec.status === "approved" && rec.approved_at) return `Approved ${formatTime(rec.approved_at)}`;
+    if (rec.status === "rejected" && rec.dismissed_at) return `Dismissed ${formatTime(rec.dismissed_at)}`;
+    return null;
+  };
+
   const recColumns: ColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
     {
       id: "table_ref",
@@ -213,42 +259,87 @@ export function SmartMaintenance() {
       cell: ({ row }) => (row.original.recommended_columns?.length ? row.original.recommended_columns.join(", ") : "-")
     },
     {
+      id: "confidence",
+      header: "Confidence",
+      cell: ({ row }) => formatPercent(row.original.confidence * 100, 0)
+    },
+    {
+      id: "benefit",
+      header: "Benefit",
+      cell: ({ row }) => {
+        const observed = row.original.observed_prune_improvement;
+        const estimated = row.original.estimated_prune_improvement;
+        if (observed != null) {
+          return <span title="Observed after execution">{formatPercent(observed * 100, 0)} observed</span>;
+        }
+        if (estimated != null) {
+          return <span title="Estimated before execution">{formatPercent(estimated * 100, 0)} est.</span>;
+        }
+        return <span className="text-muted-foreground">—</span>;
+      }
+    },
+    {
       id: "status",
       header: "Status",
-      cell: ({ row }) => <Badge variant="secondary">{row.original.status.toUpperCase()}</Badge>
+      cell: ({ row }) => (
+        <div className="flex flex-col gap-0.5">
+          <Badge variant="secondary">{row.original.status.toUpperCase()}</Badge>
+          {recStatusTimestamp(row.original) ? (
+            <span className="text-xs text-muted-foreground">{recStatusTimestamp(row.original)}</span>
+          ) : null}
+        </div>
+      )
     },
     {
       id: "actions",
       header: "Actions",
       cell: ({ row }) => (
         <div className="flex flex-wrap gap-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => approve.mutate(row.original)}
+          <ConfirmAction
+            title="Approve this recommendation?"
+            description={
+              <span>
+                Marks <strong>{row.original.table_ref}</strong>&apos;s layout change as reviewed and ready to run. It
+                does not change any data yet and can still be dismissed afterward.
+              </span>
+            }
+            onConfirm={() => approve.mutate(row.original)}
             disabled={row.original.status === "applied" || row.original.status === "approved"}
           >
-            Approve
-          </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={row.original.status === "applied" || row.original.status === "approved"}
+              loading={approve.isPending}
+            >
+              Approve
+            </Button>
+          </ConfirmAction>
           <ConfirmAction
             title="Apply this layout change?"
             description={
               <span>
                 Physically re-sorts <strong>{row.original.table_ref}</strong> by{" "}
                 <strong>{row.original.recommended_columns?.join(", ") || "the recommended columns"}</strong> (
-                {row.original.recommended_strategy}) and sets <code>write.sort-order</code>.
+                {row.original.recommended_strategy}) and sets <code>write.sort-order</code>. This runs a maintenance
+                job now and cannot be undone once it completes.
               </span>
             }
             onConfirm={() => execute.mutate(row.original)}
             disabled={row.original.status !== "approved"}
           >
-            <Button size="sm" variant="secondary" disabled={row.original.status !== "approved"} loading={execute.isPending}>
+            <Button size="sm" variant="primary" disabled={row.original.status !== "approved"} loading={execute.isPending}>
               Execute
             </Button>
           </ConfirmAction>
           <ConfirmAction
             title="Dismiss this recommendation?"
-            description={<span>Removes <strong>{row.original.table_ref}</strong> from the pending layout queue.</span>}
+            description={
+              <span>
+                Removes <strong>{row.original.table_ref}</strong> from the pending layout queue. This does not affect
+                table data and a new recommendation can appear again after the next evaluation.
+              </span>
+            }
             onConfirm={() => dismiss.mutate(row.original)}
             disabled={row.original.status === "rejected" || row.original.status === "applied"}
           >
@@ -309,7 +400,7 @@ export function SmartMaintenance() {
           variant="secondary"
           onClick={(e) => {
             e.stopPropagation();
-            setInspectTable(row.original);
+            openInspect(row.original);
           }}
         >
           Inspect ROI
@@ -317,6 +408,18 @@ export function SmartMaintenance() {
       )
     }
   ];
+
+  const emptyRecommendationsDescription = (() => {
+    const ov = overview.data;
+    if (!ov) return "Sort-order suggestions appear after scan telemetry builds up.";
+    if (ov.tables_with_stats === 0) {
+      return "No tables have been scanned yet, so there is nothing to evaluate for layout changes.";
+    }
+    if (ov.roi_shadow_decisions_30d === 0 && !ov.roi_enforced) {
+      return `Evaluated ${formatTime(ov.generated_at)} — ROI enforcement is off and no shadow decisions have been recorded yet; recommendations may still be building a baseline.`;
+    }
+    return `Evaluated ${formatTime(ov.generated_at)} — no pending layout changes found for the tables scanned so far.`;
+  })();
 
   return (
     <div>
@@ -326,6 +429,15 @@ export function SmartMaintenance() {
         actions={<TieringHelpButton />}
       />
 
+      {overview.data ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>Last evaluated {formatTime(overview.data.generated_at)}</span>
+          <Badge variant={overview.data.roi_enforced ? "success" : "secondary"}>
+            {overview.data.roi_enforced ? "ROI enforcement on" : "ROI enforcement off (shadow mode)"}
+          </Badge>
+        </div>
+      ) : null}
+
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Pending" value={recStats.pending} loading={recommendations.isLoading} emphasis={recStats.pending > 0} />
         <MetricTile label="Approved" value={recStats.approved} loading={recommendations.isLoading} />
@@ -333,7 +445,7 @@ export function SmartMaintenance() {
         <MetricTile label="Committed (7d)" value={recStats.committed7d} loading={recommendations.isLoading} />
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tiers">Detection Tiers</TabsTrigger>
@@ -369,7 +481,7 @@ export function SmartMaintenance() {
               onRetry={() => void recommendations.refetch()}
               isEmpty={recommendationItems.length === 0}
               emptyTitle="No layout recommendations"
-              emptyDescription="Sort-order suggestions appear after scan telemetry builds up."
+              emptyDescription={emptyRecommendationsDescription}
             >
               <Card>
                 <CardHeader className="pb-2">
@@ -414,7 +526,7 @@ export function SmartMaintenance() {
         </TabsContent>
       </Tabs>
 
-      <Sheet open={inspectTable !== null} onOpenChange={(open) => !open && setInspectTable(null)}>
+      <Sheet open={Boolean(inspectTableId)} onOpenChange={(open) => !open && closeInspect()}>
         <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>
@@ -423,9 +535,9 @@ export function SmartMaintenance() {
                 : "ROI decision"}
             </SheetTitle>
           </SheetHeader>
-          {inspectTable ? (
+          {inspectTableId ? (
             <div className="mt-4 space-y-4">
-              <Button variant="ghost" className="h-auto p-0 text-primary" onClick={() => navigate(`/tables/${inspectTable.table_id}`)}>
+              <Button variant="ghost" className="h-auto p-0 text-primary" onClick={() => navigate(`/tables/${inspectTableId}`)}>
                 Open table detail
               </Button>
               <Card>

@@ -10,6 +10,7 @@ import { Alert } from "../../components/ui/alert";
 import { Autocomplete } from "../../components/ui/autocomplete";
 import { Button } from "../../components/ui/button";
 import { Collapsible } from "../../components/ui/collapsible";
+import { FormErrorSummary } from "../../components/ui/form-error-summary";
 import { FormField, FormProvider, useForm } from "../../components/ui/form";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -151,14 +152,21 @@ export const SourceDrawer = ({
       return;
     }
     try {
-      onSave({
+      const body: Parameters<typeof onSave>[0] = {
         name: values.name,
         type: values.type,
         config: buildSourceConfig(values),
-        secret_ref: values.secret_ref || null,
         enabled: values.enabled,
         maintenance_schema_names: values.maintenance_schema_names ?? []
-      });
+      };
+      // The API never returns the stored secret_ref (SourceRead omits it entirely), so this field
+      // always starts blank on an edit. Only send it when the user actually typed something --
+      // otherwise the key is omitted from the request body, so patch_source's `exclude_unset`
+      // leaves the existing secret_ref untouched instead of overwriting it with null.
+      if (values.secret_ref?.trim()) {
+        body.secret_ref = values.secret_ref.trim();
+      }
+      onSave(body);
     } catch {
       toast.error("Advanced properties must be valid JSON.");
     }
@@ -172,6 +180,15 @@ export const SourceDrawer = ({
         </SheetHeader>
         <FormProvider {...form}>
           <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(submit)}>
+            <FormErrorSummary<SourceFormValues>
+              labels={{
+                name: "Name",
+                uri: "Catalog URI",
+                s3_role_arn: "Role ARN"
+              }}
+            />
+
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Identity</p>
             <FormField name="name" label="Name">
               {(field) => (
                 <Input
@@ -257,6 +274,12 @@ export const SourceDrawer = ({
             ) : null}
             {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
 
+            {showSchemaFilter ? (
+              <>
+                <Separator />
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tuning</p>
+              </>
+            ) : null}
             {showSchemaFilter ? (
               <FormField
                 name="maintenance_schema_names"
@@ -376,6 +399,7 @@ export const SourceDrawer = ({
                     <Input
                       type="password"
                       autoComplete="off"
+                      placeholder={form.watch("s3_has_secret_access_key") ? "Leave blank to keep the saved key" : ""}
                       value={String(field.value ?? "")}
                       onChange={field.onChange}
                       onBlur={field.onBlur}
@@ -385,6 +409,13 @@ export const SourceDrawer = ({
                   )}
                 </FormField>
               </div>
+            ) : null}
+
+            {s3AuthMethod === "access_key" && form.watch("s3_has_secret_access_key") ? (
+              <p className="text-xs text-muted-foreground -mt-1">
+                A secret access key is already saved for this source. Leave the field blank to keep it, or enter a
+                new value to replace it.
+              </p>
             ) : null}
 
             {s3AuthMethod === "assume_role" ? (
@@ -507,6 +538,12 @@ export const SourceDrawer = ({
                 />
               )}
             </FormField>
+            {isEditing ? (
+              <p className="text-xs text-muted-foreground -mt-2">
+                The API never returns the saved reference, so this field starts blank. Leave it blank to keep the
+                current reference unchanged, or enter a new value to replace it.
+              </p>
+            ) : null}
 
             <div className="flex items-center gap-2">
               <Switch
@@ -516,6 +553,41 @@ export const SourceDrawer = ({
               />
               <Label htmlFor="enabled">Enabled</Label>
             </div>
+
+            <Separator />
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Review</p>
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Name</dt>
+                <dd className="font-medium">{form.watch("name") || "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Catalog type</dt>
+                <dd className="font-medium">{CATALOG_TYPES.find((t) => t.value === catalogType)?.label ?? catalogType}</dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">S3 authentication</dt>
+                <dd className="font-medium">
+                  {S3_AUTH_METHODS.find((m) => m.value === form.watch("s3_auth_method"))?.label ?? "Default"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Schemas for maintenance</dt>
+                <dd className="font-medium">
+                  {(form.watch("maintenance_schema_names") ?? []).length > 0
+                    ? `${(form.watch("maintenance_schema_names") ?? []).length} selected`
+                    : "All schemas"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Enabled</dt>
+                <dd className="font-medium">{form.watch("enabled") ? "Yes" : "No"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Connection test</dt>
+                <dd className="font-medium">{testPassed ? "Passed" : "Not yet passed"}</dd>
+              </div>
+            </dl>
 
             {!testPassed ? (
               <Alert

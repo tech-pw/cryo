@@ -24,6 +24,7 @@ import { GradePill, PriorityTag } from "../components/status";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { ChartDataTable } from "../components/ui/chart-data-table";
 import { MetricGrid } from "../components/ui/metric-grid";
 import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
@@ -66,34 +67,39 @@ const FleetTrendChartPanel = <T extends FleetHealthTrendPoint | FleetCostTrendPo
   title,
   points,
   ariaLabel,
-  children
+  children,
+  dataTable
 }: {
   title: string;
   points: T[];
   ariaLabel: string;
   children: ReactNode;
+  dataTable?: ReactNode;
 }) => (
   <ChartPanel title={title}>
     {points.length < 2 ? (
       <EmptyState title={TREND_EMPTY_TITLE} description={TREND_EMPTY_DESCRIPTION} />
     ) : (
-      <ChartFrame empty={false} ariaLabel={ariaLabel}>
-        {children}
-      </ChartFrame>
+      <>
+        <ChartFrame empty={false} ariaLabel={ariaLabel}>
+          {children}
+        </ChartFrame>
+        {dataTable}
+      </>
     )}
   </ChartPanel>
 );
 
 const HealthPageSkeleton = () => (
   <div className="space-y-4">
-    <MetricGrid columns={4}>
-      {Array.from({ length: 4 }).map((_, index) => (
+    <MetricGrid columns={2}>
+      {Array.from({ length: 2 }).map((_, index) => (
         <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
       ))}
     </MetricGrid>
     <Skeleton className="h-8 w-full max-w-xl" />
-    <MetricGrid columns={5}>
-      {Array.from({ length: 5 }).map((_, index) => (
+    <MetricGrid columns={4}>
+      {Array.from({ length: 4 }).map((_, index) => (
         <Skeleton key={index} className="h-[88px] rounded-[var(--radius-default)]" />
       ))}
     </MetricGrid>
@@ -163,7 +169,7 @@ export const DatalakeHealth = () => {
         subtitle="Datalake posture, cost pressure, and tables most likely to benefit from maintenance."
         actions={
           <>
-            <Link to="/catalogs">
+            <Link to="/catalogs?needsCompaction=1">
               <Button variant="primary">Fix top offenders</Button>
             </Link>
             <Link to="/ai">
@@ -175,6 +181,11 @@ export const DatalakeHealth = () => {
           </>
         }
       />
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {gradeDfCount > 0
+          ? `${formatNumber(gradeDfCount, true)} tables at grade D or F. ${formatNumber(data.totals?.needs_compaction ?? 0)} tables need compaction.`
+          : "No tables currently at grade D or F."}
+      </p>
       {dashboard.isError ? (
         <Alert
           className="page-alert"
@@ -195,7 +206,7 @@ export const DatalakeHealth = () => {
         <HealthPageSkeleton />
       ) : (
         <>
-          <MetricGrid columns={4} className="mb-3">
+          <MetricGrid columns={2} className="mb-3">
             <MetricTile
               label="Tables at grade D/F"
               value={formatNumber(gradeDfCount, true)}
@@ -203,31 +214,17 @@ export const DatalakeHealth = () => {
               delta={dfTrendDelta}
               hint={
                 gradeDfCount > 0 ? (
-                  <Link to="/catalogs" className="text-xs text-primary hover:underline">
+                  <Link to="/catalogs?grades=D,F" className="text-xs text-primary hover:underline">
                     Fix in catalog
                   </Link>
                 ) : undefined
               }
             />
             <MetricTile label="Tracked tables" value={formatNumber(data.totals?.tables, true)} />
-            <MetricTile
-              label="Needs compaction"
-              value={formatNumber(data.totals?.needs_compaction)}
-              emphasis={(data.totals?.needs_compaction ?? 0) > 0}
-            />
-            <MetricTile
-              label="Monthly savings"
-              value={formatCurrency(data.totals?.projected_savings_usd_month)}
-              hint={
-                <Link to="/cost" className="text-xs text-primary hover:underline">
-                  Cost breakdown
-                </Link>
-              }
-            />
           </MetricGrid>
           <GradeDistributionMiniBar distribution={gradeDistribution} />
           <h2 className="mb-2 mt-0 text-sm font-semibold text-foreground">Health</h2>
-          <MetricGrid columns={5} className="mb-4">
+          <MetricGrid columns={4} className="mb-4">
             <MetricTile
               label="Total data size"
               value={formatGb(data.totals?.size_gb)}
@@ -246,7 +243,18 @@ export const DatalakeHealth = () => {
                 </span>
               }
             />
-            <MetricTile label="Needs compaction" value={formatNumber(data.totals?.needs_compaction)} />
+            <MetricTile
+              label="Needs compaction"
+              value={formatNumber(data.totals?.needs_compaction)}
+              emphasis={(data.totals?.needs_compaction ?? 0) > 0}
+              hint={
+                (data.totals?.needs_compaction ?? 0) > 0 ? (
+                  <Link to="/catalogs?needsCompaction=1" className="text-xs text-primary hover:underline">
+                    Fix in catalog
+                  </Link>
+                ) : undefined
+              }
+            />
             <MetricTile
               label="Reclaimable storage"
               value={formatBytesGb(data.totals?.reclaimable_bytes)}
@@ -307,6 +315,28 @@ export const DatalakeHealth = () => {
               title="Fleet health trend"
               points={healthTrend}
               ariaLabel="Fleet average health score over time"
+              dataTable={
+                <ChartDataTable
+                  caption="Fleet average health score and count of tables at grade D or F, per scan day."
+                  rows={healthTrendChartData}
+                  getRowKey={(row) => row.day}
+                  columns={[
+                    { key: "day", header: "Day", render: (row) => row.label },
+                    {
+                      key: "avg_health_score",
+                      header: "Avg health score",
+                      align: "right",
+                      render: (row) => formatNumber(row.avg_health_score)
+                    },
+                    {
+                      key: "tables_at_grade_df",
+                      header: "D/F tables",
+                      align: "right",
+                      render: (row) => formatNumber(row.tables_at_grade_df, true)
+                    }
+                  ]}
+                />
+              }
             >
               <LineChart data={healthTrendChartData}>
                 <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
@@ -339,6 +369,28 @@ export const DatalakeHealth = () => {
               title="Fleet cost trend"
               points={costTrend}
               ariaLabel="Fleet monthly storage cost and projected savings over time"
+              dataTable={
+                <ChartDataTable
+                  caption="Fleet monthly S3 storage cost and projected savings, per scan day."
+                  rows={costTrendChartData}
+                  getRowKey={(row) => row.day}
+                  columns={[
+                    { key: "day", header: "Day", render: (row) => row.label },
+                    {
+                      key: "total_monthly_cost_usd",
+                      header: "Monthly cost",
+                      align: "right",
+                      render: (row) => formatCurrency(row.total_monthly_cost_usd)
+                    },
+                    {
+                      key: "projected_savings_usd_month",
+                      header: "Projected savings",
+                      align: "right",
+                      render: (row) => formatCurrency(row.projected_savings_usd_month)
+                    }
+                  ]}
+                />
+              }
             >
               <LineChart data={costTrendChartData}>
                 <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />

@@ -36,7 +36,7 @@ export function Stat({
 }: StatProps) {
   if (loading) {
     return (
-      <div className={cn("rounded-[var(--radius-default)] border border-border bg-card p-4", className)}>
+      <div className={cn("cryo-metric-tile", className)}>
         <Skeleton className="h-3 w-20" />
         <Skeleton className="mt-2 h-6 w-24" />
         <Skeleton className="mt-2 h-3 w-16" />
@@ -47,18 +47,18 @@ export function Stat({
   return (
     <div
       className={cn(
-        "rounded-[var(--radius-default)] border border-border bg-card p-4",
-        emphasis && "border-l-[3px] border-l-[var(--color-primary)]",
+        "cryo-metric-tile",
+        emphasis && "cryo-metric-tile--emphasis",
         className
       )}
     >
       <div className="flex items-center gap-1.5">
-        <p className="text-[11px] font-medium leading-4 text-muted-foreground">{label}</p>
+        <p className="text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground">{label}</p>
         {hint}
       </div>
       <div className="mt-1 flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xl font-semibold leading-7 text-foreground [font-variant-numeric:tabular-nums]">
+          <p className="text-2xl font-semibold leading-8 tracking-[-0.025em] text-foreground [font-variant-numeric:tabular-nums]">
             {value}
             {suffix ? <span className="ml-1 text-sm font-normal text-muted-foreground">{suffix}</span> : null}
           </p>

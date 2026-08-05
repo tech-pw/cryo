@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { z } from "zod";
 import {
   createTierPolicy,
   deleteTierPolicy,
@@ -12,11 +13,9 @@ import {
   getGitOpsStatus,
   listAbacPolicies,
   listSources,
-  listTables,
   listTierPolicies,
   patchTierPolicy,
-  type TierPolicyRead,
-  type TierPolicyWrite
+  type TierPolicyRead
 } from "../../api/client";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import { ConfirmAction } from "../../components/confirm";
@@ -33,17 +32,40 @@ import {
   DialogHeader,
   DialogTitle
 } from "../../components/ui/dialog";
-import { FormField, FormProvider, useForm } from "../../components/ui/form";
+import { FormField, FormProvider, useZodForm } from "../../components/ui/form";
+import { FormErrorSummary } from "../../components/ui/form-error-summary";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
-import { qualifiedTableName } from "../../lib/tableLabels";
+import { TableSearchSelect } from "./TableSearchSelect";
 
 const TIER_PAGE_SIZE = 8;
 
-type TierPolicyFormValues = TierPolicyWrite;
+const STORAGE_CLASSES = ["STANDARD_IA", "GLACIER", "DEEP_ARCHIVE", "INTELLIGENT_TIERING"] as const;
+type StorageClass = (typeof STORAGE_CLASSES)[number];
+
+const asStorageClass = (value: string): StorageClass =>
+  (STORAGE_CLASSES as readonly string[]).includes(value) ? (value as StorageClass) : "STANDARD_IA";
+
+const tierPolicyFormSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  source_id: z.string().min(1, "Select a source"),
+  storage_class: z.enum(STORAGE_CLASSES, { message: "Select a storage class" }),
+  min_age_days: z.coerce.number().int("Must be a whole number").min(1, "Must be at least 1 day"),
+  predicate: z.record(z.string(), z.unknown()).nullable().optional(),
+  enabled: z.boolean().optional()
+});
+
+type TierPolicyFormValues = z.infer<typeof tierPolicyFormSchema>;
+
+const TIER_POLICY_FIELD_LABELS: Record<string, string> = {
+  name: "Name",
+  source_id: "Source",
+  storage_class: "Storage class",
+  min_age_days: "Minimum age (days)"
+};
 
 export const PoliciesTab = () => {
   const { api, role } = useAuth();
@@ -54,7 +76,7 @@ export const PoliciesTab = () => {
   const [tierPage, setTierPage] = useState(0);
   const [s3Page, setS3Page] = useState(0);
 
-  const policyForm = useForm<TierPolicyFormValues>({
+  const policyForm = useZodForm(tierPolicyFormSchema, {
     defaultValues: {
       name: "",
       source_id: "",
@@ -81,10 +103,6 @@ export const PoliciesTab = () => {
   const sources = useQuery({
     queryKey: ["sources", api.token],
     queryFn: () => listSources(api)
-  });
-  const tableOptions = useQuery({
-    queryKey: ["governance-table-picker", api.token],
-    queryFn: () => listTables(api, { limit: 200, offset: 0 })
   });
   const abacPolicies = useQuery({
     queryKey: ["abac-policies", api.token],
@@ -133,7 +151,7 @@ export const PoliciesTab = () => {
     policyForm.reset({
       name: policy.name,
       source_id: policy.source_id,
-      storage_class: policy.storage_class,
+      storage_class: asStorageClass(policy.storage_class),
       min_age_days: policy.min_age_days,
       enabled: policy.enabled
     });
@@ -379,19 +397,12 @@ export const PoliciesTab = () => {
             <CardTitle>Tier candidates by policy</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            <select
-              className="h-[var(--control-height)] max-w-md rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+            <TableSearchSelect
+              className="max-w-md"
               value={tierTableId}
-              disabled={tableOptions.isLoading}
-              onChange={(event) => setTierTableId(event.target.value)}
-            >
-              <option value="">Select a table to evaluate tier policies</option>
-              {(tableOptions.data?.items ?? []).map((table) => (
-                <option key={table.id} value={table.id}>
-                  {qualifiedTableName(table)}
-                </option>
-              ))}
-            </select>
+              onChange={setTierTableId}
+              placeholder="Select a table to evaluate tier policies"
+            />
             <QueryErrorAlert error={tierCandidates.error} title="Failed to load tier candidates" />
             {tierCandidates.data ? (
               <>
@@ -497,20 +508,37 @@ export const PoliciesTab = () => {
         </div>
       </div>
 
-      <Dialog open={policyModal !== null} onOpenChange={(open) => !open && setPolicyModal(null)}>
+      <Dialog
+        open={policyModal !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPolicyModal(null);
+            saveTierPolicy.reset();
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{policyModal === "new" ? "Create tier policy" : "Edit tier policy"}</DialogTitle>
           </DialogHeader>
+          {saveTierPolicy.isError ? (
+            <Alert
+              variant="error"
+              title="Couldn't save tier policy"
+              description={(saveTierPolicy.error as Error).message}
+              onDismiss={() => saveTierPolicy.reset()}
+            />
+          ) : null}
           <FormProvider {...policyForm}>
             <form
               className="flex flex-col gap-3"
               onSubmit={policyForm.handleSubmit((values) => saveTierPolicy.mutate(values))}
             >
-              <FormField name="name" label="Name">
+              <FormErrorSummary<TierPolicyFormValues> labels={TIER_POLICY_FIELD_LABELS} />
+              <FormField<TierPolicyFormValues> name="name" label="Name">
                 {(field) => <Input {...field} value={String(field.value ?? "")} />}
               </FormField>
-              <FormField name="source_id" label="Source">
+              <FormField<TierPolicyFormValues> name="source_id" label="Source">
                 {(field) => (
                   <select
                     className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
@@ -526,7 +554,7 @@ export const PoliciesTab = () => {
                   </select>
                 )}
               </FormField>
-              <FormField name="storage_class" label="Storage class">
+              <FormField<TierPolicyFormValues> name="storage_class" label="Storage class">
                 {(field) => (
                   <select
                     className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
@@ -540,7 +568,7 @@ export const PoliciesTab = () => {
                   </select>
                 )}
               </FormField>
-              <FormField name="min_age_days" label="Minimum age (days)">
+              <FormField<TierPolicyFormValues> name="min_age_days" label="Minimum age (days)">
                 {(field) => (
                   <Input
                     type="number"

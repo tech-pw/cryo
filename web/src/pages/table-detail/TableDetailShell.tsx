@@ -1,5 +1,7 @@
 import { lazy, Suspense } from "react";
+import { Link } from "react-router-dom";
 import { PlanPreview } from "../../components/PlanPreview";
+import { ConfirmAction } from "../../components/confirm";
 import { AssetHeader } from "../../components/table-detail/AssetHeader";
 import { EngineActionStrip } from "../../components/table-detail/EngineActionStrip";
 import { TableSettingsSheet } from "../../components/table-detail/TableSettingsSheet";
@@ -14,7 +16,10 @@ import {
 } from "../../components/table-detail/tableDetailTabLabels";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { EmptyState } from "../../components/ui/empty-state";
+import { PageHeader } from "../../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { formatTime } from "../../lib/format";
 import { TableDetailProvider } from "./TableDetailContext";
 import { useTableDetail } from "./useTableDetail";
 
@@ -84,21 +89,24 @@ export const TableDetailShell = () => {
   if (!row && !table.isLoading) {
     return (
       <div className="table-detail">
-        <div className="td-breadcrumbs">
-          <span className="td-breadcrumb-item" onClick={() => navigate("/")}>
-            Home
-          </span>
-          <span className="td-breadcrumb-separator">/</span>
-          <span className="td-breadcrumb-item">Catalogs</span>
-        </div>
-        <div className="td-identity-bar" style={{ marginTop: 8 }}>
-          <div className="td-identity-info">
-            <h3 className="m-0 text-xl font-bold text-foreground">Table not found</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              The table may not have been scanned yet or has been removed.
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          title="Table not found"
+          subtitle="It may not have been scanned yet, was removed from the catalog, or this link is out of date."
+        />
+        <EmptyState
+          title="This table couldn't be found"
+          description="Search the catalog to find it under a different source or schema, or go back to Datalake health to see what's currently tracked."
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Link to="/catalogs">
+                <Button variant="primary">Search catalogs</Button>
+              </Link>
+              <Link to="/">
+                <Button variant="secondary">Go to Datalake health</Button>
+              </Link>
+            </div>
+          }
+        />
       </div>
     );
   }
@@ -132,20 +140,30 @@ export const TableDetailShell = () => {
               className="mb-4"
               title="Silent data loss detected"
               description={
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1.5">
                   <span>
                     {silentLoss.data.orphan_data_files.length} orphan data file(s) totaling{" "}
                     {(silentLoss.data.orphan_size_bytes / 1024 / 1024).toFixed(1)} MB outside any committed
-                    snapshot. Root cause: {silentLoss.data.root_cause}.
+                    snapshot. Root cause: {silentLoss.data.root_cause}. Detected {formatTime(silentLoss.data.detected_at)}.
                   </span>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    loading={repairSilentLoss.isPending}
-                    onClick={() => repairSilentLoss.mutate()}
+                  <span className="text-xs text-muted-foreground">
+                    Known scope: this only checks the files Cryo already knows about from the last scan; it does not
+                    rewrite manifests and cannot delete or commit anything from this page.
+                  </span>
+                  <ConfirmAction
+                    title="Run a Spark dry-run check?"
+                    description={`Dispatches a Spark-on-K8s job that lists ${silentLoss.data.orphan_data_files.length} suspected orphan data file(s) (${(silentLoss.data.orphan_size_bytes / 1024 / 1024).toFixed(1)} MB) against S3 storage to confirm they're really orphaned. This is a dry run: it does not rewrite manifests, and it does not delete or commit anything -- it only reports what it finds. Requires a configured Spark-on-K8s fallback destination for this table's source. Committing an actual repair is not available from this UI.`}
+                    okText="Run dry-run check"
+                    onConfirm={() => repairSilentLoss.mutate()}
                   >
-                    Repair (rewrite manifests)
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={repairSilentLoss.isPending}
+                    >
+                      Run Spark dry-run check
+                    </Button>
+                  </ConfirmAction>
                 </div>
               }
             />

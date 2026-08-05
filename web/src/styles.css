@@ -1,6 +1,77 @@
 /* IBM Plex Sans & Mono fonts are bundled locally via @fontsource imports in main.tsx */
 /* Theme tokens, base resets, and focus rings live in styles/tokens.css + tailwind.css */
 
+.cryo-page-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cryo-page-header__breadcrumbs {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cryo-page-header__breadcrumbs .ant-breadcrumb {
+  margin-bottom: 0;
+}
+
+.cryo-page-header__body {
+  display: flex;
+  min-height: 48px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 24px;
+}
+
+.cryo-page-header__copy {
+  min-width: 0;
+  max-width: 72ch;
+}
+
+.cryo-page-header__title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 32px;
+  letter-spacing: -0.025em;
+}
+
+.cryo-page-header__subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.cryo-page-header__actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cryo-metric-tile {
+  position: relative;
+  overflow: hidden;
+  min-height: 92px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-card);
+}
+
+.cryo-metric-tile--emphasis {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 26%, var(--bg));
+}
+
 /* Responsive grid utilities — replaces bespoke media queries in pages */
 .cryo-grid {
   display: grid;
@@ -531,6 +602,15 @@ textarea.mono-input {
   .bulk-bar {
     width: 100%;
     max-width: none;
+  }
+
+  .cryo-page-header__body,
+  .cryo-page-header__actions {
+    width: 100%;
+  }
+
+  .cryo-page-header__actions {
+    justify-content: flex-start;
   }
 }
 
@@ -2314,6 +2394,13 @@ textarea.mono-input {
   display: flex;
   gap: 3px;
   align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ops-mini-bar__item {
+  display: contents;
 }
 
 .ops-mini-bar__cell {
@@ -2555,4 +2642,3 @@ textarea.mono-input {
   color: var(--muted, #5c667a);
   line-height: 1.45;
 }
-

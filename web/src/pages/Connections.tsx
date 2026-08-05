@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Alert } from "../components/ui/alert";
 import { PageHeader } from "../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -6,6 +8,7 @@ import { CatalogLatencyModal } from "./connections/CatalogLatencyModal";
 import { ConnectionDrawers } from "./connections/ConnectionDrawers";
 import { ConnectionsKpiRow } from "./connections/ConnectionsKpiRow";
 import { ConnectionsProvider, useConnectionsContext } from "./connections/ConnectionsContext";
+import { DestinationTestResultPanel } from "./connections/DestinationTestResultPanel";
 import { EnginesTab } from "./connections/EnginesTab";
 import { LakehousesTab } from "./connections/LakehousesTab";
 import { OpsTab, OpsTabLabel } from "./connections/OpsTab";
@@ -13,21 +16,47 @@ import { SlackTab, SlackTabLabel } from "./connections/SlackTab";
 
 export { formatSourceTestSuccessMessage } from "./connections/helpers";
 
+const CONNECTIONS_TAB_KEYS = ["sources", "destinations", "ai-providers", "slack", "ops"] as const;
+type ConnectionsTabKey = (typeof CONNECTIONS_TAB_KEYS)[number];
+const DEFAULT_CONNECTIONS_TAB: ConnectionsTabKey = "sources";
+
+const isConnectionsTabKey = (value: string | null, isAdmin: boolean): value is ConnectionsTabKey =>
+  value !== null &&
+  (CONNECTIONS_TAB_KEYS as readonly string[]).includes(value) &&
+  (value !== "ops" || isAdmin);
+
 const ConnectionsTabs = () => {
   const { role, testResult, setTestResult } = useConnectionsContext();
+  const isAdmin = role === "admin";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get("tab");
+  const tabFromUrl: ConnectionsTabKey = isConnectionsTabKey(urlTab, isAdmin) ? urlTab : DEFAULT_CONNECTIONS_TAB;
+  const [activeTab, setActiveTab] = useState<ConnectionsTabKey>(tabFromUrl);
+
+  useEffect(() => {
+    setActiveTab(tabFromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabFromUrl]);
+
+  const handleTabChange = useCallback(
+    (key: string) => {
+      if (!isConnectionsTabKey(key, isAdmin)) return;
+      setActiveTab(key);
+      const next = new URLSearchParams(searchParams);
+      if (key === DEFAULT_CONNECTIONS_TAB) {
+        next.delete("tab");
+      } else {
+        next.set("tab", key);
+      }
+      setSearchParams(next, { replace: true });
+    },
+    [isAdmin, searchParams, setSearchParams]
+  );
 
   return (
     <>
-      {testResult ? (
-        <Alert
-          className="page-alert"
-          variant={testResult.ok ? "success" : "warning"}
-          title={testResult.ok ? "Engine capacity check passed" : "Engine capacity check returned warnings"}
-          description={<pre className="inline-json mt-1 overflow-x-auto text-xs">{JSON.stringify(testResult, null, 2)}</pre>}
-          onDismiss={() => setTestResult(null)}
-        />
-      ) : null}
-      <Tabs defaultValue="sources">
+      {testResult ? <DestinationTestResultPanel result={testResult} onDismiss={() => setTestResult(null)} /> : null}
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="sources">Lakehouses</TabsTrigger>
           <TabsTrigger value="destinations">Engines</TabsTrigger>
@@ -37,28 +66,18 @@ const ConnectionsTabs = () => {
           <TabsTrigger value="slack">
             <SlackTabLabel />
           </TabsTrigger>
-          {role === "admin" ? (
+          {isAdmin ? (
             <TabsTrigger value="ops">
               <OpsTabLabel />
             </TabsTrigger>
           ) : null}
         </TabsList>
-        <TabsContent value="sources">
-          <LakehousesTab />
-        </TabsContent>
-        <TabsContent value="destinations">
-          <EnginesTab />
-        </TabsContent>
-        <TabsContent value="ai-providers">
-          <AiProvidersTab />
-        </TabsContent>
-        <TabsContent value="slack">
-          <SlackTab />
-        </TabsContent>
-        {role === "admin" ? (
-          <TabsContent value="ops">
-            <OpsTab />
-          </TabsContent>
+        <TabsContent value="sources">{activeTab === "sources" ? <LakehousesTab /> : null}</TabsContent>
+        <TabsContent value="destinations">{activeTab === "destinations" ? <EnginesTab /> : null}</TabsContent>
+        <TabsContent value="ai-providers">{activeTab === "ai-providers" ? <AiProvidersTab /> : null}</TabsContent>
+        <TabsContent value="slack">{activeTab === "slack" ? <SlackTab /> : null}</TabsContent>
+        {isAdmin ? (
+          <TabsContent value="ops">{activeTab === "ops" ? <OpsTab /> : null}</TabsContent>
         ) : null}
       </Tabs>
     </>

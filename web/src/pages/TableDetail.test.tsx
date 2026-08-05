@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runMaintenance, triggerScan } from "../api/client";
+import { getSilentDataLoss, repairSilentDataLoss, runMaintenance, triggerScan } from "../api/client";
 import { TableDetail } from "./TableDetail";
 
 vi.mock("../lib/auth", () => ({
@@ -335,6 +335,7 @@ const renderTableDetail = (initialEntry = "/tables/table-1") => {
 
 describe("TableDetail page", () => {
   beforeEach(() => {
+    vi.mocked(repairSilentDataLoss).mockClear();
     vi.mocked(triggerScan).mockResolvedValue({
       run_id: "scan-run-1",
       status: "accepted",
@@ -354,6 +355,95 @@ describe("TableDetail page", () => {
     expect(await screen.findByText("public.events")).toBeInTheDocument();
     expect((await screen.findAllByText("Cost & Savings")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Health Score")).toBeInTheDocument();
+  }, 15000);
+
+  it("requires confirmation before running the silent-data-loss dry-run check, and never claims a repair/commit", async () => {
+    vi.mocked(getSilentDataLoss).mockResolvedValueOnce({
+      table_id: "table-1",
+      snapshot_id: 42,
+      orphan_data_files: ["s3://bucket/orphan-1.parquet", "s3://bucket/orphan-2.parquet"],
+      orphan_size_bytes: 10485760,
+      missing_files: [],
+      detected_at: "2026-07-01T00:00:00Z",
+      root_cause: "manifest drift",
+      is_clean: false
+    });
+
+    renderTableDetail();
+
+    // The action must be honestly labeled as a dry run -- it must never claim to repair,
+    // rewrite manifests, commit, or delete anything, since the backend always runs with
+    // commit=false from this UI.
+    expect(screen.queryByRole("button", { name: /repair/i })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Run Spark dry-run check" }));
+    expect(repairSilentDataLoss).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("dry run");
+    expect(dialog).toHaveTextContent("does not rewrite manifests");
+    expect(dialog).toHaveTextContent("does not delete or commit anything");
+    expect(dialog).toHaveTextContent("2 suspected orphan data file(s)");
+    expect(dialog).toHaveTextContent("10.0 MB");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run dry-run check" }));
+    await waitFor(() => expect(repairSilentDataLoss).toHaveBeenCalledTimes(1));
+  }, 15000);
+
+  it("surfaces silent-data-loss evidence and known limitations in the alert body", async () => {
+    vi.mocked(getSilentDataLoss).mockResolvedValueOnce({
+      table_id: "table-1",
+      snapshot_id: 42,
+      orphan_data_files: ["s3://bucket/orphan-1.parquet"],
+      orphan_size_bytes: 5242880,
+      missing_files: [],
+      detected_at: "2026-07-01T00:00:00Z",
+      root_cause: "manifest drift",
+      is_clean: false
+    });
+
+    renderTableDetail();
+
+    expect(await screen.findByText("Silent data loss detected")).toBeInTheDocument();
+    expect(screen.getByText(/1 orphan data file\(s\) totaling 5\.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/Root cause: manifest drift/)).toBeInTheDocument();
+    expect(screen.getByText(/only checks the files Cryo already knows about/i)).toBeInTheDocument();
+  }, 15000);
+
+  it("shows an honest not-found state with recovery links when the table can't be loaded", async () => {
+    const { getTable } = await import("../api/client");
+    vi.mocked(getTable).mockResolvedValueOnce(undefined as never);
+
+    renderTableDetail();
+
+    expect(await screen.findByText("Table not found")).toBeInTheDocument();
+    expect(screen.getByText("This table couldn't be found")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search catalogs" })).toHaveAttribute("href", "/catalogs");
+    expect(screen.getByRole("link", { name: "Go to Datalake health" })).toHaveAttribute("href", "/");
+  }, 15000);
+
+  it("defaults to the Overview tab, keeps the active tab and URL in sync when clicking a tab", async () => {
+    renderTableDetail();
+    expect(await screen.findByText("public.events")).toBeInTheDocument();
+
+    const overviewTab = screen.getByRole("tab", { name: /Overview/ });
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+
+    const structureTab = screen.getByRole("tab", { name: /Structure/ });
+    // Radix's Tabs selects on mousedown/focus (automatic activation mode), not on the
+    // synthetic "click" event alone.
+    fireEvent.mouseDown(structureTab);
+
+    await waitFor(() => expect(structureTab).toHaveAttribute("aria-selected", "true"));
+    expect(overviewTab).toHaveAttribute("aria-selected", "false");
+  }, 15000);
+
+  it("restores the active tab from the ?tab= URL param on load", async () => {
+    renderTableDetail("/tables/table-1?tab=cost");
+    expect(await screen.findByText("public.events")).toBeInTheDocument();
+
+    const costTab = await screen.findByRole("tab", { name: /Cost/ });
+    await waitFor(() => expect(costTab).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: /Overview/ })).toHaveAttribute("aria-selected", "false");
   }, 15000);
 
   it("queues scan without redirecting until follow-up click", async () => {

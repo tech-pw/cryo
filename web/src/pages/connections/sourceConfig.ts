@@ -1,4 +1,5 @@
-import { KNOWN_SOURCE_KEYS, type SourceFormValues } from "./constants";
+import { KNOWN_SOURCE_KEYS, REDACTED_PLACEHOLDER, type SourceFormValues } from "./constants";
+import { isRedactedPlaceholder } from "./helpers";
 
 export const decomposeSourceConfig = (config: Record<string, unknown> | undefined) => {
   const cfg = config ?? {};
@@ -11,6 +12,16 @@ export const decomposeSourceConfig = (config: Record<string, unknown> | undefine
     s3_auth_method = "access_key";
   }
 
+  const rawSecretAccessKey = cfg["s3.secret-access-key"];
+  // The API always redacts this key (see cryo/api/redact.py) once a source has been saved with
+  // one, so never pre-fill the editable input with the literal "***REDACTED***" placeholder --
+  // show a blank field with a "leave blank to keep it" hint instead (see SourceDrawer.tsx).
+  const s3_has_secret_access_key = typeof rawSecretAccessKey === "string" && rawSecretAccessKey.length > 0;
+  const s3_secret_access_key =
+    typeof rawSecretAccessKey === "string" && !isRedactedPlaceholder(rawSecretAccessKey)
+      ? rawSecretAccessKey
+      : undefined;
+
   return {
     uri: typeof cfg.uri === "string" ? cfg.uri : undefined,
     warehouse: typeof cfg.warehouse === "string" ? cfg.warehouse : undefined,
@@ -19,8 +30,8 @@ export const decomposeSourceConfig = (config: Record<string, unknown> | undefine
     s3_endpoint: typeof cfg["s3.endpoint"] === "string" ? (cfg["s3.endpoint"] as string) : undefined,
     s3_region: typeof cfg["s3.region"] === "string" ? (cfg["s3.region"] as string) : undefined,
     s3_access_key_id: typeof cfg["s3.access-key-id"] === "string" ? (cfg["s3.access-key-id"] as string) : undefined,
-    s3_secret_access_key:
-      typeof cfg["s3.secret-access-key"] === "string" ? (cfg["s3.secret-access-key"] as string) : undefined,
+    s3_secret_access_key,
+    s3_has_secret_access_key,
     s3_role_arn: typeof cfg["s3.role-arn"] === "string" ? (cfg["s3.role-arn"] as string) : undefined,
     s3_external_id: typeof cfg["s3.external-id"] === "string" ? (cfg["s3.external-id"] as string) : undefined,
     s3_role_session_name:
@@ -46,7 +57,15 @@ export const buildSourceConfig = (values: SourceFormValues): Record<string, unkn
 
   if (values.s3_auth_method === "access_key") {
     if (values.s3_access_key_id) config["s3.access-key-id"] = values.s3_access_key_id;
-    if (values.s3_secret_access_key) config["s3.secret-access-key"] = values.s3_secret_access_key;
+    if (values.s3_secret_access_key) {
+      config["s3.secret-access-key"] = values.s3_secret_access_key;
+    } else if (values.s3_has_secret_access_key) {
+      // Left blank on an edit that already has a secret saved -- omitting the key entirely would
+      // also be preserved server-side (see patch_source's unredact_merge), but resubmitting the
+      // sentinel makes the "keep the existing secret" intent explicit and matches how the
+      // Destination auth password is handled, where omission is not an option.
+      config["s3.secret-access-key"] = REDACTED_PLACEHOLDER;
+    }
   } else if (values.s3_auth_method === "assume_role") {
     if (values.s3_role_arn) config["s3.role-arn"] = values.s3_role_arn;
     if (values.s3_external_id) config["s3.external-id"] = values.s3_external_id;

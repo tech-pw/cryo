@@ -77,19 +77,21 @@ export const MiniRunHistoryBar = ({
   const placeholders = Math.max(0, max - cells.length);
 
   return (
-    <div className="ops-mini-bar" role="img" aria-label={`Last ${cells.length} runs`}>
+    <ul className="ops-mini-bar" aria-label={`Last ${cells.length} runs`}>
       {cells.map((run) => (
-        <Link
-          key={run.id}
-          to={runPath(run.id)}
-          className={`ops-mini-bar__cell ${STATUS_CELL[run.status] ?? "ops-mini-bar__cell--muted"}`}
-          title={`${shortId(run.id)} · ${run.status} · ${formatTime(run.created_at)}`}
-          onClick={(event) => event.stopPropagation()}
-        />
+        <li key={run.id} className="ops-mini-bar__item">
+          <Link
+            to={runPath(run.id)}
+            className={`ops-mini-bar__cell ${STATUS_CELL[run.status] ?? "ops-mini-bar__cell--muted"}`}
+            aria-label={`Run ${shortId(run.id)}, ${run.status}, ${formatTime(run.created_at)}`}
+            title={`${shortId(run.id)} · ${run.status} · ${formatTime(run.created_at)}`}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </li>
       ))}
       {Array.from({ length: placeholders }).map((_, idx) => (
-        <span key={`ph-${idx}`} className="ops-mini-bar__cell ops-mini-bar__cell--empty" aria-hidden />
+        <li key={`ph-${idx}`} className="ops-mini-bar__cell ops-mini-bar__cell--empty" aria-hidden />
       ))}
-    </div>
+    </ul>
   );
 };
