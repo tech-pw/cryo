@@ -32,6 +32,7 @@ vi.mock("../api/client", () => ({
   listDestinations: vi.fn(),
   getCostModelEvaluate: vi.fn(),
   getSchemaCost: vi.fn(),
+  exportTablesCsv: vi.fn(),
   assignTables: vi.fn(),
   runMaintenance: vi.fn(),
   runManifestRewrite: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
+  exportTablesCsv,
   getMultiCatalogDashboard,
   listDestinations,
   listPresets,
@@ -103,6 +105,7 @@ describe("Consolidated Catalog page", () => {
     window.localStorage.clear();
     vi.mocked(listPresets).mockResolvedValue([]);
     vi.mocked(listDestinations).mockResolvedValue([]);
+    vi.mocked(exportTablesCsv).mockResolvedValue("source,qualified_table\ncatalog,analytics.orders\n");
     vi.mocked(listTables).mockResolvedValue({
       items: [],
       total: 0,
@@ -195,6 +198,7 @@ describe("Consolidated Catalog page", () => {
       limit: 50,
       offset: 0
     });
+
     renderPage();
 
     await screen.findByRole("button", { name: /export csv/i });
@@ -206,6 +210,49 @@ describe("Consolidated Catalog page", () => {
       expect(location).toContain("grades=D%2CF");
       expect(location).toContain("sort=-small_files_count");
     });
+  });
+
+  it("preserves a freshness drill-down and sends exact timestamp bounds to the server", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 1,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [SAMPLE_TABLE],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+    window.localStorage.setItem("cryo.catalog.defaultView.v1", "Health triage");
+
+    renderPage("/catalogs?freshness=3_7d&freshnessAsOf=2026-08-04T12%3A00%3A00Z");
+
+    expect(await screen.findByText("Freshness view: Not updated 3-7 days")).toBeInTheDocument();
+    await waitFor(() => {
+      const freshnessCall = vi.mocked(listTables).mock.calls.find(([, args]) =>
+        JSON.stringify(args?.predicate).includes("last_snapshot_committed_at")
+      );
+      expect(freshnessCall).toBeDefined();
+      const serialized = JSON.stringify(freshnessCall?.[1].predicate);
+      expect(serialized).toContain("2026-08-01T12:00:00.000Z");
+      expect(serialized).toContain("2026-07-28T12:00:00.000Z");
+      expect(serialized).toContain("consecutive_scan_failures");
+    });
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("freshness=3_7d");
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+    await waitFor(() => {
+      expect(exportTablesCsv).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          predicate: expect.objectContaining({ all: expect.any(Array) })
+        })
+      );
+    });
+    anchorClick.mockRestore();
   });
 
   it("controls column visibility via a native popover + checkboxes, scoped to the table explorer only", async () => {

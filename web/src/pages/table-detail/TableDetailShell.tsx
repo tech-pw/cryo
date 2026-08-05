@@ -65,8 +65,6 @@ export const TableDetailShell = () => {
     navigate,
     stats,
     sourceName,
-    effectivePreset,
-    effectiveDestination,
     lastSnapshotCommittedAt,
     score,
     savingsDisplay,
@@ -119,8 +117,6 @@ export const TableDetailShell = () => {
           row={row}
           stats={stats}
           sourceName={sourceName}
-          effectivePreset={effectivePreset}
-          effectiveDestination={effectiveDestination}
           lastSnapshotCommittedAt={lastSnapshotCommittedAt}
           score={score}
           savingsDisplay={savingsDisplay}

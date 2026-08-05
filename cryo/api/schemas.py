@@ -589,6 +589,7 @@ class TableStatsRead(OrmModel):
     delete_file_pct: float | None = None
     detection_tier: str | None = None
     snapshot_watermark: int | None = None
+    last_snapshot_committed_at: datetime | None = None
     last_full_reconcile_at: datetime | None = None
     manifest_count: int | None = None
     partition_col: str | None = None
@@ -827,6 +828,12 @@ class GradeDistributionItem(BaseModel):
     count: int
 
 
+class FreshnessDistributionItem(BaseModel):
+    key: str
+    label: str
+    count: int
+
+
 class DashboardTopOffender(BaseModel):
     table_id: uuid.UUID
     schema_name: str
@@ -852,6 +859,8 @@ class DashboardDriftPoint(BaseModel):
 class DatalakeDashboardResponse(BaseModel):
     totals: DatalakeTotals
     grade_distribution: list[GradeDistributionItem]
+    freshness_distribution: list[FreshnessDistributionItem] = Field(default_factory=list)
+    freshness_as_of: datetime | None = None
     top_offenders: list[DashboardTopOffender]
     drift: list[DashboardDriftPoint]
     cost_by_schema: list[CostSchemaItem] = Field(default_factory=list)

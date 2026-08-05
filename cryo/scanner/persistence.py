@@ -426,6 +426,9 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         snapshot_watermark = int(current_snapshot_id) if current_snapshot_id is not None else None
     except (TypeError, ValueError):
         snapshot_watermark = None
+    last_snapshot_committed_at = _parse_optional_datetime(
+        (analysis.raw or {}).get("last_snapshot_committed_at")
+    )
 
     return {
         "table_id": table_id,
@@ -449,6 +452,7 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         "position_delete_files": int((analysis.raw or {}).get("position_delete_files") or 0),
         "delete_file_pct": analysis.delete_file_pct,
         "snapshot_watermark": snapshot_watermark,
+        "last_snapshot_committed_at": last_snapshot_committed_at,
         "last_full_reconcile_at": analysis.scan_at,
         "manifest_count": analysis.manifest_count,
         "partition_col": analysis.partition_col,
@@ -466,6 +470,17 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         "reclaimable_bytes": analysis.cost.reclaimable_bytes if analysis.cost else None,
         "raw": raw,
     }
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _count_commits_in_window(

@@ -151,11 +151,7 @@ interface ActNowSectionProps {
   statsRaw: Record<string, unknown>;
   reclaimableBytes: number;
   savingsUsd: number;
-  presetOptions: { label: string; value: string }[];
-  presetsLoading: boolean;
   effectivePresetId?: string;
-  onAssignPreset: (presetId: string) => void;
-  assignPending: boolean;
   onRun: () => void;
   runPending: boolean;
   queuedMaintenanceRunId?: string | null;
@@ -177,11 +173,7 @@ export const ActNowSection = ({
   statsRaw,
   reclaimableBytes,
   savingsUsd,
-  presetOptions,
-  presetsLoading,
   effectivePresetId,
-  onAssignPreset,
-  assignPending,
   onRun,
   runPending,
   queuedMaintenanceRunId,
@@ -286,26 +278,76 @@ export const ActNowSection = ({
         </ChartCard>
       ) : null}
       <div className="td-act-now-header">
-        <span className="td-chart-card-title">Act now</span>
+        <div>
+          <h2 className="td-chart-card-title">Priority actions</h2>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Resolve the highest-impact findings first.
+          </p>
+        </div>
         <Badge variant="danger" className="m-0">
           {issues.length}
         </Badge>
-        <div className="flex-1" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">Engine preset:</span>
-          <select
-            className="flex h-7 w-40 rounded-[var(--radius-default)] border border-border bg-background px-2 text-xs"
-            value={effectivePresetId ?? ""}
-            disabled={assignPending || presetsLoading}
-            onChange={(e) => onAssignPreset(e.target.value)}
+        <div className="td-act-now-actions">
+          <Button size="sm" variant="secondary" onClick={onPreview}>
+            Preview plan
+          </Button>
+          <ConfirmAction
+            title="Run maintenance now?"
+            description={`This queues maintenance for ${tableLabel} using the assigned engine preset.`}
+            onConfirm={handleRun}
           >
-            <option value="">Assign preset</option>
-            {presetOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            <Button size="sm" variant="primary" disabled={!effectivePresetId}>
+              Act now
+            </Button>
+          </ConfirmAction>
+          <Popover
+            open={pickerOpenFor === "section"}
+            onOpenChange={(open) => {
+              setPickerOpenFor(open ? "section" : null);
+              if (!open) setPickedTime("");
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button size="sm" variant="secondary" disabled={!effectivePresetId}>
+                <Calendar className="size-3.5" />
+                Schedule…
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80">
+              <p className="mb-2 text-sm font-medium">Schedule for a specific time</p>
+              <div className="flex flex-col gap-2">
+                <input
+                  type="datetime-local"
+                  className="flex h-8 w-full rounded-[var(--radius-default)] border border-border bg-background px-2 text-xs"
+                  value={pickedTime}
+                  min={minScheduleLocal()}
+                  onChange={(e) => setPickedTime(e.target.value)}
+                />
+                <span className="block text-[11px] text-muted-foreground">
+                  Runs through the same engine preset and Governor checks as Act now, just deferred
+                  until this time.
+                </span>
+                <ConfirmAction
+                  title="Schedule this run?"
+                  description={
+                    pickedTime
+                      ? `Queues maintenance for ${tableLabel} at ${new Date(pickedTime).toLocaleString()}, using the assigned engine preset.`
+                      : "Pick a time first."
+                  }
+                  onConfirm={handleSchedule}
+                >
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={!pickedTime || !effectivePresetId}
+                    className="w-full"
+                  >
+                    Schedule
+                  </Button>
+                </ConfirmAction>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
       <div className="td-act-now-list">
@@ -342,63 +384,6 @@ export const ActNowSection = ({
                 {issue.recommendation}
               </span>
             ) : null}
-            <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={onPreview}>
-                Preview
-              </Button>
-              <ConfirmAction
-                title="Run maintenance now?"
-                description={`This queues maintenance for ${tableLabel} using the assigned engine preset.`}
-                onConfirm={handleRun}
-              >
-                <Button size="sm" variant="primary" disabled={!effectivePresetId}>
-                  Act now
-                </Button>
-              </ConfirmAction>
-              <Popover
-                open={pickerOpenFor === issue.id}
-                onOpenChange={(open) => {
-                  setPickerOpenFor(open ? issue.id : null);
-                  if (!open) setPickedTime("");
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <Button size="sm" variant="secondary" disabled={!effectivePresetId}>
-                    <Calendar className="size-3.5" />
-                    Schedule…
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80">
-                  <p className="mb-2 text-sm font-medium">Schedule for a specific time</p>
-                  <div className="flex flex-col gap-2">
-                    <input
-                      type="datetime-local"
-                      className="flex h-8 w-full rounded-[var(--radius-default)] border border-border bg-background px-2 text-xs"
-                      value={pickedTime}
-                      min={minScheduleLocal()}
-                      onChange={(e) => setPickedTime(e.target.value)}
-                    />
-                    <span className="block text-[11px] text-muted-foreground">
-                      Runs through the same engine preset and Governor checks as Act now, just
-                      deferred until this time.
-                    </span>
-                    <ConfirmAction
-                      title="Schedule this run?"
-                      description={
-                        pickedTime
-                          ? `Queues maintenance for ${tableLabel} at ${new Date(pickedTime).toLocaleString()}, using the assigned engine preset.`
-                          : "Pick a time first."
-                      }
-                      onConfirm={handleSchedule}
-                    >
-                      <Button size="sm" variant="primary" disabled={!pickedTime || !effectivePresetId} className="w-full">
-                        Schedule
-                      </Button>
-                    </ConfirmAction>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
           </div>
         ))}
       </div>
