@@ -397,6 +397,13 @@ def update_partition_benefit_scores(
     if not partitions:
         return 0
 
+    from cryo.intelligence.autocomp_feedback import realized_value_multiplier
+
+    table_stats = session.get(TableStats, table_id)
+    feedback_multiplier = realized_value_multiplier(
+        table_stats.raw if table_stats is not None else None
+    )
+
     total_queries = (
         session.scalar(
             select(func.count(QueryLog.id)).where(
@@ -443,10 +450,14 @@ def update_partition_benefit_scores(
         size_gb = partition.partition_size_gb or 0.1
         frequency = frequencies[i]
 
-        score = compute_benefit_score(
-            small_files=small_files,
-            query_frequency=frequency,
-            partition_size_gb=size_gb,
+        score = round(
+            compute_benefit_score(
+                small_files=small_files,
+                query_frequency=frequency,
+                partition_size_gb=size_gb,
+            )
+            * feedback_multiplier,
+            4,
         )
 
         partition.query_frequency = frequency
@@ -502,9 +513,19 @@ def update_table_effectiveness(session: Session, table_id: uuid.UUID) -> bool:
     if stats is None:
         return False
     effectiveness = get_compaction_effectiveness_stats(session, table_id)
+    from cryo.intelligence.autocomp_feedback import build_autocomp_realized_value
+    from cryo.intelligence.outcomes import build_outcome_dataset
+
+    realized_value = build_autocomp_realized_value(
+        build_outcome_dataset(session, table_id=table_id, limit=200)
+    )
     raw = dict(stats.raw or {})
     raw["compaction_effectiveness"] = {
         **effectiveness,
+        "computed_at": datetime.now(UTC).isoformat(),
+    }
+    raw["autocomp_realized_value"] = {
+        **realized_value.to_dict(),
         "computed_at": datetime.now(UTC).isoformat(),
     }
     stats.raw = raw
@@ -688,7 +709,7 @@ def get_compaction_effectiveness_stats(
         ).where(
             AuditLog.table_id == table_id,
             AuditLog.action == "optimize",
-            AuditLog.status == "ok",
+            func.upper(AuditLog.status) == "OK",
             AuditLog.ts >= since,
             AuditLog.input_files_count.isnot(None),
         )

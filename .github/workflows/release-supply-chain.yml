@@ -18,6 +18,22 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Install locked migration runtime
+        run: python -m pip install --require-hashes --requirement requirements.lock
+
+      - name: Build bidirectional migration evidence
+        run: |
+          python scripts/build_upgrade_rollback_evidence.py \
+            --revision "${GITHUB_SHA}" \
+            --output "cryo-${GITHUB_REF_NAME}-upgrade-rollback.json"
+
+      - name: Upload migration evidence
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: "cryo-${{ github.ref_name }}-upgrade-rollback"
+          path: "cryo-${{ github.ref_name }}-upgrade-rollback.json"
+          retention-days: 90
+
       - name: Build fail-closed release evidence dossier
         run: |
           python scripts/build_release_dossier.py \

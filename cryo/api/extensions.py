@@ -499,6 +499,152 @@ def evaluate_learned_cost_model(session: SessionDep) -> CostModelEvaluateRespons
     )
 
 
+class IntervalGroupEvaluationResponse(BaseModel):
+    engine: str | None
+    action: str
+    scope: str | None
+    n_samples: int
+    n_evaluated: int
+    mape_median: float | None
+    mape_p90: float | None
+    interval_coverage: float | None
+
+
+class IntervalEvaluationResponse(BaseModel):
+    target: str
+    target_coverage: float
+    n_samples: int
+    n_evaluated: int
+    abstentions: int
+    abstention_rate: float
+    mape_median: float | None
+    mape_p90: float | None
+    interval_coverage: float | None
+    by_group: list[IntervalGroupEvaluationResponse]
+
+
+class RuntimeRewriteIntervalEvaluateResponse(BaseModel):
+    rewrite_bytes: IntervalEvaluationResponse
+    runtime_ms: IntervalEvaluationResponse
+    lineage_eligible: int
+    lineage_complete: int
+    lineage_completeness: float
+
+
+class DeleteCohortMetricsResponse(BaseModel):
+    cohort: str
+    observations: int
+    median_delete_pct_reduction: float | None
+    median_duration_ms: float | None
+    median_rewrite_bytes: float | None
+    median_value_per_rewrite_gib: float | None
+    median_p95_latency_reduction_ms: float | None
+
+
+class DeleteLifecycleEvidenceResponse(BaseModel):
+    schema_version: str = Field(alias="schema")
+    status: str
+    qualifies_policy_gate: bool
+    lifecycle: DeleteCohortMetricsResponse
+    threshold_only: DeleteCohortMetricsResponse
+    matched_engines: tuple[str, ...]
+    observed_value_lift: float | None
+    blockers: tuple[str, ...]
+
+
+@router.get(
+    "/ai/cost-model/runtime-intervals/evaluate",
+    response_model=RuntimeRewriteIntervalEvaluateResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai", "cost"],
+)
+def evaluate_runtime_rewrite_intervals(
+    session: SessionDep,
+) -> RuntimeRewriteIntervalEvaluateResponse:
+    """Chronological-holdout calibration report for I4 runtime/rewrite-byte intervals.
+
+    This is a locally computed report over whatever maintenance-outcome lineage exists in this
+    deployment's audit history. It is not a claim of production accuracy and does not by itself
+    satisfy the Section 5.3 exit gate, which additionally requires a representative production
+    fleet and a statistically significant sample.
+    """
+    from cryo.intelligence.outcomes import build_outcome_dataset
+    from cryo.ml.interval_model import (
+        REWRITE_BYTES,
+        RUNTIME_MS,
+        IntervalTarget,
+        evaluate_interval_model,
+        fit_interval_model,
+    )
+
+    dataset = build_outcome_dataset(session)
+    observations = dataset.calibration_rows()
+    split = max(1, int(len(observations) * 0.75))
+    training = observations[:split]
+    holdout = observations[split:]
+
+    def _report(target: IntervalTarget) -> IntervalEvaluationResponse:
+        model = fit_interval_model(training, target)
+        evaluation = evaluate_interval_model(holdout, model)
+        return IntervalEvaluationResponse(
+            target=evaluation.target,
+            target_coverage=evaluation.target_coverage,
+            n_samples=evaluation.n_samples,
+            n_evaluated=evaluation.n_evaluated,
+            abstentions=evaluation.abstentions,
+            abstention_rate=evaluation.abstention_rate,
+            mape_median=evaluation.mape_median,
+            mape_p90=evaluation.mape_p90,
+            interval_coverage=evaluation.interval_coverage,
+            by_group=[
+                IntervalGroupEvaluationResponse(
+                    engine=group.engine,
+                    action=group.action,
+                    scope=group.scope,
+                    n_samples=group.n_samples,
+                    n_evaluated=group.n_evaluated,
+                    mape_median=group.mape_median,
+                    mape_p90=group.mape_p90,
+                    interval_coverage=group.interval_coverage,
+                )
+                for group in evaluation.by_group
+            ],
+        )
+
+    return RuntimeRewriteIntervalEvaluateResponse(
+        rewrite_bytes=_report(REWRITE_BYTES),
+        runtime_ms=_report(RUNTIME_MS),
+        lineage_eligible=dataset.eligible_count,
+        lineage_complete=dataset.complete_count,
+        lineage_completeness=dataset.completeness,
+    )
+
+
+@router.get(
+    "/ai/delete-lifecycle/evaluate",
+    response_model=DeleteLifecycleEvidenceResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["ai", "cost"],
+)
+def evaluate_delete_lifecycle_evidence(
+    session: SessionDep,
+) -> DeleteLifecycleEvidenceResponse:
+    from cryo.intelligence.delete_lifecycle_evidence import evaluate_delete_lifecycle
+    from cryo.intelligence.outcomes import build_outcome_dataset
+
+    evidence = evaluate_delete_lifecycle(build_outcome_dataset(session))
+    return DeleteLifecycleEvidenceResponse(
+        schema=evidence.schema,
+        status=evidence.status,
+        qualifies_policy_gate=evidence.qualifies_policy_gate,
+        lifecycle=DeleteCohortMetricsResponse(**dataclasses.asdict(evidence.lifecycle)),
+        threshold_only=DeleteCohortMetricsResponse(**dataclasses.asdict(evidence.threshold_only)),
+        matched_engines=evidence.matched_engines,
+        observed_value_lift=evidence.observed_value_lift,
+        blockers=evidence.blockers,
+    )
+
+
 class HealthClassifierResponse(BaseModel):
     table_id: uuid.UUID
     needs_emergency_compaction: bool

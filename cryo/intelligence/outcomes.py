@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import (
     AuditLog,
+    EffectReceipt,
     MaintenanceIntent,
     MaintenanceJob,
     TableCostHistory,
@@ -47,6 +48,9 @@ class MaintenanceOutcome:
     predicted_bytes_freed: int | None
     predicted_savings_usd_month: float | None
     actual_bytes_freed: int
+    estimated_rewrite_bytes: int | None
+    actual_rewrite_bytes: int | None
+    duration_ms: int | None
     input_files_count: int | None
     pre_small_files_count: int | None
     post_small_files_count: int | None
@@ -55,6 +59,9 @@ class MaintenanceOutcome:
     pre_total_size_gb: float | None
     post_total_size_gb: float | None
     pre_delete_file_pct: float | None
+    post_delete_file_pct: float | None
+    pre_p95_query_latency_ms: float | None
+    post_p95_query_latency_ms: float | None
 
     @property
     def lineage_complete(self) -> bool:
@@ -82,6 +89,9 @@ class MaintenanceOutcome:
             "post_scan_at": self.post_scan_at.isoformat() if self.post_scan_at else None,
             "predicted_bytes_freed": self.predicted_bytes_freed,
             "actual_bytes_freed": self.actual_bytes_freed,
+            "estimated_rewrite_bytes": self.estimated_rewrite_bytes,
+            "actual_rewrite_bytes": self.actual_rewrite_bytes,
+            "duration_ms": self.duration_ms,
             "predicted_savings_usd_month": self.predicted_savings_usd_month,
             "small_files_count": self.pre_small_files_count or 0,
             "total_size_gb": self.pre_total_size_gb or 0.0,
@@ -90,6 +100,10 @@ class MaintenanceOutcome:
             "post_small_files_count": self.post_small_files_count,
             "post_total_files": self.post_total_files,
             "post_total_size_gb": self.post_total_size_gb,
+            "pre_delete_file_pct": self.pre_delete_file_pct,
+            "post_delete_file_pct": self.post_delete_file_pct,
+            "pre_p95_query_latency_ms": self.pre_p95_query_latency_ms,
+            "post_p95_query_latency_ms": self.post_p95_query_latency_ms,
         }
 
 
@@ -120,6 +134,7 @@ class OutcomeDataset:
 def build_outcome_dataset(
     session: Session,
     *,
+    table_id: uuid.UUID | None = None,
     limit: int = 500,
     observation_lookback_days: int = DEFAULT_OBSERVATION_LOOKBACK_DAYS,
     post_scan_window_days: int = DEFAULT_POST_SCAN_WINDOW_DAYS,
@@ -130,18 +145,19 @@ def build_outcome_dataset(
         raise ValueError("observation lookback must be positive")
     if post_scan_window_days < 1:
         raise ValueError("post-scan window must be positive")
-    audit_jobs = list(
-        session.execute(
-            select(AuditLog, MaintenanceJob)
-            .join(MaintenanceJob, MaintenanceJob.id == AuditLog.job_id)
-            .where(
-                AuditLog.status == "OK",
-                AuditLog.table_id.isnot(None),
-                AuditLog.actual_bytes_freed.isnot(None),
-            )
-            .order_by(AuditLog.ts.desc(), AuditLog.id.desc())
-            .limit(limit)
+    query = (
+        select(AuditLog, MaintenanceJob)
+        .join(MaintenanceJob, MaintenanceJob.id == AuditLog.job_id)
+        .where(
+            AuditLog.status == "OK",
+            AuditLog.table_id.isnot(None),
+            AuditLog.actual_bytes_freed.isnot(None),
         )
+    )
+    if table_id is not None:
+        query = query.where(AuditLog.table_id == table_id)
+    audit_jobs = list(
+        session.execute(query.order_by(AuditLog.ts.desc(), AuditLog.id.desc()).limit(limit))
     )
     if not audit_jobs:
         return OutcomeDataset(())
@@ -192,6 +208,22 @@ def build_outcome_dataset(
         if intent_ids
         else {}
     )
+    rewrite_bytes_by_intent_operation: dict[tuple[uuid.UUID, str], int] = {}
+    if intent_ids:
+        for receipt in session.scalars(
+            select(EffectReceipt).where(
+                EffectReceipt.intent_id.in_(intent_ids),
+                EffectReceipt.state == "succeeded",
+            )
+        ):
+            actual_rewrite_bytes = _result_nonnegative_int(
+                receipt.result,
+                "actual_bytes_written",
+            )
+            if actual_rewrite_bytes is not None:
+                rewrite_bytes_by_intent_operation[(receipt.intent_id, receipt.operation_type)] = (
+                    actual_rewrite_bytes
+                )
 
     outcomes: list[MaintenanceOutcome] = []
     for audit, job in reversed(audit_jobs):
@@ -220,6 +252,13 @@ def build_outcome_dataset(
                     pre_cost.projected_savings_usd_month if pre_cost is not None else None
                 ),
                 actual_bytes_freed=audit.actual_bytes_freed,
+                estimated_rewrite_bytes=_estimated_rewrite_bytes(pre_stats),
+                actual_rewrite_bytes=(
+                    rewrite_bytes_by_intent_operation.get((intent.id, audit.action))
+                    if intent is not None
+                    else None
+                ),
+                duration_ms=audit.duration_ms,
                 input_files_count=audit.input_files_count,
                 pre_small_files_count=(
                     pre_stats.small_files_count if pre_stats is not None else None
@@ -232,6 +271,9 @@ def build_outcome_dataset(
                 pre_total_size_gb=pre_stats.total_size_gb if pre_stats is not None else None,
                 post_total_size_gb=post_stats.total_size_gb if post_stats is not None else None,
                 pre_delete_file_pct=_raw_float(pre_stats, "delete_file_pct"),
+                post_delete_file_pct=_raw_float(post_stats, "delete_file_pct"),
+                pre_p95_query_latency_ms=_raw_float(pre_stats, "p95_query_latency_ms"),
+                post_p95_query_latency_ms=_raw_float(post_stats, "p95_query_latency_ms"),
             )
         )
     return OutcomeDataset(tuple(outcomes))
@@ -271,3 +313,18 @@ def _raw_float(row: TableStatsHistory | None, key: str) -> float | None:
         return None
     value = row.raw.get(key)
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _estimated_rewrite_bytes(row: TableStatsHistory | None) -> int | None:
+    if row is None or row.total_size_gb is None or row.total_size_gb <= 0:
+        return None
+    return int(row.total_size_gb * 1024**3)
+
+
+def _result_nonnegative_int(result: object, key: str) -> int | None:
+    if not isinstance(result, dict):
+        return None
+    value = result.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return int(value)

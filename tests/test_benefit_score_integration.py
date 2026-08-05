@@ -540,7 +540,7 @@ def test_compaction_effectiveness_stats(session):
         AuditLog(
             table_id=table.id,
             action="optimize",
-            status="ok",
+            status="OK",
             input_files_count=100,
             output_files_count=2,
             ts=now - timedelta(days=1),

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryo.dev/schemas/connector-manifest-v1.schema.json",
+  "title": "Cryo connector manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "connector_id",
+    "kind",
+    "package",
+    "ownership",
+    "maintainer",
+    "capabilities",
+    "configuration_schema"
+  ],
+  "properties": {
+    "api_version": { "const": "cryo.connector/v1" },
+    "connector_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+    "kind": { "enum": ["source", "engine"] },
+    "package": { "type": "string", "minLength": 1 },
+    "ownership": { "enum": ["core", "ecosystem"] },
+    "maintainer": { "type": "string", "minLength": 1 },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "configuration_schema": { "type": "string", "minLength": 1 }
+  }
+}

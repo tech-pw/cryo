@@ -50,6 +50,7 @@ imagePullSecrets:
   - name: {{ . }}
 {{- end }}
 {{- end }}
+{{- end }}
 
 {{- define "cryo.prometheusAnnotations" -}}
 {{- if .Values.observability.prometheusScrape }}
@@ -88,5 +89,4 @@ prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
     {{- fail "production with redis.enabled requires redis.image.digest (sha256:...)" -}}
   {{- end -}}
 {{- end -}}
-{{- end }}
 {{- end }}
