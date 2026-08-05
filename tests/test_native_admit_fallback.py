@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
-from cryo.governor.native_admit import _dispatch_fallback_operations
+from cryo.governor.native_admit import (
+    _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY,
+    _dispatch_fallback_operations,
+    _fallback_dispatch_concurrency,
+    _run_fallback_dispatches_concurrently,
+)
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore
 
 
@@ -191,3 +198,137 @@ def test_fallback_engine_exception_is_caught_not_raised() -> None:
             source_config={},
             table_ref="cdp.mview.load_test_basefact",
         )  # must not raise -- a fallback failure can't break the native Job dispatch
+
+
+# --- _fallback_dispatch_concurrency -----------------------------------------------
+
+
+def test_fallback_dispatch_concurrency_resolves_from_destination_slot_cap() -> None:
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 8})
+    )
+    got = _fallback_dispatch_concurrency(
+        {"sql_fallback_destination_id": "spark-1"}, store=store
+    )
+    assert got == 8
+
+
+def test_fallback_dispatch_concurrency_falls_back_to_default_when_missing_id() -> None:
+    store = InMemoryJobStore()
+    got = _fallback_dispatch_concurrency({}, store=store)
+    assert got == _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
+
+
+def test_fallback_dispatch_concurrency_falls_back_to_default_when_destination_missing() -> None:
+    store = InMemoryJobStore()  # no destinations registered
+    got = _fallback_dispatch_concurrency(
+        {"sql_fallback_destination_id": "missing-dest"}, store=store
+    )
+    assert got == _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
+
+
+def test_fallback_dispatch_concurrency_falls_back_to_default_when_slot_cap_unset() -> None:
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    got = _fallback_dispatch_concurrency(
+        {"sql_fallback_destination_id": "spark-1"}, store=store
+    )
+    assert got == _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
+
+
+# --- _run_fallback_dispatches_concurrently ----------------------------------------
+
+
+def test_run_fallback_dispatches_concurrently_empty_list_is_noop() -> None:
+    store = InMemoryJobStore()
+    _run_fallback_dispatches_concurrently([], destination_config={}, store=store)  # must not raise
+
+
+def test_run_fallback_dispatches_concurrently_calls_every_dispatch() -> None:
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 4})
+    )
+    calls: list[int] = []
+    lock = threading.Lock()
+
+    def make_dispatch(i: int):
+        def _dispatch() -> None:
+            with lock:
+                calls.append(i)
+
+        return _dispatch
+
+    dispatches = [make_dispatch(i) for i in range(10)]
+    _run_fallback_dispatches_concurrently(
+        dispatches, destination_config={"sql_fallback_destination_id": "spark-1"}, store=store
+    )
+    assert sorted(calls) == list(range(10))
+
+
+def test_run_fallback_dispatches_concurrently_respects_slot_cap_bound() -> None:
+    """The whole point of this refactor: many tables' fallback dispatches must be able
+    to run at once (previously exactly 1 at a time, regardless of slot_cap -- see the
+    module docstring on _run_fallback_dispatches_concurrently), but bounded by the
+    fallback destination's own configured slot_cap, not unbounded."""
+    store = InMemoryJobStore()
+    slot_cap = 3
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": slot_cap})
+    )
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def slow_dispatch() -> None:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+
+    dispatches = [slow_dispatch for _ in range(9)]
+    _run_fallback_dispatches_concurrently(
+        dispatches, destination_config={"sql_fallback_destination_id": "spark-1"}, store=store
+    )
+    # Some real concurrency happened (not serialized to 1)...
+    assert max_active > 1
+    # ...but never exceeded the configured slot_cap.
+    assert max_active <= slot_cap
+
+
+def test_run_fallback_dispatches_concurrently_single_dispatch_runs_synchronously() -> None:
+    store = InMemoryJobStore()
+    ran = []
+    _run_fallback_dispatches_concurrently(
+        [lambda: ran.append(1)], destination_config={}, store=store
+    )
+    assert ran == [1]
+
+
+def test_run_fallback_dispatches_concurrently_one_failure_does_not_block_others() -> None:
+    """Defensive backstop: _dispatch_fallback_operations itself never raises (it's
+    best-effort and catches internally), but the thread pool must not let one truly
+    unexpected exception swallow the rest of the batch either."""
+    store = InMemoryJobStore()
+    ran: list[int] = []
+    lock = threading.Lock()
+
+    def failing_dispatch() -> None:
+        raise RuntimeError("boom")
+
+    def ok_dispatch(i: int):
+        def _dispatch() -> None:
+            with lock:
+                ran.append(i)
+
+        return _dispatch
+
+    dispatches = [ok_dispatch(0), failing_dispatch, ok_dispatch(1), ok_dispatch(2)]
+    _run_fallback_dispatches_concurrently(
+        dispatches, destination_config={}, store=store
+    )  # must not raise
+    assert sorted(ran) == [0, 1, 2]
