@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Catalog } from "./Catalog";
 import { ThemeProvider } from "../lib/themeContext";
@@ -49,6 +49,11 @@ import {
   listTables
 } from "../api/client";
 
+const LocationProbe = () => {
+  const location = useLocation();
+  return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>;
+};
+
 const renderPage = (initialRoute = "/catalogs") => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } }
@@ -58,7 +63,15 @@ const renderPage = (initialRoute = "/catalogs") => {
       <ThemeProvider>
         <MemoryRouter initialEntries={[initialRoute]}>
           <Routes>
-            <Route path="/catalogs" element={<Catalog />} />
+            <Route
+              path="/catalogs"
+              element={
+                <>
+                  <Catalog />
+                  <LocationProbe />
+                </>
+              }
+            />
           </Routes>
         </MemoryRouter>
       </ThemeProvider>
@@ -66,8 +79,28 @@ const renderPage = (initialRoute = "/catalogs") => {
   );
 };
 
+const SAMPLE_TABLE = {
+  id: "tbl-1",
+  source_id: "src-1",
+  schema_name: "prod_data",
+  table_name: "orders",
+  catalog_name: "prod_data",
+  first_seen_at: "2026-01-01T00:00:00Z",
+  is_active: true,
+  stats: {
+    grade: "B",
+    compaction_priority: "medium",
+    needs_compaction: false,
+    total_files: 10,
+    small_files_count: 2,
+    total_size_gb: 5,
+    projected_savings_usd_month: 3.5
+  }
+} as never;
+
 describe("Consolidated Catalog page", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.mocked(listPresets).mockResolvedValue([]);
     vi.mocked(listDestinations).mockResolvedValue([]);
     vi.mocked(listTables).mockResolvedValue({
@@ -148,4 +181,97 @@ describe("Consolidated Catalog page", () => {
     });
   });
 
+  it("applying a built-in saved view rewrites the URL to the exact scoped filters (no silent state)", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 0,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [SAMPLE_TABLE],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+    renderPage();
+
+    await screen.findByRole("button", { name: /export csv/i });
+    const viewSelect = screen.getByRole("combobox", { name: /catalog view/i });
+    fireEvent.change(viewSelect, { target: { value: "Health triage" } });
+
+    await waitFor(() => {
+      const location = screen.getByTestId("location-probe").textContent ?? "";
+      expect(location).toContain("grades=D%2CF");
+      expect(location).toContain("sort=-small_files_count");
+    });
+  });
+
+  it("controls column visibility via a native popover + checkboxes, scoped to the table explorer only", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 0,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [SAMPLE_TABLE],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+    renderPage();
+
+    await screen.findByRole("button", { name: /export csv/i });
+    const explorerTable = document.querySelector(".datalake-table");
+    expect(explorerTable).not.toBeNull();
+    expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
+
+    const columnsMenuButton = screen.getByRole("button", { name: /columns/i });
+    fireEvent.click(columnsMenuButton);
+    const catalogCheckbox = screen.getByRole("checkbox", { name: "Catalog" });
+    fireEvent.click(catalogCheckbox);
+
+    await waitFor(() => {
+      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+    });
+    // The dashboard's own "Catalog" column (a separate, unrelated table) is unaffected --
+    // column visibility only ever applies to the table explorer's DataTable instance.
+    expect(document.querySelector(".datalake-table")).not.toBeNull();
+  });
+
+  it("remembers column visibility choices across a fresh mount via local storage", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 0,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [SAMPLE_TABLE],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+
+    const first = renderPage();
+    await screen.findByRole("button", { name: /export csv/i });
+    fireEvent.click(screen.getByRole("button", { name: /columns/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Catalog" }));
+    await waitFor(() => {
+      const explorerTable = document.querySelector(".datalake-table");
+      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+    });
+    first.unmount();
+
+    renderPage();
+    await screen.findByRole("button", { name: /export csv/i });
+    await waitFor(() => {
+      const explorerTable = document.querySelector(".datalake-table");
+      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+    });
+  });
 });

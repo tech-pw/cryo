@@ -1,4 +1,4 @@
-import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import type { ColumnDef, RowSelectionState, VisibilityState } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -25,7 +25,7 @@ import { PlanPreview } from "../../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
-import { DataTable } from "../../components/ui/data-table";
+import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
@@ -69,12 +69,134 @@ const applyTranslatedFilter = (
     : {})
 });
 
-const initialFiltersFromSearch = (sourceParam: string | null): TableFilterState => {
-  const base: TableFilterState = { activeOnly: true };
-  if (sourceParam) {
-    return { ...base, sourceIds: [sourceParam] };
+const csvParam = (value: string | null): string[] | undefined => {
+  if (!value) return undefined;
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length ? parts : undefined;
+};
+
+const boolParam = (value: string | null): boolean | undefined => {
+  if (value === "1" || value === "true") return true;
+  if (value === "0" || value === "false") return false;
+  return undefined;
+};
+
+const numberParam = (value: string | null): number | null | undefined => {
+  if (value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+/**
+ * Single source of truth for filters: derive them from the URL on every render instead of
+ * mirroring into local state, so links (e.g. Datalake health's "Fix in catalog") and
+ * shareable/bookmarked URLs reproduce the exact same view.
+ */
+export const filtersFromSearchParams = (params: URLSearchParams): TableFilterState => {
+  const activeOnly = boolParam(params.get("activeOnly"));
+  return {
+    activeOnly: activeOnly === undefined ? true : activeOnly,
+    grades: csvParam(params.get("grades")),
+    priorities: csvParam(params.get("priorities")),
+    needsCompaction: boolParam(params.get("needsCompaction")),
+    schemaSearch: params.get("q") ?? undefined,
+    sourceIds: csvParam(params.get("source")),
+    presetFilter: csvParam(params.get("preset")),
+    minSizeGb: numberParam(params.get("minSizeGb")) ?? null,
+    minSmallFiles: numberParam(params.get("minSmallFiles")) ?? null,
+    minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
+    minReclaimableGb: numberParam(params.get("minReclaimableGb")) ?? null,
+    costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null
+  };
+};
+
+/** Inverse of `filtersFromSearchParams` -- only writes params that diverge from defaults. */
+export const filtersToSearchParamEntries = (filters: TableFilterState): [string, string][] => {
+  const entries: [string, string][] = [];
+  if (filters.activeOnly === false) entries.push(["activeOnly", "0"]);
+  if (filters.grades?.length) entries.push(["grades", filters.grades.join(",")]);
+  if (filters.priorities?.length) entries.push(["priorities", filters.priorities.join(",")]);
+  if (typeof filters.needsCompaction === "boolean") {
+    entries.push(["needsCompaction", filters.needsCompaction ? "1" : "0"]);
   }
-  return base;
+  if (filters.schemaSearch?.trim()) entries.push(["q", filters.schemaSearch.trim()]);
+  if (filters.sourceIds?.length) entries.push(["source", filters.sourceIds.join(",")]);
+  if (filters.presetFilter?.length) entries.push(["preset", filters.presetFilter.join(",")]);
+  if (typeof filters.minSizeGb === "number") entries.push(["minSizeGb", String(filters.minSizeGb)]);
+  if (typeof filters.minSmallFiles === "number") entries.push(["minSmallFiles", String(filters.minSmallFiles)]);
+  if (typeof filters.minMonthlySavings === "number")
+    entries.push(["minMonthlySavings", String(filters.minMonthlySavings)]);
+  if (typeof filters.minReclaimableGb === "number")
+    entries.push(["minReclaimableGb", String(filters.minReclaimableGb)]);
+  if (filters.costPrecision) entries.push(["precision", filters.costPrecision]);
+  return entries;
+};
+
+const FILTER_PARAM_KEYS = [
+  "activeOnly",
+  "grades",
+  "priorities",
+  "needsCompaction",
+  "q",
+  "source",
+  "preset",
+  "minSizeGb",
+  "minSmallFiles",
+  "minMonthlySavings",
+  "minReclaimableGb",
+  "precision"
+];
+
+const CATALOG_VIEWS_STORAGE_KEY = "cryo.catalog.views.v1";
+const CATALOG_DEFAULT_VIEW_STORAGE_KEY = "cryo.catalog.defaultView.v1";
+const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v1";
+
+interface CatalogSavedView {
+  name: string;
+  filters: TableFilterState;
+  sort?: string;
+  groupBy?: TableGroupByField | null;
+  savingsView?: boolean;
+}
+
+const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
+  {
+    name: "Health triage",
+    filters: { activeOnly: true, grades: ["D", "F"] },
+    sort: "-small_files_count"
+  },
+  {
+    name: "Needs compaction",
+    filters: { activeOnly: true, needsCompaction: true },
+    sort: "-small_files_count"
+  },
+  {
+    name: "Top savings opportunities",
+    filters: { activeOnly: true },
+    sort: "-projected_savings_usd_month",
+    savingsView: true
+  }
+];
+
+const readJson = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeJson = (key: string, value: unknown): void => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage unavailable (private mode, quota, ...) -- degrade silently.
+  }
 };
 
 const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
@@ -87,6 +209,22 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
 };
 
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
+
+/** The "Table" identity column is intentionally excluded -- hiding it would leave rows unlabeled. */
+const COLUMN_VISIBILITY_OPTIONS: ColumnVisibilityOption[] = [
+  { id: "catalog", label: "Catalog" },
+  { id: "grade", label: "Grade" },
+  { id: "compaction_priority", label: "Priority" },
+  { id: "needs", label: "Compaction" },
+  { id: "small_files", label: "Small files" },
+  { id: "total_files", label: "Files" },
+  { id: "total_size_gb", label: "Size" },
+  { id: "projected_savings_usd_month", label: "Savings/mo" },
+  { id: "reclaimable_bytes", label: "Reclaimable" },
+  { id: "cost_precision", label: "Savings basis" },
+  { id: "partition", label: "Partition" },
+  { id: "first_seen_at", label: "Seen" }
+];
 
 const SortHeader = ({
   field,
@@ -128,17 +266,113 @@ type GroupRow = {
 export const TableExplorerSection = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { api, token } = useAuth();
-  const [filters, setFilters] = useState<TableFilterState>(() =>
-    initialFiltersFromSearch(searchParams.get("source"))
-  );
-  const [page, setPage] = useState(1);
-  const [sort, setSort] = useState<string | undefined>("-small_files_count");
-  const [savingsView, setSavingsView] = useState(false);
+
+  const updateParams = (updates: Record<string, string | null>) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [key, value] of Object.entries(updates)) {
+          if (value === null) next.delete(key);
+          else next.set(key, value);
+        }
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
+  const filters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams]);
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const sort = searchParams.get("sort") ?? "-small_files_count";
+  const savingsView = searchParams.get("view") === "savings";
+  const groupByParam = searchParams.get("groupBy");
+  const groupByField = (groupByParam && groupByParam in GROUP_BY_LABELS ? (groupByParam as TableGroupByField) : null);
+
+  const applyFilters = (next: TableFilterState) => {
+    const params = new URLSearchParams(searchParams);
+    FILTER_PARAM_KEYS.forEach((key) => params.delete(key));
+    filtersToSearchParamEntries(next).forEach(([key, value]) => params.set(key, value));
+    params.delete("page");
+    setSearchParams(params, { replace: true });
+  };
+
+  const applySort = (next: string | undefined) => updateParams({ sort: next ?? null, page: null });
+
   const [previewOpen, setPreviewOpen] = useState(false);
   const [nlQuery, setNlQuery] = useState("");
-  const [groupByField, setGroupByField] = useState<TableGroupByField | null>(null);
+
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() =>
+    readJson(CATALOG_COLUMNS_STORAGE_KEY, {})
+  );
+  useEffect(() => {
+    writeJson(CATALOG_COLUMNS_STORAGE_KEY, columnVisibility);
+  }, [columnVisibility]);
+
+  const [userViews, setUserViews] = useState<CatalogSavedView[]>(() =>
+    readJson(CATALOG_VIEWS_STORAGE_KEY, [])
+  );
+  const allViews = useMemo(() => [...BUILTIN_CATALOG_VIEWS, ...userViews], [userViews]);
+
+  const applyView = (view: CatalogSavedView) => {
+    const params = new URLSearchParams();
+    filtersToSearchParamEntries(view.filters).forEach(([key, value]) => params.set(key, value));
+    if (view.sort) params.set("sort", view.sort);
+    if (view.groupBy) params.set("groupBy", view.groupBy);
+    if (view.savingsView) params.set("view", "savings");
+    setSearchParams(params, { replace: true });
+  };
+
+  // Apply a locally-saved default view once, only when the page is opened with no explicit
+  // filter/sort/grouping params -- an incoming scoped link (e.g. Datalake health's "Fix in
+  // catalog") must always win over a stored default.
+  useEffect(() => {
+    const hasExplicitParams = [...FILTER_PARAM_KEYS, "sort", "groupBy", "view"].some((key) =>
+      searchParams.has(key)
+    );
+    if (hasExplicitParams) return;
+    const defaultName = (() => {
+      try {
+        return window.localStorage.getItem(CATALOG_DEFAULT_VIEW_STORAGE_KEY);
+      } catch {
+        return null;
+      }
+    })();
+    if (!defaultName) return;
+    const view = allViews.find((candidate) => candidate.name === defaultName);
+    if (view) applyView(view);
+    // Intentionally run once on mount only -- this is a one-time "land with my default" effect,
+    // not a live sync with allViews/searchParams.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveCurrentAsView = () => {
+    const name = window.prompt("Name this view:");
+    if (!name?.trim()) return;
+    const view: CatalogSavedView = {
+      name: name.trim(),
+      filters,
+      sort,
+      groupBy: groupByField,
+      savingsView
+    };
+    setUserViews((current) => {
+      const next = [...current.filter((existing) => existing.name !== view.name), view];
+      writeJson(CATALOG_VIEWS_STORAGE_KEY, next);
+      return next;
+    });
+    toast.success(`Saved view "${view.name}"`);
+  };
+
+  const setCurrentAsDefaultView = (name: string) => {
+    try {
+      window.localStorage.setItem(CATALOG_DEFAULT_VIEW_STORAGE_KEY, name);
+      toast.success(`"${name}" is now your default catalog view`);
+    } catch {
+      toast.error("Could not save a default view on this browser.");
+    }
+  };
 
   const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
   const tables = useQuery({
@@ -173,15 +407,6 @@ export const TableExplorerSection = () => {
     () => (presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id })),
     [presets.data]
   );
-
-  useEffect(() => {
-    const sourceParam = searchParams.get("source");
-    if (!sourceParam) return;
-    setFilters((current) => {
-      if (current.sourceIds?.includes(sourceParam)) return current;
-      return { ...current, sourceIds: [sourceParam] };
-    });
-  }, [searchParams]);
 
   const pageItems = tables.data?.items ?? [];
   const matchingTotal = tables.data?.total ?? 0;
@@ -324,8 +549,7 @@ export const TableExplorerSection = () => {
       if (result.errors.length) {
         toast.warning("Could not apply parts of the NL filter; review error chips.");
       }
-      setFilters((current) => applyTranslatedFilter(current, result.filter as Record<string, unknown>));
-      setPage(1);
+      applyFilters(applyTranslatedFilter(filters, result.filter as Record<string, unknown>));
       resetSelectionForFilterChange();
     },
     onError: (error) => toast.error((error as Error).message)
@@ -400,11 +624,6 @@ export const TableExplorerSection = () => {
       ],
       rows
     );
-  };
-
-  const applySort = (next: string | undefined) => {
-    setSort(next);
-    setPage(1);
   };
 
   const groupColumns = useMemo<ColumnDef<GroupRow, unknown>[]>(
@@ -589,8 +808,11 @@ export const TableExplorerSection = () => {
           variant={savingsView ? "primary" : "secondary"}
           onClick={() => {
             const next = !savingsView;
-            setSavingsView(next);
-            if (next) setSort("-projected_savings_usd_month");
+            updateParams({
+              view: next ? "savings" : null,
+              sort: next ? "-projected_savings_usd_month" : sort,
+              page: null
+            });
           }}
         >
           Savings view
@@ -605,7 +827,7 @@ export const TableExplorerSection = () => {
           aria-label="Group tables by"
           className="w-[200px]"
           value={groupByField ?? ""}
-          onChange={(next) => setGroupByField((next as TableGroupByField) || null)}
+          onChange={(next) => updateParams({ groupBy: (next as string) || null, page: null })}
           allowClear
           placeholder="No grouping"
           options={[
@@ -617,6 +839,37 @@ export const TableExplorerSection = () => {
             { label: "Group by size", value: "size_bucket" }
           ]}
         />
+        <div className="ml-auto flex max-w-full flex-wrap items-center gap-2 max-sm:ml-0 max-sm:w-full">
+          <Select
+            aria-label="Catalog view"
+            className="w-[200px]"
+            value=""
+            placeholder="Load a view..."
+            onChange={(next) => {
+              const view = allViews.find((candidate) => candidate.name === next);
+              if (view) applyView(view);
+            }}
+            options={allViews.map((view) => ({ label: view.name, value: view.name }))}
+          />
+          <Button type="button" variant="secondary" onClick={saveCurrentAsView}>
+            Save view
+          </Button>
+          {userViews.length ? (
+            <Select
+              aria-label="Set default catalog view"
+              className="w-[170px]"
+              value=""
+              placeholder="Set default..."
+              onChange={(next) => next && setCurrentAsDefaultView(next)}
+              options={allViews.map((view) => ({ label: view.name, value: view.name }))}
+            />
+          ) : null}
+          <ColumnVisibilityMenu
+            options={COLUMN_VISIBILITY_OPTIONS}
+            visibility={columnVisibility}
+            onChange={setColumnVisibility}
+          />
+        </div>
       </div>
       <div className="mb-2.5 flex w-full flex-col gap-1.5">
         <form
@@ -658,8 +911,7 @@ export const TableExplorerSection = () => {
         onSelectAllMatching={selectAllMatching}
         onClearSelection={clearSelection}
         onChange={(next) => {
-          setFilters(next);
-          setPage(1);
+          applyFilters(next);
           resetSelectionForFilterChange();
         }}
       />
@@ -691,13 +943,17 @@ export const TableExplorerSection = () => {
               const keys = Object.keys(next).filter((key) => next[key]);
               void handleRowSelectionChange(keys);
             }}
+            columnVisibility={columnVisibility}
+            onColumnVisibilityChange={(updater) => {
+              setColumnVisibility((current) => (typeof updater === "function" ? updater(current) : updater));
+            }}
             emptyTitle="No tables match this view"
             emptyDescription="Run a scan or clear filters to browse the datalake."
             pagination={{
               pageIndex: page - 1,
               pageSize,
               totalRows: matchingTotal,
-              onPageChange: (pageIndex) => setPage(pageIndex + 1)
+              onPageChange: (pageIndex) => updateParams({ page: pageIndex > 0 ? String(pageIndex + 1) : null })
             }}
           />
           <BulkAssignBar

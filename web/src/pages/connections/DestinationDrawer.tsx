@@ -12,6 +12,7 @@ import { Autocomplete } from "../../components/ui/autocomplete";
 import { Button } from "../../components/ui/button";
 import { Collapsible } from "../../components/ui/collapsible";
 import { FormField, FormProvider, useForm } from "../../components/ui/form";
+import { FormErrorSummary } from "../../components/ui/form-error-summary";
 import { Input } from "../../components/ui/input";
 import { InputNumber } from "../../components/ui/input-number";
 import { Label } from "../../components/ui/label";
@@ -158,17 +159,24 @@ export const DestinationDrawer = ({
     try {
       const config = buildDestinationConfig(values);
       const query_log_config = buildQueryLogConfig(values);
-      onSave({
+      const body: Parameters<typeof onSave>[0] = {
         name: values.name,
         engine: values.engine,
         config,
-        secret_ref: values.secret_ref || null,
         enabled: values.enabled,
         offpeak_start: values.offpeak_start ?? null,
         offpeak_end: values.offpeak_end ?? null,
         query_log_config,
         query_log_retention_days: values.query_log_enabled ? values.query_log_retention_days ?? 30 : null
-      });
+      };
+      // The API never returns the stored secret_ref (DestinationRead omits it entirely), so this
+      // field always starts blank on an edit. Only send it when the user actually typed something
+      // -- otherwise the key is omitted from the request body, so patch_destination's
+      // `exclude_unset` leaves the existing secret_ref untouched instead of overwriting it with null.
+      if (values.secret_ref?.trim()) {
+        body.secret_ref = values.secret_ref.trim();
+      }
+      onSave(body);
     } catch {
       toast.error("Spark submit params must be valid JSON.");
     }
@@ -182,6 +190,9 @@ export const DestinationDrawer = ({
         </SheetHeader>
         <FormProvider {...form}>
           <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(submit)}>
+            <FormErrorSummary<DestinationFormValues> labels={{ name: "Name" }} />
+
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Identity</p>
             <FormField name="name" label="Name">
               {(field) => (
                 <Input
@@ -415,6 +426,7 @@ export const DestinationDrawer = ({
                         <Input
                           type="password"
                           autoComplete="off"
+                          placeholder={form.watch("auth_has_password") ? "Leave blank to keep the saved password" : ""}
                           value={String(field.value ?? "")}
                           onChange={field.onChange}
                           onBlur={field.onBlur}
@@ -424,6 +436,12 @@ export const DestinationDrawer = ({
                       )}
                     </FormField>
                   </div>
+                ) : null}
+                {useBasicAuth && form.watch("auth_has_password") ? (
+                  <p className="text-xs text-muted-foreground">
+                    A password is already saved for this destination. Leave the field blank to keep it, or enter a
+                    new value to replace it.
+                  </p>
                 ) : null}
               </>
             ) : engine === "spark_emr" ? (
@@ -728,6 +746,12 @@ export const DestinationDrawer = ({
                 />
               )}
             </FormField>
+            {isEditing ? (
+              <p className="text-xs text-muted-foreground -mt-2">
+                The API never returns the saved reference, so this field starts blank. Leave it blank to keep the
+                current reference unchanged, or enter a new value to replace it.
+              </p>
+            ) : null}
 
             <div className="flex items-center gap-2">
               <Switch
@@ -747,6 +771,51 @@ export const DestinationDrawer = ({
                 description="Click &quot;Test connection&quot; above with a passing result to enable Save."
               />
             ) : null}
+
+            <Separator />
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Review</p>
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Name</dt>
+                <dd className="font-medium">{form.watch("name") || "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Engine</dt>
+                <dd className="font-medium">{engine}</dd>
+              </div>
+              {engine === "trino" ? (
+                <div className="flex justify-between gap-2 sm:block">
+                  <dt className="text-muted-foreground">Coordinators</dt>
+                  <dd className="font-medium">{coordinatorFields.length}</dd>
+                </div>
+              ) : null}
+              {engine === "spark_emr" ? (
+                <>
+                  <div className="flex justify-between gap-2 sm:block">
+                    <dt className="text-muted-foreground">EMR application ID</dt>
+                    <dd className="font-medium">{form.watch("application_id") || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2 sm:block">
+                    <dt className="text-muted-foreground">AWS region</dt>
+                    <dd className="font-medium">{form.watch("region") || "—"}</dd>
+                  </div>
+                </>
+              ) : null}
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Off-peak window</dt>
+                <dd className="font-medium">
+                  {form.watch("offpeak_start")}:00–{form.watch("offpeak_end")}:00 IST
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Enabled</dt>
+                <dd className="font-medium">{form.watch("enabled") ? "Yes" : "No"}</dd>
+              </div>
+              <div className="flex justify-between gap-2 sm:block">
+                <dt className="text-muted-foreground">Connection test</dt>
+                <dd className="font-medium">{testPassed ? "Passed" : "Not yet passed"}</dd>
+              </div>
+            </dl>
 
             <Button type="submit" loading={saving} disabled={!testPassed}>
               Save

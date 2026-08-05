@@ -23,7 +23,7 @@ import type { CostDashboard, CostTrendPoint, Mode, TableRead, UUID } from "../..
 import { BulkAssignBar, type BulkSelection } from "../../components/BulkAssignBar";
 import { EmptyState } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
-import { CostSavingsWaterfall } from "../../components/CostSavingsWaterfall";
+import { CostSavingsWaterfall, buildWaterfallRows } from "../../components/CostSavingsWaterfall";
 import { PlanPreview } from "../../components/PlanPreview";
 import { SavingsByOperation } from "../../components/SavingsByOperation";
 import { GradePill } from "../../components/status";
@@ -31,6 +31,7 @@ import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { ChartDataTable } from "../../components/ui/chart-data-table";
 import { DataTable } from "../../components/ui/data-table";
 import { MetricGrid } from "../../components/ui/metric-grid";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -294,6 +295,11 @@ export const CostOverviewTab = () => {
               lastFullCostScanAt={data.totals.last_full_cost_scan_at}
               orphanScanStale={data.totals.orphan_scan_stale}
             />
+            <span className="text-xs text-muted-foreground">
+              {data.totals.last_full_cost_scan_at
+                ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}`
+                : "No full storage-truth cost scan recorded yet -- figures below use metadata estimates."}
+            </span>
             {data.totals.orphan_scan_stale ? (
               <p className="text-sm text-muted-foreground">
                 Orphan estimates may be stale — run a full cost scan for storage-truth accuracy.
@@ -383,6 +389,30 @@ export const CostOverviewTab = () => {
                   currentStorageBytes={data.totals.current_storage_bytes}
                   byOperation={data.savings_by_operation}
                 />
+                <ChartDataTable
+                  caption="Cost waterfall from current monthly cost down to the projected cost after each maintenance operation runs."
+                  columns={[
+                    { key: "name", header: "Step", render: (row) => row.name },
+                    {
+                      key: "amount",
+                      header: "Amount",
+                      align: "right",
+                      render: (row) =>
+                        row.kind === "save" ? `- ${formatCurrency(row.amount)}` : formatCurrency(row.amount)
+                    },
+                    {
+                      key: "running",
+                      header: "Running total",
+                      align: "right",
+                      render: (row) => formatCurrency(row.kind === "save" ? row.base : row.value)
+                    }
+                  ]}
+                  rows={buildWaterfallRows(
+                    data.totals.current_monthly_cost_usd,
+                    new Map(data.savings_by_operation.map((item) => [item.operation, item.savings_usd_month]))
+                  )}
+                  getRowKey={(row, index) => `${row.name}-${index}`}
+                />
               </CardContent>
             </Card>
             <Card className="xl:col-span-4">
@@ -399,32 +429,60 @@ export const CostOverviewTab = () => {
               </CardHeader>
               <CardContent>
                 {hasRealizedTrend ? (
-                  <LineChart
-                    data={data.trend ?? []}
-                    height={220}
-                    margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
-                  >
-                    <CartesianGrid stroke={cryoColors.chartGrid} />
-                    <XAxis dataKey="bucket" stroke={cryoColors.inkFaint} tick={chartAxisTick} interval="preserveStartEnd" />
-                    <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
-                    <RechartsTooltip {...chartTooltipProps} />
-                    <Line
-                      type="monotone"
-                      dataKey="projected_usd_month"
-                      stroke={cryoColors.primary}
-                      strokeWidth={2}
-                      dot={false}
-                      name="Projected"
+                  <>
+                    <LineChart
+                      data={data.trend ?? []}
+                      height={220}
+                      margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+                    >
+                      <CartesianGrid stroke={cryoColors.chartGrid} />
+                      <XAxis
+                        dataKey="scan_at"
+                        stroke={cryoColors.inkFaint}
+                        tick={chartAxisTick}
+                        interval="preserveStartEnd"
+                        tickFormatter={(value) => formatTime(value)}
+                      />
+                      <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                      <RechartsTooltip {...chartTooltipProps} labelFormatter={(value) => formatTime(String(value))} />
+                      <Line
+                        type="monotone"
+                        dataKey="projected_savings_usd_month"
+                        stroke={cryoColors.primary}
+                        strokeWidth={2}
+                        dot={false}
+                        name="Projected savings"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="realized_usd_month"
+                        stroke={cryoColors.savings}
+                        strokeWidth={2}
+                        dot={false}
+                        name="Realized savings"
+                      />
+                    </LineChart>
+                    <ChartDataTable
+                      caption="Monthly trend of projected vs realized savings by scan date."
+                      columns={[
+                        { key: "scan_at", header: "Scan date", render: (row) => formatTime(row.scan_at) },
+                        {
+                          key: "projected",
+                          header: "Projected savings",
+                          align: "right",
+                          render: (row) => formatCurrency(row.projected_savings_usd_month ?? 0)
+                        },
+                        {
+                          key: "realized",
+                          header: "Realized savings",
+                          align: "right",
+                          render: (row) => formatCurrency(row.realized_usd_month ?? 0)
+                        }
+                      ]}
+                      rows={data.trend ?? []}
+                      getRowKey={(row, index) => row.scan_at ?? `trend-${index}`}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="realized_usd_month"
-                      stroke={cryoColors.savings}
-                      strokeWidth={2}
-                      dot={false}
-                      name="Realized"
-                    />
-                  </LineChart>
+                  </>
                 ) : (
                   <EmptyState
                     title="No realized savings history yet"
@@ -439,24 +497,46 @@ export const CostOverviewTab = () => {
               </CardHeader>
               <CardContent>
                 {schemaCost.data && schemaCost.data.length ? (
-                  <BarChart
-                    data={(schemaCost.data ?? []).slice(0, 8)}
-                    height={220}
-                    margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
-                  >
-                    <CartesianGrid stroke={cryoColors.chartGrid} />
-                    <XAxis
-                      dataKey="schema_name"
-                      stroke={cryoColors.inkFaint}
-                      tick={chartAxisTick}
-                      angle={-20}
-                      textAnchor="end"
-                      interval={0}
+                  <>
+                    <BarChart
+                      data={(schemaCost.data ?? []).slice(0, 8)}
+                      height={220}
+                      margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
+                    >
+                      <CartesianGrid stroke={cryoColors.chartGrid} />
+                      <XAxis
+                        dataKey="schema_name"
+                        stroke={cryoColors.inkFaint}
+                        tick={chartAxisTick}
+                        angle={-20}
+                        textAnchor="end"
+                        interval={0}
+                      />
+                      <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                      <RechartsTooltip {...chartTooltipProps} />
+                      <Bar dataKey="cost_usd" fill={cryoColors.primary} name="$ / mo" />
+                    </BarChart>
+                    <ChartDataTable
+                      caption="Estimated monthly S3 cost by schema, largest first."
+                      columns={[
+                        { key: "schema", header: "Schema", render: (row) => row.schema_name },
+                        {
+                          key: "cost",
+                          header: "Monthly cost",
+                          align: "right",
+                          render: (row) => formatCurrency(row.cost_usd)
+                        },
+                        {
+                          key: "size",
+                          header: "Size",
+                          align: "right",
+                          render: (row) => formatBytesGb(row.size_gb)
+                        }
+                      ]}
+                      rows={schemaCost.data ?? []}
+                      getRowKey={(row, index) => row.schema_name ?? `schema-${index}`}
                     />
-                    <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
-                    <RechartsTooltip {...chartTooltipProps} />
-                    <Bar dataKey="monthly_cost_usd" fill={cryoColors.primary} name="$ / mo" />
-                  </BarChart>
+                  </>
                 ) : (
                   <EmptyState
                     title="No schema-level cost data yet"

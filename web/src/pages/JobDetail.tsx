@@ -3,10 +3,13 @@ import {
   Bot,
   Clock,
   Code,
+  Copy,
+  Download,
   Filter,
   ThumbsDown,
   ThumbsUp,
-  TriangleAlert
+  TriangleAlert,
+  WrapText
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -105,6 +108,72 @@ const DescriptionTable = ({
   </dl>
 );
 
+export const ArtifactBlock = ({
+  label,
+  content,
+  fileName
+}: {
+  label: string;
+  content: string;
+  fileName: string;
+}) => {
+  const [wrap, setWrap] = useState(true);
+
+  const copy = () => {
+    if (!navigator.clipboard) {
+      toast.error("Clipboard access is unavailable");
+      return;
+    }
+    void navigator.clipboard.writeText(content).then(
+      () => toast.success(`${label} copied`),
+      () => toast.error(`Could not copy ${label.toLowerCase()}`)
+    );
+  };
+
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-w-0 space-y-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button size="sm" variant="secondary" onClick={copy}>
+          <Copy aria-hidden="true" />
+          Copy
+        </Button>
+        <Button size="sm" variant="secondary" onClick={download}>
+          <Download aria-hidden="true" />
+          Download
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-pressed={wrap}
+          onClick={() => setWrap((current) => !current)}
+        >
+          <WrapText aria-hidden="true" />
+          {wrap ? "Scroll" : "Wrap"}
+        </Button>
+      </div>
+      <pre
+        tabIndex={0}
+        aria-label={label}
+        className={cn(
+          "m-0 max-w-full overflow-x-auto rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)] p-3 text-[11px]",
+          wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+        )}
+      >
+        {content}
+      </pre>
+    </div>
+  );
+};
+
 const engineBadgeVariant = (engine: string) => {
   const color = engineTagColor(engine);
   if (color === "green") return "success";
@@ -161,7 +230,10 @@ export const JobDetail = () => {
   const diagnosisFeedback = useMutation({
     mutationFn: (feedback: "up" | "down") =>
       submitDiagnosisFeedback(api, diagnosisRecord!.id, { feedback }),
-    onSuccess: () => toast.success("Diagnosis feedback recorded"),
+    onSuccess: () => {
+      toast.success("Diagnosis feedback recorded");
+      void latestDiagnosis.refetch();
+    },
     onError: (err) => toast.error((err as Error).message)
   });
   const forceAdmit = useMutation({
@@ -198,7 +270,7 @@ export const JobDetail = () => {
         subtitle={data ? `Job ID: ${data.job_id}` : undefined}
         actions={
           data ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <StatusTag status={data.status} />
               <Button size="sm" variant="secondary" asChild>
                 <Link to={`/tables/${data.table_id}`}>Open table</Link>
@@ -231,7 +303,7 @@ export const JobDetail = () => {
                     {STUCK_STATUSES.has(data.status) && !data.force_admit ? (
                       <ConfirmAction
                         title="Bypass scheduling gates?"
-                        description="Skips cooldown, benefit/moop score, and offpeak checks for this job. Table locks and PII/ABAC safety gates still apply."
+                        description={`Re-queues ${data.table_name} on ${formatEngineLabel(data.engine)} while bypassing cooldown, benefit/MOOP score, and off-peak checks. Table locks and PII/ABAC safety gates still apply. Current engine load is not available in this view, so forcing admission may add contention.`}
                         okText="Force run"
                         okButtonProps={{ danger: false }}
                         onConfirm={() => forceAdmit.mutate()}
@@ -264,21 +336,34 @@ export const JobDetail = () => {
                         {diagnosisRecord.diagnosis_class.replaceAll("_", " ")} (
                         {Math.round(diagnosisRecord.confidence * 100)}% confidence)
                       </p>
+                      <p className="text-xs text-muted-foreground">
+                        Diagnosed {new Date(diagnosisRecord.diagnosed_at).toLocaleString()}
+                        {diagnosisRecord.skillset_id
+                          ? ` • Skillset ${diagnosisRecord.skillset_id}`
+                          : diagnosisRecord.observation_id
+                            ? ` • Observation ${diagnosisRecord.observation_id}`
+                            : " • Source type not reported"}
+                      </p>
                       {diagnosisRecord.summary ? <p className="text-sm">{diagnosisRecord.summary}</p> : null}
                       {diagnosisRecord.runbook_step ? (
                         <Alert variant="info" title="Runbook step" description={diagnosisRecord.runbook_step} />
                       ) : null}
                       {diagnosisRecord.evidence.length ? (
-                        <ul className="m-0 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-                          {diagnosisRecord.evidence.map((line, idx) => (
-                            <li key={`${idx}-${line}`}>{line}</li>
-                          ))}
-                        </ul>
+                        <ArtifactBlock
+                          label="Diagnosis evidence"
+                          content={diagnosisRecord.evidence.map((line) => `- ${line}`).join("\n")}
+                          fileName={`job-${data.job_id}-diagnosis-evidence.txt`}
+                        />
                       ) : null}
-                      <div className="flex items-center gap-2">
+                      {diagnosisRecord.feedback ? (
+                        <p role="status" className="text-xs text-muted-foreground">
+                          Recorded feedback: {diagnosisRecord.feedback === "up" ? "Helpful" : "Not helpful"}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant={diagnosisRecord.feedback === "up" ? "primary" : "secondary"}
                           disabled={!diagnosisRecord}
                           loading={diagnosisFeedback.isPending}
                           onClick={() => diagnosisFeedback.mutate("up")}
@@ -288,7 +373,7 @@ export const JobDetail = () => {
                         </Button>
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant={diagnosisRecord.feedback === "down" ? "primary" : "secondary"}
                           disabled={!diagnosisRecord}
                           loading={diagnosisFeedback.isPending}
                           onClick={() => diagnosisFeedback.mutate("down")}
@@ -454,18 +539,15 @@ export const JobDetail = () => {
                         <CardTitle className="text-sm">Statement {idx + 1}</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        {isNativeStatement(sql) ? (
-                          <div className="space-y-2">
-                            <code className="text-xs text-muted-foreground">{sql}</code>
-                            <pre className="m-0 rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)] p-3 text-[11px] whitespace-pre-wrap">
-                              See raw job record for execute payload details.
-                            </pre>
-                          </div>
-                        ) : (
-                          <pre className="m-0 rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)] p-3 text-[11px] whitespace-pre-wrap">
-                            {sql}
-                          </pre>
-                        )}
+                        <ArtifactBlock
+                          label={`${isNativeStatement(sql) ? "Rendered statement" : "SQL statement"} ${idx + 1}`}
+                          content={
+                            isNativeStatement(sql)
+                              ? `${sql}\n\nSee raw job record for execute payload details.`
+                              : sql
+                          }
+                          fileName={`job-${data.job_id}-statement-${idx + 1}.txt`}
+                        />
                       </CardContent>
                     </Card>
                   ))}

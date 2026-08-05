@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { cancelRun, diagnoseRunFailure, forceAdmitJob, getRun, getRunJobs, listRuns } from "../../api/client";
@@ -42,6 +42,8 @@ import {
 } from "../../lib/operations";
 
 const STUCK_STATUSES = new Set(["queued", "deferred"]);
+const STALL_THRESHOLD_MS = 3 * 60 * 1000;
+const ACTIVE_RUN_STATUSES = new Set(["accepted", "queued", "running", "admitted"]);
 
 const tableRef = (job: JobRead) => {
   const planRef = job.plan?.table_ref;
@@ -155,6 +157,12 @@ export const RunDetail = () => {
 
   const jobRows = useMemo(() => snapshot?.jobs ?? jobs.data ?? [], [snapshot?.jobs, jobs.data]);
   const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (runFinished) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [runFinished]);
   const duration = formatDuration(runDurationMs(runData));
   const workflowName = scan ? "Scanner" : targetLabel(runData ?? { id: "", kind: "", status: "", created_at: "" });
   const workflowLink = scan ? "/operations/scanner" : runData?.preset_id ? `/operations/presets/${runData.preset_id}` : "/operations";
@@ -181,6 +189,45 @@ export const RunDetail = () => {
     const denominator = Math.max(assigned, discovered);
     return denominator > 0 ? Math.min(100, Math.round((completed / denominator) * 100)) : 0;
   }, [scan, summary]);
+
+  const lastActivityAt = useMemo(() => {
+    const latestMessageTs = messages[0]?.ts ? Date.parse(messages[0].ts) : NaN;
+    const runUpdatedTs = runData?.created_at ? Date.parse(runData.created_at) : NaN;
+    const candidates = [latestMessageTs, runUpdatedTs].filter((ts) => Number.isFinite(ts));
+    return candidates.length ? Math.max(...candidates) : null;
+  }, [messages, runData?.created_at]);
+
+  const isActive = ACTIVE_RUN_STATUSES.has((runData?.status ?? "").toLowerCase()) && !runFinished;
+  const msSinceActivity = lastActivityAt != null ? now - lastActivityAt : null;
+  const possiblyStalled = isActive && msSinceActivity != null && msSinceActivity > STALL_THRESHOLD_MS;
+
+  // Restrained live region: announce status transitions and scan-progress milestones only, never
+  // every log line or poll tick (per audit R11/R16/R21).
+  const [announcement, setAnnouncement] = useState("");
+  const prevStatusRef = useRef<string | undefined>(undefined);
+  const prevMilestoneRef = useRef(0);
+  useEffect(() => {
+    const status = (runData?.status ?? "").toLowerCase();
+    const prev = prevStatusRef.current;
+    if (status && status !== prev) {
+      if (prev !== undefined) {
+        if (status === "running" || status === "admitted") setAnnouncement("Run is now running.");
+        else if (status === "succeeded") setAnnouncement("Run succeeded.");
+        else if (status === "failed" || status === "partial_failed") setAnnouncement("Run failed.");
+        else if (status === "cancelled") setAnnouncement("Run cancelled.");
+      }
+      prevStatusRef.current = status;
+    }
+  }, [runData?.status]);
+  useEffect(() => {
+    if (!scan) return;
+    const milestones = [25, 50, 75, 100];
+    const crossed = milestones.filter((m) => scanPercent >= m && prevMilestoneRef.current < m);
+    if (crossed.length) {
+      prevMilestoneRef.current = Math.max(...crossed);
+      setAnnouncement(`Scan ${Math.max(...crossed)}% complete.`);
+    }
+  }, [scan, scanPercent]);
 
   const jobColumns = useMemo<ColumnDef<JobRead, unknown>[]>(
     () => [
@@ -258,6 +305,9 @@ export const RunDetail = () => {
 
   return (
     <div>
+      <div aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
       <PageHeader
         title={`Run ${shortRunId(runId)}`}
         subtitle={
@@ -267,6 +317,14 @@ export const RunDetail = () => {
             <span>{targetLabel(runData ?? { id: runId, kind: "", status: "", created_at: "" })}</span>
             <span>Duration {duration}</span>
             <span>Started {formatTime(runData?.created_at)}</span>
+            {possiblyStalled ? (
+              <span
+                className="rounded px-1.5 py-0.5 text-xs font-medium text-[var(--color-status-warning)]"
+                title="No live update or log line for over 3 minutes while the run is active."
+              >
+                No update in {formatDuration(msSinceActivity)} — may be stalled
+              </span>
+            ) : null}
           </div>
         }
         rootCrumb={{ label: "Operations", to: "/operations" }}
@@ -383,6 +441,7 @@ export const RunDetail = () => {
             reconnectAttempt={reconnectAttempt}
             onManualReconnect={manualReconnect}
             formatTime={formatTime}
+            downloadName={`run-${shortRunId(runId)}-log`}
           />
         </div>
 

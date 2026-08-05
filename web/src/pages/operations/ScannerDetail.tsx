@@ -1,8 +1,8 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   getScannerConfig,
   getScannerStatus,
@@ -21,6 +21,7 @@ import { ConfirmAction } from "../../components/confirm";
 import { StatStrip } from "../../components/common";
 import { OperationPipeline, scanPipelineSteps } from "../../components/operations/OperationPipeline";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
+import { describeCronSchedule, nextCronRun } from "../../components/operations/scheduleSummary";
 import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -38,7 +39,7 @@ import {
 } from "../../lib/connectionScanPrompt";
 import { formatNumber, formatTime } from "../../lib/format";
 import { shortRunId, summaryNumber } from "../../lib/operations";
-import { WorkflowDetailShell } from "./WorkflowDetailShell";
+import { WorkflowDetailShell, type WorkflowTabKey } from "./WorkflowDetailShell";
 
 type ScanScope = "all" | "source" | "schemas" | "tables";
 
@@ -158,6 +159,32 @@ const ScanScopeForm = ({
     (scope === "schemas" && Boolean(sourceId) && schemaNames.length > 0) ||
     (scope === "tables" && (tableIds.length > 0 || unscannedTableSelection.length > 0));
 
+  const selectedSourceName = (sources.data ?? []).find((s: SourceRead) => s.id === sourceId)?.name;
+  const selectedTableCount = tableIds.length + unscannedTableSelection.length;
+
+  const scopeDescription = useMemo(() => {
+    if (scope === "all") return "the entire catalog (every configured lakehouse)";
+    if (scope === "source") return selectedSourceName ? `lakehouse "${selectedSourceName}"` : "the selected lakehouse";
+    if (scope === "schemas") {
+      const schemaText = schemaNames.length > 0 ? schemaNames.join(", ") : "the selected schemas";
+      return `${schemaNames.length} schema${schemaNames.length === 1 ? "" : "s"} (${schemaText}) in ${selectedSourceName ?? "the selected lakehouse"}`;
+    }
+    return `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"} in ${selectedSourceName ?? "the selected lakehouse"}`;
+  }, [scope, schemaNames, selectedSourceName, selectedTableCount]);
+
+  const confirmDescription = (
+    <div className="space-y-1.5 text-sm">
+      <p>
+        This queues a <strong>full scan</strong> (not incremental) of {scopeDescription}.
+      </p>
+      {hasActiveRun ? (
+        <p className="text-destructive">
+          A scan is already running. This new scan will be queued behind it, not run in parallel.
+        </p>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
@@ -191,14 +218,14 @@ const ScanScopeForm = ({
       ) : null}
       <ConfirmAction
         title="Trigger this scan?"
-        description="Queues a scan for the selected scope."
+        description={confirmDescription}
         onConfirm={() => trigger.mutate()}
       >
         <Button
           variant="primary"
           className="w-full"
           loading={trigger.isPending}
-          disabled={!canOperate || !canSubmit || hasActiveRun}
+          disabled={!canOperate || !canSubmit}
         >
           Trigger scan
         </Button>
@@ -277,8 +304,38 @@ const ScannerOverviewTab = () => {
   const activeRun = status.data?.active_run;
   const latest = runs.data?.[0];
 
+  const [liveMessage, setLiveMessage] = useState("");
+  const prevActiveRunIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (status.isLoading) return;
+    const prevId = prevActiveRunIdRef.current;
+    const currentId = activeRun?.id ?? null;
+    if (prevId !== undefined && prevId !== currentId) {
+      if (currentId) setLiveMessage(`Scan ${shortRunId(currentId)} started.`);
+      else if (prevId) setLiveMessage(`Scan ${shortRunId(prevId)} finished.`);
+    }
+    prevActiveRunIdRef.current = currentId;
+  }, [activeRun?.id, status.isLoading]);
+
   return (
     <div className="flex flex-col gap-3">
+      <span className="sr-only" role="status" aria-live="polite">
+        {liveMessage}
+      </span>
+      {status.isError ? (
+        <Alert
+          variant="error"
+          title="Couldn't load scanner status"
+          description={
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{(status.error as Error)?.message ?? "Unknown error."}</span>
+              <Button size="sm" variant="secondary" onClick={() => void status.refetch()}>
+                Retry
+              </Button>
+            </div>
+          }
+        />
+      ) : null}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Scanner status</CardTitle>
@@ -382,8 +439,38 @@ const ScannerConfigTab = () => {
     saveConfig.mutate(formValues);
   };
 
+  const liveCronError = validateCronExpression(formValues.schedule_cron, { allowEmpty: false });
+  const scheduleSummary = !liveCronError ? describeCronSchedule(formValues.schedule_cron) : null;
+  const nextRun = !liveCronError ? nextCronRun(formValues.schedule_cron) : null;
+
+  const configLoadFailed = config.isError || status.isError;
+
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {configLoadFailed ? (
+        <Alert
+          className="lg:col-span-2"
+          variant="error"
+          title="Couldn't load scanner configuration"
+          description={
+            <div className="flex flex-wrap items-center gap-2">
+              <span>
+                {(config.error as Error)?.message ?? (status.error as Error)?.message ?? "Unknown error."}
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  void config.refetch();
+                  void status.refetch();
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          }
+        />
+      ) : null}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Trigger a scan</CardTitle>
@@ -423,7 +510,21 @@ const ScannerConfigTab = () => {
                   setCronError(validateCronExpression(value, { allowEmpty: false }));
                 }}
               />
-              {cronError ? <p className="text-xs text-destructive">{cronError}</p> : null}
+              {cronError ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {cronError}
+                </p>
+              ) : scheduleSummary ? (
+                <p className="text-xs text-muted-foreground">
+                  {scheduleSummary}
+                  {nextRun ? ` · Next run: ${formatTime(nextRun.toISOString())}` : ""}
+                </p>
+              ) : null}
+              {status.data?.next_scan_at ? (
+                <p className="text-xs text-muted-foreground">
+                  Scanner-reported next scan: {formatTime(status.data.next_scan_at)}
+                </p>
+              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -497,13 +598,19 @@ const ScannerGridTab = () => {
   return <DataTable columns={columns} data={data} density="compact" getRowId={(row) => row.key} />;
 };
 
+const VALID_SCANNER_TABS = new Set(["overview", "grid", "runs", "config"]);
+
 export const ScannerDetail = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { api, role } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [connectionNotice, setConnectionNotice] = useState<ConnectionScanNotice | null>(() =>
     readConnectionScanNotice(location.state)
   );
+
+  const rawTab = searchParams.get("tab");
+  const activeTab = (rawTab && VALID_SCANNER_TABS.has(rawTab) ? rawTab : "overview") as WorkflowTabKey;
 
   const scanNoticeSource = useMutation({
     mutationFn: (sourceId: string) =>
@@ -541,6 +648,18 @@ export const ScannerDetail = () => {
         title="Scanner"
         subtitle="Catalog discovery and health statistics across your lakehouses."
         hiddenTabs={["graph"]}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setSearchParams(
+            (previous) => {
+              const next = new URLSearchParams(previous);
+              if (tab === "overview") next.delete("tab");
+              else next.set("tab", tab);
+              return next;
+            },
+            { replace: true }
+          );
+        }}
         overview={<ScannerOverviewTab />}
         grid={<ScannerGridTab />}
         graph={<ScannerGraphTab />}

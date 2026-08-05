@@ -87,6 +87,8 @@ export interface SourceFormValues {
   s3_region?: string;
   s3_access_key_id?: string;
   s3_secret_access_key?: string;
+  /** True when the saved config already has a secret access key (not re-sent by the API — see redact.py). */
+  s3_has_secret_access_key?: boolean;
   s3_role_arn?: string;
   s3_external_id?: string;
   s3_role_session_name?: string;

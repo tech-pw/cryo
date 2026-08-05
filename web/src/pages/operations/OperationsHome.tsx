@@ -1,7 +1,7 @@
 import { Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getScannerStatus, listPresets, listRuns } from "../../api/client";
 import type { PresetRead, RunRead } from "../../api/types";
@@ -13,6 +13,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import { formatNumber, formatTime } from "../../lib/format";
@@ -22,6 +23,10 @@ import {
   shortRunId,
   targetLabel
 } from "../../lib/operations";
+
+const RUN_FILTER_VALUES = new Set(["all", "failed", "active"]);
+const isRunFilter = (value: string | null): value is "all" | "failed" | "active" =>
+  value !== null && RUN_FILTER_VALUES.has(value);
 
 const HealthDot = ({ ok, label }: { ok?: boolean; label: string }) => (
   <span className="inline-flex items-center gap-1.5">
@@ -51,8 +56,36 @@ export const OperationsHome = () => {
   const { api, token, role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") === "runs" ? "runs" : "workflows";
-  const [runFilter, setRunFilter] = useState<"all" | "failed" | "active">("all");
-  const [runsPage, setRunsPage] = useState(0);
+  const runFilterParam = searchParams.get("runFilter");
+  const runFilter = isRunFilter(runFilterParam) ? runFilterParam : "all";
+  const runsPageParam = Number.parseInt(searchParams.get("runsPage") ?? "0", 10);
+  const runsPage = Number.isFinite(runsPageParam) && runsPageParam >= 0 ? runsPageParam : 0;
+
+  const setRunFilter = (filter: "all" | "failed" | "active") => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("tab", "runs");
+      if (filter === "all") {
+        next.delete("runFilter");
+      } else {
+        next.set("runFilter", filter);
+      }
+      next.delete("runsPage");
+      return next;
+    });
+  };
+
+  const setRunsPage = (page: number) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (page === 0) {
+        next.delete("runsPage");
+      } else {
+        next.set("runsPage", String(page));
+      }
+      return next;
+    });
+  };
 
   const scannerStatus = useQuery({
     queryKey: ["scanner-status", token],
@@ -76,6 +109,23 @@ export const OperationsHome = () => {
     return runs.filter((run) => run.status === "failed" && Date.parse(run.created_at) >= cutoff);
   }, [runs]);
   const activeRuns = useMemo(() => runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status)), [runs]);
+
+  const [liveMessage, setLiveMessage] = useState("");
+  const prevCountsRef = useRef<{ active: number; failed: number } | null>(null);
+  useEffect(() => {
+    if (allRuns.isLoading) return;
+    const prev = prevCountsRef.current;
+    if (prev) {
+      if (activeRuns.length > prev.active) {
+        setLiveMessage(`${activeRuns.length} run${activeRuns.length === 1 ? "" : "s"} now active.`);
+      } else if (failed24h.length > prev.failed) {
+        setLiveMessage(`${failed24h.length} run${failed24h.length === 1 ? "" : "s"} failed in the last 24 hours.`);
+      } else if (activeRuns.length === 0 && prev.active > 0) {
+        setLiveMessage("All active runs finished.");
+      }
+    }
+    prevCountsRef.current = { active: activeRuns.length, failed: failed24h.length };
+  }, [activeRuns.length, allRuns.isLoading, failed24h.length]);
 
   const runsByPreset = useMemo(() => {
     const map = new Map<string, RunRead[]>();
@@ -225,7 +275,7 @@ export const OperationsHome = () => {
         size: 110,
         cell: ({ row }) => {
           const latest = row.original.runs[0];
-          return latest ? <StatusTag status={latest.status} /> : <StatusTag status="queued" />;
+          return latest ? <StatusTag status={latest.status} /> : <Badge variant="secondary">Not run</Badge>;
         }
       },
       {
@@ -268,14 +318,27 @@ export const OperationsHome = () => {
                   Scanner
                 </Link>
               </Button>
-              <Button variant="primary" disabled>
-                <Plus className="size-4" aria-hidden />
-                New preset
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>
+                    <Button variant="primary" disabled>
+                      <Plus className="size-4" aria-hidden />
+                      New preset
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Preset creation isn&apos;t available in this UI yet. Ask an admin to create presets via the API.
+                </TooltipContent>
+              </Tooltip>
             </div>
           ) : undefined
         }
       />
+
+      <span className="sr-only" role="status" aria-live="polite">
+        {liveMessage}
+      </span>
 
       <div className="flex flex-col gap-3">
         <Card>
@@ -324,22 +387,14 @@ export const OperationsHome = () => {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setRunFilter("failed");
-                  setRunsPage(0);
-                  setSearchParams({ tab: "runs" });
-                }}
+                onClick={() => setRunFilter("failed")}
               >
                 Failed runs ({failed24h.length})
               </Button>
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setRunFilter("active");
-                  setRunsPage(0);
-                  setSearchParams({ tab: "runs" });
-                }}
+                onClick={() => setRunFilter("active")}
               >
                 Running now ({activeRuns.length})
               </Button>
@@ -355,7 +410,17 @@ export const OperationsHome = () => {
 
         <Tabs
           value={tab}
-          onValueChange={(key) => setSearchParams(key === "runs" ? { tab: "runs" } : {})}
+          onValueChange={(key) =>
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              if (key === "runs") {
+                next.set("tab", "runs");
+              } else {
+                next.delete("tab");
+              }
+              return next;
+            })
+          }
         >
           <TabsList>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
@@ -379,30 +444,21 @@ export const OperationsHome = () => {
                 <Button
                   size="sm"
                   variant={runFilter === "all" ? "primary" : "secondary"}
-                  onClick={() => {
-                    setRunFilter("all");
-                    setRunsPage(0);
-                  }}
+                  onClick={() => setRunFilter("all")}
                 >
                   All
                 </Button>
                 <Button
                   size="sm"
                   variant={runFilter === "failed" ? "primary" : "secondary"}
-                  onClick={() => {
-                    setRunFilter("failed");
-                    setRunsPage(0);
-                  }}
+                  onClick={() => setRunFilter("failed")}
                 >
                   Failed
                 </Button>
                 <Button
                   size="sm"
                   variant={runFilter === "active" ? "primary" : "secondary"}
-                  onClick={() => {
-                    setRunFilter("active");
-                    setRunsPage(0);
-                  }}
+                  onClick={() => setRunFilter("active")}
                 >
                   Active
                 </Button>

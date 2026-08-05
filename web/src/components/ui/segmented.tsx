@@ -26,7 +26,7 @@ export function Segmented<T extends string>({
     <div
       role="group"
       className={cn(
-        "inline-flex rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] p-0.5",
+        "inline-flex max-w-full overflow-x-auto rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] p-0.5",
         block && "flex w-full",
         className
       )}

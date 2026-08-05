@@ -224,7 +224,7 @@
 
 .cryo-shell__brand {
   flex: 0 0 auto;
-  height: 48px;
+  height: 64px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -233,6 +233,39 @@
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.01em;
+}
+
+.cryo-shell__brand-mark {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: var(--sidebar-accent);
+  color: #fff;
+  box-shadow: 0 8px 24px -12px rgba(61, 111, 212, 0.9);
+}
+
+.cryo-shell__brand-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.cryo-shell__brand-copy strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cryo-shell__brand-copy small {
+  margin-top: 3px;
+  color: #8f9cad;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.035em;
 }
 
 .cryo-shell__nav {
@@ -282,7 +315,7 @@
 }
 
 .cryo-shell__nav-link--active {
-  background: rgba(61, 111, 212, 0.15);
+  background: rgba(61, 111, 212, 0.18);
   border-color: rgba(61, 111, 212, 0.32);
   color: var(--sidebar-text-active);
   font-weight: 600;
@@ -444,6 +477,7 @@
   flex: 1;
   min-width: 0;
   padding: 24px;
+  background: var(--layout-bg);
 }
 
 .cryo-shell__search-group {
@@ -485,7 +519,8 @@
 }
 
 .cryo-shell__search-item-meta {
-  color: var(--ink-faint);
+  /* --ink-faint fails WCAG AA (2.76:1) against panel/surface backgrounds; --ink-soft passes. */
+  color: var(--ink-soft);
   font-size: 11px;
 }
 
@@ -647,13 +682,16 @@
 }
 
 .cryo-search-page__table th {
-  color: var(--ink-faint);
+  /* --ink-faint fails WCAG AA (2.76:1) against the row background; --ink-soft passes. */
+  color: var(--ink-soft);
   font-size: 12px;
   font-weight: 600;
 }
 
 .cryo-search-page__table a {
-  color: var(--primary);
+  /* --primary is borderline (4.35:1, below the 4.5:1 AA threshold) on this row background;
+     --primary-hover reads as the same brand blue but clears AA in both themes. */
+  color: var(--primary-hover);
   text-decoration: none;
   font-weight: 500;
 }
@@ -663,7 +701,8 @@
 }
 
 .cryo-search-page__link {
-  color: var(--primary);
+  /* --primary is borderline (4.35:1) on this row background; --primary-hover clears AA. */
+  color: var(--primary-hover);
   text-decoration: none;
   font-weight: 500;
 }

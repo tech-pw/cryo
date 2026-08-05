@@ -21,8 +21,13 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
       aria-label="Primary navigation"
     >
       <div className="cryo-shell__brand">
-        <BrandIcon size={18} aria-hidden />
-        <span>Cryo</span>
+        <span className="cryo-shell__brand-mark">
+          <BrandIcon size={18} aria-hidden />
+        </span>
+        <span className="cryo-shell__brand-copy">
+          <strong>Cryo</strong>
+          <small>Iceberg control plane</small>
+        </span>
       </div>
       <nav className="cryo-shell__nav">
         {NAV_GROUPS.map((group) => {

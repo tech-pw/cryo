@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Governance } from "./Governance";
 
 vi.mock("../lib/auth", () => ({
@@ -92,6 +92,7 @@ vi.mock("../api/client", () => ({
     conflicts: [],
     message: "GitOps is not configured."
   }),
+  getTable: vi.fn(),
   ApiError: class ApiError extends Error {
     status: number;
     detail?: unknown;
@@ -116,6 +117,10 @@ const renderGovernance = (initialRoute = "/governance") => {
 };
 
 describe("Governance page", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders governance sections and tier policies", async () => {
     renderGovernance("/governance?tab=policies");
     expect(screen.getByRole("heading", { name: "Governance" })).toBeInTheDocument();
@@ -127,5 +132,27 @@ describe("Governance page", () => {
     renderGovernance("/governance?tab=inventory");
     expect(await screen.findByText("demo.broken_orders")).toBeInTheDocument();
     expect(await screen.findByText("Permission denied")).toBeInTheDocument();
+  }, 15000);
+
+  it("resolves legacy tab aliases to the new task-oriented tabs", async () => {
+    renderGovernance("/governance?tab=attention");
+    expect(screen.getByRole("heading", { name: "Governance" })).toBeInTheDocument();
+    expect(await screen.findByText("Pending approvals")).toBeInTheDocument();
+  }, 15000);
+
+  it("only mounts the active tab's content and data fetching", async () => {
+    const client = await import("../api/client");
+    renderGovernance("/governance?tab=triage");
+    expect(await screen.findByText("Pending approvals")).toBeInTheDocument();
+    // Tier policies / ABAC policies are rendered only by the Access & policy tab.
+    expect(screen.queryByText("Tier policies")).not.toBeInTheDocument();
+    expect(client.listTierPolicies).not.toHaveBeenCalled();
+    expect(client.listAbacPolicies).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("switches tabs and mounts the newly active tab's content", async () => {
+    renderGovernance("/governance?tab=access");
+    expect(await screen.findByText("Tier policies")).toBeInTheDocument();
+    expect(screen.queryByText("Pending approvals")).not.toBeInTheDocument();
   }, 15000);
 });

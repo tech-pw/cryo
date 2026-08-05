@@ -25,6 +25,7 @@ const ROUTE_LABELS: Record<string, string> = {
   "/smart-maintenance": "Smart Maintenance",
   "/connections": "Connections",
   "/jobs": "Jobs",
+  "/search": "Search",
   "/attribution": "Attribution",
   "/skillsets": "Skillsets",
   "/scans": "Scanner",

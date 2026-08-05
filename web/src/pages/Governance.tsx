@@ -8,6 +8,7 @@ import { AttentionTab } from "./governance/AttentionTab";
 import {
   DEFAULT_GOVERNANCE_TAB,
   isGovernanceTabKey,
+  resolveGovernanceTab,
   type GovernanceTabKey
 } from "./governance/constants";
 import { GovernanceKpiRow } from "./governance/GovernanceKpiRow";
@@ -20,21 +21,21 @@ const TABS: Array<{
   label: string;
   icon: React.ReactNode;
 }> = [
-  { key: "attention", label: "Attention", icon: <AlertTriangle className="size-3.5" aria-hidden="true" /> },
-  { key: "policies", label: "Policies", icon: <Shield className="size-3.5" aria-hidden="true" /> },
-  { key: "intelligence", label: "Intelligence", icon: <Radar className="size-3.5" aria-hidden="true" /> },
-  { key: "inventory", label: "Inventory", icon: <Database className="size-3.5" aria-hidden="true" /> }
+  { key: "triage", label: "Triage", icon: <AlertTriangle className="size-3.5" aria-hidden="true" /> },
+  { key: "access", label: "Access & policy", icon: <Shield className="size-3.5" aria-hidden="true" /> },
+  { key: "signals", label: "Signals & lineage", icon: <Radar className="size-3.5" aria-hidden="true" /> },
+  { key: "ownership", label: "Ownership & inventory", icon: <Database className="size-3.5" aria-hidden="true" /> }
 ];
 
 const tabContent = (key: GovernanceTabKey) => {
   switch (key) {
-    case "attention":
+    case "triage":
       return <AttentionTab />;
-    case "policies":
+    case "access":
       return <PoliciesTab />;
-    case "intelligence":
+    case "signals":
       return <IntelligenceTab />;
-    case "inventory":
+    case "ownership":
       return <InventoryTab />;
   }
 };
@@ -42,12 +43,28 @@ const tabContent = (key: GovernanceTabKey) => {
 export const Governance = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get("tab");
-  const tabFromUrl: GovernanceTabKey = isGovernanceTabKey(urlTab) ? urlTab : DEFAULT_GOVERNANCE_TAB;
+  const tabFromUrl: GovernanceTabKey = resolveGovernanceTab(urlTab);
   const [activeTab, setActiveTab] = useState<GovernanceTabKey>(tabFromUrl);
 
   useEffect(() => {
     setActiveTab(tabFromUrl);
   }, [tabFromUrl]);
+
+  // Legacy `?tab=` values (e.g. `attention`, `policies`) resolve correctly above but should be
+  // rewritten to the current task-oriented key so a shared/bookmarked link normalizes on next
+  // navigation instead of perpetuating the old value.
+  useEffect(() => {
+    if (urlTab !== null && !isGovernanceTabKey(urlTab)) {
+      const next = new URLSearchParams(searchParams);
+      if (tabFromUrl === DEFAULT_GOVERNANCE_TAB) {
+        next.delete("tab");
+      } else {
+        next.set("tab", tabFromUrl);
+      }
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlTab]);
 
   const handleTabChange = useCallback(
     (key: string) => {
@@ -88,8 +105,8 @@ export const Governance = () => {
           ))}
         </TabsList>
         {TABS.map((tab) => (
-          <TabsContent key={tab.key} value={tab.key} forceMount>
-            {tabContent(tab.key)}
+          <TabsContent key={tab.key} value={tab.key}>
+            {activeTab === tab.key ? tabContent(tab.key) : null}
           </TabsContent>
         ))}
       </Tabs>

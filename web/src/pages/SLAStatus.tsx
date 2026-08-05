@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   Zap
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -21,7 +21,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { getSlaStatusDashboard, type SLAResponse } from "../api/client";
 import { AsyncBoundary } from "../components/AsyncBoundary";
 import { PageHeader } from "../components/common";
@@ -35,10 +35,11 @@ import { Switch } from "../components/ui/switch";
 import { MetricTile } from "../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { useAuth } from "../lib/auth";
-import { formatSlaDays as formatDays, formatSlaHours as formatHours } from "../lib/format";
+import { formatSlaDays as formatDays, formatSlaHours as formatHours, formatTime } from "../lib/format";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 
 type SLAStatusRow = SLAResponse["slas"][number];
+const LOCAL_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const ProgressBar = ({
   percent,
@@ -107,14 +108,32 @@ const breachCount = (record: SLAStatusRow) =>
 
 export const SLAStatus = () => {
   const { api } = useAuth();
-  const [breachedOnly, setBreachedOnly] = useState(false);
-  const [tableSearch, setTableSearch] = useState("");
-  const [freshnessBucket, setFreshnessBucket] = useState<string | null>(null);
-  const [pageIndex, setPageIndex] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const breachedOnly = searchParams.get("breached") === "1";
+  const tableSearch = searchParams.get("q") ?? "";
+  const freshnessBucket = searchParams.get("bucket");
+  const pageIndex = Number(searchParams.get("page") ?? "0") || 0;
   const [pageSize, setPageSize] = useState(20);
   const [schemaPageIndex, setSchemaPageIndex] = useState(0);
 
-  const { data, isLoading, error, refetch } = useQuery<SLAResponse>({
+  const updateParams = (updates: Record<string, string | null>) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === "") params.delete(key);
+        else params.set(key, value);
+      }
+      return params;
+    });
+  };
+
+  const setBreachedOnly = (next: boolean) => updateParams({ breached: next ? "1" : null, page: null });
+  const setTableSearch = (next: string) => updateParams({ q: next || null, page: null });
+  const setFreshnessBucket = (next: string | null) => updateParams({ bucket: next, page: null });
+  const setPageIndex = (next: number) => updateParams({ page: next ? String(next) : null });
+
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery<SLAResponse>({
     queryKey: ["sla-status", api.token, breachedOnly],
     queryFn: () => getSlaStatusDashboard(api, breachedOnly),
     refetchInterval: 60000
@@ -140,6 +159,44 @@ export const SLAStatus = () => {
       return true;
     });
   }, [slas, tableSearch, freshnessBucket]);
+
+  const [announcement, setAnnouncement] = useState("");
+  const previousBreachedRef = useRef<number | null>(null);
+  const previousFilterRef = useRef<{ tableSearch: string; freshnessBucket: string | null; count: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!data) return;
+    const total = data.total_breached;
+    const prev = previousBreachedRef.current;
+    if (prev !== null && prev !== total) {
+      setAnnouncement(
+        total === 0
+          ? "All SLA breaches cleared."
+          : total > prev
+            ? `${total} table(s) now breach SLA thresholds, up from ${prev}.`
+            : `${total} table(s) now breach SLA thresholds, down from ${prev}.`
+      );
+    }
+    previousBreachedRef.current = total;
+  }, [data]);
+
+  useEffect(() => {
+    if (!data) return;
+    const prev = previousFilterRef.current;
+    const changedFilter = !prev || prev.tableSearch !== tableSearch || prev.freshnessBucket !== freshnessBucket;
+    if (changedFilter) {
+      const timer = window.setTimeout(() => {
+        setAnnouncement(
+          `Showing ${visibleRows.length} table${visibleRows.length === 1 ? "" : "s"} of ${slas.length}.`
+        );
+        previousFilterRef.current = { tableSearch, freshnessBucket, count: visibleRows.length };
+      }, 400);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [data, tableSearch, freshnessBucket, visibleRows.length, slas.length]);
 
   const breachByType = useMemo(
     () => ({
@@ -361,6 +418,13 @@ export const SLAStatus = () => {
           </div>
         }
       />
+      <p className="mb-3 text-xs text-muted-foreground" aria-live="off">
+        Refreshes every 60s
+        {dataUpdatedAt ? ` \u2022 Last refreshed ${formatTime(new Date(dataUpdatedAt).toISOString())} (${LOCAL_TIMEZONE})` : ""}
+      </p>
+      <span aria-live="polite" className="sr-only">
+        {announcement}
+      </span>
 
       <AsyncBoundary
         isLoading={isLoading}
@@ -410,47 +474,73 @@ export const SLAStatus = () => {
 
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle>Freshness distribution</CardTitle>
+              <div>
+                <CardTitle>Freshness distribution</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose a freshness range to filter the table below.
+                </p>
+              </div>
               {freshnessBucket ? (
                 <Button size="sm" variant="secondary" onClick={() => setFreshnessBucket(null)}>
                   Clear filter
                 </Button>
-              ) : (
-                <span className="text-xs text-muted-foreground">Click a bar to filter the table below</span>
-              )}
+              ) : null}
             </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={freshnessHistogram} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={cryoColors.chartGrid} vertical={false} />
-                  <XAxis dataKey="label" stroke={cryoColors.inkFaint} tick={chartAxisTick} />
-                  <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} allowDecimals={false} width={32} />
-                  <RechartsTooltip {...chartTooltipProps} />
-                  <Bar
-                    dataKey="count"
-                    name="Tables"
-                    cursor="pointer"
-                    radius={[2, 2, 0, 0]}
-                    onClick={(point) => {
-                      const key = (point?.payload as { key?: string } | undefined)?.key;
-                      if (!key) return;
-                      setFreshnessBucket((current) => (current === key ? null : key));
-                    }}
+            <CardContent className="space-y-3">
+              <div
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6"
+                role="group"
+                aria-label="Filter tables by freshness range"
+              >
+                {freshnessHistogram.map((bucket) => (
+                  <Button
+                    key={bucket.key}
+                    type="button"
+                    size="sm"
+                    variant={freshnessBucket === bucket.key ? "primary" : "secondary"}
+                    className="h-auto min-h-9 justify-between gap-2 px-3 py-2"
+                    aria-label={`Filter to ${bucket.label}: ${bucket.count} table${bucket.count === 1 ? "" : "s"}`}
+                    aria-pressed={freshnessBucket === bucket.key}
+                    onClick={() => setFreshnessBucket(freshnessBucket === bucket.key ? null : bucket.key)}
                   >
-                    {freshnessHistogram.map((bucket) => (
-                      <Cell
-                        key={bucket.key}
-                        fill={
-                          freshnessBucket === null || freshnessBucket === bucket.key
-                            ? cryoColors.primary
-                            : cryoColors.chartGrid
-                        }
-                      />
-                    ))}
-                    <LabelList dataKey="count" position="top" fontSize={11} fill={cryoColors.inkFaint} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                    <span>{bucket.label}</span>
+                    <span className="font-mono text-xs">{bucket.count}</span>
+                  </Button>
+                ))}
+              </div>
+              <div aria-hidden="true" inert>
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={freshnessHistogram} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke={cryoColors.chartGrid} vertical={false} />
+                    <XAxis dataKey="label" stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                    <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} allowDecimals={false} width={32} />
+                    <RechartsTooltip {...chartTooltipProps} />
+                    <Bar
+                      dataKey="count"
+                      name="Tables"
+                      cursor="pointer"
+                      radius={[2, 2, 0, 0]}
+                      onClick={(point) => {
+                        const key = (point?.payload as { key?: string } | undefined)?.key;
+                        if (!key) return;
+                        setFreshnessBucket(freshnessBucket === key ? null : key);
+                      }}
+                    >
+                      {freshnessHistogram.map((bucket) => (
+                        <Cell
+                          key={bucket.key}
+                          fill={
+                            freshnessBucket === null || freshnessBucket === bucket.key
+                              ? cryoColors.primary
+                              : cryoColors.chartGrid
+                          }
+                        />
+                      ))}
+                      <LabelList dataKey="count" position="top" fontSize={11} fill={cryoColors.inkFaint} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
 
@@ -483,10 +573,7 @@ export const SLAStatus = () => {
                 <Input
                   placeholder="Search table name"
                   value={tableSearch}
-                  onChange={(e) => {
-                    setTableSearch(e.target.value);
-                    setPageIndex(0);
-                  }}
+                  onChange={(e) => setTableSearch(e.target.value)}
                   className="h-8 pl-8 text-sm"
                 />
               </div>
