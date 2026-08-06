@@ -216,6 +216,10 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
 - Workload-aware research build order to prefer: finish **AutoComp** (highest near-term ROI) →
   **PTO** (biggest net-new) → WAIR / Okolnychyi secondaries; master spec is
   `docs/implementation/workload-aware-optimization.md`.
+- **Standing directive, added 2026-08-06: check Cryo's own infrastructure cost every day and keep
+  fixing until fully optimized — this is ongoing, not a one-time pass.** Don't wait to be asked;
+  proactively pull the numbers each session and investigate anything that looks off. See the
+  "Cost self-check" entry below for the concrete how-to and what's already been fixed.
 
 ## Learned Workspace Facts
 
@@ -228,3 +232,33 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
   compaction path — UI/run presets should expose it when configured, not Trino-only.
 - Slack daily-report structure guidance lives in `docs/SLACK_REPORT_FORMAT_GUIDE.md`; native-engine
   scope/gaps are tracked in `docs/native-engine-scoping-research.md`.
+- **Cost self-check, added 2026-08-06** (see the standing directive above): Cryo's own AWS EKS
+  spend for its `cryo` namespace on the `data-platform-eks` cluster is visible two ways —
+  - **Grafana dashboard**: `https://platform-grafana.penpencil.co/d/de05f8e7cjpj4ea/namespace-cost`
+    (`var-cluster_name=data-platform-eks&var-namespace=cryo`). Shows `used_cost` vs `unused_cost`
+    (requested-but-idle capacity) split by workload.
+  - **Direct query**: the same numbers come from AWS's EKS Split Cost Allocation Data via the
+    `grafana-athena-datasource` Grafana datasource (uid `fe0bimj2kv9xca`), querying the `cur` table's
+    `split_line_item_split_cost` (used) / `split_line_item_unused_cost` (wasted) columns, filtered by
+    `resource_tags_aws_eks_namespace = 'cryo'`. Call it via Grafana's `/api/ds/query` proxy (see the
+    2026-08 session transcript for the exact `rawSQL` payload shape) so you don't need direct AWS
+    creds. **Gotcha**: ephemeral Kubernetes Jobs/Pods (Cryo's native + Spark dispatch pods) don't
+    carry the `eks:workload-name`/`eks:deployment` tags a Deployment gets, so their cost is invisible
+    in the normal per-service breakdown — it all lands in a `resource_tags_aws_eks_workload_name = ''`
+    bucket. Check that bucket specifically; don't conclude "no waste" just because the named-workload
+    rows look clean.
+  - **Ground-truth actual usage**: `kubectl top pods -n cryo` on live dispatch pods, compared against
+    their configured CPU/mem *requests* (not limits) — the gap between the two, multiplied across
+    however many pods run per day, is the real waste, and it's what the `unused_cost` column above
+    is billing for.
+  - **Already fixed this way (2026-08-06)**: native engine's rewrite "packing floor" was sizing every
+    table's pod to ~5.3GiB regardless of actual table size (`cryo/engines/native/resources.py`,
+    `packing_floor_bytes`/`mem_mib_for_group_packing` — now capped by `table_total_bytes`); Spark
+    fallback driver/executor static sizing was ~10x observed usage (`values-prod.yaml`); 3,276
+    orphaned Spark driver pods had no cleanup path (`cryo.engines.spark.k8s.cleanup_stale_driver_pods`,
+    wired into `GovernorRunner._tick`) — needed an RBAC fix too (`governor-rbac.yaml`, pods needed
+    `delete` not just `get`/`list`).
+  - **Not yet fixed, known gap**: Spark fallback sizing is still one static value for every table,
+    unlike the native engine's already-dynamic per-table sizing — doesn't generalize once Cryo runs
+    against a fleet shaped differently from this one. Extend `estimate_table_resources`-style sizing
+    (driven by `manifest_count`/`total_size_gb`/`total_snapshots`) to the Spark dispatch path next.
