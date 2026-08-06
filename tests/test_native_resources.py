@@ -15,6 +15,9 @@ from cryo.engines.native.resources import (
     derive_chunk_params,
     estimate_table_resources,
     group_concurrency_for_table,
+    max_bytes_per_group_for_pod_mem,
+    mem_mib_for_group_packing,
+    packing_floor_bytes,
 )
 
 
@@ -269,3 +272,115 @@ def test_group_concurrency_capped_by_cpu_ceiling() -> None:
 def test_group_concurrency_capped_by_hard_max() -> None:
     got = group_concurrency_for_table({"total_partitions": 100_000}, max_cpu_milli=100_000)
     assert got == 8
+
+
+# --- table-size-aware packing floor (2026-08-06 cost fix) -------------------------
+#
+# Regression coverage for capping the rewrite packing floor by the table's actual
+# size: confirmed live that native dispatch pods averaged 154MiB actual RSS against
+# ~6GiB requested (2.5% utilization) across the fleet, because the packing floor
+# (2x target file size x 8x decompression-expansion factor, ~5.3GiB) applied
+# unconditionally to every rewrite job regardless of whether the table had anywhere
+# near that much data. 8,590 of 12,053 real fleet tables (71%) are under 0.1GB.
+
+
+def test_packing_floor_uncapped_when_table_size_not_given() -> None:
+    # Backward-compatible: omitting table_total_bytes keeps the original behavior.
+    assert packing_floor_bytes({}) == 256 * 1024 * 1024 * 2
+
+
+def test_packing_floor_capped_by_small_table_size() -> None:
+    # A 10MiB table can never produce a group anywhere near the uncapped 512MiB
+    # floor -- the floor should shrink to what the table could plausibly need,
+    # but never below one target file size (the shred floor).
+    ten_mib = 10 * 1024 * 1024
+    got = packing_floor_bytes({}, table_total_bytes=ten_mib)
+    assert got == 256 * 1024 * 1024  # clamped to the shred floor, not ten_mib
+
+
+def test_packing_floor_not_reduced_below_shred_floor() -> None:
+    got = packing_floor_bytes({}, table_total_bytes=1)
+    assert got == 256 * 1024 * 1024
+
+
+def test_packing_floor_noop_for_large_table() -> None:
+    large = 100 * 1024 * 1024 * 1024  # 100GiB
+    assert packing_floor_bytes({}, table_total_bytes=large) == packing_floor_bytes({})
+
+
+def test_mem_mib_for_group_packing_reduced_for_tiny_table() -> None:
+    tiny_bytes = int(0.05 * (1024**3))  # 50MiB
+    with_cap = mem_mib_for_group_packing(512, {}, table_total_bytes=tiny_bytes)
+    without_cap = mem_mib_for_group_packing(512, {})
+    assert with_cap < without_cap
+
+
+def test_mem_mib_for_group_packing_unchanged_for_large_table() -> None:
+    large_bytes = 100 * 1024 * 1024 * 1024
+    with_cap = mem_mib_for_group_packing(512, {}, table_total_bytes=large_bytes)
+    without_cap = mem_mib_for_group_packing(512, {})
+    assert with_cap == without_cap
+
+
+def test_estimate_table_resources_tiny_table_uses_less_memory_than_before_fix() -> None:
+    """The actual production case: an 8,590-table cohort (71% of the fleet) is
+    under 0.1GB and was getting sized identically to a 20GB table."""
+    tiny = estimate_table_resources(
+        {"total_size_gb": 0.05, "total_files": 20, "max_files_per_partition": 5},
+        operations=(OperationType.OPTIMIZE,),
+    )
+    twenty_gb = estimate_table_resources(
+        {"total_size_gb": 20, "total_files": 100, "max_files_per_partition": 10},
+        operations=(OperationType.OPTIMIZE,),
+    )
+    # Before the fix both sized to the same uncapped packing floor (~5.3GiB).
+    assert tiny.mem_mib < twenty_gb.mem_mib
+
+
+def test_estimate_table_resources_large_table_unaffected_by_size_cap() -> None:
+    """The size-aware cap must be a no-op once a table exceeds the uncapped
+    floor -- large/hot tables keep exactly their prior sizing headroom."""
+    large = estimate_table_resources(
+        {
+            "total_size_gb": 2000,
+            "total_files": 200_000,
+            "max_files_per_partition": 5_000,
+            "delete_file_pct": 10,
+        },
+        operations=(OperationType.OPTIMIZE,),
+    )
+    assert large.mem_mib == 16384
+    assert large.hot
+
+
+def test_estimate_table_resources_half_gb_boundary_matches_uncapped() -> None:
+    # 0.5GB in bytes (~512MiB) is right at the default uncapped floor -- the cap
+    # should be a near no-op there, not a discontinuity.
+    at_boundary = estimate_table_resources(
+        {"total_size_gb": 0.5, "total_files": 20, "max_files_per_partition": 5},
+        operations=(OperationType.OPTIMIZE,),
+    )
+    uncapped_equivalent = estimate_table_resources(
+        {"total_size_gb": 20, "total_files": 20, "max_files_per_partition": 5},
+        operations=(OperationType.OPTIMIZE,),
+    )
+    assert at_boundary.mem_mib == uncapped_equivalent.mem_mib
+
+
+def test_derive_chunk_params_smaller_table_gets_smaller_max_bytes_per_group() -> None:
+    tiny_params = derive_chunk_params(512, {"total_size_gb": 0.05})
+    large_params = derive_chunk_params(512, {"total_size_gb": 100})
+    assert tiny_params["max_bytes_per_group"] <= large_params["max_bytes_per_group"]
+
+
+def test_derive_chunk_params_no_stats_falls_back_to_uncapped() -> None:
+    # No total_size_gb in stats (or stats=None) -- must not crash, must behave
+    # exactly as the pre-fix uncapped path (safe default, no assumption of "small").
+    params = derive_chunk_params(512, None)
+    assert params["max_bytes_per_group"] >= 256 * 1024 * 1024
+
+
+def test_max_bytes_per_group_for_pod_mem_respects_table_total_bytes() -> None:
+    tiny_bytes = int(0.05 * (1024**3))
+    got = max_bytes_per_group_for_pod_mem(512, {}, table_total_bytes=tiny_bytes)
+    assert got == 256 * 1024 * 1024  # shred floor, not the uncapped packing floor

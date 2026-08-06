@@ -240,9 +240,11 @@ def estimate_table_resources(
     raw_mem = max(peaks)
     mem_mib = _clamp(raw_mem, _MIN_MEM_MIB, caps.max_mem_mib)
     if has_rewrite:
-        # Ensure group coalesce can keep ≥ packing-floor output file size.
+        # Ensure group coalesce can keep ≥ packing-floor output file size,
+        # but don't size for a floor the table's own data could never fill.
+        table_total_bytes = int(total_size_gb * (1024**3)) if total_size_gb > 0 else None
         mem_mib = _clamp(
-            mem_mib_for_group_packing(mem_mib, params),
+            mem_mib_for_group_packing(mem_mib, params, table_total_bytes=table_total_bytes),
             _MIN_MEM_MIB,
             caps.max_mem_mib,
         )
@@ -300,27 +302,50 @@ def compaction_memory_budget_bytes(mem_mib: int) -> int:
     return budget_mib * 1024 * 1024
 
 
-def packing_floor_bytes(params: Mapping[str, Any] | None = None) -> int:
+def packing_floor_bytes(
+    params: Mapping[str, Any] | None = None,
+    *,
+    table_total_bytes: int | None = None,
+) -> int:
     """Minimum coalesce size that keeps output files at/above target size.
 
     One target is the shred floor; ``_PACKING_TARGETS_PER_GROUP`` targets lets
     the rolling writer finish multiple full files before a remainder tail.
+
+    ``table_total_bytes``, when given, caps the floor at what the table could
+    ever actually need: a table smaller than the uncapped floor (e.g. a 0.5GB
+    table against the default 512MiB floor) cannot produce a group that large
+    regardless of how much memory the pod requests, so sizing for it is pure
+    waste, not safety margin. The shred floor (one target file size) is never
+    reduced below -- that's a compaction-quality constant, unrelated to table
+    size. Confirmed live, 2026-08-06: native dispatch pods averaged 154MiB
+    actual RSS against ~6GiB requested (2.5% utilization) fleet-wide, since
+    the uncapped floor sized every rewrite job as if it had >=512MiB of
+    compressed data to coalesce even when the whole table didn't.
     """
     target = target_file_size_bytes_from_params(params)
-    return target * _PACKING_TARGETS_PER_GROUP
+    floor = target * _PACKING_TARGETS_PER_GROUP
+    if table_total_bytes is not None and table_total_bytes > 0:
+        floor = max(target, min(floor, table_total_bytes))
+    return floor
 
 
 def mem_mib_for_group_packing(
     mem_mib: int,
     params: Mapping[str, Any] | None = None,
+    *,
+    table_total_bytes: int | None = None,
 ) -> int:
     """Raise pod mem so ``budget / planning_expansion`` can hold the packing floor.
 
     Without this bump, small rewrite estimates (e.g. ~682 MiB for a 4.5 GiB
     table) force ``max_bytes_per_group`` down to a single target and produce
     one undersized remainder file per group.
+
+    ``table_total_bytes`` caps the floor this bump targets -- see
+    ``packing_floor_bytes``. A no-op for tables at/above the uncapped floor.
     """
-    packing = packing_floor_bytes(params)
+    packing = packing_floor_bytes(params, table_total_bytes=table_total_bytes)
     needed_budget = packing * _PLANNING_MEMORY_EXPANSION
     # Invert compaction_memory_budget_bytes: budget_mib = int(mem * 0.75).
     needed_budget_mib = max(_MIN_MEM_MIB, (needed_budget + (1024 * 1024) - 1) // (1024 * 1024))
@@ -355,6 +380,7 @@ def max_bytes_per_group_for_pod_mem(
     params: Mapping[str, Any] | None = None,
     *,
     chunk_size_gb: float | None = None,
+    table_total_bytes: int | None = None,
 ) -> int:
     """Derive rewrite ``max_bytes_per_group`` from pod memory / chunk budget.
 
@@ -371,7 +397,7 @@ def max_bytes_per_group_for_pod_mem(
     """
     params = params or {}
     target = target_file_size_bytes_from_params(params)
-    packing = packing_floor_bytes(params)
+    packing = packing_floor_bytes(params, table_total_bytes=table_total_bytes)
     chunk_gb = (
         float(chunk_size_gb) if chunk_size_gb is not None else chunk_size_gb_for_pod_mem(mem_mib)
     )
@@ -433,13 +459,15 @@ def derive_chunk_params(
     override (e.g. dense-table memory tuning).
     """
     merged = dict(base_params or {})
-    sized_mem = mem_mib_for_group_packing(mem_mib, merged)
+    table_size_gb = _as_float((stats or {}).get("total_size_gb"), 0.0)
+    table_total_bytes = int(table_size_gb * (1024**3)) if table_size_gb > 0 else None
+    sized_mem = mem_mib_for_group_packing(mem_mib, merged, table_total_bytes=table_total_bytes)
     chunk = chunk_size_gb_for_pod_mem(sized_mem, stats)
     merged["chunk_size_gb"] = chunk
     merged["compaction_memory_budget_bytes"] = compaction_memory_budget_bytes(sized_mem)
     if "max_bytes_per_group" not in merged:
         merged["max_bytes_per_group"] = max_bytes_per_group_for_pod_mem(
-            sized_mem, merged, chunk_size_gb=chunk
+            sized_mem, merged, chunk_size_gb=chunk, table_total_bytes=table_total_bytes
         )
     return merged
 
