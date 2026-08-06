@@ -171,10 +171,23 @@ spark:
       # Built + pushed 2026-08-05 from gitlab-main commit eee1788.
       digest: "sha256:7c508fbb330b5af493187c58c20c3180f9dd173ecd25f32c5ea6e528da3bf7fb"
       pullPolicy: Always
-    driverCpuMilli: 1000
-    driverMemMib: 2048
-    executorCpuMilli: 2000
-    executorMemMib: 4096
+    # Right-sized 2026-08-06 from real usage sampled via `kubectl top` on ~15 live
+    # dispatch pods while the manifest-fix rollout was running: driver averaged
+    # 58-100m CPU / 541-552Mi mem, executors averaged 2-409m CPU / 287-301Mi mem --
+    # against the prior 1000m/2048Mi driver and 2000m/4096Mi-per-executor requests,
+    # i.e. ~6-15% memory utilization and ~5-20% CPU utilization. This was the
+    # dominant driver of the cryo namespace's AWS EKS split-cost "unused_cost"
+    # (87.9% of a $1,412/30d untagged-workload bucket, confirmed via the CUR `cur`
+    # table -- ephemeral Jobs don't carry eks:workload-name tags, so this cost was
+    # invisible in the normal per-Deployment cost breakdown). Halved on the
+    # CPU dimension (worst case is throttling, not a crash) and cut with more
+    # margin on memory (worst case is OOMKill) -- still ~2x observed peak on both,
+    # not cut to the observed average. If real optimize_manifests OOMs start
+    # showing up, raise executorMemMib first; that's the one with the least slack.
+    driverCpuMilli: 500
+    driverMemMib: 1024
+    executorCpuMilli: 1000
+    executorMemMib: 2048
     executorInstances: 2
     activeDeadlineSeconds: 7200
     ttlSecondsAfterFinished: 3600
