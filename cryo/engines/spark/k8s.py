@@ -438,6 +438,69 @@ class SparkK8sClient:
             )
 
 
+_DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"
+
+
+def cleanup_stale_driver_pods(
+    *,
+    namespace: str,
+    older_than_seconds: int = _DEFAULT_TTL_SECONDS,
+    core_api: client.CoreV1Api | None = None,
+) -> int:
+    """Delete completed Spark driver pods older than ``older_than_seconds``.
+
+    This module's own top-of-file docstring describes the intended cleanup design:
+    "this dispatcher deletes the driver pod as part of Job TTL cleanup, which
+    cascades [to executors]." That assumes the driver pod is owned by (and thus
+    gets deleted alongside) the wrapper dispatch Job's ``ttlSecondsAfterFinished``.
+    It isn't: cluster-mode ``spark-submit`` creates the driver pod itself via
+    Spark's own Kubernetes scheduler backend, with no owner reference back to
+    Cryo's wrapper Job -- so the TTL controller's cascade-delete-on-owner never
+    reaches it. Confirmed live, 2026-08-06: 3,276 completed driver pods had
+    accumulated with zero owner references (going back to 2026-08-04), against
+    only 1 leftover executor pod -- executors genuinely are cleaned up by Spark
+    itself on application completion, matching the docstring; only the driver
+    side of that assumption was ever actually implemented by Spark.
+
+    Restores the intended TTL behavior via an explicit sweep instead of relying
+    on an ownership cascade that doesn't exist for cluster-mode driver pods.
+    Best-effort: a failure listing or deleting one pod is logged and skipped,
+    never raised -- this must not be able to break the governor tick it runs in.
+    """
+    api = core_api or _new_k8s_core_client()
+    deleted = 0
+    now = time.time()
+    for phase in ("Succeeded", "Failed"):
+        try:
+            pods = api.list_namespaced_pod(
+                namespace=namespace,
+                label_selector=_DRIVER_POD_LABEL_SELECTOR,
+                field_selector=f"status.phase={phase}",
+            )
+        except Exception:  # noqa: BLE001 - best-effort cleanup only
+            logger.warning(
+                "Failed to list %s Spark driver pods for cleanup", phase, exc_info=True
+            )
+            continue
+        for pod in pods.items or []:
+            start_time = getattr(pod.status, "start_time", None)
+            if start_time is None:
+                continue
+            age_seconds = now - start_time.timestamp()
+            if age_seconds < older_than_seconds:
+                continue
+            pod_name = pod.metadata.name
+            try:
+                api.delete_namespaced_pod(name=pod_name, namespace=namespace)
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+                if "404" not in str(exc):
+                    logger.warning(
+                        "Failed to delete stale Spark driver pod %s: %s", pod_name, exc
+                    )
+    return deleted
+
+
 _k8s_config_loaded = False
 
 

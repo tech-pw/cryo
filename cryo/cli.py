@@ -211,11 +211,19 @@ class GovernorRunner(DaemonRunner):
     # if the per-operation rate doesn't, so don't rely on "only ever restarts once."
     _LOCK_RECONCILE_INTERVAL_SECONDS = 600
 
+    # Spark-on-K8s cluster-mode driver pods are never owned by Cryo's wrapper
+    # dispatch Job (see cryo.engines.spark.k8s.cleanup_stale_driver_pods's
+    # docstring) so nothing else in the cluster ever deletes them -- confirmed
+    # live, 2026-08-06: 3,276 accumulated with zero owner references. Listing is
+    # a single cheap call; gate the sweep so it isn't repeated every 30s tick.
+    _SPARK_POD_CLEANUP_INTERVAL_SECONDS = 600
+
     def __init__(self, interval: int = 30, wiring: Any = None) -> None:
         super().__init__("governor", interval)
         self._wiring: Any = wiring
         self._governor: Any = None
         self._last_lock_reconcile_at: float = 0.0
+        self._last_spark_pod_cleanup_at: float = 0.0
 
     def _tick(self) -> None:
         governor = self._get_governor()
@@ -230,6 +238,12 @@ class GovernorRunner(DaemonRunner):
         if now_monotonic - self._last_lock_reconcile_at >= self._LOCK_RECONCILE_INTERVAL_SECONDS:
             self._reconcile_orphaned_table_locks(wiring)
             self._last_lock_reconcile_at = now_monotonic
+        if (
+            now_monotonic - self._last_spark_pod_cleanup_at
+            >= self._SPARK_POD_CLEANUP_INTERVAL_SECONDS
+        ):
+            self._cleanup_stale_spark_driver_pods()
+            self._last_spark_pod_cleanup_at = now_monotonic
 
         # Reconcile direct Kubernetes dispatches before admitting new work so a
         # restarted governor cannot duplicate a still-running Job whose DB
@@ -271,6 +285,25 @@ class GovernorRunner(DaemonRunner):
                 )
         except Exception as exc:
             self._logger.debug("Native JobWatcher tick skipped: %s", exc)
+
+    def _cleanup_stale_spark_driver_pods(self) -> None:
+        import os
+
+        from cryo.engines.native.job_state import current_k8s_namespace
+        from cryo.engines.spark.k8s import cleanup_stale_driver_pods
+
+        try:
+            namespace = current_k8s_namespace()
+            older_than_seconds = int(
+                os.environ.get("CRYO_SPARK_DRIVER_POD_CLEANUP_TTL_SECONDS", "3600")
+            )
+            deleted = cleanup_stale_driver_pods(
+                namespace=namespace, older_than_seconds=older_than_seconds
+            )
+            if deleted:
+                self._logger.info("Spark driver pod cleanup: deleted=%d", deleted)
+        except Exception as exc:
+            self._logger.debug("Spark driver pod cleanup tick skipped: %s", exc)
 
     def _tick_scan_dispatch(self, wiring: Any) -> None:
         import os
