@@ -283,10 +283,28 @@ def _heuristic_fallback(
     snapshot_count: int,
     manifest_count: int = 0,
 ) -> MetadataCostAccounting:
+    """Degraded-but-safe accounting when a table exceeds cost_scan_max_snapshots/
+    _manifests: walks only the CURRENT snapshot's manifests (cheap, bounded) instead
+    of full snapshot history, so live_bytes/delete_bytes are still real numbers.
+
+    ``referenced_file_paths`` must be populated from that same walk, not left empty.
+    It used to be hardcoded to {} -- "no known references" -- which is fine for THIS
+    function's own live/dead accounting (computed independently above) but gets
+    handed to scan_orphans() downstream, which treats "not in the referenced set" as
+    "orphan, safe to delete." An empty set there doesn't mean "no references exist,"
+    it means "we didn't look" -- but scan_orphans can't tell the difference, so every
+    listed S3 object under the table's location gets misclassified as 100% orphan.
+    Confirmed live, 2026-08-06: 50 of the 54 tables with >200 snapshots (the default
+    cost_scan_max_snapshots) hit this fallback and showed orphan_bytes == listed_bytes
+    -- 91.95TB of false "reclaimable" storage, the single largest remaining source of
+    inflated reclaimable-bytes fleet-wide, including one 24TB table that reported
+    64.6TB "reclaimable" (2.7x its own size).
+    """
     del settings
     current = _current_snapshot(table_obj)
     live_bytes = delete_bytes = 0
     manifest_bytes = 0
+    referenced_paths: dict[str, int] = {}
     if current is not None:
         io = _attr(table_obj, "io", None)
         for manifest in _call_or_attr(current, "manifests", io, default=()) or []:
@@ -297,6 +315,9 @@ def _heuristic_fallback(
                 data_file = _attr(entry, "data_file", entry)
                 size = int(_attr(data_file, "file_size_in_bytes", 0) or 0)
                 content = str(_attr(data_file, "content", "")).lower()
+                file_path = _file_path(data_file)
+                if file_path:
+                    referenced_paths[file_path] = max(referenced_paths.get(file_path, 0), size)
                 if content.endswith("deletes") or content in {"1", "2"}:
                     delete_bytes += size
                 else:
@@ -313,7 +334,7 @@ def _heuristic_fallback(
         reclaim_optimize_bytes=delete_bytes,
         reclaim_manifests_bytes=0,
         small_file_bytes=0,
-        referenced_file_paths={},
+        referenced_file_paths=referenced_paths,
         raw={
             "bounded_out": reason,
             "snapshot_count": snapshot_count,
