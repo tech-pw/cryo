@@ -12,6 +12,7 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
     _read_pod_log_tail,
+    cleanup_stale_driver_pods,
 )
 
 
@@ -345,3 +346,141 @@ def test_get_job_run_falls_back_to_wrapper_job_when_driver_pod_missing() -> None
     ):
         result = client.get_job_run("cryo-spark-abc123")
     assert result.state is JobRunState.RUNNING
+
+
+# --- cleanup_stale_driver_pods (2026-08-06 orphaned-pod cleanup) ------------------
+#
+# Cluster-mode spark-submit creates the driver pod itself, with no owner reference
+# back to Cryo's wrapper dispatch Job -- so the wrapper Job's ttlSecondsAfterFinished
+# never cascades to it. Confirmed live: 3,276 completed driver pods had accumulated
+# with zero owner references (vs only 1 leftover executor -- Spark does clean those
+# up itself on application completion). These tests cover the explicit sweep that
+# restores the intended TTL behavior.
+
+
+def _pod(name: str, *, phase: str, start_time, has_start_time: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name),
+        status=SimpleNamespace(
+            phase=phase,
+            start_time=start_time if has_start_time else None,
+        ),
+    )
+
+
+def test_cleanup_deletes_old_completed_driver_pods() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    old_start = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(
+            items=[_pod("cryo-spark-old-driver", phase="Succeeded", start_time=old_start)]
+        ),
+        SimpleNamespace(items=[]),
+    ]
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api
+    )
+
+    assert deleted == 1
+    core_api.delete_namespaced_pod.assert_called_once_with(
+        name="cryo-spark-old-driver", namespace="cryo"
+    )
+
+
+def test_cleanup_skips_pods_younger_than_ttl() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    recent_start = datetime.now(UTC) - timedelta(seconds=30)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(
+            items=[_pod("cryo-spark-fresh-driver", phase="Succeeded", start_time=recent_start)]
+        ),
+        SimpleNamespace(items=[]),
+    ]
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api
+    )
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+
+
+def test_cleanup_skips_pods_with_no_start_time() -> None:
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(
+            items=[
+                _pod(
+                    "cryo-spark-weird-driver",
+                    phase="Succeeded",
+                    start_time=None,
+                    has_start_time=False,
+                )
+            ]
+        ),
+        SimpleNamespace(items=[]),
+    ]
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api
+    )
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+
+
+def test_cleanup_checks_both_succeeded_and_failed_phases() -> None:
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(items=[]),
+        SimpleNamespace(items=[]),
+    ]
+
+    cleanup_stale_driver_pods(namespace="cryo", older_than_seconds=3600, core_api=core_api)
+
+    calls = core_api.list_namespaced_pod.call_args_list
+    assert len(calls) == 2
+    phases = {c.kwargs["field_selector"] for c in calls}
+    assert phases == {"status.phase=Succeeded", "status.phase=Failed"}
+    for c in calls:
+        assert c.kwargs["label_selector"] == "spark-role=driver"
+        assert c.kwargs["namespace"] == "cryo"
+
+
+def test_cleanup_never_raises_on_list_failure() -> None:
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = RuntimeError("api down")
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api
+    )  # must not raise
+    assert deleted == 0
+
+
+def test_cleanup_never_raises_on_delete_failure_and_continues() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    old_start = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(
+            items=[
+                _pod("cryo-spark-a-driver", phase="Succeeded", start_time=old_start),
+                _pod("cryo-spark-b-driver", phase="Succeeded", start_time=old_start),
+            ]
+        ),
+        SimpleNamespace(items=[]),
+    ]
+    core_api.delete_namespaced_pod.side_effect = [RuntimeError("conflict"), None]
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api
+    )  # must not raise despite the first delete failing
+
+    assert deleted == 1  # only the second delete succeeded
+    assert core_api.delete_namespaced_pod.call_count == 2
