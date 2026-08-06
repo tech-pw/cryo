@@ -262,3 +262,13 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
     unlike the native engine's already-dynamic per-table sizing — doesn't generalize once Cryo runs
     against a fleet shaped differently from this one. Extend `estimate_table_resources`-style sizing
     (driven by `manifest_count`/`total_size_gb`/`total_snapshots`) to the Spark dispatch path next.
+  - **Success metric + daily tracking, added 2026-08-06**: the goal is this month's cost lower than
+    last month's, **with statistical significance** — not just a number that moved. Full methodology,
+    the daily log, and a zero-dependency month-over-month comparison script (Welch's t-test, refuses
+    to call anything significant with <7 days of current-month data) live in
+    `docs/cost-tracking/README.md` / `daily-cost-log.csv` / `compare_mom.py`. **Whenever you check
+    cost — asked or self-initiated — append the day's numbers to `daily-cost-log.csv` before
+    reporting them**; that's what makes "check daily" actually accumulate a real trend instead of
+    depending on a conversation's context.  Two namespaces tracked: `trino-db` (fleet query/compute
+    efficiency) and `cryo` (Cryo's own footprint — judge by *unused_cost ratio* trending down, not
+    raw total, since real fleet work legitimately costs more to run than doing nothing).
