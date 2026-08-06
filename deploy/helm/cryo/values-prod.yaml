@@ -31,12 +31,13 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-06 from gitlab-main commit 001e1a0. Includes: parallelized
+  # Built + pushed 2026-08-06 from gitlab-main commit 91b17b7. Includes: parallelized
   # native SQL-fallback dispatch (4d0351d); table-size-aware native/Spark resource
-  # sizing, fixing ~40x memory over-request on small tables (2b050c5); periodic
-  # cleanup of orphaned Spark driver pods, see GovernorRunner._cleanup_stale_spark_driver_pods
-  # (001e1a0).
-  digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
+  # sizing (2b050c5); orphaned Spark driver pod cleanup (001e1a0); heuristic cost
+  # fallback no longer reports referenced_file_paths as empty for tables over
+  # cost_scan_max_snapshots, fixing 91.95TB of false "reclaimable" storage across
+  # 50 tables (91b17b7 -- see cryo/scanner/cost.py::_heuristic_fallback).
+  digest: "sha256:f1bf2999c5eefa8df2098002e17f91b861cce32a247eecfbc6b64ca876aa8e2e"
 
 imagePullSecrets:
   - cryo-registry
@@ -45,7 +46,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
+    digest: "sha256:f1bf2999c5eefa8df2098002e17f91b861cce32a247eecfbc6b64ca876aa8e2e"
 
 global:
   envFromSecret: cryo-secrets
@@ -84,7 +85,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
+    digest: "sha256:f1bf2999c5eefa8df2098002e17f91b861cce32a247eecfbc6b64ca876aa8e2e"
   keda:
     enabled: true
 
