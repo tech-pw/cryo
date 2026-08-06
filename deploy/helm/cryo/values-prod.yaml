@@ -31,10 +31,12 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-05 from gitlab-main commit 4d0351d (parallelizes the native
-  # engine's SQL-fallback dispatch, e.g. optimize_manifests, which previously ran one
-  # table at a time regardless of slot_cap -- see native_admit.py::_dispatch_fallback_operations).
-  digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
+  # Built + pushed 2026-08-06 from gitlab-main commit 001e1a0. Includes: parallelized
+  # native SQL-fallback dispatch (4d0351d); table-size-aware native/Spark resource
+  # sizing, fixing ~40x memory over-request on small tables (2b050c5); periodic
+  # cleanup of orphaned Spark driver pods, see GovernorRunner._cleanup_stale_spark_driver_pods
+  # (001e1a0).
+  digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
 
 imagePullSecrets:
   - cryo-registry
@@ -43,7 +45,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
+    digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
 
 global:
   envFromSecret: cryo-secrets
@@ -82,7 +84,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8c744f19b24ddd6989ca872897ce1afabfb01026f14f1feecc6ccc91220114d9"
+    digest: "sha256:c356d3feceb7ab3bfbf404b8f9c68c983a6e6d22d794e35413b97e5d19f1f1a4"
   keda:
     enabled: true
 
