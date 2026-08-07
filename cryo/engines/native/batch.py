@@ -140,12 +140,32 @@ def execute_batch(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry: decode CRYO_PAYLOAD_B64 and run batch (or single) execute."""
+    """CLI entry: decode the batch payload (file or env var) and run batch/single execute.
+
+    Prefers CRYO_PAYLOAD_FILE (a mounted Secret volume) over CRYO_PAYLOAD_B64 (the env
+    var) -- Linux caps any single argv/env string at MAX_ARG_STRLEN (128KiB), which a
+    large table's payload (e.g. 200k+ files) exceeds as base64, failing before this
+    process even starts ("exec .../python: argument list too long", confirmed live
+    2026-08-07 on a 211,158-file table). A mounted file has no such limit. The env var
+    is kept as a fallback for any caller still using the old delivery path.
+    """
     import os
 
-    raw_b64 = os.environ.get("CRYO_PAYLOAD_B64")
+    raw_b64: str | None = None
+    payload_file = os.environ.get("CRYO_PAYLOAD_FILE")
+    if payload_file:
+        try:
+            with open(payload_file, encoding="utf-8") as f:
+                raw_b64 = f.read().strip()
+        except OSError as exc:
+            err = f"cannot read CRYO_PAYLOAD_FILE: {exc}"
+            print(json.dumps({"ok": False, "error": err}), flush=True)
+            return 1
     if not raw_b64:
-        print(json.dumps({"ok": False, "error": "CRYO_PAYLOAD_B64 not set"}), flush=True)
+        raw_b64 = os.environ.get("CRYO_PAYLOAD_B64")
+    if not raw_b64:
+        err = "neither CRYO_PAYLOAD_FILE nor CRYO_PAYLOAD_B64 set"
+        print(json.dumps({"ok": False, "error": err}), flush=True)
         return 1
     try:
         payload = json.loads(base64.b64decode(raw_b64).decode())
