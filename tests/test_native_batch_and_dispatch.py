@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from types import SimpleNamespace
@@ -13,6 +14,9 @@ from cryo.engines.native.batch import (
     build_batch_payload,
     execute_batch,
     is_batch_payload,
+)
+from cryo.engines.native.batch import (
+    main as batch_main,
 )
 from cryo.engines.native.job_dispatch import create_native_job
 from cryo.engines.native.resources import MAX_POD_MEM_MIB
@@ -29,6 +33,86 @@ def test_build_batch_payload() -> None:
     assert payload["batch"] is True
     assert len(payload["tables"]) == 2
     assert is_batch_payload(payload)
+
+
+# --- batch.main() payload delivery (2026-08-07 argument-list-too-long fix) --------
+#
+# Linux caps any single argv/env string at MAX_ARG_STRLEN (128KiB). A large table's
+# base64-encoded batch payload can exceed that, and the container fails before Python
+# even starts: "exec .../python: argument list too long" -- confirmed live on a
+# 211,158-file table. Payload delivery moved to a mounted Secret file
+# (CRYO_PAYLOAD_FILE), with CRYO_PAYLOAD_B64 kept as a fallback for any caller still
+# using the old path.
+
+
+def _b64_payload(payload: dict) -> str:
+    return base64.b64encode(json.dumps(payload).encode()).decode()
+
+
+def test_main_reads_payload_from_file(tmp_path, monkeypatch, capsys) -> None:
+    payload_file = tmp_path / "payload"
+    payload_file.write_text(_b64_payload({"table_ref": "a.b", "operations": []}))
+    monkeypatch.setenv("CRYO_PAYLOAD_FILE", str(payload_file))
+    monkeypatch.delenv("CRYO_PAYLOAD_B64", raising=False)
+
+    fake_result = SimpleNamespace(ok=True, table_ref="a.b", error=None, results=())
+    with patch("cryo.engines.native.batch.execute_request", return_value=fake_result):
+        exit_code = batch_main()
+
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["ok"] is True
+    assert out["table_ref"] == "a.b"
+
+
+def test_main_falls_back_to_env_var_when_no_file(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("CRYO_PAYLOAD_FILE", raising=False)
+    monkeypatch.setenv("CRYO_PAYLOAD_B64", _b64_payload({"table_ref": "a.b", "operations": []}))
+
+    fake_result = SimpleNamespace(ok=True, table_ref="a.b", error=None, results=())
+    with patch("cryo.engines.native.batch.execute_request", return_value=fake_result):
+        exit_code = batch_main()
+
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["table_ref"] == "a.b"
+
+
+def test_main_prefers_file_over_env_var(tmp_path, monkeypatch, capsys) -> None:
+    payload_file = tmp_path / "payload"
+    payload_file.write_text(_b64_payload({"table_ref": "from-file", "operations": []}))
+    monkeypatch.setenv("CRYO_PAYLOAD_FILE", str(payload_file))
+    env_payload = _b64_payload({"table_ref": "from-env", "operations": []})
+    monkeypatch.setenv("CRYO_PAYLOAD_B64", env_payload)
+
+    fake_result = SimpleNamespace(ok=True, table_ref="from-file", error=None, results=())
+    with patch("cryo.engines.native.batch.execute_request", return_value=fake_result) as mock_exec:
+        batch_main()
+
+    assert mock_exec.call_args.args[0]["table_ref"] == "from-file"
+
+
+def test_main_errors_cleanly_when_payload_file_unreadable(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CRYO_PAYLOAD_FILE", "/nonexistent/path/payload")
+    monkeypatch.delenv("CRYO_PAYLOAD_B64", raising=False)
+
+    exit_code = batch_main()
+
+    assert exit_code == 1
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["ok"] is False
+    assert "CRYO_PAYLOAD_FILE" in out["error"]
+
+
+def test_main_errors_when_neither_file_nor_env_set(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("CRYO_PAYLOAD_FILE", raising=False)
+    monkeypatch.delenv("CRYO_PAYLOAD_B64", raising=False)
+
+    exit_code = batch_main()
+
+    assert exit_code == 1
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["ok"] is False
 
 
 def test_execute_batch_serial_isolation() -> None:
@@ -103,8 +187,19 @@ def test_create_native_job_uses_payload_secret() -> None:
     secret = core_api.create_namespaced_secret.call_args.kwargs["body"]
     assert secret["stringData"]["payload"]
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
-    payload_env = manifest["spec"]["template"]["spec"]["containers"][0]["env"][0]
-    assert payload_env["valueFrom"]["secretKeyRef"]["name"] == "cryo-native-test-payload"
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    # Payload is delivered via a mounted Secret file, not an env var -- Linux caps any
+    # single argv/env string at MAX_ARG_STRLEN (128KiB), which a large table's payload
+    # can exceed as base64 (confirmed live, 2026-08-07: "argument list too long" on a
+    # 211,158-file table). The env var only carries the file path now.
+    payload_file_env = next(e for e in container["env"] if e["name"] == "CRYO_PAYLOAD_FILE")
+    assert payload_file_env["value"] == "/etc/cryo/payload/payload"
+    assert not any("valueFrom" in e for e in container["env"])
+    volume_mount = next(v for v in container["volumeMounts"] if v["name"] == "payload")
+    assert volume_mount["mountPath"] == "/etc/cryo/payload"
+    volume = next(v for v in pod_spec["volumes"] if v["name"] == "payload")
+    assert volume["secret"]["secretName"] == "cryo-native-test-payload"
     core_api.patch_namespaced_secret.assert_called_once()
 
 

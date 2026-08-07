@@ -394,16 +394,24 @@ def create_native_job(
                             "imagePullPolicy": image_pull_policy,
                             "command": command,
                             "env": [
-                                {
-                                    "name": "CRYO_PAYLOAD_B64",
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": payload_secret_name,
-                                            "key": "payload",
-                                        }
-                                    },
-                                },
+                                # File path, not the payload itself -- see volumeMounts below.
+                                # Linux caps any single argv/env string at MAX_ARG_STRLEN
+                                # (128KiB); a large table's batch payload (e.g. a table with
+                                # 200k+ files) blows past that as base64 and the container
+                                # fails before Python even starts: "exec /usr/local/bin/python:
+                                # argument list too long". Confirmed live, 2026-08-07, on a
+                                # 211,158-file table. A mounted Secret file has no such
+                                # exec-time size limit (bounded only by the Secret's own 1MiB
+                                # etcd cap, ~8x more headroom than the env var path had).
+                                {"name": "CRYO_PAYLOAD_FILE", "value": "/etc/cryo/payload/payload"},
                                 {"name": "CRYO_ENGINE_BINARY", "value": binary},
+                            ],
+                            "volumeMounts": [
+                                {
+                                    "name": "payload",
+                                    "mountPath": "/etc/cryo/payload",
+                                    "readOnly": True,
+                                },
                             ],
                             "resources": {
                                 "requests": {
@@ -414,6 +422,15 @@ def create_native_job(
                                     "cpu": f"{min(cpu_milli * 2, MAX_POD_CPU_MILLI)}m",
                                     "memory": f"{min(mem_mib * 2, MAX_POD_MEM_MIB)}Mi",
                                 },
+                            },
+                        },
+                    ],
+                    "volumes": [
+                        {
+                            "name": "payload",
+                            "secret": {
+                                "secretName": payload_secret_name,
+                                "items": [{"key": "payload", "path": "payload"}],
                             },
                         },
                     ],
