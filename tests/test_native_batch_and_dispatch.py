@@ -203,6 +203,30 @@ def test_create_native_job_uses_payload_secret() -> None:
     core_api.patch_namespaced_secret.assert_called_once()
 
 
+def test_read_pod_logs_does_not_limit_bytes() -> None:
+    """Regression: `limit_bytes` truncates a pod log from the START, not the end.
+
+    Same bug class already fixed in cryo/engines/spark/k8s.py::_read_pod_log_tail
+    (2026-07-31, see its docstring) but left unfixed here, where it's worse: a shared
+    batch pod can carry up to 32 tables' worth of CRYO_TABLE_RESULT lines
+    (packing.py max_tables_per_pod=32), and any line past the old 512KiB cutoff was
+    silently dropped, making NativeJobWatcher._finalize_success report
+    "native_job_no_result" for tables whose batch Job actually succeeded.
+    """
+    from cryo.engines.native.job_dispatch import _read_pod_logs
+
+    core_api = MagicMock()
+    core_api.read_namespaced_pod_log.return_value = "full log contents"
+    pod = SimpleNamespace(metadata=SimpleNamespace(name="p1", namespace="cryo"))
+
+    with patch("kubernetes.client.CoreV1Api", return_value=core_api):
+        result = _read_pod_logs([pod], "cryo-engine", object())
+
+    assert result == "full log contents"
+    call_kwargs = core_api.read_namespaced_pod_log.call_args.kwargs
+    assert "limit_bytes" not in call_kwargs
+
+
 def test_parse_batch_results() -> None:
     stdout = (
         'progress\n{"ok": false, "batch": true, "results": ['

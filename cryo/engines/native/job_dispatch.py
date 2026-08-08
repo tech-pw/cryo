@@ -698,6 +698,25 @@ def _read_pod_logs(
     container_name: str,
     k8s_client: type | None,
 ) -> str | None:
+    """Read a completed pod's full stdout so every batched table's result line is seen.
+
+    Deliberately passes neither `limit_bytes` nor `tail_lines`. Same regression class
+    already found and fixed in cryo/engines/spark/k8s.py::_read_pod_log_tail on
+    2026-07-31: Kubernetes' `limit_bytes` truncates from the START of the log stream,
+    not the end -- the old `limit_bytes=1024*512` here silently dropped every
+    CRYO_TABLE_RESULT line that landed after the first 512KiB. That's a routine
+    outcome, not an edge case: packing.py allows up to 32 tables serially in one
+    shared batch pod (`max_tables_per_pod`), and NativeJobWatcher._finalize_success
+    treats any job whose result line got truncated out as `native_job_no_result` --
+    silently marking a table FAILED (or losing its real error) even when the batch
+    Job itself succeeded and that table's own operation genuinely completed.
+    Unlike Spark's error-tail use (`tail_lines=200`, only the last error matters), a
+    tail alone isn't sufficient here either -- a batch's result lines are scattered
+    across the whole log, one per table, so the finalization path needs the complete
+    log, not a fixed head or tail slice. This is bounded anyway: the pod already
+    exited, so the log is static, and kubelet's own container-log rotation (not this
+    client) is the real ceiling on how much is even retained.
+    """
     if not pods:
         return None
     from kubernetes import client
@@ -709,7 +728,6 @@ def _read_pod_logs(
                 name=pod.metadata.name,
                 namespace=pod.metadata.namespace,
                 container=container_name,
-                limit_bytes=1024 * 512,
             )
             return logs
         except Exception:
