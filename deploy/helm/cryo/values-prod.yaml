@@ -31,14 +31,18 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-07 from gitlab-main commit 204a4b0. Includes: parallelized
-  # native SQL-fallback dispatch (4d0351d); table-size-aware native/Spark resource
-  # sizing (2b050c5); orphaned Spark driver pod cleanup (001e1a0); heuristic cost
-  # fallback referenced_file_paths fix (91b17b7); native batch payload delivered via
-  # mounted Secret file instead of an env var, fixing "argument list too long" on
-  # large-file-count tables (204a4b0 -- see cryo/engines/native/job_dispatch.py,
-  # cryo/engines/native/batch.py).
-  digest: "sha256:8b824ae2c5f21499d9d6c2950cb31095397ebda9c03a76510be94a89c6428921"
+  # Built + pushed 2026-08-08 from gitlab-main commit 7e36bed. Includes everything in
+  # the prior digest (see git log) plus: NativeJobWatcher's final-result pod-log read
+  # (_read_pod_logs in job_dispatch.py) no longer passes limit_bytes -- that param
+  # truncates a K8s pod log from the START, not the end, silently dropping any
+  # CRYO_TABLE_RESULT line past the first 512KiB. packing.py bin-packs up to 32
+  # tables into one shared serial batch pod (max_tables_per_pod), so this was a
+  # routine, not edge-case, way for a table whose result line got truncated out to
+  # be misreported as "native_job_no_result" (FAILED) even though its operation, and
+  # the batch Job itself, genuinely succeeded. Same regression class already found
+  # and fixed in cryo/engines/spark/k8s.py on 2026-07-31, never ported to native
+  # until now (7e36bed).
+  digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
 
 imagePullSecrets:
   - cryo-registry
@@ -47,7 +51,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8b824ae2c5f21499d9d6c2950cb31095397ebda9c03a76510be94a89c6428921"
+    digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
 
 global:
   envFromSecret: cryo-secrets
@@ -86,7 +90,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8b824ae2c5f21499d9d6c2950cb31095397ebda9c03a76510be94a89c6428921"
+    digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
   keda:
     enabled: true
 
