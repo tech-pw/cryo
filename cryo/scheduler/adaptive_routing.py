@@ -67,16 +67,41 @@ def rank_destinations(
     destinations: Mapping[str, Mapping[str, Any]],
     context: AdaptiveRoutingContext | None = None,
 ) -> list[RankedDestination]:
-    """Score destinations for a table using size, capacity, latency, and cost signals."""
+    """Score destinations for a table using size, capacity, latency, and cost signals.
+
+    A destination that has failed this specific table `max_consecutive_failures_before_
+    exclusion` times in a row (default 2) is excluded -- scored -inf, so it never wins while
+    any non-excluded destination exists in the pool. Regression context, 2026-08-10:
+    unified_bq.gold_dbt_pw_bq failed on the native engine 4 times running (8 days, 4 different
+    error messages) with nothing in this scoring function aware of that history -- it scored
+    an already-4x-failed table identically to one that had never been tried. The failure
+    signal itself (table.row["engine_consecutive_failures"]) is computed once per scheduler
+    tick from real MaintenanceJob history, not invented here -- see
+    SQLSchedulerStore.consecutive_engine_failures().
+    """
     context = context or AdaptiveRoutingContext()
     pool = _destination_pool(preset, destinations)
     signals_by_id = {signal.destination_id: signal for signal in context.signals}
     size_gb = float(table.row.get("total_size_gb") or 0)
+    preferences = preset.guardrails.get("engine_preferences") or {}
+    failure_threshold = int(preferences.get("max_consecutive_failures_before_exclusion") or 2)
+    failures_by_destination = table.row.get("engine_consecutive_failures") or {}
     ranked: list[RankedDestination] = []
 
     for destination_id in pool:
         entry = destinations.get(destination_id) or {}
         engine = str(entry.get("engine") or EngineType.TRINO.value)
+        consecutive_failures = int(failures_by_destination.get(destination_id) or 0)
+        if consecutive_failures >= failure_threshold:
+            ranked.append(
+                RankedDestination(
+                    destination_id=destination_id,
+                    engine=engine,
+                    score=float("-inf"),
+                    reason=f"excluded:consecutive_failures={consecutive_failures}",
+                )
+            )
+            continue
         signal = signals_by_id.get(destination_id, DestinationSignal(destination_id, engine))
         score, reason = _score_destination(
             engine=engine,
@@ -84,7 +109,7 @@ def rank_destinations(
             available_slots=signal.available_slots,
             catalog_p99_ms=max(signal.catalog_p99_ms, context.catalog_p99_ms),
             estimated_cost_usd=signal.estimated_cost_usd,
-            preferences=preset.guardrails.get("engine_preferences") or {},
+            preferences=preferences,
         )
         ranked.append(
             RankedDestination(
