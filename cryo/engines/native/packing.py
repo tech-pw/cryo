@@ -3,7 +3,9 @@
 Rules (serial-within-shared-pod):
 - Hot tables get a dedicated pod.
 - Cold tables pack first-fit-decreasing under CPU/mem ceilings (≤16Gi mem).
-- Shared-pod request = max(cpu), max(mem) of members (serial execution).
+- Shared-pod request = max(cpu) of members, max(mem) of members plus a small
+  per-additional-member overhead (serial execution isn't memory-independent
+  across members -- see ``_SERIAL_MEMBER_OVERHEAD_MIB``).
 """
 
 from __future__ import annotations
@@ -181,10 +183,30 @@ def _pack_single_run(
     return specs
 
 
+#  Confirmed live, 2026-08-10: a 28-member batch pod (cryo-native-d16040800875, run
+# ab24b625) requested only 5,462 MiB -- the single largest member's peak estimate,
+# per the pre-fix "max, not sum" rule -- and was OOMKilled partway through table 8
+# despite the first 7 members completing cleanly. Members run serially as separate
+# cryo-engine subprocesses, so per-process RSS is independent and does get released
+# on each subprocess exit, but page cache from files each subprocess reads (Iceberg
+# manifests, Parquet metadata/footers) is accounted against the POD's own cgroup
+# and isn't reclaimed just because one subprocess exited -- "peak, not sum" doesn't
+# account for that cumulative pressure as more members share one pod's lifetime.
+# Add a modest fixed overhead per additional member so a large batch's actual
+# memory request grows with its member count, and so the packer's own ceiling
+# check (in _pack_single_run, below) naturally caps how many tables land in one
+# pod under real memory pressure instead of always packing up to
+# max_tables_per_pod regardless of it. Heuristic pending real cgroup-memory
+# telemetry from a live batch pod -- revisit the exact number once that exists.
+_SERIAL_MEMBER_OVERHEAD_MIB = 200
+
+
 def _serial_pod_request(members: Sequence[PackableJob]) -> tuple[int, int]:
-    """Serial execution → request = peak member, not sum."""
+    """Serial execution → request = peak member + cumulative per-member overhead."""
     cpu = max((m.estimate.cpu_milli for m in members), default=0)
     mem = max((m.estimate.mem_mib for m in members), default=0)
+    if len(members) > 1:
+        mem += (len(members) - 1) * _SERIAL_MEMBER_OVERHEAD_MIB
     cpu = min(cpu, MAX_POD_CPU_MILLI)
     mem = min(mem, MAX_POD_MEM_MIB)
     return cpu, mem

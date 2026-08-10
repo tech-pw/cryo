@@ -56,8 +56,9 @@ def test_hot_gets_dedicated_pod() -> None:
     assert hot_specs[0].job_ids == ("hot",)
     assert len(cold_specs) == 1
     assert set(cold_specs[0].job_ids) == {"c1", "c2"}
-    # Serial → max mem of cold members
-    assert cold_specs[0].mem_mib == 512
+    # Serial → max mem of cold members + per-additional-member overhead (1 extra
+    # member here) -- see _SERIAL_MEMBER_OVERHEAD_MIB.
+    assert cold_specs[0].mem_mib == 512 + 200
 
 
 def test_all_tiny_share_one_pod() -> None:
@@ -65,8 +66,29 @@ def test_all_tiny_share_one_pod() -> None:
     specs = pack_jobs(jobs)
     assert len(specs) == 1
     assert len(specs[0].members) == 5
-    assert specs[0].mem_mib == 600
+    # max(mem) of members + (5-1) extra members' worth of overhead.
+    assert specs[0].mem_mib == 600 + 4 * 200
     assert specs[0].cpu_milli == 300
+
+
+def test_large_batch_request_scales_with_member_count() -> None:
+    """Regression, 2026-08-10: a 28-member batch pod sized only for its single
+
+    largest member's peak (5,462 MiB under the old "max, not sum" rule) was
+    OOMKilled partway through -- cumulative page-cache pressure across many
+    serially-executed members isn't captured by peak-member sizing alone. The
+    packed pod's memory request must now grow with member count, and stay
+    strictly above the naive peak-only figure once more than a couple of
+    members share one pod.
+    """
+    jobs = [_job(f"t{i}", mem=200, cpu=100) for i in range(28)]
+    specs = pack_jobs(jobs, max_tables_per_pod=32)
+    assert len(specs) == 1
+    assert len(specs[0].members) == 28
+    naive_peak_only = 200
+    assert specs[0].mem_mib > naive_peak_only
+    assert specs[0].mem_mib == 200 + 27 * 200
+    assert specs[0].mem_mib <= MAX_POD_MEM_MIB
 
 
 def test_over_ceiling_splits() -> None:
