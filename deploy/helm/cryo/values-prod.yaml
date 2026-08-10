@@ -95,7 +95,7 @@ image:
   #    in Settings) -- this digest ships the capability, not the behavior; it does nothing
   #    unless/until CRYO_PROPERTY_AUTOPILOT_ENABLED=true is deliberately added to this
   #    file's global.env in a future, separate change -- not set here.
-  digest: "sha256:e1b461b4200ffb0fda4166c52cb62ca6bfe570036cc999bf5e82decf1f5e9fef"
+  digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
 
 imagePullSecrets:
   - cryo-registry
@@ -104,7 +104,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:e1b461b4200ffb0fda4166c52cb62ca6bfe570036cc999bf5e82decf1f5e9fef"
+    digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
 
 global:
   envFromSecret: cryo-secrets
@@ -143,7 +143,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:e1b461b4200ffb0fda4166c52cb62ca6bfe570036cc999bf5e82decf1f5e9fef"
+    digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
   keda:
     enabled: true
 
