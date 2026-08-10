@@ -309,3 +309,126 @@ def test_streaming_aware_retention_no_op_when_not_streaming() -> None:
     plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
     expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
     assert expire_ops[0].params["retention_days"] == 7
+
+
+def test_backlog_aware_retention_tightens_when_not_streaming() -> None:
+    """Regression, 2026-08-10: admin.iceberg_maintenance_log sits at 22.15 commits/day --
+    just under the 24.0/day is_streaming detection cutoff -- so streaming-aware retention
+    never fires despite the table carrying 499 accumulated snapshots. commits_per_day only
+    reacts to *current* velocity; this reacts to the backlog itself, which is why a table
+    that's never flagged streaming still needs to be caught."""
+    stats = {
+        "schema_name": "admin",
+        "table_name": "iceberg_maintenance_log",
+        "small_files_count": 0,
+        "total_size_gb": 0.0,
+        "is_streaming": False,
+        "commits_per_day": 22.15,
+        "total_snapshots": 499,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 1
+    assert any("Backlog-aware retention" in note for note in plan.notes)
+    assert any("499 snapshots" in note for note in plan.notes)
+
+
+def test_backlog_aware_retention_moderate_backlog_caps_at_three_days() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": False,
+        "commits_per_day": 1.0,
+        "total_snapshots": 150,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 3
+
+
+def test_backlog_aware_retention_no_op_below_threshold() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": False,
+        "commits_per_day": 1.0,
+        "total_snapshots": 40,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 7
+    assert not any("Backlog-aware retention" in note for note in plan.notes)
+
+
+def test_backlog_aware_retention_never_tightens_below_an_explicit_shorter_value() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": False,
+        "commits_per_day": 1.0,
+        "total_snapshots": 500,
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 1})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 1
+
+
+def test_backlog_aware_retention_opt_out() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": False,
+        "commits_per_day": 1.0,
+        "total_snapshots": 500,
+    }
+    plan = build_plan(
+        stats, [], Mode.STANDARD, {"retention_days": 7, "backlog_aware_cadence": False}
+    )
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 7
+    assert not any("Backlog-aware retention" in note for note in plan.notes)
+
+
+def test_backlog_aware_retention_threshold_is_configurable() -> None:
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": False,
+        "commits_per_day": 1.0,
+        "total_snapshots": 40,
+    }
+    plan = build_plan(
+        stats, [], Mode.STANDARD, {"retention_days": 7, "snapshot_backlog_threshold": 30}
+    )
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 3
+
+
+def test_streaming_and_backlog_signals_combine_via_min() -> None:
+    """A table that's both currently streaming AND already sitting on a large backlog should
+    get the more aggressive of the two tightened values, not have one signal silently
+    override the other."""
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 0,
+        "total_size_gb": 10,
+        "is_streaming": True,
+        "commits_per_day": 25.0,  # streaming-aware alone would cap at 3
+        "total_snapshots": 500,  # backlog-aware alone would tighten to 1
+    }
+    plan = build_plan(stats, [], Mode.STANDARD, {"retention_days": 7})
+    expire_ops = [op for op in plan.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 1
+    assert any("Streaming-aware retention" in note for note in plan.notes)
+    assert any("Backlog-aware retention" in note for note in plan.notes)

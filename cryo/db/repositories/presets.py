@@ -418,6 +418,11 @@ STATS_LOAD_ONLY_COLUMNS = (
     # evaluation needs it loaded even though it isn't copied into the candidate dict.
     TableStats.estimated_monthly_s3_cost_usd,
     TableStats.last_snapshot_committed_at,
+    # Added 2026-08-10 alongside FIELD_MAP support for backlog-based rules (e.g.
+    # total_snapshots > 100) -- same "predicate needs it loaded, _stats_dict doesn't
+    # necessarily read it" rationale as estimated_monthly_s3_cost_usd above.
+    TableStats.total_snapshots,
+    TableStats.manifest_count,
 )
 # TableCost's only field _stats_dict reads is `precision` -- same rationale as above,
 # TableCost.raw is the same class of large per-table JSONB blob.
@@ -442,4 +447,13 @@ def _stats_dict(stats: TableStats | None) -> dict[str, Any]:
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "projected_monthly_s3_cost_usd": stats.projected_monthly_s3_cost_usd,
         "reclaimable_bytes": stats.reclaimable_bytes,
+        # Added 2026-08-10 alongside FIELD_MAP support for total_snapshots/manifest_count.
+        # PresetRule matching (scheduler/rules.py::tables_for_preset) evaluates predicates
+        # against this dict via evaluate_predicate(), not the SQL-side FIELD_MAP -- a field
+        # present only in FIELD_MAP (like estimated_monthly_s3_cost_usd, added earlier) works
+        # for the /tables API's `filter` query param but silently never matches as a
+        # PresetRule predicate, since row.get() on a missing key returns None. Both fields
+        # need to be here for a rule like `total_snapshots > 100` to actually route tables.
+        "total_snapshots": stats.total_snapshots,
+        "manifest_count": stats.manifest_count,
     }
