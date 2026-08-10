@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.config import get_settings
@@ -111,6 +111,73 @@ class SQLSchedulerStore:
                 }
                 for d in session.scalars(select(Destination).where(Destination.enabled.is_(True)))
             ]
+
+    def consecutive_engine_failures(
+        self, table_ids: Sequence[str], *, lookback: int = 10
+    ) -> dict[str, dict[str, int]]:
+        """For each table, per destination it's actually been run against, count how many of
+        its most recent (up to `lookback`) jobs failed consecutively -- most-recent-first,
+        stopping at the first non-failed status -- so adaptive routing can stop repeatedly
+        retrying a destination that keeps failing a specific table.
+
+        Regression context, 2026-08-10: unified_bq.gold_dbt_pw_bq failed on the native engine
+        4 times in a row across 8 days, 4 different error messages each time, and nothing in
+        routing had any memory of that history -- adaptive_routing's own scoring (size/
+        capacity/latency/cost) treats a table that's failed repeatedly identically to one
+        that's never been tried. This is that missing memory.
+
+        Deliberately scoped to only the table_ids the caller actually needs (a single
+        scheduled run's job list, not the whole fleet) -- list_tables() already OOM-killed
+        the API pod once this session from an unbounded fleet-wide query; this must not
+        repeat that mistake by defaulting to "all tables" anywhere.
+        """
+        if not table_ids:
+            return {}
+        ids = [uuid.UUID(str(t)) for t in table_ids]
+        with self._session_factory() as session:
+            ranked = (
+                select(
+                    MaintenanceJob.table_id,
+                    MaintenanceJob.destination_id,
+                    MaintenanceJob.status,
+                    func.row_number()
+                    .over(
+                        partition_by=(MaintenanceJob.table_id, MaintenanceJob.destination_id),
+                        order_by=MaintenanceJob.started_at.desc(),
+                    )
+                    .label("rn"),
+                )
+                .where(
+                    MaintenanceJob.table_id.in_(ids),
+                    MaintenanceJob.started_at.is_not(None),
+                    MaintenanceJob.status.in_(("succeeded", "failed", "partial")),
+                )
+                .subquery()
+            )
+            rows = session.execute(
+                select(ranked.c.table_id, ranked.c.destination_id, ranked.c.status)
+                .where(ranked.c.rn <= lookback)
+                .order_by(ranked.c.table_id, ranked.c.destination_id, ranked.c.rn)
+            ).all()
+
+        result: dict[str, dict[str, int]] = {}
+        current_key: tuple[str, str] | None = None
+        streak = 0
+        broken = False
+        for table_id, destination_id, status in rows:
+            key = (str(table_id), str(destination_id))
+            if key != current_key:
+                current_key = key
+                streak = 0
+                broken = False
+            if not broken:
+                if status == "failed":
+                    streak += 1
+                else:
+                    broken = True
+            if streak:
+                result.setdefault(str(table_id), {})[str(destination_id)] = streak
+        return result
 
     def persist_run(self, run: ScheduledRunDraft) -> None:
         with self._session_factory() as session:

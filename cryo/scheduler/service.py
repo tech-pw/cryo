@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
@@ -27,6 +27,10 @@ class SchedulerStore(Protocol):
     def list_assignments(self) -> list[TableAssignment]: ...
 
     def list_destinations(self) -> list[dict[str, Any]]: ...
+
+    def consecutive_engine_failures(
+        self, table_ids: Sequence[str]
+    ) -> dict[str, dict[str, int]]: ...
 
     def persist_run(self, run: ScheduledRunDraft) -> None: ...
 
@@ -105,7 +109,14 @@ class SchedulerService:
                 self._store.mark_preset_run(preset.id, current)
                 continue
 
-            routed_jobs = _apply_routing(run, preset, tables, destinations)
+            failure_history: dict[str, dict[str, int]] = {}
+            if preset.guardrails.get("adaptive_routing"):
+                get_failures = getattr(self._store, "consecutive_engine_failures", None)
+                if get_failures is not None:
+                    failure_history = get_failures([job.table_id for job in run.jobs])
+            routed_jobs = _apply_routing(
+                run, preset, tables, destinations, failure_history=failure_history
+            )
             self._store.persist_run(routed_jobs)
             enqueue_run(routed_jobs, self._queue)
             self._store.mark_preset_run(preset.id, current)
@@ -592,6 +603,8 @@ def _apply_routing(
     preset: PresetConfig,
     tables: list[TableCandidate],
     destinations: dict[str, dict[str, Any]],
+    *,
+    failure_history: Mapping[str, Mapping[str, int]] | None = None,
 ) -> ScheduledRunDraft:
     tables_by_id = {table.id: table for table in tables}
     routed = []
@@ -600,8 +613,21 @@ def _apply_routing(
         destination_id = job.destination_id
         if table is not None:
             if preset.guardrails.get("adaptive_routing"):
+                routing_table = table
+                per_table_failures = (failure_history or {}).get(table.id)
+                if per_table_failures:
+                    # dataclasses.replace, not a mutation -- TableCandidate is frozen, and
+                    # this per-run augmented copy must never leak into the shared `tables`
+                    # list other jobs/presets in the same tick still read from.
+                    routing_table = replace(
+                        table,
+                        stats={
+                            **table.stats,
+                            "engine_consecutive_failures": per_table_failures,
+                        },
+                    )
                 route = resolve_destination_adaptive(
-                    table,
+                    routing_table,
                     preset,
                     destinations,
                     AdaptiveRoutingContext(),
