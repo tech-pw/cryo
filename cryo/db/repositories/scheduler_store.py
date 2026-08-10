@@ -19,6 +19,8 @@ from cryo.db.models import (
     TableAssignment,
 )
 from cryo.db.repositories.presets import (
+    COST_LOAD_ONLY_COLUMNS,
+    STATS_LOAD_ONLY_COLUMNS,
     assignment_to_config,
     preset_to_config,
     rule_to_config,
@@ -61,11 +63,21 @@ class SQLSchedulerStore:
 
     def list_tables(self) -> list[TableCandidate]:
         with self._session_factory() as session:
+            # STATS_LOAD_ONLY_COLUMNS / COST_LOAD_ONLY_COLUMNS restrict TableStats/TableCost
+            # eager-loading to the handful of scalar columns rule/predicate evaluation
+            # actually reads -- a bare `selectinload(Table.stats)` (no column restriction)
+            # pulls every column including `raw`, a large per-table JSONB blob, for the
+            # entire active fleet in one process. Confirmed live, 2026-08-10: this exact
+            # unrestricted query OOM-killed the API pod (6Gi limit) via /simulate on a
+            # fleet-wide (~13,600-table) predicate -- this is the scheduler's own tick path,
+            # so an unrestricted load here would OOM the scheduler on every cron firing for
+            # any preset whose rule matches a large share of the fleet, not just at
+            # diagnostic time.
             tables = session.scalars(
                 select(Table)
                 .options(
-                    selectinload(Table.stats),
-                    selectinload(Table.cost),
+                    selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
+                    selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
                     selectinload(Table.source),
                 )
                 .where(Table.is_active.is_(True))

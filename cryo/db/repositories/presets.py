@@ -205,7 +205,12 @@ def simulate_preset(
     candidates = [
         table_to_candidate(table)
         for table in session.scalars(
-            select(Table).outerjoin(TableStats).options(selectinload(Table.stats))
+            select(Table)
+            .where(Table.is_active.is_(True))
+            .options(
+                selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
+                selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
+            )
         )
     ]
     matched = tables_for_preset(preset_to_config(preset), candidates, presets, rules, assignments)
@@ -382,6 +387,41 @@ def job_summary(job: MaintenanceJob) -> dict[str, object]:
         "plan": job.plan,
         "force_admit": job.force_admit,
     }
+
+
+# Columns _stats_dict actually reads. Confirmed live, 2026-08-10: eager-loading
+# TableStats via a bare `selectinload(Table.stats)` (no column restriction) pulls every
+# column, including `raw` -- a JSONB blob per table holding per-column quality stats,
+# a sample of file paths, health deductions, etc., easily tens of KB per row. Across the
+# full fleet (~13,600 tables) that materializes into a single Python process all at once
+# for both `simulate_preset` and the scheduler's own `list_tables()` (used by every
+# cron tick) -- OOM-killed the API pod (6Gi limit) on a fleet-wide predicate. `load_only`
+# restricts what SQLAlchemy actually selects from the DB for this relationship to just
+# the columns below, cutting the per-table payload by roughly two orders of magnitude.
+# Keep this in sync with `_stats_dict`'s own field list below.
+STATS_LOAD_ONLY_COLUMNS = (
+    TableStats.needs_compaction,
+    TableStats.compaction_priority,
+    TableStats.grade,
+    TableStats.overall_score,
+    TableStats.total_files,
+    TableStats.small_files_count,
+    TableStats.total_partitions,
+    TableStats.total_size_gb,
+    TableStats.partition_col,
+    TableStats.partition_col_type,
+    TableStats.query_count_30d,
+    TableStats.projected_savings_usd_month,
+    TableStats.projected_monthly_s3_cost_usd,
+    TableStats.reclaimable_bytes,
+    # Not read by _stats_dict but part of predicates.py's FIELD_MAP, so predicate
+    # evaluation needs it loaded even though it isn't copied into the candidate dict.
+    TableStats.estimated_monthly_s3_cost_usd,
+    TableStats.last_snapshot_committed_at,
+)
+# TableCost's only field _stats_dict reads is `precision` -- same rationale as above,
+# TableCost.raw is the same class of large per-table JSONB blob.
+COST_LOAD_ONLY_COLUMNS = (TableCost.precision,)
 
 
 def _stats_dict(stats: TableStats | None) -> dict[str, Any]:
