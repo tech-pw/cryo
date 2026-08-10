@@ -78,6 +78,15 @@ Backlog-aware retention takes effect on `default-native-deep`'s next scheduled r
 (20:00 UTC). Property autopilot needs an explicit follow-up decision to turn on — see its own
 entry above for what "on" means before flipping it.
 
+**Update, same day**: a second build/deploy landed digest `sha256:c3729ccc...`, adding
+failure-aware adaptive routing (item #5) on top of the above. Confirmed live the same way —
+all 5 core pods on the new digest, all 4 rollouts report success. `adaptive_routing` also
+turned on for `default-native-deep` via the preset API (a data change, not part of the
+image), `engine_pool` scoped explicitly to `[native-datafusion, spark-k8s-fallback]` only —
+Trino-Prod deliberately excluded per explicit instruction, not an intended maintenance
+target. The file-count/byte-count reporting change (`fe69b3f`) landed *after* this build and
+is not yet in a deployed image.
+
 - Commit `78262a8` on `gitlab-main`: backlog-aware `expire_snapshots` retention (catches tables
   like `admin.iceberg_maintenance_log`, sitting on 499 snapshots at 22.15 commits/day — just
   under the 24.0/day streaming-detection cutoff, so the existing streaming-aware tightening never
@@ -133,10 +142,10 @@ a real fix. **Not yet scoped.**
 
 ## 3. Scoped, deliberately deferred (not forgotten)
 
-| Item | Why deferred |
+| Item | Status |
 |---|---|
-| Native engine's `optimize_manifests` silently no-ops (`iceberg-go` doesn't implement `rewrite_manifests` execute — confirmed in `engine-go/internal/ops/manifests.go`), but the overall job still reports `"succeeded"` | Fix requires changing Go-engine-level job-status aggregation (mark `"partial"` when a sub-op reports unavailable) — needs its own Go rebuild + test cycle, shouldn't be bundled into the retention-fix deploy in flight |
-| Report file-count reduction and byte-count reduction as separate before/after metrics (a table can drop 90% of files while barely changing bytes — currently only the byte number is prominent, which undersells real request-cost wins) | Low-risk, quick — queued as the *next* change after the retention fix is deployed and verified, deliberately not bundled into the same deploy |
+| Native engine's `optimize_manifests` silently no-ops (`iceberg-go` doesn't implement `rewrite_manifests` execute — confirmed in `engine-go/internal/ops/manifests.go`), but the overall job still reports `"succeeded"` | Still deferred — needs a Go-engine-level job-status aggregation change (mark `"partial"` when a sub-op reports unavailable), its own Go rebuild + test cycle |
+| ~~Report file-count reduction and byte-count reduction as separate before/after metrics~~ | **Built, not deployed** (`fe69b3f`). New `effectiveness` field on `GET /tables/{id}/runs`: `file_count_reduction_pct`, `small_file_reduction_pct`, `byte_reduction_pct` as independent signed percentages + a headline. 10 tests, full suite green. Landed *after* today's `sha256:c3729ccc...` build/deploy, so it needs its own build cycle — not live yet. |
 | Sequence S3 Intelligent-Tiering *after* compaction, never independently (monitoring fee is $0.0025/1,000 objects/month — a bucket full of uncompacted small files could net-negative before compaction ever gets a chance to reduce object count) | Not a Cryo code change — an infra/bucket-lifecycle-policy decision for whoever manages the S3 buckets |
 
 ## 4. Research-grounded future projects
