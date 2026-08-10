@@ -173,6 +173,30 @@ items above where actionable:
 
 ---
 
+## 5. Built — failure-aware adaptive routing
+
+**Status: committed, tested, pushed (`0cdad5e`). Not yet deployed** (needs the same
+build/deploy cycle as items #0/#1).
+
+Directly answers "why does a table that's failed 4 times keep getting sent to the same
+engine": `adaptive_routing.py` already had real size/capacity/latency/cost-based destination
+scoring, but zero memory of failure history — a 4x-failed table scored identically to a
+never-tried one. Also confirmed live: `adaptive_routing` itself is `false` on every preset
+actually running today — same "real infrastructure, never turned on" shape as items #0's
+`layout_analyzer`/`pto/` finding.
+
+New: `SQLSchedulerStore.consecutive_engine_failures()` (one bulk query per tick, scoped to
+the current run's tables only — not fleet-wide, learned from the OOM incident earlier this
+session) feeds a per-table failure-streak signal into `rank_destinations()`, which now
+excludes (score `-inf`) any destination with `>= max_consecutive_failures_before_exclusion`
+(default 2, configurable) consecutive failures on that specific table. Fails open if nothing
+else is available. 13 new tests, full suite green.
+
+**Does not fix anything by itself** — `adaptive_routing` is still off. Turning it on for
+`default-native-deep` is the actual remaining decision, and should happen deliberately (it
+changes routing behavior for the whole fleet-wide catch-all preset), not as a side effect of
+this commit landing.
+
 ## Priority order, if picking one thing
 
 1. **#0** — scope and build a bounded "apply recommendations" consumer. Highest leverage,
