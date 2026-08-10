@@ -68,6 +68,7 @@ class SparkK8sConfig:
     executor_cpu_milli: int = 2000
     executor_mem_mib: int = 4096
     executor_instances: int = 2
+    node_selector: dict[str, str] | None = None
     active_deadline_seconds: int = _DEFAULT_ACTIVE_DEADLINE_SECONDS
     ttl_seconds_after_finished: int = _DEFAULT_TTL_SECONDS
 
@@ -91,6 +92,21 @@ class SparkK8sConfig:
         else:
             pull_secrets = ()
 
+        # node_selector: allow CRYO_SPARK_K8S_NODE_SELECTOR env as comma-separated key=val pairs
+        _node_sel_raw = _get("node_selector")
+        if isinstance(_node_sel_raw, str):
+            pairs = [p.strip() for p in _node_sel_raw.split(",") if p.strip()]
+            node_selector = {}
+            for p in pairs:
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    node_selector[k.strip()] = v.strip()
+        elif isinstance(_node_sel_raw, Mapping):
+            node_selector = dict(_node_sel_raw)
+        else:
+            # Default to on-demand capacity-type for Spark workloads
+            node_selector = {"karpenter.sh/capacity-type": "on-demand"}
+
         return cls(
             namespace=str(_get("namespace") or "default"),
             image=str(_get("image") or _DEFAULT_IMAGE),
@@ -108,6 +124,7 @@ class SparkK8sConfig:
             executor_cpu_milli=int(_get("executor_cpu_milli") or 2000),
             executor_mem_mib=int(_get("executor_mem_mib") or 4096),
             executor_instances=int(_get("executor_instances") or 2),
+            node_selector=node_selector,
             active_deadline_seconds=int(
                 _get("active_deadline_seconds") or _DEFAULT_ACTIVE_DEADLINE_SECONDS
             ),
@@ -208,6 +225,16 @@ class SparkK8sClient:
             "--conf", f"spark.executor.memory={cfg.executor_mem_mib}m",
             "--conf", "spark.kubernetes.executor.deleteOnTermination=true",
             "--conf", "spark.kubernetes.submission.waitAppCompletion=true",
+            # Explicit Kubernetes resource requests/limits so Karpenter can pack nodes
+            # accurately instead of guessing from Spark's integer core counts.
+            "--conf", f"spark.kubernetes.driver.request.cores={cfg.driver_cpu_milli/1000.0:.3f}",
+            "--conf", f"spark.kubernetes.driver.limit.cores={cfg.driver_cpu_milli/1000.0:.3f}",
+            "--conf", f"spark.kubernetes.executor.request.cores={cfg.executor_cpu_milli/1000.0:.3f}",
+            "--conf", f"spark.kubernetes.executor.limit.cores={cfg.executor_cpu_milli/1000.0:.3f}",
+            "--conf", f"spark.kubernetes.driver.request.memory={cfg.driver_mem_mib}m",
+            "--conf", f"spark.kubernetes.driver.limit.memory={cfg.driver_mem_mib}m",
+            "--conf", f"spark.kubernetes.executor.request.memory={cfg.executor_mem_mib}m",
+            "--conf", f"spark.kubernetes.executor.limit.memory={cfg.executor_mem_mib}m",
             # Driver/executor pods must land on the same Karpenter on-demand capacity as
             # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
             # that node pool's instance profile is what actually has S3 access to the
@@ -215,10 +242,15 @@ class SparkK8sClient:
             # against data-platform-cluster, 2026-07-21: AccessDeniedException on
             # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
             # aren't checkpointed, so on-demand only, matching the native engine's own rule.
-            "--conf", "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand",
             "local:///opt/cryo/cryo_spark_runner.py",
             *runner_args,
         ]
+
+        # Insert node selector spark.conf entries so they appear before the app path
+        # (insert at index 1 to keep all --conf values before the application script)
+        if cfg.node_selector:
+            for _k, _v in cfg.node_selector.items():
+                spark_submit_cmd[1:1] = ["--conf", f"spark.kubernetes.node.selector.{_k}={_v}"]
         if cfg.image_pull_secrets:
             secrets_csv = ",".join(cfg.image_pull_secrets)
             spark_submit_cmd[1:1] = [
@@ -301,7 +333,7 @@ class SparkK8sClient:
                     "spec": {
                         "restartPolicy": "Never",
                         "serviceAccountName": cfg.service_account,
-                        "nodeSelector": {"karpenter.sh/capacity-type": "on-demand"},
+                        "nodeSelector": cfg.node_selector,
                         "imagePullSecrets": [{"name": s} for s in cfg.image_pull_secrets],
                         "containers": [
                             {
