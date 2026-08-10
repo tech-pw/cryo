@@ -31,17 +31,17 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-10 from gitlab-main commit 4892393. Includes everything in
-  # the prior digest (see git log) plus: shared native batch pods now size their
-  # memory request for cumulative, not just peak, member memory
-  # (_SERIAL_MEMBER_OVERHEAD_MIB in packing.py). A 28-member batch pod requested only
-  # 5,462 MiB -- the single largest member's peak estimate under the old "max, not
-  # sum" rule -- and was OOMKilled partway through table 8 despite the first 7
-  # completing cleanly (confirmed live, 2026-08-10, run ab24b625). Page cache from
-  # files each serially-executed member's subprocess reads isn't reclaimed just
-  # because that subprocess exits, so cumulative pressure grows with batch size in a
-  # way peak-only sizing missed. See cryo/engines/native/packing.py (4892393).
-  digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
+  # Built + pushed 2026-08-10 from gitlab-main commit 4d66e4b. Includes everything in
+  # the prior digest (see git log) plus: simulate_preset and the scheduler's own
+  # list_tables() (used by every cron tick) no longer eager-load TableStats.raw /
+  # TableCost.raw -- large per-table JSONB blobs that, loaded unrestricted for the
+  # whole active fleet (~13,600 tables) at once, OOM-killed the API pod (OOMKilled,
+  # exit 137, 6Gi limit; confirmed live, 2026-08-10, testing a fleet-wide preset rule
+  # via /simulate before enabling a daily schedule). list_tables() is the exact query
+  # shape the real scheduler tick uses on every cron firing, so this would have
+  # recurred automatically in production, not just at diagnostic time. See
+  # cryo/db/repositories/presets.py, cryo/db/repositories/scheduler_store.py (4d66e4b).
+  digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
 
 imagePullSecrets:
   - cryo-registry
@@ -50,7 +50,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
+    digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
 
 global:
   envFromSecret: cryo-secrets
@@ -89,7 +89,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
+    digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
   keda:
     enabled: true
 
