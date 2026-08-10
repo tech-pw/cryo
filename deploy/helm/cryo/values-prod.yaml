@@ -31,18 +31,17 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-08 from gitlab-main commit 7e36bed. Includes everything in
-  # the prior digest (see git log) plus: NativeJobWatcher's final-result pod-log read
-  # (_read_pod_logs in job_dispatch.py) no longer passes limit_bytes -- that param
-  # truncates a K8s pod log from the START, not the end, silently dropping any
-  # CRYO_TABLE_RESULT line past the first 512KiB. packing.py bin-packs up to 32
-  # tables into one shared serial batch pod (max_tables_per_pod), so this was a
-  # routine, not edge-case, way for a table whose result line got truncated out to
-  # be misreported as "native_job_no_result" (FAILED) even though its operation, and
-  # the batch Job itself, genuinely succeeded. Same regression class already found
-  # and fixed in cryo/engines/spark/k8s.py on 2026-07-31, never ported to native
-  # until now (7e36bed).
-  digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
+  # Built + pushed 2026-08-10 from gitlab-main commit 4892393. Includes everything in
+  # the prior digest (see git log) plus: shared native batch pods now size their
+  # memory request for cumulative, not just peak, member memory
+  # (_SERIAL_MEMBER_OVERHEAD_MIB in packing.py). A 28-member batch pod requested only
+  # 5,462 MiB -- the single largest member's peak estimate under the old "max, not
+  # sum" rule -- and was OOMKilled partway through table 8 despite the first 7
+  # completing cleanly (confirmed live, 2026-08-10, run ab24b625). Page cache from
+  # files each serially-executed member's subprocess reads isn't reclaimed just
+  # because that subprocess exits, so cumulative pressure grows with batch size in a
+  # way peak-only sizing missed. See cryo/engines/native/packing.py (4892393).
+  digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
 
 imagePullSecrets:
   - cryo-registry
@@ -51,7 +50,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
+    digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
 
 global:
   envFromSecret: cryo-secrets
@@ -90,7 +89,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:fe3b556fd66e966bdb32aa9e372c2b17064c24480807faf9f19446f7ebe160ad"
+    digest: "sha256:6766b05a993adfce421be757178f2b3c1085dc08d2c7fe3f70d05b92c6732040"
   keda:
     enabled: true
 
