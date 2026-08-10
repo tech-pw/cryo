@@ -785,6 +785,19 @@ class RunResourceEstimateRead(BaseModel):
     active_duration_seconds: float | None = None
 
 
+class RunEffectivenessRead(BaseModel):
+    """File-count and byte-size reduction reported as separate, independently-signed
+    percentages -- not one blended number. S3 request cost scales with file *count*, not
+    bytes, so a run that cuts file count 90% while barely moving total bytes (confirmed live,
+    2026-08-10: mview.gold_dbt_drip_marketing_flow, 2,549 -> 268 files, size -4%) is a large
+    real win that a size-only summary would undersell. See docs/open-items-2026-08-10.md."""
+
+    file_count_reduction_pct: float | None = None
+    small_file_reduction_pct: float | None = None
+    byte_reduction_pct: float | None = None
+    headline: str | None = None
+
+
 class TableRunRead(BaseModel):
     job_id: uuid.UUID
     run_id: uuid.UUID
@@ -799,6 +812,7 @@ class TableRunRead(BaseModel):
     before_stats: TableStatsSnapshotRead | None = None
     after_stats: TableStatsSnapshotRead | None = None
     resource_estimate: RunResourceEstimateRead | None = None
+    effectiveness: RunEffectivenessRead | None = None
 
 
 class TableRunsResponse(BaseModel):
