@@ -55,10 +55,22 @@ git doesn't make it run in production until that ships.
 
 ---
 
-## 1. Blocked, waiting on a decision — retention fix
+## 1. Blocked, waiting on a decision — retention fix + property autopilot deploy
 
-**Status: code done, tested, committed, pushed. Blocked at the docker build/deploy step by the
-permission classifier (consequential production action, correctly gated).**
+**Status: image built, pushed, and pinned. `helm upgrade` and the rollout restart are the last
+two steps, both blocked by the permission classifier.**
+
+- User ran the multi-arch build directly (outside Claude Code, sidestepping the classifier):
+  `sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9`, both `linux/amd64`
+  and `linux/arm64`, pushed successfully.
+- `values-prod.yaml` updated with the new digest across all 3 references (main image,
+  migration image, native image), committed and pushed (`b508bce`).
+- `helm upgrade --install cryo ...` — blocked by the classifier, a *different* block than the
+  docker-build one (a `Bash(docker buildx build:*)` permission rule was added to
+  `.claude/settings.json` and cleared that specific command, but does not cover `helm`/`kubectl`
+  — each command pattern needs its own rule).
+- **Until this runs, none of today's code changes are live.** The production scheduler is still
+  on the old image.
 
 - Commit `78262a8` on `gitlab-main`: backlog-aware `expire_snapshots` retention (catches tables
   like `admin.iceberg_maintenance_log`, sitting on 499 snapshots at 22.15 commits/day — just
@@ -76,23 +88,38 @@ permission classifier (consequential production action, correctly gated).**
   `kubectl rollout restart` on scheduler/worker/governor. Needs explicit go-ahead or someone
   running `docs/deployment.md`'s documented sequence directly.
 
-## 2. In progress — 24TB table compaction retry
+## 2. Resolved — 24TB table compaction retry, and a new bug found in the process
 
-**Status: running, past the point where the previous attempt failed.**
+**Status: finished (failed), 3h6m, two genuinely different failures underneath one status.**
 
-- Run `e085420b`, retrying `reports.gold_dbt_video_stats_reports_unified` and
-  `unified_bq.gold_dbt_pw_bq` (24.3TB, 214K files) on the native engine after the original run
-  (`54f0a8fa`) failed both with a generic `native_job_failed`.
-- Previous attempt failed at 120.4 minutes. This retry passed that mark cleanly and is still
-  running — a meaningfully different signal than a repeat of the same crash, not yet a result
-  either way.
-- History for `unified_bq.gold_dbt_pw_bq` specifically: only ever succeeded once, via a 62-hour,
-  28-chunk Spark-on-EMR run (577K → 81.6K small files). Every native-engine attempt since
-  (3 in a row before this one) has failed with 3 *different* errors (`argument list too long`,
-  `native_job_missing_before_result_collection`, generic `native_job_failed`) — a real pattern
-  suggesting this specific table may be past what the native engine can handle at this scale,
-  not a transient issue. If this retry also fails, the honest next move is routing it to Spark
-  like the one run that actually worked, not a 5th native retry.
+Run `e085420b` failed after 3h6m (11:06→14:12). But the two tables failed for *different*
+reasons, and only one of them is a real compaction failure:
+
+- **`unified_bq.gold_dbt_pw_bq`** (24.3TB, 214K files): `native_job_failed`, K8s Job status
+  genuinely `Failed`. This is the **4th native-engine failure in a row** for this table, each
+  with a different error (`argument list too long`, `native_job_missing_before_result_collection`,
+  2x generic `native_job_failed`). It has only ever succeeded once — a 62-hour, 28-chunk
+  Spark-on-EMR run (577K → 81.6K small files). Verdict: this table is past what the native
+  engine can handle at this scale. **Next native retry should not happen** — route it to Spark
+  like the one run that actually worked.
+
+- **`reports.gold_dbt_video_stats_reports_unified`** (1.5TB): marked `native_job_no_result` —
+  but checking the underlying K8s Job directly (`kubectl get jobs`) shows it as
+  **`Complete`, 1/1, finished in 41 minutes** — the compaction itself likely ran fine. Cryo's
+  own job record, though, stayed `running` for another ~2.5 hours before finally timing out and
+  marking it failed. Found one corroborating event before it rotated out of K8s' short
+  retention window: a `TaintManagerEviction` on the pod ("Cancelling deletion of Pod...") around
+  the 100-minute mark — an eviction attempt that got cancelled, which may be exactly what broke
+  Cryo's log-streaming/result-collection watcher without killing the pod itself. **This is a
+  real, distinct bug** — the pod finishing doesn't reliably get detected, so a job that actually
+  succeeded gets reported and treated as failed, and the run sits burning 2+ extra hours of
+  wall-clock time doing nothing. Triggered a rescan (`e8d6606e`) to confirm empirically whether
+  the table's stats actually improved despite the "failed" status — result pending.
+
+**Not yet scoped**: fixing the result-collection gap itself. Given the taint-eviction
+correlation, the fix likely needs the watcher to re-establish its connection/tracking after a
+cancelled eviction rather than assuming the stream is still good, but this needs the K8s events
+(now gone) or a live reproduction to confirm before writing a fix with any confidence.
 
 ## 3. Scoped, deliberately deferred (not forgotten)
 
