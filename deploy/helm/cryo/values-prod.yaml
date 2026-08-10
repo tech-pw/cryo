@@ -31,8 +31,27 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-10 by user, from gitlab-main commit fe69b3f (on top of 0cdad5e,
-  # a6f1759, 78262a8). Adds one change over the prior digest:
+  # Built + pushed 2026-08-10 by user, from gitlab-main commit d408fed (on top of fe69b3f,
+  # 0cdad5e, a6f1759, 78262a8).
+  #
+  # CORRECTION: the fe69b3f digest (sha256:9b6591558...) was pinned correctly for
+  # migration.image and native.image below but NOT for this top-level image: digest in the
+  # previous version of this file -- an editing mistake, not a build/push problem. That would
+  # have meant api/worker/governor/scheduler pods ran fe69b3f-behind code while the native
+  # engine binary (same image, different values.yaml key) ran fe69b3f. All three are back in
+  # sync now, both because of this fix and because this whole file is being replaced with
+  # today's newest digest anyway. This is exactly the class of mistake deploy.sh (see
+  # deploy/deploy.sh) exists to make structurally impossible going forward -- one script,
+  # one digest, three keys updated together, instead of three manual find-and-replace edits.
+  #
+  # -2. Fallback-dispatch outcomes now persisted (d408fed): _dispatch_fallback_operations()
+  #     (the Governor's admission-time route to Spark for ops native can't run, e.g.
+  #     optimize_manifests) already genuinely attempted the work -- its outcome only ever hit
+  #     logger.info/logger.error. A job could show "succeeded" while its manifest
+  #     consolidation silently failed, with zero persisted trace. Now recorded via the
+  #     already-existing store.record_audit()/AuditRecord (has a manifests_rewritten field).
+  #     Every exit path covered (success, failure, engine mismatch, missing config,
+  #     unresolvable destination). See cryo/governor/native_admit.py.
   #
   # -1. Effectiveness reporting (fe69b3f): S3 bills per-request not per-byte, so a compaction
   #     that cuts file count 90% while barely moving bytes (confirmed live,
@@ -76,7 +95,7 @@ image:
   #    in Settings) -- this digest ships the capability, not the behavior; it does nothing
   #    unless/until CRYO_PROPERTY_AUTOPILOT_ENABLED=true is deliberately added to this
   #    file's global.env in a future, separate change -- not set here.
-  digest: "sha256:c3729ccc9b980e2ec2fd4d0e647abd49f74f0e0f986e01f88f45d29d735a5d57"
+  digest: "sha256:4189f1dcaf894f72cff452cfb57dc98608d547396886c4574319de81b4806dfb"
 
 imagePullSecrets:
   - cryo-registry
@@ -85,7 +104,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:9b6591558eb41176f3794161ea1923e604a7a1673aa4a37033f42dd9500bb575"
+    digest: "sha256:4189f1dcaf894f72cff452cfb57dc98608d547396886c4574319de81b4806dfb"
 
 global:
   envFromSecret: cryo-secrets
@@ -124,7 +143,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:9b6591558eb41176f3794161ea1923e604a7a1673aa4a37033f42dd9500bb575"
+    digest: "sha256:4189f1dcaf894f72cff452cfb57dc98608d547396886c4574319de81b4806dfb"
   keda:
     enabled: true
 
