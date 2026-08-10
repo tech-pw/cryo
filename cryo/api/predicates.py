@@ -32,6 +32,8 @@ FIELD_MAP = {
     "small_files_count": TableStats.small_files_count,
     "total_partitions": TableStats.total_partitions,
     "total_size_gb": TableStats.total_size_gb,
+    "total_snapshots": TableStats.total_snapshots,
+    "manifest_count": TableStats.manifest_count,
     "partition_col": TableStats.partition_col,
     "partition_col_type": TableStats.partition_col_type,
     "query_count_30d": TableStats.query_count_30d,

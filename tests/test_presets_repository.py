@@ -51,6 +51,50 @@ def test_table_to_candidate_merges_table_and_stats_fields() -> None:
     assert candidate.row["small_files_count"] == 80
 
 
+def test_table_to_candidate_exposes_snapshot_and_manifest_counts_for_rule_matching() -> None:
+    """Regression, 2026-08-10: total_snapshots/manifest_count were readable via a table's own
+    stats but weren't in _stats_dict, so a PresetRule predicate like `total_snapshots > 100`
+    would silently never match -- evaluate_predicate()'s row.get() returns None for a missing
+    key rather than raising, so this failed quietly instead of loudly. Added alongside
+    FIELD_MAP support for these two fields so backlog-style rules can actually route tables,
+    not just filter the /tables API."""
+    from cryo.domain.predicates import evaluate_predicate
+
+    table_id = uuid.uuid4()
+    table = Table(
+        id=table_id,
+        source_id=uuid.uuid4(),
+        schema_name="fixtures",
+        table_name="bloated_snapshots",
+        is_active=True,
+    )
+    table.stats = TableStats(
+        table_id=table_id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=True,
+        compaction_priority="HIGH",
+        grade="F",
+        overall_score=20,
+        total_files=10,
+        small_files_count=8,
+        total_size_gb=0.1,
+        total_snapshots=499,
+        manifest_count=13,
+    )
+
+    candidate = presets.table_to_candidate(table)
+
+    assert candidate.row["total_snapshots"] == 499
+    assert candidate.row["manifest_count"] == 13
+    predicate = {
+        "all": [
+            {"field": "total_size_gb", "op": "<", "value": 10},
+            {"field": "total_snapshots", "op": ">", "value": 100},
+        ]
+    }
+    assert evaluate_predicate(predicate, candidate.row) is True
+
+
 def test_repository_adapters_preserve_scheduler_resolution_shape() -> None:
     preset_id = uuid.uuid4()
     table_id = uuid.uuid4()

@@ -21,6 +21,8 @@ SUPPORTED_FIELDS = frozenset(
         "small_files_count",
         "total_partitions",
         "total_size_gb",
+        "total_snapshots",
+        "manifest_count",
         "partition_col",
         "partition_col_type",
         "query_count_30d",
