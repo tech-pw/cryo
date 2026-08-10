@@ -236,6 +236,55 @@ def _fallback_engine_config(
     return merged
 
 
+def _record_fallback_audit(
+    store: JobStore,
+    *,
+    job_id: str,
+    table_id: str,
+    table_ref: str,
+    operation: Operation,
+    status: str,
+    engine: EngineType | str,
+    detail: str | None,
+    duration_ms: int | None = None,
+    manifests_rewritten: int | None = None,
+) -> None:
+    """Persist a fallback-dispatch outcome so it's queryable (GET /tables/{id}/runs' `steps`),
+    not just a log line that vanishes when the pod cycles.
+
+    Regression, 2026-08-10: confirmed live that _dispatch_fallback_operations already attempts
+    real work (e.g. routing optimize_manifests to Spark when the native engine can't run it),
+    but its outcome only ever reached logger.info/logger.error -- a job could be marked
+    "succeeded" overall while its manifest consolidation silently failed, with zero persisted
+    trace. record_audit() already existed for exactly this (AuditRecord has a
+    manifests_rewritten field) but nothing here had ever called it. The audit write itself is
+    wrapped separately from the dispatch attempt it's recording -- a DB hiccup writing the
+    audit trail must not be mistaken for (or mask) the real dispatch outcome already logged.
+    """
+    try:
+        from cryo.worker.worker import AuditRecord
+
+        store.record_audit(
+            AuditRecord(
+                job_id=job_id,
+                table_id=table_id,
+                action=operation.type,
+                status=status,
+                engine=engine,
+                detail=detail,
+                duration_ms=duration_ms,
+                manifests_rewritten=manifests_rewritten,
+            )
+        )
+    except Exception:
+        logger.exception(
+            "%s: failed to record audit for fallback %s (dispatch outcome itself already logged "
+            "above; this only affects whether it's also queryable)",
+            table_ref,
+            operation.type.value,
+        )
+
+
 def _dispatch_fallback_operations(
     *,
     store: JobStore,
@@ -244,6 +293,8 @@ def _dispatch_fallback_operations(
     destination_config: Mapping[str, Any],
     source_config: Mapping[str, Any],
     table_ref: str,
+    job_id: str,
+    table_id: str,
 ) -> None:
     """Best-effort synchronous dispatch of native-unsupported ops to a SQL fallback.
 
@@ -266,6 +317,17 @@ def _dispatch_fallback_operations(
             len(fallback_operations),
             ", ".join(sorted({op.type.value for op, _ in fallback_operations})),
         )
+        for operation, reason in fallback_operations:
+            _record_fallback_audit(
+                store,
+                job_id=job_id,
+                table_id=table_id,
+                table_ref=table_ref,
+                operation=operation,
+                status="SKIPPED",
+                engine="none",
+                detail=f"no sql_fallback_destination_id configured ({reason})",
+            )
         return
 
     try:
@@ -275,6 +337,17 @@ def _dispatch_fallback_operations(
             fallback_destination = store.get_destination(fallback_id.strip())
         except KeyError:
             logger.error("%s: sql_fallback_destination_id %r not found", table_ref, fallback_id)
+            for operation, reason in fallback_operations:
+                _record_fallback_audit(
+                    store,
+                    job_id=job_id,
+                    table_id=table_id,
+                    table_ref=table_ref,
+                    operation=operation,
+                    status="FAILED",
+                    engine="none",
+                    detail=f"sql_fallback_destination_id {fallback_id!r} not found ({reason})",
+                )
             return
 
         fallback_engine = create_engine(
@@ -283,10 +356,19 @@ def _dispatch_fallback_operations(
         )
         for operation, reason in fallback_operations:
             if not native_fallback_supports(fallback_engine.type, operation.type):
-                logger.error(
-                    "%s: %s",
-                    table_ref,
-                    native_fallback_mismatch_detail(fallback_engine.type, operation.type),
+                mismatch_detail = native_fallback_mismatch_detail(
+                    fallback_engine.type, operation.type
+                )
+                logger.error("%s: %s", table_ref, mismatch_detail)
+                _record_fallback_audit(
+                    store,
+                    job_id=job_id,
+                    table_id=table_id,
+                    table_ref=table_ref,
+                    operation=operation,
+                    status="SKIPPED",
+                    engine=fallback_engine.type,
+                    detail=mismatch_detail,
                 )
                 continue
             fallback_plan = MaintenancePlan(
@@ -316,6 +398,18 @@ def _dispatch_fallback_operations(
                         operation.type.value,
                         result.error,
                     )
+                _record_fallback_audit(
+                    store,
+                    job_id=job_id,
+                    table_id=table_id,
+                    table_ref=table_ref,
+                    operation=operation,
+                    status="OK" if result.ok else "FAILED",
+                    engine=fallback_engine.type,
+                    detail=result.detail or result.error or reason,
+                    duration_ms=result.duration_ms,
+                    manifests_rewritten=result.manifests_rewritten,
+                )
     except Exception:
         logger.exception("%s: SQL fallback dispatch raised unexpectedly", table_ref)
 
@@ -579,6 +673,8 @@ def admit_native_k8s_jobs(
                                 destination_config=destination.config,
                                 source_config=prepared_item.table_data.source_config,
                                 table_ref=plan.table_ref,
+                                job_id=prepared_item.job.id,
+                                table_id=prepared_item.job.table_id,
                             )
                         )
                 except Exception as exc:
