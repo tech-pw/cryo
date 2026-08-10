@@ -579,6 +579,33 @@ def _expire_params(
                 "shorter window on a one-shot run."
             )
 
+    # Backlog-aware retention: is_streaming/commits_per_day only reacts to *current* write
+    # velocity, so a table that was bursty in the past (or commits just under the streaming
+    # detection cutoff -- confirmed live, 2026-08-10: admin.iceberg_maintenance_log sits at
+    # 22.15 commits/day against a 24.0 threshold, never flagged, sitting on 499 snapshots) or
+    # that has simply never had expire_snapshots reach it before never gets tightened, no
+    # matter how large the accumulated backlog already is. This reacts to the backlog itself
+    # (total_snapshots, an absolute count, not a rate) so it catches both cases the streaming
+    # check misses. Purely additive to the streaming check above via min() -- never loosens
+    # whatever the streaming-aware pass already decided.
+    total_snapshots = int(stats.get("total_snapshots") or 0)
+    backlog_aware = params.get("backlog_aware_cadence", True)
+    backlog_threshold = int(params.get("snapshot_backlog_threshold", 100))
+    if backlog_aware and total_snapshots >= backlog_threshold:
+        original_retention = retention_days
+        if total_snapshots >= backlog_threshold * 4:
+            retention_days = min(retention_days, 1)
+        else:
+            retention_days = max(1, min(retention_days, 3))
+        if retention_days != original_retention and notes is not None:
+            notes.append(
+                f"Backlog-aware retention: table already carries {total_snapshots} snapshots "
+                f"(>= {backlog_threshold}) regardless of current write velocity — tightened "
+                f"retention_days {original_retention} → {retention_days} to clear the backlog "
+                "over the next few scheduled runs rather than waiting on the streaming-velocity "
+                "signal alone."
+            )
+
     out: dict[str, Any] = {
         "retention_days": retention_days,
         "retain_last": int(params.get("retain_last", 1)),
