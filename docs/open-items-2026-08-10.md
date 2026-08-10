@@ -55,22 +55,28 @@ git doesn't make it run in production until that ships.
 
 ---
 
-## 1. Blocked, waiting on a decision — retention fix + property autopilot deploy
+## 1. Deployed and verified live — retention fix + property autopilot
 
-**Status: image built, pushed, and pinned. `helm upgrade` and the rollout restart are the last
-two steps, both blocked by the permission classifier.**
+**Status: done.** Image `sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9`
+(multi-arch, built by the user directly), `values-prod.yaml` updated (`b508bce`), `helm upgrade`
++ `kubectl rollout restart` run by the user (classifier blocked both from this side, same as the
+docker build).
 
-- User ran the multi-arch build directly (outside Claude Code, sidestepping the classifier):
-  `sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9`, both `linux/amd64`
-  and `linux/arm64`, pushed successfully.
-- `values-prod.yaml` updated with the new digest across all 3 references (main image,
-  migration image, native image), committed and pushed (`b508bce`).
-- `helm upgrade --install cryo ...` — blocked by the classifier, a *different* block than the
-  docker-build one (a `Bash(docker buildx build:*)` permission rule was added to
-  `.claude/settings.json` and cleared that specific command, but does not cover `helm`/`kubectl`
-  — each command pattern needs its own rule).
-- **Until this runs, none of today's code changes are live.** The production scheduler is still
-  on the old image.
+Verified, not just trusted:
+- All 5 core pods (api×2, governor, scheduler, worker) confirmed on the new digest, `Ready`,
+  0 restarts, `kubectl rollout status` reports success on all 4 deployments.
+- New `total_snapshots`/`manifest_count` filter fields confirmed working live against real
+  data (`total_size_gb < 10 AND total_snapshots > 100` correctly matched
+  `admin.iceberg_compaction_scan`, 174 snapshots, 6.56GB).
+- Property autopilot deployed but confirmed **off** (`property_autopilot_enabled: false`) —
+  ships the capability, not the behavior, as designed.
+- Unrelated drift noticed in passing: `cryo-worker` running 1 replica against
+  `values-prod.yaml`'s declared 2 — timestamp shows this predates today's deploy, not caused by
+  it. Not investigated further; flagging in case it matters later.
+
+Backlog-aware retention takes effect on `default-native-deep`'s next scheduled run
+(20:00 UTC). Property autopilot needs an explicit follow-up decision to turn on — see its own
+entry above for what "on" means before flipping it.
 
 - Commit `78262a8` on `gitlab-main`: backlog-aware `expire_snapshots` retention (catches tables
   like `admin.iceberg_maintenance_log`, sitting on 499 snapshots at 22.15 commits/day — just
