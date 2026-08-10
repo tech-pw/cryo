@@ -136,6 +136,12 @@ def test_table_runs_includes_steps_and_before_after_delta(session) -> None:
     assert run_entry["after_stats"]["grade"] == "B"
     assert run_entry["after_stats"]["total_files"] == 4000
 
+    effectiveness = run_entry["effectiveness"]
+    assert effectiveness["file_count_reduction_pct"] == -96.0
+    assert effectiveness["small_file_reduction_pct"] == -100.0
+    assert effectiveness["byte_reduction_pct"] == -2.0
+    assert effectiveness["headline"] == "96% fewer files, size 2% smaller"
+
     estimate = run_entry["resource_estimate"]
     assert estimate["engine"] == "spark_emr"
     # active_duration_seconds sums step durations (5min + 115min = 2h), not job duration --
@@ -230,3 +236,71 @@ def test_table_runs_queued_job_with_no_started_at_does_not_crash(session) -> Non
     assert entry["before_stats"] is None
     assert entry["after_stats"] is None
     assert entry["duration_seconds"] is None
+    assert entry["effectiveness"] is None
+
+
+def test_effectiveness_omitted_when_before_or_after_missing(session) -> None:
+    """A table's first run (no before) or a job that hasn't finished (no after) has nothing
+    to diff -- must not crash, just omit the field, same as before_stats/after_stats do."""
+    from cryo.db.repositories.datalake import _run_effectiveness_payload
+
+    assert _run_effectiveness_payload(None, {"total_files": 10}) is None
+    assert _run_effectiveness_payload({"total_files": 10}, None) is None
+    assert _run_effectiveness_payload(None, None) is None
+
+
+def test_effectiveness_reports_large_file_count_win_even_when_bytes_barely_move() -> None:
+    """Regression, 2026-08-10: mview.gold_dbt_drip_marketing_flow's real compaction cut file
+    count 2,549 -> 268 (89%) while total size only moved -4% -- a genuinely large S3 request-
+    cost win that a size-only summary would make look unremarkable. Both numbers must be
+    independently visible, not blended into one."""
+    from cryo.db.repositories.datalake import _run_effectiveness_payload
+
+    result = _run_effectiveness_payload(
+        {"total_files": 2549, "small_files_count": 2548, "total_size_gb": 64.0},
+        {"total_files": 268, "small_files_count": 0, "total_size_gb": 61.1},
+    )
+    assert result["file_count_reduction_pct"] == -89.5
+    assert result["small_file_reduction_pct"] == -100.0
+    assert result["byte_reduction_pct"] == -4.5
+    assert "fewer files" in result["headline"]
+    assert "smaller" in result["headline"]
+
+
+def test_effectiveness_handles_a_file_count_increase() -> None:
+    """A table that regressed (more files after than before, e.g. a failed/partial run that
+    still shows organic growth) should report a positive pct and say "more", not silently
+    show a negative-looking reduction."""
+    from cryo.db.repositories.datalake import _run_effectiveness_payload
+
+    result = _run_effectiveness_payload(
+        {"total_files": 100, "total_size_gb": 10.0},
+        {"total_files": 150, "total_size_gb": 10.0},
+    )
+    assert result["file_count_reduction_pct"] == 50.0
+    assert "more files" in result["headline"]
+    assert "unchanged" in result["headline"]
+
+
+def test_effectiveness_zero_baseline_reports_that_metric_as_none_not_a_crash() -> None:
+    """Dividing by a zero baseline (e.g. total_size_gb tracked as 0 for a metadata-only
+    table) must not raise -- that specific metric reports as unavailable rather than
+    crashing the whole payload, as long as at least one other metric has a real baseline."""
+    from cryo.db.repositories.datalake import _run_effectiveness_payload
+
+    result = _run_effectiveness_payload(
+        {"total_files": 100, "total_size_gb": 0.0},
+        {"total_files": 80, "total_size_gb": 0.1},
+    )
+    assert result["byte_reduction_pct"] is None
+    assert result["file_count_reduction_pct"] == -20.0
+
+
+def test_effectiveness_all_zero_baselines_returns_none_entirely() -> None:
+    from cryo.db.repositories.datalake import _run_effectiveness_payload
+
+    result = _run_effectiveness_payload(
+        {"total_files": 0, "total_size_gb": 0.0},
+        {"total_files": 5, "total_size_gb": 0.1},
+    )
+    assert result is None

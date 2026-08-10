@@ -848,6 +848,66 @@ def _stats_snapshot_payload(row: TableStatsHistory | None) -> dict[str, object] 
     }
 
 
+def _pct_change(before: float | None, after: float | None) -> float | None:
+    """Signed percent change, before -> after. Negative means it went down. None if either
+    side is missing or before is zero (no baseline to compare against)."""
+    if before is None or after is None or before == 0:
+        return None
+    return round(((after - before) / before) * 100, 1)
+
+
+def _run_effectiveness_payload(
+    before: dict[str, object] | None, after: dict[str, object] | None
+) -> dict[str, object] | None:
+    """File-count and byte-size reduction as separate, independently-signed percentages.
+
+    Confirmed live, 2026-08-10: mview.gold_dbt_drip_marketing_flow's compaction cut file
+    count 2,549 -> 268 (-89%) while total size only moved -4% -- a genuinely large S3
+    request-cost win (S3 bills per request, not per byte) that a size-only "before/after"
+    summary would make look unremarkable. Reporting both separately, rather than one blended
+    number, is the fix. See docs/open-items-2026-08-10.md item #3.
+    """
+    if before is None or after is None:
+        return None
+    total_files_before = before.get("total_files")
+    total_files_after = after.get("total_files")
+    small_files_before = before.get("small_files_count")
+    small_files_after = after.get("small_files_count")
+    size_before = before.get("total_size_gb")
+    size_after = after.get("total_size_gb")
+
+    file_pct = _pct_change(
+        float(total_files_before) if total_files_before is not None else None,
+        float(total_files_after) if total_files_after is not None else None,
+    )
+    small_file_pct = _pct_change(
+        float(small_files_before) if small_files_before is not None else None,
+        float(small_files_after) if small_files_after is not None else None,
+    )
+    byte_pct = _pct_change(
+        float(size_before) if size_before is not None else None,
+        float(size_after) if size_after is not None else None,
+    )
+    if file_pct is None and byte_pct is None:
+        return None
+
+    parts = []
+    if file_pct is not None:
+        parts.append(f"{abs(file_pct):.0f}% {'fewer' if file_pct < 0 else 'more'} files")
+    if byte_pct is not None:
+        direction = "smaller" if byte_pct < 0 else "larger" if byte_pct > 0 else "unchanged"
+        size_word = f"{abs(byte_pct):.0f}% {direction}" if byte_pct != 0 else "unchanged"
+        parts.append(f"size {size_word}")
+    headline = ", ".join(parts) if parts else None
+
+    return {
+        "file_count_reduction_pct": file_pct,
+        "small_file_reduction_pct": small_file_pct,
+        "byte_reduction_pct": byte_pct,
+        "headline": headline,
+    }
+
+
 def _resource_estimate_payload(
     steps: list[JobStep], destination: Destination | None
 ) -> dict[str, object] | None:
@@ -980,11 +1040,12 @@ def table_runs(
                     }
                     for step in steps
                 ],
-                "before_stats": _stats_snapshot_payload(before),
-                "after_stats": _stats_snapshot_payload(after),
+                "before_stats": (before_payload := _stats_snapshot_payload(before)),
+                "after_stats": (after_payload := _stats_snapshot_payload(after)),
                 "resource_estimate": _resource_estimate_payload(
                     steps, destinations_by_id.get(job.destination_id)
                 ),
+                "effectiveness": _run_effectiveness_payload(before_payload, after_payload),
             }
         )
 
