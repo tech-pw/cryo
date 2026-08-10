@@ -523,6 +523,30 @@ class Settings(BaseSettings):
             "benefit-score updater."
         ),
     )
+    property_autopilot_enabled: bool = Field(
+        default=False,
+        description=(
+            "Off by default -- opt-in. When true, the scheduler's telemetry tick "
+            "automatically applies a table's tier1/action=apply property recommendations "
+            "(metadata-only changes like write.target-file-size-bytes, "
+            "write.metadata.delete-after-commit.enabled -- never a data rewrite). "
+            "compute_property_recommendations() and apply_table_properties() were both "
+            "already fully built and running (the former on a schedule, the latter behind "
+            "a manual-only API route) but nothing had ever connected them -- confirmed live, "
+            "2026-08-10, by grepping the whole codebase for a consumer of the recommendation "
+            "action field and finding none. See cryo/scanner/property_autopilot.py."
+        ),
+    )
+    property_autopilot_max_tables_per_tick: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Cap on how many tables get their safe property recommendations applied per "
+            "telemetry tick when property_autopilot_enabled is true -- same rationale as "
+            "layout_recommendation_max_tables_per_tick above: bounds the cost of a single "
+            "tick rather than trying to sweep the whole fleet in one pass."
+        ),
+    )
     s3_request_cost_retention_days: int = Field(
         default=35,
         ge=1,

@@ -323,11 +323,38 @@ class SchedulerService:
             )
             if patterns_updated > 0:
                 self._generate_layout_recommendations(settings)
+            if settings.property_autopilot_enabled:
+                self._run_property_autopilot(settings)
             self._last_telemetry_ingest = current
         except Exception as exc:
             import logging
 
             logging.getLogger(__name__).warning("Telemetry tick failed: %s", exc)
+
+    def _run_property_autopilot(self, settings: Any) -> None:
+        """Apply each active table's safe (tier1, non-risky) property recommendations.
+
+        Off by default (property_autopilot_enabled) -- see cryo/scanner/property_autopilot.py
+        for the full safety rationale. Runs every tick regardless of patterns_updated (unlike
+        _generate_layout_recommendations) since a table's tier1 recommendations can change
+        from a fresh scan alone, without a new query pattern.
+        """
+        import logging
+
+        from cryo.scanner.property_autopilot import run_property_autopilot
+
+        logger = logging.getLogger(__name__)
+        with SessionLocal() as session:
+            result = run_property_autopilot(
+                session, max_tables=settings.property_autopilot_max_tables_per_tick
+            )
+        if result.tables_changed or result.tables_failed:
+            logger.info(
+                "Property autopilot tick: %s/%s tables changed, %s failed",
+                result.tables_changed,
+                result.tables_considered,
+                result.tables_failed,
+            )
 
     def _generate_layout_recommendations(self, settings: Any) -> None:
         """Turn freshly-updated query_patterns into LayoutRecommendation rows.
