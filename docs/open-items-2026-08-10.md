@@ -103,23 +103,27 @@ reasons, and only one of them is a real compaction failure:
   engine can handle at this scale. **Next native retry should not happen** — route it to Spark
   like the one run that actually worked.
 
-- **`reports.gold_dbt_video_stats_reports_unified`** (1.5TB): marked `native_job_no_result` —
-  but checking the underlying K8s Job directly (`kubectl get jobs`) shows it as
-  **`Complete`, 1/1, finished in 41 minutes** — the compaction itself likely ran fine. Cryo's
-  own job record, though, stayed `running` for another ~2.5 hours before finally timing out and
-  marking it failed. Found one corroborating event before it rotated out of K8s' short
-  retention window: a `TaintManagerEviction` on the pod ("Cancelling deletion of Pod...") around
-  the 100-minute mark — an eviction attempt that got cancelled, which may be exactly what broke
-  Cryo's log-streaming/result-collection watcher without killing the pod itself. **This is a
-  real, distinct bug** — the pod finishing doesn't reliably get detected, so a job that actually
-  succeeded gets reported and treated as failed, and the run sits burning 2+ extra hours of
-  wall-clock time doing nothing. Triggered a rescan (`e8d6606e`) to confirm empirically whether
-  the table's stats actually improved despite the "failed" status — result pending.
+- **`reports.gold_dbt_video_stats_reports_unified`** (1.5TB): marked `native_job_no_result`.
+  The underlying K8s Job shows `Complete`, 1/1, finished in 41 minutes — which first looked like
+  a false-negative (job actually succeeded, Cryo's tracking just didn't notice). **Checked
+  empirically via a rescan (`e8d6606e`) and that theory is wrong**: post-run stats are
+  byte-for-byte identical to pre-run (11,045 files, 7,853 small files, 1,521.5 GB, same as
+  before the run started). The compaction did not happen. Correcting the record rather than
+  leaving the wrong theory standing.
+- **`unified_bq.gold_dbt_pw_bq`**: rescan confirms pure organic growth during the failed run
+  (214,170→215,212 files, 87,449→88,396 small files) — consistent with a genuine failure, no
+  surprises there.
 
-**Not yet scoped**: fixing the result-collection gap itself. Given the taint-eviction
-correlation, the fix likely needs the watcher to re-establish its connection/tracking after a
-cancelled eviction rather than assuming the stream is still good, but this needs the K8s events
-(now gone) or a live reproduction to confirm before writing a fix with any confidence.
+**The real, more concerning finding**: a K8s Job can report `Complete` (clean pod exit) while
+the maintenance operation it was supposed to run never actually happened. That's a different and
+worse problem than "result-collection lost track of a real success" — Cryo currently has **no
+way to distinguish** "pod exited 0 after doing its job" from "pod exited 0 having done nothing"
+except the eventual multi-hour timeout that happened to land on the right answer here by luck,
+not by detection. The `TaintManagerEviction` event around the 100-minute mark (cancelled, pod
+not actually killed) is still the best lead on *why* — plausibly the pod's main work aborted
+partway through in response to the eviction signal but still exited cleanly afterward — but this
+needs a live reproduction or the K8s events (already rotated out here) to confirm before writing
+a real fix. **Not yet scoped.**
 
 ## 3. Scoped, deliberately deferred (not forgotten)
 
