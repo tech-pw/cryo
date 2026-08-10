@@ -157,14 +157,35 @@ cost-triggered reclustering), not just a search summary. Real gap: WAIR needs pe
 **utilization** (bytes a query needed ÷ bytes it had to read) — Cryo has per-file min/max and
 aggregate query counts, but not this per-query-per-file signal yet.
 
-**Given finding #0 above, this project should be re-scoped**: `cryo/optimizer/pto/` already has
-holdout + counterfactual evaluation machinery that's *sophisticated enough to validate WAIR-style
-recommendations once built* — the missing piece isn't a new evaluation framework, it's the
-per-file utilization data feed. Phase 0 is the same shape either way (Trino query-log → per-file
-utilization pipeline) but now clearly plugs into existing infrastructure rather than needing new
-scaffolding. **Not yet scoped in detail — do this only after #0 is resolved**, since building a
-richer recommendation signal before anything consumes the recommendations already being made is
-the wrong order of operations.
+**Phase 0, now actually scoped — with a correction made mid-investigation, kept here rather
+than smoothed over.** First pass looked very promising: `cryo/telemetry/parser.py::
+extract_query_ranges()` already parses real SQL (via sqlglot) into exactly the per-query
+predicate bounds WAIR needs (`QueryRange(column, lower, upper)`), and it's wired into
+`cryo/telemetry/curator.py`'s row-construction code, which also captures real per-query
+`files_read`/`files_pruned`/`bytes_read` from Trino into a `QueryLog` table — that combination
+would have been close to the whole Phase 0 data feed, already built.
+
+**Checked it live rather than trust the code read alone**: `GET /api/v1/query-performance`
+(backed by `QueryLog`) returns **zero rows**, over a full 7-day window, fleet-wide. The
+richer path exists and is tested, but isn't the one actually populating data for the real
+fleet. Root cause, confirmed in `cryo/telemetry/iceberg_source.py::
+aggregate_from_iceberg_query_log()`'s own docstring: *"no query_logs rows are written for
+this source"* — the `cdp` source's real ingestion config (`query_log.mode: iceberg_table`)
+routes through this leaner, source-level aggregator, which writes only into `query_patterns`
+(the coarser per-column `filter_count`/`equality_filter_count`/`range_filter_count`/
+`avg_selectivity` stats already powering `layout_analyzer`) — deliberately bypassing the
+richer per-query `QueryLog` capture. Not an oversight: the docstring on the leaner path
+explains it was built to fix a real OOM from the previous unbounded-per-query approach.
+
+**So the real Phase 0** is not "wire up the existing rich parser" (it isn't the active path
+and reactivating it risks the exact OOM it was built to avoid) — it's: extend the *active*
+`aggregate_from_iceberg_query_log()` path to also capture a *bounded, sampled* per-query
+predicate-range signal, reusing the sampling logic that already exists for exactly this
+purpose in `QueryLogCurator._is_summary_worthy()` (state=failed/slow/large-scan always kept,
+the rest sampled at a fixed rate) rather than trying to activate the unbounded path. This
+keeps the existing OOM-safety property intact while adding the one real missing signal.
+**Not started — this is the accurate scope for whoever picks it up next, not a green light
+to build it tonight.**
 
 ### Cost-reduction research (S3 + Trino on Iceberg), full findings
 See conversation record for the complete cited writeup. Ranked list, already reflected in
