@@ -18,6 +18,14 @@ Data (the same mechanism documented in `agents.md`'s "Cost self-check" entry):
 Also tracked less frequently (monthly rollups, not daily — this data doesn't change fast
 enough to need daily granularity): S3 storage + request cost for Cryo-managed buckets,
 via the `cloud_costs` table in the Postgres cost datasource (`ef75vmxq6mnswf`).
+**Must filter `line_item_resource_id` to the actual warehouse bucket** (e.g.
+`pw-data-cdp-prod-gold-layer`, from the source's `config.warehouse` in Cryo's own
+`/api/v1/sources`) — confirmed live 2026-08-10: an unfiltered `AmazonS3` query over the
+whole `cloud_costs` table (company-wide CUR export, not scoped to any one namespace)
+returned ~10x the bucket-scoped number ($82K storage / $30K requests over 30d vs $2.9K /
+$1.5K once filtered to the real bucket). The 2026-08-06 baseline row's exact filter isn't
+recorded, so don't treat a comparison against it as apples-to-apples — the 2026-08-10 row
+onward uses this bucket-scoped query and is the reliable baseline going forward.
 
 ## How to check (the query)
 
