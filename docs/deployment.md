@@ -108,6 +108,33 @@ command hangs or times out for no obvious reason (including trivial ones like
 a problem inside the cluster. Re-run `infra use data-platform-cluster` and
 retry — this has resolved every instance of this symptom seen so far.
 
+## The easy way: `deploy/deploy.sh`
+
+Everything below this section — build, pin the digest into `values-prod.yaml`, commit,
+`helm upgrade`, rollout restart, verify — is automated by `deploy/deploy.sh`:
+
+```bash
+deploy/deploy.sh                # full sequence, prompts nothing, does everything
+deploy/deploy.sh --build-only    # build + pin + commit, stop before touching the cluster
+deploy/deploy.sh --skip-tests    # skip the local test suite gate (not recommended)
+deploy/deploy.sh --no-commit     # pin the digest locally without git commit/push
+```
+
+Written 2026-08-10 after a real incident: hand-editing `values-prod.yaml`'s three digest
+fields (`image.digest`, `migration.image.digest`, `native.image.digest` — they must always
+point at the same build) missed one of them on a manual edit, which would have left
+api/worker/governor/scheduler running one commit behind the native engine binary shipped in
+the very same image. The script captures the digest programmatically from
+`docker buildx build --metadata-file` (never eyeballed from terminal scrollback) and pins it
+via `deploy/pin_digest.py`, which refuses to write anything unless it finds and updates
+exactly those three fields — a partial update is a hard error, not a silent skip. It also
+verifies at the end that every pod actually landed on the new digest, via `kubectl get pods
+-o json`, rather than trusting `rollout status` alone.
+
+The manual sequence below still works and is useful for understanding *why* each step
+exists (or if the script's assumptions about this repo's layout ever stop holding) — but for
+an actual deploy, prefer the script.
+
 ## Building and pushing the image
 
 **Always build multi-arch.** The cluster's node pool is a mix of `amd64` and
