@@ -31,17 +31,32 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-10 from gitlab-main commit 4d66e4b. Includes everything in
-  # the prior digest (see git log) plus: simulate_preset and the scheduler's own
-  # list_tables() (used by every cron tick) no longer eager-load TableStats.raw /
-  # TableCost.raw -- large per-table JSONB blobs that, loaded unrestricted for the
-  # whole active fleet (~13,600 tables) at once, OOM-killed the API pod (OOMKilled,
-  # exit 137, 6Gi limit; confirmed live, 2026-08-10, testing a fleet-wide preset rule
-  # via /simulate before enabling a daily schedule). list_tables() is the exact query
-  # shape the real scheduler tick uses on every cron firing, so this would have
-  # recurred automatically in production, not just at diagnostic time. See
-  # cryo/db/repositories/presets.py, cryo/db/repositories/scheduler_store.py (4d66e4b).
-  digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
+  # Built + pushed 2026-08-10 from gitlab-main commit a6f1759 (on top of 78262a8). Includes
+  # everything in the prior digest plus two changes:
+  #
+  # 1. Backlog-aware expire_snapshots retention (78262a8): the existing streaming-aware
+  #    retention tightening only reacts to *current* commits_per_day, missing tables that
+  #    were bursty in the past or sit just under the is_streaming detection cutoff --
+  #    confirmed live, admin.iceberg_maintenance_log at 22.15 commits/day vs a 24.0/day
+  #    threshold, sitting on 499 snapshots, never flagged. Now also reacts to the raw
+  #    accumulated total_snapshots count. total_snapshots/manifest_count are also now real
+  #    filterable/rule-matchable fields (FIELD_MAP + _stats_dict), closing the gap that
+  #    would otherwise have forced a hardcoded per-table pin list instead of a genuine
+  #    condition-based rule. See cryo/planner/planner.py, cryo/api/predicates.py,
+  #    cryo/domain/predicates.py, cryo/db/repositories/presets.py.
+  #
+  # 2. Property autopilot (a6f1759): layout_analyzer already generates real property
+  #    recommendations automatically on a schedule, and apply_table_properties() already
+  #    executes them via PyIceberg -- but nothing had ever connected the two; the only
+  #    caller of apply_table_properties() was a human clicking a button. See
+  #    cryo/scanner/property_autopilot.py. Narrowly scoped to tier1/action=="apply"/
+  #    not-needs_confirmation items only (metadata-only properties, never a data rewrite);
+  #    apply_table_properties()'s own TIER1_APPLYABLE_KEYS allowlist is the actual safety
+  #    boundary, checked independently. OFF BY DEFAULT (property_autopilot_enabled=false
+  #    in Settings) -- this digest ships the capability, not the behavior; it does nothing
+  #    unless/until CRYO_PROPERTY_AUTOPILOT_ENABLED=true is deliberately added to this
+  #    file's global.env in a future, separate change -- not set here.
+  digest: "sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9"
 
 imagePullSecrets:
   - cryo-registry
@@ -50,7 +65,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
+    digest: "sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9"
 
 global:
   envFromSecret: cryo-secrets
@@ -89,7 +104,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:8bac3ec74585bfc2a5aaecb46df09756e0fa4cddfa856d3518a027b9afce7397"
+    digest: "sha256:ea3f2b3ddef50f74a5af64e78aed5fd786920d706a24e8d0aaf2ea6e2b05aaa9"
   keda:
     enabled: true
 
