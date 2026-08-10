@@ -43,12 +43,15 @@ concrete answer to "why doesn't Cryo get smarter on its own" — it already does
 part continuously; it's missing the *acting* part. Closing this gap is higher leverage than any
 new research feature below, because the recommendation-generation side is already paid for.
 
-**Proposed next step** (not yet started, needs its own scoping pass): a bounded "apply
-recommendations" consumer — start with the lowest-risk `tier1`/`"action": "apply"` property
-sets (pure Iceberg table-property `ALTER TABLE`s, no data rewrite, fully reversible), gated
-behind an explicit opt-in per table/preset before ever going fleet-wide-automatic. Do **not**
-wire `write.sort-order` auto-apply first — that implies an actual rewrite, not just a property
-flip, and deserves the same "test before default" caution the scheduler itself got this session.
+**Update, same day**: built. `cryo/scanner/property_autopilot.py` (commit `a6f1759`) is that
+consumer — narrowly scoped to `tier1`/`action=="apply"`/`not needs_confirmation` items only,
+leaning on `apply_table_properties()`'s own `TIER1_APPLYABLE_KEYS` allowlist as the real safety
+boundary, wired into the scheduler's telemetry tick, **off by default**
+(`Settings.property_autopilot_enabled`). 6 new tests, full suite still green. Deliberately does
+**not** auto-apply `write.sort-order` — that implies an actual data rewrite, not a property
+flip, and deserves its own dedicated caution pass, not a bundled default-on flip.
+**Not deployed yet** — same blocked docker-build step as item #1 below; the code existing in
+git doesn't make it run in production until that ships.
 
 ---
 
