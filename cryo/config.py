@@ -65,6 +65,28 @@ class Settings(BaseSettings):
     scan_num_chunks: int = Field(default=4, gt=0)
     scan_small_file_mb: float = Field(default=89.6, gt=0)
     scan_needs_compaction_threshold: int = Field(default=128, gt=0)
+
+    # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
+    # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,
+    # not tuned to any specific deployment -- override per-environment as real threshold
+    # noise is observed. WoW bands are wider than DoD's: a week-long window naturally carries
+    # more workload-drift noise, but catches slow creep DoD's tighter window misses.
+    report_cost_dod_spike_pct: float = Field(
+        default=10.0, gt=0, description="Day-over-day fleet cost increase (%) that flags a spike."
+    )
+    report_cost_dod_decline_pct: float = Field(
+        default=30.0,
+        gt=0,
+        description="Day-over-day fleet cost decrease (%) that flags a decline worth noting.",
+    )
+    report_cost_wow_spike_pct: float = Field(
+        default=15.0, gt=0, description="Week-over-week fleet cost increase (%) that flags a spike."
+    )
+    report_cost_wow_decline_pct: float = Field(
+        default=35.0,
+        gt=0,
+        description="Week-over-week fleet cost decrease (%) that flags a decline worth noting.",
+    )
     scan_parallel_tables: int = Field(
         default=0,
         ge=0,

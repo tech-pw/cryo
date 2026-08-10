@@ -12,7 +12,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from cryo.db.models import Source, Table, TableStats, TableStatsHistory
+from cryo.db.models import AuditLog, Source, Table, TableCostHistory, TableStats, TableStatsHistory
 from cryo.ml.anomaly_detector import AnomalyAlert
 from cryo.reporting.daily_report import (
     DailyReportData,
@@ -311,6 +311,105 @@ def test_collect_report_data_watch_when_unhealthy_table_present(session) -> None
     assert data.status == "WATCH"
     assert data.unhealthy_tables == 1
     assert data.tables_needing_compaction == 1
+
+
+def test_collect_report_data_unexplained_cost_spike_forces_watch(session) -> None:
+    """An unexplained fleet-cost spike must surface even when every table itself looks
+    healthy -- the cost signal is a fleet-wide check, not a table-health one, and the two
+    shouldn't be able to mask each other."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    now = datetime.now(UTC)
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=1, hours=1),
+            current_monthly_cost_usd=200.0,
+        )
+    )
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=2, hours=1),
+            current_monthly_cost_usd=100.0,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "WATCH"
+    assert data.cost_signal is not None
+    assert data.cost_signal.direction == "spike"
+    assert data.cost_correlation is not None
+    assert data.cost_correlation.explains_change is False
+    assert any("Fleet cost spike" in item["text"] for item in data.action_items)
+
+
+def test_collect_report_data_explained_cost_spike_does_not_force_watch(session) -> None:
+    """A spike explained by Cryo's own recent rewrite activity shouldn't force WATCH status
+    on an otherwise-healthy fleet -- it's still surfaced, just not as an open question."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    now = datetime.now(UTC)
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=1, hours=1),
+            current_monthly_cost_usd=200.0,
+        )
+    )
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=2, hours=1),
+            current_monthly_cost_usd=100.0,
+        )
+    )
+    session.add(
+        AuditLog(
+            ts=now - timedelta(hours=6),
+            table_id=table.id,
+            action="optimize",
+            status="OK",
+            actual_bytes_freed=1024**3,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "CLEAR"
+    assert data.cost_signal is not None
+    assert data.cost_signal.direction == "spike"
+    assert data.cost_correlation is not None
+    assert data.cost_correlation.explains_change is True
 
 
 # ---------------------------------------------------------------------------

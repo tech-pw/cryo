@@ -20,6 +20,12 @@ from sqlalchemy.orm import Session
 from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.db.models import AIProvider, AuditLog, Table, TableStats, TableStatsHistory
 from cryo.ml.anomaly_detector import AnomalyAlert, detect_all_anomalies
+from cryo.reporting.cost_signals import (
+    CostSignal,
+    MaintenanceCorrelation,
+    compute_cost_signal,
+    correlate_with_maintenance,
+)
 from cryo.reporting.slack import (
     SlackBlock,
     SlackClient,
@@ -64,6 +70,8 @@ class DailyReportData:
     total_size_tb_delta: float | None = None
     total_cost_usd: float = 0.0
     projected_savings_usd: float = 0.0
+    cost_signal: CostSignal | None = None
+    cost_correlation: MaintenanceCorrelation | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -113,6 +121,26 @@ async def generate_daily_report(
             "total_size_tb_delta": report_data.total_size_tb_delta,
             "total_cost_usd": report_data.total_cost_usd,
             "projected_savings_usd": report_data.projected_savings_usd,
+            "signal": (
+                {
+                    "direction": report_data.cost_signal.direction,
+                    "primary_signal": report_data.cost_signal.primary_signal,
+                    "dod_pct": report_data.cost_signal.dod_pct,
+                    "wow_pct": report_data.cost_signal.wow_pct,
+                    "explained": (
+                        report_data.cost_correlation.explains_change
+                        if report_data.cost_correlation
+                        else None
+                    ),
+                    "explanation": (
+                        report_data.cost_correlation.summary
+                        if report_data.cost_correlation
+                        else None
+                    ),
+                }
+                if report_data.cost_signal is not None
+                else None
+            ),
         },
         "bottom_line": narrated_bottom_line,
         "bottom_line_used_llm": bottom_line is not None,
@@ -139,9 +167,23 @@ async def generate_daily_report(
     return result
 
 
+def _cost_signal_sentence(data: DailyReportData) -> str:
+    signal = data.cost_signal
+    if signal is None or signal.direction == "stable":
+        return ""
+    pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    window = "DoD" if signal.primary_signal == "dod" else "WoW"
+    pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+    explained = data.cost_correlation is not None and data.cost_correlation.explains_change
+    tail = " Explained by Cryo's own maintenance." if explained else " Not yet explained."
+    return f" Fleet cost {signal.direction}{pct_str}.{tail}"
+
+
 def _deterministic_bottom_line(data: DailyReportData) -> str:
+    cost_sentence = _cost_signal_sentence(data)
     if data.status == "CLEAR":
-        return f"All {data.total_tables} tables healthy, no anomalies detected. No action required."
+        base = f"All {data.total_tables} tables healthy, no anomalies detected."
+        return f"{base}{cost_sentence} No action required."
     delta_str = ""
     if data.total_size_tb_delta is not None:
         direction = "up" if data.total_size_tb_delta >= 0 else "down"
@@ -149,13 +191,24 @@ def _deterministic_bottom_line(data: DailyReportData) -> str:
     noun = "anomaly" if len(data.critical_anomalies) == 1 else "anomalies"
     return (
         f"{data.unhealthy_tables} of {data.total_tables} tables need attention "
-        f"({len(data.critical_anomalies)} {noun} flagged).{delta_str}"
+        f"({len(data.critical_anomalies)} {noun} flagged).{delta_str}{cost_sentence}"
     )
 
 
-def _classify_status(unhealthy_tables: int, anomalies: list[AnomalyAlert]) -> ReportStatus:
+def _classify_status(
+    unhealthy_tables: int,
+    anomalies: list[AnomalyAlert],
+    cost_signal: CostSignal | None = None,
+    cost_correlation: MaintenanceCorrelation | None = None,
+) -> ReportStatus:
     if any(a.severity == "high" for a in anomalies):
         return "CRITICAL"
+    # An unexplained cost spike (no matching maintenance activity found) is worth surfacing
+    # even when nothing else fired -- explained spikes (Cryo's own rewrites, pending their
+    # own cleanup window) still show up in the report, just without forcing WATCH status.
+    if cost_signal is not None and cost_signal.direction == "spike":
+        if cost_correlation is None or not cost_correlation.explains_change:
+            return "WATCH"
     if unhealthy_tables > 0 or any(a.severity == "medium" for a in anomalies):
         return "WATCH"
     return "CLEAR"
@@ -213,6 +266,30 @@ def _build_action_items(
                 }
             )
     return items
+
+
+def _add_cost_action_item(
+    items: list[dict[str, Any]],
+    signal: CostSignal,
+    correlation: MaintenanceCorrelation,
+) -> list[dict[str, Any]]:
+    """Prepend a cost-signal action item when the fleet cost spiked or declined past
+    threshold -- ahead of table-level items, since a fleet-wide cost move is more
+    consequential than any single table's grade. An explained spike/decline still gets an
+    item (so the report never silently drops a real cost move), just marked low severity
+    with the explanation attached instead of reading as an open question.
+    """
+    pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    window = "day-over-day" if signal.primary_signal == "dod" else "week-over-week"
+    severity = "high" if not correlation.explains_change else "low"
+    sign = "+" if (pct or 0) >= 0 else ""
+    text = (
+        f"Fleet cost {signal.direction} — {sign}{pct:.1f}% {window}. {correlation.summary}"
+        if pct is not None
+        else f"Fleet cost {signal.direction}. {correlation.summary}"
+    )
+    item = {"severity": severity, "text": text, "owner": "no owner assigned"}
+    return [item, *items[:2]]
 
 
 def _collect_report_data(session: Session) -> DailyReportData:
@@ -299,10 +376,15 @@ def _collect_report_data(session: Session) -> DailyReportData:
     size_yesterday_tb = _size_snapshot_asof(session, yesterday)
     size_delta = (total_size_tb - size_yesterday_tb) if size_yesterday_tb is not None else None
 
-    status = _classify_status(unhealthy, anomaly_alerts)
+    cost_signal = compute_cost_signal(session, now=now)
+    cost_correlation = correlate_with_maintenance(session, cost_signal, now=now)
+
+    status = _classify_status(unhealthy, anomaly_alerts, cost_signal, cost_correlation)
     action_items = (
         _build_action_items(session, anomaly_alerts, top_issues) if status != "CLEAR" else []
     )
+    if cost_signal.direction != "stable" and cost_correlation is not None:
+        action_items = _add_cost_action_item(action_items, cost_signal, cost_correlation)
 
     return DailyReportData(
         report_date=now,
@@ -320,6 +402,8 @@ def _collect_report_data(session: Session) -> DailyReportData:
         total_size_tb_delta=size_delta,
         total_cost_usd=total_cost,
         projected_savings_usd=projected_savings,
+        cost_signal=cost_signal,
+        cost_correlation=cost_correlation,
         action_items=action_items,
     )
 
@@ -350,6 +434,25 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
         ),
         "monthly_cost_usd": round(data.total_cost_usd, 2),
         "maintenance_last_24h": data.maintenance_stats,
+        "cost_signal": (
+            {
+                "direction": data.cost_signal.direction,
+                "primary_signal": data.cost_signal.primary_signal,
+                "dod_pct": (
+                    round(data.cost_signal.dod_pct, 1)
+                    if data.cost_signal.dod_pct is not None
+                    else None
+                ),
+                "wow_pct": (
+                    round(data.cost_signal.wow_pct, 1)
+                    if data.cost_signal.wow_pct is not None
+                    else None
+                ),
+                "explanation": data.cost_correlation.summary if data.cost_correlation else None,
+            }
+            if data.cost_signal is not None
+            else None
+        ),
     }
 
     prompt = f"Write the bottom line for today's datalake health digest.\n\nData:\n{context}"
@@ -414,6 +517,20 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             ],
         )
     )
+
+    if data.cost_signal is not None and data.cost_signal.direction != "stable":
+        blocks.append(divider_block())
+        signal = data.cost_signal
+        pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+        window = "day-over-day" if signal.primary_signal == "dod" else "week-over-week"
+        emoji = "📈" if signal.direction == "spike" else "📉"
+        pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+        blocks.append(section_block(f"{emoji} *Fleet Cost {signal.direction.title()}*{pct_str}"))
+        if data.cost_correlation is not None:
+            explained_emoji = "✅" if data.cost_correlation.explains_change else "❓"
+            blocks.append(
+                section_block(f"{explained_emoji} {data.cost_correlation.summary}")
+            )
 
     if data.grade_distribution:
         blocks.append(divider_block())
