@@ -35,6 +35,8 @@ def test_no_fallback_operations_is_a_noop() -> None:
             destination_config={},
             source_config={},
             table_ref="cdp.mview.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
         )
     create_engine.assert_not_called()
 
@@ -50,6 +52,8 @@ def test_missing_fallback_destination_id_logs_and_returns() -> None:
             destination_config={},
             source_config={},
             table_ref="cdp.mview.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
         )
     create_engine.assert_not_called()
 
@@ -64,6 +68,8 @@ def test_unresolvable_fallback_destination_does_not_raise() -> None:
         destination_config={"sql_fallback_destination_id": "missing-dest"},
         source_config={},
         table_ref="cdp.mview.load_test_basefact",
+        job_id="job-1",
+        table_id="table-1",
     )  # must not raise
 
 
@@ -87,6 +93,8 @@ def test_dispatches_each_fallback_operation_to_the_configured_engine() -> None:
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
             table_ref="cdp.mview.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
         )
 
     create_engine.assert_called_once_with(EngineType.SPARK_EMR, {"submit_mode": "k8s"})
@@ -115,6 +123,8 @@ def test_source_s3_credentials_are_merged_into_fallback_engine_config() -> None:
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={"s3.access-key-id": "AKIA...", "s3.secret-access-key": "shh"},
             table_ref="cdp.mview.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
         )
 
     passed_config = create_engine.call_args.args[1]
@@ -168,6 +178,8 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
                 "warehouse": "s3://pw-data-cdp-dev-bronze-layer/",
             },
             table_ref="hive.lms.silver_adminactions",
+            job_id="job-1",
+            table_id="table-1",
         )
 
     passed_config = create_engine.call_args.args[1]
@@ -184,6 +196,173 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
     assert store.get_destination("spark-1").config["catalog"] == "cdp"
 
 
+def test_successful_fallback_dispatch_is_recorded_as_a_queryable_audit() -> None:
+    """Regression, 2026-08-10: _dispatch_fallback_operations already attempted real work
+    (routing optimize_manifests to Spark), but the outcome only ever reached
+    logger.info/logger.error -- a job could show "succeeded" overall while manifest
+    consolidation silently never happened, with zero persisted trace. This is the fix:
+    the outcome must land in store.record_audit(), not just application logs."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.SPARK_EMR
+    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=True, engine_ref="spark-job-1", duration_ms=4200, manifests_rewritten=13, error=None,
+        detail="rewrote 13 manifests",
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="cdp.mview.load_test_basefact",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    assert len(store.audit) == 1
+    record = store.audit[0]
+    assert record.job_id == "job-42"
+    assert record.table_id == "table-42"
+    assert record.action == OperationType.OPTIMIZE_MANIFESTS
+    assert record.status == "OK"
+    assert record.engine == EngineType.SPARK_EMR
+    assert record.manifests_rewritten == 13
+    assert record.duration_ms == 4200
+
+
+def test_failed_fallback_dispatch_is_recorded_not_just_logged() -> None:
+    """The exact scenario this whole fix exists for: the fallback attempt fails, and that
+    failure must be visible somewhere queryable, not just a log line."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.SPARK_EMR
+    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=False, engine_ref=None, duration_ms=1100, manifests_rewritten=None,
+        error="MISSING_CATALOG_ABILITY.PROCEDURES", detail=None,
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="cdp.mview.load_test_basefact",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    assert len(store.audit) == 1
+    record = store.audit[0]
+    assert record.status == "FAILED"
+    assert record.detail == "MISSING_CATALOG_ABILITY.PROCEDURES"
+
+
+def test_engine_type_mismatch_is_recorded_as_skipped() -> None:
+    store = InMemoryJobStore()
+    # Trino fallback destination that can't actually run optimize_manifests either.
+    store.add_destination(DestinationConfig(id="trino-1", engine=EngineType.TRINO, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    with patch(
+        "cryo.governor.native_admit.native_fallback_supports", return_value=False
+    ), patch("cryo.engines.factory.create_engine") as create_engine:
+        mock_engine = MagicMock()
+        mock_engine.type = EngineType.TRINO
+        create_engine.return_value = mock_engine
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "trino-1"},
+            source_config={},
+            table_ref="cdp.mview.load_test_basefact",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    assert len(store.audit) == 1
+    assert store.audit[0].status == "SKIPPED"
+    mock_engine.execute.assert_not_called()
+
+
+def test_missing_fallback_destination_id_is_recorded_as_skipped_not_only_logged() -> None:
+    store = InMemoryJobStore()
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+    _dispatch_fallback_operations(
+        store=store,
+        fallback_operations=fallback_ops,
+        plan=_plan(),
+        destination_config={},
+        source_config={},
+        table_ref="cdp.mview.load_test_basefact",
+        job_id="job-42",
+        table_id="table-42",
+    )
+    assert len(store.audit) == 1
+    assert store.audit[0].status == "SKIPPED"
+
+
+def test_unresolvable_destination_is_recorded_as_failed_not_only_logged() -> None:
+    store = InMemoryJobStore()  # no destinations registered
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "reason"),)
+    _dispatch_fallback_operations(
+        store=store,
+        fallback_operations=fallback_ops,
+        plan=_plan(),
+        destination_config={"sql_fallback_destination_id": "missing-dest"},
+        source_config={},
+        table_ref="cdp.mview.load_test_basefact",
+        job_id="job-42",
+        table_id="table-42",
+    )
+    assert len(store.audit) == 1
+    assert store.audit[0].status == "FAILED"
+
+
+def test_audit_write_failure_does_not_break_the_dispatch_itself() -> None:
+    """The audit write is a second, independent thing that can fail on its own (a DB
+    hiccup) -- it must never mask or crash the real dispatch outcome that's already been
+    logged and attempted."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "reason"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.SPARK_EMR
+    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=True, engine_ref="job-1", duration_ms=100, manifests_rewritten=1, error=None, detail=None
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine), patch.object(
+        store, "record_audit", side_effect=RuntimeError("db hiccup")
+    ):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="cdp.mview.load_test_basefact",
+            job_id="job-42",
+            table_id="table-42",
+        )  # must not raise
+    mock_engine.execute.assert_called_once()
+
+
 def test_fallback_engine_exception_is_caught_not_raised() -> None:
     store = InMemoryJobStore()
     store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
@@ -197,6 +376,8 @@ def test_fallback_engine_exception_is_caught_not_raised() -> None:
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
             table_ref="cdp.mview.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
         )  # must not raise -- a fallback failure can't break the native Job dispatch
 
 
