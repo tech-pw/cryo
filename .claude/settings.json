@@ -44,7 +44,11 @@
       "Bash(git commit -m ' *)",
       "Bash(.venv/bin/python -m pytest tests/test_scanner.py -q)",
       "Bash(.venv/bin/python -m pytest tests/test_serializers.py -q)",
-      "Bash(helm status *)"
+      "Bash(helm status *)",
+      "Bash(docker buildx build:*)",
+      "Bash(docker buildx use:*)",
+      "Bash(docker buildx:*)",
+      "Bash(docker:*)"
     ]
   }
 }
