@@ -4,11 +4,21 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import sqlalchemy as sa
 from fastapi import HTTPException
 
 from cryo.api.routes import _resolve_selection, _sort_clauses
 from cryo.api.schemas import AssignmentSelection
-from cryo.db.models import Preset, PresetRule, Table, TableAssignment, TableStats
+from cryo.db.models import (
+    Destination,
+    Preset,
+    PresetRule,
+    Source,
+    Table,
+    TableAssignment,
+    TableCost,
+    TableStats,
+)
 from cryo.db.repositories import presets
 
 
@@ -97,6 +107,122 @@ def test_sort_clauses_accepts_consecutive_scan_failures() -> None:
     clauses = _sort_clauses("-consecutive_scan_failures")
 
     assert len(clauses) == 1
+
+
+# ---------------------------------------------------------------------------
+# simulate_preset -- must not eager-load TableStats.raw / TableCost.raw
+# ---------------------------------------------------------------------------
+
+
+def test_simulate_preset_does_not_load_raw_jsonb_blob(session) -> None:
+    """Regression, 2026-08-10: simulate_preset's query used a bare
+    `selectinload(Table.stats)` with no column restriction, which pulls every column --
+    including `raw`, a large per-table JSONB blob (file samples, per-column quality
+    stats, health deductions) -- for the whole matched fleet at once. Confirmed live:
+    this OOM-killed the API pod (6Gi limit) via a fleet-wide predicate. STATS_LOAD_ONLY_
+    COLUMNS/COST_LOAD_ONLY_COLUMNS must keep `raw` out of what's actually selected from
+    the DB, while still returning correct values for the columns predicates/reporting
+    actually use.
+    """
+    source = Source(id=uuid.uuid4(), name=f"source-{uuid.uuid4()}", type="rest", config={})
+    destination = Destination(
+        id=uuid.uuid4(), name=f"dest-{uuid.uuid4()}", engine="native", config={}
+    )
+    session.add_all([source, destination])
+    session.flush()
+
+    preset = Preset(
+        id=uuid.uuid4(),
+        name=f"preset-{uuid.uuid4()}",
+        destination_id=destination.id,
+        mode="standard",
+        operations=["optimize"],
+        params={},
+        guardrails={},
+        priority=0,
+    )
+    session.add(preset)
+    session.flush()
+    session.add(
+        PresetRule(
+            id=uuid.uuid4(),
+            preset_id=preset.id,
+            predicate={"field": "is_active", "op": "=", "value": True},
+            enabled=True,
+        )
+    )
+
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=source.id,
+        schema_name="fixtures",
+        table_name="fixture_day",
+        is_active=True,
+    )
+    session.add(table)
+    session.flush()
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=True,
+            compaction_priority="HIGH",
+            grade="C",
+            overall_score=64,
+            total_files=100,
+            small_files_count=80,
+            total_size_gb=1.25,
+            # The large blob that must NOT be pulled by the restricted query.
+            raw={"wair_file_sample": ["x"] * 5000, "column_quality": ["y"] * 5000},
+        )
+    )
+    session.add(
+        TableCost(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=0,
+            dead_bytes=0,
+            metadata_bytes=0,
+            current_monthly_cost_usd=0.0,
+            projected_monthly_cost_usd=0.0,
+            projected_savings_usd_month=0.0,
+            raw={"padding": ["z"] * 5000},
+        )
+    )
+    session.commit()
+
+    # The fixed query, run directly against this session (mirrors simulate_preset's
+    # own query construction) so we can inspect what actually got loaded.
+    from sqlalchemy.orm import selectinload
+
+    loaded = session.scalars(
+        sa.select(Table)
+        .where(Table.is_active.is_(True))
+        .options(
+            selectinload(Table.stats).load_only(*presets.STATS_LOAD_ONLY_COLUMNS),
+            selectinload(Table.cost).load_only(*presets.COST_LOAD_ONLY_COLUMNS),
+        )
+    ).one()
+
+    stats_state = sa.inspect(loaded.stats)
+    cost_state = sa.inspect(loaded.cost)
+    assert "raw" in stats_state.unloaded, "TableStats.raw must stay unloaded at fleet scale"
+    assert "raw" in cost_state.unloaded, "TableCost.raw must stay unloaded at fleet scale"
+
+    # Correctness: the columns rule evaluation / reporting actually need are still there.
+    candidate = presets.table_to_candidate(loaded)
+    assert candidate.row["grade"] == "C"
+    assert candidate.row["needs_compaction"] is True
+    assert candidate.row["small_files_count"] == 80
+    assert candidate.row["cost_precision"] == "metadata"
+
+    # simulate_preset itself, end to end: matches the table via the fleet-wide rule
+    # and doesn't blow up doing it.
+    matched, estimate = presets.simulate_preset(session, preset)
+    assert estimate["matched_count"] == 1
+    assert matched[0].id == str(table.id)
 
 
 def test_resolve_selection_translates_repository_errors_to_http() -> None:
