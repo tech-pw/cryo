@@ -31,8 +31,16 @@
 image:
   repository: registry.example.com/cryo
   tag: latest
-  # Built + pushed 2026-08-10 by user, from gitlab-main commit 0cdad5e (on top of a6f1759,
-  # 78262a8). Includes everything in the prior digest plus three changes:
+  # Built + pushed 2026-08-10 by user, from gitlab-main commit fe69b3f (on top of 0cdad5e,
+  # a6f1759, 78262a8). Adds one change over the prior digest:
+  #
+  # -1. Effectiveness reporting (fe69b3f): S3 bills per-request not per-byte, so a compaction
+  #     that cuts file count 90% while barely moving bytes (confirmed live,
+  #     mview.gold_dbt_drip_marketing_flow: 2,549 -> 268 files, size only -4%) is a large real
+  #     cost win a byte-only summary would undersell. New `effectiveness` field on
+  #     GET /tables/{id}/runs: file_count_reduction_pct, small_file_reduction_pct,
+  #     byte_reduction_pct as independent signed percentages + a headline. Pure read-path
+  #     addition, no behavior change. See cryo/db/repositories/datalake.py.
   #
   # 0. Failure-aware adaptive routing (0cdad5e): adaptive_routing's own size/capacity/
   #    latency/cost scoring had zero memory of failure history -- a table that failed on an
@@ -77,7 +85,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:c3729ccc9b980e2ec2fd4d0e647abd49f74f0e0f986e01f88f45d29d735a5d57"
+    digest: "sha256:9b6591558eb41176f3794161ea1923e604a7a1673aa4a37033f42dd9500bb575"
 
 global:
   envFromSecret: cryo-secrets
@@ -116,7 +124,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:c3729ccc9b980e2ec2fd4d0e647abd49f74f0e0f986e01f88f45d29d735a5d57"
+    digest: "sha256:9b6591558eb41176f3794161ea1923e604a7a1673aa4a37033f42dd9500bb575"
   keda:
     enabled: true
 
