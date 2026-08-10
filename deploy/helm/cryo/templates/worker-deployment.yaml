@@ -61,6 +61,10 @@ env:
     value: {{ .root.Values.spark.k8s.activeDeadlineSeconds | quote }}
   - name: CRYO_SPARK_K8S_TTL_SECONDS_AFTER_FINISHED
     value: {{ .root.Values.spark.k8s.ttlSecondsAfterFinished | quote }}
+  - name: CRYO_SPARK_K8S_SLOT_CAP
+    value: {{ .root.Values.spark.k8s.slotCap | quote }}
+  - name: CRYO_SPARK_K8S_NODE_SELECTOR
+    value: {{ .root.Values.spark.k8s.nodeSelector | quote }}
   {{- end }}
 envFrom:
   {{- include "cryo.envFrom" .root | nindent 2 }}

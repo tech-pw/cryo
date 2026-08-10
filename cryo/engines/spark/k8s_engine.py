@@ -37,7 +37,7 @@ class SparkK8sEngine:
         self._client: SparkK8sClient | None = None
         catalog = self.config.get("catalog")
         self._catalog = str(catalog) if catalog else None
-        self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
+        self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 2)
 
     @property
     def k8s_client(self) -> SparkK8sClient:
