@@ -91,11 +91,10 @@ image:
   #    cryo/scanner/property_autopilot.py. Narrowly scoped to tier1/action=="apply"/
   #    not-needs_confirmation items only (metadata-only properties, never a data rewrite);
   #    apply_table_properties()'s own TIER1_APPLYABLE_KEYS allowlist is the actual safety
-  #    boundary, checked independently. OFF BY DEFAULT (property_autopilot_enabled=false
-  #    in Settings) -- this digest ships the capability, not the behavior; it does nothing
-  #    unless/until CRYO_PROPERTY_AUTOPILOT_ENABLED=true is deliberately added to this
-  #    file's global.env in a future, separate change -- not set here.
-  digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
+  #    boundary, checked independently. Shipped OFF in this digest; turned ON 2026-08-10 via
+  #    global.env.CRYO_PROPERTY_AUTOPILOT_ENABLED below, by request -- see that env var's own
+  #    comment for the rollback note.
+  digest: "sha256:7913d94f9a33c7505e944b769844bf46f81694e8c2f10c8c514c9374dca8210c"
 
 imagePullSecrets:
   - cryo-registry
@@ -104,7 +103,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
+    digest: "sha256:7913d94f9a33c7505e944b769844bf46f81694e8c2f10c8c514c9374dca8210c"
 
 global:
   envFromSecret: cryo-secrets
@@ -127,6 +126,18 @@ global:
     # docs/deployment.md or ask before flipping this back off, since it will re-lock the UI.
     CRYO_ALLOW_DEV_TOKEN_IN_PROD: "true"
 
+    # Turned on 2026-08-10, by request, the deliberate follow-up promised in the digest
+    # changelog above (a6f1759 / property_autopilot.py). Scheduler's telemetry tick now
+    # auto-applies tier1/action=apply/not-needs_confirmation property recommendations
+    # (metadata-only PyIceberg ALTER TABLE calls -- write.target-file-size-bytes,
+    # write.metadata.delete-after-commit.enabled, etc; never a data rewrite, never sort-order).
+    # apply_table_properties()'s own TIER1_APPLYABLE_KEYS allowlist remains the independent
+    # safety boundary regardless of this flag. Bounded to
+    # property_autopilot_max_tables_per_tick (default 100) tables/tick. Watch
+    # admin.iceberg_maintenance_log / audit records for cryo-property-autopilot actor after
+    # this rolls out, and roll back by removing this line if anything looks wrong.
+    CRYO_PROPERTY_AUTOPILOT_ENABLED: "true"
+
 # Enabled 2026-07-29 (see cost-driven-autoscaling plan, #devops-data): turns on the
 # already-built Governor -> sized-per-table K8s Job dispatch path for maintenance jobs
 # (rewrite/expire/orphan), replacing static always-on Worker capacity with ephemeral,
@@ -143,7 +154,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:996960028f71be86d28e29f5faf0b90ac22cd8c6f7d3c4eb068986bdd79ae119"
+    digest: "sha256:7913d94f9a33c7505e944b769844bf46f81694e8c2f10c8c514c9374dca8210c"
   keda:
     enabled: true
 
