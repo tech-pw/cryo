@@ -502,6 +502,46 @@ def execute_layout_recommendation(
     table = session.get(Table, recommendation.table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
+
+    # Regression, 2026-08-11: recommended_columns comes straight from QueryPattern.column_name
+    # telemetry (get_recommended_sort_columns in cryo/telemetry/patterns.py), which is never
+    # validated against the table's real Iceberg schema. Confirmed live on
+    # lsq_pw.silver_prospect_activity_base: the recommendation included 'mx_customobject_1'
+    # (not a real column -- almost certainly a query alias picked up from log parsing) and
+    # 'activityevent' (real column is 'ActivityEvent', case mismatch) -- both dispatched a real
+    # Spark job that failed deep in a Java stack trace with
+    # "Cannot find field 'mx_customobject_1' in struct: ..." only after the rewrite had already
+    # started. Validate against TableStats.raw.column_quality (the Go scanner's own column
+    # list, already on hand, no extra catalog call) before ever dispatching, and resolve
+    # case-only mismatches to the schema's real casing rather than failing on them --
+    # NamedReference.bind is case-sensitive but query telemetry routinely lowercases columns.
+    stats = session.scalar(select(TableStats).where(TableStats.table_id == table.id))
+    column_quality = (stats.raw or {}).get("column_quality") or [] if stats is not None else []
+    schema_columns = [
+        str(c.get("column_name")) for c in column_quality if c.get("column_name")
+    ]
+    if schema_columns:
+        schema_by_lower = {c.lower(): c for c in schema_columns}
+        resolved_columns: list[str] = []
+        unknown_columns: list[str] = []
+        for col in columns:
+            real = schema_by_lower.get(col.lower())
+            if real is None:
+                unknown_columns.append(col)
+            else:
+                resolved_columns.append(real)
+        if unknown_columns:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Recommendation {recommendation.id} references column(s) not present on "
+                    f"{table.schema_name}.{table.table_name}'s current schema: "
+                    f"{unknown_columns} -- dismiss and regenerate this recommendation rather "
+                    "than dispatching a rewrite that will fail mid-job."
+                ),
+            )
+        columns = resolved_columns
+
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         raise HTTPException(status_code=400, detail="Table has no effective preset/destination")
