@@ -398,6 +398,19 @@ def _dispatch_fallback_operations(
                         operation.type.value,
                         result.error,
                     )
+                # Regression, confirmed live 2026-08-11: ExecResult.detail is unconditionally
+                # populated on both success and failure (k8s_engine.py sets detail=stmt.sql
+                # even in its except-blocks, alongside the real error= text) -- `detail or
+                # error or reason` therefore always picked the SQL statement and never once
+                # reached the actual exception. Every fallback-dispatch failure's audit row
+                # showed only "CALL cdp.system.rewrite_manifests(...)", never why it failed.
+                # On failure, prefer the real error text; only fall back to detail/reason when
+                # the engine genuinely didn't produce one.
+                audit_detail = (
+                    (result.error or result.detail or reason)
+                    if not result.ok
+                    else (result.detail or result.error or reason)
+                )
                 _record_fallback_audit(
                     store,
                     job_id=job_id,
@@ -406,7 +419,7 @@ def _dispatch_fallback_operations(
                     operation=operation,
                     status="OK" if result.ok else "FAILED",
                     engine=fallback_engine.type,
-                    detail=result.detail or result.error or reason,
+                    detail=audit_detail,
                     duration_ms=result.duration_ms,
                     manifests_rewritten=result.manifests_rewritten,
                 )
