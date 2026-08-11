@@ -139,6 +139,61 @@ class SparkK8sEngine:
                 break
         return results
 
+    def submit(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
+        """Fire-and-forget: submit the K8s Job and return immediately, without waiting for
+        completion or cleaning up its credentials Secret (that Secret is still in use while
+        the job runs -- only a caller who eventually reaches the job's terminal state should
+        clean it up, see get_job_run()/cleanup_credentials_secret()).
+
+        Built for PDAE-8352: run_wave()'s fallback dispatch used to call execute() (submit +
+        block on wait_for_completion()) inline for every native-unsupported operation --
+        confirmed live, 2026-08-11, this made the fallback destination's own slot_cap (e.g. 6)
+        the effective ceiling on the whole Governor's per-wave throughput, independent of the
+        native engine's own much higher slot_cap (e.g. 80): 7,855 deep-mode jobs queued and
+        barely draining. Returns ok=True with outcome_known=False on a clean submission --
+        the caller must track engine_ref and resolve the real outcome later (see
+        cryo.governor.fallback_sweep), not treat a submitted-but-unresolved dispatch as
+        either success or failure.
+        """
+        job_name = _build_job_name(stmt, ctx)
+        start = time.monotonic()
+        catalog = stmt.metadata.get("catalog") or self._catalog
+        if not catalog:
+            return ExecResult(
+                ok=False,
+                detail=stmt.sql,
+                error=(
+                    "No Spark catalog name available for this dispatch -- neither the "
+                    "rendered statement nor this destination's config specifies one. Set "
+                    "the table's source catalog_name or this destination's `catalog`."
+                ),
+                duration_ms=_elapsed_ms(start),
+            )
+        try:
+            job_id = self.k8s_client.submit_spark_sql(
+                stmt.sql,
+                job_name=job_name,
+                catalog=str(catalog),
+                destination_id=self._destination_id,
+            )
+            if ctx is not None and ctx.on_engine_ref is not None:
+                ctx.on_engine_ref(job_id)
+            return ExecResult(
+                ok=True,
+                outcome_known=False,
+                engine_ref=job_id,
+                detail=stmt.sql,
+                duration_ms=_elapsed_ms(start),
+            )
+        except Exception as exc:
+            return ExecResult(
+                ok=False,
+                outcome_known=False,
+                detail=stmt.sql,
+                error=truncate_error_message(f"Spark-on-K8s submission failed: {exc}"),
+                duration_ms=_elapsed_ms(start),
+            )
+
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
         job_name = _build_job_name(stmt, ctx)
         start = time.monotonic()
