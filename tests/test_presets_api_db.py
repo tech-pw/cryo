@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -101,6 +102,32 @@ def api_db() -> Iterator[ApiDb]:
     event.remove(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
     event.remove(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
     engine.dispose()
+
+
+_PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
+
+
+@pytest.fixture()
+def postgres_session() -> Iterator[Session]:
+    """Real Postgres session -- see test_datalake_dashboard_repository.py's fixture of the same
+    name for the general rationale (SQLite doesn't enforce constraints/transaction semantics
+    Postgres does, so Postgres-only bugs are invisible to the rest of this suite). Skips
+    cleanly if no local Postgres is available (`docker compose up -d postgres` +
+    `alembic upgrade head`, per the Makefile's `migrate` target)."""
+    try:
+        engine = create_engine(_PG_URL)
+        connection = engine.connect()
+    except OperationalError:
+        pytest.skip("local Postgres not available at localhost:5432 (see Makefile: migrate)")
+    transaction = connection.begin()
+    session = Session(bind=connection, autoflush=False, expire_on_commit=False)
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+        engine.dispose()
 
 
 def _assign_missing_autoincrement_primary_keys(
@@ -532,6 +559,134 @@ def test_maintenance_run_applies_adaptive_routing_around_failing_destination(
     # regardless of the 2 prior failures. The fix: adaptive routing should have routed this
     # job away from the excluded destination.
     assert job_detail["destination_id"] != str(native_destination_id)
+
+
+def test_adaptive_routing_helper_does_not_close_the_caller_session() -> None:
+    """Regression, confirmed live 2026-08-11: _adaptive_routing_destinations_for_run used to
+    build `SQLSchedulerStore(lambda: session, redis_client=None)` -- but SQLSchedulerStore's
+    methods do `with self._session_factory() as session:`, i.e. they call __exit__ on
+    whatever the "factory" returns. Passed the live request-scoped session directly, that
+    closes/rolls back it partway through create_maintenance_run's own request, so the later
+    MaintenanceRun/MaintenanceJob inserts in the same request hit "insert or update on table
+    jobs violates foreign key constraint fk_jobs_run_id_runs" once Postgres actually enforced
+    the now-invisible earlier insert -- a real prod 500 on POST /maintenance/run whenever
+    adaptive_routing was on and the table had any prior job history at all (findable by
+    consecutive_engine_failures's own query, whether or not it changes the routing decision).
+
+    test_maintenance_run_applies_adaptive_routing_around_failing_destination (above) exercises
+    the same endpoint but does NOT catch this on in-memory SQLite (session.is_active stayed
+    True and a later commit did not raise). This test needs real Postgres AND a session bound
+    directly to the engine via sessionmaker -- exactly how cryo/db/session.py's real
+    `get_session()` builds the request session (`with SessionLocal() as session: yield
+    session`, SessionLocal = sessionmaker(bind=engine, ...)`). The shared postgres_session
+    fixture (see test_datalake_dashboard_repository.py) binds Session to a single pre-opened
+    `connection` instead, for test-isolation-via-rollback -- confirmed live that shape does
+    NOT reproduce this bug either (a connection-bound session's close/reopen semantics differ
+    enough that __exit__ being called twice doesn't detach it the same way). Skips cleanly
+    without local Postgres, same as postgres_session."""
+    from sqlalchemy.exc import OperationalError as SAOperationalError
+    from sqlalchemy.orm import sessionmaker as sa_sessionmaker
+
+    from cryo.api.routes import _adaptive_routing_destinations_for_run
+
+    try:
+        engine = create_engine(_PG_URL)
+        engine.connect().close()
+    except SAOperationalError:
+        pytest.skip("local Postgres not available at localhost:5432 (see Makefile: migrate)")
+
+    SessionLocal = sa_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    source_id = uuid.uuid4()
+    destination_id = uuid.uuid4()
+    table_id = uuid.uuid4()
+    preset_id = uuid.uuid4()
+    try:
+        with SessionLocal() as session:
+            session.add(Source(id=source_id, name=f"src-{source_id}", type="rest", config={}))
+            session.add(
+                Destination(
+                    id=destination_id,
+                    name=f"dest-{destination_id}",
+                    engine="native",
+                    config={"catalog_bindings": [{"source_id": str(source_id)}]},
+                )
+            )
+            session.add(
+                Table(
+                    id=table_id,
+                    source_id=source_id,
+                    schema_name="analytics",
+                    table_name=f"hot_events_{table_id.hex[:8]}",
+                    is_active=True,
+                )
+            )
+            session.add(
+                Preset(
+                    id=preset_id,
+                    name=f"adaptive-pg-test-{preset_id.hex[:8]}",
+                    destination_id=destination_id,
+                    operations=["optimize"],
+                    params={},
+                    priority=100,
+                    guardrails={"adaptive_routing": True},
+                )
+            )
+            # Any prior job history is enough to exercise consecutive_engine_failures' query --
+            # doesn't need to actually trigger a routing change to reproduce the bug.
+            old_run_id = uuid.uuid4()
+            session.add(MaintenanceRun(id=old_run_id, kind="adhoc", status="succeeded"))
+            session.commit()
+            session.add(
+                MaintenanceJob(
+                    id=uuid.uuid4(),
+                    run_id=old_run_id,
+                    table_id=table_id,
+                    destination_id=destination_id,
+                    mode="standard",
+                    status="succeeded",
+                    started_at=datetime(2026, 8, 10, 10, tzinfo=UTC),
+                    finished_at=datetime(2026, 8, 10, 10, 5, tzinfo=UTC),
+                )
+            )
+            session.commit()
+            preset = session.get(Preset, preset_id)
+
+            # Matches create_maintenance_run's real sequence exactly: flush(), not commit(),
+            # before calling the helper -- this is what makes the bug reproducible.
+            new_run = MaintenanceRun(id=uuid.uuid4(), kind="adhoc", status="queued")
+            session.add(new_run)
+            session.flush()
+
+            _adaptive_routing_destinations_for_run(session, preset, [table_id])
+
+            # The real bug: this session would already be closed/detached here, so new_run's
+            # flushed-but-uncommitted row is gone and this insert 500s with a FK violation.
+            session.add(
+                MaintenanceJob(
+                    id=uuid.uuid4(),
+                    run_id=new_run.id,
+                    table_id=table_id,
+                    destination_id=destination_id,
+                    mode="standard",
+                    status="queued",
+                )
+            )
+            session.flush()
+            session.commit()
+    finally:
+        with engine.connect() as cleanup_conn:
+            cleanup_conn.execute(
+                text("DELETE FROM cryo.jobs WHERE table_id = :tid"), {"tid": table_id}
+            )
+            cleanup_conn.execute(text("DELETE FROM cryo.runs"))
+            cleanup_conn.execute(text("DELETE FROM cryo.presets WHERE id = :pid"), {"pid": preset_id})
+            cleanup_conn.execute(text("DELETE FROM cryo.tables WHERE id = :tid"), {"tid": table_id})
+            cleanup_conn.execute(
+                text("DELETE FROM cryo.destinations WHERE id = :did"), {"did": destination_id}
+            )
+            cleanup_conn.execute(text("DELETE FROM cryo.sources WHERE id = :sid"), {"sid": source_id})
+            cleanup_conn.commit()
+        engine.dispose()
 
 
 def test_maintenance_run_keeps_payload_destination_when_adaptive_routing_is_off(
