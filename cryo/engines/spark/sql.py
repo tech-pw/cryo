@@ -115,18 +115,30 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     # Sort/Z-order configuration
     sort_columns = operation.params.get("sort_columns", [])
     zorder_columns = operation.params.get("zorder_columns", [])
+    write_ordered_by_stmt: str | None = None
 
     if zorder_columns:
-        # Z-order clustering
+        # Z-order clustering -- Iceberg's rewrite_data_files procedure takes this inline via
+        # the options map, no table-level sort-order metadata needed first.
         zorder_expr = ", ".join(f"`{col}`" for col in zorder_columns)
         options.append(f"'sort-order', 'zorder({zorder_expr})'")
     elif sort_columns:
-        # Linear sort
+        # Linear sort. Regression, 2026-08-11: rewrite_data_files(strategy => 'sort') does
+        # NOT read a linear sort order from the options map the way it does for zorder --
+        # confirmed live on lsq_pw.silver_prospect_activity_base, which failed with
+        # "Cannot sort data without a valid sort order, table ... is unsorted and no sort
+        # order is provided" even though 'sort-order' was set in options. Iceberg's rewrite
+        # procedure only honors a linear sort strategy against the table's own persisted
+        # sort-order metadata (see docs/native-iceberg-go-compaction-plan.md's "table
+        # sort-order metadata on write" framing) -- so it must be set via ALTER TABLE ...
+        # WRITE ORDERED BY *before* this rewrite call, not passed inline and not persisted
+        # only after (which is what execute_layout_recommendation used to do).
         sort_exprs = []
         sort_directions = operation.params.get("sort_directions", ["asc"] * len(sort_columns))
         for col, direction in zip(sort_columns, sort_directions, strict=False):
             sort_exprs.append(f"`{col}` {direction.upper()}")
-        options.append(f"'sort-order', '{', '.join(sort_exprs)}'")
+        order_expr = ", ".join(sort_exprs)
+        write_ordered_by_stmt = f"ALTER TABLE {catalog}.{table_name} WRITE ORDERED BY {order_expr}"
 
     # Additional options
     if operation.params.get("rewrite_all"):
@@ -144,6 +156,8 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
 
     args.append(f"options => map({', '.join(options)})")
     rewrite_call = f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+    if write_ordered_by_stmt is not None:
+        rewrite_call = f"{write_ordered_by_stmt};\n{rewrite_call}"
 
     # target-file-size-bytes above only governs this one rewrite -- without also persisting
     # it (and a sensible write.distribution-mode) as table properties, the next writer that
