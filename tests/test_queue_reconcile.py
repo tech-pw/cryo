@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
-from cryo.domain.enums import JobStatus, Mode
+from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
 from cryo.queue.locks import InMemoryLockStore
@@ -279,6 +280,114 @@ def test_governor_wave_reaps_stale_running_jobs() -> None:
         session_factory=None,
     )
     result = governor.run_wave(now=datetime(2026, 7, 14, 13, 0, tzinfo=UTC))
+
+    assert result.reaped == 1
+    assert store.get_job("job-1").status is JobStatus.FAILED
+
+
+def test_governor_wave_does_not_reap_spark_job_whose_driver_pod_is_still_running(
+    monkeypatch,
+) -> None:
+    """Regression, 2026-08-11: engine_activity_checker was declared as a parameter on
+    reconcile_stale_running_jobs but never actually passed from anywhere in the codebase --
+    every RUNNING job past stale_after_seconds got reaped unconditionally, with no way to
+    tell "worker died" from "job is huge and still going". Confirmed live: a 24TB rewrite
+    legitimately still processing after ~5h (driver pod genuinely Running) would have been
+    force-FAILED by this reaper despite doing real, uninterrupted work the whole time."""
+    from cryo.engines.spark.k8s import JobRunResult, JobRunState
+
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "spark-dest",
+            engine=EngineType.SPARK_EMR,
+            config={"replicas": ["r1"], "catalog": "cdp"},
+        )
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="spark-dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 8, 11, 10, 39, tzinfo=UTC),
+            engine_ref="cryo-spark-17449de5c7",
+        )
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-17449de5c7", state=JobRunState.RUNNING
+    )
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
+    )
+
+    governor = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+        lock_ttl_seconds=6 * 60 * 60,
+        session_factory=None,
+    )
+    result = governor.run_wave(now=datetime(2026, 8, 11, 17, 0, tzinfo=UTC))
+
+    assert result.reaped == 0
+    assert store.get_job("job-1").status is JobStatus.RUNNING
+    mock_client.get_job_run.assert_called_once_with("cryo-spark-17449de5c7")
+
+
+def test_governor_wave_reaps_spark_job_whose_driver_pod_is_gone(monkeypatch) -> None:
+    """The other direction of the same fix: a Spark job whose driver pod genuinely finished
+    or was never found must still be reaped -- the checker isn't a blanket "never reap Spark
+    jobs" escape hatch, only a real liveness signal."""
+    from cryo.engines.spark.k8s import JobRunResult, JobRunState
+
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "spark-dest",
+            engine=EngineType.SPARK_EMR,
+            config={"replicas": ["r1"], "catalog": "cdp"},
+        )
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="spark-dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.RUNNING,
+            started_at=datetime(2026, 8, 11, 10, 39, tzinfo=UTC),
+            engine_ref="cryo-spark-dead",
+        )
+    )
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-dead", state=JobRunState.FAILED
+    )
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
+    )
+
+    governor = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+        lock_ttl_seconds=6 * 60 * 60,
+        session_factory=None,
+    )
+    result = governor.run_wave(now=datetime(2026, 8, 11, 17, 0, tzinfo=UTC))
 
     assert result.reaped == 1
     assert store.get_job("job-1").status is JobStatus.FAILED
