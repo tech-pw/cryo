@@ -612,16 +612,19 @@ def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted
     (2026-07-29): this exact partition shape (well-sized data files, extreme delete-per-file
     ratio) turned out to make convert_deletes a no-op even once correctly scoped -- confirmed
     live, removed_delete_files_count=0 across every attempt -- so the planner now routes it to
-    rewrite_position_delete_files instead. This test keeps a milder ratio (8000/6 partition
-    replaced with a below-pathological-threshold shape) purely to keep convert_deletes' own
-    scoping-by-delete-skew logic covered independent of the minor-path escape hatch.
+    rewrite_position_delete_files instead. This test keeps a milder ratio purely to keep
+    convert_deletes' own scoping-by-delete-skew logic covered independent of the minor-path
+    escape hatch(es) -- it must land clearly *below* both _has_pathological_delete_skew's
+    (ratio>=20.0) and _has_unreachable_delete_skew's (ratio>=7.0, added 2026-08-11 for the
+    sub-pathological-but-still-unreachable case) trigger points, or this test would start
+    exercising the wrong code path. Ratio here is 1500/500=3.0, comfortably under both.
     """
     partitions = [
         {
             "partition_value": str(20485 + i),
             "small_files_in_partition_count": 0,
             "files_per_partition": 500,
-            "delete_files_in_partition_count": 8000,
+            "delete_files_in_partition_count": 1500,
         }
         for i in range(4)
     ] + [
@@ -637,7 +640,7 @@ def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted
             "schema_name": "cdp",
             "table_name": "load_test_basefact",
             "small_files_count": 1000,
-            "total_delete_files": 32000,
+            "total_delete_files": 6000,
             "delete_file_pct": 96.0,
             "total_size_gb": 5,
             "partition_fields": [
@@ -663,6 +666,61 @@ def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted
     # The 4 delete-heavy partitions must be scoped in, even though they have zero small files.
     assert scoped_values == {"20485", "20486", "20487", "20488"}
     assert any("delete-file count" in note for note in plan.notes)
+
+
+def test_planner_routes_sub_pathological_but_unreachable_delete_skew_to_minor_rewrite() -> None:
+    """Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (483 queries/30d --
+    a genuinely hot table) has delete_file_pct=100% (271 data files, 1,797 position-delete
+    files, current live snapshot) and has had a "succeeded" job whose own plan notes read
+    "Skipped convert_deletes: planned optimize already rewrites data files for this table" --
+    yet the deletes are untouched, because optimize/convert_deletes selects rewrite candidates
+    by file *size*, and this table's data files are already reasonably sized (not fragmented).
+
+    This table's worst partition (40 data files, 315 position-deletes -> ratio ~7.9) sits
+    *below* _has_pathological_delete_skew's default min_ratio=20.0, so the existing pathological
+    escape hatch (test_planner_routes_pathological_delete_skew_to_minor_rewrite, ratio ~1450-1700)
+    correctly does not fire -- but convert_deletes/optimize still provably won't reach these
+    deletes, just less extremely than the ratio>=20 case. The gap: delete_file_pct alone
+    (>= delete_major_pct_threshold) routes to convert_deletes/optimize with no check that doing
+    so will actually touch the delete-heavy partitions when the ratio, while below "pathological",
+    is still too low for rewrite_data_files' size-driven selection to reach them."""
+    partitions = [
+        {
+            "partition_value": str(20670 + i),
+            "small_files_in_partition_count": 0,
+            "files_per_partition": [40, 39, 37, 34, 28, 44, 20, 29][i],
+            "delete_files_in_partition_count": [315, 299, 295, 267, 214, 178, 155, 74][i],
+        }
+        for i in range(8)
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "mview",
+            "table_name": "gold_dbt_test_results",
+            "small_files_count": 29,
+            "total_delete_files": 1797,
+            "position_delete_files": 1797,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 66.8,
+            "query_count_30d": 483,
+            "partition_fields": [
+                {
+                    "base_column": "test_attempted_at",
+                    "partition_field": "test_attempted_at_month",
+                    "transform": "month",
+                    "col_type": "timestamptz",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,  # table isn't fragmented enough to trigger optimize's own gate
+            "convert_deletes_threshold_pct": 5.0,
+        },
+    )
+    assert OperationType.REWRITE_POSITION_DELETES in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
 
 
 def test_planner_routes_pathological_delete_skew_to_minor_rewrite() -> None:
