@@ -117,6 +117,74 @@ def _seed(
     return recommendation.id
 
 
+def _seed_with_spark_primary_destination(
+    session,
+    *,
+    recommended_strategy: str = "sort",
+    recommended_columns: list[str] | None = None,
+    status: str = "approved",
+):
+    """Table whose effective preset routes straight to a Spark destination (e.g. spark-medium
+    -> spark-k8s-fallback), with no sql_fallback_destination_id of its own -- Spark isn't a
+    fallback here, it IS the primary engine. Regression, 2026-08-11: the fallback-id-only check
+    in execute_layout_recommendation rejected every such table with a 422 even though nothing
+    else was missing (found live on lsq_pw.silver_prospect_activity_base, effective preset
+    spark-medium -> destination spark-k8s-fallback, engine=spark_emr, config has no
+    sql_fallback_destination_id since it's not acting as anyone's fallback).
+    """
+    source = Source(
+        id=uuid4(),
+        name=f"source-{uuid4()}",
+        type="rest",
+        config={
+            "catalog_name": "lsq_pw",
+            "uri": "thrift://trino-prod-metastore.penpencil.co:9083",
+            "warehouse": "s3://pw-data-cdp-prod-gold-layer/",
+        },
+    )
+    spark_destination = Destination(
+        id=uuid4(),
+        name="spark-k8s-fallback",
+        engine="spark_emr",
+        config={"catalog": "cdp", "spark_k8s": {"namespace": "cryo"}},
+    )
+    table = Table(
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="lsq_pw",
+        table_name="silver_prospect_activity_base",
+        is_active=True,
+    )
+    session.add_all([source, spark_destination, table])
+    session.flush()
+
+    preset = Preset(
+        id=uuid4(),
+        name=f"spark-medium-{uuid4()}",
+        destination_id=spark_destination.id,
+        operations=["optimize"],
+        params={},
+        guardrails={},
+    )
+    session.add(preset)
+    session.flush()
+    session.add(TableAssignment(table_id=table.id, preset_id=preset.id))
+
+    recommendation = LayoutRecommendation(
+        id=uuid4(),
+        table_id=table.id,
+        recommended_strategy=recommended_strategy,
+        recommended_columns=recommended_columns
+        if recommended_columns is not None
+        else ["ProspectActivityAutoId"],
+        confidence=0.8,
+        status=status,
+    )
+    session.add(recommendation)
+    session.commit()
+    return recommendation.id
+
+
 def _mock_spark_client(monkeypatch, wait_results: list[JobRunResult]) -> MagicMock:
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = [f"cryo-spark-{i}" for i in range(len(wait_results))]
@@ -176,6 +244,29 @@ def test_execute_applies_zorder_strategy_without_sort_order_persist(session, mon
 
     recommendation = session.get(LayoutRecommendation, rec_id)
     assert recommendation.status == "applied"
+
+
+def test_execute_uses_destination_directly_when_it_is_already_spark(session, monkeypatch) -> None:
+    rec_id = _seed_with_spark_primary_destination(
+        session, recommended_strategy="sort", recommended_columns=["ProspectActivityAutoId"]
+    )
+    mock_client = _mock_spark_client(monkeypatch, [_success("rewrite"), _success("persist")])
+
+    response = execute_layout_recommendation(
+        rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+    )
+
+    assert response.status == "succeeded"
+    assert mock_client.submit_spark_sql.call_count == 2
+    rewrite_sql = mock_client.submit_spark_sql.call_args_list[0].args[0]
+    persist_sql = mock_client.submit_spark_sql.call_args_list[1].args[0]
+    assert "rewrite_data_files" in rewrite_sql
+    assert "WRITE ORDERED BY" in persist_sql
+    assert "`ProspectActivityAutoId` ASC" in persist_sql
+
+    recommendation = session.get(LayoutRecommendation, rec_id)
+    assert recommendation.status == "applied"
+    assert recommendation.applied_at is not None
 
 
 def test_execute_rejects_when_not_approved(session, monkeypatch) -> None:

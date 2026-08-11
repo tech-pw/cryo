@@ -509,23 +509,35 @@ def execute_layout_recommendation(
     destination = session.get(Destination, uuid.UUID(effective.preset.destination_id))
     if destination is None:
         raise HTTPException(status_code=422, detail="Assigned destination not found")
-    fallback_id = (destination.config or {}).get("sql_fallback_destination_id") or (
-        destination.config or {}
-    ).get("fallback_destination_id")
-    if not fallback_id:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "This table's destination has no sql_fallback_destination_id configured -- "
-                "sort/z-order rewrites run via the Spark-on-K8s engine, same as other SQL "
-                "fallback maintenance operations."
-            ),
-        )
-    fallback_destination = session.get(Destination, uuid.UUID(str(fallback_id)))
-    if fallback_destination is None:
-        raise HTTPException(
-            status_code=422, detail=f"Configured fallback destination {fallback_id} not found"
-        )
+    if destination.engine == EngineType.SPARK_EMR:
+        # Table is already routed straight to a Spark-on-K8s destination (e.g. spark-medium) --
+        # that IS the engine sort/z-order rewrites need, so use it directly instead of requiring
+        # a separate sql_fallback_destination_id. Regression, 2026-08-11:
+        # silver_prospect_activity_base's effective preset (spark-medium) routes straight to
+        # the spark-k8s-fallback destination
+        # with no fallback config of its own (Spark is not a fallback here, it's the primary
+        # engine), so the old fallback-id-only check rejected every Spark-primary table with a
+        # 422 even though nothing else was actually missing.
+        fallback_destination = destination
+    else:
+        fallback_id = (destination.config or {}).get("sql_fallback_destination_id") or (
+            destination.config or {}
+        ).get("fallback_destination_id")
+        if not fallback_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "This table's destination has no sql_fallback_destination_id configured -- "
+                    "sort/z-order rewrites run via the Spark-on-K8s engine, same as other SQL "
+                    "fallback maintenance operations."
+                ),
+            )
+        maybe_fallback_destination = session.get(Destination, uuid.UUID(str(fallback_id)))
+        if maybe_fallback_destination is None:
+            raise HTTPException(
+                status_code=422, detail=f"Configured fallback destination {fallback_id} not found"
+            )
+        fallback_destination = maybe_fallback_destination
     source = session.get(Source, table.source_id)
     if source is None:
         raise HTTPException(status_code=422, detail="Table's source not found")

@@ -336,6 +336,8 @@ class SchedulerService:
                 self._generate_layout_recommendations(settings)
             if settings.property_autopilot_enabled:
                 self._run_property_autopilot(settings)
+            if settings.layout_autopilot_enabled:
+                self._run_layout_autopilot(settings)
             self._last_telemetry_ingest = current
         except Exception as exc:
             import logging
@@ -365,6 +367,89 @@ class SchedulerService:
                 result.tables_changed,
                 result.tables_considered,
                 result.tables_failed,
+            )
+
+    def _run_layout_autopilot(self, settings: Any) -> None:
+        """Auto-approve and execute pending sort/z-order recommendations, but only for tables
+        whose effective preset explicitly opts in via params.auto_apply_layout_recommendations.
+
+        Closes the gap between "make it a part of preset" and the reality that link_layout is
+        a real Spark data rewrite (tier2), not a metadata-only flip -- see
+        cryo/scanner/property_autopilot.py's tier2 rationale, which is exactly why this stays
+        gated per-preset rather than a single fleet-wide switch like property_autopilot_enabled.
+        A preset owner decides "yes, always resort tables assigned to me" once; individual
+        tables still don't need a human clicking approve/execute in the UI every time a fresh
+        recommendation lands.
+
+        Reuses execute_layout_recommendation() itself (not a reimplementation) so this gets the
+        exact same Spark rewrite + write.sort-order persistence + intent/effect-budget tracking
+        as the manual API path -- see cryo/api/routes_smart_maintenance.py.
+        """
+        import logging
+
+        from sqlalchemy import select
+
+        from cryo.api.routes_smart_maintenance import (
+            ExecuteLayoutRecommendationRequest,
+            execute_layout_recommendation,
+        )
+        from cryo.api.security import Principal, Role
+        from cryo.db.models import LayoutRecommendation, Table
+        from cryo.db.repositories import presets as presets_repo
+
+        logger = logging.getLogger(__name__)
+        autopilot_principal = Principal(
+            subject="cryo-layout-autopilot", roles=frozenset({Role.OPERATOR})
+        )
+        applied = 0
+        failed = 0
+        with SessionLocal() as session:
+            candidates = session.execute(
+                select(LayoutRecommendation)
+                .where(LayoutRecommendation.status == "pending")
+                .where(LayoutRecommendation.recommended_strategy.in_(("sort", "zorder")))
+                .order_by(LayoutRecommendation.updated_at.asc().nulls_first())
+                .limit(settings.layout_autopilot_max_tables_per_tick)
+            ).scalars().all()
+            for recommendation in candidates:
+                table = session.get(Table, recommendation.table_id)
+                if table is None:
+                    continue
+                effective = presets_repo.resolve_effective_preset(session, table)
+                if effective is None:
+                    continue
+                auto_apply = (effective.preset.params or {}).get(
+                    "auto_apply_layout_recommendations"
+                )
+                if not bool(auto_apply):
+                    continue
+                recommendation.status = "approved"
+                recommendation.approved_at = datetime.now(UTC)
+                recommendation.approved_by = autopilot_principal.subject
+                session.commit()
+                try:
+                    execute_layout_recommendation(
+                        recommendation.id,
+                        ExecuteLayoutRecommendationRequest(),
+                        session,
+                        autopilot_principal,
+                    )
+                    applied += 1
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    logger.warning(
+                        "Layout autopilot: auto-execute failed for recommendation %s "
+                        "(table %s.%s): %s",
+                        recommendation.id,
+                        table.schema_name,
+                        table.table_name,
+                        exc,
+                    )
+        if applied or failed:
+            logger.info(
+                "Layout autopilot tick: %s applied, %s failed",
+                applied,
+                failed,
             )
 
     def _generate_layout_recommendations(self, settings: Any) -> None:
