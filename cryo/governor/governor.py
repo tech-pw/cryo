@@ -14,7 +14,7 @@ from typing import Any, Protocol, cast
 from cryo.config import get_settings
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.session import SessionLocal
-from cryo.domain.enums import JobStatus
+from cryo.domain.enums import EngineType, JobStatus
 from cryo.domain.intents import IntentStatus
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
@@ -138,6 +138,47 @@ class Governor:
         self._roi_gate_enabled = settings.roi_gate_enabled
         self._roi_gate = ROIGate()
 
+    def _spark_engine_still_active(self, job: MaintenanceJobRecord) -> bool:
+        """Real fix for a live incident, 2026-08-11: engine_activity_checker was declared as a
+        parameter on reconcile_stale_running_jobs but never actually passed from anywhere in
+        the codebase -- every RUNNING job past stale_after_seconds (default 6h) got reaped
+        unconditionally, with no way to tell "worker died" from "job is huge and still going".
+        Confirmed live: a 24TB rewrite (cdp.unified_bq.gold_dbt_pw_bq) legitimately still
+        processing after ~5h, driver pod genuinely Running, would have been force-FAILED by
+        this reaper within the hour despite doing real, uninterrupted work the whole time.
+
+        Only implemented for spark_emr -- that's the engine large, long-running jobs actually
+        route to (see cryo/engines/native/routing.py's SQL-fallback-required cases), and
+        SparkK8sClient.get_job_run() already has the exact live signal this needs: the driver
+        pod's own K8s phase, not the dispatch wrapper Job's, which is known unreliable
+        (see get_job_run's own docstring). Any lookup failure or a destination this isn't
+        built for returns False (not still active) -- matches reconcile_stale_running_jobs'
+        existing conservative-but-not-silent-forever default elsewhere in this same function
+        (the step-ledger check): when genuinely unsure, this reaper still reaps rather than
+        leaving a truly-dead job stuck RUNNING forever, but a real live signal always wins.
+        """
+        if not job.engine_ref:
+            return False
+        destination = _try_get_destination(self._store, job.destination_id)
+        if destination is None or destination.engine != EngineType.SPARK_EMR:
+            return False
+        try:
+            from cryo.engines.spark.k8s import JobRunState
+            from cryo.engines.spark.k8s_engine import SparkK8sEngine
+
+            engine = SparkK8sEngine(config=dict(destination.config))
+            result = engine.k8s_client.get_job_run(job.engine_ref)
+            return result.state == JobRunState.RUNNING
+        except Exception:
+            logger.warning(
+                "Spark engine-activity check failed for job %s (engine_ref=%s); "
+                "treating as not-active",
+                job.id,
+                job.engine_ref,
+                exc_info=True,
+            )
+            return False
+
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         wave_start = perf_counter()
         destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -163,6 +204,7 @@ class Governor:
                 now=current,
                 stale_after_seconds=self._lock_ttl_seconds,
                 step_ledger=step_ledger,
+                engine_activity_checker=self._spark_engine_still_active,
             )
             admitted = 0
             deferred = 0
