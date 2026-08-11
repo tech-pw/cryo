@@ -6,7 +6,7 @@ import io
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
@@ -1535,6 +1535,77 @@ def preview_maintenance(payload: MaintenancePreviewRequest) -> MaintenancePrevie
     return MaintenancePreviewResponse(items=items)
 
 
+def _adaptive_routing_destinations_for_run(
+    session: Session, preset: Preset, table_ids: Sequence[uuid.UUID]
+) -> dict[str, str]:
+    """When `preset.guardrails.adaptive_routing` is on, re-resolve each table's destination
+    the same way the scheduler's cron path does (`_apply_routing` in scheduler/service.py) --
+    including consecutive-failure exclusion -- instead of forcing every job in this run onto
+    the caller's single `payload.destination_id`.
+
+    Regression, confirmed live 2026-08-11: `unified_bq.gold_dbt_pw_bq` failed on
+    native-datafusion 4 times in a row. `consecutive_engine_failures()` correctly computed
+    that streak and `default-native-deep`'s *cron*-triggered runs correctly routed around it --
+    but every retry that actually hit this table went through this ad-hoc API path instead
+    (`POST /maintenance/run`, trigger="api"/"claude-retry-failed-*"), which always used the
+    single `destination_id` the caller passed and never consulted adaptive routing at all. The
+    failure-exclusion logic was real and correct; it just never got a chance to run here.
+
+    Returns `{table_id: destination_id}` only for tables whose destination should change;
+    callers should fall back to `payload.destination_id` for any table_id not in the result
+    (also what happens when adaptive_routing is off, or nothing routes anywhere else).
+    """
+    if not preset.guardrails.get("adaptive_routing"):
+        return {}
+
+    from cryo.db.repositories.presets import preset_to_config, table_to_candidate
+    from cryo.db.repositories.scheduler_store import SQLSchedulerStore
+    from cryo.scheduler.adaptive_routing import (
+        AdaptiveRoutingContext,
+        resolve_destination_adaptive,
+    )
+    from cryo.scheduler.routing import build_destinations_index
+
+    tables = session.scalars(
+        select(Table)
+        .where(Table.id.in_(table_ids))
+        .options(selectinload(Table.stats), selectinload(Table.cost))
+    ).all()
+    if not tables:
+        return {}
+
+    destinations = build_destinations_index(
+        [
+            {"id": str(d.id), "name": d.name, "engine": d.engine, "config": dict(d.config)}
+            for d in session.scalars(select(Destination).where(Destination.enabled.is_(True)))
+        ]
+    )
+    preset_config = preset_to_config(preset)
+
+    # Bounded to exactly this run's tables, not the fleet -- list_tables() OOM-killed the API
+    # pod once this session from an unbounded query; consecutive_engine_failures() is already
+    # scoped this way for the same reason (see its own docstring).
+    store = SQLSchedulerStore(lambda: session, redis_client=None)
+    failure_history = store.consecutive_engine_failures([str(t.id) for t in tables])
+
+    routed: dict[str, str] = {}
+    for table in tables:
+        candidate = table_to_candidate(table)
+        per_table_failures = failure_history.get(candidate.id)
+        if per_table_failures:
+            from dataclasses import replace
+
+            candidate = replace(
+                candidate,
+                stats={**candidate.stats, "engine_consecutive_failures": per_table_failures},
+            )
+        route = resolve_destination_adaptive(
+            candidate, preset_config, destinations, AdaptiveRoutingContext()
+        )
+        routed[candidate.id] = route.destination_id
+    return routed
+
+
 @router.post(
     "/maintenance/run",
     response_model=MaintenanceRunResponse,
@@ -1596,6 +1667,11 @@ def create_maintenance_run(
     # to enqueue.
     settings = get_settings()
     verifier_enabled = settings.plan_verifier_enabled
+    # Computed once for the whole run, not per-table -- avoids an N+1 query pattern and matches
+    # how the scheduler's cron path (_apply_routing) resolves routing for a run as a batch.
+    adaptive_destinations = _adaptive_routing_destinations_for_run(
+        session, preset, selection.table_ids
+    )
     jobs: list[MaintenanceJob] = []
     for table_id in selection.table_ids:
         if preset is not None and requested_ops:
@@ -1648,10 +1724,15 @@ def create_maintenance_run(
                         "violations": violations_value,
                     },
                 )
+        routed_destination_id = adaptive_destinations.get(str(table_id))
         job = MaintenanceJob(
             run_id=run.id,
             table_id=table_id,
-            destination_id=payload.destination_id,
+            destination_id=(
+                uuid.UUID(routed_destination_id)
+                if routed_destination_id is not None
+                else payload.destination_id
+            ),
             mode=payload.mode.value,
             status="queued",
             verified=verified_flag,
