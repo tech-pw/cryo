@@ -270,6 +270,88 @@ def test_failed_fallback_dispatch_is_recorded_not_just_logged() -> None:
     assert record.detail == "MISSING_CATALOG_ABILITY.PROCEDURES"
 
 
+def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error() -> None:
+    """Regression, confirmed live 2026-08-11: k8s_engine.py's real failure paths set BOTH
+    detail=stmt.sql (unconditionally, success or failure) and error=<the real exception>.
+    `detail or error or reason` therefore always picked the SQL statement and never once
+    surfaced the actual cause -- confirmed against real fallback-dispatch audit rows, every
+    single one showed only "CALL cdp.system.rewrite_manifests(...)", never why it failed.
+    The prior test (test_failed_fallback_dispatch_is_recorded_not_just_logged) sets
+    detail=None on its mock, which accidentally never exercised this bug -- this test matches
+    the real ExecResult shape a failing engine actually returns."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.SPARK_EMR
+    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=False,
+        engine_ref=None,
+        duration_ms=1100,
+        manifests_rewritten=None,
+        error="Caused by: org.apache.iceberg.exceptions.CommitFailedException: real cause",
+        detail="CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')",
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="cdp.lms.silver_useractivitydumps_evolving",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    assert len(store.audit) == 1
+    record = store.audit[0]
+    assert record.status == "FAILED"
+    assert "CommitFailedException: real cause" in record.detail
+    assert record.detail != "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+
+
+def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> None:
+    """On success, detail (the SQL/outcome description) should still win over a stray error
+    field an engine might leave populated -- only the failure path needs the error-first
+    precedence flip."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.SPARK_EMR
+    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=True,
+        engine_ref="run-1",
+        duration_ms=1100,
+        manifests_rewritten=3,
+        error=None,
+        detail="CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')",
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="cdp.lms.silver_useractivitydumps_evolving",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    assert len(store.audit) == 1
+    record = store.audit[0]
+    assert record.status == "OK"
+    assert record.detail == "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+
+
 def test_engine_type_mismatch_is_recorded_as_skipped() -> None:
     store = InMemoryJobStore()
     # Trino fallback destination that can't actually run optimize_manifests either.
