@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,6 +19,26 @@ from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 ERROR_MESSAGE_TRUNCATE = 4000
 
 
+_CAUSED_BY_RE = re.compile(r"Caused by:[^\n]*")
+
+
+def deepest_caused_by(message: str | None) -> str | None:
+    """Return the last (deepest, i.e. root) ``Caused by:`` line in a JVM-style stack trace.
+
+    A chained Java/Scala exception prints each wrapping layer as its own "Caused by:" line, in
+    outer-to-inner order -- the *last* one is the actual root cause the outer frames were just
+    propagating. On a multi-KB Spark-on-K8s stack trace that line routinely sits in the middle
+    of the text, well past what head+tail truncation in `truncate_error_message` keeps -- see
+    that function's docstring for the 2026-07-28/07-31 incidents this pattern already exists to
+    avoid for the narrower `is_table_not_found_error` case. This generalizes the same "front-load
+    the signature before truncating" idea to any exception, not just the table-not-found one.
+    """
+    if not message:
+        return None
+    matches = _CAUSED_BY_RE.findall(message)
+    return matches[-1] if matches else None
+
+
 def truncate_error_message(
     message: str, *, limit: int = ERROR_MESSAGE_TRUNCATE, tail: int = 500
 ) -> str:
@@ -31,7 +52,20 @@ def truncate_error_message(
     on a Spark remove_orphan_files ClassNotFoundException that the stored error never showed.
     `tail` is skipped (falls back to head-only truncation, matching pre-2026-07-28 behavior)
     when it would leave too little room for the head to be useful.
+
+    Regression, confirmed live 2026-08-11: head+tail alone still isn't enough for a chained JVM
+    exception whose root `Caused by:` line sits in the *middle* of the trace (e.g. a
+    BaseMetastoreTableOperations failure wrapped by several Catalyst/Spark analyzer frames) --
+    neither the head nor the tail window catches it, so the actual cause was silently dropped in
+    ~4,051-char failures on the spark-k8s-fallback destination. Front-load the deepest
+    `Caused by:` line the same way `is_table_not_found_error` already does for its one known
+    signature, but for any exception, so root cause always survives truncation regardless of
+    where in the original text it falls.
     """
+    caused_by = deepest_caused_by(message)
+    if caused_by and caused_by not in message[:limit]:
+        prefix = f"[root cause] {caused_by}\n"
+        message = prefix + message
     if len(message) <= limit:
         return message
     total = len(message)
