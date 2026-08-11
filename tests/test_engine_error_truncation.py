@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
-from cryo.engines.base import is_table_not_found_error, truncate_error_message
+from cryo.engines.base import deepest_caused_by, is_table_not_found_error, truncate_error_message
 from cryo.engines.spark.emr import JobRunResult, JobRunState
 from cryo.engines.spark.engine import SparkEMREngine
 
@@ -47,7 +47,14 @@ def test_truncate_error_message_preserves_tail_not_just_head() -> None:
     stack trace last. Head-only truncation kept only the boilerplate and threw away the one
     part an operator (or Cryo itself, on the next diagnosis pass) actually needs. Confirmed
     live: a remove_orphan_files ClassNotFoundException was completely invisible in the stored
-    error until this fix."""
+    error until this fix.
+
+    Since the 2026-08-11 fix (see test_truncate_error_message_preserves_caused_by_buried_in_
+    the_middle), the deepest `Caused by:` line is now front-loaded with a `[root cause]`
+    prefix -- so the result starts with that prefix, then the original head text, rather than
+    starting directly with the boilerplate. The original (still-true) guarantee this test
+    exists for is that the real cause survives at all and the boilerplate head is still kept
+    too, not that nothing gets prepended ahead of it."""
     message = (
         "INFO block manager registration chatter " * 200
         + "Caused by: ClassNotFoundException: real cause"
@@ -56,8 +63,53 @@ def test_truncate_error_message_preserves_tail_not_just_head() -> None:
 
     assert "ClassNotFoundException: real cause" in result
     assert result.endswith("ClassNotFoundException: real cause")
-    assert result.startswith("INFO block manager registration chatter")
+    assert result.startswith("[root cause] Caused by: ClassNotFoundException: real cause")
+    assert "INFO block manager registration chatter" in result
     assert "truncated" in result
+
+
+def test_truncate_error_message_preserves_caused_by_buried_in_the_middle() -> None:
+    """Regression, confirmed live 2026-08-11: ~40 Spark-on-K8s driver failures on
+    spark-k8s-fallback had their `error` field truncated at exactly 4,051 chars with no
+    `Caused by:` line anywhere in the stored text -- a BaseMetastoreTableOperations failure
+    wraps the root NoSuchTableException-style cause in several thousand chars of Catalyst
+    analyzer frames on *both* sides, so neither the head window nor the (default 500-char)
+    tail window created by the 2026-07-28 fix ever reached it. This is the scenario
+    test_truncate_error_message_preserves_tail_not_just_head doesn't cover, since that test's
+    `Caused by:` line sits right at the very end (naturally inside the tail window)."""
+    head_padding = "at org.apache.spark.sql.catalyst.analysis.Analyzer.frame " * 200
+    root_cause = "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: real root cause"
+    tail_padding = "at py4j.ClientServerConnection.run frame " * 200
+    message = f"{head_padding}{root_cause}{tail_padding}"
+
+    # Sanity: the buried line really is outside both the head and tail windows this function
+    # keeps, i.e. the bug this test guards against is real before the fix is applied.
+    limit, tail = 4000, 500
+    assert root_cause not in message[: limit - tail]
+    assert root_cause not in message[-tail:]
+
+    result = truncate_error_message(message, limit=limit, tail=tail)
+
+    assert root_cause in result
+    assert "truncated" in result
+
+
+def test_deepest_caused_by_returns_the_last_caused_by_line() -> None:
+    message = (
+        "Caused by: org.apache.spark.SparkException: outer wrapper\n"
+        "\tat some.frame(Foo.scala:1)\n"
+        "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause\n"
+        "\tat some.other.frame(Bar.scala:2)\n"
+    )
+    assert deepest_caused_by(message) == (
+        "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
+    )
+
+
+def test_deepest_caused_by_none_when_absent() -> None:
+    assert deepest_caused_by("OutOfMemoryError: Java heap space") is None
+    assert deepest_caused_by(None) is None
+    assert deepest_caused_by("") is None
 
 
 def test_is_table_not_found_error_matches_known_signatures() -> None:
