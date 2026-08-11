@@ -158,6 +158,7 @@ class SQLJobStore:
                     input_files_count=record.input_files_count,
                     output_files_count=record.output_files_count,
                     actor=record.actor,
+                    engine_ref=record.engine_ref,
                 )
             )
             if record.status == "OK":

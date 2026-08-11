@@ -248,6 +248,7 @@ def _record_fallback_audit(
     detail: str | None,
     duration_ms: int | None = None,
     manifests_rewritten: int | None = None,
+    engine_ref: str | None = None,
 ) -> None:
     """Persist a fallback-dispatch outcome so it's queryable (GET /tables/{id}/runs' `steps`),
     not just a log line that vanishes when the pod cycles.
@@ -274,6 +275,7 @@ def _record_fallback_audit(
                 detail=detail,
                 duration_ms=duration_ms,
                 manifests_rewritten=manifests_rewritten,
+                engine_ref=engine_ref,
             )
         )
     except Exception:
@@ -332,6 +334,7 @@ def _dispatch_fallback_operations(
 
     try:
         from cryo.engines.factory import create_engine
+        from cryo.engines.spark.k8s_engine import SparkK8sEngine
 
         try:
             fallback_destination = store.get_destination(fallback_id.strip())
@@ -381,9 +384,27 @@ def _dispatch_fallback_operations(
                 fallback_engine.type,
                 reason,
             )
+            # PDAE-8352: submit() (fire-and-forget, no wait_for_completion()) exists only
+            # on SparkK8sEngine -- that's the destination this actually matters for (Spark
+            # fallback dispatches are the ones with real wall-clock submit+run time that
+            # were capping the whole wave's throughput at the fallback destination's
+            # slot_cap). Any other engine (e.g. Trino) keeps the synchronous execute() path;
+            # those calls are fast enough that blocking on them was never the bottleneck.
+            use_async = isinstance(fallback_engine, SparkK8sEngine)
             for statement in fallback_engine.render(fallback_plan):
-                result = fallback_engine.execute(statement)
-                if result.ok:
+                result = (
+                    fallback_engine.submit(statement)
+                    if isinstance(fallback_engine, SparkK8sEngine)
+                    else fallback_engine.execute(statement)
+                )
+                if use_async and result.ok:
+                    logger.info(
+                        "%s: fallback %s submitted (engine_ref=%s, outcome pending)",
+                        table_ref,
+                        operation.type.value,
+                        result.engine_ref,
+                    )
+                elif result.ok:
                     logger.info(
                         "%s: fallback %s succeeded (engine_ref=%s, %sms)",
                         table_ref,
@@ -411,15 +432,19 @@ def _dispatch_fallback_operations(
                     if not result.ok
                     else (result.detail or result.error or reason)
                 )
+                audit_status = (
+                    "SUBMITTED" if (use_async and result.ok) else ("OK" if result.ok else "FAILED")
+                )
                 _record_fallback_audit(
                     store,
                     job_id=job_id,
                     table_id=table_id,
                     table_ref=table_ref,
                     operation=operation,
-                    status="OK" if result.ok else "FAILED",
+                    status=audit_status,
                     engine=fallback_engine.type,
                     detail=audit_detail,
+                    engine_ref=result.engine_ref if use_async else None,
                     duration_ms=result.duration_ms,
                     manifests_rewritten=result.manifests_rewritten,
                 )

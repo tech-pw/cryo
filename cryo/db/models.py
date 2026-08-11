@@ -1169,6 +1169,12 @@ class AuditLog(Base):
     input_files_count: Mapped[int | None] = mapped_column(Integer)
     output_files_count: Mapped[int | None] = mapped_column(Integer)
     actor: Mapped[str | None] = mapped_column(Text)
+    # Async fallback-dispatch tracking (PDAE-8352): engine_ref is the dispatched Spark
+    # job's K8s Job name, set when status="SUBMITTED" so a later sweep can look up its
+    # real outcome without run_wave() blocking on it. resolved_at marks when that sweep
+    # last updated the row, distinguishing "still pending" from "already resolved."
+    engine_ref: Mapped[str | None] = mapped_column(Text)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     table: Mapped[Table | None] = relationship(back_populates="audit_entries")
     job: Mapped[MaintenanceJob | None] = relationship(back_populates="audit_entries")
