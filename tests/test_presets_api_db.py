@@ -449,6 +449,119 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
     assert cancelled_job_response.json()["error"] == "cancelled"
 
 
+def test_maintenance_run_applies_adaptive_routing_around_failing_destination(
+    api_db: ApiDb,
+) -> None:
+    """Regression, confirmed live 2026-08-11: unified_bq.gold_dbt_pw_bq failed on
+    native-datafusion 4 times in a row, and consecutive_engine_failures() correctly detected
+    that streak -- but every retry actually hit this table through POST /maintenance/run
+    (trigger="api"/"claude-retry-failed-*"), which always dispatched to the single
+    `destination_id` the caller passed and never consulted adaptive routing at all. Only the
+    scheduler's cron path (_apply_routing) applied the failure-exclusion logic. This is the
+    ad-hoc API path getting the same protection.
+    """
+    source_id, native_destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+
+    with api_db.session_factory() as session:
+        # A second, healthy destination adaptive routing should fall back to once
+        # native_destination_id is excluded for this table.
+        spark_destination_id = uuid.uuid4()
+        session.add(
+            Destination(
+                id=spark_destination_id,
+                name="spark-fallback",
+                engine="spark",
+                config={"catalog_bindings": [{"source_id": str(source_id)}]},
+            )
+        )
+        session.commit()
+
+        # Seed 2 consecutive failures on native_destination_id for hot_table_id -- matches
+        # the default max_consecutive_failures_before_exclusion threshold.
+        for i in range(2):
+            run_id = uuid.uuid4()
+            session.add(MaintenanceRun(id=run_id, kind="adhoc", status="succeeded"))
+            session.flush()
+            session.add(
+                MaintenanceJob(
+                    id=uuid.uuid4(),
+                    run_id=run_id,
+                    table_id=hot_table_id,
+                    destination_id=native_destination_id,
+                    mode="standard",
+                    status="failed",
+                    started_at=datetime(2026, 8, 10, 10 + i, tzinfo=UTC),
+                    finished_at=datetime(2026, 8, 10, 10 + i, 5, tzinfo=UTC),
+                )
+            )
+            session.commit()
+
+    client = api_db.client
+    preset_id = _create_preset(client, "adaptive-standard", native_destination_id, priority=100)
+
+    # Turn on adaptive_routing and scope engine_pool to both destinations, matching how
+    # default-native-deep is actually configured in prod.
+    patch_response = client.patch(
+        f"/api/v1/presets/{preset_id}",
+        headers=ADMIN_HEADERS,
+        json={
+            "guardrails": {
+                "adaptive_routing": True,
+                "engine_pool": [str(native_destination_id), str(spark_destination_id)],
+            }
+        },
+    )
+    assert patch_response.status_code == 200
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(native_destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "table_ids": [str(hot_table_id)],
+        },
+    )
+    assert run_response.status_code == 201
+    job_id = run_response.json()["job_ids"][0]
+
+    job_detail = client.get(f"/api/v1/jobs/{job_id}", headers=VIEWER_HEADERS).json()
+    # The bug: this used to always equal native_destination_id (payload.destination_id),
+    # regardless of the 2 prior failures. The fix: adaptive routing should have routed this
+    # job away from the excluded destination.
+    assert job_detail["destination_id"] != str(native_destination_id)
+
+
+def test_maintenance_run_keeps_payload_destination_when_adaptive_routing_is_off(
+    api_db: ApiDb,
+) -> None:
+    """The common case (adaptive_routing not set on the preset) must be unaffected --
+    payload.destination_id still wins, exactly as before this fix."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    preset_id = _create_preset(client, "plain-standard", destination_id, priority=100)
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "table_ids": [str(hot_table_id)],
+        },
+    )
+    assert run_response.status_code == 201
+    job_id = run_response.json()["job_ids"][0]
+
+    job_detail = client.get(f"/api/v1/jobs/{job_id}", headers=VIEWER_HEADERS).json()
+    assert job_detail["destination_id"] == str(destination_id)
+
+
 def test_cancel_releases_table_lock_and_is_idempotent(
     api_db: ApiDb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
