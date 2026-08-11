@@ -138,6 +138,17 @@ global:
     # this rolls out, and roll back by removing this line if anything looks wrong.
     CRYO_PROPERTY_AUTOPILOT_ENABLED: "true"
 
+    # Turned on 2026-08-11, during a full-system audit ("is Cryo running at its full
+    # potential") that found this ROI-based admission gate fully built (cryo/governor/
+    # governor.py, cryo/api/routes_smart_maintenance.py) but never turned on. Safe to enable
+    # on its own: roi_gate_shadow_mode defaults to "true" (NOT overridden here), and while
+    # shadow, the gate only logs its benefit-cost-ratio decision per job ("ROI gate shadow:
+    # job ... action=... bcr=... threshold=...") -- it never skips or defers a real job. Only
+    # flip CRYO_ROI_GATE_SHADOW_MODE=false, separately and deliberately, once the shadow logs
+    # have been reviewed and the BCR thresholds (roi_min_bcr / roi_min_bcr_streaming) look
+    # right for this fleet.
+    CRYO_ROI_GATE_ENABLED: "true"
+
 # Enabled 2026-07-29 (see cost-driven-autoscaling plan, #devops-data): turns on the
 # already-built Governor -> sized-per-table K8s Job dispatch path for maintenance jobs
 # (rewrite/expire/orphan), replacing static always-on Worker capacity with ephemeral,
