@@ -48,7 +48,11 @@
       "Bash(docker buildx build:*)",
       "Bash(docker buildx use:*)",
       "Bash(docker buildx:*)",
-      "Bash(docker:*)"
+      "Bash(docker:*)",
+      "Bash(kubectl --context infra:data-platform-cluster -n cryo exec:*)",
+      "Bash(kubectl -n cryo exec:*)",
+      "Bash(helm upgrade:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
