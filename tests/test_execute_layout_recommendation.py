@@ -46,6 +46,7 @@ def _seed(
     recommended_columns: list[str] | None = None,
     status: str = "approved",
     total_files: int | None = None,
+    column_quality: list[str] | None = None,
 ):
     source = Source(
         id=uuid4(),
@@ -98,7 +99,10 @@ def _seed(
         status=status,
     )
     session.add(recommendation)
-    if total_files is not None:
+    if total_files is not None or column_quality is not None:
+        raw = {}
+        if column_quality is not None:
+            raw["column_quality"] = [{"column_name": c} for c in column_quality]
         session.add(
             TableStats(
                 table_id=table.id,
@@ -107,10 +111,11 @@ def _seed(
                 compaction_priority="HIGH",
                 grade="C",
                 overall_score=60,
-                total_files=total_files,
-                small_files_count=total_files,
+                total_files=total_files or 0,
+                small_files_count=total_files or 0,
                 total_partitions=1,
                 total_size_gb=1.0,
+                raw=raw,
             )
         )
     session.commit()
@@ -267,6 +272,79 @@ def test_execute_uses_destination_directly_when_it_is_already_spark(session, mon
     recommendation = session.get(LayoutRecommendation, rec_id)
     assert recommendation.status == "applied"
     assert recommendation.applied_at is not None
+
+
+def test_execute_rejects_columns_not_present_on_real_schema(session, monkeypatch) -> None:
+    """Regression, 2026-08-11: recommended_columns comes straight from QueryPattern.column_name
+    telemetry, never validated against the table's real Iceberg schema -- confirmed live on
+    lsq_pw.silver_prospect_activity_base, whose recommendation included 'mx_customobject_1'
+    (not a real column, a query alias) and dispatched a real Spark job that failed deep in a
+    Java stack trace only after the rewrite had already started. Must fail fast instead."""
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["ProspectActivityAutoId", "mx_customobject_1"],
+        column_quality=["ProspectActivityId", "ProspectActivityAutoId", "ActivityEvent"],
+    )
+    mock_client = _mock_spark_client(monkeypatch, [])
+
+    with pytest.raises(HTTPException) as exc_info:
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "mx_customobject_1" in exc_info.value.detail
+    mock_client.submit_spark_sql.assert_not_called()
+
+    recommendation = session.get(LayoutRecommendation, rec_id)
+    assert recommendation.status == "approved"
+
+
+def test_execute_resolves_case_mismatched_columns_to_real_schema_casing(
+    session, monkeypatch
+) -> None:
+    """Query telemetry routinely lowercases column names (e.g. 'activityevent'), but
+    NamedReference.bind (what WRITE ORDERED BY resolves against) is case-sensitive -- confirmed
+    live, the real column is 'ActivityEvent'. Resolve to the schema's real casing instead of
+    failing outright, since this is a benign, fully-recoverable mismatch."""
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["activityevent"],
+        column_quality=["ProspectActivityAutoId", "ActivityEvent"],
+    )
+    mock_client = _mock_spark_client(monkeypatch, [_success("rewrite"), _success("persist")])
+
+    response = execute_layout_recommendation(
+        rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+    )
+
+    assert response.status == "succeeded"
+    persist_sql = mock_client.submit_spark_sql.call_args_list[1].args[0]
+    assert "`ActivityEvent` ASC" in persist_sql
+    assert "`activityevent`" not in persist_sql
+
+
+def test_execute_skips_schema_validation_when_no_column_quality_available(
+    session, monkeypatch
+) -> None:
+    """A table with no TableStats.column_quality yet (e.g. never scanned) must not be blocked
+    outright -- fall back to trusting the recommendation rather than rejecting everything."""
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+        column_quality=None,
+    )
+    mock_client = _mock_spark_client(monkeypatch, [_success("rewrite"), _success("persist")])
+
+    response = execute_layout_recommendation(
+        rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+    )
+
+    assert response.status == "succeeded"
+    mock_client.submit_spark_sql.assert_called()
 
 
 def test_execute_rejects_when_not_approved(session, monkeypatch) -> None:
