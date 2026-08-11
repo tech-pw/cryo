@@ -69,6 +69,9 @@ def build_plan(
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
         optimize_ops = _optimize_operations(stats, partitions, params, notes)
         pathological_skew = _has_pathological_delete_skew(partitions, params)
+        unreachable_skew = not pathological_skew and _has_unreachable_delete_skew(
+            partitions, params
+        )
         delete_policy = _delete_compaction_policy(stats, partitions, params)
         if delete_policy == "minor":
             operations.append(_rewrite_position_deletes_operation(params))
@@ -79,6 +82,16 @@ def build_plan(
                     f"concentrated on already-compacted partitions with an extreme delete-per-file "
                     f"ratio -- convert_deletes cannot reach these regardless of delete_file_pct "
                     f"({float(stats.get('delete_file_pct') or 0):.2f}%)."
+                )
+            elif unreachable_skew:
+                notes.append(
+                    f"Planned rewrite_position_deletes (minor): "
+                    f"{int(stats.get('position_delete_files') or 0)} position-delete files "
+                    f"concentrated on partitions whose data files are already reasonably sized -- "
+                    f"convert_deletes/optimize select rewrite candidates by file size and would "
+                    f"very likely form zero rewrite groups here despite delete_file_pct "
+                    f"({float(stats.get('delete_file_pct') or 0):.2f}%) being past the major-rewrite "
+                    f"threshold."
                 )
             else:
                 notes.append(
@@ -324,7 +337,9 @@ def _delete_compaction_policy(
         # DV-aware maintenance is a different lever this policy doesn't implement; do not
         # misapply V2-shaped file-count heuristics to it.
         return None
-    if _has_pathological_delete_skew(partitions, params):
+    if _has_pathological_delete_skew(
+        partitions, params
+    ) or _has_unreachable_delete_skew(partitions, params):
         # convert_deletes (rewrite_data_files/BIN-PACK) selects candidates by *file size* --
         # even with delete-file-threshold set, it does not reliably form a rewrite group for a
         # partition whose data files are already well-sized but carry an extreme delete-to-data
@@ -371,6 +386,48 @@ def _has_pathological_delete_skew(
     _delete_compaction_policy for the live incident this codifies."""
     min_ratio = float(params.get("delete_per_file_pathological_ratio", 20.0))
     min_deletes = int(params.get("delete_pathological_min_files", 200))
+    for row in partitions:
+        deletes = _delete_files(row)
+        if deletes < min_deletes:
+            continue
+        small_files = int(row.get("small_files_in_partition_count") or 0)
+        if small_files > 0:
+            continue  # data itself is still fragmented -- convert_deletes can still help here
+        data_files = int(row.get("files_per_partition") or 0)
+        if data_files <= 0:
+            continue
+        if deletes / data_files >= min_ratio:
+            return True
+    return False
+
+
+def _has_unreachable_delete_skew(
+    partitions: Sequence[Mapping[str, Any]], params: Mapping[str, Any]
+) -> bool:
+    """True if any partition's data files are already well-sized (no small-file fragmentation)
+    but still carry enough deletes per data file that rewrite_data_files' size-driven candidate
+    selection is unlikely to form a rewrite group -- a milder version of
+    _has_pathological_delete_skew's "provably zero rewrite groups" case.
+
+    Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (delete_file_pct=100%,
+    a genuinely hot table at 483 queries/30d) has 8 partitions each carrying 150-315
+    position-delete files against 20-44 well-sized data files -- ratios of ~2.6 to ~8.0,
+    well under _has_pathological_delete_skew's default 20.0 "provably unreachable" bar, but still far
+    past the point where convert_deletes/optimize's size-driven selection reliably picks up
+    these files. That table's own "succeeded" job plan explicitly deferred to optimize
+    ("planned optimize already rewrites data files for this table") and never touched the
+    deletes -- delete_file_pct was still 100% in the live snapshot afterward. Distinct,
+    separately-tunable threshold from the pathological case so a fleet-wide default change
+    here can't silently also change the (already-proven, already-tested) pathological
+    threshold's behavior.
+    """
+    # 7.0 sits with real margin on both sides: the live incident this codifies
+    # (mview.gold_dbt_test_results) has its highest per-partition ratio at ~8.0 (295/37), and
+    # test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted (a separate,
+    # deliberately-milder fixture for _has_pathological_delete_skew, ratio 20.0) sits at 18.0 --
+    # this threshold must never drift close enough to either to make those tests ambiguous.
+    min_ratio = float(params.get("delete_per_file_unreachable_ratio", 7.0))
+    min_deletes = int(params.get("delete_unreachable_min_files", 100))
     for row in partitions:
         deletes = _delete_files(row)
         if deletes < min_deletes:
