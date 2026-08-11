@@ -547,6 +547,32 @@ class Settings(BaseSettings):
             "tick rather than trying to sweep the whole fleet in one pass."
         ),
     )
+    layout_autopilot_enabled: bool = Field(
+        default=False,
+        description=(
+            "Off by default -- opt-in, and a second gate on top of the per-preset opt-in "
+            "below. When true, the scheduler's telemetry tick automatically approves and "
+            "executes a table's pending sort/z-order LayoutRecommendation -- but ONLY for "
+            "tables whose effective preset has params.auto_apply_layout_recommendations = "
+            "true. Unlike property_autopilot_enabled (tier1, metadata-only, safe fleet-wide "
+            "by construction), applying a layout recommendation is a real data rewrite "
+            "(tier2, link_layout) -- see cryo/scanner/property_autopilot.py's tier2 rationale. "
+            "It stays human-supervised per-table by requiring the preset itself to opt in, "
+            "not a single global switch, matching the 'test -> adopt & evolve' rollout used "
+            "for every other autonomy change in this system. See "
+            "cryo/scheduler/service.py::_run_layout_autopilot."
+        ),
+    )
+    layout_autopilot_max_tables_per_tick: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Cap on how many tables get their pending layout recommendation auto-executed "
+            "per telemetry tick when layout_autopilot_enabled is true. Kept far lower than "
+            "property_autopilot_max_tables_per_tick since each one is a real Spark rewrite "
+            "job, not a metadata-only property flip."
+        ),
+    )
     s3_request_cost_retention_days: int = Field(
         default=35,
         ge=1,
