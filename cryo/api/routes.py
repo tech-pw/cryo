@@ -1559,7 +1559,6 @@ def _adaptive_routing_destinations_for_run(
         return {}
 
     from cryo.db.repositories.presets import preset_to_config, table_to_candidate
-    from cryo.db.repositories.scheduler_store import SQLSchedulerStore
     from cryo.scheduler.adaptive_routing import (
         AdaptiveRoutingContext,
         resolve_destination_adaptive,
@@ -1585,8 +1584,62 @@ def _adaptive_routing_destinations_for_run(
     # Bounded to exactly this run's tables, not the fleet -- list_tables() OOM-killed the API
     # pod once this session from an unbounded query; consecutive_engine_failures() is already
     # scoped this way for the same reason (see its own docstring).
-    store = SQLSchedulerStore(lambda: session, redis_client=None)
-    failure_history = store.consecutive_engine_failures([str(t.id) for t in tables])
+    #
+    # Regression, confirmed live 2026-08-11: this used to construct SQLSchedulerStore with
+    # `lambda: session` standing in for its usual session_factory -- but SQLSchedulerStore's
+    # methods do `with self._session_factory() as session:`, i.e. they call __exit__ on
+    # whatever the "factory" returns. Passed the live request-scoped `session` object directly,
+    # that closes/rolls back this route's own session partway through the request (right after
+    # this helper returns), so the later MaintenanceRun/MaintenanceJob inserts in the same
+    # request failed with "insert or update on table jobs violates foreign key constraint
+    # fk_jobs_run_id_runs" -- the run row from earlier in the same (now-closed) transaction was
+    # gone. Inlining the same query here, against the real request session with no extra
+    # with-block around it, avoids ever needing a fake session factory.
+    failure_history: dict[str, dict[str, int]] = {}
+    table_ids_as_uuid = [table.id for table in tables]
+    if table_ids_as_uuid:
+        ranked = (
+            select(
+                MaintenanceJob.table_id,
+                MaintenanceJob.destination_id,
+                MaintenanceJob.status,
+                func.row_number()
+                .over(
+                    partition_by=(MaintenanceJob.table_id, MaintenanceJob.destination_id),
+                    order_by=MaintenanceJob.started_at.desc(),
+                )
+                .label("rn"),
+            )
+            .where(
+                MaintenanceJob.table_id.in_(table_ids_as_uuid),
+                MaintenanceJob.started_at.is_not(None),
+                MaintenanceJob.status.in_(("succeeded", "failed", "partial")),
+            )
+            .subquery()
+        )
+        rows = session.execute(
+            select(ranked.c.table_id, ranked.c.destination_id, ranked.c.status)
+            .where(ranked.c.rn <= 10)
+            .order_by(ranked.c.table_id, ranked.c.destination_id, ranked.c.rn)
+        ).all()
+        current_key: tuple[str, str] | None = None
+        streak = 0
+        broken = False
+        for row_table_id, row_destination_id, row_status in rows:
+            key = (str(row_table_id), str(row_destination_id))
+            if key != current_key:
+                current_key = key
+                streak = 0
+                broken = False
+            if not broken:
+                if row_status == "failed":
+                    streak += 1
+                else:
+                    broken = True
+            if streak:
+                failure_history.setdefault(str(row_table_id), {})[str(row_destination_id)] = (
+                    streak
+                )
 
     routed: dict[str, str] = {}
     for table in tables:
