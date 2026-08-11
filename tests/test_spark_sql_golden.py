@@ -178,6 +178,71 @@ def test_spark_renders_optimize_persists_target_file_size_and_distribution_mode(
     assert "'target-file-size-bytes', '134217728'" in statements[1]
 
 
+def test_spark_renders_linear_sort_as_write_ordered_by_before_rewrite() -> None:
+    """Regression, 2026-08-11: rewrite_data_files(strategy => 'sort') does NOT read a linear
+    sort order from its options map -- confirmed live on lsq_pw.silver_prospect_activity_base,
+    which failed with "Cannot sort data without a valid sort order, table ... is unsorted and
+    no sort order is provided" even with 'sort-order' set in options. Iceberg's rewrite
+    procedure only honors a linear sort against the table's own persisted sort-order metadata,
+    so ALTER TABLE ... WRITE ORDERED BY must run first, in the same dispatched statement."""
+    plan = MaintenancePlan(
+        table_ref="cdp.lsq_pw.silver_prospect_activity_base",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    "strategy": "sort",
+                    "sort_columns": ["ProspectActivityAutoId", "activityevent"],
+                    "rewrite_all": True,
+                },
+            ),
+        ),
+    )
+    sql = render(plan)[0].sql
+    statements = sql.split(";\n")
+    assert len(statements) == 3
+    # Both ALTER statements are metadata-only and independently committed before the rewrite
+    # runs, so their relative order doesn't matter -- what matters is that WRITE ORDERED BY
+    # lands before the rewrite_data_files call, which the last assertion below confirms.
+    assert statements[0].startswith(
+        "ALTER TABLE cdp.lsq_pw.silver_prospect_activity_base SET TBLPROPERTIES ("
+    )
+    assert statements[1] == (
+        "ALTER TABLE cdp.lsq_pw.silver_prospect_activity_base WRITE ORDERED BY "
+        "`ProspectActivityAutoId` ASC, `activityevent` ASC"
+    )
+    assert statements[2].startswith("CALL cdp.system.rewrite_data_files(")
+    assert "strategy => 'sort'" in statements[2]
+    # The bogus inline 'sort-order' options-map entry is gone -- Iceberg never read it for the
+    # linear-sort strategy, only for zorder (see the zorder test below).
+    assert "'sort-order'" not in statements[2]
+
+
+def test_spark_renders_zorder_inline_without_write_ordered_by() -> None:
+    """Z-order is a genuinely different Iceberg rewrite argument -- it's passed inline via the
+    options map and does NOT require table-level sort-order metadata first, unlike linear sort
+    (see test_spark_renders_linear_sort_as_write_ordered_by_before_rewrite above)."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {
+                    "strategy": "zorder",
+                    "zorder_columns": ["tenant_id", "event_date"],
+                    "persist_target_file_size": False,
+                },
+            ),
+        ),
+    )
+    sql = render(plan)[0].sql
+    assert not sql.startswith("ALTER TABLE")
+    assert sql.startswith("CALL iceberg.system.rewrite_data_files(")
+    assert "'sort-order', 'zorder(`tenant_id`, `event_date`)'" in sql
+
+
 def test_spark_can_render_scoped_rewrite_without_persisting_table_properties() -> None:
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
