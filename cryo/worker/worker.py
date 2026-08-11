@@ -103,6 +103,8 @@ class AuditRecord:
     snapshots_expired: int | None = None
     manifests_rewritten: int | None = None
     actor: str | None = None
+    # Async fallback-dispatch tracking (PDAE-8352) -- see AuditLog.engine_ref's docstring.
+    engine_ref: str | None = None
 
 
 @dataclass(frozen=True)

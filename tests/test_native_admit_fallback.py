@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
+from cryo.engines.spark.k8s_engine import SparkK8sEngine
 from cryo.governor.native_admit import (
     _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY,
     _dispatch_fallback_operations,
@@ -595,3 +596,84 @@ def test_run_fallback_dispatches_concurrently_one_failure_does_not_block_others(
         dispatches, destination_config={}, store=store
     )  # must not raise
     assert sorted(ran) == [0, 1, 2]
+
+
+def _spark_engine_with_mock_client(monkeypatch) -> tuple[SparkK8sEngine, MagicMock]:
+    """A real SparkK8sEngine (so isinstance(engine, SparkK8sEngine) is True, taking the
+    async submit() path) with its underlying SparkK8sClient replaced by a mock -- matches
+    tests/test_execute_layout_recommendation.py's _mock_spark_client pattern."""
+    mock_client = MagicMock()
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
+    )
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    return engine, mock_client
+
+
+def test_spark_fallback_dispatch_submits_without_waiting_for_completion(monkeypatch) -> None:
+    """Regression, 2026-08-11 (PDAE-8352): _dispatch_fallback_operations used to call
+    execute() (submit + block on wait_for_completion()) inline for every native-unsupported
+    operation -- with the fallback destination's own slot_cap (e.g. 6) and each dispatch
+    taking real wall-clock time, this made it the effective ceiling on the whole Governor's
+    per-wave admission throughput, independent of the native engine's own much higher
+    slot_cap. Confirmed live: 7,855 deep-mode jobs queued, draining at ~12/min. Fix: for a
+    real SparkK8sEngine, use submit() (fire-and-forget) and record status=SUBMITTED with
+    the engine_ref, instead of blocking on the full result."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    engine, mock_client = _spark_engine_with_mock_client(monkeypatch)
+    mock_client.submit_spark_sql.return_value = "cryo-spark-abc123"
+
+    with patch("cryo.engines.factory.create_engine", return_value=engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref="lake.analytics.load_test_basefact",
+            job_id="job-42",
+            table_id="table-42",
+        )
+
+    # The whole point: wait_for_completion() must never be called from this path.
+    mock_client.wait_for_completion.assert_not_called()
+    mock_client.submit_spark_sql.assert_called_once()
+
+    assert len(store.audit) == 1
+    record = store.audit[0]
+    assert record.status == "SUBMITTED"
+    assert record.engine_ref == "cryo-spark-abc123"
+
+
+def test_non_spark_fallback_dispatch_still_blocks_synchronously() -> None:
+    """The async path is Spark-specific (submit() only exists on SparkK8sEngine) -- any
+    other fallback engine (e.g. Trino) keeps the original synchronous execute() call,
+    since those were never the bottleneck this fix targets."""
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="trino-1", engine=EngineType.TRINO, config={}))
+    fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
+
+    mock_engine = MagicMock()
+    mock_engine.type = EngineType.TRINO
+    mock_engine.render.return_value = [MagicMock(sql="ALTER TABLE ... EXECUTE optimize_manifests")]
+    mock_engine.execute.return_value = MagicMock(
+        ok=True, engine_ref="trino-query-1", duration_ms=300, error=None, detail="done"
+    )
+
+    with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=fallback_ops,
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "trino-1"},
+            source_config={},
+            table_ref="lake.analytics.load_test_basefact",
+            job_id="job-1",
+            table_id="table-1",
+        )
+
+    mock_engine.execute.assert_called_once()
+    assert store.audit[0].status == "OK"

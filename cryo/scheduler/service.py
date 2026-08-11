@@ -77,6 +77,7 @@ class SchedulerService:
         self._maybe_prune_audit_logs(current)
         self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
+        self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
@@ -635,6 +636,35 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("silent_data_loss sweep failed: %s", exc)
+
+    def _sweep_pending_fallback_dispatches(self) -> None:
+        """Resolve SUBMITTED audit rows (async Spark fallback dispatches, PDAE-8352) to
+        their real terminal outcome.
+
+        Runs every tick with no extra throttle -- like _dispatch_scheduled_runs above, the
+        check itself is cheap and bounded (see sweep_pending_fallback_dispatches's own
+        max_rows default), and a stuck-pending dispatch should get resolved close to when
+        it actually finishes, not delayed by an internal interval.
+        """
+        import logging
+
+        from cryo.governor.fallback_sweep import sweep_pending_fallback_dispatches
+
+        logger = logging.getLogger(__name__)
+        try:
+            with SessionLocal() as session:
+                result = sweep_pending_fallback_dispatches(session)
+            if result.resolved_ok or result.resolved_failed or result.lookup_errors:
+                logger.info(
+                    "Fallback dispatch sweep: %d resolved ok, %d resolved failed, "
+                    "%d still pending, %d lookup errors",
+                    result.resolved_ok,
+                    result.resolved_failed,
+                    result.still_pending,
+                    result.lookup_errors,
+                )
+        except Exception as exc:  # pragma: no cover - defensive: don't break the scheduler.
+            logger.warning("Fallback dispatch sweep failed: %s", exc)
 
     def _dispatch_scheduled_runs(self, current: datetime) -> None:
         """Enqueue one-off runs whose `scheduled_at` has passed.
