@@ -95,6 +95,69 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
     assert unassigned is None
 
 
+def test_effective_preset_falls_through_to_rules_when_pinned_preset_is_disabled() -> None:
+    # A table pinned to a preset that has since been disabled (retired, replaced) must
+    # not be blackholed forever -- it should fall through to the normal rule engine.
+    # Found live in production: 21 tables pinned to disabled presets, including a 24TB
+    # table sitting with needs_compaction=True, never rescheduled because the pin
+    # short-circuited before the rule loop ever ran.
+    stale_preset = PresetConfig("stale", "retired-preset", "spark", priority=999, enabled=False)
+    large = PresetConfig("large", "large", "spark", priority=200)
+    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 300})
+    rules = [
+        PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
+    ]
+
+    effective = effective_preset(
+        table,
+        [stale_preset, large],
+        rules,
+        [TableAssignment("table-1", "stale")],
+    )
+    assert effective is not None
+    assert effective.preset.id == "large"
+    assert effective.provenance == "rule_after_stale_pin"
+
+
+def test_effective_preset_falls_through_to_rules_when_pinned_preset_does_not_exist() -> None:
+    # Same fallback behavior when the pinned preset id references a preset that was
+    # deleted outright, not just disabled.
+    large = PresetConfig("large", "large", "spark", priority=200)
+    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 300})
+    rules = [
+        PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
+    ]
+
+    effective = effective_preset(
+        table,
+        [large],
+        rules,
+        [TableAssignment("table-1", "deleted-preset-id")],
+    )
+    assert effective is not None
+    assert effective.preset.id == "large"
+    assert effective.provenance == "rule_after_stale_pin"
+
+
+def test_effective_preset_still_none_when_stale_pin_and_no_rule_matches() -> None:
+    # The fallback only helps when a rule actually matches -- a stale pin with no
+    # matching rule still resolves to None, same as the no-assignment-no-rule case.
+    stale_preset = PresetConfig("stale", "retired-preset", "spark", priority=999, enabled=False)
+    large = PresetConfig("large", "large", "spark", priority=200)
+    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 5})
+    rules = [
+        PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
+    ]
+
+    effective = effective_preset(
+        table,
+        [stale_preset, large],
+        rules,
+        [TableAssignment("table-1", "stale")],
+    )
+    assert effective is None
+
+
 def test_tables_for_preset_uses_effective_preset_and_skips_inactive_tables() -> None:
     standard = PresetConfig("standard", "standard", "trino", priority=100)
     large = PresetConfig("large", "large", "spark", priority=200)

@@ -190,6 +190,14 @@ scheduler_approval_requests_total = Counter(
     ["operation_type", "status"],  # status: pending, approved, rejected, expired
 )
 
+scheduler_unmatched_tables = Gauge(
+    "cryo_scheduler_unmatched_tables",
+    "Active tables that resolve to no effective preset (no pinned assignment, no matching "
+    "rule) and so are never scheduled for maintenance by any cron. Split by whether the "
+    "table's latest scan flagged needs_compaction=True, since that's the actionable subset.",
+    ["needs_compaction"],
+)
+
 rollout_decisions_total = Counter(
     "cryo_rollout_decisions_total",
     "Cohort rollout safety decisions by declared phase.",

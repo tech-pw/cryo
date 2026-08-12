@@ -402,6 +402,19 @@ class Settings(BaseSettings):
         ge=1,
         description="Hours between scheduled health-classifier drift evaluations.",
     )
+    unmatched_tables_check_interval_hours: int = Field(
+        default=6,
+        ge=1,
+        description=(
+            "Hours between fleet-wide sweeps for active tables that resolve to no effective "
+            "preset (cryo.scheduler.rules.effective_preset returns None) -- these are never "
+            "scheduled for maintenance by any cron and previously went undetected. Matches "
+            "the scanner cadence (0 */6 * * *) since that's when needs_compaction can change. "
+            "Real incident, 2026-08-12: 1,267 active tables with needs_compaction=True matched "
+            "no enabled preset, including a 24TB table pinned to a preset that had been "
+            "disabled -- found only via manual investigation, with no metric surfacing it."
+        ),
+    )
 
     # Slack notifications
     slack_webhook_url: str | None = Field(
