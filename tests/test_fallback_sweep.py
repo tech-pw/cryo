@@ -88,6 +88,40 @@ def test_sweep_resolves_submitted_row_to_failed_when_job_failed(session, monkeyp
     assert row.resolved_at is not None
 
 
+def test_sweep_resolves_submitted_row_to_unknown_when_job_ttl_expired(session, monkeypatch) -> None:
+    """Real incident, 2026-08-12: a scheduler RBAC gap (fixed separately) left this sweep
+    unable to resolve anything for ~20h; by the time it could reach 8,401 backlogged
+    SUBMITTED rows, ~8,348 of them had TTL-expired -- their K8s Job and driver pod were
+    both already gone. UNKNOWN records that honestly (outcome unrecoverable) instead of
+    a false FAILED (implies an observed failure that was never actually seen)."""
+    _seed_spark_destination(session)
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-longgone")
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-longgone",
+        state=JobRunState.UNKNOWN,
+        state_details="Dispatch Job and driver pod both gone (TTL-expired)",
+    )
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
+    )
+
+    result = sweep_pending_fallback_dispatches(session)
+
+    assert result.resolved_unknown == 1
+    assert result.resolved_ok == 0
+    assert result.resolved_failed == 0
+    session.refresh(row)
+    assert row.status == "UNKNOWN"
+    assert row.detail == "Dispatch Job and driver pod both gone (TTL-expired)"
+    assert row.resolved_at is not None
+    # Still attempts cleanup -- the credentials Secret may outlive the wrapper Job.
+    mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-longgone")
+
+
 def test_sweep_cleans_up_driver_pod_and_secret_on_resolution(session, monkeypatch) -> None:
     """submit() (the async path this sweep resolves) deliberately skips cleanup at
     dispatch time -- the driver pod/credentials Secret are still in use while the job

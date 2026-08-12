@@ -734,12 +734,19 @@ class SchedulerService:
         try:
             with SessionLocal() as session:
                 result = sweep_pending_fallback_dispatches(session)
-            if result.resolved_ok or result.resolved_failed or result.lookup_errors:
+            if (
+                result.resolved_ok
+                or result.resolved_failed
+                or result.resolved_unknown
+                or result.lookup_errors
+            ):
                 logger.info(
                     "Fallback dispatch sweep: %d resolved ok, %d resolved failed, "
+                    "%d resolved unknown (TTL-expired before resolution), "
                     "%d still pending, %d lookup errors",
                     result.resolved_ok,
                     result.resolved_failed,
+                    result.resolved_unknown,
                     result.still_pending,
                     result.lookup_errors,
                 )

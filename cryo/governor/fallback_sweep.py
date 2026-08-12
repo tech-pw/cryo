@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 class FallbackSweepResult:
     resolved_ok: int
     resolved_failed: int
+    resolved_unknown: int
     still_pending: int
     lookup_errors: int
 
@@ -64,6 +65,7 @@ def sweep_pending_fallback_dispatches(
 
     resolved_ok = 0
     resolved_failed = 0
+    resolved_unknown = 0
     still_pending = 0
     lookup_errors = 0
 
@@ -77,7 +79,7 @@ def sweep_pending_fallback_dispatches(
             "Fallback sweep: no resolvable Spark fallback destination; %d row(s) left pending",
             len(rows),
         )
-        return FallbackSweepResult(0, 0, len(rows), 0)
+        return FallbackSweepResult(0, 0, 0, len(rows), 0)
 
     for row in rows:
         if not row.engine_ref:
@@ -104,6 +106,15 @@ def sweep_pending_fallback_dispatches(
         if result.state == JobRunState.SUCCESS:
             row.status = "OK"
             resolved_ok += 1
+        elif result.state == JobRunState.UNKNOWN:
+            # Job + driver both gone (TTL-expired) before anything ever resolved this row
+            # -- the real outcome is unrecoverable, not "known to have failed". Distinct
+            # terminal status so this doesn't read as a false FAILED (implies an observed
+            # failure) or keep looking like an active bug (lookup_errors, which retries
+            # forever -- this will never resolve differently on a later tick).
+            row.status = "UNKNOWN"
+            row.detail = result.state_details or row.detail
+            resolved_unknown += 1
         else:
             row.status = "FAILED"
             row.detail = result.state_details or row.detail
@@ -115,8 +126,11 @@ def sweep_pending_fallback_dispatches(
         # this row has reached a terminal state, this is the only place left that will
         # ever call it -- execute()'s own `finally: cleanup_after_run(...)` never runs
         # for a submit()-dispatched job, since execute() is never called for it at all.
-        # Best-effort: a cleanup failure here must not stop this row from being marked
-        # resolved -- the outcome is already known and correct either way.
+        # Still worth attempting even for UNKNOWN: the wrapper Job is gone but the
+        # credentials Secret may not be (it isn't Job-TTL-owned in every code path --
+        # see _adopt_credentials_secret). Best-effort: a cleanup failure here must not
+        # stop this row from being marked resolved -- the outcome is already known (or
+        # known-unknowable) and correct either way.
         try:
             engine.k8s_client.cleanup_after_run(row.engine_ref)
         except Exception:
@@ -127,10 +141,12 @@ def sweep_pending_fallback_dispatches(
                 exc_info=True,
             )
 
-    if resolved_ok or resolved_failed:
+    if resolved_ok or resolved_failed or resolved_unknown:
         session.commit()
 
-    return FallbackSweepResult(resolved_ok, resolved_failed, still_pending, lookup_errors)
+    return FallbackSweepResult(
+        resolved_ok, resolved_failed, resolved_unknown, still_pending, lookup_errors
+    )
 
 
 def _spark_engine_for_fallback_lookups(session: Session) -> SparkK8sEngine | None:
