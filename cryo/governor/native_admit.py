@@ -20,7 +20,7 @@ from cryo.db.repositories.native_dispatch import (
     get_dispatch,
     mark_dispatch_running,
 )
-from cryo.domain.enums import EngineType, JobStatus, Mode
+from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.native.batch import build_batch_payload
 from cryo.engines.native.job_dispatch import (
@@ -73,6 +73,31 @@ logger = logging.getLogger(__name__)
 # create_engine), so running them concurrently is safe; bounding by the fallback
 # destination's slot_cap keeps it consistent with the capacity the operator configured.
 _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY = 6
+
+# Operations that mutate a table's snapshot/manifest state: expiring or removing files
+# changes which manifests are "live", and rewriting/optimizing data or manifests commits
+# a new snapshot. Two of these running concurrently against the *same table* -- one via
+# the native (iceberg-go) K8s job, one via the SQL fallback dispatch -- race on that same
+# metadata with no coordination between them.
+#
+# Real incident, 2026-08-11 evening: a single admission wave dispatched native
+# expire_snapshots + remove_orphan_files and, in the same cycle, fallback-routed
+# optimize_manifests (CALL rewrite_manifests) to Spark for the same tables -- both
+# writers touching live Iceberg metadata at once. ~3,751 native jobs failed in that
+# window; 870 tables were left with a current snapshot referencing a manifest file that
+# had already been deleted (Trino: "Metadata not found in metadata location";
+# scanner: "could not open manifest file ... NoSuchKey"). Whichever engine committed
+# last won; the loser's assumptions about what was still live were already stale.
+_SNAPSHOT_MUTATING_OPERATIONS: frozenset[OperationType] = frozenset(
+    {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.OPTIMIZE,
+        OperationType.OPTIMIZE_MANIFESTS,
+        OperationType.CONVERT_DELETES,
+        OperationType.REWRITE_POSITION_DELETES,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -147,8 +172,41 @@ def build_native_request(
     """
     routing = resolve_native_routing(plan, stats, destination_config)
     native_ops = routing.native_operations
-    if routing.fallback_operations or routing.skipped_operations:
-        dropped = {op.type for op, _ in (*routing.fallback_operations, *routing.skipped_operations)}
+    fallback_operations = routing.fallback_operations
+
+    # A fallback op that mutates snapshot/manifest state must never be dispatched in the
+    # same cycle as native operations that also mutate that state -- the native K8s job
+    # and the fallback dispatch have no coordination between them and both write to the
+    # same table's Iceberg metadata concurrently. See _SNAPSHOT_MUTATING_OPERATIONS'
+    # docstring for the real incident this fixes. Deferred fallback ops are dropped from
+    # this dispatch (not executed, not skipped-permanently) -- they get re-planned and
+    # re-routed on the table's next scheduled run, once native_ops has had a full cycle
+    # to complete and the table's snapshot state has settled.
+    if native_ops and any(op.type in _SNAPSHOT_MUTATING_OPERATIONS for op in native_ops):
+        deferred_fallback = [
+            (op, reason)
+            for op, reason in fallback_operations
+            if op.type in _SNAPSHOT_MUTATING_OPERATIONS
+        ]
+        if deferred_fallback:
+            logger.warning(
+                "Table %s: deferring %s fallback op(s) to next cycle -- native ops in this "
+                "same dispatch (%s) also mutate snapshot/manifest state, and running both "
+                "concurrently against the same table risks a manifest-not-found corruption "
+                "(see 2026-08-11 incident)",
+                table_id,
+                ", ".join(sorted(op.type.value for op, _ in deferred_fallback)),
+                ", ".join(sorted(op.type.value for op in native_ops)),
+            )
+            deferred_types = {op.type for op, _ in deferred_fallback}
+            fallback_operations = tuple(
+                (op, reason)
+                for op, reason in fallback_operations
+                if op.type not in deferred_types
+            )
+
+    if fallback_operations or routing.skipped_operations:
+        dropped = {op.type for op, _ in (*fallback_operations, *routing.skipped_operations)}
         logger.info(
             "Native-unsupported operations for table %s: %s",
             table_id,
@@ -181,7 +239,7 @@ def build_native_request(
             if params.get("group_concurrency") in (None, 2):
                 params["group_concurrency"] = group_concurrency_for_table(stats)
             op["params"] = params
-    return NativeRequestResult(request=request, fallback_operations=routing.fallback_operations)
+    return NativeRequestResult(request=request, fallback_operations=fallback_operations)
 
 
 def _fallback_engine_config(
