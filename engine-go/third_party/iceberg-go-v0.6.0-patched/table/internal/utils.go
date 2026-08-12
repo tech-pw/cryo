@@ -458,8 +458,20 @@ func (s *statsAggregator[T]) MinAsBytes() ([]byte, error) {
 	}
 
 	if s.truncLen > 0 {
-		return s.toBytes((&iceberg.TruncateTransform{Width: s.truncLen}).
-			Apply(iceberg.Optional[iceberg.Literal]{Valid: true, Val: s.curMin}).Val)
+		// Match Spark/Java ParquetMetrics: string lower bounds use UnicodeUtil
+		// truncateStringMin (code points). TruncateTransform handles that for
+		// strings; binary still truncates by bytes.
+		switch s.primitiveType.(type) {
+		case iceberg.StringType:
+			if !s.curMin.Type().Equals(s.primitiveType) {
+				return nil, errors.New("expected current min to be a string")
+			}
+			curMin := any(s.curMin.Value()).(string)
+			return s.toBytes(iceberg.StringLiteral(TruncateLowerBoundText(curMin, s.truncLen)))
+		default:
+			return s.toBytes((&iceberg.TruncateTransform{Width: s.truncLen}).
+				Apply(iceberg.Optional[iceberg.Literal]{Valid: true, Val: s.curMin}).Val)
+		}
 	}
 
 	return s.toBytes(s.curMin)
@@ -504,18 +516,55 @@ func (s *statsAggregator[T]) MaxAsBytes() ([]byte, error) {
 	}
 }
 
+// TruncateLowerBoundText matches Iceberg Java UnicodeUtil.truncateStringMin
+// (Spark rewrite metrics): keep at most trunc Unicode code points as a valid
+// UTF-8 lower bound.
+func TruncateLowerBoundText(s string, trunc int) string {
+	for idx := range s {
+		if trunc == 0 {
+			return s[:idx]
+		}
+		trunc--
+	}
+	return s
+}
+
+// incrementCodePoint mirrors org.apache.iceberg.util.UnicodeUtil.incrementCodePoint:
+// skip the UTF-16 surrogate range (not Unicode scalar values) so truncated upper
+// bounds remain encodable as UTF-8.
+func incrementCodePoint(codePoint rune) rune {
+	const (
+		minSurrogate = 0xD800
+		maxSurrogate = 0xDFFF
+	)
+	if codePoint >= minSurrogate && codePoint <= maxSurrogate {
+		return 0
+	}
+	if codePoint == minSurrogate-1 {
+		return maxSurrogate + 1
+	}
+	if codePoint == utf8.MaxRune {
+		return 0
+	}
+	return codePoint + 1
+}
+
+// TruncateUpperBoundText matches Iceberg Java UnicodeUtil.truncateStringMax used
+// by Spark when writing file metrics under truncate(N).
 func TruncateUpperBoundText(s string, trunc int) string {
-	if trunc >= utf8.RuneCountInString(s) {
+	runes := []rune(s)
+	if trunc >= len(runes) {
 		return s
 	}
 
-	result := []rune(s)[:trunc]
+	result := runes[:trunc]
 	for i := len(result) - 1; i >= 0; i-- {
-		next := result[i] + 1
-		if utf8.ValidRune(next) {
-			result[i] = next
-
-			return string(result)
+		next := incrementCodePoint(result[i])
+		if next != 0 {
+			out := make([]rune, i+1)
+			copy(out, result[:i])
+			out[i] = next
+			return string(out)
 		}
 	}
 
