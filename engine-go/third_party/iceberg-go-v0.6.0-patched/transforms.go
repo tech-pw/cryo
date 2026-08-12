@@ -35,6 +35,20 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+// truncateString truncates s to at most width Unicode code points, always
+// returning valid UTF-8. Matches Iceberg Java UnicodeUtil.truncateString /
+// Spark rewrite metrics (write.metadata.metrics.default=truncate(N)) and the
+// Iceberg spec: strings truncate by code points, not bytes.
+func truncateString(s string, width int) string {
+	for idx := range s {
+		if width == 0 {
+			return s[:idx]
+		}
+		width--
+	}
+	return s
+}
+
 // ParseTransform takes the string representation of a transform as
 // defined in the iceberg spec, and produces the appropriate Transform
 // object or an error if the string is not a valid transform string.
@@ -433,16 +447,21 @@ func (t TruncateTransform) Transformer(src Type) (func(any) any, error) {
 
 			return val - (((val % width) + width) % width)
 		}, nil
-	case StringType, BinaryType:
+	case StringType:
 		return func(v any) any {
-			switch v := v.(type) {
-			case string:
-				return v[:min(len(v), t.Width)]
-			case []byte:
-				return v[:min(len(v), t.Width)]
-			default:
+			str, ok := v.(string)
+			if !ok {
 				return nil
 			}
+			return truncateString(str, t.Width)
+		}, nil
+	case BinaryType:
+		return func(v any) any {
+			b, ok := v.([]byte)
+			if !ok {
+				return nil
+			}
+			return b[:min(len(b), t.Width)]
 		}, nil
 	case DecimalType:
 		bigWidth := big.NewInt(int64(t.Width))

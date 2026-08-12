@@ -277,10 +277,11 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         finally:
-            # Best-effort: don't leave per-job AWS credential Secrets lying around once
-            # the run is terminal (or timed out/raised).
+            # Best-effort: Spark leaves completed driver pods (and our AWS credential
+            # Secrets) behind -- Job TTL does not cascade to the driver. Delete both
+            # once the run is terminal (or timed out/raised).
             if job_id is not None:
-                self.k8s_client.cleanup_credentials_secret(job_id)
+                self.k8s_client.cleanup_after_run(job_id)
 
 
 def _build_job_name(stmt: RenderedStatement, ctx: ExecCtx | None) -> str:

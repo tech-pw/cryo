@@ -5,6 +5,8 @@ dispatched via Governor create-on-admit) and submitting Spark-on-K8s fallback di
 Jobs (cryo.engines.spark.k8s) -- both are just "create a batch/v1 Job", so one Role
 covers both; Governor admission uses its own ServiceAccount (governor-rbac.yaml), and
 the Spark driver/executor pods run under their own SA (rbac-spark.yaml), not this one.
+pods/delete is required so SparkK8sClient.cleanup_after_run can reclaim completed
+driver pods (Spark does not own them to the wrapper Job).
 */ -}}
 {{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
 apiVersion: v1
@@ -34,7 +36,9 @@ rules:
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    # delete: Spark-on-K8s completed driver pods are not Job-owned; Worker must
+    # reclaim them via SparkK8sClient.cleanup_after_run after the run finishes.
+    verbs: ["get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get", "list"]

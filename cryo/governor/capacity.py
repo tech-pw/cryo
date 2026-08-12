@@ -289,7 +289,7 @@ def _static_capacity(config: Mapping[str, Any]) -> Mapping[str, CapacitySnapshot
     replicas = config.get("replicas") or config.get("coordinators") or ("default",)
     if isinstance(replicas, str):
         replicas = (replicas,)
-    cap = int(config.get("per_replica_cap") or config.get("slot_cap") or 5)
+    cap = int(config.get("per_replica_cap") or config.get("slot_cap") or 2)
     return {str(replica): CapacitySnapshot(capacity=cap, used=0) for replica in replicas}
 
 

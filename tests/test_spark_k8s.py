@@ -67,6 +67,7 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
         catalog_uri="http://iceberg-rest:8181",
         catalog_warehouse="s3://warehouse/",
         image_pull_secrets=("cryo-registry",),
+        node_selector={"karpenter.sh/capacity-type": "on-demand"},
     )
     client = SparkK8sClient(cfg)
 
@@ -113,6 +114,9 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     # Driver/executor pods (created by spark-submit itself, not our Job manifest) also
     # need the same node selector -- this conf flag is how we reach them.
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
+    # Same for do-not-disrupt: wrapper Job annotation alone does not protect driver/executor.
+    assert "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true" in command
+    assert "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true" in command
 
 
 def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
@@ -221,13 +225,14 @@ def test_cleanup_credentials_secret_deletes_when_annotation_present() -> None:
     )
 
 
-def test_cleanup_credentials_secret_noop_without_annotation() -> None:
+def test_cleanup_credentials_secret_falls_back_to_conventional_name() -> None:
+    """When the wrapper Job is already TTL-deleted, still try ``{job_id}-aws``."""
+    from kubernetes.client.exceptions import ApiException
+
     cfg = SparkK8sConfig(namespace="cryo")
     client = SparkK8sClient(cfg)
     batch_api = MagicMock()
-    batch_api.read_namespaced_job.return_value = SimpleNamespace(
-        metadata=SimpleNamespace(annotations={})
-    )
+    batch_api.read_namespaced_job.side_effect = ApiException(status=404)
     core_api = MagicMock()
 
     with (
@@ -236,7 +241,94 @@ def test_cleanup_credentials_secret_noop_without_annotation() -> None:
     ):
         client.cleanup_credentials_secret("cryo-spark-abc")
 
-    core_api.delete_namespaced_secret.assert_not_called()
+    core_api.delete_namespaced_secret.assert_called_once_with(
+        name="cryo-spark-abc-aws", namespace="cryo"
+    )
+
+
+def test_cleanup_driver_pod_deletes_driver() -> None:
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    core_api = MagicMock()
+
+    with patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api):
+        client.cleanup_driver_pod("cryo-spark-abc")
+
+    core_api.delete_namespaced_pod.assert_called_once_with(
+        name="cryo-spark-abc-driver", namespace="cryo"
+    )
+
+
+def test_cleanup_driver_pod_ignores_not_found() -> None:
+    from kubernetes.client.exceptions import ApiException
+
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    core_api = MagicMock()
+    core_api.delete_namespaced_pod.side_effect = ApiException(status=404)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api):
+        client.cleanup_driver_pod("cryo-spark-abc")  # must not raise
+
+
+def test_cleanup_after_run_deletes_driver_and_credentials() -> None:
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+
+    with (
+        patch.object(client, "cleanup_driver_pod") as cleanup_driver,
+        patch.object(client, "cleanup_credentials_secret") as cleanup_secret,
+    ):
+        client.cleanup_after_run("cryo-spark-abc")
+
+    cleanup_driver.assert_called_once_with("cryo-spark-abc")
+    cleanup_secret.assert_called_once_with("cryo-spark-abc")
+
+
+def test_cancel_job_run_also_cleans_driver() -> None:
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    batch_api = MagicMock()
+
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
+        patch.object(client, "cleanup_after_run") as cleanup,
+    ):
+        client.cancel_job_run("cryo-spark-abc")
+
+    batch_api.delete_namespaced_job.assert_called_once()
+    cleanup.assert_called_once_with("cryo-spark-abc")
+
+
+def test_submit_spark_sql_adopts_credentials_secret_to_job() -> None:
+    batch_api = MagicMock()
+    batch_api.create_namespaced_job.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(uid="job-uid-1", name="ignored")
+    )
+    core_api = MagicMock()
+    cfg = SparkK8sConfig(
+        namespace="cryo",
+        s3_access_key="AKIA_TEST",
+        s3_secret_key="shh_test",
+    )
+    client = SparkK8sClient(cfg)
+
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
+    ):
+        job_id = client.submit_spark_sql(
+            "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp"
+        )
+
+    core_api.patch_namespaced_secret.assert_called_once()
+    patch_kwargs = core_api.patch_namespaced_secret.call_args.kwargs
+    assert patch_kwargs["name"] == f"{job_id}-aws"
+    owners = patch_kwargs["body"]["metadata"]["ownerReferences"]
+    assert owners[0]["kind"] == "Job"
+    assert owners[0]["name"] == job_id
+    assert owners[0]["uid"] == "job-uid-1"
+
 
 
 def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:

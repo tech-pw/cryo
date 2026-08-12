@@ -306,6 +306,27 @@ nothing is transmitted automatically. The `cryo.connector/v1` manifest and
 conformance checker give ecosystem source/engine packages a stable protocol
 boundary without dynamic plugin discovery or implied core ownership.
 
+## Spark-on-K8s driver cleanup (2026-08-05, extended 2026-08-12)
+
+Spark keeps completed **driver** pods by design; they are not owned by Cryo's wrapper Job, so
+Job `ttlSecondsAfterFinished` never reclaims them (live: ~1000 orphaned `cryo-spark-*-driver`
+pods on data-platform). Fix:
+
+- `SparkK8sClient.cleanup_after_run` deletes `{job}-driver` + the per-job AWS Secret after a
+  terminal/cancelled run; `SparkK8sEngine.execute` always calls it in `finally`.
+- Credentials Secrets are also `ownerReference`d to the wrapper Job so TTL cascades Secret
+  deletion for fire-and-forget admin dispatches.
+- Worker/Governor Roles gain `pods/delete` so in-cluster cleanup is allowed.
+- `submit()` (PDAE-8352's async fire-and-forget fallback path, 2026-08-11) never calls
+  `execute()`, so its `finally: cleanup_after_run(...)` never runs for a submit()-dispatched
+  job -- `cryo.governor.fallback_sweep.sweep_pending_fallback_dispatches` now calls
+  `cleanup_after_run` itself once a SUBMITTED row resolves to a terminal state.
+- `cleanup_stale_driver_pods` (a separate periodic sweep, not tied to any specific job's
+  completion) is kept as defense-in-depth alongside the above -- confirmed live, 2026-08-06:
+  3,276 completed driver pods had accumulated with zero owner references, catching cases where
+  neither `execute()`'s `finally` nor the fallback sweep ever ran for a given job (crash before
+  reaching either, a dispatch path that predates this fix, etc).
+
 ## Known gaps and non-claims
 
 - No external design-partner interviews, third-party security audit, published
