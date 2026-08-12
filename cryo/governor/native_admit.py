@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
+from cryo.config import get_settings
 from cryo.db.repositories.native_dispatch import (
     create_dispatch_record,
     get_dispatch,
@@ -648,6 +649,7 @@ def admit_native_k8s_jobs(
     try:
         specs = pack_jobs([p.packable for p in prepared], ceilings=ceilings)
         slots_left, cpu_left, mem_left = cluster_headroom(live_capacity, config=destination.config)
+        metastore_headroom = _MetastoreHeadroom(store)
 
         for spec in specs:
             if slots_left <= 0 or spec.cpu_milli > cpu_left or spec.mem_mib > mem_left:
@@ -659,6 +661,22 @@ def admit_native_k8s_jobs(
                     resolved=resolved,
                 )
                 continue
+
+            spec_uris = _spec_metastore_uris(spec, by_job_id)
+            over_capacity_uri = next(
+                (uri for uri in spec_uris if not metastore_headroom.has_headroom(uri)), None
+            )
+            if over_capacity_uri is not None:
+                deferred += _defer_spec(
+                    spec,
+                    defer_job=defer_job,
+                    release_lock=release_lock,
+                    reason=f"metastore_capacity:{over_capacity_uri}",
+                    resolved=resolved,
+                )
+                continue
+            for uri in spec_uris:
+                metastore_headroom.reserve(uri)
 
             # Shared pod: all members use chunk / file-group caps from the dispatch mem.
             peak_stats = _peak_stats_for_spec(spec, by_job_id)
@@ -909,6 +927,55 @@ def _peak_stats_for_spec(
         "total_delete_files": delete_files,
         "total_size_gb": total_size,
     }
+
+
+class _MetastoreHeadroom:
+    """Remaining admission headroom per metastore URI. A URI with no currently-running
+    jobs at all is absent from the underlying count query's GROUP BY result -- treated
+    here as fully open (cap slots free), not zero. Real incident, 2026-08-12: see
+    Settings.max_concurrent_jobs_per_metastore's docstring for the full incident this
+    guards against.
+
+    Duck-typed like list_running_jobs -- not every JobStore implementation (e.g. tests'
+    InMemoryJobStore) needs to support count_running_jobs_by_metastore_uri(); a store
+    that doesn't leaves this permanently "no cap enforced" (has_headroom always True).
+    """
+
+    def __init__(self, store: JobStore) -> None:
+        self._cap = get_settings().max_concurrent_jobs_per_metastore
+        self._remaining: dict[str, int] = {}
+        counter = getattr(store, "count_running_jobs_by_metastore_uri", None)
+        if not callable(counter):
+            return
+        try:
+            current_counts = counter()
+        except Exception:
+            logger.warning("Failed to compute metastore concurrency counts", exc_info=True)
+            return
+        self._remaining = {uri: max(0, self._cap - count) for uri, count in current_counts.items()}
+
+    def has_headroom(self, uri: str) -> bool:
+        return self._remaining.get(uri, self._cap) > 0
+
+    def reserve(self, uri: str) -> None:
+        if uri in self._remaining:
+            self._remaining[uri] -= 1
+        else:
+            self._remaining[uri] = self._cap - 1
+
+
+def _spec_metastore_uris(
+    spec: DispatchSpec, by_job_id: Mapping[str, _PreparedJob]
+) -> set[str]:
+    uris: set[str] = set()
+    for member in spec.members:
+        prepared_item = by_job_id.get(member.job_id)
+        if prepared_item is None:
+            continue
+        uri = prepared_item.table_data.source_config.get("uri")
+        if isinstance(uri, str) and uri:
+            uris.add(uri)
+    return uris
 
 
 def _defer_spec(

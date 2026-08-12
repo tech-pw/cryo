@@ -573,6 +573,27 @@ class Settings(BaseSettings):
             "job, not a metadata-only property flip."
         ),
     )
+    max_concurrent_jobs_per_metastore: int = Field(
+        default=150,
+        ge=1,
+        description=(
+            "Cross-destination cap on RUNNING jobs whose table's source shares the same "
+            "Hive metastore URI, checked at native-engine admission time. Real incident,  "
+            "2026-08-12: a Hive metastore OOM'd (heap exhaustion, JvmPauseMonitor and "
+            "pool-6 threads all throwing OutOfMemoryError) with 322 jobs started in the "
+            "surrounding 15 minutes and ~70 concurrently failing with literal 'failed to "
+            "connect to metastore' -- a direct, foreseeable consequence of raising the "
+            "Governor's per-wave admission throughput (PDAE-8352's async fallback-dispatch "
+            "fix) without checking whether the downstream metastore had headroom for the "
+            "resulting concurrency. native_datafusion's own slot_cap (e.g. 80) has no "
+            "relationship to the shared metastore's real connection capacity -- this is a "
+            "second, independent ceiling, keyed by metastore URI rather than destination "
+            "since multiple destinations/sources can share one metastore. Deliberately "
+            "generous (150) rather than tightly tuned -- the goal is a circuit breaker "
+            "against a repeat of this exact incident, not throughput-optimal metastore "
+            "sizing, which is the metastore operator's call, not Cryo's."
+        ),
+    )
     s3_request_cost_retention_days: int = Field(
         default=35,
         ge=1,

@@ -15,6 +15,7 @@ from cryo.db.models import (
     MaintenanceIntent,
     MaintenanceJob,
     MaintenanceRun,
+    Source,
     Table,
     TableAssignment,
     TablePartition,
@@ -224,6 +225,31 @@ class SQLJobStore:
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
             return [_job_record(session, job) for job in jobs]
+
+    def count_running_jobs_by_metastore_uri(self) -> dict[str, int]:
+        """Count RUNNING jobs grouped by their table's source metastore URI.
+
+        Built for a global (cross-destination) concurrency guardrail, 2026-08-12:
+        native_datafusion's own slot_cap (e.g. 80) has no relationship to the shared Hive
+        metastore's own connection capacity -- confirmed live the same night, a metastore
+        OOM (322 jobs started in the surrounding 15 minutes, ~70 concurrently failing with
+        literal "failed to connect to metastore") followed directly from the async
+        fallback-dispatch throughput fix raising admission speed without anyone checking
+        whether the downstream metastore had headroom for the resulting concurrency. A
+        single GROUP BY query (not per-job N+1 lookups) so this is cheap enough to call
+        every wave.
+        """
+        with self._session_factory() as session:
+            uri_expr = Source.config["uri"].astext
+            results = session.execute(
+                select(uri_expr.label("uri"), func.count(MaintenanceJob.id))
+                .select_from(MaintenanceJob)
+                .join(Table, Table.id == MaintenanceJob.table_id)
+                .join(Source, Source.id == Table.source_id)
+                .where(MaintenanceJob.status == JobStatus.RUNNING.value)
+                .group_by(uri_expr)
+            ).all()
+        return {uri: count for uri, count in results if uri}
 
     def destination_exists(self, destination_id: str) -> bool:
         with self._session_factory() as session:
