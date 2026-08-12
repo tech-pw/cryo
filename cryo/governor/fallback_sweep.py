@@ -109,6 +109,23 @@ def sweep_pending_fallback_dispatches(
             row.detail = result.state_details or row.detail
             resolved_failed += 1
         row.resolved_at = datetime.now(UTC)
+        # submit() (the async fire-and-forget path this sweep resolves) deliberately
+        # skips cleanup at dispatch time -- the driver pod/credentials Secret are still
+        # in use while the job runs (see SparkK8sEngine.submit's own docstring). Now that
+        # this row has reached a terminal state, this is the only place left that will
+        # ever call it -- execute()'s own `finally: cleanup_after_run(...)` never runs
+        # for a submit()-dispatched job, since execute() is never called for it at all.
+        # Best-effort: a cleanup failure here must not stop this row from being marked
+        # resolved -- the outcome is already known and correct either way.
+        try:
+            engine.k8s_client.cleanup_after_run(row.engine_ref)
+        except Exception:
+            logger.warning(
+                "Fallback sweep: cleanup_after_run failed for engine_ref=%s (audit row %s)",
+                row.engine_ref,
+                row.id,
+                exc_info=True,
+            )
 
     if resolved_ok or resolved_failed:
         session.commit()
