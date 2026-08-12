@@ -63,6 +63,7 @@ class SchedulerService:
         self._last_silent_loss_sweep: datetime | None = None
         self._silent_loss_cursor: Any | None = None
         self._last_unmatched_tables_check: datetime | None = None
+        self._last_cost_ceiling_check: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -79,6 +80,7 @@ class SchedulerService:
         self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
         self._maybe_check_unmatched_tables(current)
+        self._maybe_check_cost_ceiling(current)
         self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -675,6 +677,62 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Unmatched-tables sweep failed: %s", exc)
+
+    def _maybe_check_cost_ceiling(self, current: datetime) -> None:
+        """Real-dollar circuit breaker: check the cryo namespace's actual daily spend
+        (used+unused, via Grafana's Athena CUR datasource) and pause fleet-wide admission
+        if it exceeds Settings.cost_ceiling_daily_usd. Off by default
+        (cost_ceiling_enabled) -- see that field's docstring for why, and
+        cryo.reporting.cost_ceiling's module docstring for the incident/request behind
+        this.
+
+        Requires CRYO_GRAFANA_TOKEN (see cryo-secrets) -- silently no-ops if it isn't
+        set, same fail-safe-open contract as every other guardrail in this codebase that
+        depends on an external credential.
+        """
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        settings = get_settings()
+        if not settings.cost_ceiling_enabled:
+            return
+        if self._last_cost_ceiling_check is not None:
+            elapsed = current - self._last_cost_ceiling_check
+            if elapsed < timedelta(minutes=settings.cost_ceiling_check_interval_minutes):
+                return
+
+        import logging
+        import os
+
+        logger = logging.getLogger(__name__)
+        token = os.environ.get("CRYO_GRAFANA_TOKEN")
+        if not token:
+            logger.debug("Cost ceiling check skipped: CRYO_GRAFANA_TOKEN not set")
+            return
+
+        try:
+            from cryo.reporting.cost_ceiling import enforce_cost_ceiling
+
+            with SessionLocal() as session:
+                check = enforce_cost_ceiling(
+                    session,
+                    grafana_url=settings.grafana_base_url,
+                    grafana_token=token,
+                )
+            if check is not None:
+                logger.info(
+                    "Cost ceiling check: cryo namespace $%.2f today (used $%.2f + unused "
+                    "$%.2f) vs $%.2f ceiling%s",
+                    check.total_cost_usd,
+                    check.used_cost_usd,
+                    check.unused_cost_usd,
+                    check.ceiling_usd,
+                    " -- OVER BUDGET" if check.over_ceiling else "",
+                )
+            self._last_cost_ceiling_check = current
+        except Exception as exc:
+            logger.warning("Cost ceiling check failed: %s", exc)
 
     def _maybe_silent_data_loss_sweep(self, current: datetime) -> None:
         """Periodically run the silent-data-loss detector for a rotating slice of the fleet.
