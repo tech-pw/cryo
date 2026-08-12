@@ -43,9 +43,19 @@ class JobRunState(StrEnum):
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+    # Distinct from FAILED: FAILED means the driver/Job told us it failed. UNKNOWN means
+    # both the driver pod and the wrapper Job are gone (404) -- normal once
+    # ttlSecondsAfterFinished passes, but if a caller is asking this late, the real outcome
+    # is genuinely unrecoverable, not "known to have failed". Confirmed live, 2026-08-12:
+    # a scheduler RBAC gap (fixed separately) left 8,401 async fallback dispatches
+    # unresolved from 2026-08-11's incident window; by the time the sweep could reach
+    # them, ~8,348 had already TTL-expired -- this state lets that be recorded honestly
+    # instead of either a bare lookup error (looks like a bug) or a false FAILED (implies
+    # a known outcome that was never actually observed).
+    UNKNOWN = "UNKNOWN"
 
 
-TERMINAL_STATES = frozenset({JobRunState.SUCCESS, JobRunState.FAILED})
+TERMINAL_STATES = frozenset({JobRunState.SUCCESS, JobRunState.FAILED, JobRunState.UNKNOWN})
 SUCCESS_STATES = frozenset({JobRunState.SUCCESS})
 
 
@@ -450,9 +460,30 @@ class SparkK8sClient:
     def _get_wrapper_job_run(self, job_id: str) -> JobRunResult:
         """Fallback for the window before the driver pod exists -- e.g. submission itself
         failed (bad image, RBAC on the wrapper pod) and spark-submit never got to create it.
+
+        A 404 here means both the driver pod (checked by the caller before this) and the
+        wrapper Job itself are gone -- normal once ttlSecondsAfterFinished passes, but if
+        nothing ever resolved this job before then (e.g. the caller lacked the RBAC to
+        check earlier -- see fallback_sweep's docstring), the real outcome is permanently
+        unrecoverable. UNKNOWN, not FAILED: we never actually observed a failure, only its
+        absence now.
         """
+        from kubernetes.client.exceptions import ApiException
+
         batch_api = _new_k8s_batch_client()
-        job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
+        try:
+            job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                return JobRunResult(
+                    job_run_id=job_id,
+                    state=JobRunState.UNKNOWN,
+                    state_details=(
+                        "Dispatch Job and driver pod both gone (TTL-expired) before this "
+                        "job's outcome was ever resolved"
+                    ),
+                )
+            raise
         status = job.status
         if status.failed and status.failed >= 1:
             detail = _read_pod_log_tail(

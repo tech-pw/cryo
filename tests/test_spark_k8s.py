@@ -440,6 +440,51 @@ def test_get_job_run_falls_back_to_wrapper_job_when_driver_pod_missing() -> None
     assert result.state is JobRunState.RUNNING
 
 
+def test_get_job_run_returns_unknown_when_job_and_driver_both_ttl_expired() -> None:
+    """Real incident, 2026-08-12: a caller asking about a job long after its
+    ttlSecondsAfterFinished has passed finds neither the driver pod nor the wrapper Job
+    -- the real outcome is permanently unrecoverable. UNKNOWN, not FAILED: nothing ever
+    actually observed a failure, only the job's absence."""
+    from kubernetes.client.exceptions import ApiException
+
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    core_api = MagicMock()
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
+    batch_api = MagicMock()
+    batch_api.read_namespaced_job.side_effect = ApiException(status=404)
+
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
+    ):
+        result = client.get_job_run("cryo-spark-longgone")
+
+    assert result.state is JobRunState.UNKNOWN
+    assert "TTL-expired" in (result.state_details or "")
+
+
+def test_get_job_run_reraises_non_404_errors_on_wrapper_job_lookup() -> None:
+    """A genuine transient error (RBAC misconfigured, network blip) must still surface
+    as a real exception -- only a confirmed 404 (Job definitely gone) should downgrade
+    to UNKNOWN rather than propagate and be retried next tick."""
+    from kubernetes.client.exceptions import ApiException
+
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    core_api = MagicMock()
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
+    batch_api = MagicMock()
+    batch_api.read_namespaced_job.side_effect = ApiException(status=403)
+
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
+        pytest.raises(ApiException),
+    ):
+        client.get_job_run("cryo-spark-abc123")
+
+
 # --- cleanup_stale_driver_pods (2026-08-06 orphaned-pod cleanup) ------------------
 #
 # Cluster-mode spark-submit creates the driver pod itself, with no owner reference
