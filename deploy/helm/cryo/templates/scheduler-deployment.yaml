@@ -21,6 +21,15 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- if .Values.spark.k8s.enabled }}
+      # -native grants batch/jobs get/list/watch, which is what
+      # sweep_pending_fallback_dispatches (cryo.governor.fallback_sweep) needs to look up
+      # Spark dispatch Job status -- same SA the Worker uses for the same reason (see
+      # worker-deployment.yaml, rbac-native.yaml). The scheduler ran under the "default"
+      # SA before this sweep existed and never needed K8s API access; confirmed live,
+      # 2026-08-12, that gap surfaced as 403 Forbidden on every sweep call.
+      serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- end }}
       containers:
         - name: scheduler
           image: {{ include "cryo.imageRef" .Values.image | quote }}
@@ -37,6 +46,20 @@ spec:
             {{- end }}
             - name: CRYO_HEALTH_PORT
               value: {{ .Values.observability.metricsPort | quote }}
+            {{- if .Values.spark.k8s.enabled }}
+            # cryo.governor.fallback_sweep.sweep_pending_fallback_dispatches (this pod's
+            # scheduler tick) constructs a SparkK8sEngine to resolve SUBMITTED fallback
+            # dispatches -- SparkK8sConfig.from_config() falls back to namespace="default"
+            # when this isn't set, which is wrong (Spark Jobs run in this release's own
+            # namespace, matching worker/governor/api). Confirmed live, 2026-08-12: every
+            # sweep call failed with 403 Forbidden looking up Jobs in "default" because this
+            # var was never wired here -- the scheduler had no Spark/K8s dependency before
+            # this sweep existed, so worker-deployment.yaml's env block was never copied.
+            - name: CRYO_SPARK_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
           resources:
