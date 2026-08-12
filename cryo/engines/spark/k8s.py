@@ -8,9 +8,13 @@ dispatch Job's own exit code mirrors the real Spark application's outcome --
 the same "one Job, exit code is the answer" shape as the native engine's
 ``cryo.engines.native.job_dispatch``.
 
-Executor pods are cleaned up by Spark itself once the driver pod is deleted
-(``spark.kubernetes.driver.pod.name`` + owner references); this dispatcher deletes
-the driver pod as part of Job TTL cleanup, which cascades.
+Spark deletes executor pods on termination
+(``spark.kubernetes.executor.deleteOnTermination``), but **keeps the completed
+driver pod** by design (for logs). That driver is created by spark-submit and is
+**not** owned by our wrapper Job, so Job ``ttlSecondsAfterFinished`` does not
+remove it. Callers must invoke :meth:`SparkK8sClient.cleanup_after_run` once the
+run is terminal (see ``SparkK8sEngine.execute``) to delete the driver pod and the
+per-job AWS credentials Secret.
 """
 
 from __future__ import annotations
@@ -65,6 +69,7 @@ class SparkK8sConfig:
     executor_cpu_milli: int = 2000
     executor_mem_mib: int = 4096
     executor_instances: int = 2
+    node_selector: dict[str, str] | None = None
     active_deadline_seconds: int = _DEFAULT_ACTIVE_DEADLINE_SECONDS
     ttl_seconds_after_finished: int = _DEFAULT_TTL_SECONDS
 
@@ -89,6 +94,21 @@ class SparkK8sConfig:
         else:
             pull_secrets = ()
 
+        # node_selector: allow CRYO_SPARK_K8S_NODE_SELECTOR env as comma-separated key=val pairs
+        _node_sel_raw = _get("node_selector")
+        if isinstance(_node_sel_raw, str):
+            pairs = [p.strip() for p in _node_sel_raw.split(",") if p.strip()]
+            node_selector = {}
+            for p in pairs:
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    node_selector[k.strip()] = v.strip()
+        elif isinstance(_node_sel_raw, Mapping):
+            node_selector = dict(_node_sel_raw)
+        else:
+            # Default to on-demand capacity-type for Spark workloads
+            node_selector = {"karpenter.sh/capacity-type": "on-demand"}
+
         return cls(
             namespace=str(_get("namespace") or "default"),
             image=str(_get("image") or _DEFAULT_IMAGE),
@@ -106,6 +126,7 @@ class SparkK8sConfig:
             executor_cpu_milli=int(_get("executor_cpu_milli") or 2000),
             executor_mem_mib=int(_get("executor_mem_mib") or 4096),
             executor_instances=int(_get("executor_instances") or 2),
+            node_selector=node_selector,
             active_deadline_seconds=int(
                 _get("active_deadline_seconds") or _DEFAULT_ACTIVE_DEADLINE_SECONDS
             ),
@@ -228,18 +249,51 @@ class SparkK8sClient:
             "spark.kubernetes.executor.deleteOnTermination=true",
             "--conf",
             "spark.kubernetes.submission.waitAppCompletion=true",
-            # Driver/executor pods must land on the same Karpenter on-demand capacity as
-            # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
-            # that node pool's instance profile is what actually has S3 access to the
-            # warehouse bucket. A generic node's instance role does not (confirmed live
-            # against data-platform-cluster, 2026-07-21: AccessDeniedException on
-            # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
-            # aren't checkpointed, so on-demand only, matching the native engine's own rule.
+            # Explicit Kubernetes resource requests/limits so Karpenter can pack nodes
+            # accurately instead of guessing from Spark's integer core counts.
             "--conf",
-            "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand",
+            f"spark.kubernetes.driver.request.cores={cfg.driver_cpu_milli / 1000.0:.3f}",
+            "--conf",
+            f"spark.kubernetes.driver.limit.cores={cfg.driver_cpu_milli / 1000.0:.3f}",
+            "--conf",
+            f"spark.kubernetes.executor.request.cores={cfg.executor_cpu_milli / 1000.0:.3f}",
+            "--conf",
+            f"spark.kubernetes.executor.limit.cores={cfg.executor_cpu_milli / 1000.0:.3f}",
+            "--conf",
+            f"spark.kubernetes.driver.request.memory={cfg.driver_mem_mib}m",
+            "--conf",
+            f"spark.kubernetes.driver.limit.memory={cfg.driver_mem_mib}m",
+            "--conf",
+            f"spark.kubernetes.executor.request.memory={cfg.executor_mem_mib}m",
+            "--conf",
+            f"spark.kubernetes.executor.limit.memory={cfg.executor_mem_mib}m",
+            # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
+            # spark-submit and need the same annotation or Karpenter consolidation can
+            # SIGTERM them mid-rewrite (data-platform-cluster 2026-08-12: run 3af23a9f,
+            # Evicted Underutilized → exit 143 → misleading "driver never observed").
+            "--conf",
+            "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true",
+            "--conf",
+            "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true",
             "local:///opt/cryo/cryo_spark_runner.py",
             *runner_args,
         ]
+
+        # Driver/executor pods must land on the same Karpenter on-demand capacity as
+        # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
+        # that node pool's instance profile is what actually has S3 access to the
+        # warehouse bucket. A generic node's instance role does not (confirmed live
+        # against data-platform-cluster, 2026-07-21: AccessDeniedException on
+        # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
+        # aren't checkpointed, so on-demand only, matching the native engine's own rule --
+        # enforced via cfg.node_selector, which defaults to on-demand (see from_config
+        # above) but stays overridable per-destination rather than hardcoded here.
+        #
+        # Insert node selector spark.conf entries so they appear before the app path
+        # (insert at index 1 to keep all --conf values before the application script)
+        if cfg.node_selector:
+            for _k, _v in cfg.node_selector.items():
+                spark_submit_cmd[1:1] = ["--conf", f"spark.kubernetes.node.selector.{_k}={_v}"]
         if cfg.image_pull_secrets:
             secrets_csv = ",".join(cfg.image_pull_secrets)
             spark_submit_cmd[1:1] = [
@@ -248,6 +302,7 @@ class SparkK8sClient:
             ]
 
         credentials_secret_name: str | None = None
+        core_api = None
         if cfg.s3_access_key and cfg.s3_secret_key:
             # secretKeyRef, not a literal --conf value: the pod spec's command array is
             # always visible via `kubectl get pod -o yaml` regardless of RBAC on Secrets,
@@ -261,7 +316,14 @@ class SparkK8sClient:
                 body={
                     "apiVersion": "v1",
                     "kind": "Secret",
-                    "metadata": {"name": credentials_secret_name, "namespace": cfg.namespace},
+                    "metadata": {
+                        "name": credentials_secret_name,
+                        "namespace": cfg.namespace,
+                        "labels": {
+                            "app.kubernetes.io/name": "cryo",
+                            "app.kubernetes.io/component": "spark-fallback",
+                        },
+                    },
                     "stringData": {
                         "access_key_id": cfg.s3_access_key,
                         "secret_access_key": cfg.s3_secret_key,
@@ -316,7 +378,7 @@ class SparkK8sClient:
                     "spec": {
                         "restartPolicy": "Never",
                         "serviceAccountName": cfg.service_account,
-                        "nodeSelector": {"karpenter.sh/capacity-type": "on-demand"},
+                        "nodeSelector": cfg.node_selector,
                         "imagePullSecrets": [{"name": s} for s in cfg.image_pull_secrets],
                         "containers": [
                             {
@@ -336,7 +398,15 @@ class SparkK8sClient:
         }
 
         batch_api = _new_k8s_batch_client()
-        batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
+        created_job = batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
+        if credentials_secret_name and core_api is not None:
+            _adopt_credentials_secret(
+                core_api,
+                secret_name=credentials_secret_name,
+                namespace=cfg.namespace,
+                job_name=k8s_job_name,
+                created_job=created_job,
+            )
         logger.info(
             "Created Spark-on-K8s dispatch Job %s (driver=%s)", k8s_job_name, driver_pod_name
         )
@@ -412,30 +482,82 @@ class SparkK8sClient:
 
     def cancel_job_run(self, job_id: str) -> None:
         batch_api = _new_k8s_batch_client()
-        batch_api.delete_namespaced_job(
-            name=job_id,
-            namespace=self._config.namespace,
-            propagation_policy="Foreground",
-        )
+        try:
+            batch_api.delete_namespaced_job(
+                name=job_id,
+                namespace=self._config.namespace,
+                propagation_policy="Foreground",
+            )
+        finally:
+            # Driver is not owned by the Job -- Foreground delete will not remove it.
+            self.cleanup_after_run(job_id)
+
+    def cleanup_driver_pod(self, job_id: str) -> None:
+        """Delete the Spark driver pod left behind after the application finishes.
+
+        Spark keeps completed drivers for log inspection and does not attach them as
+        children of our wrapper Job, so Job TTL alone never reclaims them. Best-effort:
+        missing/already-deleted is not an error.
+        """
+        driver_pod_name = f"{job_id}-driver"
+        try:
+            core_api = _new_k8s_core_client()
+            core_api.delete_namespaced_pod(
+                name=driver_pod_name,
+                namespace=self._config.namespace,
+            )
+            logger.info("Deleted Spark driver pod %s", driver_pod_name)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+            if _is_not_found(exc):
+                return
+            logger.warning(
+                "Failed to delete Spark driver pod %s: %s",
+                driver_pod_name,
+                exc,
+                exc_info=True,
+            )
 
     def cleanup_credentials_secret(self, job_id: str) -> None:
         """Delete the per-job AWS credentials Secret created by submit_spark_sql, if any.
 
         Best-effort: called after the run reaches a terminal state (or times out/raises)
         so credential Secrets don't accumulate. Missing/already-deleted is not an error.
+        Prefers the Job annotation; falls back to the conventional ``{job_id}-aws`` name
+        when the wrapper Job is already gone (TTL).
         """
+        secret_name: str | None = None
         try:
             batch_api = _new_k8s_batch_client()
             job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
             secret_name = (job.metadata.annotations or {}).get("cryo/credentials-secret-name")
-            if not secret_name:
-                return
+        except Exception as exc:  # noqa: BLE001 - Job may already be TTL-deleted
+            if not _is_not_found(exc):
+                logger.warning(
+                    "Failed to read Job %s while cleaning credentials Secret: %s",
+                    job_id,
+                    exc,
+                    exc_info=True,
+                )
+        if not secret_name:
+            secret_name = f"{job_id}-aws"
+        try:
             core_api = _new_k8s_core_client()
             core_api.delete_namespaced_secret(name=secret_name, namespace=self._config.namespace)
-        except Exception:  # noqa: BLE001 - best-effort cleanup only
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+            if _is_not_found(exc):
+                return
             logger.warning(
-                "Failed to clean up credentials Secret for job %s", job_id, exc_info=True
+                "Failed to clean up credentials Secret %s for job %s: %s",
+                secret_name,
+                job_id,
+                exc,
+                exc_info=True,
             )
+
+    def cleanup_after_run(self, job_id: str) -> None:
+        """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
+        self.cleanup_driver_pod(job_id)
+        self.cleanup_credentials_secret(job_id)
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"
@@ -478,9 +600,7 @@ def cleanup_stale_driver_pods(
                 field_selector=f"status.phase={phase}",
             )
         except Exception:  # noqa: BLE001 - best-effort cleanup only
-            logger.warning(
-                "Failed to list %s Spark driver pods for cleanup", phase, exc_info=True
-            )
+            logger.warning("Failed to list %s Spark driver pods for cleanup", phase, exc_info=True)
             continue
         for pod in pods.items or []:
             start_time = getattr(pod.status, "start_time", None)
@@ -495,9 +615,7 @@ def cleanup_stale_driver_pods(
                 deleted += 1
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
                 if "404" not in str(exc):
-                    logger.warning(
-                        "Failed to delete stale Spark driver pod %s: %s", pod_name, exc
-                    )
+                    logger.warning("Failed to delete stale Spark driver pod %s: %s", pod_name, exc)
     return deleted
 
 
@@ -540,6 +658,66 @@ def _new_k8s_core_client() -> client.CoreV1Api:
 
     _ensure_k8s_config()
     return client.CoreV1Api()
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    status = getattr(exc, "status", None)
+    if status == 404:
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, str) and "not found" in body.lower():
+        return True
+    return False
+
+
+def _adopt_credentials_secret(
+    core_api: Any,
+    *,
+    secret_name: str,
+    namespace: str,
+    job_name: str,
+    created_job: Any,
+) -> None:
+    """Attach the AWS credentials Secret as a child of the wrapper Job.
+
+    Job TTL then cascades Secret deletion even if ``cleanup_credentials_secret``
+    never runs (e.g. fire-and-forget admin diagnostics). The Spark driver pod
+    still needs an explicit delete -- Spark creates it without ownerReferences.
+    """
+    metadata = getattr(created_job, "metadata", None)
+    uid = getattr(metadata, "uid", None)
+    if not uid:
+        logger.warning(
+            "Created Job %s without UID; credentials Secret needs explicit cleanup",
+            job_name,
+        )
+        return
+    try:
+        core_api.patch_namespaced_secret(
+            name=secret_name,
+            namespace=namespace,
+            body={
+                "metadata": {
+                    "ownerReferences": [
+                        {
+                            "apiVersion": "batch/v1",
+                            "kind": "Job",
+                            "name": job_name,
+                            "uid": str(uid),
+                            "controller": True,
+                            "blockOwnerDeletion": True,
+                        }
+                    ]
+                }
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort; cleanup_after_run still deletes
+        logger.warning(
+            "Failed to attach credentials Secret %s to Job %s: %s",
+            secret_name,
+            job_name,
+            exc,
+        )
 
 
 def _read_pod_log_tail(
