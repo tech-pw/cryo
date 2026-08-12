@@ -11,7 +11,12 @@ metadata:
     {{- include "cryo.labels" . | nindent 4 }}
     app.kubernetes.io/component: scanner-worker
 spec:
+  {{- if not .Values.scannerWorker.autoscaling.enabled }}
+  # Omitted when the HPA (scanner-worker-hpa.yaml) is managing replica count -- setting
+  # this here would fight the HPA's live scaling on every `helm upgrade`, resetting
+  # whatever count the HPA had scaled to back to this static value.
   replicas: {{ .Values.scannerWorker.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "cryo.selectorLabels" . | nindent 6 }}

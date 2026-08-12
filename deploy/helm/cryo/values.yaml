@@ -104,6 +104,18 @@ scannerWorker:
       # from headroom against that outlier rather than the median table.
       memory: 3Gi
   # Scanner engine is set via global.env.CRYO_SCAN_ENGINE (default: go).
+  autoscaling:
+    # HPA-managed replica count instead of the fixed `replicas` above -- see
+    # scanner-worker-hpa.yaml for why (this Deployment polls an ad-hoc scan queue that's
+    # empty most of the time, so a fixed replica count sized for the largest burst sits
+    # mostly idle otherwise). `replicas` above still applies as the Deployment's initial
+    # replica count on first create; the HPA takes over from there.
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    scaleDownStabilizationSeconds: 300
 
 scanner:
   schedule: "0 */6 * * *"
