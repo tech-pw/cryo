@@ -63,6 +63,10 @@ def _store_with_job(
 
 class _FakeSettings:
     max_concurrent_jobs_per_metastore = 3
+    # Generous enough that these metastore-cap-focused tests never trip the separate
+    # fleet-wide rate limiter (test_native_admit_fleet_rate_cap.py covers that one).
+    fleet_admission_rate_cap = 100_000
+    fleet_admission_rate_window_minutes = 15
 
 
 def test_metastore_headroom_treats_unseen_uri_as_fully_open(monkeypatch) -> None:

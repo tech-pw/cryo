@@ -251,6 +251,24 @@ class SQLJobStore:
             ).all()
         return {uri: count for uri, count in results if uri}
 
+    def count_jobs_started_since(self, cutoff: datetime) -> int:
+        """Count all jobs (any status, any destination) that started at or after ``cutoff``.
+
+        Fleet-wide circuit breaker, 2026-08-12: the metastore-concurrency cap
+        (count_running_jobs_by_metastore_uri) bounds one specific downstream --
+        it wouldn't have caught a different bottleneck the same admission burst could
+        hit. Real incident that night: 100+ jobs admitted in single-minute windows,
+        11,824 native jobs total across the day, 31% of them failing -- real compute
+        spent and billed regardless of *why* they failed. This is a blunt, mechanism-
+        agnostic ceiling on fleet-wide admission rate itself, independent of which
+        specific downstream would choke on it.
+        """
+        with self._session_factory() as session:
+            count = session.scalar(
+                select(func.count(MaintenanceJob.id)).where(MaintenanceJob.started_at >= cutoff)
+            )
+        return int(count or 0)
+
     def destination_exists(self, destination_id: str) -> bool:
         with self._session_factory() as session:
             destination = session.get(Destination, uuid.UUID(destination_id))

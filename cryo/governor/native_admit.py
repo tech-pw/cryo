@@ -708,6 +708,7 @@ def admit_native_k8s_jobs(
         specs = pack_jobs([p.packable for p in prepared], ceilings=ceilings)
         slots_left, cpu_left, mem_left = cluster_headroom(live_capacity, config=destination.config)
         metastore_headroom = _MetastoreHeadroom(store)
+        fleet_rate_limiter = _FleetAdmissionRateLimiter(store)
 
         for spec in specs:
             if slots_left <= 0 or spec.cpu_milli > cpu_left or spec.mem_mib > mem_left:
@@ -719,6 +720,17 @@ def admit_native_k8s_jobs(
                     resolved=resolved,
                 )
                 continue
+
+            if not fleet_rate_limiter.has_headroom():
+                deferred += _defer_spec(
+                    spec,
+                    defer_job=defer_job,
+                    release_lock=release_lock,
+                    reason="fleet_admission_rate_cap",
+                    resolved=resolved,
+                )
+                continue
+            fleet_rate_limiter.reserve(len(spec.members))
 
             spec_uris = _spec_metastore_uris(spec, by_job_id)
             over_capacity_uri = next(
@@ -1020,6 +1032,45 @@ class _MetastoreHeadroom:
             self._remaining[uri] -= 1
         else:
             self._remaining[uri] = self._cap - 1
+
+
+class _FleetAdmissionRateLimiter:
+    """Blunt, mechanism-agnostic ceiling on fleet-wide admission rate. See
+    Settings.fleet_admission_rate_cap's docstring for the incident this guards against --
+    unlike _MetastoreHeadroom (which closes one specific downstream bottleneck), this
+    bounds the burst itself, so a *different* bottleneck hitting the same admission
+    volume still gets caught.
+
+    Duck-typed like _MetastoreHeadroom -- a JobStore that doesn't implement
+    count_jobs_started_since leaves this permanently "no cap enforced" (has_headroom
+    always True), matching every other guardrail's fail-open-on-missing-support
+    contract in this module.
+    """
+
+    def __init__(self, store: JobStore) -> None:
+        settings = get_settings()
+        self._cap = settings.fleet_admission_rate_cap
+        self._remaining = self._cap
+        counter = getattr(store, "count_jobs_started_since", None)
+        if not callable(counter):
+            return
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            cutoff = datetime.now(UTC) - timedelta(
+                minutes=settings.fleet_admission_rate_window_minutes
+            )
+            current_count = counter(cutoff)
+        except Exception:
+            logger.warning("Failed to compute fleet admission rate", exc_info=True)
+            return
+        self._remaining = max(0, self._cap - current_count)
+
+    def has_headroom(self) -> bool:
+        return self._remaining > 0
+
+    def reserve(self, n: int = 1) -> None:
+        self._remaining = max(0, self._remaining - n)
 
 
 def _spec_metastore_uris(
