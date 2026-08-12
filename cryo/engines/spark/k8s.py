@@ -235,6 +235,12 @@ class SparkK8sClient:
             "--conf", f"spark.kubernetes.driver.limit.memory={cfg.driver_mem_mib}m",
             "--conf", f"spark.kubernetes.executor.request.memory={cfg.executor_mem_mib}m",
             "--conf", f"spark.kubernetes.executor.limit.memory={cfg.executor_mem_mib}m",
+            # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
+            # spark-submit and need the same annotation or Karpenter consolidation can
+            # SIGTERM them mid-rewrite (data-platform-cluster 2026-08-12: run 3af23a9f,
+            # Evicted Underutilized → exit 143 → misleading "driver never observed").
+            "--conf", "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true",
+            "--conf", "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true",
             # Driver/executor pods must land on the same Karpenter on-demand capacity as
             # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
             # that node pool's instance profile is what actually has S3 access to the
