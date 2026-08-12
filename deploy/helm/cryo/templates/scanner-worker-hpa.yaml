@@ -1,0 +1,61 @@
+# Autoscales the ad-hoc scan-queue consumer (scanner-worker-deployment.yaml) instead of
+# running a fixed replica count 24/7. That Deployment polls cryo:scan:pending (Redis list,
+# see cryo/queue/scan_queue.py) every 5s for ad-hoc/manual scan triggers -- most of the
+# time that queue is empty and the pods sit at near-zero CPU, which is exactly what showed
+# up as ~73% "unused cost" on the cost dashboard for the cryo namespace (2026-08-12):
+# provisioned at a fixed 8 replicas for the fleet's largest-observed scan burst, but idle
+# between bursts.
+#
+# minReplicas matches the base chart's default (values.yaml scannerWorker.replicas: 3),
+# already the trusted floor after the Go scan-stats engine landed (see that value's own
+# comment) -- this does not lower the floor below what's already been verified safe.
+# maxReplicas matches values-prod.yaml's current fixed override (8), so this cannot burst
+# past what's already provisioned and proven to handle this fleet's largest scan (12,938
+# tables, one 397k-partition outlier) without a separate capacity review.
+#
+# CPU-based (not queue-depth-based): works with just metrics-server, present on every EKS
+# cluster by default -- no dependency on KEDA or any other operator being installed. A
+# queue-depth trigger (KEDA's redis scaler against cryo:scan:pending's LLEN) would react
+# faster to a burst of ad-hoc scan requests, but that's a genuine follow-up, not a
+# blocker: gate it behind scannerWorker.autoscaling.keda.enabled once KEDA's presence on
+# this cluster is confirmed, rather than assume it here.
+{{- if .Values.scannerWorker.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "cryo.fullname" . }}-scanner-worker
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scanner-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "cryo.fullname" . }}-scanner-worker
+  minReplicas: {{ .Values.scannerWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.scannerWorker.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.scannerWorker.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.scannerWorker.autoscaling.targetMemoryUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      # The ad-hoc scan queue is bursty (a user clicking "Trigger scan" in the web UI), not
+      # a steady ramp -- scale down conservatively so a pod isn't reaped mid-poll right
+      # before the next burst arrives. Scale-up stays at the K8s default (fast, no
+      # stabilization window) so a real burst gets capacity quickly.
+      stabilizationWindowSeconds: {{ .Values.scannerWorker.autoscaling.scaleDownStabilizationSeconds }}
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+{{- end }}

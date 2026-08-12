@@ -224,7 +224,23 @@ scheduler:
       memory: 6Gi
 
 scannerWorker:
+  # `replicas: 8` was a fixed floor, not a target -- provisioned for this fleet's largest
+  # observed scan burst (12,938 tables, one 397k-partition outlier) and left running at
+  # that size continuously, because the base chart's default of 3 (see values.yaml,
+  # justified by the Go scan-stats engine's lower peak RSS) hadn't been verified safe on
+  # this specific cluster yet. CRYO_SCAN_ENGINE=go (global.env) has been live here the
+  # whole time, so that verification gap was already closed in practice -- but rather than
+  # just drop the number and re-trust a single fixed value, autoscale between the two:
+  # minReplicas 3 (the already-justified floor) to maxReplicas 8 (today's provisioned
+  # ceiling, so this can't burst past what's already proven to handle this fleet without a
+  # separate capacity review). Confirmed live, 2026-08-12: this fixed-8 configuration was
+  # ~73% "unused cost" on the cryo-namespace cost dashboard -- the ad-hoc scan queue
+  # (cryo:scan:pending) these pods consume is empty most of the time between bursts.
   replicas: 8
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
   resources:
     requests:
       cpu: 500m
