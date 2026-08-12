@@ -94,7 +94,7 @@ image:
   #    boundary, checked independently. Shipped OFF in this digest; turned ON 2026-08-10 via
   #    global.env.CRYO_PROPERTY_AUTOPILOT_ENABLED below, by request -- see that env var's own
   #    comment for the rollback note.
-  digest: "sha256:983c2e778d4b4a8464e6e99bc4dce621cb539a77a64128aa77a2495b25a3d7b8"
+  digest: "sha256:322d14b38933765fe42fbada725b3786e102441708f95a21a5ee513c77ddbb2f"
 
 imagePullSecrets:
   - cryo-registry
@@ -103,7 +103,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:983c2e778d4b4a8464e6e99bc4dce621cb539a77a64128aa77a2495b25a3d7b8"
+    digest: "sha256:322d14b38933765fe42fbada725b3786e102441708f95a21a5ee513c77ddbb2f"
 
 global:
   envFromSecret: cryo-secrets
@@ -113,6 +113,12 @@ global:
     CRYO_S3_LOG_TRINO_CATALOG: cdp
     # internal.example.com uses a self-signed/internal-CA cert.
     CRYO_TELEMETRY_TRINO_SSL_VERIFY: "false"
+    # User-requested, 2026-08-12: a hard $100/day ceiling on the cryo namespace's own
+    # used+unused spend after real data showed it averaging $210.82/day over the
+    # trailing 14 days. Requires CRYO_GRAFANA_TOKEN (see cryo-secrets, added manually
+    # 2026-08-12 -- not chart-managed, rotate via `kubectl patch secret cryo-secrets`).
+    # See cryo/reporting/cost_ceiling.py.
+    CRYO_COST_CEILING_ENABLED: "true"
     # Explicit, deliberate bridge until real OIDC (CRYO_OIDC_ISSUER_URL/CLIENT_ID) is
     # configured -- re-enables the dev sign-in form (self-declared role, no real identity
     # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.
@@ -165,7 +171,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:983c2e778d4b4a8464e6e99bc4dce621cb539a77a64128aa77a2495b25a3d7b8"
+    digest: "sha256:322d14b38933765fe42fbada725b3786e102441708f95a21a5ee513c77ddbb2f"
   keda:
     enabled: true
 
