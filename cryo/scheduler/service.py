@@ -62,6 +62,7 @@ class SchedulerService:
         self._last_rollout_safety_check: datetime | None = None
         self._last_silent_loss_sweep: datetime | None = None
         self._silent_loss_cursor: Any | None = None
+        self._last_unmatched_tables_check: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -77,6 +78,7 @@ class SchedulerService:
         self._maybe_prune_audit_logs(current)
         self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
+        self._maybe_check_unmatched_tables(current)
         self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -595,6 +597,84 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Rollout safety tick failed: %s", exc)
+
+    def _maybe_check_unmatched_tables(self, current: datetime) -> None:
+        """Periodically sweep for active tables that resolve to no effective preset.
+
+        `effective_preset()` returning None (no pinned assignment, no matching rule) means
+        the table is never scheduled for maintenance by any cron -- silently, forever, until
+        someone manually assigns a preset. There's no platform-default fallback by design,
+        so this isn't a bug in the matching logic itself, but until now nothing surfaced how
+        many tables were actually falling into that gap.
+
+        Real incident, 2026-08-12: found via manual investigation that 1,267 active tables
+        with needs_compaction=True matched no enabled preset, including a 24TB table pinned
+        to a preset that had since been disabled (a related, now-fixed bug in
+        effective_preset's stale-pin handling -- see cryo/scheduler/rules.py). This sweep
+        would have surfaced that gap as a metric instead of requiring ad-hoc debugging.
+        """
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        interval_hours = get_settings().unmatched_tables_check_interval_hours
+        if self._last_unmatched_tables_check is not None:
+            elapsed = current - self._last_unmatched_tables_check
+            if elapsed < timedelta(hours=interval_hours):
+                return
+
+        try:
+            import logging
+
+            from cryo.observability.metrics import scheduler_unmatched_tables
+            from cryo.scheduler.rules import effective_preset
+
+            tables = self._store.list_tables()
+            presets = self._store.list_presets()
+            rules = self._store.list_rules()
+            assignments = self._store.list_assignments()
+
+            unmatched_needs_compaction: list[TableCandidate] = []
+            unmatched_other = 0
+            for table in tables:
+                if effective_preset(table, presets, rules, assignments) is not None:
+                    continue
+                if bool(table.stats.get("needs_compaction")):
+                    unmatched_needs_compaction.append(table)
+                else:
+                    unmatched_other += 1
+
+            scheduler_unmatched_tables.labels(needs_compaction="true").set(
+                len(unmatched_needs_compaction)
+            )
+            scheduler_unmatched_tables.labels(needs_compaction="false").set(unmatched_other)
+
+            logger = logging.getLogger(__name__)
+            if unmatched_needs_compaction:
+                priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+                worst = sorted(
+                    unmatched_needs_compaction,
+                    key=lambda t: (
+                        priority_rank.get(str(t.stats.get("compaction_priority", "LOW")), 3),
+                        -float(t.stats.get("total_size_gb") or 0),
+                    ),
+                )[:10]
+                logger.warning(
+                    "Unmatched-tables sweep: %d active table(s) need compaction but match no "
+                    "enabled preset (never scheduled). Largest/highest-priority: %s",
+                    len(unmatched_needs_compaction),
+                    ", ".join(
+                        f"{t.schema_name}.{t.table_name} "
+                        f"({t.stats.get('compaction_priority')}, "
+                        f"{float(t.stats.get('total_size_gb') or 0):.0f}GB)"
+                        for t in worst
+                    ),
+                )
+            self._last_unmatched_tables_check = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Unmatched-tables sweep failed: %s", exc)
 
     def _maybe_silent_data_loss_sweep(self, current: datetime) -> None:
         """Periodically run the silent-data-loss detector for a rotating slice of the fleet.

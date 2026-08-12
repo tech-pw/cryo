@@ -71,12 +71,23 @@ def effective_preset(
 ) -> EffectivePreset | None:
     presets_by_id = {preset.id: preset for preset in presets if preset.enabled}
 
+    stale_pin = False
     for assignment in assignments:
         if assignment.table_id == table.id and assignment.pinned:
             preset = presets_by_id.get(assignment.preset_id)
             if preset:
                 return EffectivePreset(preset=preset, provenance="assignment")
-            return None
+            # The pin exists but points at a preset that no longer exists or has been
+            # disabled since the table was pinned (e.g. a preset retired in favor of a
+            # replacement). A hard stop here silently blackholes the table forever --
+            # found live in production: 21 tables pinned to disabled presets, including
+            # a 24TB table, sitting with needs_compaction=True and never rescheduled.
+            # Falling through to the rule engine is strictly safer than returning None:
+            # worst case a table gets the generic rule-matched preset instead of its
+            # stale pin, which still maintains it; returning None guarantees it never
+            # gets maintained until someone manually notices and re-pins it.
+            stale_pin = True
+            break
 
     matches: list[tuple[int, str, PresetRule, PresetConfig]] = []
     for rule in rules:
@@ -90,7 +101,7 @@ def effective_preset(
         _, _, winning_rule, winning_preset = max(matches, key=lambda item: (item[0], item[1]))
         return EffectivePreset(
             preset=winning_preset,
-            provenance="rule",
+            provenance="rule_after_stale_pin" if stale_pin else "rule",
             rule_id=winning_rule.id,
         )
 
