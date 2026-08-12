@@ -623,6 +623,48 @@ class Settings(BaseSettings):
             "for the incident this pair guards against."
         ),
     )
+    cost_ceiling_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enables cryo.reporting.cost_ceiling's real-dollar circuit breaker -- checks "
+            "the cryo namespace's actual daily spend (used+unused, via Grafana's Athena "
+            "CUR datasource) and pauses fleet-wide admission (the same "
+            "MaintenanceControlState global pause an operator's manual pause button "
+            "writes to) if it exceeds cost_ceiling_daily_usd. Off by default: requires "
+            "CRYO_GRAFANA_TOKEN to be set (see cryo-secrets) and the scheduler's "
+            "periodic check to be wired in -- turning this on without that wiring is a "
+            "silent no-op, not a broken cap, but there's no point defaulting it on before "
+            "both exist. User-requested, 2026-08-12: a hard $100/day ceiling after real "
+            "data showed the namespace averaging $210.82/day over the trailing 14 days."
+        ),
+    )
+    cost_ceiling_daily_usd: float = Field(
+        default=100.0,
+        gt=0,
+        description="Daily used+unused USD ceiling for cost_ceiling_enabled's circuit breaker.",
+    )
+    cost_ceiling_cluster_name: str = Field(
+        default="data-platform-eks",
+        description="EKS cluster name as tagged in AWS CUR (resource_tags_aws_eks_cluster_name).",
+    )
+    cost_ceiling_namespace: str = Field(
+        default="cryo",
+        description="Kubernetes namespace to check against cost_ceiling_daily_usd.",
+    )
+    cost_ceiling_check_interval_minutes: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "How often the scheduler re-checks real spend. CUR data lags 24-48h, so "
+            "checking much more often than this doesn't reveal new information -- this "
+            "mainly controls how quickly a pause gets lifted once yesterday's lagged data "
+            "catches up to show spend back under the ceiling."
+        ),
+    )
+    grafana_base_url: str = Field(
+        default="https://platform-grafana.penpencil.co",
+        description="Base URL for cost_ceiling's Grafana API calls (no trailing slash).",
+    )
     fleet_admission_rate_cap: int = Field(
         default=500,
         ge=1,
