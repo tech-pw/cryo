@@ -65,6 +65,7 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
         catalog_uri="http://iceberg-rest:8181",
         catalog_warehouse="s3://warehouse/",
         image_pull_secrets=("cryo-registry",),
+        node_selector={"karpenter.sh/capacity-type": "on-demand"},
     )
     client = SparkK8sClient(cfg)
 
@@ -101,6 +102,9 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     # Driver/executor pods (created by spark-submit itself, not our Job manifest) also
     # need the same node selector -- this conf flag is how we reach them.
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
+    # Same for do-not-disrupt: wrapper Job annotation alone does not protect driver/executor.
+    assert "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true" in command
+    assert "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true" in command
 
 
 def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
