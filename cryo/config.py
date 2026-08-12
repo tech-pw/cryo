@@ -615,6 +615,36 @@ class Settings(BaseSettings):
             "few days past the 30-day TableCost rollup window."
         ),
     )
+    fleet_admission_rate_window_minutes: int = Field(
+        default=15,
+        ge=1,
+        description=(
+            "Rolling window used by fleet_admission_rate_cap -- see that field's docstring "
+            "for the incident this pair guards against."
+        ),
+    )
+    fleet_admission_rate_cap: int = Field(
+        default=500,
+        ge=1,
+        description=(
+            "Blunt, mechanism-agnostic ceiling on total jobs (any status, any destination, "
+            "fleet-wide) admitted within fleet_admission_rate_window_minutes. Real incident, "
+            "2026-08-11 evening: 11,824 native jobs ran in one day, with 100+ admitted in "
+            "single-minute windows and 31% of the day's jobs failing -- the metastore-"
+            "concurrency cap (max_concurrent_jobs_per_metastore) and the concurrent-write-"
+            "race fix (native_admit.py's snapshot-mutation defer) both close specific "
+            "mechanisms that burst caused, but neither bounds the burst itself -- a "
+            "different downstream bottleneck could still choke on the same admission "
+            "volume. This is the backstop: if the fleet is admitting jobs this fast, "
+            "something is already wrong (a retry storm, a misconfigured preset re-firing, "
+            "an operator's bulk trigger) and it's worth pausing new admissions rather than "
+            "richocheting straight through cluster capacity into whatever breaks next. "
+            "Deliberately generous (500 per 15min = ~33/min average, well above the ~44/min "
+            "peak throughput the async fallback-dispatch fix was built to reach) -- this "
+            "is a circuit breaker against a repeat of the exact 2026-08-11 burst shape, not "
+            "a throughput limiter for normal operation."
+        ),
+    )
 
     anomaly_detection_batch_size: int = Field(
         default=100,
