@@ -621,3 +621,65 @@ def test_cleanup_never_raises_on_delete_failure_and_continues() -> None:
 
     assert deleted == 1  # only the second delete succeeded
     assert core_api.delete_namespaced_pod.call_count == 2
+
+
+def test_client_reuses_cached_batch_and_core_clients_across_calls() -> None:
+    """Regression for the cryo-worker OOM investigated 2026-08-13: every
+    SparkK8sClient method used to call _new_k8s_batch_client()/_new_k8s_core_client()
+    fresh, and each call constructs a real kubernetes ApiClient (its own
+    urllib3.PoolManager, SSL context, certifi bundle) that is never closed. A single
+    wait_for_completion() poll loop (10s interval) leaked one of these per poll --
+    confirmed live: 8 of 10 running cryo-worker pods OOMKilled (exitCode 137) despite
+    idling at ~150-190Mi against a 4Gi limit, i.e. a spike from bursty accumulation,
+    not steady growth. One cached client per SparkK8sClient instance, reused across
+    every method, closes this.
+    """
+    from kubernetes.client.exceptions import ApiException
+
+    cfg = SparkK8sConfig(namespace="cryo")
+    sut = SparkK8sClient(cfg)
+    batch_api = MagicMock()
+    core_api = MagicMock()
+    batch_api.read_namespaced_job.return_value = SimpleNamespace(
+        status=SimpleNamespace(failed=0, succeeded=0),
+        metadata=SimpleNamespace(annotations={}),
+    )
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
+
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api) as new_batch,
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api) as new_core,
+    ):
+        # get_job_run's driver-pod lookup misses (404) and falls through to
+        # _get_wrapper_job_run's batch lookup -- exercises both client factories.
+        sut.get_job_run("cryo-spark-abc123")
+        sut.get_job_run("cryo-spark-abc123")
+        sut.cleanup_credentials_secret("cryo-spark-abc123")
+        sut.cleanup_driver_pod("cryo-spark-abc123")
+
+    # The underlying kubernetes ApiClient constructor must run at most once per
+    # transport type for this SparkK8sClient's whole lifetime, not once per call.
+    assert new_batch.call_count == 1
+    assert new_core.call_count == 1
+    # And every call actually landed on the one cached instance, not a fresh mock.
+    assert core_api.read_namespaced_pod.call_count == 2
+    assert batch_api.read_namespaced_job.call_count >= 1
+
+
+def test_separate_client_instances_do_not_share_cached_clients() -> None:
+    """The cache is per-SparkK8sClient instance, not global -- two destinations'
+    clients (e.g. two SparkK8sEngine instances) must not cross-wire connections."""
+    cfg = SparkK8sConfig(namespace="cryo")
+    first = SparkK8sClient(cfg)
+    second = SparkK8sClient(cfg)
+    batch_api = MagicMock()
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api) as new_batch:
+        first.submit_spark_sql("SELECT 1", catalog="cdp")
+        second.submit_spark_sql("SELECT 1", catalog="cdp")
+
+    # Each instance built its own client independently -- the cache lives on `self`,
+    # not as shared/global state, so two destinations' clients can't cross-wire.
+    assert new_batch.call_count == 2
+    assert first._batch_api is batch_api
+    assert second._batch_api is batch_api
