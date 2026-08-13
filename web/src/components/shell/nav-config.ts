@@ -5,6 +5,7 @@ import {
   Clock,
   Cloud,
   Cog,
+  Copy,
   DollarSign,
   LayoutDashboard,
   Lightbulb,
@@ -51,6 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Insights",
     items: [
       { href: "/ai", label: "Intelligence", icon: Bot },
+      { href: "/similarity", label: "Similarity", icon: Copy },
       { href: "/governance", label: "Governance", icon: Shield },
       { href: "/queries", label: "Queries", icon: Zap },
       { href: "/cost", label: "Cost", icon: DollarSign },

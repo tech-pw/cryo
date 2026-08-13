@@ -120,7 +120,12 @@ import type {
   S3LogProvisionRequest,
   S3LogProvisionResponse,
   S3LogTeardownRequest,
-  S3LogTeardownResponse
+  S3LogTeardownResponse,
+  SimilarityClustersResponse,
+  SimilarityPairRead,
+  SimilarityPipelineRunResponse,
+  SimilarityVerifyRequest,
+  SimilarityVerifyResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -601,6 +606,29 @@ export const getSchemaCost = (api: ApiOptions) =>
       size_gb: item.total_size_gb
     }))
   );
+
+// Table deduplication / similarity (docs/TABLE_DEDUPLICATION_DESIGN.md)
+export const runDedupPipeline = (api: ApiOptions, args: { sample_rows?: boolean } = {}) =>
+  apiFetch<SimilarityPipelineRunResponse>("/dedup/run", api, {
+    method: "POST",
+    query: { sample_rows: args.sample_rows }
+  });
+export const getSimilarityClusters = (api: ApiOptions, args: { min_reclaimable_gb?: number } = {}) =>
+  apiFetch<SimilarityClustersResponse>("/dedup/clusters", api, {
+    query: { min_reclaimable_gb: args.min_reclaimable_gb }
+  });
+export const getSimilarityPairs = (
+  api: ApiOptions,
+  args: { min_score?: number; limit?: number } = {}
+) =>
+  apiFetch<SimilarityPairRead[]>("/dedup/pairs", api, {
+    query: { min_score: args.min_score, limit: args.limit }
+  });
+export const verifySimilarityPair = (api: ApiOptions, body: SimilarityVerifyRequest) =>
+  apiFetch<SimilarityVerifyResponse>("/dedup/verify", api, {
+    method: "POST",
+    body
+  });
 
 export const wsRunUrl = (runId: UUID, token: string): string => {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";

@@ -1182,6 +1182,89 @@ export interface ObservationCompactResponse {
 }
 
 // ============================================================================
+// Table deduplication / similarity (docs/TABLE_DEDUPLICATION_DESIGN.md)
+// ============================================================================
+
+export interface SimilarityPairRead {
+  id: UUID;
+  table_a_id: UUID;
+  table_a_name: string;
+  table_b_id: UUID;
+  table_b_name: string;
+  stage: "blocked" | "scored" | "verified";
+  similarity_score: number | null;
+  schema_similarity: number | null;
+  stats_similarity: number | null;
+  row_jaccard_estimate: number | null;
+  naming_pattern_boost: number | null;
+  file_overlap_detected: boolean;
+  verified_relationship: string | null;
+  exact_row_overlap_pct: number | null;
+  score_components: Record<string, number | boolean | null>;
+  computed_at: string;
+}
+
+export interface SimilarityClusterMemberRead {
+  table_id: UUID;
+  table_name: string;
+  schema_name: string;
+  total_size_gb: number;
+  role: "keep" | "drop_candidate";
+  keep_score: number | null;
+  keep_reason: string | null;
+  query_count_30d: number;
+}
+
+export interface SimilarityClusterRead {
+  cluster_id: UUID;
+  members: SimilarityClusterMemberRead[];
+  total_size_gb: number;
+  reclaimable_gb: number;
+  max_pair_similarity: number | null;
+  generation: number;
+  computed_at: string;
+}
+
+export interface SimilarityClustersResponse {
+  clusters: SimilarityClusterRead[];
+  generation: number | null;
+  total_clusters: number;
+  total_tables_in_clusters: number;
+  total_reclaimable_gb: number;
+}
+
+export interface SimilarityPipelineRunResponse {
+  tables_considered: number;
+  candidate_pairs: number;
+  pairs_sampled: number;
+  pairs_persisted: number;
+  clusters_found: number;
+  cluster_generation: number;
+  errors: string[];
+}
+
+export interface SimilarityVerifyRequest {
+  table_a_id: UUID;
+  table_b_id: UUID;
+  row_limit?: number;
+}
+
+export interface SimilarityVerifyResponse {
+  table_a_id: UUID;
+  table_b_id: UUID;
+  relationship:
+    | "exact_duplicate"
+    | "near_duplicate"
+    | "contains_a_in_b"
+    | "contains_b_in_a"
+    | "unrelated";
+  a_rows_found_in_b_pct: number;
+  b_rows_found_in_a_pct: number;
+  rows_compared_a: number;
+  rows_compared_b: number;
+}
+
+// ============================================================================
 // Puffin-backed column sketches (FORMATS '26, arXiv:2605.30308)
 // ============================================================================
 

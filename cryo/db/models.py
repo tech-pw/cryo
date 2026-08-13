@@ -1913,6 +1913,103 @@ class RunFailureDiagnosis(Base):
     feedback_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
 
+class TableSimilarityPair(Base):
+    """One scored candidate pair from the table-deduplication pipeline
+    (docs/TABLE_DEDUPLICATION_DESIGN.md). A row exists only for pairs that survived Stage 1
+    blocking -- this table is never the full n^2 cross product, only candidates.
+
+    ``table_a_id``/``table_b_id`` are stored with a < b ordering (by string comparison of
+    the UUIDs) enforced at write time, not by a DB constraint, so a pair is never inserted
+    twice in both directions -- see cryo.intelligence.dedup.pairing.canonical_pair_order.
+
+    ``score_components`` is the full breakdown behind ``similarity_score`` (schema
+    Jaccard, column-stat cosine similarity, MinHash row-Jaccard estimate, naming-pattern
+    boost, file-overlap flag, etc) -- kept as JSON rather than separate columns because the
+    signal set is still evolving per the design doc's staged-confidence approach, and
+    because every recommendation surfaced to an operator must show its evidence (design
+    doc SS7/SS9: never a bare numeric score for something that can end in a DROP TABLE).
+    """
+
+    __tablename__ = "table_similarity_pairs"
+    __table_args__ = (
+        UniqueConstraint("table_a_id", "table_b_id", name="uq_table_similarity_pair"),
+        Index("ix_table_similarity_pairs_table_a", "table_a_id"),
+        Index("ix_table_similarity_pairs_table_b", "table_b_id"),
+        Index("ix_table_similarity_pairs_score", "similarity_score"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    table_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    # Stage reached: "blocked" (Stage 1 candidate only, no score yet), "scored" (Stage 2
+    # statistical composite computed), "verified" (Stage 3 exact Trino comparison ran).
+    stage: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'blocked'"))
+    similarity_score: Mapped[float | None] = mapped_column(Float)
+    schema_similarity: Mapped[float | None] = mapped_column(Float)
+    stats_similarity: Mapped[float | None] = mapped_column(Float)
+    row_jaccard_estimate: Mapped[float | None] = mapped_column(Float)
+    naming_pattern_boost: Mapped[float | None] = mapped_column(Float)
+    file_overlap_detected: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # Stage 3 outcome, when run: "exact_duplicate" | "near_duplicate" | "contains_a_in_b" |
+    # "contains_b_in_a" | "unrelated" (score looked high but Stage 3 disconfirmed it) | NULL
+    # (Stage 3 never ran). Distinguishing containment direction matters -- design doc SS9:
+    # dropping the superset when only the subset is read is a real risk.
+    verified_relationship: Mapped[str | None] = mapped_column(Text)
+    exact_row_overlap_pct: Mapped[float | None] = mapped_column(Float)
+    score_components: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table_a: Mapped[Table] = relationship(foreign_keys=[table_a_id])
+    table_b: Mapped[Table] = relationship(foreign_keys=[table_b_id])
+
+
+class TableSimilarityCluster(Base):
+    """Connected-components grouping of TableSimilarityPair edges above threshold
+    (design doc SS6). Recomputed on each pipeline run, not incrementally maintained --
+    cluster membership can change (chaining, splitting) as new pairs are scored, so each
+    run replaces the prior generation's rows for a clean, explainable snapshot rather than
+    trying to diff/patch cluster assignments in place.
+    """
+
+    __tablename__ = "table_similarity_clusters"
+    __table_args__ = (
+        Index("ix_table_similarity_clusters_cluster", "cluster_id"),
+        Index("ix_table_similarity_clusters_table", "table_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    cluster_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    # Highest-scoring recommendation role within the cluster: "keep" (canonical member) or
+    # "drop_candidate". Never "drop" -- design doc SS7: this pipeline recommends, an
+    # operator confirms, nothing here auto-deletes.
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'drop_candidate'"))
+    keep_score: Mapped[float | None] = mapped_column(Float)
+    keep_reason: Mapped[str | None] = mapped_column(Text)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    computed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table: Mapped[Table] = relationship()
+
+
 __all__ = [
     "AIProvider",
     "AWSCostInsightConfig",
@@ -1948,6 +2045,8 @@ __all__ = [
     "TableCostHistory",
     "TableEmbedding",
     "TablePartition",
+    "TableSimilarityCluster",
+    "TableSimilarityPair",
     "TableStats",
     "TableStatsHistory",
     "TierPolicyRecord",
