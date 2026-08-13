@@ -27,11 +27,20 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import Table, TableColumn, TableStats
 
-# Wide on purpose (see module docstring) -- a genuine containment pair (a filtered subset
-# of another table) can be a fraction of its parent's size, so this only excludes pairs
-# where neither table could plausibly be a superset/subset/near-duplicate of the other at
-# all (e.g. a 4GB dimension table vs a 4TB fact table sharing a schema by coincidence).
-_MIN_SIZE_RATIO = 0.02
+# Tightened from an original 0.02 after a real production run, 2026-08-13: this fleet has
+# a single schema bucket of 1,667 tables (spanning many unrelated source products --
+# pw_bq, curiousjr_bq, xylem_bq, ...) that share a generic BigQuery-ingestion schema shape
+# by coincidence, not because they're related. At 0.02 that one bucket alone produced
+# 1.39M of 1.41M total candidate pairs -- schema-identical does not mean related when
+# hundreds of genuinely unrelated tables share a common ingestion format, which the design
+# doc's SS9 false-positive section names directly ("coincidental schema similarity,
+# unrelated data") but the original threshold badly underestimated for this fleet's shape.
+# 0.9 still leaves 51,511 candidates from that one bucket alone (verified by direct
+# simulation against real fleet data) -- tables clustered near similar small sizes still
+# pass a strict ratio -- so this alone doesn't fully solve the problem; naming_pattern_hint
+# and Stage 2's _MIN_METADATA_SCORE_FOR_SAMPLING gate (cryo.intelligence.dedup.pipeline)
+# are what keep Stage 2's real Trino sampling cost bounded on top of this.
+_MIN_SIZE_RATIO = 0.9
 # Naming-convention patterns from the real fleet scan (docs/TABLE_DEDUPLICATION_DESIGN.md
 # SS2/SS8) -- used here only as an ADDITIONAL blocking relaxation (a pair matching a naming
 # pattern is included even outside the size-ratio band, since e.g. a `_temp` table is often
