@@ -21,6 +21,9 @@ const Cost = lazy(() => import("./pages/Cost").then((m) => ({ default: m.Cost })
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
 const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
 const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
+const TableSimilarity = lazy(() =>
+  import("./pages/TableSimilarity").then((m) => ({ default: m.TableSimilarity }))
+);
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
 const Catalog = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.Catalog })));
@@ -112,6 +115,7 @@ const AuthenticatedRoutes = () => (
             <Route path="/operations/presets/:presetId" element={<PresetDetail />} />
             <Route path="/operations/runs/:runId" element={<RunDetail />} />
             <Route path="/ai" element={<Intelligence />} />
+            <Route path="/similarity" element={<TableSimilarity />} />
             <Route path="/governance" element={<Governance />} />
             <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/sla" element={<SLAStatus />} />
