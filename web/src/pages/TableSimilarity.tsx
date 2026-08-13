@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { getSimilarityClusters, getSimilarityPairs, runDedupPipeline, verifySimilarityPair } from "../api/client";
-import type { SimilarityPairRead } from "../api/types";
+import type { SimilarityClusterRead, SimilarityPairRead } from "../api/types";
 import { ClusterForceGraph } from "../components/dedup/ClusterForceGraph";
 import { EmptyState, QueryErrorAlert } from "../components/common";
 import { Alert } from "../components/ui/alert";
@@ -12,6 +13,7 @@ import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
+import { exportCsv } from "../lib/exportCsv";
 import { formatGb, formatNumber, formatPercent, formatTime } from "../lib/format";
 
 // Rendering all ~498 clusters' force graphs at once would still be too much to scan --
@@ -21,6 +23,45 @@ import { formatGb, formatNumber, formatPercent, formatTime } from "../lib/format
 const DEFAULT_GRAPH_LIMIT = 12;
 
 const roleVariant = (role: "keep" | "drop_candidate") => (role === "keep" ? "success" : "warning");
+
+const CSV_HEADERS = [
+  "cluster_id",
+  "schema_name",
+  "table_name",
+  "table_id",
+  "role",
+  "total_size_gb",
+  "keep_score",
+  "keep_reason",
+  "query_count_30d",
+  "cluster_reclaimable_gb",
+  "cluster_max_pair_similarity"
+];
+
+// Exports every cluster's every member -- not just the ones with a rendered force
+// graph (DEFAULT_GRAPH_LIMIT caps the UI at 12 for readability, but the underlying
+// `clusters` data already holds all of them) -- so the CSV is the complete real dataset
+// an operator can filter/pivot/sort in a spreadsheet, independent of what's currently
+// scrolled into view on the page.
+const downloadClustersCsv = (clusters: SimilarityClusterRead[]) => {
+  const rows = clusters.flatMap((cluster) =>
+    cluster.members.map((member) => [
+      cluster.cluster_id,
+      member.schema_name,
+      member.table_name,
+      member.table_id,
+      member.role,
+      member.total_size_gb,
+      member.keep_score,
+      member.keep_reason,
+      member.query_count_30d,
+      cluster.reclaimable_gb,
+      cluster.max_pair_similarity
+    ])
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  exportCsv(`cryo-similarity-clusters-${today}.csv`, CSV_HEADERS, rows);
+};
 
 const PairEvidenceRow = ({ pair }: { pair: SimilarityPairRead }) => {
   const { api } = useAuth();
@@ -246,9 +287,20 @@ export const TableSimilarity = () => {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Clusters ranked by reclaimable storage</CardTitle>
-          <CardDescription>Every recommendation shows its evidence — never a bare score.</CardDescription>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div>
+            <CardTitle>Clusters ranked by reclaimable storage</CardTitle>
+            <CardDescription>Every recommendation shows its evidence — never a bare score.</CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => downloadClustersCsv(clusters)}
+            disabled={clusters.length === 0}
+          >
+            <Download className="mr-1.5 size-3.5" />
+            Download CSV
+          </Button>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {isLoading ? (
