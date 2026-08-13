@@ -281,7 +281,20 @@ def _replace_clusters(
     next_generation = (prior_max or 0) + 1
 
     fingerprints_by_id = {fp.table_id: fp for fp in fingerprints_list}
-    stats_by_id = {row.table_id: row for row in session.execute(select(TableStats)).scalars().all()}
+    # Scoped to only the tables actually in a cluster, not select(TableStats) for the
+    # whole fleet -- see build_schema_fingerprints' docstring (cryo.intelligence.dedup.
+    # fingerprint) for why an unscoped full-fleet ORM select of a large table OOM-killed
+    # the API pod live, 2026-08-13. Cluster membership is typically a small fraction of
+    # the fleet, so this stays cheap without needing the same column-projection rewrite.
+    cluster_table_ids = [tables_by_id[t].id for t in cluster_assignments if t in tables_by_id]
+    stats_by_id = {
+        row.table_id: row
+        for row in session.execute(
+            select(TableStats).where(TableStats.table_id.in_(cluster_table_ids))
+        )
+        .scalars()
+        .all()
+    }
 
     now = datetime.now(UTC)
     cluster_inputs: dict[str, TableClusterInput] = {}
