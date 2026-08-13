@@ -619,11 +619,21 @@ export const getSimilarityClusters = (api: ApiOptions, args: { min_reclaimable_g
   });
 export const getSimilarityPairs = (
   api: ApiOptions,
-  args: { min_score?: number; limit?: number } = {}
-) =>
-  apiFetch<SimilarityPairRead[]>("/dedup/pairs", api, {
-    query: { min_score: args.min_score, limit: args.limit }
-  });
+  args: { min_score?: number; limit?: number; table_ids?: UUID[] } = {}
+) => {
+  // table_ids needs repeated ?table_ids=x&table_ids=y query params (FastAPI's list[UUID]
+  // query-param convention) -- apiFetch's `query` option only supports scalar values via
+  // URLSearchParams.set (last-write-wins, not .append), so this one call builds its path
+  // manually rather than widening the shared helper's type for a single caller.
+  let path = "/dedup/pairs";
+  const params = new URLSearchParams();
+  if (args.min_score !== undefined) params.set("min_score", String(args.min_score));
+  if (args.limit !== undefined) params.set("limit", String(args.limit));
+  (args.table_ids ?? []).forEach((id) => params.append("table_ids", id));
+  const qs = params.toString();
+  if (qs) path += `?${qs}`;
+  return apiFetch<SimilarityPairRead[]>(path, api);
+};
 export const verifySimilarityPair = (api: ApiOptions, body: SimilarityVerifyRequest) =>
   apiFetch<SimilarityVerifyResponse>("/dedup/verify", api, {
     method: "POST",

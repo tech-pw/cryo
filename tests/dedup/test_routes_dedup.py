@@ -332,3 +332,49 @@ def test_max_pair_similarity_found_even_when_pair_sides_land_in_different_chunks
     result = _max_pair_similarity_by_cluster(session, table_ids, table_to_cluster, chunk_size=1)
 
     assert result.get(cluster_id) == 0.77
+
+
+def test_list_similarity_pairs_scopes_to_table_ids_when_given(session: Session) -> None:
+    """table_ids restricts to pairs where BOTH sides are in the given set -- used by the
+    frontend's per-cluster force-directed layout to fetch only that cluster's real
+    intra-cluster edges, not a global top-N list that could miss/include the wrong pairs."""
+    source = Source(id=uuid.uuid4(), name="src", type="iceberg", config={})
+    session.add(source)
+    session.flush()
+
+    a = _make_table(session, source, schema_name="s", table_name="a", size_gb=1.0)
+    b = _make_table(session, source, schema_name="s", table_name="b", size_gb=1.0)
+    c = _make_table(session, source, schema_name="s", table_name="c", size_gb=1.0)
+    session.flush()
+
+    ab_a, ab_b = sorted([a.id, b.id], key=str)
+    session.add(
+        TableSimilarityPair(
+            id=uuid.uuid4(),
+            table_a_id=ab_a,
+            table_b_id=ab_b,
+            stage="blocked",
+            similarity_score=0.9,
+            score_components={},
+            computed_at=datetime.now(UTC),
+        )
+    )
+    bc_a, bc_b = sorted([b.id, c.id], key=str)
+    session.add(
+        TableSimilarityPair(
+            id=uuid.uuid4(),
+            table_a_id=bc_a,
+            table_b_id=bc_b,
+            stage="blocked",
+            similarity_score=0.8,
+            score_components={},
+            computed_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+
+    # Only a+b -- the b+c pair must be excluded even though b is in the set, since c isn't.
+    results = list_similarity_pairs(session, table_ids=[a.id, b.id])
+
+    assert len(results) == 1
+    assert results[0].similarity_score == 0.9

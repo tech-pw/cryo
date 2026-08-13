@@ -266,25 +266,40 @@ def list_similarity_pairs(
     session: SessionDep,
     min_score: Annotated[float, Query(ge=0, le=1)] = 0.0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    table_ids: Annotated[
+        list[UUID] | None,
+        Query(
+            description=(
+                "Restrict to pairs where both sides are in this set -- e.g. one "
+                "cluster's members, for the force-directed layout."
+            )
+        ),
+    ] = None,
 ) -> list[SimilarityPairRead]:
     """Flat pair list above ``min_score``, highest first -- used for a debugging/detail
-    table view alongside the cluster graph, and by the frontend's edge list for the bubble
-    chart's connecting lines."""
-    rows = (
-        session.execute(
-            select(TableSimilarityPair)
-            .where(TableSimilarityPair.similarity_score >= min_score)
-            .order_by(TableSimilarityPair.similarity_score.desc())
-            .limit(limit)
+    table view alongside the cluster graph, and (via ``table_ids``) by the frontend's
+    per-cluster force-directed layout, which needs the real intra-cluster edge weights
+    rather than a global top-N list that could miss pairs relevant to one specific
+    cluster. ``table_ids`` is always a small, caller-supplied set (one cluster's members,
+    typically single digits to low hundreds), never unbounded.
+    """
+    query = select(TableSimilarityPair).where(TableSimilarityPair.similarity_score >= min_score)
+    if table_ids:
+        table_id_set = set(table_ids)
+        query = query.where(
+            TableSimilarityPair.table_a_id.in_(table_id_set),
+            TableSimilarityPair.table_b_id.in_(table_id_set),
         )
+    rows = (
+        session.execute(query.order_by(TableSimilarityPair.similarity_score.desc()).limit(limit))
         .scalars()
         .all()
     )
 
-    table_ids = {r.table_a_id for r in rows} | {r.table_b_id for r in rows}
+    pair_table_ids = {r.table_a_id for r in rows} | {r.table_b_id for r in rows}
     tables_by_id = {
         t.id: t
-        for t in session.execute(select(Table).where(Table.id.in_(table_ids))).scalars().all()
+        for t in session.execute(select(Table).where(Table.id.in_(pair_table_ids))).scalars().all()
     }
 
     results: list[SimilarityPairRead] = []
