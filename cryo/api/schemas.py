@@ -1475,3 +1475,82 @@ class ObservationCompactResponse(BaseModel):
     rows: int
     bytes_in: int
     bytes_out: int
+
+
+# ---------------------------------------------------------------------------
+# Table deduplication / similarity (docs/TABLE_DEDUPLICATION_DESIGN.md)
+# ---------------------------------------------------------------------------
+
+
+class SimilarityPairRead(BaseModel):
+    id: uuid.UUID
+    table_a_id: uuid.UUID
+    table_a_name: str
+    table_b_id: uuid.UUID
+    table_b_name: str
+    stage: str
+    similarity_score: float | None = None
+    schema_similarity: float | None = None
+    stats_similarity: float | None = None
+    row_jaccard_estimate: float | None = None
+    naming_pattern_boost: float | None = None
+    file_overlap_detected: bool = False
+    verified_relationship: str | None = None
+    exact_row_overlap_pct: float | None = None
+    score_components: JsonDict = Field(default_factory=dict)
+    computed_at: datetime
+
+
+class SimilarityClusterMemberRead(BaseModel):
+    table_id: uuid.UUID
+    table_name: str
+    schema_name: str
+    total_size_gb: float
+    role: Literal["keep", "drop_candidate"]
+    keep_score: float | None = None
+    keep_reason: str | None = None
+    query_count_30d: int = 0
+
+
+class SimilarityClusterRead(BaseModel):
+    cluster_id: uuid.UUID
+    members: list[SimilarityClusterMemberRead]
+    total_size_gb: float
+    reclaimable_gb: float
+    max_pair_similarity: float | None = None
+    generation: int
+    computed_at: datetime
+
+
+class SimilarityClustersResponse(BaseModel):
+    clusters: list[SimilarityClusterRead]
+    generation: int | None = None
+    total_clusters: int = 0
+    total_tables_in_clusters: int = 0
+    total_reclaimable_gb: float = 0
+
+
+class SimilarityPipelineRunResponse(BaseModel):
+    tables_considered: int
+    candidate_pairs: int
+    pairs_sampled: int
+    pairs_persisted: int
+    clusters_found: int
+    cluster_generation: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class SimilarityVerifyRequest(BaseModel):
+    table_a_id: uuid.UUID
+    table_b_id: uuid.UUID
+    row_limit: int = 500_000
+
+
+class SimilarityVerifyResponse(BaseModel):
+    table_a_id: uuid.UUID
+    table_b_id: uuid.UUID
+    relationship: str
+    a_rows_found_in_b_pct: float
+    b_rows_found_in_a_pct: float
+    rows_compared_a: int
+    rows_compared_b: int
