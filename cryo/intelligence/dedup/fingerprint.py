@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -81,38 +82,61 @@ def build_schema_fingerprints(session: Session) -> list[SchemaFingerprint]:
     Tables missing TableStats (never successfully scanned) or with zero TableColumn rows
     are skipped -- there is nothing to fingerprint yet, and including them would only
     produce false "identical empty schema" bucket collisions.
-    """
-    tables = session.execute(select(Table).where(Table.is_active.is_(True))).scalars().all()
 
-    stats_by_table = {
-        row.table_id: row for row in session.execute(select(TableStats)).scalars().all()
+    Selects specific columns (not full ORM entities via select(Table)/select(TableStats)/
+    select(TableColumn)) deliberately -- confirmed live, 2026-08-13: against this fleet's
+    real 654,590 TableColumn rows (13,725 active tables), loading all three as full ORM
+    objects into three separate in-memory dicts simultaneously OOM-killed the API pod
+    (6Gi limit) running this function. Column-selected tuples skip SQLAlchemy's identity
+    map and instrumentation overhead per row, which is where the memory actually went --
+    ORM object overhead, not the data itself (654K rows of two short strings each is a
+    few tens of MB of raw data).
+    """
+    table_rows = session.execute(
+        select(Table.id, Table.schema_name, Table.table_name).where(Table.is_active.is_(True))
+    ).all()
+
+    stats_by_table: dict[Any, tuple[float, int | None, int]] = {
+        table_id: (total_size_gb, total_records, total_files)
+        for table_id, total_size_gb, total_records, total_files in session.execute(
+            select(
+                TableStats.table_id,
+                TableStats.total_size_gb,
+                TableStats.total_records,
+                TableStats.total_files,
+            )
+        ).all()
     }
-    columns_by_table: dict[str, list[TableColumn]] = {}
-    for col in session.execute(select(TableColumn)).scalars().all():
-        columns_by_table.setdefault(str(col.table_id), []).append(col)
+
+    columns_by_table: dict[str, list[tuple[str, str]]] = {}
+    for table_id, column_name, data_type in session.execute(
+        select(TableColumn.table_id, TableColumn.column_name, TableColumn.data_type)
+    ).yield_per(5000):
+        columns_by_table.setdefault(str(table_id), []).append((column_name, data_type))
 
     fingerprints: list[SchemaFingerprint] = []
-    for table in tables:
-        stats = stats_by_table.get(table.id)
-        columns = columns_by_table.get(str(table.id))
+    for table_id, schema_name, table_name in table_rows:
+        stats = stats_by_table.get(table_id)
+        columns = columns_by_table.get(str(table_id))
         if stats is None or not columns:
             continue
+        total_size_gb, total_records, total_files = stats
         # TableColumn has no explicit ordinal position column -- fall back to name order,
         # which loses true DDL column order but keeps the ordered-tuple comparison at
         # least deterministic and comparable across two tables' fingerprints. Noted as a
         # known gap: a real ordinal_position column would make SS3.1's order-sensitive
         # signal meaningfully stronger (open question, design doc SS11).
-        ordered = tuple(sorted((c.column_name, c.data_type) for c in columns))
+        ordered = tuple(sorted(columns))
         fingerprints.append(
             SchemaFingerprint(
-                table_id=str(table.id),
-                schema_name=table.schema_name,
-                table_name=table.table_name,
+                table_id=str(table_id),
+                schema_name=schema_name,
+                table_name=table_name,
                 unordered_columns=frozenset(ordered),
                 ordered_columns=ordered,
-                total_size_gb=stats.total_size_gb,
-                total_records=stats.total_records,
-                total_files=stats.total_files,
+                total_size_gb=total_size_gb,
+                total_records=total_records,
+                total_files=total_files,
             )
         )
     return fingerprints
