@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
@@ -133,6 +134,15 @@ def run_pipeline(
     pairs_sampled = 0
     pairs_persisted = 0
     signature_cache: dict[str, MinHashSignature] = {}
+    # Accumulated in memory and written with one bulk upsert after the loop, not a
+    # select-then-insert round trip per pair -- confirmed live, 2026-08-13: against this
+    # fleet's real 51,706-pair Stage-2 candidate set, one Postgres round trip per pair
+    # (the original _upsert_pair pattern) was slow enough that a single pipeline run
+    # exceeded a 90s exec timeout with zero rows committed (the whole run is one
+    # transaction; a killed client connection rolls it all back). A single
+    # INSERT ... ON CONFLICT DO UPDATE statement over all rows is one round trip
+    # regardless of candidate count.
+    pending_pairs: list[dict[str, object]] = []
 
     for candidate in blocking.candidates:
         metadata_score = score_candidate_pair(candidate)
@@ -159,7 +169,9 @@ def run_pipeline(
             continue
 
         a_id, b_id = _canonical_pair_order(candidate.table_a.table_id, candidate.table_b.table_id)
-        _upsert_pair(session, a_id, b_id, final_score, stage="scored" if row_jaccard else "blocked")
+        pending_pairs.append(
+            _pair_upsert_row(a_id, b_id, final_score, stage="scored" if row_jaccard else "blocked")
+        )
         pairs_persisted += 1
         edges.append(
             SimilarityEdge(
@@ -167,6 +179,7 @@ def run_pipeline(
             )
         )
 
+    _bulk_upsert_pairs(session, pending_pairs)
     session.flush()
 
     # Union-find roots are table_id strings (whichever member happened to become the root
@@ -232,16 +245,12 @@ def _sample_and_score(
     return row_jaccard_from_signatures(sig_a, sig_b)
 
 
-def _upsert_pair(
-    session: Session, a_id: str, b_id: str, score: ScoreComponents, *, stage: str
-) -> None:
-    existing = session.execute(
-        select(TableSimilarityPair).where(
-            TableSimilarityPair.table_a_id == a_id, TableSimilarityPair.table_b_id == b_id
-        )
-    ).scalar_one_or_none()
-
-    fields = {
+def _pair_upsert_row(
+    a_id: str, b_id: str, score: ScoreComponents, *, stage: str
+) -> dict[str, object]:
+    return {
+        "table_a_id": a_id,
+        "table_b_id": b_id,
         "stage": stage,
         "similarity_score": score.composite_score,
         "schema_similarity": score.schema_similarity,
@@ -252,11 +261,40 @@ def _upsert_pair(
         "score_components": score.to_dict(),
         "computed_at": datetime.now(UTC),
     }
-    if existing is not None:
-        for key, value in fields.items():
-            setattr(existing, key, value)
-    else:
-        session.add(TableSimilarityPair(table_a_id=a_id, table_b_id=b_id, **fields))
+
+
+def _bulk_upsert_pairs(session: Session, rows: list[dict[str, object]]) -> None:
+    """One INSERT ... ON CONFLICT DO UPDATE per batch, not one round trip per pair --
+    see run_pipeline's docstring note on why (a real 90s timeout against 51,706 real
+    candidate pairs, zero rows committed, confirmed live 2026-08-13). Batched (not one
+    giant statement) to keep a single INSERT's parameter count and lock duration
+    reasonable regardless of how large a single pipeline run's candidate set gets.
+    """
+    if not rows:
+        return
+    batch_size = 2000
+    update_columns = {
+        col: getattr(pg_insert(TableSimilarityPair).excluded, col)
+        for col in (
+            "stage",
+            "similarity_score",
+            "schema_similarity",
+            "stats_similarity",
+            "row_jaccard_estimate",
+            "naming_pattern_boost",
+            "file_overlap_detected",
+            "score_components",
+            "computed_at",
+        )
+    }
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start : start + batch_size]
+        stmt = pg_insert(TableSimilarityPair).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_table_similarity_pair",
+            set_=update_columns,
+        )
+        session.execute(stmt)
 
 
 def _replace_clusters(
