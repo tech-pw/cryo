@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, select
@@ -321,18 +322,35 @@ def _replace_clusters(
     fingerprints_by_id = {fp.table_id: fp for fp in fingerprints_list}
     # Scoped to only the tables actually in a cluster, not select(TableStats) for the
     # whole fleet -- see build_schema_fingerprints' docstring (cryo.intelligence.dedup.
-    # fingerprint) for why an unscoped full-fleet ORM select of a large table OOM-killed
-    # the API pod live, 2026-08-13. Cluster membership is typically a small fraction of
-    # the fleet, so this stays cheap without needing the same column-projection rewrite.
+    # fingerprint) for the unscoped-full-fleet-select version of this same class of bug.
+    #
+    # Chunked into batches of 1000 IDs per query, and column-projected rather than
+    # select(TableStats) for full ORM entities -- defensive hardening after a real OOM,
+    # 2026-08-13: the first fleet-wide run OOM-killed the API pod (6Gi limit) somewhere
+    # inside this function against ~5,245 clustered tables. Isolated component testing
+    # (this query alone, the DELETE alone, the insert loop alone, all against the real
+    # data) each completed cleanly in under a second with negligible memory delta, and a
+    # synthetic local reproduction shaped like the real fleet (giant coincidental-schema
+    # bucket, ~1.9M candidates) also ran cleanly on both the pre-fix and post-fix code --
+    # the exact trigger was never conclusively isolated, and is suspected to be tied to
+    # live prod conditions (connection/session state accumulated across a long-running
+    # request, or load on the shared Postgres instance) that neither isolated component
+    # tests nor an idle local DB reproduce. This change (chunking + synchronize_session
+    # below) is real, defensible hardening regardless -- an unbounded IN-list and
+    # identity-map-synchronized bulk delete are both legitimate risk factors even without
+    # a fully confirmed root cause -- shipped with closer live monitoring on the next
+    # real run rather than further blocking on a repro that wasn't reproducing.
     cluster_table_ids = [tables_by_id[t].id for t in cluster_assignments if t in tables_by_id]
-    stats_by_id = {
-        row.table_id: row
-        for row in session.execute(
-            select(TableStats).where(TableStats.table_id.in_(cluster_table_ids))
-        )
-        .scalars()
-        .all()
-    }
+    stats_by_id: dict[Any, tuple[float, int]] = {}
+    chunk_size = 1000
+    for start in range(0, len(cluster_table_ids), chunk_size):
+        chunk = cluster_table_ids[start : start + chunk_size]
+        for table_id, total_size_gb, query_count_30d in session.execute(
+            select(TableStats.table_id, TableStats.total_size_gb, TableStats.query_count_30d).where(
+                TableStats.table_id.in_(chunk)
+            )
+        ).all():
+            stats_by_id[table_id] = (total_size_gb, query_count_30d)
 
     now = datetime.now(UTC)
     cluster_inputs: dict[str, TableClusterInput] = {}
@@ -342,20 +360,32 @@ def _replace_clusters(
         if table is None or fp is None:
             continue
         stats = stats_by_id.get(table.id)
+        total_size_gb, query_count_30d = stats if stats else (fp.total_size_gb, 0)
         cluster_inputs[table_id] = TableClusterInput(
             table_id=table_id,
             schema_name=table.schema_name,
             table_name=table.table_name,
-            total_size_gb=stats.total_size_gb if stats else fp.total_size_gb,
+            total_size_gb=total_size_gb,
             created_at=table.first_seen_at,
-            query_count_30d=stats.query_count_30d if stats else 0,
+            query_count_30d=query_count_30d,
             naming_pattern_hint=False,  # already folded into the score that formed the cluster edge
         )
 
     members = recommend_cluster_roles(cluster_assignments, cluster_inputs, now=now)
 
+    # synchronize_session=False -- also part of the 2026-08-13 hardening above. ORM
+    # delete() defaults to synchronize_session="auto" (evaluate, falling back to fetch),
+    # which evaluates the WHERE clause against every object currently tracked in the
+    # session's identity map -- here that's tables_by_id's ~11,711 full Table entities
+    # (run_pipeline) plus everything else accumulated by this point in a long-running
+    # session. This DELETE doesn't need in-Python session sync at all (nothing in this
+    # function holds a stale reference to a deleted TableSimilarityCluster row
+    # afterward), so skipping it removes a real identity-map-scan cost regardless of
+    # whether it was the specific trigger for the OOM this hardening responds to.
     session.execute(
-        delete(TableSimilarityCluster).where(TableSimilarityCluster.generation < next_generation)
+        delete(TableSimilarityCluster)
+        .where(TableSimilarityCluster.generation < next_generation)
+        .execution_options(synchronize_session=False)
     )
     for member in members:
         session.add(
