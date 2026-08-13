@@ -261,8 +261,12 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-05 from gitlab-main commit e5ac5a5.
-    digest: "sha256:0edbcd9bdeb65c0311a1732d6577be87a78e258f3e09b3b217e658f1aaba5872"
+    # Built + pushed 2026-08-13 from gitlab-main commit 9fadb5d -- first build to include
+    # the /similarity page (web/src/pages/TableSimilarity.tsx). The web image was never
+    # part of deploy/deploy.sh's build (that script only builds/pins the backend image),
+    # so it silently sat 8 days stale through the whole table-dedup feature build until
+    # the user asked "did you deploy the web?" and this gap was caught.
+    digest: "sha256:2681c7567fa38de3951c188595abda090fb415efc9070f6d7d57a4f380ca0456"
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
