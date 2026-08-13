@@ -159,6 +159,33 @@ class SparkK8sClient:
 
     def __init__(self, config: SparkK8sConfig) -> None:
         self._config = config
+        self._batch_api: client.BatchV1Api | None = None
+        self._core_api: client.CoreV1Api | None = None
+
+    def _batch_client(self) -> client.BatchV1Api:
+        """One BatchV1Api per SparkK8sClient, not per call.
+
+        Every kubernetes-client ApiClient owns its own urllib3.PoolManager (SSL contexts,
+        connection pools, certifi bundle) -- real, non-trivial memory that is never freed
+        unless .close() is called. Before this fix, every method below (_submit,
+        get_job_run, wait_for_completion's per-poll get_job_run, cleanup_after_run, ...)
+        called _new_k8s_batch_client()/_new_k8s_core_client() fresh, so a single
+        wait_for_completion() poll loop (10s interval, up to active_deadline_seconds ~2h)
+        leaked one PoolManager per poll -- confirmed live, 2026-08-13: cryo-worker pods
+        OOMKilled repeatedly (8 of 10 running pods, exitCode 137) despite idling at
+        ~150-190Mi against a 4Gi limit, i.e. a spike from bursty accumulation, not steady
+        growth. One cached client per SparkK8sClient instance (which SparkK8sEngine
+        already caches per engine instance via its own k8s_client property) closes this --
+        matches the pattern that property already uses one level up.
+        """
+        if self._batch_api is None:
+            self._batch_api = _new_k8s_batch_client()
+        return self._batch_api
+
+    def _core_client(self) -> client.CoreV1Api:
+        if self._core_api is None:
+            self._core_api = _new_k8s_core_client()
+        return self._core_api
 
     def submit_spark_sql(
         self,
@@ -320,7 +347,7 @@ class SparkK8sClient:
             # The native (Go) engine needs the same source-configured S3 credentials (the
             # node's ambient IAM role alone isn't sufficient here, confirmed live 2026-07-21).
             credentials_secret_name = f"{k8s_job_name}-aws"
-            core_api = _new_k8s_core_client()
+            core_api = self._core_client()
             core_api.create_namespaced_secret(
                 namespace=cfg.namespace,
                 body={
@@ -407,7 +434,7 @@ class SparkK8sClient:
             },
         }
 
-        batch_api = _new_k8s_batch_client()
+        batch_api = self._batch_client()
         created_job = batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
         if credentials_secret_name and core_api is not None:
             _adopt_credentials_secret(
@@ -435,7 +462,7 @@ class SparkK8sClient:
         driver pod's own terminal phase instead.
         """
         driver_pod_name = f"{job_id}-driver"
-        core_api = _new_k8s_core_client()
+        core_api = self._core_client()
         from kubernetes.client.exceptions import ApiException
 
         try:
@@ -470,7 +497,7 @@ class SparkK8sClient:
         """
         from kubernetes.client.exceptions import ApiException
 
-        batch_api = _new_k8s_batch_client()
+        batch_api = self._batch_client()
         try:
             job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
         except ApiException as exc:
@@ -512,7 +539,7 @@ class SparkK8sClient:
         )
 
     def cancel_job_run(self, job_id: str) -> None:
-        batch_api = _new_k8s_batch_client()
+        batch_api = self._batch_client()
         try:
             batch_api.delete_namespaced_job(
                 name=job_id,
@@ -532,7 +559,7 @@ class SparkK8sClient:
         """
         driver_pod_name = f"{job_id}-driver"
         try:
-            core_api = _new_k8s_core_client()
+            core_api = self._core_client()
             core_api.delete_namespaced_pod(
                 name=driver_pod_name,
                 namespace=self._config.namespace,
@@ -558,7 +585,7 @@ class SparkK8sClient:
         """
         secret_name: str | None = None
         try:
-            batch_api = _new_k8s_batch_client()
+            batch_api = self._batch_client()
             job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
             secret_name = (job.metadata.annotations or {}).get("cryo/credentials-secret-name")
         except Exception as exc:  # noqa: BLE001 - Job may already be TTL-deleted
@@ -572,7 +599,7 @@ class SparkK8sClient:
         if not secret_name:
             secret_name = f"{job_id}-aws"
         try:
-            core_api = _new_k8s_core_client()
+            core_api = self._core_client()
             core_api.delete_namespaced_secret(name=secret_name, namespace=self._config.namespace)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
             if _is_not_found(exc):
