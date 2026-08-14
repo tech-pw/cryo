@@ -18,6 +18,7 @@ from cryo.db.models import (
     AWSCurLineItem,
     AWSIntegration,
     AWSInventoryObject,
+    DarkTableCandidate,
     Destination,
     LLMObservation,
     MaintenanceJob,
@@ -61,6 +62,7 @@ UUID_ID_MODELS = (
     S3BucketLogConfig,
     S3RequestCostDaily,
     SilentDataLossEvent,
+    DarkTableCandidate,
 )
 _AUTOINCREMENT_ID_MODELS = (
     TablePartition,

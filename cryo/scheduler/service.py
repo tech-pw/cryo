@@ -64,6 +64,7 @@ class SchedulerService:
         self._silent_loss_cursor: Any | None = None
         self._last_unmatched_tables_check: datetime | None = None
         self._last_cost_ceiling_check: datetime | None = None
+        self._last_dark_table_detection: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -81,6 +82,7 @@ class SchedulerService:
         self._maybe_silent_data_loss_sweep(current)
         self._maybe_check_unmatched_tables(current)
         self._maybe_check_cost_ceiling(current)
+        self._maybe_detect_dark_tables(current)
         self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -571,6 +573,42 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Audit retention tick failed: %s", exc)
+
+    def _maybe_detect_dark_tables(self, current: datetime) -> None:
+        """Once a day, advance every active table's consecutive-zero-query-window counter.
+
+        Must be daily, not every tick (the telemetry tick this file also runs can fire hourly)
+        -- cryo.telemetry.dark_tables.DARK_TABLE_CONFIRMATION_WINDOWS=3 is meant to mean "3
+        distinct days of a silent trailing-30-day window", not "3 ticks a few hours apart",
+        or a table could get falsely confirmed dark within a single afternoon.
+        """
+        from datetime import timedelta
+
+        if self._last_dark_table_detection is not None:
+            if current - self._last_dark_table_detection < timedelta(days=1):
+                return
+
+        try:
+            from cryo.telemetry.dark_tables import detect_dark_table_candidates
+
+            with SessionLocal() as session:
+                result = detect_dark_table_candidates(session, now=current)
+
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Dark table detection tick: checked=%s newly_zero=%s confirmed_this_run=%s "
+                "reset_to_active=%s",
+                result.checked,
+                result.newly_zero,
+                result.confirmed_this_run,
+                result.reset_to_active,
+            )
+            self._last_dark_table_detection = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Dark table detection tick failed: %s", exc)
 
     def _maybe_check_rollout_safety(self, current: datetime) -> None:
         from datetime import timedelta
