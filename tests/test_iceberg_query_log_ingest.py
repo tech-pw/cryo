@@ -61,29 +61,52 @@ class _FakeColumn:
 
 
 class _FakeBatch:
-    def __init__(self, texts: list[str]) -> None:
+    """``texts`` drives the query column; ``inputs`` (defaulting to all-None, same length as
+    ``texts``) drives ``inputs_json`` -- real ``_read_query_texts`` always projects both columns
+    now that selectivity extraction is on by default."""
+
+    def __init__(self, texts: list[str], inputs: list[str | None] | None = None) -> None:
         self._texts = texts
+        self._inputs = inputs if inputs is not None else [None] * len(texts)
 
     def column(self, name: str) -> _FakeColumn:
-        assert name == "query"
-        return _FakeColumn(self._texts)
+        if name == "query":
+            return _FakeColumn(self._texts)
+        if name == "inputs_json":
+            return _FakeColumn(self._inputs)
+        raise AssertionError(f"unexpected column requested: {name!r}")
 
 
 class _FakeScan:
-    def __init__(self, batches: list[list[str]]) -> None:
+    def __init__(
+        self,
+        batches: list[list[str]],
+        inputs_batches: list[list[str | None]] | None = None,
+    ) -> None:
         self._batches = batches
+        self._inputs_batches = inputs_batches
 
     def to_arrow_batch_reader(self):
-        return iter(_FakeBatch(batch) for batch in self._batches)
+        if self._inputs_batches is None:
+            return iter(_FakeBatch(batch) for batch in self._batches)
+        return iter(
+            _FakeBatch(batch, inputs)
+            for batch, inputs in zip(self._batches, self._inputs_batches, strict=True)
+        )
 
 
 class _FakeIcebergTable:
-    def __init__(self, batches: list[list[str]]) -> None:
+    def __init__(
+        self,
+        batches: list[list[str]],
+        inputs_batches: list[list[str | None]] | None = None,
+    ) -> None:
         self._batches = batches
+        self._inputs_batches = inputs_batches
 
     def scan(self, *, row_filter, selected_fields):
-        assert selected_fields == ("query", "query_date")
-        return _FakeScan(self._batches)
+        assert selected_fields == ("query", "query_date", "inputs_json")
+        return _FakeScan(self._batches, self._inputs_batches)
 
 
 class _FakeCatalog:
@@ -104,7 +127,7 @@ def test_read_query_texts_reads_across_multiple_batches(monkeypatch) -> None:
         "cryo.sources.factory.source_catalog_for", lambda source: _FakeCatalog(fake_table)
     )
 
-    texts, truncated = _read_query_texts(
+    rows, truncated = _read_query_texts(
         Source(id=uuid4(), name="s", type="hive", config={}),
         _config(),
         since=datetime(2026, 1, 1, tzinfo=UTC),
@@ -112,7 +135,7 @@ def test_read_query_texts_reads_across_multiple_batches(monkeypatch) -> None:
         max_rows=100,
     )
 
-    assert texts == ["select 1", "select 2", "select 3"]
+    assert rows == [("select 1", None), ("select 2", None), ("select 3", None)]
     assert truncated is False
 
 
@@ -122,7 +145,7 @@ def test_read_query_texts_stops_at_max_rows(monkeypatch) -> None:
         "cryo.sources.factory.source_catalog_for", lambda source: _FakeCatalog(fake_table)
     )
 
-    texts, truncated = _read_query_texts(
+    rows, truncated = _read_query_texts(
         Source(id=uuid4(), name="s", type="hive", config={}),
         _config(),
         since=datetime(2026, 1, 1, tzinfo=UTC),
@@ -130,8 +153,29 @@ def test_read_query_texts_stops_at_max_rows(monkeypatch) -> None:
         max_rows=2,
     )
 
-    assert texts == ["a", "b"]
+    assert rows == [("a", None), ("b", None)]
     assert truncated is True
+
+
+def test_read_query_texts_extracts_inputs_json_alongside_query_text(monkeypatch) -> None:
+    fake_table = _FakeIcebergTable(
+        batches=[["select 1", "select 2"]],
+        inputs_batches=[['{"a": 1}', None]],
+    )
+    monkeypatch.setattr(
+        "cryo.sources.factory.source_catalog_for", lambda source: _FakeCatalog(fake_table)
+    )
+
+    rows, truncated = _read_query_texts(
+        Source(id=uuid4(), name="s", type="hive", config={}),
+        _config(),
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        until=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        max_rows=100,
+    )
+
+    assert rows == [("select 1", '{"a": 1}'), ("select 2", None)]
+    assert truncated is False
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +198,7 @@ def test_aggregate_chunks_backlog_into_windows_and_advances_watermark(session, m
 
     def _fake_read(src, cfg, *, since, until, max_rows):
         calls.append((since, until))
-        return ([f"select * from s.t where x = {len(calls)}"], False)
+        return ([(f"select * from s.t where x = {len(calls)}", None)], False)
 
     monkeypatch.setattr(iceberg_source, "_read_query_texts", _fake_read)
     # _upsert_query_patterns uses a Postgres-only on_conflict_do_update; the test session is
@@ -226,7 +270,7 @@ def test_aggregate_matches_queries_to_tables_across_windows(session, monkeypatch
         iceberg_source,
         "_read_query_texts",
         lambda src, cfg, *, since, until, max_rows: (
-            ["select a from s.t where a = 1"],
+            [("select a from s.t where a = 1", None)],
             False,
         ),
     )
@@ -285,7 +329,10 @@ def test_aggregate_populates_query_count_30d_end_to_end(session, monkeypatch) ->
         iceberg_source,
         "_read_query_texts",
         lambda src, cfg, *, since, until, max_rows: (
-            ["select a from s.t where a = 1", "select b from s.t where b = 2"],
+            [
+                ("select a from s.t where a = 1", None),
+                ("select b from s.t where b = 2", None),
+            ],
             False,
         ),
     )
@@ -334,3 +381,49 @@ def test_aggregate_stops_early_on_read_failure_without_losing_watermark_progress
     # Window 1 succeeded and was persisted; window 2 failed and the loop stopped there --
     # watermark must reflect exactly window 1's end, not silently jump past the failed window.
     assert persisted == now - timedelta(hours=6)
+
+
+def test_aggregate_end_to_end_populates_avg_selectivity_from_inputs_json(
+    session, monkeypatch
+) -> None:
+    """Regression, 2026-08-14: query_patterns.avg_selectivity was NULL for every one of 22,671
+    rows because nothing in either aggregation path ever computed it -- this is the real,
+    production path (source.config.query_log.mode=iceberg_table) that must now populate it from
+    Trino's own inputs_json (physicalInputRows / connectorInfo.totalRecords)."""
+    _patch_window_hours(monkeypatch, 6)
+    source, table = _seed_source_and_table(session, schema_name="s", table_name="t")
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    source.config = {
+        "query_log": {
+            "mode": "iceberg_table",
+            "table": "s.t",
+            "executed_at_column": "query_date",
+            "last_aggregated_at": (now - timedelta(hours=6)).isoformat(),
+        }
+    }
+    session.commit()
+
+    inputs_json = (
+        '[{"schema": "s", "table": "t", "physicalInputRows": 250, '
+        '"connectorInfo": {"totalRecords": "1000"}}]'
+    )
+    monkeypatch.setattr(
+        iceberg_source,
+        "_read_query_texts",
+        lambda src, cfg, *, since, until, max_rows: (
+            [("select a from s.t where a = 1", inputs_json)],
+            False,
+        ),
+    )
+
+    captured: dict = {}
+
+    def _fake_upsert(session, table_stats):
+        captured.update(table_stats)
+        return len(table_stats)
+
+    monkeypatch.setattr(iceberg_source, "_upsert_query_patterns", _fake_upsert)
+
+    aggregate_from_iceberg_query_log(session, source, now=now)
+
+    assert captured[table.id]["a"].avg_selectivity == 0.25
