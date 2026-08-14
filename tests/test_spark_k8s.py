@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import cryo.engines.spark.k8s as k8s_module
 from cryo.engines.spark.k8s import (
     JobRunState,
     SparkK8sClient,
@@ -14,6 +15,20 @@ from cryo.engines.spark.k8s import (
     _read_pod_log_tail,
     cleanup_stale_driver_pods,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_level_k8s_client_cache():
+    """_new_k8s_batch_client/_new_k8s_core_client cache a real ApiClient at module scope
+    (see their docstrings -- the fix for a real production OOM, 2026-08-14). That's
+    correct in production (the whole point is one shared connection for the process's
+    lifetime) but must not leak between tests, or an early test's mock/real client would
+    silently satisfy a later test that expects a fresh singleton to be built."""
+    k8s_module._module_batch_client = None
+    k8s_module._module_core_client = None
+    yield
+    k8s_module._module_batch_client = None
+    k8s_module._module_core_client = None
 
 
 def test_config_from_config_uses_nested_spark_k8s_block() -> None:
@@ -328,7 +343,6 @@ def test_submit_spark_sql_adopts_credentials_secret_to_job() -> None:
     assert owners[0]["kind"] == "Job"
     assert owners[0]["name"] == job_id
     assert owners[0]["uid"] == "job-uid-1"
-
 
 
 def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
@@ -666,9 +680,24 @@ def test_client_reuses_cached_batch_and_core_clients_across_calls() -> None:
     assert batch_api.read_namespaced_job.call_count >= 1
 
 
-def test_separate_client_instances_do_not_share_cached_clients() -> None:
-    """The cache is per-SparkK8sClient instance, not global -- two destinations'
-    clients (e.g. two SparkK8sEngine instances) must not cross-wire connections."""
+def test_separate_client_instances_share_the_same_underlying_k8s_api_client() -> None:
+    """Regression for a real production OOM, 2026-08-14: cryo.governor.native_admit's
+    _dispatch_fallback_operations builds a brand-new SparkK8sEngine (and therefore a
+    brand-new SparkK8sClient) once PER TABLE, up to 6 concurrently via a
+    ThreadPoolExecutor. A per-SparkK8sClient-instance-only cache (this test's original
+    assertion, before this fix) is defeated every single call in that real hot path --
+    confirmed live: cryo-worker pods (4Gi limit) OOMKilled repeatedly, idle at
+    ~160-225Mi but spiking hard during exactly this dispatch-burst pattern in the logs.
+
+    Each table's *Spark* config (S3 credentials, catalog URI -- see
+    native_admit._fallback_engine_config's docstring) legitimately differs per table, so
+    SparkK8sClient instances must stay separate for that. But the underlying *K8s API*
+    connection has no legitimate reason to be per-table -- it's always the same
+    in-cluster API server -- so _new_k8s_batch_client/_new_k8s_core_client are now
+    themselves process-wide cached singletons (see their docstrings in k8s.py), and two
+    separate SparkK8sClient instances correctly end up sharing the one real ApiClient
+    underneath, however many instances get constructed.
+    """
     cfg = SparkK8sConfig(namespace="cryo")
     first = SparkK8sClient(cfg)
     second = SparkK8sClient(cfg)
@@ -678,8 +707,77 @@ def test_separate_client_instances_do_not_share_cached_clients() -> None:
         first.submit_spark_sql("SELECT 1", catalog="cdp")
         second.submit_spark_sql("SELECT 1", catalog="cdp")
 
-    # Each instance built its own client independently -- the cache lives on `self`,
-    # not as shared/global state, so two destinations' clients can't cross-wire.
+    # Both instances' calls resolve through the same (mocked, in this test) client
+    # factory, and each instance's own cache means the factory itself is only invoked
+    # once per instance -- the real fix under test lives in _new_k8s_batch_client's own
+    # module-level caching, not observable through this mock boundary, but the shared
+    # return value below is what production code actually receives.
     assert new_batch.call_count == 2
     assert first._batch_api is batch_api
     assert second._batch_api is batch_api
+    assert first._batch_api is second._batch_api
+
+
+def test_new_k8s_batch_client_constructs_the_real_apiclient_at_most_once() -> None:
+    """Tests _new_k8s_batch_client itself (not mocked away), proving the module-level
+    singleton actually works: even across many calls -- simulating many SparkK8sClient
+    instances each calling this once, the real shape of the OOM this fix addresses --
+    kubernetes.client.BatchV1Api() (which owns the real urllib3.PoolManager the leak was
+    about) is constructed exactly once."""
+    with (
+        patch("cryo.engines.spark.k8s._ensure_k8s_config"),
+        patch("kubernetes.client.BatchV1Api") as mock_batch_v1_api,
+    ):
+        mock_batch_v1_api.return_value = MagicMock()
+
+        results = [k8s_module._new_k8s_batch_client() for _ in range(10)]
+
+        mock_batch_v1_api.assert_called_once()
+        assert all(r is results[0] for r in results)
+
+
+def test_new_k8s_core_client_constructs_the_real_apiclient_at_most_once() -> None:
+    """Same as the batch-client test above, for CoreV1Api (owns its own separate
+    PoolManager -- both client types leaked independently before this fix)."""
+    with (
+        patch("cryo.engines.spark.k8s._ensure_k8s_config"),
+        patch("kubernetes.client.CoreV1Api") as mock_core_v1_api,
+    ):
+        mock_core_v1_api.return_value = MagicMock()
+
+        results = [k8s_module._new_k8s_core_client() for _ in range(10)]
+
+        mock_core_v1_api.assert_called_once()
+        assert all(r is results[0] for r in results)
+
+
+def test_new_k8s_batch_client_is_thread_safe_under_concurrent_first_access() -> None:
+    """The real hot path this fix targets is exactly this: many threads
+    (ThreadPoolExecutor, up to 6 concurrent per native_admit._run_fallback_dispatches_concurrently)
+    potentially racing to build the singleton on first use. Proves the lock actually
+    prevents more than one real ApiClient from ever being constructed under real
+    concurrent first-access, not just sequential calls."""
+    import threading
+
+    with (
+        patch("cryo.engines.spark.k8s._ensure_k8s_config"),
+        patch("kubernetes.client.BatchV1Api") as mock_batch_v1_api,
+    ):
+        mock_batch_v1_api.side_effect = lambda: MagicMock()
+
+        results: list = []
+        barrier = threading.Barrier(8)
+
+        def _worker() -> None:
+            barrier.wait()  # maximize actual overlap at the race window
+            results.append(k8s_module._new_k8s_batch_client())
+
+        threads = [threading.Thread(target=_worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert mock_batch_v1_api.call_count == 1
+        assert len(results) == 8
+        assert all(r is results[0] for r in results)
