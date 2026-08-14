@@ -525,7 +525,7 @@ class Settings(BaseSettings):
         ),
     )
     layout_recommendation_max_tables_per_tick: int = Field(
-        default=200,
+        default=20,
         ge=1,
         description=(
             "Cap on how many tables get a layout-recommendation (re)generated per telemetry "
@@ -533,7 +533,14 @@ class Settings(BaseSettings):
             "on its own, so this only bounds the cost of the *first* pass over a large backlog "
             "-- keeps a single tick from doing thousands of analyses (each with its own bloom-"
             "filter/column-stats work) in the same process that already runs the memory-heavy "
-            "benefit-score updater."
+            "benefit-score updater. Lowered from 200 to 20, 2026-08-14: "
+            "generate_layout_recommendation() now calls analyze_table_layout(), which -- as of "
+            "the same date -- self-fetches real per-file column bounds via "
+            "cryo.optimizer.layout_analyzer.fetch_file_stats (previously a silent no-op, see "
+            "that function's docstring). Confirmed live: reading one real table's manifests "
+            "took ~5s; 200 tables/tick at that rate is 15+ minutes of real Iceberg catalog I/O "
+            "in a single scheduler tick, which this cap now has to actually account for rather "
+            "than being free."
         ),
     )
     property_autopilot_enabled: bool = Field(

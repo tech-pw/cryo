@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -79,6 +80,28 @@ _next_autoincrement_id = itertools.count(1)
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_sqlite(type_: JSONB, compiler: object, **kwargs: object) -> str:
     return "JSON"
+
+
+@event.listens_for(Engine, "connect")
+def _register_sqlite_jsonb_array_length(
+    dbapi_connection: object, connection_record: object
+) -> None:
+    """Postgres's jsonb_array_length() (used by get_table_query_patterns) has no sqlite
+    equivalent registered by default -- sqlite's own json_array_length() does the same thing
+    for the JSON-typed columns _compile_jsonb_sqlite maps JSONB onto, so just alias it. Only
+    fires for sqlite connections (checked via a cheap attribute probe rather than importing
+    the pysqlite driver here) so this is a no-op against the real Postgres test path."""
+    if not hasattr(dbapi_connection, "create_function"):
+        return
+    import json as _json
+
+    def _jsonb_array_length(value: object) -> int | None:
+        if value is None:
+            return None
+        parsed = _json.loads(value) if isinstance(value, str) else value
+        return len(parsed) if isinstance(parsed, list) else None
+
+    dbapi_connection.create_function("jsonb_array_length", 1, _jsonb_array_length)
 
 
 @pytest.fixture(autouse=True)
