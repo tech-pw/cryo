@@ -261,11 +261,12 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-13 from gitlab-main commit bfd93d9 -- adds a Download CSV
-    # button to the Similarity page's cluster list (every member's cluster_id, role,
-    # size, keep-score/reason, exported flat for spreadsheet analysis). Still a manual
-    # build+push -- deploy/deploy.sh does not build this image, only the backend's.
-    digest: "sha256:742e346d966a28f4a6b42b3fb526f6b1ef213458b973c9bb5f5154f4f735e9e8"
+    # Built + pushed 2026-08-14 from gitlab-main commit a41b9a1 -- adds the Dark Tables
+    # (/dark-tables) and Scan Cost (/scan-cost) pages, frontend for the two same-day
+    # backend features (GET /api/v1/dark-tables + dismiss, GET /api/v1/cost-attribution).
+    # Still a manual build+push -- deploy/deploy.sh does not build this image, only the
+    # backend's.
+    digest: "sha256:194d0f801a853f3685004ff4adc4da1e671b31a90b380765081dd674dc6ea41c"
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
