@@ -1554,3 +1554,35 @@ class SimilarityVerifyResponse(BaseModel):
     b_rows_found_in_a_pct: float
     rows_compared_a: int
     rows_compared_b: int
+
+
+class DarkTableCandidateRead(BaseModel):
+    id: uuid.UUID
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    consecutive_zero_query_windows: int
+    first_zero_query_at: datetime | None
+    last_checked_at: datetime
+    total_size_gb: float
+    estimated_monthly_cost_usd: float | None
+    status: str
+
+
+class DarkTableCandidatesResponse(BaseModel):
+    candidates: list[DarkTableCandidateRead]
+    total_candidates: int = 0
+    total_size_gb: float = 0
+    total_estimated_monthly_cost_usd: float = 0
+
+
+class DarkTableDismissRequest(BaseModel):
+    reason: str
+
+
+class DarkTableDismissResponse(BaseModel):
+    table_id: uuid.UUID
+    status: str
+    dismissed_by: str
+    dismissed_at: datetime
+    dismissed_reason: str

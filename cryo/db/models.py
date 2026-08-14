@@ -268,6 +268,9 @@ class Table(Base):
     alert_dispatches: Mapped[list[TableAlertDispatch]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
+    dark_table_candidate: Mapped[DarkTableCandidate | None] = relationship(
+        back_populates="table", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class TableStats(Base):
@@ -578,6 +581,49 @@ class TableAlertDispatch(Base):
     )
 
     table: Mapped[Table] = relationship(back_populates="alert_dispatches")
+
+
+class DarkTableCandidate(Base):
+    """A table with sustained zero query activity across several consecutive 30-day windows.
+
+    ``consecutive_zero_query_windows`` -- not a single ``query_count_30d == 0`` snapshot -- is
+    what makes this a real signal instead of a false positive on a legitimately-quarterly-use
+    table: see ``cryo.telemetry.dark_tables.detect_dark_table_candidates`` for the detection
+    job's own reasoning. Detection/surfacing only -- ``status`` starts at ``'candidate'`` and
+    this model has no code path that deletes or archives the underlying table data; that's a
+    deliberately separate, future, explicitly opt-in action.
+    """
+
+    __tablename__ = "dark_table_candidates"
+    __table_args__ = (UniqueConstraint("table_id", name="uq_dark_table_candidates_table"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    consecutive_zero_query_windows: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    first_zero_query_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_checked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    total_size_gb: Mapped[float] = mapped_column(Float, nullable=False)
+    estimated_monthly_cost_usd: Mapped[float | None] = mapped_column(Float)
+    # 'candidate' | 'dismissed' | 'archived' (see class docstring -- 'archived' is reserved,
+    # nothing in this codebase writes it yet).
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="candidate")
+    dismissed_by: Mapped[str | None] = mapped_column(Text)
+    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    dismissed_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    table: Mapped[Table] = relationship(back_populates="dark_table_candidate")
 
 
 class TierPolicyRecord(TimestampMixin, Base):

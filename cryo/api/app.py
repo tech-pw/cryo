@@ -21,6 +21,7 @@ from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
+from cryo.api.routes_dark_tables import router as dark_tables_router
 from cryo.api.routes_dedup import router as dedup_router
 from cryo.api.routes_property_recommendations import router as property_recommendations_router
 from cryo.api.routes_smart_maintenance import router as smart_maintenance_router
@@ -144,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(s3_log_config_router)
     app.include_router(evidence_router)
     app.include_router(dedup_router)
+    app.include_router(dark_tables_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup
