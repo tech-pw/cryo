@@ -125,7 +125,11 @@ import type {
   SimilarityPairRead,
   SimilarityPipelineRunResponse,
   SimilarityVerifyRequest,
-  SimilarityVerifyResponse
+  SimilarityVerifyResponse,
+  DarkTableCandidatesResponse,
+  DarkTableDismissRequest,
+  DarkTableDismissResponse,
+  ScanCostAttributionResponse
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -638,6 +642,21 @@ export const verifySimilarityPair = (api: ApiOptions, body: SimilarityVerifyRequ
   apiFetch<SimilarityVerifyResponse>("/dedup/verify", api, {
     method: "POST",
     body
+  });
+
+// Dark table detection (sustained zero-query-activity tables)
+export const getDarkTables = (api: ApiOptions) =>
+  apiFetch<DarkTableCandidatesResponse>("/dark-tables", api);
+export const dismissDarkTable = (api: ApiOptions, tableId: UUID, body: DarkTableDismissRequest) =>
+  apiFetch<DarkTableDismissResponse>(`/dark-tables/${tableId}/dismiss`, api, {
+    method: "POST",
+    body
+  });
+
+// Query-driven scan cost attribution
+export const getScanCostAttribution = (api: ApiOptions, args: { days?: number } = {}) =>
+  apiFetch<ScanCostAttributionResponse>("/cost-attribution", api, {
+    query: { days: args.days }
   });
 
 export const wsRunUrl = (runId: UUID, token: string): string => {
