@@ -94,7 +94,7 @@ image:
   #    boundary, checked independently. Shipped OFF in this digest; turned ON 2026-08-10 via
   #    global.env.CRYO_PROPERTY_AUTOPILOT_ENABLED below, by request -- see that env var's own
   #    comment for the rollback note.
-  digest: "sha256:6f6c31f15f1604e60640f7a9e79298a8a1f09b290018bd3176ddf2a9dbfdc834"
+  digest: "sha256:4d159cc962456e0d52125ea4a566118081daa547d56508967eb560142d4fb85c"
 
 imagePullSecrets:
   - cryo-registry
@@ -103,7 +103,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:6f6c31f15f1604e60640f7a9e79298a8a1f09b290018bd3176ddf2a9dbfdc834"
+    digest: "sha256:4d159cc962456e0d52125ea4a566118081daa547d56508967eb560142d4fb85c"
 
 global:
   envFromSecret: cryo-secrets
@@ -171,7 +171,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:6f6c31f15f1604e60640f7a9e79298a8a1f09b290018bd3176ddf2a9dbfdc834"
+    digest: "sha256:4d159cc962456e0d52125ea4a566118081daa547d56508967eb560142d4fb85c"
   keda:
     enabled: true
 
