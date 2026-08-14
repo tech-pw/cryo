@@ -1784,6 +1784,49 @@ class S3RequestCostDaily(TimestampMixin, Base):
     )
 
 
+class QueryCostAttributionDaily(Base):
+    """Per-day, per-client, per-schema rollup of real Trino query scan bytes -- a "who/what is
+    driving scan cost" report, built entirely from data Trino's own query-completion event
+    already carries (``inputs_json``'s ``physicalInputBytes``, the ``source`` client string),
+    read through the same path as ``cryo.telemetry.iceberg_source``'s selectivity extraction.
+
+    Coarse by design: (day, client, schema_name), not per-table or per-query -- Trino's own
+    query-log table (e.g. ``trino_logs.trino_queries``, wired per-source via
+    ``Source.config["query_log"]``) already *is* the durable per-query audit trail; this table
+    exists to answer the aggregate cost-attribution question quickly without re-scanning that
+    log on every report request. Same bounded/retained-window shape as ``S3RequestCostDaily``
+    -- see ``cryo.telemetry.cost_attribution.prune_query_cost_attribution``.
+    """
+
+    __tablename__ = "query_cost_attribution_daily"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id", "day", "client", "schema_name", name="uq_query_cost_attribution_key"
+        ),
+        Index("ix_query_cost_attribution_day", "day"),
+        Index("ix_query_cost_attribution_client", "client"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id", ondelete="CASCADE"), nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    client: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_name: Mapped[str] = mapped_column(Text, nullable=False)
+    query_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    failed_query_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    physical_bytes_scanned: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    estimated_scan_cost_usd: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class QPPObservation(Base):
     """Variance-aware QPP observation row (CLOUD 2026, arXiv:2606.03464).
 

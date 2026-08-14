@@ -65,6 +65,7 @@ class SchedulerService:
         self._last_unmatched_tables_check: datetime | None = None
         self._last_cost_ceiling_check: datetime | None = None
         self._last_dark_table_detection: datetime | None = None
+        self._last_cost_attribution: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -83,6 +84,7 @@ class SchedulerService:
         self._maybe_check_unmatched_tables(current)
         self._maybe_check_cost_ceiling(current)
         self._maybe_detect_dark_tables(current)
+        self._maybe_aggregate_cost_attribution(current)
         self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -609,6 +611,55 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Dark table detection tick failed: %s", exc)
+
+    def _maybe_aggregate_cost_attribution(self, current: datetime) -> None:
+        """Once a day, roll up real Trino query-log scan bytes by (day, client, schema) into
+        cryo.query_cost_attribution_daily for every source with an Iceberg-native query-log
+        configured. Daily (not the hourly telemetry tick) -- this is a cost *report*, not a
+        latency-sensitive signal, and each run does real Iceberg catalog scans per source.
+        """
+        from datetime import timedelta
+
+        if self._last_cost_attribution is not None:
+            if current - self._last_cost_attribution < timedelta(days=1):
+                return
+
+        try:
+            import logging
+
+            from sqlalchemy import select
+
+            from cryo.db.models import Source
+            from cryo.telemetry.cost_attribution import aggregate_query_cost_attribution
+            from cryo.telemetry.iceberg_source import parse_iceberg_query_log_config
+
+            logger = logging.getLogger(__name__)
+            total_windows = 0
+            total_rows = 0
+            with SessionLocal() as session:
+                sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
+                for source in sources:
+                    if parse_iceberg_query_log_config(source.config or {}) is None:
+                        continue
+                    try:
+                        result = aggregate_query_cost_attribution(session, source, now=current)
+                        total_windows += result.windows_processed
+                        total_rows += result.rows_upserted
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Cost attribution tick failed for source %s: %s", source.id, exc
+                        )
+
+            logger.info(
+                "Cost attribution tick: %s window(s) across sources, %s rows upserted",
+                total_windows,
+                total_rows,
+            )
+            self._last_cost_attribution = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Cost attribution tick failed: %s", exc)
 
     def _maybe_check_rollout_safety(self, current: datetime) -> None:
         from datetime import timedelta

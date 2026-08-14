@@ -1586,3 +1586,27 @@ class DarkTableDismissResponse(BaseModel):
     dismissed_by: str
     dismissed_at: datetime
     dismissed_reason: str
+
+
+class CostAttributionRow(BaseModel):
+    client: str
+    schema_name: str
+    query_count: int
+    failed_query_count: int
+    physical_bytes_scanned: int
+    physical_gb_scanned: float
+
+
+class CostAttributionByClient(BaseModel):
+    client: str
+    query_count: int
+    physical_bytes_scanned: int
+    physical_gb_scanned: float
+
+
+class CostAttributionResponse(BaseModel):
+    since: date
+    rows: list[CostAttributionRow]
+    by_client: list[CostAttributionByClient]
+    total_query_count: int = 0
+    total_physical_gb_scanned: float = 0
