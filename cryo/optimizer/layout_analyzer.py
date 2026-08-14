@@ -22,10 +22,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import LayoutRecommendation, QueryPattern, Table, TableStats
+from cryo.db.models import LayoutRecommendation, QueryPattern, Source, Table, TableStats
 from cryo.telemetry.patterns import get_recommended_sort_columns, get_table_query_patterns
 
 logger = logging.getLogger(__name__)
+
+# Real-data cap for fetch_file_stats: a busy table can have 90K+ data files (confirmed live,
+# 2026-08-14: pw_experimentation.gold_unleash_experiments_v1 alone has 93,699), and this whole
+# analysis only needs enough files to estimate whether column ranges overlap across files, not
+# every file in the table. A few thousand files (spread across the table, not just the first N
+# written) is already a strong statistical sample for _calculate_overlap_ratio's purposes.
+DEFAULT_FILE_STATS_SAMPLE_SIZE = 2000
 
 
 class LayoutStrategy(StrEnum):
@@ -97,17 +104,127 @@ class LayoutAnalysis:
     analyzed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
+def fetch_file_stats(
+    session: Session,
+    table: Table,
+    *,
+    sample_size: int = DEFAULT_FILE_STATS_SAMPLE_SIZE,
+) -> list[dict[str, Any]] | None:
+    """Read real per-file column bounds from the table's own Iceberg manifests and shape them
+    into what ``_analyze_column_stats`` expects: ``{"lower_bounds": {col: value}, "upper_bounds":
+    {col: value}}`` per file, decoded to real Python values.
+
+    Regression, found 2026-08-14: ``analyze_table_layout``'s ``file_stats`` parameter has
+    always defaulted to ``None``, and none of its 3 real callers ever passed it -- so
+    ``current_prune_efficiency`` was always computed from an unset 0.0 baseline instead of real
+    file data, and every layout recommendation's ``estimated_prune_improvement`` was really
+    just a function of the hardcoded target efficiency (0.8, discounted for confidence),
+    identical across every table regardless of its actual layout. This is the real fetch this
+    was always supposed to have.
+
+    Uses ``cryo.scanner.analyze.iter_data_files`` (manifest entries, streamed, with an early
+    break once ``sample_size`` is reached) rather than ``table.inspect.files()`` -- confirmed
+    live, 2026-08-14: ``inspect.files()`` took 23s on a table with 93,699 files because it
+    materializes the *entire* Arrow file-metadata table before any sampling can happen, vs
+    ``iter_data_files``'s streaming break at the same sample size in ~5s. This mirrors
+    ``iter_data_files``'s own docstring warning against ``table.scan().plan_files()`` for the
+    identical reason (that path also eagerly materializes the full FileScanTask graph) --
+    ``inspect.files()`` turned out to have the same problem despite the different API shape.
+    Sampling still walks the *whole* file list conceptually (manifests are read in whatever
+    order PyIceberg returns them, not truncated to "the first manifest"), just without
+    forcing a full materialization first.
+
+    Decodes each entry's raw ``lower_bounds``/``upper_bounds`` (Iceberg-field-ID-keyed, binary,
+    per the Iceberg spec) via ``pyiceberg.conversions.from_bytes`` against the table's own
+    schema, since ``iter_data_files`` yields raw manifest entries rather than
+    ``inspect.files()``'s pre-decoded ``readable_metrics``. Columns whose value fails to decode
+    (unexpected type, corrupt bound) are skipped for that one file rather than failing the
+    whole file -- one bad column shouldn't discard otherwise-good bounds on every other column
+    of the same file.
+
+    Returns ``None`` (not ``[]``) on any failure (catalog unreachable, table has no data files
+    yet, an unexpected metadata shape) so callers can distinguish "we don't know" from "we
+    checked and there's nothing to prune on" -- see ``analyze_table_layout``'s ``if
+    file_stats:`` gate, which already treats both the same way, but future callers reading this
+    return value directly shouldn't have to guess.
+    """
+    from pyiceberg.conversions import from_bytes
+
+    from cryo.scanner.analyze import iter_data_files
+    from cryo.sources.factory import source_catalog_for
+
+    source = session.get(Source, table.source_id)
+    if source is None:
+        return None
+
+    try:
+        catalog = source_catalog_for(source)
+        iceberg_table = catalog.load_table(table.schema_name, table.table_name)
+        schema = iceberg_table.schema()
+    except Exception:
+        logger.warning(
+            "fetch_file_stats: could not load Iceberg table %s.%s",
+            table.schema_name,
+            table.table_name,
+            exc_info=True,
+        )
+        return None
+
+    def _decode_bounds(raw_bounds: Any) -> dict[str, Any]:
+        if not raw_bounds:
+            return {}
+        decoded: dict[str, Any] = {}
+        for field_id, raw_value in dict(raw_bounds).items():
+            try:
+                field = schema.find_field(field_id)
+                decoded[field.name] = from_bytes(field.field_type, raw_value)
+            except Exception:  # noqa: BLE001 -- one bad column must not drop the whole file
+                continue
+        return decoded
+
+    try:
+        file_stats: list[dict[str, Any]] = []
+        for data_file in iter_data_files(iceberg_table):
+            lower_bounds = _decode_bounds(getattr(data_file, "lower_bounds", None))
+            upper_bounds = _decode_bounds(getattr(data_file, "upper_bounds", None))
+            if lower_bounds and upper_bounds:
+                file_stats.append({"lower_bounds": lower_bounds, "upper_bounds": upper_bounds})
+            if len(file_stats) >= sample_size:
+                break
+    except Exception:
+        logger.warning(
+            "fetch_file_stats: could not read Iceberg manifests for %s.%s",
+            table.schema_name,
+            table.table_name,
+            exc_info=True,
+        )
+        return None
+
+    return file_stats
+
+
+_UNSET = object()
+
+
 def analyze_table_layout(
     session: Session,
     table_id: uuid.UUID,
-    file_stats: list[dict[str, Any]] | None = None,
+    file_stats: list[dict[str, Any]] | None = _UNSET,  # type: ignore[assignment]
 ) -> LayoutAnalysis:
     """Analyze a table's data layout and generate recommendations.
 
     Args:
         session: Database session
         table_id: Table to analyze
-        file_stats: Optional pre-fetched file statistics (from $files metadata table)
+        file_stats: Pre-fetched file statistics (from ``$files`` metadata, see
+            ``fetch_file_stats``'s docstring for the shape). When omitted entirely, this
+            function fetches real file stats itself via ``fetch_file_stats`` -- pass an
+            explicit ``file_stats=[]`` (or a real pre-fetched list, e.g. to avoid a second
+            catalog round-trip when a caller already has one) to skip that fetch.
+            ``file_stats=None`` was the previous default and is still accepted, but -- as of
+            2026-08-14 -- resolves through the same self-fetch path as omitting the argument,
+            since ``None`` was never actually meant to opt out of analysis; it silently did
+            because nothing supplied a real value. See ``fetch_file_stats``'s docstring.
 
     Returns:
         LayoutAnalysis with current metrics and recommendations
@@ -115,6 +232,9 @@ def analyze_table_layout(
     table = session.get(Table, table_id)
     if table is None:
         raise ValueError(f"Table not found: {table_id}")
+
+    if file_stats is _UNSET or file_stats is None:
+        file_stats = fetch_file_stats(session, table)
 
     stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
 
