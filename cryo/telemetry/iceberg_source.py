@@ -19,19 +19,32 @@ Enable per-Source by setting, in `Source.config`::
         "mode": "iceberg_table",
         "table": "logging.trino_query_log",   # namespace.table, read via this source's own catalog
         "query_text_column": "query",          # optional, defaults shown
-        "executed_at_column": "create_time"    # optional, defaults shown
+        "executed_at_column": "create_time",   # optional, defaults shown
+        "inputs_json_column": "inputs_json"    # optional, defaults shown; null/false disables
       }
     }
 
-Only two columns are actually required -- the raw SQL text (parsed the same way
-`cryo/telemetry/parser.py` parses any other query text, to find filter/join/projection columns
-and the referenced table) and a timestamp column (to push down a `since` filter and to persist a
-per-source watermark so repeat runs are incremental, not a full re-scan every time). No
-`query_logs` rows are written for this path; only `query_patterns` is updated.
+Two columns are required -- the raw SQL text (parsed the same way `cryo/telemetry/parser.py`
+parses any other query text, to find filter/join/projection columns and the referenced table)
+and a timestamp column (to push down a `since` filter and to persist a per-source watermark so
+repeat runs are incremental, not a full re-scan every time). No `query_logs` rows are written
+for this path; only `query_patterns` is updated.
+
+A third, optional column (`inputs_json_column`, defaulting to `"inputs_json"` -- the name Trino's
+own event listener uses) unlocks real per-query selectivity: Trino's query-completion event
+carries, per input table, `physicalInputRows` and (for Iceberg tables) `connectorInfo.totalRecords`
+-- the table's total row count at the snapshot that query scanned. `physicalInputRows /
+totalRecords` is genuine partition-pruning evidence, attributed to whichever filter columns that
+query used, and is what makes `query_patterns.avg_selectivity` (consumed by
+`cryo.optimizer.pto.candidate_space.PtoPattern.pruning_value` for layout/partition
+recommendations) a real signal instead of always falling back to the "no information" 0.5
+default. Set `inputs_json_column` to `null`/`false` for event-listener tables that don't have an
+inputs-shaped column -- filter/join/projection column stats are still collected either way.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections import defaultdict
@@ -54,6 +67,15 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_QUERY_TEXT_COLUMN = "query"
 _DEFAULT_EXECUTED_AT_COLUMN = "create_time"
+# Trino's query-completion event listener (see e.g. trino_logs.trino_queries) writes one JSON
+# array per query under this column: one object per input table actually read, each carrying
+# physicalInputRows and, when the connector reports it (Iceberg does), connectorInfo.totalRecords
+# -- the table's total row count as of the snapshot that query scanned. That pair is real,
+# per-query selectivity ground truth (physicalInputRows / totalRecords), not a placeholder.
+# Optional: older event-listener table versions or non-Iceberg connectors may not have this
+# column or may leave connectorInfo empty, in which case selectivity is simply not recorded for
+# those queries rather than the whole read-through path failing.
+_DEFAULT_INPUTS_JSON_COLUMN = "inputs_json"
 _DEFAULT_LOOKBACK_DAYS = 7  # only used the first time a source has no persisted watermark yet
 
 
@@ -64,6 +86,7 @@ class IcebergQueryLogConfig:
     table_identifier: str  # "namespace.table"
     query_text_column: str = _DEFAULT_QUERY_TEXT_COLUMN
     executed_at_column: str = _DEFAULT_EXECUTED_AT_COLUMN
+    inputs_json_column: str | None = _DEFAULT_INPUTS_JSON_COLUMN
     last_aggregated_at: datetime | None = None
 
     @property
@@ -94,10 +117,19 @@ def parse_iceberg_query_log_config(source_config: dict[str, Any]) -> IcebergQuer
         except ValueError:
             logger.warning("Could not parse query_log.last_aggregated_at=%r", raw_watermark)
 
+    # Explicit false/null disables selectivity extraction for sources whose event-listener
+    # table doesn't have an inputs_json-shaped column, without disabling the whole read-through
+    # path -- filter/join/projection column stats still have value on their own.
+    inputs_json_column: str | None = _DEFAULT_INPUTS_JSON_COLUMN
+    if "inputs_json_column" in block:
+        raw_col = block.get("inputs_json_column")
+        inputs_json_column = str(raw_col) if raw_col else None
+
     return IcebergQueryLogConfig(
         table_identifier=str(table_identifier),
         query_text_column=str(block.get("query_text_column") or _DEFAULT_QUERY_TEXT_COLUMN),
         executed_at_column=str(block.get("executed_at_column") or _DEFAULT_EXECUTED_AT_COLUMN),
+        inputs_json_column=inputs_json_column,
         last_aggregated_at=last_aggregated_at,
     )
 
@@ -109,16 +141,18 @@ def _read_query_texts(
     since: datetime,
     until: datetime,
     max_rows: int,
-) -> tuple[list[str], bool]:
-    """Scan the query-log Iceberg table for query text within a bounded half-open time window.
+) -> tuple[list[tuple[str, str | None]], bool]:
+    """Scan the query-log Iceberg table for query text (and, when configured, that query's
+    ``inputs_json``) within a bounded half-open time window.
 
     Reads batch-by-batch (``to_arrow_batch_reader``) rather than materializing the whole window
     with ``to_arrow()``, and stops at ``max_rows`` as a last-resort safety valve. The caller is
     responsible for keeping each window itself small (see ``aggregate_from_iceberg_query_log``)
     -- a busy Trino cluster's query-event-listener table can log millions of rows with large raw
     SQL text per row, and an unbounded scan of that over a multi-day lookback is what previously
-    OOM'd the process reading it. Returns ``(texts, truncated)``; ``truncated`` is True if
-    ``max_rows`` was hit, so the caller can log that rows were dropped for this window.
+    OOM'd the process reading it. Returns ``(rows, truncated)`` where each row is
+    ``(query_text, inputs_json_or_None)``; ``truncated`` is True if ``max_rows`` was hit, so the
+    caller can log that rows were dropped for this window.
     """
     from pyiceberg.expressions import And, GreaterThan, LessThanOrEqual
 
@@ -128,22 +162,80 @@ def _read_query_texts(
     catalog = source_catalog_for(source)
     iceberg_table = catalog.load_table(namespace, table_name)
 
+    selected_fields = (config.query_text_column, config.executed_at_column)
+    if config.inputs_json_column:
+        selected_fields = (*selected_fields, config.inputs_json_column)
+
     scan = iceberg_table.scan(
         row_filter=And(
             GreaterThan(config.executed_at_column, since),  # type: ignore[misc,call-arg,arg-type]
             LessThanOrEqual(config.executed_at_column, until),  # type: ignore[misc,call-arg,arg-type]
         ),
-        selected_fields=(config.query_text_column, config.executed_at_column),
+        selected_fields=selected_fields,
     )
 
-    texts: list[str] = []
+    rows: list[tuple[str, str | None]] = []
     for batch in scan.to_arrow_batch_reader():
-        for value in batch.column(config.query_text_column).to_pylist():
+        query_col = batch.column(config.query_text_column).to_pylist()
+        inputs_col = (
+            batch.column(config.inputs_json_column).to_pylist()
+            if config.inputs_json_column
+            else [None] * len(query_col)
+        )
+        for value, inputs_json in zip(query_col, inputs_col, strict=True):
             if value:
-                texts.append(str(value))
-            if len(texts) >= max_rows:
-                return texts, True
-    return texts, False
+                rows.append((str(value), inputs_json))
+            if len(rows) >= max_rows:
+                return rows, True
+    return rows, False
+
+
+def _selectivity_for_query(
+    inputs_json: str | None,
+    *,
+    schema_name: str,
+    table_name: str,
+) -> float | None:
+    """Extract this query's selectivity against one specific table from its ``inputs_json``.
+
+    ``inputs_json`` is a JSON array with one object per table the query actually read (see the
+    module docstring). Matches by ``schema``/``table`` rather than position since a query can
+    join several tables and Cryo only wants the selectivity for the table this pattern-scan
+    call is attributing columns to. Returns ``None`` -- not 0.0 -- whenever real numbers aren't
+    available (missing column, unparseable JSON, connector didn't report totalRecords, or a
+    total of 0 which would make the ratio meaningless): ``None`` is the "no information" value
+    ``PtoPattern.pruning_value`` already knows how to fall back on, whereas a fabricated 0.0
+    would silently claim perfect pruning that was never observed.
+    """
+    if not inputs_json:
+        return None
+    try:
+        inputs = json.loads(inputs_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(inputs, list):
+        return None
+
+    for entry in inputs:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("schema") != schema_name or entry.get("table") != table_name:
+            continue
+        physical_input_rows = entry.get("physicalInputRows")
+        connector_info = entry.get("connectorInfo")
+        if not isinstance(connector_info, dict):
+            continue
+        total_records = connector_info.get("totalRecords")
+        try:
+            physical_input_rows = float(physical_input_rows)
+            total_records = float(total_records)
+        except (TypeError, ValueError):
+            return None
+        if total_records <= 0:
+            return None
+        return physical_input_rows / total_records
+
+    return None
 
 
 def aggregate_from_iceberg_query_log(
@@ -226,7 +318,7 @@ def aggregate_from_iceberg_query_log(
         # query in this window under window_end's own date is close enough for a 30-day rolling
         # count and needs no extra column read.
         window_query_counts: defaultdict[uuid.UUID, int] = defaultdict(int)
-        for query_text in query_texts:
+        for query_text, inputs_json in query_texts:
             schema_name, table_name = extract_table_from_query(query_text)
             if not schema_name or not table_name:
                 continue
@@ -236,7 +328,10 @@ def aggregate_from_iceberg_query_log(
             total_matched += 1
             window_query_counts[table.id] += 1
             predicate_info = parse_query_predicates(query_text)
-            _accumulate(table_stats[table.id], predicate_info)
+            selectivity = _selectivity_for_query(
+                inputs_json, schema_name=schema_name, table_name=table_name
+            )
+            _accumulate(table_stats[table.id], predicate_info, selectivity=selectivity)
 
         if window_query_counts:
             record_table_query_activity(session, window_query_counts, day=window_end.date())
@@ -264,12 +359,27 @@ def aggregate_from_iceberg_query_log(
     return updated
 
 
-def _accumulate(stats_by_col: dict[str, ColumnPatternStats], predicate_info: Any) -> None:
+def _accumulate(
+    stats_by_col: dict[str, ColumnPatternStats],
+    predicate_info: Any,
+    *,
+    selectivity: float | None = None,
+) -> None:
+    """Fold one query's predicate/join/projection columns into the running per-table stats.
+
+    ``selectivity`` (fraction of the table's rows this specific query actually read, from
+    ``_selectivity_for_query``) is attributed only to this query's *filter* columns -- it's the
+    pruning outcome of whatever predicate the query applied, so it belongs on the columns that
+    predicate touched, not on unrelated join or pure-projection columns the query also
+    happened to reference.
+    """
     for col in predicate_info.filter_columns:
         if not col.column:
             continue
         stats = stats_by_col.setdefault(col.column, ColumnPatternStats(column_name=col.column))
         stats.filter_count += 1
+        if selectivity is not None:
+            stats.record_selectivity_sample(selectivity)
         if col.is_equality:
             stats.equality_filter_count += 1
         if col.is_range:

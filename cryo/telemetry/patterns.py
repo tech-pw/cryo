@@ -21,7 +21,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ColumnPatternStats:
-    """Aggregated statistics for a column's query patterns."""
+    """Aggregated statistics for a column's query patterns.
+
+    ``avg_selectivity`` is the running mean of ``rows matched / table's total rows`` across
+    every query observed for this column, lower is better pruning (see
+    ``cryo.optimizer.pto.candidate_space.PtoPattern.pruning_value``, which falls back to 0.5
+    -- "no information" -- whenever this is ``None``). It's accumulated via
+    ``record_selectivity_sample`` rather than assigned directly so repeated calls (e.g. one
+    per matched column per query) produce a correct mean instead of overwriting each other;
+    ``_selectivity_sample_count`` is the running-mean's own weight and is intentionally not
+    the same number as ``total_queries`` (a query can touch a column without Cryo being able
+    to compute that query's selectivity -- see ``iceberg_source._selectivity_for_query``).
+    """
 
     column_name: str
     filter_count: int = 0
@@ -31,6 +42,18 @@ class ColumnPatternStats:
     projection_count: int = 0
     avg_selectivity: float | None = None
     total_queries: int = 0
+    _selectivity_sample_count: int = 0
+
+    def record_selectivity_sample(self, selectivity: float) -> None:
+        """Fold one more (query, selectivity) observation into the running mean."""
+        selectivity = min(1.0, max(0.0, selectivity))
+        if self.avg_selectivity is None:
+            self.avg_selectivity = selectivity
+            self._selectivity_sample_count = 1
+            return
+        n = self._selectivity_sample_count
+        self.avg_selectivity = (self.avg_selectivity * n + selectivity) / (n + 1)
+        self._selectivity_sample_count = n + 1
 
 
 @dataclass
@@ -84,6 +107,23 @@ def aggregate_query_patterns(
 
         stats_by_col = table_stats[log.table_id]
 
+        # files_read/files_pruned are populated by the same engines that populate
+        # filter_columns (see cryo/telemetry/ingestion.py's TrinoQueryIngester), so a query
+        # that pruned files gives a real, engine-reported selectivity signal -- how much of
+        # the table's file set this query actually had to touch. Files rather than rows
+        # because that's what both Trino's query-completion event and this table's own
+        # columns natively carry; a files-scanned ratio is a reasonable proxy for a
+        # rows-scanned ratio for the same partition-pruning purpose PtoPattern uses it for.
+        # getattr rather than log.files_read: real QueryLog rows always have the attribute
+        # (nullable column), but callers/tests sometimes pass lighter row stand-ins that only
+        # set the fields a given test cares about.
+        query_selectivity: float | None = None
+        files_read = getattr(log, "files_read", None) or 0
+        files_pruned = getattr(log, "files_pruned", None) or 0
+        total_candidate_files = files_read + files_pruned
+        if total_candidate_files > 0:
+            query_selectivity = files_read / total_candidate_files
+
         # Process filter columns
         for col_info in log.filter_columns or []:
             col_name = col_info.get("column", "")
@@ -96,6 +136,8 @@ def aggregate_query_patterns(
             stats = stats_by_col[col_name]
             stats.filter_count += 1
             stats.total_queries += 1
+            if query_selectivity is not None:
+                stats.record_selectivity_sample(query_selectivity)
 
             if col_info.get("is_equality"):
                 stats.equality_filter_count += 1
@@ -220,6 +262,7 @@ def _upsert_query_patterns(
                 range_filter_count=stats.range_filter_count,
                 join_count=stats.join_count,
                 projection_count=stats.projection_count,
+                avg_selectivity=stats.avg_selectivity,
                 last_seen_at=datetime.now(UTC),
             )
             stmt = stmt.on_conflict_do_update(
@@ -230,6 +273,15 @@ def _upsert_query_patterns(
                     "range_filter_count": stmt.excluded.range_filter_count,
                     "join_count": stmt.excluded.join_count,
                     "projection_count": stmt.excluded.projection_count,
+                    # NULL only when this call observed zero selectivity samples for the
+                    # column (e.g. every matched query lacked usable stats) -- COALESCE keeps
+                    # whatever was already stored rather than blanking out a real prior value.
+                    # Every other field here is already a blind per-call overwrite (not an
+                    # incremental merge), so this matches existing semantics as closely as
+                    # possible while not regressing a populated value to NULL for a quiet call.
+                    "avg_selectivity": func.coalesce(
+                        stmt.excluded.avg_selectivity, QueryPattern.avg_selectivity
+                    ),
                     "last_seen_at": stmt.excluded.last_seen_at,
                     "updated_at": func.now(),
                 },
