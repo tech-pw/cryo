@@ -1265,6 +1265,72 @@ export interface SimilarityVerifyResponse {
 }
 
 // ============================================================================
+// Dark table detection (sustained zero-query-activity tables)
+// ============================================================================
+
+export interface DarkTableCandidateRead {
+  id: UUID;
+  table_id: UUID;
+  schema_name: string;
+  table_name: string;
+  consecutive_zero_query_windows: number;
+  first_zero_query_at: string | null;
+  last_checked_at: string;
+  total_size_gb: number;
+  estimated_monthly_cost_usd: number | null;
+  status: "candidate" | "dismissed" | "archived";
+}
+
+export interface DarkTableCandidatesResponse {
+  candidates: DarkTableCandidateRead[];
+  total_candidates: number;
+  total_size_gb: number;
+  total_estimated_monthly_cost_usd: number;
+}
+
+export interface DarkTableDismissRequest {
+  reason: string;
+}
+
+export interface DarkTableDismissResponse {
+  table_id: UUID;
+  status: string;
+  dismissed_by: string;
+  dismissed_at: string;
+  dismissed_reason: string;
+}
+
+// ============================================================================
+// Query-driven scan cost attribution (real Trino bytes-scanned by client/schema --
+// distinct from the cost-center CostAttributionResponse in api/client.ts, which is an
+// unrelated, currently-placeholder feature. Named ScanCost* here to avoid the collision.)
+// ============================================================================
+
+export interface ScanCostAttributionRow {
+  client: string;
+  schema_name: string;
+  query_count: number;
+  failed_query_count: number;
+  physical_bytes_scanned: number;
+  physical_gb_scanned: number;
+}
+
+export interface ScanCostAttributionByClient {
+  client: string;
+  query_count: number;
+  physical_bytes_scanned: number;
+  physical_gb_scanned: number;
+}
+
+export interface ScanCostAttributionResponse {
+  since: string;
+  rows: ScanCostAttributionRow[];
+  by_client: ScanCostAttributionByClient[];
+  total_query_count: number;
+  total_physical_gb_scanned: number;
+}
+
+// ============================================================================
 // Puffin-backed column sketches (FORMATS '26, arXiv:2605.30308)
 // ============================================================================
 
