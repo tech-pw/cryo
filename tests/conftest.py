@@ -26,6 +26,7 @@ from cryo.db.models import (
     MaintenanceRun,
     Preset,
     PresetRule,
+    QueryCostAttributionDaily,
     QueryLog,
     QueryPattern,
     S3BucketLogConfig,
@@ -73,6 +74,7 @@ _AUTOINCREMENT_ID_MODELS = (
     AuditLog,
     QueryLog,
     QueryPattern,
+    QueryCostAttributionDaily,
 )
 _next_autoincrement_id = itertools.count(1)
 
