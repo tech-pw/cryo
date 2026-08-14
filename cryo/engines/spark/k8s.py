@@ -20,6 +20,7 @@ per-job AWS credentials Secret.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -678,6 +679,9 @@ def cleanup_stale_driver_pods(
 
 
 _k8s_config_loaded = False
+_module_client_lock = threading.Lock()
+_module_batch_client: client.BatchV1Api | None = None
+_module_core_client: client.CoreV1Api | None = None
 
 
 def _ensure_k8s_config() -> None:
@@ -705,17 +709,47 @@ def _ensure_k8s_config() -> None:
 
 
 def _new_k8s_batch_client() -> client.BatchV1Api:
-    from kubernetes import client
+    """Process-wide cached singleton, not a fresh ApiClient per call.
 
-    _ensure_k8s_config()
-    return client.BatchV1Api()
+    SparkK8sClient already caches these per-instance (see its _batch_client/_core_client
+    methods), but that cache is defeated whenever a fresh SparkK8sClient gets built --
+    which is routine, not rare: cryo.governor.native_admit._dispatch_fallback_operations
+    calls create_engine() (building a brand-new SparkK8sEngine -> SparkK8sClient) once
+    PER TABLE, and _run_fallback_dispatches_concurrently runs up to 6 of those
+    concurrently via a ThreadPoolExecutor -- confirmed live, 2026-08-14: cryo-worker pods
+    (4Gi limit) OOMKilled repeatedly, idle at ~160-225Mi but spiking hard during exactly
+    this "Created Spark-on-K8s dispatch Job ... Deleted Spark driver pod" burst pattern
+    in the logs. Each fresh ApiClient (constructed inside BatchV1Api()/CoreV1Api() when
+    none is passed) owns its own urllib3.PoolManager + SSL context + certifi bundle --
+    real, non-trivial memory -- and a per-table engine has no legitimate reason to also
+    mean a per-table K8s API connection: the in-cluster K8s API server is the same
+    regardless of which table's Spark job is being dispatched, only the *Spark* config
+    (S3 credentials, catalog URI) is legitimately per-table (see
+    native_admit._fallback_engine_config's docstring for why that part can't be cached).
+    Lock-guarded since this is reached from real worker threads, not just sequentially.
+    """
+    global _module_batch_client
+    if _module_batch_client is None:
+        with _module_client_lock:
+            if _module_batch_client is None:
+                from kubernetes import client as k8s_client_module
+
+                _ensure_k8s_config()
+                _module_batch_client = k8s_client_module.BatchV1Api()
+    return _module_batch_client
 
 
 def _new_k8s_core_client() -> client.CoreV1Api:
-    from kubernetes import client
+    """Process-wide cached singleton -- see _new_k8s_batch_client's docstring."""
+    global _module_core_client
+    if _module_core_client is None:
+        with _module_client_lock:
+            if _module_core_client is None:
+                from kubernetes import client as k8s_client_module
 
-    _ensure_k8s_config()
-    return client.CoreV1Api()
+                _ensure_k8s_config()
+                _module_core_client = k8s_client_module.CoreV1Api()
+    return _module_core_client
 
 
 def _is_not_found(exc: BaseException) -> bool:
