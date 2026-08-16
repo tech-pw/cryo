@@ -13,6 +13,7 @@ from cryo.governor.native_admit import (
     _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY,
     _dispatch_fallback_operations,
     _fallback_dispatch_concurrency,
+    _process_rss_mib,
     _run_fallback_dispatches_concurrently,
 )
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore
@@ -677,3 +678,67 @@ def test_non_spark_fallback_dispatch_still_blocks_synchronously() -> None:
 
     mock_engine.execute.assert_called_once()
     assert store.audit[0].status == "OK"
+
+
+class TestProcessRssMib:
+    """Diagnostic-logging helper added 2026-08-16 after cryo-worker pods OOMKilled 46-77x
+    each in a burst with no time-series data available to reconstruct what happened --
+    _run_fallback_dispatches_concurrently now logs RSS around each concurrent batch so the
+    next occurrence has real data. This is the platform-unit-handling logic behind that."""
+
+    def test_returns_a_positive_reasonable_value_on_this_platform(self) -> None:
+        result = _process_rss_mib()
+        assert result is not None
+        # A live pytest process's own RSS is a real, bounded number -- not exactly
+        # predictable, but anywhere from a few tens of MiB to a few GiB is a sane range.
+        # This is the same assertion shape that would have caught the macOS/Linux unit bug
+        # (bytes vs KiB) found while smoke-testing this function locally: on macOS, dividing
+        # a bytes-denominated ru_maxrss by 1024 (the Linux KiB convention) alone produces a
+        # value in the tens-of-thousands-of-MiB range, clearly outside this bound.
+        assert 0 < result < 10_000
+
+    def test_uses_kib_divisor_on_linux(self, monkeypatch) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Linux")
+        fake_resource = MagicMock()
+        fake_resource.getrusage.return_value = MagicMock(ru_maxrss=2_097_152)  # 2 GiB in KiB
+        with patch.dict("sys.modules", {"resource": fake_resource}):
+            result = _process_rss_mib()
+        assert result == 2048.0
+
+    def test_uses_bytes_divisor_on_non_linux(self, monkeypatch) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        fake_resource = MagicMock()
+        fake_resource.getrusage.return_value = MagicMock(ru_maxrss=2_147_483_648)  # 2 GiB in bytes
+        with patch.dict("sys.modules", {"resource": fake_resource}):
+            result = _process_rss_mib()
+        assert result == 2048.0
+
+    def test_returns_none_rather_than_raising_on_failure(self, monkeypatch) -> None:
+        fake_resource = MagicMock()
+        fake_resource.getrusage.side_effect = RuntimeError("unavailable")
+        with patch.dict("sys.modules", {"resource": fake_resource}):
+            result = _process_rss_mib()
+        assert result is None
+
+
+def test_run_fallback_dispatches_concurrently_logs_rss_around_the_batch(caplog) -> None:
+    """The diagnostic logging itself: must fire for a real multi-dispatch concurrent batch
+    (not the concurrency<=1 fast path, which returns before ever reaching it)."""
+    import logging
+
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 3})
+    )
+    dispatches = [lambda: None for _ in range(5)]
+
+    with caplog.at_level(logging.INFO, logger="cryo.governor.native_admit"):
+        _run_fallback_dispatches_concurrently(
+            dispatches,
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            store=store,
+        )
+
+    messages = [r.message for r in caplog.records]
+    assert any("Fallback dispatch batch starting" in m for m in messages)
+    assert any("Fallback dispatch batch finished" in m for m in messages)

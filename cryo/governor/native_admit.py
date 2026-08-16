@@ -572,6 +572,23 @@ def _run_fallback_dispatches_concurrently(
             dispatch()
         return
 
+    # Diagnostic logging only, added 2026-08-16 after cryo-worker pods OOMKilled 46-77x each
+    # in a burst with the same "Created Spark-on-K8s dispatch Job ... Deleted Spark driver
+    # pod" signature as the 2026-08-14 client-caching fix -- that fix is confirmed live and
+    # its own code path looks clean on review, so this batch's real memory footprint
+    # (concurrency up to _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6 simultaneous Spark-K8s
+    # dispatches) is the next suspect. Nothing here queried at investigation time could
+    # reconstruct what RSS actually did during the burst -- this makes that data available
+    # for the next occurrence instead of guessing again. rss_mib is None if the `resource`
+    # module is unavailable (non-POSIX) rather than failing the batch over a metric.
+    rss_before_mib = _process_rss_mib()
+    logger.info(
+        "Fallback dispatch batch starting: %d dispatch(es), concurrency=%d, rss=%s MiB",
+        len(dispatches),
+        concurrency,
+        rss_before_mib,
+    )
+
     with ThreadPoolExecutor(
         max_workers=concurrency, thread_name_prefix="fallback-dispatch"
     ) as executor:
@@ -584,6 +601,42 @@ def _run_fallback_dispatches_concurrently(
                 future.result()
             except Exception:
                 logger.exception("Fallback dispatch task raised unexpectedly")
+
+    rss_after_mib = _process_rss_mib()
+    logger.info(
+        "Fallback dispatch batch finished: %d dispatch(es), concurrency=%d, rss=%s MiB "
+        "(was %s MiB)",
+        len(dispatches),
+        concurrency,
+        rss_after_mib,
+        rss_before_mib,
+    )
+
+
+def _process_rss_mib() -> float | None:
+    """Best-effort current process peak RSS in MiB, for the diagnostic logging above.
+
+    Uses the stdlib `resource` module (POSIX-only, already true of every environment this
+    runs in) rather than adding a psutil dependency for two log lines. `ru_maxrss` is
+    cumulative peak RSS for the process's lifetime (not current RSS) -- that's actually more
+    useful here than instantaneous RSS: it captures the batch's real peak even if a spike
+    happens between the before/after log calls, which an instantaneous read could miss
+    entirely.
+
+    `ru_maxrss`'s unit is platform-dependent: KiB on Linux (every real deploy target for
+    this codebase), bytes on macOS/BSD (a real gap caught locally, 2026-08-16: without this
+    branch the value came back ~1000x too large when smoke-tested on a Mac). Divides
+    accordingly rather than assuming Linux's convention everywhere.
+    """
+    try:
+        import platform
+        import resource
+
+        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        divisor = 1024 if platform.system() == "Linux" else 1024 * 1024
+        return round(raw / divisor, 1)
+    except Exception:  # noqa: BLE001 - diagnostic only, must never affect dispatch
+        return None
 
 
 def cluster_headroom(
