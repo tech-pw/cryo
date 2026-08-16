@@ -190,7 +190,11 @@ api:
   resources:
     requests:
       cpu: 250m
-      memory: 768Mi
+      # Lowered 768Mi -> 256Mi 2026-08-16: confirmed live, both cryo-api pods steady at
+      # ~136Mi actual usage (0 restarts, ever) -- 768Mi was reserving ~82% unused memory
+      # per the cryo-namespace cost dashboard. 256Mi keeps ~2x headroom over observed
+      # usage; limit is untouched (6Gi) so a real spike still has room before OOM.
+      memory: 256Mi
     limits:
       cpu: "1"
       memory: 6Gi
@@ -221,7 +225,12 @@ governor:
   resources:
     requests:
       cpu: 250m
-      memory: 1Gi
+      # Lowered 1Gi -> 384Mi 2026-08-16: confirmed live, actual usage steady at ~178Mi
+      # (0 restarts, ever) -- 1Gi was reserving ~83% unused memory per the cryo-namespace
+      # cost dashboard. 384Mi keeps ~2x headroom over observed usage; the limit below is
+      # untouched (already raised 1Gi->3Gi 2026-08-03 for a real OOM under queue-depth
+      # load, unrelated to this request-sizing change) so a real spike still has room.
+      memory: 384Mi
     limits:
       cpu: "1"
       # Raised 1Gi -> 3Gi 2026-08-03: OOMKilled 22x in ~3h once a single destination's queue
@@ -261,7 +270,12 @@ scannerWorker:
   resources:
     requests:
       cpu: 500m
-      memory: 512Mi
+      # Lowered 512Mi -> 256Mi 2026-08-16: confirmed live, all 3 pods steady at ~103Mi
+      # actual usage (0 restarts, ever) -- consistent with this section's own 2026-08-12
+      # note above that the fixed-8-replica configuration ran ~73% unused on the
+      # cryo-namespace cost dashboard. 256Mi keeps ~2.5x headroom over observed usage;
+      # limit untouched (3Gi) for scan-burst headroom.
+      memory: 256Mi
     limits:
       cpu: "2"
       memory: 3Gi
@@ -278,6 +292,18 @@ web:
     # Still a manual build+push -- deploy/deploy.sh does not build this image, only the
     # backend's.
     digest: "sha256:194d0f801a853f3685004ff4adc4da1e671b31a90b380765081dd674dc6ea41c"
+  # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
+  # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
+  # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
+  # in values.yaml since that default is shared across every deployment of this chart,
+  # not just this cluster's confirmed-safe number.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 spark:
   # Live on data-platform-cluster as of 2026-07-21 (helm upgrade revision 40) as the SQL
