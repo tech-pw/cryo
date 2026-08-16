@@ -203,7 +203,18 @@ worker:
       memory: 1Gi
     limits:
       cpu: "2"
-      memory: 4Gi
+      # Raised 4Gi -> 6Gi 2026-08-16: confirmed live, several cryo-worker pods OOMKilled
+      # 46-77x each in an ~8.5-11.5h-old burst window, same "Created Spark-on-K8s dispatch
+      # Job ... Deleted Spark driver pod" signature as the 2026-08-14 OOM investigation
+      # (see cryo/engines/spark/k8s.py's module-level client caching fix from that date).
+      # That fix is confirmed live on the running image and its own code path looks clean
+      # on review -- this is very likely genuine concurrent-dispatch memory pressure (up to
+      # _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6 concurrent Spark-K8s submissions per table
+      # admission wave), not a new client-object leak, but there's no time-series data from
+      # the actual burst to confirm that precisely. This bump is a safety margin, not a
+      # confirmed root-cause fix -- see the new per-dispatch memory logging in
+      # native_admit.py, added the same day, for real data next time this recurs.
+      memory: 6Gi
 
 governor:
   replicas: 1
