@@ -60,6 +60,23 @@ where date_format(line_item_usage_start_date, '%Y-%m-%d') = '{day}'
   and resource_tags_aws_eks_namespace = '{namespace}'
 """
 
+# Same shape as _TODAYS_COST_SQL, grouped by day over a range instead of pinned to one date --
+# used by fetch_namespace_cost_range (cryo.cost.model's Trino $/byte price derivation reads a
+# trailing window, not just today) rather than duplicating the query with a different WHERE.
+_COST_RANGE_SQL = """
+select
+    date_format(line_item_usage_start_date, '%Y-%m-%d') as day,
+    sum(split_line_item_split_cost) AS used_cost,
+    sum(split_line_item_unused_cost) AS unused_cost
+from cur
+where date_format(line_item_usage_start_date, '%Y-%m-%d') >= '{since}'
+  and date_format(line_item_usage_start_date, '%Y-%m-%d') <= '{until}'
+  and resource_tags_aws_eks_cluster_name = '{cluster}'
+  and resource_tags_aws_eks_namespace = '{namespace}'
+GROUP BY date_format(line_item_usage_start_date, '%Y-%m-%d')
+ORDER BY day
+"""
+
 _CEILING_PAUSE_REASON_PREFIX = "cost_ceiling_breach:"
 
 
@@ -145,6 +162,96 @@ def fetch_todays_namespace_cost(
         unused_cost_usd=unused,
         ceiling_usd=ceiling_usd,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class NamespaceDayCost:
+    day: date
+    used_cost_usd: float
+    unused_cost_usd: float
+
+    @property
+    def total_cost_usd(self) -> float:
+        return self.used_cost_usd + self.unused_cost_usd
+
+
+def fetch_namespace_cost_range(
+    *,
+    grafana_url: str,
+    grafana_token: str,
+    cluster_name: str,
+    namespace: str,
+    since: date,
+    until: date | None = None,
+    timeout_seconds: float = 15.0,
+) -> list[NamespaceDayCost]:
+    """Same Athena CUR datasource/query shape as fetch_todays_namespace_cost, grouped by day
+    over [since, until] instead of pinned to one date -- for callers that need a trailing
+    window (e.g. cryo.cost.model's Trino $/byte price derivation, which needs several days of
+    namespace cost to correlate against QueryCostAttributionDaily's bytes-scanned rollup, not
+    just today). Days with no CUR rows yet (lag 24-48h, see fetch_todays_namespace_cost's
+    docstring) are simply absent from the returned list, not zero-filled -- the caller decides
+    how to treat a missing day rather than this function guessing "no data" vs "genuinely $0".
+    """
+    target_until = until or datetime.now(UTC).date()
+    sql = _COST_RANGE_SQL.format(
+        since=since.isoformat(),
+        until=target_until.isoformat(),
+        cluster=cluster_name,
+        namespace=namespace,
+    )
+    payload = {
+        "queries": [
+            {
+                "refId": "A",
+                "datasource": {"uid": _ATHENA_DATASOURCE_UID, "type": "grafana-athena-datasource"},
+                "format": 1,
+                "table": "cur",
+                "connectionArgs": _CUR_CONNECTION_ARGS,
+                "rawSQL": sql,
+            }
+        ]
+    }
+    response = httpx.post(
+        f"{grafana_url.rstrip('/')}{_GRAFANA_QUERY_PATH}",
+        headers={"Authorization": f"Bearer {grafana_token}"},
+        json=payload,
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    body = response.json()
+
+    result = body.get("results", {}).get("A", {})
+    if "error" in result:
+        raise RuntimeError(f"Grafana query error: {result['error']}")
+
+    frames = result.get("frames") or []
+    if not frames:
+        return []
+
+    fields = frames[0].get("schema", {}).get("fields", [])
+    values = frames[0].get("data", {}).get("values", [])
+    field_names = [f.get("name") for f in fields]
+    columns = dict(zip(field_names, values, strict=False))
+    days = columns.get("day") or []
+    used_costs = columns.get("used_cost") or []
+    unused_costs = columns.get("unused_cost") or []
+
+    results: list[NamespaceDayCost] = []
+    for i, raw_day in enumerate(days):
+        if raw_day is None:
+            continue
+        parsed_day = raw_day if isinstance(raw_day, date) else date.fromisoformat(str(raw_day))
+        used_val = used_costs[i] if i < len(used_costs) else None
+        unused_val = unused_costs[i] if i < len(unused_costs) else None
+        results.append(
+            NamespaceDayCost(
+                day=parsed_day,
+                used_cost_usd=float(used_val) if used_val is not None else 0.0,
+                unused_cost_usd=float(unused_val) if unused_val is not None else 0.0,
+            )
+        )
+    return results
 
 
 def enforce_cost_ceiling(
