@@ -1,22 +1,32 @@
 /** Maintenance-operation ordering validation, mirroring ``cryo.planner.guardrails``.
 
-The backend (``validate_operation_order`` in cryo/planner.guardrails) enforces
-the canonical expire → orphan → optimize → manifests order on every
-/maintenance/run and /maintenance/preview call -- out-of-order sequences get
-a 400. The UI mirrors that same validator here so editors see the warning
-*before* submitting instead of after a server-side rejection. Keeping both
-sides in sync is required; if you change the canonical order on the backend,
-update CORRECT_ORDER here too.
+The canonical order is "compact, then clean up": optimize first, then manifests, then
+expire and orphan removal last -- so a single run reclaims the space its own compaction
+freed. ``compute_statistics`` sits right after ``optimize`` because Puffin blobs reference
+specific data files.
+
+The backend (``validate_operation_order`` in cryo/planner.guardrails) applies this same
+order. Presets are normalised into it on write and again on read, and ``build_plan`` sorts
+by it, so the executed sequence is canonical regardless of what a preset stores. The UI
+mirrors the validator here so editors see the warning while editing rather than after
+saving. Keeping both sides in sync is required; if you change the canonical order on the
+backend, update CORRECT_ORDER here too.
 */
 
 const CORRECT_ORDER = [
-  "expire_snapshots",
-  "remove_orphan_files",
+  "convert_deletes",
+  "rewrite_position_deletes",
   "optimize",
-  "optimize_manifests"
+  "compute_statistics",
+  "optimize_manifests",
+  "expire_snapshots",
+  "remove_orphan_files"
 ] as const;
 
 export type MaintenanceOperation = (typeof CORRECT_ORDER)[number];
+
+/** Derived from CORRECT_ORDER so the message can never drift from the tuple. */
+const ORDER_PHRASE = `recommended order is ${CORRECT_ORDER.join(" → ")}`;
 
 export const validateOperationOrder = (
   operations: readonly string[]
@@ -28,7 +38,7 @@ export const validateOperationOrder = (
     if (index === -1) continue;
     if (index < lastIndex) {
       warnings.push(
-        `Operation ${operation} should run after earlier maintenance steps; recommended order is expire → orphan → optimize → manifests.`
+        `Operation ${operation} should run after earlier maintenance steps; ${ORDER_PHRASE}.`
       );
     }
     lastIndex = Math.max(lastIndex, index);

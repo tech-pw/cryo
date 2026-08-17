@@ -155,11 +155,11 @@ def test_build_plan_chunks_large_partitioned_tables_and_preserves_deep_order() -
 
     assert plan.table_ref == "iceberg.demo.events"
     assert [operation.type for operation in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
-        OperationType.REMOVE_ORPHAN_FILES,
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE_MANIFESTS,
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.REMOVE_ORPHAN_FILES,
     ]
     assert [
         len(operation.predicates or ())
@@ -407,8 +407,8 @@ def test_planner_adds_convert_deletes_when_optimize_not_planned() -> None:
         {"min_small_files": 128, "convert_deletes_threshold_pct": 5.0},
     )
     assert [op.type for op in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
 
 
@@ -435,8 +435,8 @@ def test_planner_prefers_minor_delete_compaction_below_major_threshold() -> None
         },
     )
     assert [op.type for op in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.REWRITE_POSITION_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
     assert any("rewrite_position_deletes (minor)" in note for note in plan.notes)
 
@@ -464,8 +464,8 @@ def test_planner_escalates_to_major_rewrite_above_threshold_even_with_few_positi
         },
     )
     assert [op.type for op in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
 
 
@@ -492,8 +492,8 @@ def test_planner_escalates_repeated_minor_delete_compactions_to_major() -> None:
     )
 
     assert [operation.type for operation in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
     assert any("after 5 successful minor" in note for note in plan.notes)
 
@@ -520,8 +520,8 @@ def test_planner_routes_equality_deletes_to_major_rewrite() -> None:
     )
 
     assert [operation.type for operation in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
 
 
@@ -549,8 +549,8 @@ def test_planner_uses_opt_in_hot_table_minor_cycle() -> None:
     )
 
     assert [operation.type for operation in plan.operations] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
 
 
