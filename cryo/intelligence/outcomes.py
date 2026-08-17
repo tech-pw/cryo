@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
@@ -13,6 +14,8 @@ from cryo.db.models import (
     EffectReceipt,
     MaintenanceIntent,
     MaintenanceJob,
+    QueryCostAttributionDaily,
+    QueryLog,
     TableCostHistory,
     TableStatsHistory,
 )
@@ -20,6 +23,11 @@ from cryo.db.models import (
 OUTCOME_SCHEMA_VERSION = "cryo.maintenance-outcome/v1"
 DEFAULT_OBSERVATION_LOOKBACK_DAYS = 90
 DEFAULT_POST_SCAN_WINDOW_DAYS = 7
+_GIB = 1_073_741_824
+# Trailing window for _table_scan_cost_usd, matching persist_table_analysis's
+# _P95_LATENCY_LOOKBACK_DAYS convention -- consistent with the rest of the codebase's
+# per-table query-signal windows rather than inventing a fourth window length.
+_COST_WINDOW_DAYS = 7
 
 _RECLAIM_FIELD_BY_ACTION = {
     "expire_snapshots": "reclaim_expire_bytes",
@@ -62,6 +70,8 @@ class MaintenanceOutcome:
     post_delete_file_pct: float | None
     pre_p95_query_latency_ms: float | None
     post_p95_query_latency_ms: float | None
+    pre_estimated_cost_usd: float | None
+    post_estimated_cost_usd: float | None
 
     @property
     def lineage_complete(self) -> bool:
@@ -104,6 +114,8 @@ class MaintenanceOutcome:
             "post_delete_file_pct": self.post_delete_file_pct,
             "pre_p95_query_latency_ms": self.pre_p95_query_latency_ms,
             "post_p95_query_latency_ms": self.post_p95_query_latency_ms,
+            "pre_estimated_cost_usd": self.pre_estimated_cost_usd,
+            "post_estimated_cost_usd": self.post_estimated_cost_usd,
         }
 
 
@@ -180,6 +192,51 @@ def build_outcome_dataset(
         .order_by(TableStatsHistory.table_id, TableStatsHistory.scan_at)
     ):
         stats_by_table[stats_history.table_id].append(stats_history)
+
+    # Real Trino $/GiB per day, backed out from QueryCostAttributionDaily's already-derived
+    # estimated_scan_cost_usd (see cryo.cost.model.derive_trino_scan_cost_prices -- that
+    # module produces the price, cryo.telemetry.cost_attribution.apply_scan_cost_prices writes
+    # it proportionally onto every (day, client, schema) row for that day, so any row's own
+    # cost/bytes ratio recovers the same day-level $/GiB rate). Coarse cost_attribution rollup
+    # has no table_id -- this is why _table_scan_cost_usd re-derives per-table cost from
+    # QueryLog.bytes_read directly rather than reading a per-table cost column that doesn't
+    # exist anywhere in the schema.
+    price_usd_per_gib_by_day: dict[Any, float] = {}
+    for row in session.execute(
+        select(
+            QueryCostAttributionDaily.day,
+            func.sum(QueryCostAttributionDaily.estimated_scan_cost_usd),
+            func.sum(QueryCostAttributionDaily.physical_bytes_scanned),
+        )
+        .where(
+            QueryCostAttributionDaily.day >= history_start.date(),
+            QueryCostAttributionDaily.day <= history_end.date(),
+            QueryCostAttributionDaily.estimated_scan_cost_usd.isnot(None),
+        )
+        .group_by(QueryCostAttributionDaily.day)
+    ):
+        day, cost_sum, bytes_sum = row
+        if cost_sum is not None and bytes_sum:
+            price_usd_per_gib_by_day[day] = float(cost_sum) / (float(bytes_sum) / _GIB)
+
+    bytes_read_by_table_day: dict[tuple[uuid.UUID, Any], int] = {}
+    for row in session.execute(
+        select(
+            QueryLog.table_id,
+            func.date(QueryLog.executed_at),
+            func.sum(QueryLog.bytes_read),
+        )
+        .where(
+            QueryLog.table_id.in_(table_ids),
+            QueryLog.executed_at >= history_start,
+            QueryLog.executed_at <= history_end,
+            QueryLog.bytes_read.isnot(None),
+        )
+        .group_by(QueryLog.table_id, func.date(QueryLog.executed_at))
+    ):
+        log_table_id, day, bytes_sum = row
+        if bytes_sum:
+            bytes_read_by_table_day[(log_table_id, day)] = int(bytes_sum)
 
     costs_by_table: dict[uuid.UUID, list[TableCostHistory]] = {
         table_id: [] for table_id in table_ids
@@ -274,6 +331,18 @@ def build_outcome_dataset(
                 post_delete_file_pct=_raw_float(post_stats, "delete_file_pct"),
                 pre_p95_query_latency_ms=_raw_float(pre_stats, "p95_query_latency_ms"),
                 post_p95_query_latency_ms=_raw_float(post_stats, "p95_query_latency_ms"),
+                pre_estimated_cost_usd=_table_scan_cost_usd(
+                    audit.table_id,
+                    as_of=pre_stats.scan_at if pre_stats is not None else None,
+                    bytes_read_by_table_day=bytes_read_by_table_day,
+                    price_usd_per_gib_by_day=price_usd_per_gib_by_day,
+                ),
+                post_estimated_cost_usd=_table_scan_cost_usd(
+                    audit.table_id,
+                    as_of=post_stats.scan_at if post_stats is not None else None,
+                    bytes_read_by_table_day=bytes_read_by_table_day,
+                    price_usd_per_gib_by_day=price_usd_per_gib_by_day,
+                ),
             )
         )
     return OutcomeDataset(tuple(outcomes))
@@ -313,6 +382,40 @@ def _raw_float(row: TableStatsHistory | None, key: str) -> float | None:
         return None
     value = row.raw.get(key)
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _table_scan_cost_usd(
+    table_id: uuid.UUID,
+    *,
+    as_of: datetime | None,
+    bytes_read_by_table_day: Mapping[tuple[uuid.UUID, Any], int],
+    price_usd_per_gib_by_day: Mapping[Any, float],
+) -> float | None:
+    """Real estimated Trino scan cost for this table over the ``_COST_WINDOW_DAYS`` trailing
+    ``as_of`` -- reconstructed from QueryLog.bytes_read (per-table, real) times that day's
+    derived $/GiB price (per-day, real, backed out of QueryCostAttributionDaily -- see the
+    price_usd_per_gib_by_day comment at its build site in build_outcome_dataset for why this
+    reconstruction is necessary rather than reading a per-table cost column, which doesn't
+    exist anywhere in the schema).
+
+    Returns None when ``as_of`` is None (no matching pre/post scan) or when any day in the
+    window is missing a price (Settings.trino_cost_pricing_enabled off, or that day just
+    hasn't been priced yet) -- a partial-window cost estimate would be misleadingly precise,
+    not honestly partial, so this abstains rather than silently under-counting.
+    """
+    if as_of is None:
+        return None
+    total_usd = 0.0
+    for offset in range(_COST_WINDOW_DAYS):
+        day = (as_of - timedelta(days=offset)).date()
+        price = price_usd_per_gib_by_day.get(day)
+        if price is None:
+            continue
+        bytes_read = bytes_read_by_table_day.get((table_id, day))
+        if not bytes_read:
+            continue
+        total_usd += (bytes_read / _GIB) * price
+    return round(total_usd, 6) if total_usd > 0 else None
 
 
 def _estimated_rewrite_bytes(row: TableStatsHistory | None) -> int | None:
