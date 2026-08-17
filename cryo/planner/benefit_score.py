@@ -6,13 +6,19 @@ in Data Lakes" — SIGMOD 2025, LinkedIn.
 Core idea: compact a partition only when the expected scan savings
 × query frequency exceed the estimated compaction cost.
 
-Score = (small_files × query_frequency) / estimated_rewrite_cost_factor
+Score = (small_files × query_frequency × scan_cost_multiplier) / estimated_rewrite_cost_factor
+
+scan_cost_multiplier (see _scan_cost_multiplier) weights by real Trino bytes-scanned-per-query
+when known (QueryLog.bytes_read), neutral (1.0) otherwise -- two tables with identical
+fragmentation and identical query *counts* don't necessarily cost the same to scan, and file
+count/frequency alone can't see that gap.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -128,10 +134,43 @@ def enhanced_bcr_from_table(
     )
 
 
+# Reference point for the scan-cost multiplier: a query that reads ~1GB on average is treated
+# as "typical" (multiplier ~1x, same as a caller that never passes avg_bytes_per_query at all).
+# Bigger than this and the multiplier climbs above 1; smaller and it eases below 1 but never to
+# 0, so a low-cost query pattern still leaves file-count/frequency doing the ranking rather than
+# suppressing the score outright. log2-scaled rather than linear so one 500GB-scanning outlier
+# query doesn't blow the ranking out to a degenerate "always compact this table first" state --
+# real spread observed in cost_attribution's 20K-query sample (2026-08-14) ranged from
+# near-zero to 525GB in a single query, a ~9 orders-of-magnitude range linear scaling can't
+# absorb sanely.
+_TYPICAL_QUERY_BYTES_GB = 1.0
+# Ceiling on the multiplier itself -- an extreme scan-cost table should rank well above a cheap
+# one, but shouldn't single-handedly drown out every other trait (small_files, frequency) the
+# way an unbounded log multiplier could for a truly pathological outlier.
+_MAX_BYTES_MULTIPLIER = 8.0
+
+
+def _scan_cost_multiplier(avg_bytes_per_query: float | None) -> float:
+    """log2-scaled multiplier from average bytes scanned per query hitting this partition/table.
+
+    Returns 1.0 (neutral -- no change to the pre-existing score) when no scan-cost signal is
+    available, so every caller that doesn't pass ``avg_bytes_per_query`` keeps today's behavior
+    exactly. See module-level constants above for why log2 and why it's capped.
+    """
+    if avg_bytes_per_query is None or avg_bytes_per_query <= 0:
+        return 1.0
+    gb = avg_bytes_per_query / 1_073_741_824  # bytes -> GiB
+    if gb <= 0:
+        return 1.0
+    multiplier = 1.0 + math.log2(max(gb, 0.001) / _TYPICAL_QUERY_BYTES_GB)
+    return round(min(max(multiplier, 0.25), _MAX_BYTES_MULTIPLIER), 4)
+
+
 def compute_benefit_score(
     small_files: int,
     query_frequency: float,
     partition_size_gb: float,
+    avg_bytes_per_query: float | None = None,
 ) -> float:
     """Compute a compaction benefit score for a partition.
 
@@ -139,6 +178,13 @@ def compute_benefit_score(
         small_files: Number of small files in the partition
         query_frequency: Average queries per day hitting this partition
         partition_size_gb: Size of the partition in GB (proxy for rewrite cost)
+        avg_bytes_per_query: Average bytes actually scanned per query hitting this
+            partition/table (``QueryLog.bytes_read``), when known. Two tables with identical
+            file fragmentation and identical query *counts* previously scored identically even
+            if one's queries scan orders of magnitude more data per hit -- this is the real
+            Trino scan-cost signal that distinguishes them. ``None`` (the default) keeps the
+            score identical to before this parameter existed, for every existing caller that
+            hasn't been wired up to a bytes source yet.
 
     Returns:
         Benefit score — higher = higher priority for compaction.
@@ -153,10 +199,14 @@ def compute_benefit_score(
     # Query frequency amplifies the value of faster scans
     frequency_multiplier = max(query_frequency, 0.1)  # floor at 0.1 to avoid zero
 
+    # Real Trino scan-cost signal: queries that read more bytes per hit get more benefit from
+    # having fewer/larger files to scan through. Neutral (1.0) when unknown.
+    bytes_multiplier = _scan_cost_multiplier(avg_bytes_per_query)
+
     # Rewrite cost scales with data volume
     rewrite_cost = max(partition_size_gb * _COST_PER_GB, 0.1)
 
-    score = (scan_savings * frequency_multiplier) / rewrite_cost
+    score = (scan_savings * frequency_multiplier * bytes_multiplier) / rewrite_cost
     return round(score, 4)
 
 
@@ -205,16 +255,33 @@ def compute_moop_scores(
     """MOOP-scalarized score for each candidate, normalized against the others in this batch.
 
     Each candidate is a mapping with ``small_files``, ``size_gb``, ``query_frequency``, and
-    optionally ``file_entropy``. Normalization is min-max *within this batch* (a table's
-    partitions from one scan, or a fleet-wide batch the caller assembles) -- the paper allows
-    either; per-table keeps this a pure function with no cross-table state to manage.
+    optionally ``file_entropy`` and ``avg_bytes_per_query``. Normalization is min-max *within
+    this batch* (a table's partitions from one scan, or a fleet-wide batch the caller assembles)
+    -- the paper allows either; per-table keeps this a pure function with no cross-table state
+    to manage.
+
+    T4 (query_affinity) folds in real Trino scan cost (``avg_bytes_per_query``, when given) via
+    the same log2-scaled multiplier ``compute_benefit_score`` uses, rather than adding a 5th
+    trait: the paper's four-trait scalarization (T1 file count, T2 compute cost, T3 entropy, T4
+    query affinity) is a fixed, weighted formula, and query affinity is already "how much does
+    being queried matter" -- a query that scans 50GB mattering more than one scanning 10MB is
+    the same concept sharpened with real cost, not a new dimension. Two candidates with
+    identical query *counts* previously tied on T4 even when one's queries scan orders of
+    magnitude more data per hit; this closes that gap without touching T1-T3 or the paper's
+    weight semantics.
     """
     if not candidates:
         return []
 
     small_files = [float(c.get("small_files") or 0) for c in candidates]
     size_gb = [float(c.get("size_gb") or 0.1) for c in candidates]
-    frequency = [float(c.get("query_frequency") or 0.0) for c in candidates]
+    frequency = [
+        float(c.get("query_frequency") or 0.0)
+        * _scan_cost_multiplier(
+            float(v) if (v := c.get("avg_bytes_per_query")) is not None else None
+        )
+        for c in candidates
+    ]
     entropy_raw = [c.get("file_entropy") for c in candidates]
     has_entropy = any(v is not None for v in entropy_raw)
     entropy = [float(v) if v is not None else 0.0 for v in entropy_raw]
@@ -415,6 +482,21 @@ def update_partition_benefit_scores(
     )
     queries_per_day = total_queries / max(days_in_window, 1.0)
 
+    # Real Trino scan-cost signal (bytes actually read per query), table-level broadcast --
+    # same granularity as queries_per_day's own fallback above, since QueryLog doesn't resolve
+    # bytes to a specific partition any more reliably than it resolves frequency without the
+    # same affinity mechanism _partition_query_frequency already gates on. AVG rather than SUM:
+    # QueryLog is a curated/sampled table (see cryo.telemetry.curator's _is_summary_worthy --
+    # only failed/slow/large queries plus a 1% sample of "normal" traffic land here), so a raw
+    # sum would just track how much got sampled, not the actual per-query cost.
+    avg_bytes_per_query = session.scalar(
+        select(func.avg(QueryLog.bytes_read)).where(
+            QueryLog.table_id == table_id,
+            QueryLog.executed_at >= since,
+            QueryLog.bytes_read.isnot(None),
+        )
+    )
+
     partition_frequency = _partition_query_frequency(
         session,
         table_id=table_id,
@@ -439,6 +521,7 @@ def update_partition_benefit_scores(
                 "size_gb": partition.partition_size_gb or 0.1,
                 "query_frequency": frequencies[i],
                 "file_entropy": partition.file_entropy,
+                "avg_bytes_per_query": avg_bytes_per_query,
             }
             for i, partition in enumerate(partitions)
         ]
@@ -455,6 +538,7 @@ def update_partition_benefit_scores(
                 small_files=small_files,
                 query_frequency=frequency,
                 partition_size_gb=size_gb,
+                avg_bytes_per_query=avg_bytes_per_query,
             )
             * feedback_multiplier,
             4,

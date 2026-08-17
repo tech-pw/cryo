@@ -69,6 +69,56 @@ def test_compute_benefit_score():
     assert score == 0.0
 
 
+def test_compute_benefit_score_scan_cost_multiplier_is_neutral_when_unknown():
+    """avg_bytes_per_query defaults to None -- every pre-existing caller that never learned
+    about this parameter must keep scoring exactly as before it existed."""
+    without_signal = compute_benefit_score(
+        small_files=100, query_frequency=10.0, partition_size_gb=5.0
+    )
+    with_none = compute_benefit_score(
+        small_files=100, query_frequency=10.0, partition_size_gb=5.0, avg_bytes_per_query=None
+    )
+    assert without_signal == with_none
+
+
+def test_compute_benefit_score_rewards_tables_with_expensive_scans():
+    """Two tables, identical fragmentation and identical query *count* -- the one whose queries
+    actually scan more bytes per hit (the real Trino cost signal) must score higher. This is
+    the exact gap a count-only query_frequency term can't see."""
+    cheap_queries = compute_benefit_score(
+        small_files=200,
+        query_frequency=20.0,
+        partition_size_gb=10.0,
+        avg_bytes_per_query=10 * 1024 * 1024,  # 10MB/query -- cheap
+    )
+    expensive_queries = compute_benefit_score(
+        small_files=200,
+        query_frequency=20.0,
+        partition_size_gb=10.0,
+        avg_bytes_per_query=50 * 1024 * 1024 * 1024,  # 50GB/query -- real Trino cost driver
+    )
+    assert expensive_queries > cheap_queries
+
+
+def test_compute_benefit_score_scan_cost_multiplier_is_bounded():
+    """An extreme outlier (real sample: one query scanned 525GB) shouldn't let scan cost alone
+    drown out every other trait -- see _MAX_BYTES_MULTIPLIER's rationale in benefit_score.py."""
+    from cryo.planner.benefit_score import _MAX_BYTES_MULTIPLIER, _scan_cost_multiplier
+
+    huge = _scan_cost_multiplier(525 * 1024 * 1024 * 1024)  # 525GB, the real observed outlier
+    assert huge == _MAX_BYTES_MULTIPLIER
+
+    tiny = _scan_cost_multiplier(1)  # 1 byte -- degenerate small end
+    assert tiny > 0.0  # never suppresses the score to zero on its own
+
+
+def test_compute_benefit_score_scan_cost_multiplier_zero_or_negative_is_neutral():
+    from cryo.planner.benefit_score import _scan_cost_multiplier
+
+    assert _scan_cost_multiplier(0) == 1.0
+    assert _scan_cost_multiplier(-5.0) == 1.0
+
+
 def test_compute_moop_scores_empty_batch():
     assert compute_moop_scores([]) == []
 
@@ -96,6 +146,46 @@ def test_compute_moop_scores_all_tied_candidates_get_neutral_traits_not_zero():
         assert t.t1 == 0.5
         assert t.t2 == 0.5
         assert t.t4 == 0.5
+
+
+def test_compute_moop_scores_t4_unaffected_when_avg_bytes_per_query_absent():
+    """No candidate carries avg_bytes_per_query -- T4 (and therefore s_c) must be identical to
+    before this parameter existed, same guarantee as compute_benefit_score's own None default."""
+    candidates_without_key = [
+        {"small_files": 500, "size_gb": 5.0, "query_frequency": 20.0},
+        {"small_files": 10, "size_gb": 100.0, "query_frequency": 5.0},
+    ]
+    candidates_with_none = [{**c, "avg_bytes_per_query": None} for c in candidates_without_key]
+    assert compute_moop_scores(candidates_without_key) == compute_moop_scores(
+        candidates_with_none
+    )
+
+
+def test_compute_moop_scores_rewards_expensive_scans_via_t4():
+    """Two candidates, identical query_frequency -- the one whose queries actually scan more
+    bytes per hit must score higher on T4 (query affinity) and therefore s_c, the score
+    job_store._table_autocomp_summary and planner._compare_candidates actually dispatch on."""
+    candidates = [
+        {
+            "small_files": 100,
+            "size_gb": 10.0,
+            "query_frequency": 20.0,
+            "avg_bytes_per_query": 10 * 1024 * 1024,  # 10MB/query -- cheap
+        },
+        {
+            "small_files": 100,
+            "size_gb": 10.0,
+            "query_frequency": 20.0,
+            "avg_bytes_per_query": 50 * 1024 * 1024 * 1024,  # 50GB/query -- expensive
+        },
+    ]
+    traits = compute_moop_scores(candidates)
+    cheap, expensive = traits
+    assert expensive.t4 > cheap.t4
+    assert expensive.s_c > cheap.s_c
+    # T1/T2 (file count, size) are identical between the two -- only T4 should diverge.
+    assert expensive.t1 == cheap.t1
+    assert expensive.t2 == cheap.t2
 
 
 def test_compute_moop_scores_without_file_entropy_redistributes_its_weight():
@@ -222,6 +312,143 @@ def test_update_partition_benefit_scores(session):
     hottest_s_c = by_value["2024-01-03"].autocomp_traits["s_c"]
     coldest_s_c = by_value["2024-01-02"].autocomp_traits["s_c"]
     assert hottest_s_c > coldest_s_c
+
+
+def test_update_partition_benefit_scores_uses_real_scan_cost_from_query_log(session):
+    """Two otherwise-identical tables (same fragmentation, same query count) -- the one whose
+    QueryLog rows carry a high bytes_read must end up with a higher compaction_benefit_score.
+    End-to-end version of test_compute_benefit_score_rewards_tables_with_expensive_scans,
+    proving the signal actually reaches the DB write path, not just the pure function."""
+    cheap_table = _seed_table(session, schema_name="test", table_name="cheap_scans")
+    expensive_table = _seed_table(session, schema_name="test", table_name="expensive_scans")
+    scan_at = datetime.now(UTC)
+
+    for table in (cheap_table, expensive_table):
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            )
+        )
+
+    def _seed_queries(table, bytes_read: int, count: int = 10) -> None:
+        source = session.get(Source, table.source_id)
+        for i in range(count):
+            session.add(
+                QueryLog(
+                    source_id=source.id,
+                    table_id=table.id,
+                    query_id=f"{table.table_name}-query-{i}",
+                    engine="trino",
+                    query_text=f"SELECT * FROM test.{table.table_name}",
+                    executed_at=datetime.now(UTC) - timedelta(hours=i),
+                    duration_ms=1000,
+                    bytes_read=bytes_read,
+                )
+            )
+
+    _seed_queries(cheap_table, bytes_read=10 * 1024 * 1024)  # 10MB/query
+    _seed_queries(expensive_table, bytes_read=50 * 1024 * 1024 * 1024)  # 50GB/query
+    session.commit()
+
+    update_partition_benefit_scores(session, cheap_table.id)
+    update_partition_benefit_scores(session, expensive_table.id)
+
+    cheap_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == cheap_table.id)
+    ).one()
+    expensive_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == expensive_table.id)
+    ).one()
+
+    # Both tables have identical fragmentation and identical query counts (10/window on each) --
+    # only the real Trino scan-cost signal (bytes_read) differs, and it must be what separates
+    # them here.
+    assert expensive_partition.query_frequency == pytest.approx(cheap_partition.query_frequency)
+    assert (
+        expensive_partition.compaction_benefit_score > cheap_partition.compaction_benefit_score
+    )
+
+
+def test_update_partition_benefit_scores_scan_cost_reaches_dispatch_score(session):
+    """job_store._table_autocomp_summary and planner._compare_candidates prefer
+    autocomp_traits["s_c"] over compaction_benefit_score whenever both are present -- that's
+    the field real job dispatch order actually reads. Two partitions on the *same* table/scan
+    (so MOOP's within-batch min-max normalization has a real spread to normalize against,
+    unlike a single-partition table where every trait degenerates to the trivial 0.5 midpoint):
+    identical size, uneven small_files so query_frequency naturally diverges per-partition via
+    real filter affinity, plus a high table-level scan-cost signal -- the higher-frequency
+    partition's s_c must end up materially above the neutral tie point, proving the scan-cost
+    multiplier reached the persisted dispatch field end-to-end, not just the pure function."""
+    table = _seed_table(session, schema_name="analytics", table_name="scan_cost_dispatch")
+    scan_at = datetime.now(UTC)
+
+    def _day_partition(epoch_day: int, small_files: int) -> TablePartition:
+        return TablePartition(
+            table_id=table.id,
+            partition_values={"event_date_day": epoch_day},
+            partition_fields=[
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+            partition_value=str(epoch_day),
+            base_column="event_date",
+            base_column_type="date",
+            transform="day",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=small_files,
+            scan_at=scan_at,
+        )
+
+    hot = _day_partition(20210, small_files=100)  # queried a lot, expensive scans
+    cold = _day_partition(20211, small_files=100)  # never queried
+    session.add_all([hot, cold])
+
+    source = session.get(Source, table.source_id)
+    for i in range(8):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"hot-{i}",
+                engine="trino",
+                query_text=(
+                    "SELECT * FROM analytics.scan_cost_dispatch WHERE event_date = DATE "
+                    "'2025-05-02'"
+                ),
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=1000,
+                bytes_read=50 * 1024 * 1024 * 1024,  # 50GB/query -- expensive
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, table.id)
+
+    by_value = {
+        p.partition_value: p
+        for p in session.scalars(
+            select(TablePartition).where(TablePartition.table_id == table.id)
+        ).all()
+    }
+    hot_traits = by_value["20210"].autocomp_traits
+    cold_traits = by_value["20211"].autocomp_traits
+
+    # Identical fragmentation (t1/t2 tied) -- only the queried, expensive-scan partition should
+    # come out ahead, and specifically via t4 (query affinity), not t1/t2 drift.
+    assert hot_traits["t1"] == cold_traits["t1"]
+    assert hot_traits["t2"] == cold_traits["t2"]
+    assert hot_traits["t4"] > cold_traits["t4"]
+    assert hot_traits["s_c"] > cold_traits["s_c"]
 
 
 def test_update_partition_benefit_scores_diverges_per_partition_with_uneven_filters(session):
