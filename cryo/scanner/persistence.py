@@ -5,12 +5,13 @@ import uuid
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
     MaintenanceJob,
+    QueryLog,
     Table,
     TableColumn,
     TableCost,
@@ -44,6 +45,43 @@ def _json_safe(value: Any) -> Any:
         # numeric values instead of strings. Store as null rather than fail the whole row.
         return None
     return value
+
+
+# Trailing window for _table_p95_query_latency_ms, matching benefit_score._QUERY_WINDOW_HOURS'
+# 7-day convention -- consistent with the rest of the codebase's query-frequency/scan-cost
+# signals rather than inventing a third window length for latency specifically.
+_P95_LATENCY_LOOKBACK_DAYS = 7
+
+
+def _table_p95_query_latency_ms(
+    session: Session,
+    *,
+    table_id: uuid.UUID,
+    as_of: datetime,
+) -> float | None:
+    """p95 of real Trino query duration for this table, over the
+    ``_P95_LATENCY_LOOKBACK_DAYS`` trailing ``as_of`` (this scan's own timestamp, not
+    ``datetime.now()`` -- a historical/backfilled scan must not silently anchor its latency
+    snapshot to whenever the scan happens to run in wall-clock time).
+
+    Same ``percentile_cont(0.95) WITHIN GROUP`` shape as
+    ``cryo.scanner.compaction_candidates._table_p95_latency``, not reused directly: that
+    function is always anchored to "now" and returns ``0.0`` (not ``None``) when there's no
+    data, semantics this call site can't use -- a table snapshotted with no recent query
+    traffic has no latency signal, not a p95 of exactly zero. Returns ``None`` on no data,
+    matching every other "unknown, not zero" signal this scan's ``raw`` payload already
+    carries (e.g. ``avg_null_rate``).
+    """
+    since = as_of - timedelta(days=_P95_LATENCY_LOOKBACK_DAYS)
+    p95 = session.scalar(
+        select(func.percentile_cont(0.95).within_group(QueryLog.duration_ms)).where(
+            QueryLog.table_id == table_id,
+            QueryLog.executed_at >= since,
+            QueryLog.executed_at <= as_of,
+            QueryLog.duration_ms.is_not(None),
+        )
+    )
+    return float(p95) if p95 is not None else None
 
 
 def upsert_table(
@@ -356,6 +394,15 @@ def persist_table_analysis(
                         "wair_file_sample_complete"
                     ),
                     "wair_query_ranges": (analysis.raw or {}).get("wair_query_ranges"),
+                    # Real Trino query latency as of this scan (trailing window, not this
+                    # table's whole history) -- see _table_p95_query_latency_ms. Populates
+                    # cryo.intelligence.outcomes' pre/post_p95_query_latency_ms, previously
+                    # always None: three modules (outcomes.py, fleet_benchmark.py,
+                    # delete_lifecycle_evidence.py) already had real latency-delta logic
+                    # written against this key with nothing ever writing it.
+                    "p95_query_latency_ms": _table_p95_query_latency_ms(
+                        session, table_id=table_id, as_of=scan_at
+                    ),
                 }
             ),
         )

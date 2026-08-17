@@ -87,6 +87,61 @@ def test_outcome_dataset_joins_frozen_prediction_effect_and_post_scan(session: S
     assert calibration["predicted_bytes_freed"] != calibration["actual_bytes_freed"]
 
 
+def test_outcome_dataset_carries_real_p95_query_latency_when_scanner_wrote_it(
+    session: Session,
+) -> None:
+    """cryo.scanner.persistence now writes a real p95_query_latency_ms into
+    TableStatsHistory.raw (previously never populated by anything -- see
+    _table_p95_query_latency_ms) -- confirms build_outcome_dataset's existing _raw_float read
+    of that key actually surfaces a real value end-to-end, not just that the read path itself
+    doesn't crash on a present key."""
+    event_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    table, job, intent = _lineage_fixture(session)
+    session.add_all(
+        [
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=event_at - timedelta(hours=1),
+                small_files_count=120,
+                total_files=150,
+                total_size_gb=10.0,
+                grade="C",
+                overall_score=60,
+                raw={"reclaim_optimize_bytes": 8_000, "p95_query_latency_ms": 850.0},
+            ),
+            AuditLog(
+                ts=event_at,
+                table_id=table.id,
+                job_id=job.id,
+                action="optimize",
+                status="OK",
+                engine=EngineType.TRINO.value,
+                actual_bytes_freed=6_000,
+                input_files_count=120,
+                output_files_count=12,
+            ),
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=event_at + timedelta(hours=1),
+                small_files_count=8,
+                total_files=38,
+                total_size_gb=9.9,
+                grade="A",
+                overall_score=94,
+                raw={"p95_query_latency_ms": 310.0},
+            ),
+        ]
+    )
+    session.commit()
+
+    row = build_outcome_dataset(session).rows[0]
+
+    assert row.pre_p95_query_latency_ms == 850.0
+    assert row.post_p95_query_latency_ms == 310.0
+    # The actual point of the feature: a real, non-None before/after delta is now computable.
+    assert row.pre_p95_query_latency_ms - row.post_p95_query_latency_ms == 540.0
+
+
 def test_outcome_dataset_reports_missing_post_scan_without_claiming_completeness(
     session: Session,
 ) -> None:
