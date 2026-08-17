@@ -1,29 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { validateOperationOrder } from "./operationOrder";
+import { MAINTENANCE_OPERATION_ORDER, validateOperationOrder } from "./operationOrder";
 
 describe("validateOperationOrder", () => {
   it("returns no warnings for canonical order", () => {
-    expect(
-      validateOperationOrder([
-        "expire_snapshots",
-        "remove_orphan_files",
-        "optimize",
-        "optimize_manifests"
-      ])
-    ).toEqual([]);
+    expect(validateOperationOrder([...MAINTENANCE_OPERATION_ORDER])).toEqual([]);
   });
 
   it("returns no warnings for a subset in canonical order", () => {
-    expect(validateOperationOrder(["expire_snapshots", "optimize"])).toEqual([]);
+    expect(validateOperationOrder(["optimize", "expire_snapshots"])).toEqual([]);
   });
 
   it("returns no warnings for an empty selection", () => {
     expect(validateOperationOrder([])).toEqual([]);
   });
 
-  it("flags expire_snapshots appearing after optimize", () => {
-    const warnings = validateOperationOrder(["optimize", "expire_snapshots"]);
+  it("flags expire_snapshots appearing before optimize", () => {
+    const warnings = validateOperationOrder(["expire_snapshots", "optimize"]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/optimize should run after earlier/);
+  });
+
+  it("flags remove_orphan_files appearing before expire_snapshots", () => {
+    const warnings = validateOperationOrder(["remove_orphan_files", "expire_snapshots"]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/expire_snapshots should run after earlier/);
   });

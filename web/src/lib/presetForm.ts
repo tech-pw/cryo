@@ -51,11 +51,13 @@ export interface PresetFormValues {
   routing_rules?: RoutingRuleFormRow[];
 }
 
+// Membership is the default op set for a new preset; the sequence mirrors the canonical
+// order in ./operationOrder.ts (compact -> manifests -> expire -> orphan).
 const DEFAULT_OPERATIONS = [
-  "expire_snapshots",
-  "remove_orphan_files",
   "optimize",
-  "optimize_manifests"
+  "optimize_manifests",
+  "expire_snapshots",
+  "remove_orphan_files"
 ];
 
 const asNumber = (value: unknown, fallback: number): number =>
