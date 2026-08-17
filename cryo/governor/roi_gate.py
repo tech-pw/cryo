@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.config import get_settings
-from cryo.db.models import TableCost, TableStats
+from cryo.db.models import QueryLog, TableCost, TableStats
 from cryo.governor.admission import AdmissionJob
 from cryo.planner.benefit_score import BenefitCostBreakdown, enhanced_bcr_from_table
+
+# Same lookback window compute_benefit_score's callers use (benefit_score._QUERY_WINDOW_HOURS /
+# 24) -- keeps the admission gate's cost signal on the same recency as the ranking signal
+# rather than inventing a second window convention.
+_AVG_BYTES_LOOKBACK_DAYS = 7
 
 
 class GateAction(StrEnum):
@@ -82,6 +88,7 @@ class ROIGate:
                 if cost and cost.query_request_savings_usd_month is not None
                 else None
             ),
+            avg_bytes_per_query=_avg_bytes_per_query(session, table_uuid),
         )
 
         is_streaming = bool((stats.raw or {}).get("is_streaming")) or stats.detection_tier == "hot"
@@ -121,6 +128,24 @@ def _parse_uuid(raw: str) -> uuid.UUID | None:
         return uuid.UUID(str(raw))
     except (ValueError, TypeError):
         return None
+
+
+def _avg_bytes_per_query(session: Session, table_id: uuid.UUID) -> float | None:
+    """Average ``QueryLog.bytes_read`` per query hitting this table over the last
+    ``_AVG_BYTES_LOOKBACK_DAYS`` days, or ``None`` if unknown -- same AVG-not-SUM reasoning as
+    ``compaction_candidates._avg_bytes_per_query_for_table``: QueryLog is a curated/sampled
+    table (see ``cryo.telemetry.curator``), so a sum would track sampling volume, not real
+    per-query cost. This admission decision runs on every job, so the query stays cheap and
+    single-purpose rather than reusing a heavier per-table aggregation path."""
+    since = datetime.now(UTC) - timedelta(days=_AVG_BYTES_LOOKBACK_DAYS)
+    avg_bytes = session.scalar(
+        select(func.avg(QueryLog.bytes_read)).where(
+            QueryLog.table_id == table_id,
+            QueryLog.executed_at >= since,
+            QueryLog.bytes_read.isnot(None),
+        )
+    )
+    return float(avg_bytes) if avg_bytes is not None else None
 
 
 def _zero_breakdown() -> BenefitCostBreakdown:

@@ -92,11 +92,22 @@ def enhanced_bcr_from_table(
     *,
     projected_storage_savings_usd_month: float | None = None,
     query_request_savings_usd_month: float | None = None,
+    avg_bytes_per_query: float | None = None,
     value_per_query_second_usd: float = 0.0002,
     rewrite_cost_per_gb_usd: float = 0.025,
     write_amp_multiplier: float = 1.15,
 ) -> BenefitCostBreakdown:
-    """Compute monthly ROI terms in USD for smart-maintenance gating."""
+    """Compute monthly ROI terms in USD for smart-maintenance gating.
+
+    ``avg_bytes_per_query``: real per-query scan cost (``QueryLog.bytes_read`` average), when
+    known. This is the same admission decision ``ROIGate.decide()`` uses to PROCEED/SKIP/DEFER
+    a job outright -- unlike ``compute_benefit_score``'s ranking-only role, a wrong number here
+    can block a job from running at all. Reuses ``_scan_cost_multiplier`` so a table whose
+    queries genuinely scan a lot of data gets credited proportionally more latency benefit for
+    having fewer/larger files to scan through, instead of ``latency_seconds_saved_per_query``
+    depending only on file count/delete pressure with no sense of how expensive each scan
+    actually is. ``None`` (the default) keeps this identical to before the parameter existed.
+    """
     query_count_30d = float(table_stats.get("query_count_30d") or 0.0)
     small_files = float(table_stats.get("small_files_count") or 0.0)
     delete_pct = float(table_stats.get("delete_file_pct") or 0.0)
@@ -113,9 +124,16 @@ def enhanced_bcr_from_table(
     )
 
     # Cheap but monotonic proxy: more small files and more delete pressure generally
-    # translate to larger planning/pruning wins.
+    # translate to larger planning/pruning wins. Scaled by real scan cost (neutral 1.0 when
+    # unknown) so the benefit estimate reflects how much data these queries actually touch,
+    # not just how fragmented the table is.
     latency_seconds_saved_per_query = (small_files / 2000.0) + (delete_pct / 100.0 * 0.35)
-    latency_benefit = query_count_30d * latency_seconds_saved_per_query * value_per_query_second_usd
+    latency_benefit = (
+        query_count_30d
+        * latency_seconds_saved_per_query
+        * _scan_cost_multiplier(avg_bytes_per_query)
+        * value_per_query_second_usd
+    )
 
     rewrite_compute_cost = max(0.0, table_size_gb * rewrite_cost_per_gb_usd)
     write_amp_cost = max(0.0, table_size_gb * max(write_amp_multiplier - 1.0, 0.0) * 0.006)

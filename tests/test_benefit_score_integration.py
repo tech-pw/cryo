@@ -11,6 +11,7 @@ from cryo.planner.benefit_score import (
     DEFAULT_MOOP_WEIGHTS,
     compute_benefit_score,
     compute_moop_scores,
+    enhanced_bcr_from_table,
     get_compaction_effectiveness_stats,
     get_top_compaction_candidates,
     update_all_benefit_scores,
@@ -117,6 +118,45 @@ def test_compute_benefit_score_scan_cost_multiplier_zero_or_negative_is_neutral(
 
     assert _scan_cost_multiplier(0) == 1.0
     assert _scan_cost_multiplier(-5.0) == 1.0
+
+
+def test_enhanced_bcr_from_table_scan_cost_is_neutral_when_unknown():
+    """ROIGate.decide() callers that don't pass avg_bytes_per_query (or pass None) must get
+    identical BCR breakdowns to before this parameter existed."""
+    stats = {
+        "query_count_30d": 100,
+        "small_files_count": 500,
+        "delete_file_pct": 10.0,
+        "total_size_gb": 20.0,
+    }
+    without_signal = enhanced_bcr_from_table(stats)
+    with_none = enhanced_bcr_from_table(stats, avg_bytes_per_query=None)
+    assert without_signal == with_none
+
+
+def test_enhanced_bcr_from_table_rewards_expensive_scans():
+    """The actual admission-gate regression this fixes: two tables, identical fragmentation
+    and identical query counts -- the one whose queries scan more bytes per hit must get a
+    higher latency_benefit (and therefore BCR), or ROIGate can SKIP/DEFER a table that's
+    genuinely expensive to scan while PROCEEDing one that's fragmented but cheap."""
+    stats = {
+        "query_count_30d": 100,
+        "small_files_count": 500,
+        "delete_file_pct": 10.0,
+        "total_size_gb": 20.0,
+    }
+    cheap = enhanced_bcr_from_table(stats, avg_bytes_per_query=10 * 1024 * 1024)  # 10MB/query
+    expensive = enhanced_bcr_from_table(
+        stats, avg_bytes_per_query=50 * 1024 * 1024 * 1024
+    )  # 50GB/query
+    assert expensive.latency_benefit_usd_month > cheap.latency_benefit_usd_month
+    assert expensive.bcr > cheap.bcr
+    # Only the scan-cost-driven latency_benefit (and opportunity_benefit, which is derived from
+    # it) should move -- storage/request benefit and every cost term are untouched by this
+    # signal.
+    assert expensive.storage_benefit_usd_month == cheap.storage_benefit_usd_month
+    assert expensive.request_benefit_usd_month == cheap.request_benefit_usd_month
+    assert expensive.rewrite_compute_cost_usd_month == cheap.rewrite_compute_cost_usd_month
 
 
 def test_compute_moop_scores_empty_batch():
