@@ -1866,6 +1866,21 @@ func (d *dataFile) initializeMapData() {
 }
 
 func (d *dataFile) convertAvroValueToIcebergType(v any, fieldID int) any {
+	// A NULL-valued Avro partition field decodes to a nil interface{} -- legal per the Iceberg
+	// spec (any partition field can be null, e.g. a row whose partition-source column was
+	// itself null) but previously unhandled here: every branch below went straight to a type
+	// assertion (v.(int32), v.(int64), etc.) with no nil check first, so a null value panicked
+	// with "interface conversion: interface {} is nil, not int32" instead of decoding to "no
+	// value" -- crashed the whole native maintenance subprocess (PDAE-8279, table
+	// hive.icesheet.silver_offline_drip_read_status_2, 2026-08-14). nil is the correct decoded
+	// value for a null partition field: newPartitionRecord (table/scanner.go) already treats an
+	// absent map entry as nil via a plain Go map lookup, and Iceberg's own expression evaluator
+	// is built to handle a nil/absent partition value as part of normal null semantics -- this
+	// makes the explicit-null case behave the same as the already-handled absent-key case,
+	// rather than a third, panicking code path.
+	if v == nil {
+		return nil
+	}
 	if logicalType, ok := d.fieldIDToLogicalType[fieldID]; ok {
 		// twmb/avro returns rich Go types (time.Time, time.Duration,
 		// *big.Rat, [16]byte) when the file schema includes a logicalType,
@@ -1876,38 +1891,56 @@ func (d *dataFile) convertAvroValueToIcebergType(v any, fieldID int) any {
 			if val, ok := v.(time.Time); ok {
 				return Date(val.Truncate(24*time.Hour).Unix() / int64((time.Hour * 24).Seconds()))
 			}
+			if val, ok := v.(int32); ok {
+				return Date(val)
+			}
 
-			return Date(v.(int32))
+			return nil
 		case atype.TimeMillis:
 			if val, ok := v.(time.Duration); ok {
 				return Time(val.Milliseconds())
 			}
+			if val, ok := v.(int64); ok {
+				return Time(val)
+			}
 
-			return Time(v.(int64))
+			return nil
 		case atype.TimeMicros:
 			if val, ok := v.(time.Duration); ok {
 				return Time(val.Microseconds())
 			}
+			if val, ok := v.(int64); ok {
+				return Time(val)
+			}
 
-			return Time(v.(int64))
+			return nil
 		case atype.TimestampMillis:
 			if val, ok := v.(time.Time); ok {
 				return Timestamp(val.UTC().UnixMilli())
 			}
+			if val, ok := v.(int64); ok {
+				return Timestamp(val)
+			}
 
-			return Timestamp(v.(int64))
+			return nil
 		case atype.TimestampMicros:
 			if val, ok := v.(time.Time); ok {
 				return Timestamp(val.UTC().UnixMicro())
 			}
+			if val, ok := v.(int64); ok {
+				return Timestamp(val)
+			}
 
-			return Timestamp(v.(int64))
+			return nil
 		case atype.TimestampNanos:
 			if val, ok := v.(time.Time); ok {
 				return TimestampNano(val.UTC().UnixNano())
 			}
+			if val, ok := v.(int64); ok {
+				return TimestampNano(val)
+			}
 
-			return TimestampNano(v.(int64))
+			return nil
 		case atype.Decimal:
 			if r, ok := v.(*big.Rat); ok {
 				scale := d.fieldIDToFixedSize[fieldID]
