@@ -25,8 +25,12 @@ from pyiceberg.conversions import to_bytes
 from pyiceberg.schema import Schema
 from pyiceberg.types import LongType, NestedField, StringType
 
-from cryo.db.models import Source, Table, TableStats
-from cryo.optimizer.layout_analyzer import analyze_table_layout, fetch_file_stats
+from cryo.db.models import LayoutRecommendation, Source, Table, TableStats
+from cryo.optimizer.layout_analyzer import (
+    analyze_table_layout,
+    fetch_file_stats,
+    measure_layout_recommendation_effectiveness,
+)
 
 _SCHEMA = Schema(
     NestedField(field_id=1, name="event_date", field_type=StringType(), required=False),
@@ -355,3 +359,157 @@ class TestAnalyzeTableLayoutSelfFetch:
 
         assert analysis.current_prune_efficiency == 0.0
         assert analysis.column_stats == []
+
+
+class TestMeasureLayoutRecommendationEffectiveness:
+    """PDAE-8288: observed_prune_improvement existed as a column, read into every API response,
+    but nothing ever computed or wrote it -- a real applied sort/z-order rewrite's actual effect
+    was never confirmed. These tests cover measure_layout_recommendation_effectiveness, the
+    function that closes that gap."""
+
+    def _seed_table_with_stats(self, session) -> Table:
+        source = Source(id=uuid.uuid4(), name=f"source-{uuid.uuid4()}", type="hive", config={})
+        session.add(source)
+        session.flush()
+        table = Table(
+            id=uuid.uuid4(),
+            source_id=source.id,
+            schema_name="s",
+            table_name="t",
+            is_active=True,
+        )
+        session.add(table)
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="C",
+                overall_score=65,
+                total_files=2,
+                small_files_count=0,
+                total_size_gb=1.0,
+                query_count_30d=0,
+            )
+        )
+        session.commit()
+        return table
+
+    def test_no_baseline_returns_none_and_writes_nothing(self, session, monkeypatch) -> None:
+        """A recommendation with no applied_prune_efficiency_baseline (e.g. applied before this
+        feature existed, or never actually applied) has nothing to compare against -- must
+        abstain, not fabricate a comparison against an unset 0.0."""
+        table = self._seed_table_with_stats(session)
+        recommendation = LayoutRecommendation(
+            id=uuid.uuid4(),
+            table_id=table.id,
+            recommended_strategy="sort",
+            recommended_columns=[{"column": "event_date"}],
+            status="applied",
+            applied_prune_efficiency_baseline=None,
+        )
+        session.add(recommendation)
+        session.commit()
+
+        def _should_not_be_called(source: object) -> None:
+            raise AssertionError("should not fetch file stats with no baseline to compare")
+
+        monkeypatch.setattr("cryo.sources.factory.source_catalog_for", _should_not_be_called)
+
+        result = measure_layout_recommendation_effectiveness(session, recommendation)
+
+        assert result is None
+        assert recommendation.observed_prune_improvement is None
+
+    def test_real_improvement_is_computed_and_persisted(self, session, monkeypatch) -> None:
+        """The actual point of the feature: a real 'after' analysis against real (fake, in this
+        test) manifest data, diffed against the frozen baseline, must produce and persist a real
+        positive number when the layout genuinely improved."""
+        table = self._seed_table_with_stats(session)
+        recommendation = LayoutRecommendation(
+            id=uuid.uuid4(),
+            table_id=table.id,
+            recommended_strategy="sort",
+            recommended_columns=[{"column": "event_date"}],
+            status="applied",
+            applied_prune_efficiency_baseline=0.1,  # was poorly clustered before
+        )
+        session.add(recommendation)
+        session.commit()
+
+        # Non-overlapping ranges -- well-clustered, high prune efficiency after the rewrite.
+        manifest = _FakeManifest(
+            [
+                _entry_for(event_date_range=("2026-01-01", "2026-01-01")),
+                _entry_for(event_date_range=("2026-06-01", "2026-06-01")),
+            ]
+        )
+        monkeypatch.setattr(
+            "cryo.sources.factory.source_catalog_for",
+            lambda source: _FakeCatalog(_FakeIcebergTable([manifest])),
+        )
+
+        result = measure_layout_recommendation_effectiveness(session, recommendation)
+
+        assert result is not None
+        assert result > 0.0  # real improvement over the 0.1 baseline
+        assert recommendation.observed_prune_improvement == result
+        # current_prune_efficiency is also refreshed to the same fresh reading, since it's
+        # meant to always reflect the table's latest known state -- independently confirm it
+        # equals baseline + observed (the fresh reading), not left stale from generation time.
+        assert recommendation.current_prune_efficiency == round(
+            recommendation.applied_prune_efficiency_baseline + result, 4
+        )
+
+    def test_baseline_field_is_never_overwritten_by_measurement(self, session, monkeypatch) -> None:
+        """The frozen baseline itself must survive a measurement call -- only
+        observed_prune_improvement and current_prune_efficiency should move."""
+        table = self._seed_table_with_stats(session)
+        recommendation = LayoutRecommendation(
+            id=uuid.uuid4(),
+            table_id=table.id,
+            recommended_strategy="sort",
+            recommended_columns=[{"column": "event_date"}],
+            status="applied",
+            applied_prune_efficiency_baseline=0.1,
+        )
+        session.add(recommendation)
+        session.commit()
+        manifest = _FakeManifest([_entry_for(event_date_range=("2026-01-01", "2026-01-01"))])
+        monkeypatch.setattr(
+            "cryo.sources.factory.source_catalog_for",
+            lambda source: _FakeCatalog(_FakeIcebergTable([manifest])),
+        )
+
+        measure_layout_recommendation_effectiveness(session, recommendation)
+
+        assert recommendation.applied_prune_efficiency_baseline == 0.1
+
+    def test_unreadable_manifests_returns_none_not_a_fabricated_zero(
+        self, session, monkeypatch
+    ) -> None:
+        table = self._seed_table_with_stats(session)
+        recommendation = LayoutRecommendation(
+            id=uuid.uuid4(),
+            table_id=table.id,
+            recommended_strategy="zorder",
+            recommended_columns=[{"column": "event_date"}],
+            status="applied",
+            applied_prune_efficiency_baseline=0.3,
+        )
+        session.add(recommendation)
+        session.commit()
+
+        class _BrokenCatalog:
+            def load_table(self, namespace: str, table_name: str) -> None:
+                raise RuntimeError("catalog unreachable")
+
+        monkeypatch.setattr(
+            "cryo.sources.factory.source_catalog_for", lambda source: _BrokenCatalog()
+        )
+
+        result = measure_layout_recommendation_effectiveness(session, recommendation)
+
+        assert result is None
+        assert recommendation.observed_prune_improvement is None

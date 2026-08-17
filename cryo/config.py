@@ -593,6 +593,19 @@ class Settings(BaseSettings):
             "job, not a metadata-only property flip."
         ),
     )
+    layout_effectiveness_max_tables_per_tick: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Cap on how many applied-but-unmeasured LayoutRecommendation rows get a fresh "
+            "observed_prune_improvement reading per telemetry tick (PDAE-8288). Always runs "
+            "(not gated behind an enabled flag like layout_autopilot_enabled) -- unlike "
+            "actually rewriting a table, measuring an already-applied rewrite's real effect "
+            "is read-only analysis, no data mutation, safe fleet-wide by construction. See "
+            "cryo.optimizer.layout_analyzer.measure_layout_recommendation_effectiveness and "
+            "MIN_HOURS_BEFORE_MEASURING_EFFECTIVENESS for the wait-period rationale."
+        ),
+    )
     max_concurrent_jobs_per_metastore: int = Field(
         default=150,
         ge=1,

@@ -21,7 +21,6 @@ from cryo.db.models import (
     MaintenanceRun,
     Source,
     Table,
-    TableCost,
     TableStats,
 )
 from cryo.db.repositories import presets
@@ -982,14 +981,18 @@ def execute_layout_recommendation(
     recommendation.status = "applied"
     recommendation.applied_at = datetime.now(UTC)
     recommendation.applied_run_id = run.id
-
-    # Best-effort before/after effectiveness baseline from recent query telemetry.
-    baseline = session.scalar(
-        select(func.avg(TableCost.query_request_savings_usd_month)).where(
-            TableCost.table_id == recommendation.table_id
-        )
-    )
-    recommendation.baseline_scan_bytes = int((baseline or 0.0) * 1024 * 1024)
+    # Freeze the real "before" baseline now, at the moment the rewrite is actually dispatched --
+    # current_prune_efficiency itself is not safe to read again later: it gets overwritten in
+    # place by the next generate_layout_recommendation regeneration tick (no status check on
+    # that update path), which would otherwise silently clobber the true pre-apply value before
+    # anything gets a chance to measure the real before/after improvement. See
+    # measure_layout_recommendation_effectiveness (layout_analyzer.py) for the consumer of this
+    # field and PDAE-8288 for why this replaced the previous baseline_scan_bytes write here (that
+    # field stored a dollar figure -- avg TableCost.query_request_savings_usd_month -- multiplied
+    # by 1024*1024 into a column named "_bytes"; a real unit-confusion bug, not a
+    # pending-but-correct placeholder, and nothing ever wrote its post_apply_scan_bytes
+    # counterpart anyway).
+    recommendation.applied_prune_efficiency_baseline = recommendation.current_prune_efficiency
     if intent_store is not None and attempt is not None:
         intent_store.finish_attempt(str(attempt.id), AttemptStatus.SUCCEEDED)
     session.commit()
