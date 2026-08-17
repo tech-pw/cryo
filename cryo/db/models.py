@@ -1375,6 +1375,12 @@ class LayoutRecommendation(TimestampMixin, Base):
     baseline_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
     post_apply_scan_bytes: Mapped[int | None] = mapped_column(BigInteger)
     observed_prune_improvement: Mapped[float | None] = mapped_column(Float)
+    # Write-once snapshot of current_prune_efficiency captured at execute_layout_recommendation
+    # time (the moment a rewrite is actually dispatched) -- see migration 20260817_0043 for why
+    # current_prune_efficiency itself can't serve as this baseline: generate_layout_recommendation
+    # overwrites it in place on every regeneration tick, with no status check, so an applied
+    # recommendation's real "before" value silently gets clobbered by the next routine refresh.
+    applied_prune_efficiency_baseline: Mapped[float | None] = mapped_column(Float)
     detail: Mapped[JsonDict | None] = mapped_column(JSONB)  # Additional analysis details
     bloom_filter_columns: Mapped[JsonList | None] = mapped_column(
         JSONB

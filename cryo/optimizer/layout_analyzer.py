@@ -627,3 +627,49 @@ def generate_layout_recommendation(
     session.commit()
     session.refresh(recommendation)
     return recommendation
+
+
+# How long to wait after a rewrite is dispatched before measuring its effect. A fresh scan
+# needs to have run against the table's new manifests (and, ideally, some real post-rewrite
+# query traffic against the new layout) before a prune-efficiency reading means anything --
+# measuring immediately after apply would just be re-reading the rewrite's own output files
+# with no independent confirmation the new layout actually holds up under real access patterns.
+MIN_HOURS_BEFORE_MEASURING_EFFECTIVENESS = 24
+
+
+def measure_layout_recommendation_effectiveness(
+    session: Session,
+    recommendation: LayoutRecommendation,
+) -> float | None:
+    """Re-analyze the table's current file layout and write the real observed prune-efficiency
+    improvement onto ``recommendation.observed_prune_improvement`` -- PDAE-8288's actual gap:
+    ``observed_prune_improvement`` existed as a column and was read into every API response, but
+    nothing ever computed or wrote it, so a table's real before/after result was never confirmed,
+    only the rewrite's own "did it run" status.
+
+    Reads ``recommendation.applied_prune_efficiency_baseline`` for the "before" value -- a
+    write-once snapshot captured by ``execute_layout_recommendation`` at apply time, deliberately
+    not the same ``current_prune_efficiency`` field this function's own fresh analysis will
+    itself update (that field is meant to always reflect the table's *latest* known state, and
+    letting a "did it improve" comparison read from a value that keeps moving underneath it would
+    make the comparison meaningless).
+
+    Returns ``None`` (and does not write anything) when there's no frozen baseline to compare
+    against, or the fresh analysis produced no efficiency reading (e.g. the table's manifests
+    were unreadable this attempt) -- an absent measurement should stay absent, not become a
+    fabricated 0.0 that looks like "no improvement" when it's really "couldn't check".
+    """
+    if recommendation.applied_prune_efficiency_baseline is None:
+        return None
+
+    analysis = analyze_table_layout(session, recommendation.table_id)
+    if not analysis.column_stats:
+        return None
+
+    observed = round(
+        analysis.current_prune_efficiency - recommendation.applied_prune_efficiency_baseline, 4
+    )
+    recommendation.observed_prune_improvement = observed
+    recommendation.current_prune_efficiency = analysis.current_prune_efficiency
+    session.commit()
+    return observed
