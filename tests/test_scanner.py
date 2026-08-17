@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import sessionmaker
 
 from cryo.config import Settings
@@ -451,6 +451,90 @@ def test_persist_table_analysis_strips_nul_bytes_from_history_column_quality() -
     assert history.raw["column_quality"] == [
         {"column_name": "notes", "lower_bound": "dirtyvalue", "upper_bound": "clean"}
     ]
+
+
+def test_persist_table_analysis_writes_real_p95_query_latency(session) -> None:
+    """Real-DB test (not FakeSession, whose .scalar() always returns None) --
+    TableStatsHistory.raw["p95_query_latency_ms"] must carry a real value computed from this
+    table's own QueryLog rows, previously always absent (see cryo.intelligence.outcomes'
+    pre/post_p95_query_latency_ms, which read this exact key and got None for every table)."""
+    from cryo.db.models import QueryLog, Source
+
+    source = Source(id=uuid.uuid4(), name="demo-source", type="hive", config={})
+    session.add(source)
+    session.flush()
+    table_id = uuid.uuid4()
+    table = Table(id=table_id, source_id=source.id, schema_name="demo", table_name="events")
+    session.add(table)
+    session.flush()
+
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    for i, duration in enumerate([100, 200, 300, 400, 5000]):  # p95 should land near 5000
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table_id,
+                query_id=f"q-{i}",
+                engine="trino",
+                query_text="SELECT * FROM demo.events",
+                executed_at=scan_at - timedelta(hours=i),
+                duration_ms=duration,
+            )
+        )
+    session.commit()
+
+    analysis = analyze_table(
+        FakeTable(
+            files=[FakeDataFile(10 * MB, 10, ("2026-06-29",))],
+            snapshots=[FakeSnapshotMeta(scan_at)],
+        ),
+        "demo",
+        "events",
+        scan_at=scan_at,
+    )
+
+    persist_table_analysis(session, source_id=source.id, table=table, analysis=analysis)
+    session.commit()
+
+    history = session.scalars(
+        select(TableStatsHistory).where(TableStatsHistory.table_id == table_id)
+    ).one()
+    assert history.raw["p95_query_latency_ms"] is not None
+    assert history.raw["p95_query_latency_ms"] > 400  # clearly above the bulk of durations
+
+
+def test_persist_table_analysis_p95_query_latency_is_none_with_no_query_log(session) -> None:
+    """No QueryLog rows at all for this table -- must be None, not 0.0 (a table genuinely
+    never queried has no latency signal to report, which is a different fact than 'queries
+    here are instant')."""
+    from cryo.db.models import Source
+
+    source = Source(id=uuid.uuid4(), name="demo-source-2", type="hive", config={})
+    session.add(source)
+    session.flush()
+    table_id = uuid.uuid4()
+    table = Table(id=table_id, source_id=source.id, schema_name="demo", table_name="quiet_table")
+    session.add(table)
+    session.flush()
+
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    analysis = analyze_table(
+        FakeTable(
+            files=[FakeDataFile(10 * MB, 10, ("2026-06-29",))],
+            snapshots=[FakeSnapshotMeta(scan_at)],
+        ),
+        "demo",
+        "quiet_table",
+        scan_at=scan_at,
+    )
+
+    persist_table_analysis(session, source_id=source.id, table=table, analysis=analysis)
+    session.commit()
+
+    history = session.scalars(
+        select(TableStatsHistory).where(TableStatsHistory.table_id == table_id)
+    ).one()
+    assert history.raw["p95_query_latency_ms"] is None
 
 
 def test_json_safe_strips_nul_bytes_postgres_cannot_store() -> None:
