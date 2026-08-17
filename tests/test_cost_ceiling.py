@@ -8,6 +8,7 @@ parallel kill-switch.
 
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import patch
 
 import httpx
@@ -18,8 +19,34 @@ from cryo.db.models import AuditLog, MaintenanceControlState
 from cryo.db.repositories.intents import set_pause_state
 from cryo.reporting.cost_ceiling import (
     enforce_cost_ceiling,
+    fetch_namespace_cost_range,
     fetch_todays_namespace_cost,
 )
+
+
+def _grafana_range_response(rows: list[tuple[str, float, float]]) -> dict:
+    """rows: [(day, used, unused), ...] -- matches _COST_RANGE_SQL's column order/names."""
+    days = [r[0] for r in rows]
+    used = [r[1] for r in rows]
+    unused = [r[2] for r in rows]
+    return {
+        "results": {
+            "A": {
+                "frames": [
+                    {
+                        "schema": {
+                            "fields": [
+                                {"name": "day"},
+                                {"name": "used_cost"},
+                                {"name": "unused_cost"},
+                            ]
+                        },
+                        "data": {"values": [days, used, unused]},
+                    }
+                ]
+            }
+        }
+    }
 
 
 def _grafana_response(*, used: float, unused: float) -> dict:
@@ -104,6 +131,62 @@ def test_fetch_todays_cost_raises_on_grafana_query_error() -> None:
                 cluster_name="data-platform-eks",
                 namespace="cryo",
                 ceiling_usd=100.0,
+            )
+
+
+def test_fetch_namespace_cost_range_parses_multiple_days() -> None:
+    payload = _grafana_range_response(
+        [
+            ("2026-08-14", 100.0, 200.0),
+            ("2026-08-15", 110.0, 190.0),
+            ("2026-08-16", 90.0, 210.0),
+        ]
+    )
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
+        days = fetch_namespace_cost_range(
+            grafana_url="https://grafana.example.com",
+            grafana_token="tok",
+            cluster_name="data-platform-eks",
+            namespace="trino-db",
+            since=date(2026, 8, 14),
+            until=date(2026, 8, 16),
+        )
+
+    assert len(days) == 3
+    assert days[0].day == date(2026, 8, 14)
+    assert days[0].used_cost_usd == 100.0
+    assert days[0].unused_cost_usd == 200.0
+    assert days[0].total_cost_usd == 300.0
+    assert days[2].day == date(2026, 8, 16)
+    assert days[2].total_cost_usd == 300.0
+
+
+def test_fetch_namespace_cost_range_empty_frame_returns_empty_list() -> None:
+    """CUR's 24-48h lag means recent days can legitimately have no rows yet -- must return an
+    empty list, not crash or fabricate zero-cost days for a range with no data at all."""
+    empty = {"results": {"A": {"frames": []}}}
+    with patch("httpx.post", side_effect=_mock_httpx_post(empty)):
+        days = fetch_namespace_cost_range(
+            grafana_url="https://grafana.example.com",
+            grafana_token="tok",
+            cluster_name="data-platform-eks",
+            namespace="trino-db",
+            since=date(2026, 8, 14),
+        )
+
+    assert days == []
+
+
+def test_fetch_namespace_cost_range_raises_on_grafana_query_error() -> None:
+    errored = {"results": {"A": {"error": "plugin.requestFailureError"}}}
+    with patch("httpx.post", side_effect=_mock_httpx_post(errored)):
+        with pytest.raises(RuntimeError, match="Grafana query error"):
+            fetch_namespace_cost_range(
+                grafana_url="https://grafana.example.com",
+                grafana_token="tok",
+                cluster_name="data-platform-eks",
+                namespace="trino-db",
+                since=date(2026, 8, 14),
             )
 
 

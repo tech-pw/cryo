@@ -66,6 +66,7 @@ class SchedulerService:
         self._last_cost_ceiling_check: datetime | None = None
         self._last_dark_table_detection: datetime | None = None
         self._last_cost_attribution: datetime | None = None
+        self._last_trino_cost_pricing: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         if not self._leader_check():
@@ -85,6 +86,7 @@ class SchedulerService:
         self._maybe_check_cost_ceiling(current)
         self._maybe_detect_dark_tables(current)
         self._maybe_aggregate_cost_attribution(current)
+        self._maybe_price_trino_scan_cost(current)
         self._sweep_pending_fallback_dispatches()
         self._dispatch_scheduled_runs(current)
         due_presets = self._store.list_due_presets(current)
@@ -660,6 +662,69 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Cost attribution tick failed: %s", exc)
+
+    def _maybe_price_trino_scan_cost(self, current: datetime) -> None:
+        """Once a day, derive a real $/GiB Trino compute price (trino-db namespace's actual
+        Grafana Athena CUR cost, per cryo.reporting.cost_ceiling, divided by real bytes scanned
+        that day, per cryo.telemetry.cost_attribution's rollup) and write it onto
+        QueryCostAttributionDaily.estimated_scan_cost_usd -- previously always NULL, since
+        there's no published per-byte Trino price the way there is for S3.
+
+        Off by default (Settings.trino_cost_pricing_enabled) and requires CRYO_GRAFANA_TOKEN,
+        same fail-safe-open contract as _maybe_check_cost_ceiling: silently no-ops rather than
+        raising if either isn't set. Runs after _maybe_aggregate_cost_attribution in the tick
+        order above so this tick's bytes-scanned denominator is as fresh as possible.
+        """
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        settings = get_settings()
+        if not settings.trino_cost_pricing_enabled:
+            return
+        if self._last_trino_cost_pricing is not None:
+            if current - self._last_trino_cost_pricing < timedelta(days=1):
+                return
+
+        import logging
+        import os
+
+        logger = logging.getLogger(__name__)
+        token = os.environ.get("CRYO_GRAFANA_TOKEN")
+        if not token:
+            logger.debug("Trino scan-cost pricing skipped: CRYO_GRAFANA_TOKEN not set")
+            return
+
+        try:
+            from cryo.cost.model import derive_trino_scan_cost_prices
+            from cryo.reporting.cost_ceiling import fetch_namespace_cost_range
+            from cryo.telemetry.cost_attribution import apply_scan_cost_prices, bytes_scanned_by_day
+
+            since = (current - timedelta(days=settings.trino_cost_pricing_lookback_days)).date()
+
+            day_costs = fetch_namespace_cost_range(
+                grafana_url=settings.grafana_base_url,
+                grafana_token=token,
+                cluster_name=settings.cost_ceiling_cluster_name,
+                namespace=settings.trino_cost_pricing_namespace,
+                since=since,
+            )
+            namespace_cost_by_day = {dc.day: dc.total_cost_usd for dc in day_costs}
+
+            with SessionLocal() as session:
+                bytes_by_day = bytes_scanned_by_day(session, since=since)
+                prices = derive_trino_scan_cost_prices(namespace_cost_by_day, bytes_by_day)
+                updated = apply_scan_cost_prices(session, prices)
+                session.commit()
+
+            logger.info(
+                "Trino scan-cost pricing tick: %s day(s) priced, %s rows updated",
+                len(prices),
+                updated,
+            )
+            self._last_trino_cost_pricing = current
+        except Exception as exc:
+            logger.warning("Trino scan-cost pricing tick failed: %s", exc)
 
     def _maybe_check_rollout_safety(self, current: datetime) -> None:
         from datetime import timedelta

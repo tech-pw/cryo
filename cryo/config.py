@@ -672,6 +672,33 @@ class Settings(BaseSettings):
         default="https://platform-grafana.penpencil.co",
         description="Base URL for cost_ceiling's Grafana API calls (no trailing slash).",
     )
+    trino_cost_pricing_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enables deriving a real $/GiB Trino compute price from the trino-db namespace's "
+            "actual Grafana Athena CUR cost "
+            "(cryo.reporting.cost_ceiling.fetch_namespace_cost_range) divided by real bytes "
+            "scanned that day (QueryCostAttributionDaily's rollup), and "
+            "writing it onto QueryCostAttributionDaily.estimated_scan_cost_usd -- previously "
+            "left NULL everywhere, since Trino-on-EKS has no published per-byte price the way "
+            "S3 does. Off by default: same CRYO_GRAFANA_TOKEN dependency as "
+            "cost_ceiling_enabled, and turning this on without that secret set is a silent "
+            "no-op, not a broken feature."
+        ),
+    )
+    trino_cost_pricing_namespace: str = Field(
+        default="trino-db",
+        description="Kubernetes namespace to price against (see trino_cost_pricing_enabled).",
+    )
+    trino_cost_pricing_lookback_days: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "How many trailing days to (re-)price on each tick. Wider than CUR's 24-48h lag "
+            "on purpose, so a day whose cost data was still incomplete on a prior tick gets "
+            "priced once it catches up, not stuck NULL forever."
+        ),
+    )
     fleet_admission_rate_cap: int = Field(
         default=500,
         ge=1,

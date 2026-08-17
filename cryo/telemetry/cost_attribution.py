@@ -24,14 +24,16 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from cryo.cost.model import TrinoScanCostPrice
 from cryo.db.models import QueryCostAttributionDaily, Source
 from cryo.telemetry.iceberg_source import parse_iceberg_query_log_config
 
@@ -325,3 +327,56 @@ def top_cost_drivers(
         .scalars()
         .all()
     )
+
+
+def bytes_scanned_by_day(
+    session: Session,
+    *,
+    since: date,
+) -> dict[date, int]:
+    """Total ``physical_bytes_scanned`` per day, summed across every (client, schema) row --
+    the denominator ``cryo.cost.model.derive_trino_scan_cost_prices`` needs, since a day's real
+    Trino namespace cost has to divide by that day's *total* bytes scanned, not any one
+    client/schema slice of it."""
+    rows = session.execute(
+        select(
+            QueryCostAttributionDaily.day,
+            func.sum(QueryCostAttributionDaily.physical_bytes_scanned),
+        )
+        .where(QueryCostAttributionDaily.day >= since)
+        .group_by(QueryCostAttributionDaily.day)
+    ).all()
+    return {day: int(total or 0) for day, total in rows}
+
+
+def apply_scan_cost_prices(
+    session: Session,
+    prices: Sequence[TrinoScanCostPrice],
+) -> int:
+    """Write ``estimated_scan_cost_usd`` onto every (day, client, schema) row for each priced
+    day -- proportional to that row's own ``physical_bytes_scanned`` share of the day's total
+    (the price itself is a $/GiB rate, not a flat per-row number; a client responsible for half
+    a day's bytes should be attributed half that day's cost, not the whole day's cost repeated
+    on every row). Rows for a day with a price get their existing value overwritten (this is a
+    derived/recomputable field, not raw ingested data); days absent from ``prices`` (see
+    derive_trino_scan_cost_prices' docstring for why some days have none) are left untouched,
+    not zeroed -- an old, real price is more honest than erasing it because today's fetch
+    didn't cover that day. Returns rows updated; caller commits."""
+    updated = 0
+    for price in prices:
+        rows = list(
+            session.scalars(
+                select(QueryCostAttributionDaily).where(
+                    QueryCostAttributionDaily.day == price.day
+                )
+            )
+        )
+        if not rows:
+            continue
+        for row in rows:
+            row_bytes = row.physical_bytes_scanned or 0
+            row.estimated_scan_cost_usd = round(
+                (row_bytes / 1_073_741_824) * price.price_usd_per_gib, 6
+            )
+            updated += 1
+    return updated
