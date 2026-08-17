@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.sql.elements import WithinGroup
 
 from cryo.db.base import Base
 from cryo.db.models import (
@@ -104,6 +105,61 @@ def _register_sqlite_jsonb_array_length(
         return len(parsed) if isinstance(parsed, list) else None
 
     dbapi_connection.create_function("jsonb_array_length", 1, _jsonb_array_length)
+
+
+@event.listens_for(Engine, "connect")
+def _register_sqlite_percentile_cont(
+    dbapi_connection: object, connection_record: object
+) -> None:
+    """Postgres's ``percentile_cont(p) WITHIN GROUP (ORDER BY col)`` (used by
+    compaction_candidates._table_p95_latency) has no sqlite equivalent -- sqlite doesn't support
+    WITHIN GROUP syntax at all, so this can't be a same-shape function alias like
+    jsonb_array_length above; instead we register a sqlite aggregate class that sqlite invokes
+    per matching row and finishes with a linear-interpolation percentile, called via a plain
+    ``percentile_cont(col, p)`` from a query rewrite (see _rewrite_percentile_cont_for_sqlite in
+    _patch_sqlite_incompatible_defaults below). Only fires for sqlite connections; no-op against
+    the real Postgres test path."""
+    if not hasattr(dbapi_connection, "create_aggregate"):
+        return
+
+    class _PercentileCont:
+        def __init__(self) -> None:
+            self.values: list[float] = []
+            self.percentile: float | None = None
+
+        def step(self, value: float | None, percentile: float | None) -> None:
+            if value is not None:
+                self.values.append(float(value))
+            if percentile is not None:
+                self.percentile = float(percentile)
+
+        def finalize(self) -> float | None:
+            if not self.values or self.percentile is None:
+                return None
+            ordered = sorted(self.values)
+            if len(ordered) == 1:
+                return ordered[0]
+            rank = self.percentile * (len(ordered) - 1)
+            lo, hi = int(rank), min(int(rank) + 1, len(ordered) - 1)
+            frac = rank - lo
+            return ordered[lo] + (ordered[hi] - ordered[lo]) * frac
+
+    dbapi_connection.create_aggregate("percentile_cont_agg", 2, _PercentileCont)
+
+
+@compiles(WithinGroup, "sqlite")
+def _compile_within_group_sqlite(element: WithinGroup, compiler: object, **kwargs: object) -> str:
+    """Rewrite Postgres' ``percentile_cont(p) WITHIN GROUP (ORDER BY col)`` into a call to the
+    ``percentile_cont_agg(col, p)`` sqlite aggregate registered above -- sqlite has no WITHIN
+    GROUP syntax at all, so this can't stay a plain function-name alias."""
+    func_name = element.element.name
+    if func_name != "percentile_cont":
+        # Only percentile_cont is special-cased; anything else falls back to sqlite's default
+        # (likely still broken, but not something this codebase's tests currently exercise).
+        return compiler.visit_withingroup(element, **kwargs)
+    percentile_expr = compiler.process(list(element.element.clauses)[0], **kwargs)
+    order_by_expr = compiler.process(element.order_by, **kwargs)
+    return f"percentile_cont_agg({order_by_expr}, {percentile_expr})"
 
 
 @pytest.fixture(autouse=True)
