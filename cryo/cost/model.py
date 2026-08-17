@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from cryo.config import Settings
@@ -151,3 +153,52 @@ def project_savings(
         query_request_savings_usd_month=query_savings,
         assumptions=merged_assumptions,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class TrinoScanCostPrice:
+    """A derived $/GiB Trino compute price for one day, plus enough to audit how it was
+    computed. Unlike S3 (settings.cost_price_per_gb_month, a real published AWS rate), there is
+    no sane universal Trino compute rate to fall back to -- a cluster's own sizing/spot-mix/
+    utilization determines it entirely, so this is always either a real derived number or
+    nothing at all. Callers must not invent a fallback constant the way project_savings does
+    for S3 GET pricing."""
+
+    day: date
+    price_usd_per_gib: float
+    namespace_cost_usd: float
+    bytes_scanned: int
+
+
+def derive_trino_scan_cost_prices(
+    namespace_cost_by_day: Mapping[date, float],
+    bytes_scanned_by_day: Mapping[date, int],
+) -> list[TrinoScanCostPrice]:
+    """$/GiB Trino compute price per day: real namespace spend (used+unused, from
+    cryo.reporting.cost_ceiling.fetch_namespace_cost_range) divided by real bytes scanned that
+    day (from QueryCostAttributionDaily, summed across clients/schemas for the day).
+
+    Only days present in *both* mappings produce a price -- a day with cost but no
+    bytes-scanned data (e.g. cost_attribution's watermark hasn't caught up yet) or bytes but no
+    cost (e.g. CUR's 24-48h lag, see fetch_todays_namespace_cost's docstring) has no honest
+    price to report for that day, not a guessed one. Callers writing this onto
+    QueryCostAttributionDaily.estimated_scan_cost_usd should leave the column NULL for any day
+    not returned here, exactly today's behavior before this function existed.
+    """
+    prices: list[TrinoScanCostPrice] = []
+    for day, cost_usd in namespace_cost_by_day.items():
+        bytes_scanned = bytes_scanned_by_day.get(day)
+        if not bytes_scanned or bytes_scanned <= 0:
+            continue
+        if cost_usd <= 0:
+            continue
+        price_per_gib = round(cost_usd / (bytes_scanned / GIB), 8)
+        prices.append(
+            TrinoScanCostPrice(
+                day=day,
+                price_usd_per_gib=price_per_gib,
+                namespace_cost_usd=cost_usd,
+                bytes_scanned=bytes_scanned,
+            )
+        )
+    return prices

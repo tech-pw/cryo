@@ -9,15 +9,18 @@ iceberg_source.aggregate_from_iceberg_query_log.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
-from cryo.db.models import Source, Table
+from cryo.cost.model import TrinoScanCostPrice
+from cryo.db.models import QueryCostAttributionDaily, Source, Table
 from cryo.telemetry import cost_attribution
 from cryo.telemetry.cost_attribution import (
     _normalize_client,
     _sum_physical_bytes,
     aggregate_query_cost_attribution,
+    apply_scan_cost_prices,
+    bytes_scanned_by_day,
 )
 
 
@@ -299,3 +302,139 @@ class TestAggregateQueryCostAttribution:
         assert result.windows_processed == 0
         session.refresh(source)
         assert source.config.get("cost_attribution") is None
+
+
+class TestBytesScannedByDay:
+    def test_sums_across_clients_and_schemas_for_the_same_day(self, session) -> None:
+        source = _seed_source(session)
+        day = date(2026, 8, 14)
+        session.add_all(
+            [
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=day,
+                    client="Metabase",
+                    schema_name="cdp_revenue",
+                    query_count=10,
+                    failed_query_count=0,
+                    physical_bytes_scanned=100,
+                ),
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=day,
+                    client="dbt",
+                    schema_name="admin",
+                    query_count=5,
+                    failed_query_count=0,
+                    physical_bytes_scanned=50,
+                ),
+            ]
+        )
+        session.commit()
+
+        result = bytes_scanned_by_day(session, since=day)
+        assert result == {day: 150}
+
+    def test_excludes_days_before_since(self, session) -> None:
+        source = _seed_source(session)
+        old_day = date(2026, 8, 1)
+        recent_day = date(2026, 8, 14)
+        session.add_all(
+            [
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=old_day,
+                    client="Metabase",
+                    schema_name="cdp_revenue",
+                    query_count=1,
+                    failed_query_count=0,
+                    physical_bytes_scanned=999,
+                ),
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=recent_day,
+                    client="Metabase",
+                    schema_name="cdp_revenue",
+                    query_count=1,
+                    failed_query_count=0,
+                    physical_bytes_scanned=100,
+                ),
+            ]
+        )
+        session.commit()
+
+        result = bytes_scanned_by_day(session, since=recent_day)
+        assert result == {recent_day: 100}
+
+
+class TestApplyScanCostPrices:
+    def test_writes_cost_proportional_to_each_rows_byte_share(self, session) -> None:
+        source = _seed_source(session)
+        day = date(2026, 8, 14)
+        # Metabase: 300 of the day's 400 total bytes (75%); dbt: 100 (25%).
+        session.add_all(
+            [
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=day,
+                    client="Metabase",
+                    schema_name="cdp_revenue",
+                    query_count=10,
+                    failed_query_count=0,
+                    physical_bytes_scanned=300,
+                ),
+                QueryCostAttributionDaily(
+                    source_id=source.id,
+                    day=day,
+                    client="dbt",
+                    schema_name="admin",
+                    query_count=5,
+                    failed_query_count=0,
+                    physical_bytes_scanned=100,
+                ),
+            ]
+        )
+        session.commit()
+
+        gib = 1_073_741_824
+        price = TrinoScanCostPrice(
+            day=day, price_usd_per_gib=10.0, namespace_cost_usd=4.0 * gib, bytes_scanned=400
+        )
+        updated = apply_scan_cost_prices(session, [price])
+        session.commit()
+
+        assert updated == 2
+        rows = {
+            row.client: row.estimated_scan_cost_usd
+            for row in session.query(QueryCostAttributionDaily).all()
+        }
+        assert rows["Metabase"] == round((300 / gib) * 10.0, 6)
+        assert rows["dbt"] == round((100 / gib) * 10.0, 6)
+        # Metabase's larger byte share must get proportionally more cost attributed to it.
+        assert rows["Metabase"] > rows["dbt"]
+
+    def test_leaves_unpriced_days_untouched(self, session) -> None:
+        """A day absent from `prices` (see derive_trino_scan_cost_prices docstring) must keep
+        whatever estimated_scan_cost_usd it already had -- an old real price beats erasing it
+        just because today's fetch didn't cover that day."""
+        source = _seed_source(session)
+        day = date(2026, 8, 14)
+        row = QueryCostAttributionDaily(
+            source_id=source.id,
+            day=day,
+            client="Metabase",
+            schema_name="cdp_revenue",
+            query_count=10,
+            failed_query_count=0,
+            physical_bytes_scanned=300,
+            estimated_scan_cost_usd=1.23,
+        )
+        session.add(row)
+        session.commit()
+
+        updated = apply_scan_cost_prices(session, [])
+        session.commit()
+
+        assert updated == 0
+        session.refresh(row)
+        assert row.estimated_scan_cost_usd == 1.23

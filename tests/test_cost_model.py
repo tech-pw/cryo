@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import date
+
 from cryo.config import Settings
 from cryo.cost.model import (
+    GIB,
     CostStatsInput,
     ReclaimBytes,
     bytes_to_usd,
     current_storage_bytes,
+    derive_trino_scan_cost_prices,
     project_savings,
     query_request_savings_usd,
 )
@@ -180,3 +184,44 @@ def test_project_savings_preserves_caller_assumptions_alongside_pricing_source()
 
     assert projection.assumptions["format_version"] == 2
     assert projection.assumptions["s3_get_price_source"] == "fallback_default"
+
+
+def test_derive_trino_scan_cost_prices_computes_dollars_per_gib() -> None:
+    day = date(2026, 8, 14)
+    prices = derive_trino_scan_cost_prices(
+        namespace_cost_by_day={day: 100.0},
+        bytes_scanned_by_day={day: 50 * GIB},
+    )
+    assert len(prices) == 1
+    assert prices[0].day == day
+    assert prices[0].price_usd_per_gib == round(100.0 / 50, 8)
+    assert prices[0].namespace_cost_usd == 100.0
+    assert prices[0].bytes_scanned == 50 * GIB
+
+
+def test_derive_trino_scan_cost_prices_skips_days_missing_from_either_side() -> None:
+    """A day with real cost but no bytes-scanned data (watermark lag), or bytes but no cost
+    (CUR's 24-48h lag), must produce no price for that day -- never a guessed one."""
+    day1, day2, day3 = date(2026, 8, 14), date(2026, 8, 15), date(2026, 8, 16)
+    prices = derive_trino_scan_cost_prices(
+        namespace_cost_by_day={day1: 100.0, day2: 50.0},  # day3 has no cost yet
+        bytes_scanned_by_day={day1: 50 * GIB, day3: 10 * GIB},  # day2 has no bytes yet
+    )
+    assert len(prices) == 1
+    assert prices[0].day == day1
+
+
+def test_derive_trino_scan_cost_prices_skips_zero_or_negative_bytes() -> None:
+    day = date(2026, 8, 14)
+    prices = derive_trino_scan_cost_prices(
+        namespace_cost_by_day={day: 100.0},
+        bytes_scanned_by_day={day: 0},
+    )
+    assert prices == []
+
+
+def test_derive_trino_scan_cost_prices_no_hardcoded_fallback_when_empty() -> None:
+    """Unlike S3 pricing (which has settings.cost_price_per_gb_month as a real published
+    fallback), Trino compute cost has no sane universal rate -- empty input must produce an
+    empty result, never a guessed constant."""
+    assert derive_trino_scan_cost_prices({}, {}) == []
