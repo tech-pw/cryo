@@ -37,7 +37,57 @@ The fix normalizes a bare `time.Time` value back to the same days-since-epoch `i
 `transforms.go`'s `epochTM`), regardless of whether the logical-type hint survived
 the round trip.
 
-### 2. UTF-8–safe string metrics truncate (Spark parity)
+### 2. Nil-safe Avro partition value conversion (PDAE-8279)
+
+`manifest.go`, `convertAvroValueToIcebergType()`: every logical-type branch
+(`Date`, `TimeMillis`, `TimeMicros`, `TimestampMillis`, `TimestampMicros`,
+`TimestampNanos`) went straight to an unchecked type assertion
+(`v.(int32)`, `v.(int64)`, ...) once the richer `time.Time`/`time.Duration`
+case didn't match. A NULL-valued Avro partition field — legal per the
+Iceberg spec, e.g. a row whose partition-source column was itself null —
+decodes to a bare `nil` interface value, which panicked instead of
+converting:
+
+```
+panic: interface conversion: interface {} is nil, not int32
+
+goroutine 44 [running]:
+github.com/apache/iceberg-go.(*dataFile).convertAvroValueToIcebergType(...)
+	manifest.go:1880 +0xa95
+github.com/apache/iceberg-go.(*dataFile).initializeMapData.func1()
+github.com/apache/iceberg-go.(*dataFile).Partition(...)
+github.com/apache/iceberg-go/table.GetPartitionRecord(...)
+```
+
+Reproduced in production 2026-08-14 on `hive.icesheet.silver_offline_drip_read_status_2`
+during the fleet-wide cold-table cleanup — crashed the whole native
+maintenance subprocess mid-batch, taking 29 unrelated tables' jobs down
+with it (they were reported `native_job_no_result` despite having nothing
+to do with the failing table).
+
+The fix returns `nil` for a genuinely-nil Avro value (checked once, up
+front) instead of asserting straight into a type. `nil` is the correct
+decoded value for a null partition field: `table/scanner.go`'s
+`newPartitionRecord` already treats an *absent* map entry as `nil` via a
+plain Go map lookup, and Iceberg's own expression evaluator is built to
+handle a nil/absent partition value as part of normal null semantics — this
+patch makes the explicit-null case behave the same as the
+already-correctly-handled absent-key case, rather than a third, panicking
+path. A non-nil value of an unexpected type (previously also an unchecked
+panic) now degrades the same way, returning `nil` instead of crashing.
+
+Regression tests: `manifest_partition_null_test.go`.
+
+Note: this is a narrower, independent fix from `cryo/engine-go`'s own
+`internal/ops/executor.go` `recoverOperation`, which isolates a panic
+*per-operation* within one table's subprocess so one crash doesn't take
+down unrelated operations in the *same* job. This patch fixes the actual
+root-cause panic; `recoverOperation` is defense-in-depth for whatever
+still-unknown panic shows up next. Whether cross-*table* batch-pod
+isolation (the 29-collateral-jobs scenario) needs its own fix at the
+Python dispatch/packing layer is tracked separately in PDAE-8279.
+
+### 3. UTF-8–safe string metrics truncate (Spark parity)
 
 Spark/Java Iceberg writes file metrics under `write.metadata.metrics.default=truncate(16)`
 using `UnicodeUtil.truncateStringMin` / `truncateStringMax`, which truncate by **Unicode
