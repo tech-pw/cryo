@@ -83,4 +83,6 @@ def _outcome() -> MaintenanceOutcome:
         post_delete_file_pct=1.0,
         pre_p95_query_latency_ms=500.0,
         post_p95_query_latency_ms=400.0,
+        pre_estimated_cost_usd=None,
+        post_estimated_cost_usd=None,
     )

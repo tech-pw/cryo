@@ -91,4 +91,6 @@ def _outcome(
         post_delete_file_pct=post,
         pre_p95_query_latency_ms=200.0,
         post_p95_query_latency_ms=150.0,
+        pre_estimated_cost_usd=None,
+        post_estimated_cost_usd=None,
     )
