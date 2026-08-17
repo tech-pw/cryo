@@ -196,9 +196,7 @@ def test_compute_moop_scores_t4_unaffected_when_avg_bytes_per_query_absent():
         {"small_files": 10, "size_gb": 100.0, "query_frequency": 5.0},
     ]
     candidates_with_none = [{**c, "avg_bytes_per_query": None} for c in candidates_without_key]
-    assert compute_moop_scores(candidates_without_key) == compute_moop_scores(
-        candidates_with_none
-    )
+    assert compute_moop_scores(candidates_without_key) == compute_moop_scores(candidates_with_none)
 
 
 def test_compute_moop_scores_rewards_expensive_scans_via_t4():
@@ -410,9 +408,7 @@ def test_update_partition_benefit_scores_uses_real_scan_cost_from_query_log(sess
     # only the real Trino scan-cost signal (bytes_read) differs, and it must be what separates
     # them here.
     assert expensive_partition.query_frequency == pytest.approx(cheap_partition.query_frequency)
-    assert (
-        expensive_partition.compaction_benefit_score > cheap_partition.compaction_benefit_score
-    )
+    assert expensive_partition.compaction_benefit_score > cheap_partition.compaction_benefit_score
 
 
 def test_update_partition_benefit_scores_scan_cost_reaches_dispatch_score(session):
@@ -489,6 +485,80 @@ def test_update_partition_benefit_scores_scan_cost_reaches_dispatch_score(sessio
     assert hot_traits["t2"] == cold_traits["t2"]
     assert hot_traits["t4"] > cold_traits["t4"]
     assert hot_traits["s_c"] > cold_traits["s_c"]
+
+
+def test_update_partition_benefit_scores_applies_qualified_cost_and_latency_feedback(session):
+    """End-to-end proof that realized_cost_multiplier/realized_latency_multiplier
+    (cryo.intelligence.autocomp_feedback) actually reach compaction_benefit_score, not just
+    the pure-function unit tests in test_autocomp_realized_value.py. A table whose
+    TableStats.raw already carries a qualified, real-cost-reduction calibration
+    (cost_calibration_multiplier=1.3) must score higher than an otherwise-identical table with
+    no calibration history at all."""
+    from cryo.intelligence.autocomp_feedback import AUTOCOMP_FEEDBACK_SCHEMA_VERSION
+
+    calibrated_table = _seed_table(session, schema_name="test", table_name="cost_calibrated")
+    plain_table = _seed_table(session, schema_name="test", table_name="cost_uncalibrated")
+    scan_at = datetime.now(UTC)
+
+    qualified_feedback = {
+        "schema": AUTOCOMP_FEEDBACK_SCHEMA_VERSION,
+        "status": "qualified",
+        "evidence_sufficient": True,
+        "stable": True,
+        "calibration_multiplier": 1.0,
+        "cost_status": "qualified",
+        "cost_evidence_sufficient": True,
+        "cost_stable": True,
+        "cost_calibration_multiplier": 1.3,
+        "latency_status": "abstained",
+        "latency_evidence_sufficient": False,
+        "latency_stable": False,
+        "latency_calibration_multiplier": 1.0,
+    }
+    for table, raw in (
+        (calibrated_table, {"autocomp_realized_value": qualified_feedback}),
+        (plain_table, {}),
+    ):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=scan_at,
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="C",
+                overall_score=50,
+                total_files=500,
+                small_files_count=500,
+                total_size_gb=100.0,
+                raw=raw,
+            )
+        )
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, calibrated_table.id)
+    update_partition_benefit_scores(session, plain_table.id)
+
+    calibrated_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == calibrated_table.id)
+    ).one()
+    plain_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == plain_table.id)
+    ).one()
+
+    assert calibrated_partition.compaction_benefit_score == round(
+        plain_partition.compaction_benefit_score * 1.3, 4
+    )
 
 
 def test_update_partition_benefit_scores_diverges_per_partition_with_uneven_filters(session):

@@ -482,11 +482,25 @@ def update_partition_benefit_scores(
     if not partitions:
         return 0
 
-    from cryo.intelligence.autocomp_feedback import realized_value_multiplier
+    from cryo.intelligence.autocomp_feedback import (
+        realized_cost_multiplier,
+        realized_latency_multiplier,
+        realized_value_multiplier,
+    )
 
     table_stats = session.get(TableStats, table_id)
-    feedback_multiplier = realized_value_multiplier(
-        table_stats.raw if table_stats is not None else None
+    stats_raw = table_stats.raw if table_stats is not None else None
+    # Three independently-gated calibration multipliers, each defaulting to neutral (1.0)
+    # until its own evidence-sufficiency/drift-stability check qualifies -- see
+    # autocomp_feedback._reduction_ratio_calibration's docstring for why cost/latency stay
+    # separate from the byte-yield multiplier rather than one blended number. Composed
+    # multiplicatively, same as feedback_multiplier alone composed with the base score before
+    # this existed: a table that's qualified on multiple fronts gets rewarded on each, not
+    # capped at whichever signal happens to qualify first.
+    feedback_multiplier = (
+        realized_value_multiplier(stats_raw)
+        * realized_cost_multiplier(stats_raw)
+        * realized_latency_multiplier(stats_raw)
     )
 
     total_queries = (
