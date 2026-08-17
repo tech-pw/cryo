@@ -4,9 +4,11 @@ Based on: "AutoComp: Automated Data Compaction for Log-Structured Tables
 in Data Lakes" — SIGMOD 2025, LinkedIn (arXiv:2504.04186).
 
 Ranks partitions by combining small-file pressure with observed query
-frequency so frequently-queried, fragmented partitions surface first.
-Reuses ``cryo.planner.benefit_score.compute_benefit_score`` for the
-AutoComp benefit score and adds an S3-style cost-savings estimate.
+frequency -- and real Trino scan cost (avg bytes read per query, when known)
+-- so frequently-queried, fragmented, *expensive-to-scan* partitions surface
+first. Reuses ``cryo.planner.benefit_score.compute_benefit_score`` for the
+AutoComp benefit score (which also drives this module's own ranking `.score`,
+see find_candidates) and adds an S3-style cost-savings estimate.
 """
 
 from __future__ import annotations
@@ -48,12 +50,17 @@ def _build_reasons(
     query_freq: float,
     partition_size_gb: float,
     target_file_size_bytes: int,
+    avg_bytes_per_query: float | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     if query_freq >= 1.0:
         reasons.append(f"high query frequency ({query_freq:.1f} queries/day)")
     elif query_freq > 0:
         reasons.append(f"moderate query frequency ({query_freq:.1f} queries/day)")
+
+    if avg_bytes_per_query and avg_bytes_per_query >= 1_073_741_824:  # 1 GiB
+        avg_gb = avg_bytes_per_query / 1_073_741_824
+        reasons.append(f"queries scan ~{avg_gb:.1f}GB on average — high Trino scan cost")
 
     if total_files > 0 and small_files > 0:
         small_ratio = small_files / total_files
@@ -120,6 +127,32 @@ def _query_freq_for_table(
     return float(total) / max(horizon_days, 1)
 
 
+def _avg_bytes_per_query_for_table(
+    session: Session,
+    table_id: uuid.UUID,
+    horizon_days: int,
+) -> float | None:
+    """Average ``QueryLog.bytes_read`` per query hitting this table, or ``None`` if unknown.
+
+    AVG, not SUM: QueryLog is a curated/sampled table (see ``cryo.telemetry.curator``'s
+    ``_is_summary_worthy`` -- only failed/slow/large queries plus a 1% sample of otherwise-
+    normal traffic land here), so a raw sum would track how much got sampled, not the real
+    per-query scan cost. Feeds ``compute_benefit_score``'s scan-cost multiplier so two tables
+    with identical file fragmentation and identical query *counts* don't score identically when
+    one's queries actually scan far more bytes per hit -- the gap the earlier count-only
+    ``query_frequency`` term couldn't see.
+    """
+    since = datetime.now(UTC) - timedelta(days=horizon_days)
+    avg_bytes = session.scalar(
+        select(func.avg(QueryLog.bytes_read)).where(
+            QueryLog.table_id == table_id,
+            QueryLog.executed_at >= since,
+            QueryLog.bytes_read.isnot(None),
+        )
+    )
+    return float(avg_bytes) if avg_bytes is not None else None
+
+
 def _table_p95_latency(
     session: Session,
     table_id: uuid.UUID,
@@ -164,6 +197,7 @@ def find_candidates(
         return []
 
     query_freq = _query_freq_for_table(session, table_id, horizon_days)
+    avg_bytes_per_query = _avg_bytes_per_query_for_table(session, table_id, horizon_days)
     p95_latency = _table_p95_latency(session, table_id, horizon_days)
     stats = _stats_lookup(session, table_id)
     target_file_bytes = (
@@ -178,14 +212,23 @@ def find_candidates(
         if small_files <= 0 or total_files <= 0:
             continue
 
-        denom = max(partition_size_gb, 0.1)
-        score = (small_files * query_freq * 1.0) / denom
-
         benefit_score = compute_benefit_score(
             small_files=small_files,
             query_frequency=query_freq,
             partition_size_gb=partition_size_gb,
+            avg_bytes_per_query=avg_bytes_per_query,
         )
+        # score drives the actual ranking/ordering (candidates.sort below); benefit_score only
+        # decides the HIGH/MED/LOW label. They need to agree on the scan-cost signal or a
+        # cost-heavy table's higher benefit_score would never actually move it up the list --
+        # reusing compute_benefit_score directly (rather than reimplementing its multiplier
+        # here) keeps them in lockstep by construction, not by two formulas staying in sync.
+        # (This also replaces the old local `(small_files * query_freq) / max(size_gb, 0.1)`
+        # formula, which zeroed out entirely at query_freq=0; compute_benefit_score floors
+        # frequency at 0.1 instead, so an unqueried-this-window but badly fragmented partition
+        # gets nonzero priority rather than dropping off the list -- matching
+        # update_partition_benefit_scores' existing behavior instead of diverging from it.)
+        score = benefit_score
         if benefit_score >= 5.0:
             priority: Priority = "HIGH"
         elif benefit_score >= 1.0:
@@ -201,6 +244,7 @@ def find_candidates(
             query_freq=query_freq,
             partition_size_gb=partition_size_gb,
             target_file_size_bytes=target_file_bytes,
+            avg_bytes_per_query=avg_bytes_per_query,
         )
 
         candidates.append(
