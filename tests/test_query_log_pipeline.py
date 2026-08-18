@@ -607,6 +607,108 @@ def test_curator_dedupe_across_multi_coordinator_poll() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Auth plumbing (PDAE-8277): the curator must authenticate its fetch against
+# system.runtime.queries the same way every other Trino query against this destination
+# does, or a coordinator with basic/LDAP auth silently 401s on every tick.
+# ---------------------------------------------------------------------------
+
+
+def test_build_ingester_extracts_basic_auth_from_destination_config() -> None:
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import _build_ingester
+
+    destination = SimpleNamespace(
+        config={
+            "auth": {"type": "basic", "username": "dbt_user", "password": "s3cr3t"},
+            "coordinators": [{"host": "trino.example.com", "port": 443, "http_scheme": "https"}],
+        },
+        query_log_config={"enabled": True},
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    ingester = _build_ingester(destination, config, source=None)
+    assert ingester is not None
+    assert ingester.user == "dbt_user"
+    assert ingester.auth == ("dbt_user", "s3cr3t")
+    assert ingester.trino_url == "https://trino.example.com:443"
+
+
+def test_build_ingester_has_no_auth_when_destination_config_has_none() -> None:
+    """A coordinator running in trusted-network mode (no auth configured) should still
+    work -- ingester.auth must be None, not crash on a missing password.
+    """
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import _build_ingester
+
+    destination = SimpleNamespace(
+        config={"coordinators": [{"host": "trino.example.com", "port": 8080}]},
+        query_log_config={"enabled": True},
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    ingester = _build_ingester(destination, config, source=None)
+    assert ingester is not None
+    assert ingester.auth is None
+    assert ingester.user == "cryo"
+
+
+def test_build_ingester_respects_verify_ssl_false() -> None:
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import _build_ingester
+
+    destination = SimpleNamespace(
+        config={
+            "auth": {"type": "basic", "username": "u", "password": "p"},
+            "coordinators": [{"host": "trino.example.com", "port": 443, "http_scheme": "https"}],
+            "verify_ssl": False,
+        },
+        query_log_config={"enabled": True},
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    ingester = _build_ingester(destination, config, source=None)
+    assert ingester is not None
+    assert ingester.verify_ssl is False
+
+
+def test_multi_coordinator_override_url_preserves_auth() -> None:
+    """The per-endpoint clone used by multi-coordinator destinations must carry the same
+    credentials as the base ingester -- previously it dropped password/verify_ssl entirely,
+    so a multi-coordinator destination with auth enabled would 401 on every endpoint.
+    """
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import _build_ingester, _MultiCoordinatorIngester
+
+    destination = SimpleNamespace(
+        config={
+            "auth": {"type": "basic", "username": "dbt_user", "password": "s3cr3t"},
+            "coordinators": [{"host": "c1.example.com", "port": 443, "http_scheme": "https"}],
+            "verify_ssl": False,
+        },
+        query_log_config={
+            "enabled": True,
+            "telemetry_coordinators": ["https://c2.example.com:443"],
+        },
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    ingester = _build_ingester(destination, config, source=None)
+    assert isinstance(ingester, _MultiCoordinatorIngester)
+
+    cloned = ingester.override_url("https://c2.example.com:443")
+    assert cloned.auth == ("dbt_user", "s3cr3t")
+    assert cloned.verify_ssl is False
+
+
+# ---------------------------------------------------------------------------
 # Test doubles for the curator
 # ---------------------------------------------------------------------------
 
