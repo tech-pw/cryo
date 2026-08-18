@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -15,6 +14,10 @@ import (
 )
 
 const appCommitRetries = 4
+
+func rewriteCommitAttempts() int {
+	return appCommitRetries + 1
+}
 
 func isRESTCatalog(req *protocol.ExecuteRequest) bool {
 	if req == nil {
@@ -29,11 +32,11 @@ func isRESTCatalog(req *protocol.ExecuteRequest) bool {
 
 func ensureMORCompactionProperties(txn *table.Transaction, existing iceberg.Properties) error {
 	desired := iceberg.Properties{
-		table.WriteDeleteIsolationLevelKey:     string(table.IsolationSerializable),
-		table.CommitNumRetriesKey:              "4",
-		table.CommitMinRetryWaitMsKey:          "100",
-		table.CommitMaxRetryWaitMsKey:          "60000",
-		table.CommitTotalRetryTimeoutMsKey:     "1800000",
+		table.WriteDeleteIsolationLevelKey: string(table.IsolationSerializable),
+		table.CommitNumRetriesKey:          "4",
+		table.CommitMinRetryWaitMsKey:      "100",
+		table.CommitMaxRetryWaitMsKey:      "60000",
+		table.CommitTotalRetryTimeoutMsKey: "1800000",
 	}
 	toSet := iceberg.Properties{}
 	for key, value := range desired {
@@ -96,23 +99,24 @@ func collectDeadEqualityDeletes(
 }
 
 // isRetryableCommitError classifies a commit failure as a retryable optimistic-concurrency
-// conflict. REST catalogs reliably wrap conflicts with table.ErrCommitFailed/ErrCommitDiverged,
-// so errors.Is is precise there. Non-REST catalogs (Hive, Glue, JDBC) don't -- confirmed live,
-// 2026-07-21: a genuine "branch \"main\" has changed" conflict against a Hive metastore
-// propagated as an immediate hard failure instead of retrying, even on a call site that had
-// already budgeted extra attempts specifically for this case (attempts was bumped, but every
-// attempt after the first was unreachable because this check always returned false first).
-// Since non-REST catalogs give no reliable way to distinguish a conflict from any other
-// commit error, treat any commit error as retryable there -- same assumption the single-commit
-// MOR path's `attempts` calculation already makes.
+// conflict. REST 409s wrap table.ErrCommitFailed. Hive/Glue requirement validation often
+// returns a raw "branch \"main\" has changed: expected id" string (PDAE-8353); that is
+// retryable on every catalog type. Other non-REST commit errors are assumed retryable
+// because those catalogs give no reliable sentinel.
 func isRetryableCommitError(err error, isREST bool) bool {
 	if err == nil {
 		return false
 	}
+	// Unwrapped "branch \"main\" has changed: expected id" (PDAE-8353) is retryable
+	// on REST and non-REST catalogs. REST 409s wrap ErrCommitFailed; Hive requirement
+	// validation historically did not.
+	if table.IsRetryableCommitConflict(err) {
+		return true
+	}
 	if !isREST {
 		return true
 	}
-	return errors.Is(err, table.ErrCommitFailed) || errors.Is(err, table.ErrCommitDiverged)
+	return false
 }
 
 func reloadTable(ctx context.Context, req *protocol.ExecuteRequest) (*table.Table, error) {

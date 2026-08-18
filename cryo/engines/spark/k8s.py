@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from kubernetes import client
 
+from cryo.engines.k8s_cost_labels import cost_attribution_labels
+
 logger = logging.getLogger(__name__)
 
 _IN_CLUSTER_API_SERVER = "https://kubernetes.default.svc:443"
@@ -195,6 +197,7 @@ class SparkK8sClient:
         catalog: str,
         job_name: str = "cryo-spark",
         destination_id: str | None = None,
+        operation: str | None = None,
     ) -> str:
         cfg = self._config
         runner_args = [
@@ -211,7 +214,12 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
+        return self._submit(
+            runner_args,
+            job_name=job_name,
+            destination_id=destination_id,
+            operation=operation,
+        )
 
     def submit_repair_missing_files(
         self,
@@ -220,6 +228,7 @@ class SparkK8sClient:
         job_name: str = "cryo-repair",
         commit: bool = False,
         destination_id: str | None = None,
+        operation: str = "repair_missing_files",
     ) -> str:
         """Dispatch cryo_spark_runner.py --repair-missing-files against table_ref.
 
@@ -246,10 +255,20 @@ class SparkK8sClient:
             runner_args += ["--catalog-warehouse", cfg.catalog_warehouse]
         if cfg.s3_endpoint:
             runner_args += ["--s3-endpoint", cfg.s3_endpoint]
-        return self._submit(runner_args, job_name=job_name, destination_id=destination_id)
+        return self._submit(
+            runner_args,
+            job_name=job_name,
+            destination_id=destination_id,
+            operation=operation,
+        )
 
     def _submit(
-        self, runner_args: list[str], *, job_name: str, destination_id: str | None = None
+        self,
+        runner_args: list[str],
+        *,
+        job_name: str,
+        destination_id: str | None = None,
+        operation: str | None = None,
     ) -> str:
         cfg = self._config
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
@@ -317,6 +336,32 @@ class SparkK8sClient:
             *runner_args,
         ]
 
+        cost_labels = cost_attribution_labels(
+            workload_name="cryo-spark",
+            engine="spark",
+            operation=operation or job_name,
+        )
+        spark_job_labels = {
+            "app.kubernetes.io/name": "cryo",
+            "app.kubernetes.io/component": "spark-fallback",
+            _DESTINATION_LABEL: (destination_id or "default")[:63],
+            **cost_labels,
+        }
+        # Driver/executor pods are created by spark-submit, not the wrapper Job. CUR
+        # attributes reserved CPU/memory on those pods. Hyphenated keys only: Spark
+        # config treats '.' as nesting, so app.kubernetes.io/* cannot go on this conf.
+        label_confs: list[str] = []
+        for key, value in cost_labels.items():
+            label_confs.extend(
+                [
+                    "--conf",
+                    f"spark.kubernetes.driver.label.{key}={value}",
+                    "--conf",
+                    f"spark.kubernetes.executor.label.{key}={value}",
+                ]
+            )
+        spark_submit_cmd[1:1] = label_confs
+
         # Driver/executor pods must land on the same Karpenter on-demand capacity as
         # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
         # that node pool's instance profile is what actually has S3 access to the
@@ -357,10 +402,7 @@ class SparkK8sClient:
                     "metadata": {
                         "name": credentials_secret_name,
                         "namespace": cfg.namespace,
-                        "labels": {
-                            "app.kubernetes.io/name": "cryo",
-                            "app.kubernetes.io/component": "spark-fallback",
-                        },
+                        "labels": spark_job_labels,
                     },
                     "stringData": {
                         "access_key_id": cfg.s3_access_key,
@@ -387,11 +429,7 @@ class SparkK8sClient:
             "metadata": {
                 "name": k8s_job_name,
                 "namespace": cfg.namespace,
-                "labels": {
-                    "app.kubernetes.io/name": "cryo",
-                    "app.kubernetes.io/component": "spark-fallback",
-                    _DESTINATION_LABEL: (destination_id or "default")[:63],
-                },
+                "labels": spark_job_labels,
                 "annotations": {
                     "cryo/driver-pod-name": driver_pod_name,
                     **(
@@ -407,10 +445,7 @@ class SparkK8sClient:
                 "ttlSecondsAfterFinished": cfg.ttl_seconds_after_finished,
                 "template": {
                     "metadata": {
-                        "labels": {
-                            "app.kubernetes.io/name": "cryo",
-                            "app.kubernetes.io/component": "spark-fallback",
-                        },
+                        "labels": spark_job_labels,
                         "annotations": {"karpenter.sh/do-not-disrupt": "true"},
                     },
                     "spec": {
@@ -829,6 +864,18 @@ def _read_pod_log_tail(
     NoSuchTableException that killed the job never appeared in job.error at all, only
     "Decommissioning not enabled, skipping shutdown script" spam. `tail_lines` is the
     correct parameter for "last N lines of a pod's log" and needs no byte-size guessing.
+
+    Regression, PDAE-8346, confirmed live 2026-08-18: 200 lines still wasn't enough. A
+    real sample: 19 of 47 truncated MaintenanceJob.error rows over 14 days had no exception
+    message at all captured -- only bare `at org.apache.spark...` stack frames or trailing
+    "Shutting down all executors" shutdown chatter, because the real `Exception: message`
+    header line Spark prints was further back than 200 lines from the end (e.g. Spark's own
+    graceful-shutdown log sequence after a failure routinely runs 40-60 more INFO lines).
+    2000 lines costs nothing extra downstream -- this is only the *capture* window; the
+    value that actually reaches Postgres/API responses is still capped to
+    ERROR_MESSAGE_TRUNCATE (4000 chars) by truncate_error_message, and deepest_caused_by
+    (see cryo.engines.base) searches this whole captured tail for the real signature before
+    that cap is applied, regardless of how much log text sits in between.
     """
     try:
         core_api = _new_k8s_core_client()
@@ -843,7 +890,7 @@ def _read_pod_log_tail(
                 logs: str = core_api.read_namespaced_pod_log(
                     name=pod.metadata.name,
                     namespace=namespace,
-                    tail_lines=200,
+                    tail_lines=2000,
                 )
                 tail = logs.strip()
                 if tail:

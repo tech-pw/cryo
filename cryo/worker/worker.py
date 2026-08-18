@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -41,6 +42,8 @@ from cryo.queue.run_events import (
     safe_publish,
 )
 from cryo.worker.safety_gates import requires_quiet_window, wait_for_table_quiet
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -498,6 +501,15 @@ class Worker:
                 # defines the hook should get it, matching with_source_config's own pattern
                 # just above.
                 engine = engine.with_table_stats(table_data.stats)
+
+            if engine.type is EngineType.SPARK_EMR:
+                plan = _maybe_compact_spark_worker_plan(
+                    plan,
+                    job=job,
+                    table_data=table_data,
+                    table_ref=table_ref,
+                    store=self._store,
+                )
 
             native_routing = None
             if engine.type is EngineType.NATIVE:
@@ -1904,6 +1916,14 @@ class Worker:
             fallback_engine = fallback_engine.with_source_config(table_data.source_config)
         if hasattr(fallback_engine, "with_table_stats"):
             fallback_engine = fallback_engine.with_table_stats(table_data.stats)
+        if fallback_engine.type is EngineType.SPARK_EMR:
+            plan = _maybe_compact_spark_worker_plan(
+                plan,
+                job=job,
+                table_data=table_data,
+                table_ref=table_ref,
+                store=self._store,
+            )
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
         engine_ref: str | None = None
@@ -2251,6 +2271,38 @@ class Worker:
         if had_skip and not had_success:
             final_status = JobStatus.SKIPPED
         return final_status, error, engine_ref, had_success, had_skip, False
+
+
+def _maybe_compact_spark_worker_plan(
+    plan: MaintenancePlan,
+    *,
+    job: MaintenanceJobRecord,
+    table_data: TableMaintenanceData,
+    table_ref: str | None,
+    store: JobStore,
+) -> MaintenancePlan:
+    from cryo.engines.spark.worker_guard import log_spark_payload, maybe_compact_spark_plan
+
+    compacted, snap = maybe_compact_spark_plan(
+        plan,
+        stats=table_data.stats,
+        partitions=table_data.partitions,
+    )
+    log_spark_payload(
+        stage="worker:pre_execute",
+        table_ref=table_ref or job.table_id,
+        footprint_snap=snap,
+    )
+    if snap.outlier_reason is None:
+        return plan
+    try:
+        store.save_plan(job.id, plan_to_dict(compacted))
+    except RuntimeError:
+        logger.info(
+            "spark-k8s compacted plan not persisted for job %s (durable intent bound)",
+            job.id,
+        )
+    return compacted
 
 
 def _execute_statement(

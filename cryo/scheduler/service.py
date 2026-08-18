@@ -942,10 +942,15 @@ class SchedulerService:
                     grafana_token=token,
                 )
             if check is not None:
+                # PDAE-8541: check.day is the most recent day with committed CUR rows, not
+                # necessarily literally today (CUR lags 24-48h) -- log the real day so this
+                # line can't be misread as "today's" spend when it's actually reporting
+                # yesterday's (or older) fully-billed figure.
                 logger.info(
-                    "Cost ceiling check: cryo namespace $%.2f today (used $%.2f + unused "
+                    "Cost ceiling check: cryo namespace $%.2f on %s (used $%.2f + unused "
                     "$%.2f) vs $%.2f ceiling%s",
                     check.total_cost_usd,
+                    check.day.isoformat(),
                     check.used_cost_usd,
                     check.unused_cost_usd,
                     check.ceiling_usd,

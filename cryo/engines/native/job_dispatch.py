@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from kubernetes import client
 
+from cryo.engines.k8s_cost_labels import cost_attribution_labels, operation_from_native_payload
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.native.resources import (
     MAX_POD_CPU_MILLI,
@@ -344,11 +345,17 @@ def create_native_job(
     elif isinstance(payload.get("table_ref"), str):
         primary_ref = str(payload["table_ref"])[:63]
 
+    workload_name, engine_name, operation = operation_from_native_payload(
+        payload, command=command
+    )
     labels = {
         "app.kubernetes.io/name": "cryo",
         "app.kubernetes.io/component": "native-engine",
         "app": "cryo-native",
         "cryo/destination": (destination_id or "default")[:63],
+        **cost_attribution_labels(
+            workload_name=workload_name, engine=engine_name, operation=operation
+        ),
     }
     if dispatch_id:
         labels["cryo/dispatch-id"] = str(dispatch_id)[:63]

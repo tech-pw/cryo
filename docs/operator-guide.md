@@ -464,6 +464,20 @@ catalog. Default API memory limit is 1Gi after the SQL rewrite.
 2. Access logs around the spike — look for `/dashboards/datalake` or long-lived run websockets
 3. `kubectl describe pod` → `Last State: OOMKilled`
 
+### Worker memory / OOM (cryo-worker)
+
+**Symptoms:** many `cryo-worker` pods OOMKilled in the same window; steady-state RSS
+~150–220Mi against a 4–6Gi limit.
+
+**Do not treat a Helm memory bump as the fix.** `values-prod.yaml` was raised 4Gi→6Gi
+in 1253fe3 as a margin only. Spark-on-K8s already runs in a Job; the worker blow-up is
+holding a huge partition-aware plan / `table_data.partitions` while submitting SQL.
+
+**Code path (PDAE-8348):** outlier tables (≥500GB, ≥10k files, ≥2k partitions, or a
+plan JSON ≥256KiB) drop partition filters and run a full-table Spark CALL. Logs:
+`spark-k8s payload worker:pre_execute` / `execute_plan:before` with `plan_json_bytes`,
+partition/predicate counts, and RSS.
+
 ### Approval workflows
 
 Cryo can require human approval before destructive or high-impact maintenance.

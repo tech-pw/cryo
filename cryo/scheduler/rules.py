@@ -7,6 +7,17 @@ from typing import Any
 from cryo.domain.enums import Mode
 from cryo.domain.predicates import evaluate_predicate
 
+# PDAE-8347 Pattern 1: Spark-on-K8s burned driver slots on ephemeral temp/test tables
+# that a broad preset rule had matched. Live fix on 2026-08-11 was preset predicates;
+# this default skip keeps *new* presets from reintroducing the same tables. Pinned
+# assignments still win (operator intent). `testpress` is a real product schema/prefix,
+# not a scratch namespace -- carve it out. Do not match `_test` in the middle of a name
+# (`gold_test_student_mappings` is a live exam-product table).
+_EPHEMERAL_SCHEMAS = frozenset({"temp", "tmp", "scratch"})
+_EPHEMERAL_SUFFIXES = ("_temp", "_tmp", "_scratch", "_test", "_dtmp")
+_EPHEMERAL_PREFIXES = ("temp_", "tmp_", "scratch_")
+_TESTPRESS_TOKEN = "testpress"
+
 
 @dataclass(frozen=True)
 class PresetConfig:
@@ -63,6 +74,24 @@ class EffectivePreset:
     rule_id: str | None = None
 
 
+def is_ephemeral_maintenance_table(schema_name: str, table_name: str) -> bool:
+    """True when this table should not be auto-matched by preset rules (PDAE-8347)."""
+    schema = (schema_name or "").strip()
+    name = (table_name or "").strip()
+    combined = f"{schema}.{name}".lower()
+    if _TESTPRESS_TOKEN in combined:
+        return False
+    schema_l = schema.lower()
+    name_l = name.lower()
+    if schema_l in _EPHEMERAL_SCHEMAS:
+        return True
+    if "__dbt_tmp" in name_l:
+        return True
+    if name_l.endswith(_EPHEMERAL_SUFFIXES):
+        return True
+    return name_l.startswith(_EPHEMERAL_PREFIXES)
+
+
 def effective_preset(
     table: TableCandidate,
     presets: Iterable[PresetConfig],
@@ -98,6 +127,8 @@ def effective_preset(
             matches.append((preset.priority, preset.name, rule, preset))
 
     if matches:
+        if is_ephemeral_maintenance_table(table.schema_name, table.table_name):
+            return None
         _, _, winning_rule, winning_preset = max(matches, key=lambda item: (item[0], item[1]))
         return EffectivePreset(
             preset=winning_preset,

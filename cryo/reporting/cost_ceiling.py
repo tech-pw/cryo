@@ -254,14 +254,64 @@ def fetch_namespace_cost_range(
     return results
 
 
+def fetch_latest_billed_namespace_cost(
+    *,
+    grafana_url: str,
+    grafana_token: str,
+    cluster_name: str,
+    namespace: str,
+    ceiling_usd: float,
+    lookback_days: int = 4,
+    timeout_seconds: float = 15.0,
+) -> NamespaceCostCheck | None:
+    """The real fix for PDAE-8541: return the most recent day with committed CUR rows,
+    not literally "today".
+
+    fetch_todays_namespace_cost() (kept below, unchanged, for callers that genuinely want
+    "today" e.g. a live dashboard) queries `current_date` -- but AWS CUR data lags 24-48h,
+    so "today" structurally has zero committed rows for essentially its entire duration.
+    Confirmed live, 2026-08-18: every enforce_cost_ceiling() tick logged
+    "$0.00 today (used $0.00 + unused $0.00) vs $100.00 ceiling" while real trailing spend
+    was genuinely ~$209/day (independently confirmed via a fresh Grafana pull) -- the
+    ceiling was structurally incapable of ever breaching, not merely miscalibrated.
+
+    Pulls a short trailing window (default 4 days -- comfortably covers the 24-48h lag even
+    on a slow billing day) via fetch_namespace_cost_range and returns a NamespaceCostCheck
+    for the single most recent day that actually has rows. Returns None only if the entire
+    lookback window is still empty (a real Grafana/CUR outage, not just today's normal lag)
+    -- callers must treat that as "can't evaluate right now", never as "$0, under budget".
+    """
+    until = datetime.now(UTC).date()
+    since = until.fromordinal(until.toordinal() - lookback_days)
+    days = fetch_namespace_cost_range(
+        grafana_url=grafana_url,
+        grafana_token=grafana_token,
+        cluster_name=cluster_name,
+        namespace=namespace,
+        since=since,
+        until=until,
+        timeout_seconds=timeout_seconds,
+    )
+    if not days:
+        return None
+    latest = max(days, key=lambda d: d.day)
+    return NamespaceCostCheck(
+        day=latest.day,
+        used_cost_usd=latest.used_cost_usd,
+        unused_cost_usd=latest.unused_cost_usd,
+        ceiling_usd=ceiling_usd,
+    )
+
+
 def enforce_cost_ceiling(
     session: Session,
     *,
     grafana_url: str,
     grafana_token: str,
 ) -> NamespaceCostCheck | None:
-    """Check today's real cryo-namespace spend; pause fleet-wide admission if it's over
-    the configured ceiling, resume if a previous breach has since cleared.
+    """Check the most recent fully-billed day's real cryo-namespace spend; pause fleet-wide
+    admission if it's over the configured ceiling, resume if a previous breach has since
+    cleared.
 
     Global pause/resume reuses the existing MaintenanceControlState mechanism (same one
     an operator's manual "pause all maintenance" button writes to) rather than a parallel
@@ -269,13 +319,18 @@ def enforce_cost_ceiling(
     UI. Only ever touches the pause row this module itself owns (reason prefixed
     cost_ceiling_breach:) -- never resumes a pause an operator set manually for an
     unrelated reason, and never overwrites an operator's manual pause with its own state.
+
+    PDAE-8541: uses fetch_latest_billed_namespace_cost (trailing window, most recent day
+    with real data), not fetch_todays_namespace_cost -- the latter compares against
+    `current_date`, which structurally has zero committed CUR rows for essentially its
+    entire duration (AWS bills 24-48h late), so the ceiling could never actually breach.
     """
     settings = get_settings()
     if not settings.cost_ceiling_enabled:
         return None
 
     try:
-        check = fetch_todays_namespace_cost(
+        check = fetch_latest_billed_namespace_cost(
             grafana_url=grafana_url,
             grafana_token=grafana_token,
             cluster_name=settings.cost_ceiling_cluster_name,
@@ -284,6 +339,13 @@ def enforce_cost_ceiling(
         )
     except Exception:
         logger.warning("Cost ceiling check failed to fetch Grafana data", exc_info=True)
+        return None
+
+    if check is None:
+        logger.warning(
+            "Cost ceiling check found no committed CUR rows in the trailing lookback "
+            "window -- skipping this tick rather than treating it as $0/under budget"
+        )
         return None
 
     existing = session.scalar(

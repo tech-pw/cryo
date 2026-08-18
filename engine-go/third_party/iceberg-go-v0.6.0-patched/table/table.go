@@ -519,10 +519,18 @@ func (t Table) doCommit(ctx context.Context, updates []Update, reqs []Requiremen
 		// may have actually succeeded — retrying could duplicate work.
 		// Suppress orphan cleanup for the same reason: one of the orphaned
 		// manifest-list files may actually be the snapshot the catalog accepted.
+		//
+		// Hive/Glue/JDBC (and client-side AssertRefSnapshotID) often return
+		// "branch \"main\" has changed: expected id …" without wrapping
+		// ErrCommitFailed. Treat that as a retryable conflict too.
 		if !errors.Is(err, ErrCommitFailed) {
-			cleanupOrphans = false
+			if IsRetryableCommitConflict(err) {
+				err = WrapRetryableCommitConflict(err)
+			} else {
+				cleanupOrphans = false
 
-			return nil, err
+				return nil, err
+			}
 		}
 	}
 

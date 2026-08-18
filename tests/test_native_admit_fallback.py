@@ -15,6 +15,7 @@ from cryo.governor.native_admit import (
     _fallback_dispatch_concurrency,
     _process_rss_mib,
     _run_fallback_dispatches_concurrently,
+    split_fallback_dispatch_wave,
 )
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore
 
@@ -212,7 +213,11 @@ def test_successful_fallback_dispatch_is_recorded_as_a_queryable_audit() -> None
     mock_engine.type = EngineType.SPARK_EMR
     mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
-        ok=True, engine_ref="spark-job-1", duration_ms=4200, manifests_rewritten=13, error=None,
+        ok=True,
+        engine_ref="spark-job-1",
+        duration_ms=4200,
+        manifests_rewritten=13,
+        error=None,
         detail="rewrote 13 manifests",
     )
 
@@ -250,8 +255,12 @@ def test_failed_fallback_dispatch_is_recorded_not_just_logged() -> None:
     mock_engine.type = EngineType.SPARK_EMR
     mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
-        ok=False, engine_ref=None, duration_ms=1100, manifests_rewritten=None,
-        error="MISSING_CATALOG_ABILITY.PROCEDURES", detail=None,
+        ok=False,
+        engine_ref=None,
+        duration_ms=1100,
+        manifests_rewritten=None,
+        error="MISSING_CATALOG_ABILITY.PROCEDURES",
+        detail=None,
     )
 
     with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
@@ -313,7 +322,10 @@ def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error()
     record = store.audit[0]
     assert record.status == "FAILED"
     assert "CommitFailedException: real cause" in record.detail
-    assert record.detail != "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+    assert (
+        record.detail
+        != "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+    )
 
 
 def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> None:
@@ -351,7 +363,10 @@ def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> 
     assert len(store.audit) == 1
     record = store.audit[0]
     assert record.status == "OK"
-    assert record.detail == "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+    assert (
+        record.detail
+        == "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+    )
 
 
 def test_engine_type_mismatch_is_recorded_as_skipped() -> None:
@@ -360,9 +375,10 @@ def test_engine_type_mismatch_is_recorded_as_skipped() -> None:
     store.add_destination(DestinationConfig(id="trino-1", engine=EngineType.TRINO, config={}))
     fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "not supported by native"),)
 
-    with patch(
-        "cryo.governor.native_admit.native_fallback_supports", return_value=False
-    ), patch("cryo.engines.factory.create_engine") as create_engine:
+    with (
+        patch("cryo.governor.native_admit.native_fallback_supports", return_value=False),
+        patch("cryo.engines.factory.create_engine") as create_engine,
+    ):
         mock_engine = MagicMock()
         mock_engine.type = EngineType.TRINO
         create_engine.return_value = mock_engine
@@ -431,8 +447,9 @@ def test_audit_write_failure_does_not_break_the_dispatch_itself() -> None:
         ok=True, engine_ref="job-1", duration_ms=100, manifests_rewritten=1, error=None, detail=None
     )
 
-    with patch("cryo.engines.factory.create_engine", return_value=mock_engine), patch.object(
-        store, "record_audit", side_effect=RuntimeError("db hiccup")
+    with (
+        patch("cryo.engines.factory.create_engine", return_value=mock_engine),
+        patch.object(store, "record_audit", side_effect=RuntimeError("db hiccup")),
     ):
         _dispatch_fallback_operations(
             store=store,
@@ -473,9 +490,7 @@ def test_fallback_dispatch_concurrency_resolves_from_destination_slot_cap() -> N
     store.add_destination(
         DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 8})
     )
-    got = _fallback_dispatch_concurrency(
-        {"sql_fallback_destination_id": "spark-1"}, store=store
-    )
+    got = _fallback_dispatch_concurrency({"sql_fallback_destination_id": "spark-1"}, store=store)
     assert got == 8
 
 
@@ -496,9 +511,7 @@ def test_fallback_dispatch_concurrency_falls_back_to_default_when_destination_mi
 def test_fallback_dispatch_concurrency_falls_back_to_default_when_slot_cap_unset() -> None:
     store = InMemoryJobStore()
     store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
-    got = _fallback_dispatch_concurrency(
-        {"sql_fallback_destination_id": "spark-1"}, store=store
-    )
+    got = _fallback_dispatch_concurrency({"sql_fallback_destination_id": "spark-1"}, store=store)
     assert got == _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
 
 
@@ -604,9 +617,7 @@ def _spark_engine_with_mock_client(monkeypatch) -> tuple[SparkK8sEngine, MagicMo
     async submit() path) with its underlying SparkK8sClient replaced by a mock -- matches
     tests/test_execute_layout_recommendation.py's _mock_spark_client pattern."""
     mock_client = MagicMock()
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
     engine = SparkK8sEngine(config={"catalog": "cdp"})
     return engine, mock_client
 
@@ -719,6 +730,44 @@ class TestProcessRssMib:
         with patch.dict("sys.modules", {"resource": fake_resource}):
             result = _process_rss_mib()
         assert result is None
+
+
+def test_split_fallback_dispatch_wave_empty() -> None:
+    store = InMemoryJobStore()
+    this_wave, later = split_fallback_dispatch_wave([], destination_config={}, store=store)
+    assert this_wave == ()
+    assert later == ()
+
+
+def test_split_fallback_dispatch_wave_caps_to_slot_cap_and_keeps_remainder() -> None:
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 6})
+    )
+    dispatches = [lambda: None for _ in range(49)]
+    this_wave, later = split_fallback_dispatch_wave(
+        dispatches,
+        destination_config={"sql_fallback_destination_id": "spark-1"},
+        store=store,
+    )
+    assert len(this_wave) == 6
+    assert len(later) == 43
+    assert this_wave + later == tuple(dispatches)
+
+
+def test_split_fallback_dispatch_wave_smaller_than_cap_is_all_this_wave() -> None:
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={"slot_cap": 6})
+    )
+    dispatches = [lambda: None, lambda: None]
+    this_wave, later = split_fallback_dispatch_wave(
+        dispatches,
+        destination_config={"sql_fallback_destination_id": "spark-1"},
+        store=store,
+    )
+    assert len(this_wave) == 2
+    assert later == ()
 
 
 def test_run_fallback_dispatches_concurrently_logs_rss_around_the_batch(caplog) -> None:

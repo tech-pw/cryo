@@ -25,7 +25,12 @@ from cryo.governor.admission import (
     decide_job_admission,
     pack_fleet_budget,
 )
-from cryo.governor.native_admit import admit_native_k8s_jobs, destination_uses_k8s_dispatch
+from cryo.governor.native_admit import (
+    _run_fallback_dispatches_concurrently,
+    admit_native_k8s_jobs,
+    destination_uses_k8s_dispatch,
+    split_fallback_dispatch_wave,
+)
 from cryo.governor.prefetch import (
     batch_job_requires_approval,
     batch_pii_block_reason,
@@ -78,6 +83,20 @@ class WaveResult:
     orphaned: int = 0
     re_enqueued: int = 0
     reaped: int = 0
+
+
+class _PendingFallbackDispatch:
+    """One native-unsupported SQL fallback still waiting for a later wave."""
+
+    __slots__ = ("dispatch", "destination_config")
+
+    def __init__(
+        self,
+        dispatch: Any,
+        destination_config: Mapping[str, Any],
+    ) -> None:
+        self.dispatch = dispatch
+        self.destination_config = destination_config
 
 
 def _tenant_round_robin(
@@ -137,6 +156,11 @@ class Governor:
         self._qpp_enabled = settings.qpp_enabled
         self._roi_gate_enabled = settings.roi_gate_enabled
         self._roi_gate = ROIGate()
+        # Fallbacks not yet dispatched because the current wave already spent its
+        # one slot_cap-sized concurrent batch (PDAE-8352). Drained at the end of
+        # subsequent run_wave ticks so regular queue admission is never blocked
+        # behind a multi-batch cohort.
+        self._pending_fallback_dispatches: list[_PendingFallbackDispatch] = []
 
     def _spark_engine_still_active(self, job: MaintenanceJobRecord) -> bool:
         """Real fix for a live incident, 2026-08-11: engine_activity_checker was declared as a
@@ -642,6 +666,12 @@ class Governor:
 
                             for job in native_k8s_buffer:
                                 register_admission(job.id, config)
+                            self._enqueue_fallback_dispatches(
+                                result.pending_fallback_dispatches,
+                                destination.config,
+                            )
+
+            self._run_one_fallback_dispatch_wave()
 
             return WaveResult(
                 admitted=admitted,
@@ -661,6 +691,51 @@ class Governor:
                         ).inc(count)
             governor_wave_duration_seconds.observe(perf_counter() - wave_start)
             clear_context()
+
+    def _enqueue_fallback_dispatches(
+        self,
+        dispatches: tuple[Any, ...],
+        destination_config: Mapping[str, Any],
+    ) -> None:
+        if not dispatches:
+            return
+        cfg = dict(destination_config)
+        for dispatch in dispatches:
+            self._pending_fallback_dispatches.append(_PendingFallbackDispatch(dispatch, cfg))
+
+    def _run_one_fallback_dispatch_wave(self) -> None:
+        """Dispatch at most one slot_cap concurrent batch, then yield.
+
+        Regular async-queue admission already ran for every destination this tick.
+        Remaining fallbacks stay on ``_pending_fallback_dispatches`` for later waves.
+        """
+        pending = self._pending_fallback_dispatches
+        if not pending:
+            return
+        lead_cfg = pending[0].destination_config
+        lead_key = lead_cfg.get("sql_fallback_destination_id")
+        matching: list[Any] = []
+        rest: list[_PendingFallbackDispatch] = []
+        for item in pending:
+            same = item.destination_config.get("sql_fallback_destination_id") == lead_key
+            if same:
+                matching.append(item.dispatch)
+            else:
+                rest.append(item)
+        this_wave, later = split_fallback_dispatch_wave(
+            matching,
+            destination_config=lead_cfg,
+            store=self._store,
+        )
+        self._pending_fallback_dispatches = [
+            _PendingFallbackDispatch(dispatch, lead_cfg) for dispatch in later
+        ] + rest
+        if this_wave:
+            _run_fallback_dispatches_concurrently(
+                this_wave,
+                destination_config=lead_cfg,
+                store=self._store,
+            )
 
     def _fail_orphaned_jobs(self, destination_id: str, job_ids: list[str]) -> int:
         logger.warning(

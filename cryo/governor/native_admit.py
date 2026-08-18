@@ -106,6 +106,11 @@ class NativeAdmitResult:
     deferred: int = 0
     fallback_to_worker: int = 0
     dispatches: tuple[str, ...] = ()
+    # Native-unsupported ops (typically optimize_manifests) collected during this
+    # admit. The caller (Governor.run_wave) must dispatch them with a *wave-level*
+    # cap -- see split_fallback_dispatch_wave -- so a large cohort cannot hold the
+    # admission loop for many slot_cap batches (PDAE-8352).
+    pending_fallback_dispatches: tuple[Callable[[], None], ...] = ()
 
 
 @dataclass
@@ -200,9 +205,7 @@ def build_native_request(
             )
             deferred_types = {op.type for op, _ in deferred_fallback}
             fallback_operations = tuple(
-                (op, reason)
-                for op, reason in fallback_operations
-                if op.type not in deferred_types
+                (op, reason) for op, reason in fallback_operations if op.type not in deferred_types
             )
 
     if fallback_operations or routing.skipped_operations:
@@ -562,6 +565,13 @@ def _run_fallback_dispatches_concurrently(
     2026-08-05: ~65-70s per table, ~1 concurrent, projecting ~90 hours for a
     2,833-table rollout despite the destination's slot_cap=6 and idle cluster
     headroom neither of which this path previously consulted.
+
+    This helper still runs **every** callable it is given (bounded by slot_cap
+    workers). The wave-level cap -- "at most one slot_cap-sized batch, then yield
+    so run_wave can admit the regular async queue" -- lives one level up in
+    ``split_fallback_dispatch_wave`` / ``Governor._run_one_fallback_dispatch_wave``
+    (PDAE-8352, 2026-08-18: 49 dispatches, 0 "Wave complete" in 10 min, ~9.5 min
+    per wave when this ran the full cohort before returning).
     """
     concurrency = min(
         _fallback_dispatch_concurrency(destination_config, store=store),
@@ -611,6 +621,32 @@ def _run_fallback_dispatches_concurrently(
         rss_after_mib,
         rss_before_mib,
     )
+
+
+def split_fallback_dispatch_wave(
+    dispatches: Sequence[Callable[[], None]],
+    *,
+    destination_config: Mapping[str, Any],
+    store: JobStore,
+) -> tuple[tuple[Callable[[], None], ...], tuple[Callable[[], None], ...]]:
+    """Cap fallback work to one slot_cap-sized concurrent batch; return the rest.
+
+    ``_run_fallback_dispatches_concurrently`` already bounds *in-flight* dispatches
+    to slot_cap. This is the next level up: a wave that collected dozens of
+    fallbacks must not wait for every batch of that pool before ``run_wave()``
+    returns. Live evidence (PDAE-8352, 2026-08-18): 49 dispatches, slot_cap=6,
+    40–80s each, ~9.5 min per wave, 0 "Wave complete" in 10 min -- regular
+    async-queue admission starved for the whole cohort.
+
+    The returned ``this_wave`` length is ``min(len(dispatches), slot_cap)`` so
+    the concurrent helper still saturates the configured cap; ``later_waves``
+    must be held and retried on subsequent ``run_wave`` ticks.
+    """
+    if not dispatches:
+        return (), ()
+    cap = _fallback_dispatch_concurrency(destination_config, store=store)
+    batch_size = min(cap, len(dispatches))
+    return tuple(dispatches[:batch_size]), tuple(dispatches[batch_size:])
 
 
 def _process_rss_mib() -> float | None:
@@ -683,6 +719,11 @@ def admit_native_k8s_jobs(
 
     When K8s is unavailable, returns fallback_to_worker > 0 so the caller can
     ``queue.admit`` those jobs onto the Worker path instead.
+
+    Native-unsupported operations (typically ``optimize_manifests``) are returned
+    on ``pending_fallback_dispatches`` and are **not** executed here. The Governor
+    caps them to one slot_cap concurrent batch per ``run_wave`` so the regular
+    async queue is not starved (PDAE-8352).
     """
     if not jobs:
         return NativeAdmitResult()
@@ -983,12 +1024,9 @@ def admit_native_k8s_jobs(
                 derived_chunk,
             )
 
-        if pending_fallback_dispatches:
-            _run_fallback_dispatches_concurrently(
-                pending_fallback_dispatches,
-                destination_config=destination.config,
-                store=store,
-            )
+        # Do not run fallbacks here. Returning them lets run_wave admit the rest
+        # of the async queue (and return "Wave complete") after at most one
+        # slot_cap batch -- see split_fallback_dispatch_wave.
     except Exception as exc:
         # Anything above that isn't individually guarded (pack_jobs, cluster_headroom,
         # the create_dispatch_record/mark_dispatch_running DB writes) can throw and abort
@@ -1020,6 +1058,7 @@ def admit_native_k8s_jobs(
         admitted=admitted,
         deferred=deferred,
         dispatches=tuple(dispatch_ids),
+        pending_fallback_dispatches=tuple(pending_fallback_dispatches),
     )
 
 
@@ -1126,9 +1165,7 @@ class _FleetAdmissionRateLimiter:
         self._remaining = max(0, self._remaining - n)
 
 
-def _spec_metastore_uris(
-    spec: DispatchSpec, by_job_id: Mapping[str, _PreparedJob]
-) -> set[str]:
+def _spec_metastore_uris(spec: DispatchSpec, by_job_id: Mapping[str, _PreparedJob]) -> set[str]:
     uris: set[str] = set()
     for member in spec.members:
         prepared_item = by_job_id.get(member.job_id)

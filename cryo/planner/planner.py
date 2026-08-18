@@ -15,6 +15,11 @@ from cryo.planner.partitions import (
     partition_fields_from_stats,
 )
 
+# Tables just under detect_streaming_from_history's 24 commits/day cutoff still
+# take concurrent writes during rewrite_data_files (PDAE-8353). Treat that band
+# as extra-care: smaller OPTIMIZE chunks and a shorter expire window.
+_EXTRA_CARE_COMMITS_PER_DAY = 5.0
+
 
 @dataclass(frozen=True)
 class OptimizeCandidate:
@@ -204,19 +209,36 @@ def _optimize_operations(
     # opt out by setting `streaming_aware_cadence=false` in params. Detected upstream by
     # `detect_streaming_from_history` (cryo/scanner/signals.py) from snapshot-count
     # deltas across consecutive `table_stats_history` rows.
+    #
+    # Extra-care band (PDAE-8353): tables just under the 24 commits/day is_streaming
+    # cutoff still lose rewrite_data_files to concurrent writers (live:
+    # lsq_pw.gold_prospect_activity_extension_base, 14 commits/day, is_streaming False).
+    # Apply the same smaller chunks / fewer partitions per chunk without flipping the
+    # streaming flag used elsewhere.
     is_streaming = bool(stats.get("is_streaming"))
     commits_per_day = float(stats.get("commits_per_day") or 0.0)
     streaming_aware = params.get("streaming_aware_cadence", True)
-    if is_streaming and streaming_aware:
+    extra_care = (
+        streaming_aware
+        and not is_streaming
+        and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
+    )
+    write_aware = streaming_aware and (is_streaming or extra_care)
+    max_parts = int(params.get("max_partitions_per_chunk", 100))
+    if write_aware:
         original_chunk = chunk_size_gb
         original_min_small = min_small_files
+        original_max_parts = max_parts
         chunk_size_gb = max(1.0, chunk_size_gb / 2.0)
         min_small_files = max(1, int(min_small_files * 0.75))
+        max_parts = max(1, max_parts // 2)
+        band = "streaming" if is_streaming else "moderate-write extra-care"
         notes.append(
-            f"Streaming-aware cadence: table flagged as streaming "
+            f"Streaming-aware cadence: table flagged as {band} "
             f"({commits_per_day:.1f} commits/day) — tightened chunk_size_gb "
-            f"{original_chunk:g} → {chunk_size_gb:g} and min_small_files "
-            f"{original_min_small} → {min_small_files}."
+            f"{original_chunk:g} → {chunk_size_gb:g}, min_small_files "
+            f"{original_min_small} → {min_small_files}, and max_partitions_per_chunk "
+            f"{original_max_parts} → {max_parts}."
         )
 
     delete_triggered = delete_ratio_trigger > 0 and delete_file_pct >= delete_ratio_trigger
@@ -252,7 +274,7 @@ def _optimize_operations(
     chunks = greedy_pack(
         sorted_candidates,
         gb_budget=chunk_size_gb,
-        max_parts=int(params.get("max_partitions_per_chunk", 100)),
+        max_parts=max_parts,
         max_chunks=_optional_int(params.get("max_chunks")),
         oversize_alone=True,
     )
@@ -620,15 +642,21 @@ def _expire_params(
     is_streaming = bool(stats.get("is_streaming"))
     commits_per_day = float(stats.get("commits_per_day") or 0.0)
     streaming_aware = params.get("streaming_aware_cadence", True)
-    if is_streaming and streaming_aware and commits_per_day > 0:
+    extra_care = (
+        streaming_aware
+        and not is_streaming
+        and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
+    )
+    if streaming_aware and commits_per_day > 0 and (is_streaming or extra_care):
         original_retention = retention_days
-        if commits_per_day >= 100:
+        if is_streaming and commits_per_day >= 100:
             retention_days = 1
-        elif commits_per_day >= 20:
+        elif commits_per_day >= 20 or extra_care:
             retention_days = max(1, min(retention_days, 3))
         if retention_days != original_retention and notes is not None:
+            band = "streaming" if is_streaming else "moderate-write extra-care"
             notes.append(
-                f"Streaming-aware retention: table flagged as streaming "
+                f"Streaming-aware retention: table flagged as {band} "
                 f"({commits_per_day:.1f} commits/day) — tightened retention_days "
                 f"{original_retention} → {retention_days} so expire_snapshots can keep pace. "
                 "A table this active will keep re-accumulating snapshots between runs; a "

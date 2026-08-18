@@ -109,6 +109,19 @@ Fixes (aligned with Iceberg Java `UnicodeUtil` and upstream iceberg-go #1198):
 
 Regression tests: `transforms_utf8_test.go`, `table/internal/metrics_truncate_utf8_test.go`.
 
+### 4. Unwrapped branch-changed commit conflicts (PDAE-8353)
+
+Hive/Glue `UpdateAndStageTable` requirement validation returns
+`requirement failed: branch "main" has changed: expected id …` without wrapping
+`table.ErrCommitFailed`. `Table.doCommit` then treated the rewrite as terminal,
+so `rewrite_data_files` lost races on moderate-write tables.
+
+- `table/commit_conflict.go`: classify and wrap those strings as `ErrCommitFailed`
+- `catalog/internal/utils.go`: wrap requirement-validation failures
+- `table/table.go` `doCommit`: retry when the catalog returns the unwrapped form
+
+Regression tests: `table/commit_conflict_test.go`.
+
 ## Removing this fork
 
 Once a released `apache/iceberg-go` version fixes these upstream (Avro day-transform
