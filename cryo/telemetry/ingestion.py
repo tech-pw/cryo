@@ -16,6 +16,20 @@ from cryo.telemetry.parser import extract_query_ranges, parse_query_predicates
 logger = logging.getLogger(__name__)
 
 
+class TrinoQueryError(RuntimeError):
+    """Trino accepted the HTTP request but the query itself failed (bad SQL, permission
+    denied, COLUMN_NOT_FOUND, ...). Trino's /v1/statement API always returns HTTP 200 for
+    this case, so callers must check the JSON body's "error" key -- see the comment in
+    TrinoQueryIngester.fetch_recent_queries for the incident this fixed (PDAE-8277).
+    """
+
+    def __init__(self, trino_error: dict[str, Any]) -> None:
+        self.trino_error = trino_error
+        message = trino_error.get("message", str(trino_error))
+        error_name = trino_error.get("errorName", "UNKNOWN")
+        super().__init__(f"Trino query failed ({error_name}): {message}")
+
+
 class TrinoQueryIngester:
     """Ingest query logs from Trino's system.runtime.queries table."""
 
@@ -59,7 +73,18 @@ class TrinoQueryIngester:
         if since is None:
             since = datetime.now(UTC) - timedelta(hours=24)
 
-        # Query the system.runtime.queries table
+        # Query the system.runtime.queries table. Column set is deliberately the minimal
+        # subset present since very old Trino releases (query_id, query, state, user,
+        # source, created, "end", queued/analysis/planning_time_ms) -- older attempts here
+        # also selected execution_time_ms, peak_*_memory_bytes, physical_input_bytes/rows,
+        # output_*, written_*, cumulative_memory, completed_splits, cpu_time_ms, and
+        # wall_time_ms, none of which this table carries on every Trino version/config
+        # (confirmed missing on Trino 480 in prod -- PDAE-8277). Trino rejects the whole
+        # query on any unresolvable column (COLUMN_NOT_FOUND), so a single optional column
+        # in the SELECT list silently zeroed out every fetch. rows_from_trino_queries()
+        # already treats bytes_read/rows_read/files_read as optional (q.get(...) with a
+        # None default), so dropping them here just means those fields stay unset rather
+        # than breaking ingestion entirely.
         sql = f"""
         SELECT
             query_id,
@@ -71,20 +96,7 @@ class TrinoQueryIngester:
             "end" AS ended_at,
             queued_time_ms,
             analysis_time_ms,
-            planning_time_ms,
-            execution_time_ms,
-            peak_user_memory_bytes,
-            peak_total_memory_bytes,
-            physical_input_bytes,
-            physical_input_rows,
-            output_bytes,
-            output_rows,
-            written_bytes,
-            written_rows,
-            cumulative_memory,
-            completed_splits,
-            cpu_time_ms,
-            wall_time_ms
+            planning_time_ms
         FROM {self.catalog}.{self.schema}.queries
         WHERE state = 'FINISHED'
           AND created >= TIMESTAMP '{since.strftime("%Y-%m-%d %H:%M:%S")}'
@@ -112,6 +124,15 @@ class TrinoQueryIngester:
             result = response.json()
             queries = []
 
+            # Trino's /v1/statement returns HTTP 200 even for a query-level failure (bad
+            # SQL, permission denied, ...) -- the error lives in the JSON body's "error"
+            # key, not the HTTP status. Without this check, a query-level error page (which
+            # has neither "data" nor "nextUri") looked identical to "no more rows" and this
+            # method silently returned []. That's what made the earlier COLUMN_NOT_FOUND
+            # bug invisible: the curator logged 0 rows fetched, no error, every tick.
+            if "error" in result:
+                raise TrinoQueryError(result["error"])
+
             # Trino returns results in pages, follow nextUri
             while True:
                 if "data" in result:
@@ -128,6 +149,9 @@ class TrinoQueryIngester:
                 )
                 response.raise_for_status()
                 result = response.json()
+
+                if "error" in result:
+                    raise TrinoQueryError(result["error"])
 
             return queries
 
