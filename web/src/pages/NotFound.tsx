@@ -13,6 +13,7 @@ const RELATED_DESTINATIONS: Array<{ to: string; label: string }> = [
   { to: "/operations", label: "Operations" },
   { to: "/cost", label: "Cost" },
   { to: "/governance", label: "Governance" },
+  { to: "/anomalies", label: "Anomalies" },
   { to: "/connections", label: "Connections" }
 ];
 

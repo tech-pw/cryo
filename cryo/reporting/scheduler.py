@@ -28,6 +28,7 @@ class ReportScheduler:
 
     def __init__(self) -> None:
         self._last_runs: dict[str, datetime] = {}  # config_id -> last_run
+        self._last_shared_s3_run: datetime | None = None
         self._running = False
 
     async def start(self, poll_interval_sec: int = 60) -> None:
@@ -76,6 +77,44 @@ class ReportScheduler:
                     logger.info(f"Daily report is due for Slack config '{config.name}'")
                     await self._send_daily_report(config)
                     self._last_runs[str(config.id)] = now
+
+            await self._maybe_send_shared_s3_report(now)
+        finally:
+            session.close()
+
+    async def _maybe_send_shared_s3_report(self, now: datetime) -> None:
+        from cryo.anomalies.report import (
+            SHARED_S3_REPORT_CRON,
+            SHARED_S3_REPORT_TZ,
+            notify_shared_s3_report,
+            refresh_shared_s3_report,
+        )
+
+        if not cron_is_due(
+            SHARED_S3_REPORT_CRON,
+            now=now,
+            last_run_at=self._last_shared_s3_run,
+            tz=SHARED_S3_REPORT_TZ,
+        ):
+            return
+
+        logger.info("Shared S3 anomaly report is due (10:00 IST)")
+        session = SessionLocal()
+        try:
+            snapshot = refresh_shared_s3_report(session)
+            result = await notify_shared_s3_report(session, snapshot)
+            if result.get("slack_skipped_reason") == "no_anomalies":
+                logger.info("Shared S3 harvest found no overlapping paths; Slack skipped")
+            elif result.get("slack_sent"):
+                logger.info("Shared S3 anomaly report sent to Slack")
+            else:
+                logger.warning(
+                    "Shared S3 anomalies found but Slack was not sent (%s)",
+                    result.get("slack_skipped_reason"),
+                )
+            self._last_shared_s3_run = now
+        except Exception:
+            logger.exception("Failed to run shared S3 anomaly report")
         finally:
             session.close()
 

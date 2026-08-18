@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test baseline capabilities-docs capabilities-docs-check cryobench-fixture migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test baseline capabilities-docs capabilities-docs-check cryobench-fixture migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report shared-s3-anomalies shared-s3-anomalies-notify up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen start-local stop-local status-local
 
 PYTHON ?= python3.12
 TRINO_VERSION ?= 480
@@ -67,6 +67,12 @@ report-scheduler:
 
 daily-report:
 	$(PYTHON) -c "import asyncio; from cryo.reporting.scheduler import run_daily_report_now; print(asyncio.run(run_daily_report_now()))"
+
+shared-s3-anomalies:
+	PYTHONPATH=. $(PYTHON) -c "from cryo.anomalies.report import run_shared_s3_report_now; import json; print(json.dumps(run_shared_s3_report_now(send_slack=False), indent=2, default=str))"
+
+shared-s3-anomalies-notify:
+	PYTHONPATH=. $(PYTHON) -c "from cryo.anomalies.report import run_shared_s3_report_now; import json; print(json.dumps(run_shared_s3_report_now(send_slack=True), indent=2, default=str))"
 
 serve:
 	$(PYTHON) -m cryo.cli serve

@@ -8,6 +8,7 @@ from typing import Any
 from pyiceberg.catalog import load_catalog
 
 from cryo.sources.base import TableIdentifier
+from cryo.sources.locations import CatalogTableLocation, iceberg_table_location
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,33 @@ class PyIcebergSourceCatalog:
 
     def load_table(self, schema: str, table: str) -> Any:
         return self._catalog.load_table((schema, table))
+
+    def list_table_locations(self) -> list[CatalogTableLocation]:
+        """REST/default path: load each Iceberg table. Hive/Glue override this."""
+        results: list[CatalogTableLocation] = []
+        for schema, table in self.list_tables():
+            try:
+                location = iceberg_table_location(self.load_table(schema, table))
+                results.append(
+                    CatalogTableLocation(schema_name=schema, table_name=table, location=location)
+                )
+            except Exception as exc:
+                logger.warning(
+                    "load_table failed for %s.%s.%s: %s",
+                    self.name,
+                    schema,
+                    table,
+                    exc,
+                )
+                results.append(
+                    CatalogTableLocation(
+                        schema_name=schema,
+                        table_name=table,
+                        location=None,
+                        error=str(exc)[:500],
+                    )
+                )
+        return results
 
 
 def _namespace_name(namespace: Any) -> str:

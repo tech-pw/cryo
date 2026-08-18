@@ -445,6 +445,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/export.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Tables Csv */
+        get: operations["export_tables_csv_api_v1_tables_export_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/group-by": {
         parameters: {
             query?: never;
@@ -3804,6 +3821,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dedup/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Dedup Pipeline
+         * @description Run Stage 1 (metadata blocking) + Stage 2 (statistical scoring, with MinHash row
+         *     sampling when ``sample_rows`` is true) across the whole fleet, then cluster and persist
+         *     recommendations. Operator-triggered (require_operator, not require_viewer) since this
+         *     runs real Trino queries against production tables when sample_rows=True.
+         */
+        post: operations["run_dedup_pipeline_api_v1_dedup_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dedup/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Similarity Clusters
+         * @description Latest-generation cluster list, ranked by reclaimable storage -- the primary data
+         *     source for the similarity page's cluster/bubble graph. Each cluster shows every
+         *     member's role (keep vs drop_candidate) and the reasoning behind it, never a bare score.
+         *
+         *     Column-projected and chunked rather than full-entity/unbounded-IN selects --
+         *     confirmed live, 2026-08-13: this endpoint (called on every page load) OOM-killed the
+         *     API pod (6Gi limit) twice within minutes, same root cause already found and fixed in
+         *     cryo.intelligence.dedup.pipeline._replace_clusters (select(Table)/select(TableStats)
+         *     for the whole cluster-membership set, plus a per-cluster max-similarity query -- 498
+         *     of them on the real fleet's data -- each with its own unbounded IN clause). See that
+         *     module's docstring for the fuller investigation writeup this fix reuses.
+         */
+        get: operations["list_similarity_clusters_api_v1_dedup_clusters_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dedup/pairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Similarity Pairs
+         * @description Flat pair list above ``min_score``, highest first -- used for a debugging/detail
+         *     table view alongside the cluster graph, and (via ``table_ids``) by the frontend's
+         *     per-cluster force-directed layout, which needs the real intra-cluster edge weights
+         *     rather than a global top-N list that could miss pairs relevant to one specific
+         *     cluster. ``table_ids`` is always a small, caller-supplied set (one cluster's members,
+         *     typically single digits to low hundreds), never unbounded.
+         */
+        get: operations["list_similarity_pairs_api_v1_dedup_pairs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dedup/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Similarity Pair
+         * @description Stage 3: run the real exact Trino row-overlap comparison for one pair, on demand.
+         *     Operator-triggered only -- design doc SS10: too expensive to run automatically against
+         *     every high-scoring pair, and this is the one stage that touches real data volume.
+         */
+        post: operations["verify_similarity_pair_api_v1_dedup_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/anomalies/shared-s3": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shared S3 Report */
+        get: operations["get_shared_s3_report_api_v1_anomalies_shared_s3_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/anomalies/shared-s3/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Shared S3 */
+        post: operations["refresh_shared_s3_api_v1_anomalies_shared_s3_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/anomalies/shared-s3/notify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Notify Shared S3 */
+        post: operations["notify_shared_s3_api_v1_anomalies_shared_s3_notify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5256,6 +5424,10 @@ export interface components {
             totals: components["schemas"]["DatalakeTotals"];
             /** Grade Distribution */
             grade_distribution: components["schemas"]["GradeDistributionItem"][];
+            /** Freshness Distribution */
+            freshness_distribution?: components["schemas"]["FreshnessDistributionItem"][];
+            /** Freshness As Of */
+            freshness_as_of?: string | null;
             /** Top Offenders */
             top_offenders: components["schemas"]["DashboardTopOffender"][];
             /** Drift */
@@ -5872,6 +6044,15 @@ export interface components {
             hour_start: string;
             /** Expected Queries */
             expected_queries: number;
+        };
+        /** FreshnessDistributionItem */
+        FreshnessDistributionItem: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Count */
+            count: number;
         };
         /** GitOpsPolicySummary */
         GitOpsPolicySummary: {
@@ -7540,6 +7721,24 @@ export interface components {
             /** Ranked Destinations */
             ranked_destinations: components["schemas"]["RankedDestinationRead"][];
         };
+        /**
+         * RunEffectivenessRead
+         * @description File-count and byte-size reduction reported as separate, independently-signed
+         *     percentages -- not one blended number. S3 request cost scales with file *count*, not
+         *     bytes, so a run that cuts file count 90% while barely moving total bytes (confirmed live,
+         *     2026-08-10: mview.gold_dbt_drip_marketing_flow, 2,549 -> 268 files, size -4%) is a large
+         *     real win that a size-only summary would undersell. See docs/open-items-2026-08-10.md.
+         */
+        RunEffectivenessRead: {
+            /** File Count Reduction Pct */
+            file_count_reduction_pct?: number | null;
+            /** Small File Reduction Pct */
+            small_file_reduction_pct?: number | null;
+            /** Byte Reduction Pct */
+            byte_reduction_pct?: number | null;
+            /** Headline */
+            headline?: string | null;
+        };
         /** RunFailureDiagnosisFeedbackWrite */
         RunFailureDiagnosisFeedbackWrite: {
             /**
@@ -8223,6 +8422,107 @@ export interface components {
             /** Groups */
             groups: components["schemas"]["SearchGroupRead"][];
         };
+        /** SharedS3GroupRead */
+        SharedS3GroupRead: {
+            /** Shared Path */
+            shared_path: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "exact" | "nested";
+            /** Table Count */
+            table_count: number;
+            /** Tables */
+            tables: components["schemas"]["SharedS3TableMemberRead"][];
+        };
+        /** SharedS3ReportRead */
+        SharedS3ReportRead: {
+            /** Id */
+            id?: string | null;
+            /** Generated At */
+            generated_at?: string | null;
+            /**
+             * Sources Harvested
+             * @default 0
+             */
+            sources_harvested: number;
+            /**
+             * Table Count
+             * @default 0
+             */
+            table_count: number;
+            /**
+             * Overlapping Group Count
+             * @default 0
+             */
+            overlapping_group_count: number;
+            /**
+             * Overlapping Table Count
+             * @default 0
+             */
+            overlapping_table_count: number;
+            /**
+             * Skipped Count
+             * @default 0
+             */
+            skipped_count: number;
+            /** Sources */
+            sources?: components["schemas"]["SharedS3SourceSummaryRead"][];
+            /** Groups */
+            groups?: components["schemas"]["SharedS3GroupRead"][];
+            /** Slack Sent */
+            slack_sent?: boolean | null;
+            /** Slack Skipped Reason */
+            slack_skipped_reason?: string | null;
+            /** Slack Targets */
+            slack_targets?: number | null;
+        };
+        /** SharedS3SourceSummaryRead */
+        SharedS3SourceSummaryRead: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Source Name */
+            source_name: string;
+            /** Source Type */
+            source_type: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "live" | "db_fallback";
+            /** Table Count */
+            table_count: number;
+            /** Skipped Count */
+            skipped_count: number;
+            /** Error */
+            error?: string | null;
+        };
+        /** SharedS3TableMemberRead */
+        SharedS3TableMemberRead: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Source Name */
+            source_name: string;
+            /** Source Type */
+            source_type: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Table Name */
+            table_name: string;
+            /** Location */
+            location: string;
+            /** Table Id */
+            table_id?: string | null;
+            /** Qualified Name */
+            qualified_name: string;
+        };
         /** SignalResultRead */
         SignalResultRead: {
             /** Triggered */
@@ -8313,6 +8613,189 @@ export interface components {
             similar: {
                 [key: string]: unknown;
             }[];
+        };
+        /** SimilarityClusterMemberRead */
+        SimilarityClusterMemberRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Total Size Gb */
+            total_size_gb: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "keep" | "drop_candidate";
+            /** Keep Score */
+            keep_score?: number | null;
+            /** Keep Reason */
+            keep_reason?: string | null;
+            /**
+             * Query Count 30D
+             * @default 0
+             */
+            query_count_30d: number;
+        };
+        /** SimilarityClusterRead */
+        SimilarityClusterRead: {
+            /**
+             * Cluster Id
+             * Format: uuid
+             */
+            cluster_id: string;
+            /** Members */
+            members: components["schemas"]["SimilarityClusterMemberRead"][];
+            /** Total Size Gb */
+            total_size_gb: number;
+            /** Reclaimable Gb */
+            reclaimable_gb: number;
+            /** Max Pair Similarity */
+            max_pair_similarity?: number | null;
+            /** Generation */
+            generation: number;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+        };
+        /** SimilarityClustersResponse */
+        SimilarityClustersResponse: {
+            /** Clusters */
+            clusters: components["schemas"]["SimilarityClusterRead"][];
+            /** Generation */
+            generation?: number | null;
+            /**
+             * Total Clusters
+             * @default 0
+             */
+            total_clusters: number;
+            /**
+             * Total Tables In Clusters
+             * @default 0
+             */
+            total_tables_in_clusters: number;
+            /**
+             * Total Reclaimable Gb
+             * @default 0
+             */
+            total_reclaimable_gb: number;
+        };
+        /** SimilarityPairRead */
+        SimilarityPairRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Table A Id
+             * Format: uuid
+             */
+            table_a_id: string;
+            /** Table A Name */
+            table_a_name: string;
+            /**
+             * Table B Id
+             * Format: uuid
+             */
+            table_b_id: string;
+            /** Table B Name */
+            table_b_name: string;
+            /** Stage */
+            stage: string;
+            /** Similarity Score */
+            similarity_score?: number | null;
+            /** Schema Similarity */
+            schema_similarity?: number | null;
+            /** Stats Similarity */
+            stats_similarity?: number | null;
+            /** Row Jaccard Estimate */
+            row_jaccard_estimate?: number | null;
+            /** Naming Pattern Boost */
+            naming_pattern_boost?: number | null;
+            /**
+             * File Overlap Detected
+             * @default false
+             */
+            file_overlap_detected: boolean;
+            /** Verified Relationship */
+            verified_relationship?: string | null;
+            /** Exact Row Overlap Pct */
+            exact_row_overlap_pct?: number | null;
+            /** Score Components */
+            score_components?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+        };
+        /** SimilarityPipelineRunResponse */
+        SimilarityPipelineRunResponse: {
+            /** Tables Considered */
+            tables_considered: number;
+            /** Candidate Pairs */
+            candidate_pairs: number;
+            /** Pairs Sampled */
+            pairs_sampled: number;
+            /** Pairs Persisted */
+            pairs_persisted: number;
+            /** Clusters Found */
+            clusters_found: number;
+            /** Cluster Generation */
+            cluster_generation: number;
+            /** Errors */
+            errors?: string[];
+        };
+        /** SimilarityVerifyRequest */
+        SimilarityVerifyRequest: {
+            /**
+             * Table A Id
+             * Format: uuid
+             */
+            table_a_id: string;
+            /**
+             * Table B Id
+             * Format: uuid
+             */
+            table_b_id: string;
+            /**
+             * Row Limit
+             * @default 500000
+             */
+            row_limit: number;
+        };
+        /** SimilarityVerifyResponse */
+        SimilarityVerifyResponse: {
+            /**
+             * Table A Id
+             * Format: uuid
+             */
+            table_a_id: string;
+            /**
+             * Table B Id
+             * Format: uuid
+             */
+            table_b_id: string;
+            /** Relationship */
+            relationship: string;
+            /** A Rows Found In B Pct */
+            a_rows_found_in_b_pct: number;
+            /** B Rows Found In A Pct */
+            b_rows_found_in_a_pct: number;
+            /** Rows Compared A */
+            rows_compared_a: number;
+            /** Rows Compared B */
+            rows_compared_b: number;
         };
         /** SizeByPrefixItem */
         SizeByPrefixItem: {
@@ -9122,6 +9605,7 @@ export interface components {
             before_stats?: components["schemas"]["TableStatsSnapshotRead"] | null;
             after_stats?: components["schemas"]["TableStatsSnapshotRead"] | null;
             resource_estimate?: components["schemas"]["RunResourceEstimateRead"] | null;
+            effectiveness?: components["schemas"]["RunEffectivenessRead"] | null;
         };
         /** TableRunsResponse */
         TableRunsResponse: {
@@ -9239,6 +9723,8 @@ export interface components {
             detection_tier?: string | null;
             /** Snapshot Watermark */
             snapshot_watermark?: number | null;
+            /** Last Snapshot Committed At */
+            last_snapshot_committed_at?: string | null;
             /** Last Full Reconcile At */
             last_full_reconcile_at?: string | null;
             /** Manifest Count */
@@ -10567,6 +11053,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PaginatedTables"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_tables_csv_api_v1_tables_export_csv_get: {
+        parameters: {
+            query?: {
+                filter?: string | null;
+                sort?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -16629,6 +17145,195 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_dedup_pipeline_api_v1_dedup_run_post: {
+        parameters: {
+            query?: {
+                sample_rows?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarityPipelineRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_similarity_clusters_api_v1_dedup_clusters_get: {
+        parameters: {
+            query?: {
+                min_reclaimable_gb?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarityClustersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_similarity_pairs_api_v1_dedup_pairs_get: {
+        parameters: {
+            query?: {
+                min_score?: number;
+                limit?: number;
+                /** @description Restrict to pairs where both sides are in this set -- e.g. one cluster's members, for the force-directed layout. */
+                table_ids?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarityPairRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_similarity_pair_api_v1_dedup_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimilarityVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarityVerifyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shared_s3_report_api_v1_anomalies_shared_s3_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedS3ReportRead"];
+                };
+            };
+        };
+    };
+    refresh_shared_s3_api_v1_anomalies_shared_s3_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedS3ReportRead"];
+                };
+            };
+        };
+    };
+    notify_shared_s3_api_v1_anomalies_shared_s3_notify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedS3ReportRead"];
                 };
             };
         };
