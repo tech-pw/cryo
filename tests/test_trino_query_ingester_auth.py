@@ -13,9 +13,11 @@ import asyncio
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+import pytest
+
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.scheduler.service import SchedulerService
-from cryo.telemetry.ingestion import TrinoQueryIngester
+from cryo.telemetry.ingestion import TrinoQueryError, TrinoQueryIngester
 from tests.test_scheduler_telemetry import _bound_session_factory, _NullStore, _seed_source
 
 
@@ -119,3 +121,79 @@ def test_scheduler_wires_telemetry_credentials_into_ingester(session, monkeypatc
     assert captured_kwargs.get("user") == "phoenix_user"
     assert captured_kwargs.get("password") == "secret"
     assert captured_kwargs.get("verify_ssl") is False
+
+
+# ---------------------------------------------------------------------------
+# Query-level error detection (PDAE-8277)
+#
+# Trino's /v1/statement API returns HTTP 200 even when the query itself fails (bad SQL,
+# COLUMN_NOT_FOUND, permission denied, ...) -- the failure lives in the JSON body's "error"
+# key. Before this, fetch_recent_queries only checked response.raise_for_status() (HTTP
+# status), so a query-level error page -- which has neither "data" nor "nextUri" -- looked
+# identical to "no more rows" and silently returned []. Real repro: this SELECT queried
+# execution_time_ms/physical_input_bytes/... columns that don't exist on Trino 480 in prod,
+# so Trino-Prod's curator fetched 0 rows on every tick with zero visible error.
+# ---------------------------------------------------------------------------
+
+
+def _fake_client(response_json: dict[str, object]):
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return response_json
+
+    class _FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def post(self, *args: object, **kwargs: object) -> _FakeResponse:
+            return _FakeResponse()
+
+    return _FakeClient
+
+
+def test_fetch_recent_queries_raises_on_trino_query_level_error() -> None:
+    """A COLUMN_NOT_FOUND-shaped error body must raise, not be swallowed as an empty list."""
+    ingester = TrinoQueryIngester("https://trino.example.com")
+    error_body = {
+        "error": {
+            "message": "line 13:13: Column 'execution_time_ms' cannot be resolved",
+            "errorName": "COLUMN_NOT_FOUND",
+            "errorCode": 47,
+        }
+    }
+
+    with patch("cryo.telemetry.ingestion.httpx.AsyncClient", _fake_client(error_body)):
+        with pytest.raises(TrinoQueryError) as exc_info:
+            asyncio.run(ingester.fetch_recent_queries())
+
+    assert "COLUMN_NOT_FOUND" in str(exc_info.value)
+    assert "execution_time_ms" in str(exc_info.value)
+
+
+def test_fetch_recent_queries_returns_rows_on_success() -> None:
+    """Sanity check: a normal, error-free response still returns rows as before."""
+    ingester = TrinoQueryIngester("https://trino.example.com")
+    success_body = {
+        "columns": [{"name": "query_id"}, {"name": "state"}],
+        "data": [["q1", "FINISHED"]],
+    }
+
+    with patch("cryo.telemetry.ingestion.httpx.AsyncClient", _fake_client(success_body)):
+        rows = asyncio.run(ingester.fetch_recent_queries())
+
+    assert rows == [{"query_id": "q1", "state": "FINISHED"}]
+
+
+def test_trino_query_error_message_includes_error_name_and_text() -> None:
+    exc = TrinoQueryError({"message": "permission denied", "errorName": "PERMISSION_DENIED"})
+    assert "PERMISSION_DENIED" in str(exc)
+    assert "permission denied" in str(exc)
