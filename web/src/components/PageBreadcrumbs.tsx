@@ -19,6 +19,7 @@ const ROUTE_LABELS: Record<string, string> = {
   "/operations/scanner": "Scanner",
   "/ai": "Intelligence",
   "/governance": "Governance",
+  "/anomalies": "Anomalies",
   "/queries": "Queries",
   "/cost": "Cost",
   "/sla": "SLA",

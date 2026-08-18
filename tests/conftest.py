@@ -28,6 +28,7 @@ from cryo.db.models import (
     QueryPattern,
     S3BucketLogConfig,
     S3RequestCostDaily,
+    SharedS3AnomalyReport,
     SilentDataLossEvent,
     Source,
     Table,
@@ -61,6 +62,7 @@ UUID_ID_MODELS = (
     S3BucketLogConfig,
     S3RequestCostDaily,
     SilentDataLossEvent,
+    SharedS3AnomalyReport,
 )
 _AUTOINCREMENT_ID_MODELS = (
     TablePartition,
