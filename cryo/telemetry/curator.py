@@ -552,10 +552,58 @@ def _build_ingester(destination: Destination, config: QueryLogConfig, source: So
     from cryo.telemetry.ingestion import TrinoQueryIngester  # local import: avoid cycle
 
     primary = _primary_trino_url(destination)
-    base = TrinoQueryIngester(trino_url=primary) if primary else None
+    user, password = _trino_auth_from_config(destination.config)
+    verify_ssl = _trino_verify_ssl_from_config(destination.config)
+    base = (
+        TrinoQueryIngester(
+            trino_url=primary,
+            user=user,
+            password=password,
+            verify_ssl=verify_ssl,
+        )
+        if primary
+        else None
+    )
     if not config.telemetry_coordinators or base is None:
         return base
     return _MultiCoordinatorIngester(base=base, endpoints=list(config.telemetry_coordinators))
+
+
+def _trino_auth_from_config(raw_config: object) -> tuple[str, str | None]:
+    """Extract (user, password) from a destination's ``config`` block.
+
+    Mirrors ``cryo.engines.trino.client._auth_from_config`` -- the same destination config
+    already authenticates every other Trino query Cryo runs against it (the ROI gate, the
+    scanner, the executor), so the curator's fetch against ``system.runtime.queries`` must
+    authenticate the same way. Before this, ``TrinoQueryIngester`` was always constructed
+    with no credentials at all, so any coordinator with auth enabled (basic/LDAP -- the
+    common case, and true of Trino-Prod) would 401 on every tick. The curator is fail-open
+    (logs and moves on), so this failed silently: ``query_log_config`` could be fully
+    enabled and the dashboard would still stay empty.
+    """
+    config = raw_config if isinstance(raw_config, dict) else {}
+    auth_block = config.get("auth")
+    if isinstance(auth_block, dict):
+        auth_type = str(auth_block.get("type") or "").lower()
+        password = auth_block.get("password")
+        username = auth_block.get("username") or config.get("user") or config.get("username")
+        if auth_type == "basic" and username and password:
+            return str(username), str(password)
+    password = config.get("password")
+    if password:
+        return str(config.get("user") or "cryo"), str(password)
+    return "cryo", None
+
+
+def _trino_verify_ssl_from_config(raw_config: object) -> bool:
+    """Whether to verify TLS certs for this destination's coordinator.
+
+    Defaults to verifying -- only disabled via an explicit ``verify_ssl: false`` in config,
+    same opt-out shape as ``Settings.telemetry_trino_ssl_verify`` for the legacy single-
+    cluster path.
+    """
+    config = raw_config if isinstance(raw_config, dict) else {}
+    return bool(config.get("verify_ssl", True))
 
 
 class _MultiCoordinatorIngester:
@@ -573,12 +621,18 @@ class _MultiCoordinatorIngester:
     def override_url(self, url: str) -> Any:
         from cryo.telemetry.ingestion import TrinoQueryIngester
 
+        # Clone every field the base ingester was constructed with, not just user/catalog/
+        # schema/headers -- a coordinator behind auth needs the password too (self._base.auth
+        # is the (user, password) tuple httpx uses; None means no basic auth was configured).
+        password = self._base.auth[1] if self._base.auth else None
         return TrinoQueryIngester(
             trino_url=url,
             user=self._base.user,
+            password=password,
             catalog=self._base.catalog,
             schema=self._base.schema,
             headers=dict(self._base.headers),
+            verify_ssl=self._base.verify_ssl,
         )
 
     async def fetch_recent_queries(self, *, since: datetime, limit: int) -> list[dict[str, Any]]:
