@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
+from cryo.api.anomalies_routes import router as anomalies_router
 from cryo.api.auth_routes import router as auth_router
 from cryo.api.capabilities import router as capabilities_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
@@ -96,6 +97,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             {"name": "observability", "description": "Prometheus metrics and health checks."},
             {
+                "name": "anomalies",
+                "description": "Catalog warehouse-path collisions (shared or nested S3 locations).",
+            },
+            {
                 "name": "evidence",
                 "description": "Stable privacy-safe maintenance and release evidence exports.",
             },
@@ -144,6 +149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(s3_log_config_router)
     app.include_router(evidence_router)
     app.include_router(dedup_router)
+    app.include_router(anomalies_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup
