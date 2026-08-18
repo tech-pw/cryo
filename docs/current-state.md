@@ -33,6 +33,19 @@ remain separate.
 - Missing metadata or manifest references reported as `NoSuchKey` can be
   classified as dead-table failures without treating repairable missing data
   files the same way.
+- PDAE-8347 (2026-08-18): Spark-on-K8s `BaseMetastoreTableOperations.current`
+  failures on live gold tables, once `[root cause]` is preserved, are
+  `NoSuchKeyException` on the catalog's current metadata pointer -- a stale
+  HMS/REST location after a concurrent snapshot expire, not a commit conflict
+  and not a dropped table. Cryo retries those Spark jobs (plus
+  `CommitFailedException`) with backoff. Bare `NoSuchKey` without
+  `metadata.json` / manifest wording is **not** treated as
+  `is_table_not_found_error`, so gold tables are not deactivated. A
+  `remove_orphan_files` race deleting *current* metadata is unlikely at the
+  default 7-day orphan cutoff; the Spark job fails at `loadTable` *before*
+  that procedure runs, so the concurrent writer is expire/commit from another
+  engine, not this job's own orphan cleanup. Temp/test tables are skipped at
+  `effective_preset` (except `testpress` and names with `test` in the middle).
 - Raising the native slot cap to 80 did not prove that slot capacity is the
   production throughput bottleneck.
 

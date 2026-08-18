@@ -201,6 +201,39 @@ def test_create_native_job_uses_payload_secret() -> None:
     volume = next(v for v in pod_spec["volumes"] if v["name"] == "payload")
     assert volume["secret"]["secretName"] == "cryo-native-test-payload"
     core_api.patch_namespaced_secret.assert_called_once()
+    pod_labels = manifest["spec"]["template"]["metadata"]["labels"]
+    assert pod_labels["eks-workload-name"] == "cryo-native"
+    assert pod_labels["eks-workload-type"] == "Job"
+    assert pod_labels["cryo-engine"] == "native"
+    assert pod_labels["cryo-operation"] == "maintenance"
+    assert manifest["metadata"]["labels"]["eks-workload-name"] == "cryo-native"
+
+
+def test_create_native_job_labels_operation_from_payload() -> None:
+    batch_api = MagicMock()
+    batch_api.create_namespaced_job.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(uid="job-uid")
+    )
+    core_api = MagicMock()
+    with (
+        patch("cryo.engines.native.job_dispatch._safe_load_k8s", return_value=(object(), object())),
+        patch("cryo.engines.native.job_dispatch._in_cluster_configured", return_value=True),
+        patch("cryo.engines.native.job_dispatch._new_k8s_batch_client", return_value=batch_api),
+        patch("cryo.engines.native.job_dispatch._new_k8s_core_client", return_value=core_api),
+    ):
+        result = create_native_job(
+            {"operations": [{"type": "rewrite_data_files"}], "table_ref": "a.b"},
+            config={"k8s_namespace": "cryo"},
+            cpu_milli=500,
+            mem_mib=1024,
+            job_name="cryo-native-opt",
+        )
+    assert result.ok
+    labels = batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"][
+        "metadata"
+    ]["labels"]
+    assert labels["cryo-operation"] == "rewrite_data_files"
+    assert labels["cryo-engine"] == "native"
 
 
 def test_read_pod_logs_does_not_limit_bytes() -> None:

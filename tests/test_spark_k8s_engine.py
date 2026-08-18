@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.spark.k8s import JobRunResult, JobRunState
-from cryo.engines.spark.k8s_engine import SparkK8sEngine
+from cryo.engines.spark.k8s_engine import SparkK8sEngine, is_spark_retryable_catalog_error
 
 
 def _plan() -> MaintenancePlan:
@@ -85,6 +85,64 @@ def test_execute_uses_the_statements_own_catalog_over_the_destination_default() 
     assert len(results) == 1
     assert results[0].ok
     assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "hive"
+
+
+def test_execute_retries_basemetastore_nosuchkey_then_succeeds(monkeypatch) -> None:
+    """PDAE-8347: after deepest_caused_by, gold-table Spark failures are NoSuchKey while
+    loading BaseMetastoreTableOperations.current -- a stale catalog pointer, not a drop.
+    Retry the K8s Job instead of failing the first driver."""
+    sleeps: list[float] = []
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.time.sleep", sleeps.append)
+
+    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = ["cryo-spark-try0", "cryo-spark-try1"]
+    mock_client.wait_for_completion.side_effect = [
+        JobRunResult(
+            job_run_id="cryo-spark-try0",
+            state=JobRunState.FAILED,
+            state_details=(
+                "at org.apache.iceberg.BaseMetastoreTableOperations.current("
+                "BaseMetastoreTableOperations.java:72)\n"
+                "Caused by: software.amazon.awssdk.services.s3.model.NoSuchKeyException: "
+                "The specified key does not exist."
+            ),
+        ),
+        JobRunResult(job_run_id="cryo-spark-try1", state=JobRunState.SUCCESS),
+    ]
+    engine._client = mock_client
+
+    results = engine.execute_plan(_plan())
+    assert results[0].ok
+    assert mock_client.submit_spark_sql.call_count == 2
+    assert sleeps == [10]
+    mock_client.cleanup_after_run.assert_any_call("cryo-spark-try0")
+    mock_client.cleanup_after_run.assert_any_call("cryo-spark-try1")
+
+
+def test_execute_does_not_retry_dropped_table() -> None:
+    engine = SparkK8sEngine(config={})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-drop"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-drop",
+        state=JobRunState.FAILED,
+        state_details="Caused by: org.apache.spark.sql.catalyst.analysis.NoSuchTableException",
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_plan())
+    assert not results[0].ok
+    mock_client.submit_spark_sql.assert_called_once()
+
+
+def test_is_spark_retryable_catalog_error() -> None:
+    assert is_spark_retryable_catalog_error(
+        "at org.apache.iceberg.BaseMetastoreTableOperations.current\nNoSuchKeyException"
+    )
+    assert is_spark_retryable_catalog_error("Caused by: CommitFailedException: conflict")
+    assert not is_spark_retryable_catalog_error("NoSuchTableException: gone")
+    assert not is_spark_retryable_catalog_error("OutOfMemoryError: Java heap space")
 
 
 def test_execute_failure_returns_error_result() -> None:

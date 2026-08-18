@@ -127,12 +127,12 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 		return rewriteResult(true, inputFiles, result.outputFiles, inputFiles, result.bytesRemoved, result.bytesWritten, "")
 	}
 
-	// Single all-or-nothing commit. MOR on non-REST catalogs retries the whole rewrite
-	// on a lost commit race (reload → re-run) since those catalogs don't wrap ErrCommitFailed.
-	attempts := 1
-	if morCompaction && !isRESTCatalog(req) {
-		attempts = appCommitRetries + 1
-	}
+	// Single all-or-nothing commit. Reload + re-run on a lost optimistic-concurrency
+	// race (PDAE-8353): Hive/Glue often surface "branch \"main\" has changed" without
+	// wrapping ErrCommitFailed, and COW tables hit the same race as MOR. iceberg-go
+	// also retries inside doCommit; this outer loop re-plans from the current snapshot
+	// after a concurrent writer lands.
+	attempts := rewriteCommitAttempts()
 
 	var lastErr error
 	for attempt := range attempts {

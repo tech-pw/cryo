@@ -182,6 +182,62 @@ def test_streaming_aware_cadence_opt_out() -> None:
     assert len(optimize_ops) == 1
 
 
+def test_extra_care_cadence_tightens_chunks_just_under_streaming_threshold() -> None:
+    """PDAE-8353: lsq_pw.gold_prospect_activity_extension_base writes ~14 commits/day
+    (is_streaming False, cutoff 24) and loses rewrite_data_files to
+    branch "main" has changed. Extra-care band (5-24) uses smaller chunks so each
+    commit races a shorter rewrite window.
+    """
+    stats = {
+        "schema_name": "lsq_pw",
+        "table_name": "gold_prospect_activity_extension_base",
+        "small_files_count": 200,
+        "total_size_gb": 80,
+        "partition_fields": [
+            {
+                "base_column": "event_date",
+                "partition_field": "event_date_day",
+                "transform": "day",
+                "col_type": "date",
+            }
+        ],
+        "is_streaming": False,
+        "commits_per_day": 14.0,
+    }
+    partitions = [
+        {
+            "partition_value": "2026-08-17",
+            "small_files_in_partition_count": 200,
+            "partition_size_gb": 40,
+        },
+        {
+            "partition_value": "2026-08-16",
+            "small_files_in_partition_count": 200,
+            "partition_size_gb": 40,
+        },
+    ]
+    baseline = build_plan(
+        {**stats, "commits_per_day": 1.0},
+        partitions,
+        Mode.STANDARD,
+        {"min_small_files": 128, "chunk_size_gb": 100, "max_partitions_per_chunk": 10},
+    )
+    extra_care = build_plan(
+        stats,
+        partitions,
+        Mode.STANDARD,
+        {"min_small_files": 128, "chunk_size_gb": 100, "max_partitions_per_chunk": 10},
+    )
+    baseline_opt = [op for op in baseline.operations if op.type.value == "optimize"]
+    extra_opt = [op for op in extra_care.operations if op.type.value == "optimize"]
+    assert len(baseline_opt) == 1
+    assert len(extra_opt) == 2
+    assert any("moderate-write extra-care" in note for note in extra_care.notes)
+    assert any("14.0 commits/day" in note for note in extra_care.notes)
+    expire_ops = [op for op in extra_care.operations if op.type.value == "expire_snapshots"]
+    assert expire_ops[0].params["retention_days"] == 3
+
+
 def test_streaming_aware_retention_tightens_expire_snapshots_window() -> None:
     """Regression, 2026-08-03: unified_bq.gold_dbt_pw_bq went from 666 to 2,137 snapshots
     *during* a single 2.5-day maintenance run -- expire_snapshots can only remove snapshots

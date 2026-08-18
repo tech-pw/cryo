@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -23,6 +24,46 @@ from cryo.engines.spark.k8s import (
 )
 from cryo.engines.spark.sizing import scale_executor_profile
 from cryo.engines.spark.sql import render
+from cryo.engines.spark.worker_guard import (
+    footprint as spark_payload_footprint,
+)
+from cryo.engines.spark.worker_guard import (
+    log_spark_payload,
+    maybe_compact_spark_plan,
+    process_rss_mib,
+)
+
+logger = logging.getLogger(__name__)
+
+# PDAE-8347 Pattern 2: Spark-on-K8s gold-table failures that used to look like a truncated
+# `BaseMetastoreTableOperations.current` stack are, after deepest_caused_by, NoSuchKey on
+# the catalog's current metadata pointer -- typically a stale HMS/REST location after a
+# concurrent expire, not a dropped table. A short retry with backoff covers that race.
+# CommitFailedException / Iceberg ValidationException get the same treatment. Dropped-table
+# signatures must *not* retry (worker deactivates those).
+_SPARK_CATALOG_RETRY_ATTEMPTS = 3
+_SPARK_CATALOG_RETRY_BACKOFF_SECONDS = 10
+_SPARK_RETRYABLE_SIGNATURES = (
+    "BaseMetastoreTableOperations",
+    "CommitFailedException",
+    "CommitStateUnknownException",
+    "org.apache.iceberg.exceptions.ValidationException",
+)
+_SPARK_NON_RETRYABLE_SIGNATURES = (
+    "NoSuchTableException",
+    "TABLE_OR_VIEW_NOT_FOUND",
+    "TableNotFoundException",
+    TABLE_NOT_FOUND_MARKER,
+)
+
+
+def is_spark_retryable_catalog_error(message: str | None) -> bool:
+    """True when a Spark driver failure is worth one more attempt against the catalog."""
+    if not message:
+        return False
+    if any(sig in message for sig in _SPARK_NON_RETRYABLE_SIGNATURES):
+        return False
+    return any(sig in message for sig in _SPARK_RETRYABLE_SIGNATURES)
 
 
 @dataclass
@@ -131,12 +172,27 @@ class SparkK8sEngine:
         return []
 
     def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
+        # PDAE-8348: huge partition-filtered plans blow the worker before Spark even starts.
+        # Compact outliers to full-table CALLs; Spark compute stays in the dispatched Job.
+        plan, snap = maybe_compact_spark_plan(plan, stats=None, partitions=None)
+        log_spark_payload(
+            stage="execute_plan:before",
+            table_ref=plan.table_ref,
+            footprint_snap=snap,
+            extra="compacted" if snap.outlier_reason else "",
+        )
         results: list[ExecResult] = []
         for stmt in self.render(plan):
             result = self.execute(stmt, ctx)
             results.append(result)
             if not result.ok:
                 break
+        log_spark_payload(
+            stage="execute_plan:after",
+            table_ref=plan.table_ref,
+            footprint_snap=spark_payload_footprint(plan=plan),
+            extra=f"ok={sum(1 for r in results if r.ok)}/{len(results)} rss={process_rss_mib()}",
+        )
         return results
 
     def submit(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
@@ -175,6 +231,7 @@ class SparkK8sEngine:
                 job_name=job_name,
                 catalog=str(catalog),
                 destination_id=self._destination_id,
+                operation=stmt.action.value,
             )
             if ctx is not None and ctx.on_engine_ref is not None:
                 ctx.on_engine_ref(job_id)
@@ -221,43 +278,63 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         try:
-            job_id = self.k8s_client.submit_spark_sql(
-                stmt.sql,
-                job_name=job_name,
-                catalog=str(catalog),
-                destination_id=self._destination_id,
-            )
-            if ctx is not None and ctx.on_engine_ref is not None:
-                ctx.on_engine_ref(job_id)
-            result = self.k8s_client.wait_for_completion(job_id)
+            for attempt in range(_SPARK_CATALOG_RETRY_ATTEMPTS):
+                attempt_name = job_name if attempt == 0 else f"{job_name}-r{attempt}"
+                logger.info(
+                    "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB attempt=%d",
+                    stmt.action.value,
+                    len(stmt.sql),
+                    process_rss_mib(),
+                    attempt + 1,
+                )
+                job_id = self.k8s_client.submit_spark_sql(
+                    stmt.sql,
+                    job_name=attempt_name,
+                    catalog=str(catalog),
+                    destination_id=self._destination_id,
+                    operation=stmt.action.value,
+                )
+                if ctx is not None and ctx.on_engine_ref is not None:
+                    ctx.on_engine_ref(job_id)
+                result = self.k8s_client.wait_for_completion(job_id)
 
-            duration_ms = _elapsed_ms(start)
-            if result.state in SUCCESS_STATES:
+                duration_ms = _elapsed_ms(start)
+                if result.state in SUCCESS_STATES:
+                    return ExecResult(
+                        ok=True,
+                        engine_ref=job_id,
+                        detail=stmt.sql,
+                        duration_ms=duration_ms,
+                    )
+                state_details = result.state_details or "no details"
+                # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,
+                # with "Caused by: NoSuchTableException" typically buried well past the head+tail
+                # window truncate_error_message keeps -- confirmed live, 2026-07-31: the signature
+                # was in the untruncated log but never reached the stored error, so nothing could
+                # detect "this table was dropped" downstream. Front-load the signature before
+                # truncating so head-first truncation always keeps it, regardless of where in the
+                # original text it actually occurred.
+                if is_table_not_found_error(state_details):
+                    state_details = f"{TABLE_NOT_FOUND_MARKER} {state_details}"
+                can_retry = (
+                    attempt < _SPARK_CATALOG_RETRY_ATTEMPTS - 1
+                    and is_spark_retryable_catalog_error(state_details)
+                )
+                if can_retry:
+                    self.k8s_client.cleanup_after_run(job_id)
+                    job_id = None
+                    time.sleep(_SPARK_CATALOG_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
                 return ExecResult(
-                    ok=True,
+                    ok=False,
                     engine_ref=job_id,
                     detail=stmt.sql,
+                    error=truncate_error_message(
+                        f"Spark-on-K8s Job {result.state.value}: {state_details}"
+                    ),
                     duration_ms=duration_ms,
                 )
-            state_details = result.state_details or "no details"
-            # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,
-            # with "Caused by: NoSuchTableException" typically buried well past the head+tail
-            # window truncate_error_message keeps -- confirmed live, 2026-07-31: the signature
-            # was in the untruncated log but never reached the stored error, so nothing could
-            # detect "this table was dropped" downstream. Front-load the signature before
-            # truncating so head-first truncation always keeps it, regardless of where in the
-            # original text it actually occurred.
-            if is_table_not_found_error(state_details):
-                state_details = f"{TABLE_NOT_FOUND_MARKER} {state_details}"
-            return ExecResult(
-                ok=False,
-                engine_ref=job_id,
-                detail=stmt.sql,
-                error=truncate_error_message(
-                    f"Spark-on-K8s Job {result.state.value}: {state_details}"
-                ),
-                duration_ms=duration_ms,
-            )
+            raise RuntimeError("spark-k8s execute retry loop exited without a result")
         except TimeoutError as exc:
             return ExecResult(
                 ok=False,

@@ -112,6 +112,70 @@ def test_deepest_caused_by_none_when_absent() -> None:
     assert deepest_caused_by("") is None
 
 
+def test_deepest_caused_by_falls_back_to_py4j_wrapped_exception_header() -> None:
+    """Regression, PDAE-8346, confirmed live 2026-08-18: not every JVM exception chain uses
+    the literal "Caused by:" marker. Py4J wraps a Java exception as
+    "py4j.protocol.Py4JJavaError: An error occurred...\\n: <real exception>: <message>" --
+    real sample pulled from a live failed job on gold_dbt_pw_bq's parent dataset, an Iceberg
+    ValidationException with no "Caused by:" line anywhere in the captured text."""
+    message = (
+        "Spark-on-K8s Job FAILED: some INFO chatter\n"
+        "py4j.protocol.Py4JJavaError: An error occurred while calling o79.sql.\n"
+        ": org.apache.iceberg.exceptions.ValidationException: Deleted manifest "
+        "s3a://bucket/path/manifest.avro could not be found in the latest snapshot\n"
+        "\tat org.apache.iceberg.BaseRewriteManifests.lambda$validateDeletedManifests$7"
+        "(BaseRewriteManifests.java:296)"
+    )
+    result = deepest_caused_by(message)
+    assert result is not None
+    assert "org.apache.iceberg.exceptions.ValidationException" in result
+    assert "Deleted manifest" in result
+
+
+def test_deepest_caused_by_falls_back_to_bare_qualified_exception_line() -> None:
+    """A stack trace that never went through Py4J's wrapper (or was captured starting after
+    it) can still have a bare `pkg.pkg.SomeException: message` header line worth front-
+    loading, even with no "Caused by:" anywhere."""
+    message = (
+        "26/08/12 20:36:33 INFO SparkContext: Running Spark version 4.1.2\n"
+        "org.apache.spark.sql.catalyst.parser.ParseException: \n"
+        "[INVALID_TYPED_LITERAL] The value of the typed literal is invalid\n"
+        "\tat org.apache.spark.sql.errors.QueryParsingErrors$.invalidTypedLiteralError"
+        "(QueryParsingErrors.scala:100)"
+    )
+    result = deepest_caused_by(message)
+    assert result is not None
+    assert "org.apache.spark.sql.catalyst.parser.ParseException" in result
+
+
+def test_deepest_caused_by_none_for_bare_stack_frames_with_no_exception_identity() -> None:
+    """Confirmed live, PDAE-8346: a real sample of 19/47 truncated errors over 14 days had
+    NO exception class or message anywhere in the captured text at all -- only bare
+    `at pkg.Class.method(File.java:N)` frames, because the real header line had already
+    scrolled past whatever tail window was captured (fixed separately by widening
+    _read_pod_log_tail's tail_lines -- this function alone can't recover text that was never
+    captured). deepest_caused_by must not fabricate a false signal here; None is correct."""
+    message = (
+        "at org.apache.iceberg.BaseMetastoreTableOperations.current"
+        "(BaseMetastoreTableOperations.java:72)\n"
+        "\tat org.apache.iceberg.BaseMetastoreCatalog.loadTable(BaseMetastoreCatalog.java:49)\n"
+        "\tat org.apache.iceberg.shaded.com.github.benmanes.caffeine.cache.BoundedLocalCache"
+        ".lambda$doComputeIfAbsent$14(BoundedLocalCache.java:2406)"
+    )
+    assert deepest_caused_by(message) is None
+
+
+def test_deepest_caused_by_prefers_caused_by_over_header_fallback_when_both_present() -> None:
+    """The "Caused by:" path is more precise (it's specifically the *root* cause of a chained
+    exception) than the generic header fallback, so it must still win when both exist."""
+    message = (
+        "org.apache.spark.SparkException: outer wrapper\n"
+        "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
+    )
+    result = deepest_caused_by(message)
+    assert result == "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
+
+
 def test_is_table_not_found_error_matches_known_signatures() -> None:
     assert is_table_not_found_error(
         "org.apache.spark.sql.catalyst.analysis.NoSuchTableException: "

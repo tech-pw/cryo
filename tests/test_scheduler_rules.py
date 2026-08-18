@@ -179,6 +179,52 @@ def test_tables_for_preset_uses_effective_preset_and_skips_inactive_tables() -> 
     ] == ["table-2"]
 
 
+def test_ephemeral_temp_tables_are_not_rule_matched_but_pins_still_win() -> None:
+    # PDAE-8347: a fleet-wide rule used to pick up `_temp` / schema `temp` scratch tables
+    # and burn Spark-on-K8s drivers. Code-level skip so new presets cannot reintroduce them.
+    standard = PresetConfig("standard", "standard", "spark", priority=100)
+    catch_all = PresetRule("all", "standard", {"field": "total_size_gb", "op": ">=", "value": 0})
+    temp_table = TableCandidate(
+        "t-temp",
+        "cdp_revenue",
+        "silver_infinite_practice_result_questions_temp",
+        {"total_size_gb": 4000},
+    )
+    schema_temp = TableCandidate(
+        "t-schema", "temp", "signup_login_funnel_2026", {"total_size_gb": 1}
+    )
+    live = TableCandidate("t-live", "mview", "events", {"total_size_gb": 10})
+
+    assert effective_preset(temp_table, [standard], [catch_all]) is None
+    assert effective_preset(schema_temp, [standard], [catch_all]) is None
+    matched = effective_preset(live, [standard], [catch_all])
+    assert matched is not None and matched.preset.id == "standard"
+
+    pinned = effective_preset(
+        temp_table,
+        [standard],
+        [catch_all],
+        [TableAssignment("t-temp", "standard")],
+    )
+    assert pinned is not None and pinned.provenance == "assignment"
+
+
+def test_ephemeral_skip_carves_out_testpress_and_ignores_test_in_the_middle() -> None:
+    standard = PresetConfig("standard", "standard", "spark", priority=100)
+    catch_all = PresetRule("all", "standard", {"field": "total_size_gb", "op": ">=", "value": 0})
+    testpress = TableCandidate("t-tp", "testpress", "attempts", {"total_size_gb": 50})
+    gold_test = TableCandidate(
+        "t-gold", "user_experience", "gold_test_student_mappings", {"total_size_gb": 20}
+    )
+    suffix_test = TableCandidate(
+        "t-suffix", "reports", "gold_dbt_video_stats_reports_unified_test", {"total_size_gb": 5}
+    )
+
+    assert effective_preset(testpress, [standard], [catch_all]) is not None
+    assert effective_preset(gold_test, [standard], [catch_all]) is not None
+    assert effective_preset(suffix_test, [standard], [catch_all]) is None
+
+
 def test_tables_for_preset_skips_unassigned_when_no_default_fallback() -> None:
     # Without rules or assignments, no tables match — even if the preset has is_default.
     default_native = PresetConfig(

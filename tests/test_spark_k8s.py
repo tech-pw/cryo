@@ -87,11 +87,12 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     client = SparkK8sClient(cfg)
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
-        job_id = client.submit_spark_sql(
+        job_id =         client.submit_spark_sql(
             "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')",
             job_name="cryo-optimize-manifests",
             catalog="cdp",
             destination_id="b377ac3f-7d7f-47f7-985d-7543cd4cd82c",
+            operation="optimize_manifests",
         )
 
     assert job_id.startswith("cryo-spark-")
@@ -132,6 +133,17 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     # Same for do-not-disrupt: wrapper Job annotation alone does not protect driver/executor.
     assert "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true" in command
     assert "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true" in command
+    pod_labels = manifest["spec"]["template"]["metadata"]["labels"]
+    assert pod_labels["eks-workload-name"] == "cryo-spark"
+    assert pod_labels["eks-workload-type"] == "Job"
+    assert pod_labels["cryo-engine"] == "spark"
+    assert pod_labels["cryo-operation"] == "optimize_manifests"
+    assert manifest["metadata"]["labels"]["eks-workload-name"] == "cryo-spark"
+    assert "spark.kubernetes.driver.label.eks-workload-name=cryo-spark" in command
+    assert "spark.kubernetes.executor.label.eks-workload-name=cryo-spark" in command
+    assert "spark.kubernetes.driver.label.cryo-engine=spark" in command
+    script_idx = command.index("local:///opt/cryo/cryo_spark_runner.py")
+    assert command.index("spark.kubernetes.driver.label.eks-workload-name=cryo-spark") < script_idx
 
 
 def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
@@ -351,7 +363,14 @@ def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
     the old code captured 20 lines of noise nowhere near the actual exception. A
     NoSuchTableException live in production never reached job.error because of this -- only
     "Decommissioning not enabled" spam did. tail_lines is the correct API parameter for
-    "last N lines"."""
+    "last N lines".
+
+    Regression, PDAE-8346, confirmed live 2026-08-18: 200 lines still wasn't enough -- a real
+    sample of 19/47 truncated MaintenanceJob.error rows over 14 days captured only shutdown
+    chatter or bare stack frames, no exception identity at all, because the real header line
+    was further back than 200 lines from the end. Widened to 2000; this is only the capture
+    window (cheap, this string never reaches storage directly), the *stored* value is still
+    capped by truncate_error_message downstream."""
     core_api = MagicMock()
     core_api.read_namespaced_pod.return_value = SimpleNamespace(
         metadata=SimpleNamespace(name="cryo-spark-abc123-driver")
@@ -364,7 +383,7 @@ def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
         tail = _read_pod_log_tail("cryo-spark-abc123-driver", "cryo")
 
     core_api.read_namespaced_pod_log.assert_called_once_with(
-        name="cryo-spark-abc123-driver", namespace="cryo", tail_lines=200
+        name="cryo-spark-abc123-driver", namespace="cryo", tail_lines=2000
     )
     assert "NoSuchTableException" in tail
     assert "limit_bytes" not in core_api.read_namespaced_pod_log.call_args.kwargs

@@ -201,7 +201,7 @@ func UpdateAndStageTable(ctx context.Context, current *table.Table, ident table.
 	if current != nil {
 		for _, r := range reqs {
 			if err := r.Validate(current.Metadata()); err != nil {
-				return nil, err
+				return nil, table.WrapRetryableCommitConflict(err)
 			}
 		}
 
