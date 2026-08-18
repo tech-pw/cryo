@@ -509,7 +509,22 @@ def _convert_deletes_operation(
 
 
 def _delete_files(row: Mapping[str, Any]) -> int:
-    return int(row.get("delete_files_in_partition_count") or 0)
+    """Read a partition row's delete-file count.
+
+    Bug found live 2026-08-18 while verifying PDAE-8355's deployed fix against real data:
+    this read `delete_files_in_partition_count`, a key that has never existed in production.
+    Both scanner producers write the count as `delete_files` (`cryo/scanner/analyze.py`'s
+    `raw={"partition_values": ..., "delete_files": accum.delete_files}` and
+    `cryo/scanner/go_scan.py`'s identical shape) -- so this always read 0/None and silently
+    made both `_has_pathological_delete_skew` and `_has_unreachable_delete_skew` dead code in
+    prod despite passing every test, because the test fixtures used the same wrong key this
+    function read rather than the real one the scanners actually produce. Confirmed live on
+    the exact PDAE-8355 incident table (`mview.gold_dbt_test_results`): before this fix,
+    `_has_unreachable_delete_skew` returned False against its own real partition data (every
+    row's `delete_files` present, non-zero, up to 431 in a single partition) because this
+    function couldn't see it under the wrong key.
+    """
+    return int(row.get("delete_files") or row.get("delete_files_in_partition_count") or 0)
 
 
 def _skewed_rows_by(

@@ -442,6 +442,36 @@ Log exploration (Loki via Grafana Explore):
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
 | Full cost scan overload | Disable `cost_full_scan` until off-peak |
 
+### Unmatched tables (no effective preset)
+
+**Symptoms:**
+- `CryoUnmatchedNeedsCompactionTablesHigh` alert fires
+- `cryo_scheduler_unmatched_tables{needs_compaction="true"}` reads high in Grafana
+
+**What this means:** these tables resolve to no effective preset via
+`cryo.scheduler.rules.effective_preset()` — no pinned assignment, no matching rule, and
+either no fleet-wide catchall preset is enabled or its rule/priority doesn't reach them. They
+get zero recurring maintenance, silently, until someone notices. Real incident, 2026-08-12:
+1,267 `needs_compaction=True` tables unmatched, including a 24TB table pinned to a preset
+that had been disabled — found only by manual investigation before this alert existed.
+
+**Diagnosis:**
+1. `GET /api/v1/presets` — confirm the intended fleet-wide catchall (`default-native-deep` or
+   equivalent) is `enabled: true` and has a `schedule_cron`.
+2. `GET /api/v1/tables?filter=needs_compaction=true` cross-referenced against
+   `POST /api/v1/presets/{id}/simulate` for each enabled preset — find which unmatched tables
+   should be covered and by which preset.
+3. Check for a recently disabled preset (`PATCH .../presets/{id}` audit trail) or a rule
+   priority regression that stopped matching a previously-covered cohort.
+
+**Remediation:**
+
+| Cause | Action |
+|-------|--------|
+| Fleet-wide catchall disabled | Re-enable it, or confirm the narrower preset set is the deliberate replacement (see PDAE-8540) |
+| Rule priority/predicate regression | Fix the rule via `POST /api/v1/presets/{id}/rules`; re-run simulate to confirm `matched_count` |
+| Genuinely out-of-scope tables (temp/scratch/test) | Confirm via `cryo.scheduler.rules.is_ephemeral_maintenance_table` — these should stay unmatched, not force-matched |
+
 ### API memory / OOM (cryo-api)
 
 **Symptoms:**

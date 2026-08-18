@@ -58,3 +58,25 @@ groups:
         annotations:
           summary: "Cryo automatically halted a maintenance rollout cohort"
           runbook: "docs/SAFE_ROLLOUT.md"
+
+      # PDAE-8543: cryo_scheduler_unmatched_tables (added for the 2026-08-12 incident, see
+      # cryo/config.py's unmatched_tables_check_interval_hours docstring) has existed with no
+      # alert on it -- the 2026-08-12 incident itself (1,267 needs_compaction=True tables,
+      # including a 24TB table, matching no enabled preset) was found only by manual
+      # investigation. `for: 6h` matches the sweep's own default check interval
+      # (unmatched_tables_check_interval_hours) so this can't fire on a single mid-migration
+      # sample between two sweeps -- it requires the gauge to still read high on a later sweep.
+      #
+      # Threshold raised 100 -> 200, same day (PDAE-8540): enabling default-native-deep as the
+      # true fleet-wide catchall dropped live unmatched count 1,894 -> 125 -- comfortably under
+      # 200, with real margin against normal churn (new scratch-schema tables landing before
+      # classification, etc.) that would have sat right on top of a 100 threshold and risked
+      # a false positive on day one.
+      - alert: CryoUnmatchedNeedsCompactionTablesHigh
+        expr: cryo_scheduler_unmatched_tables{needs_compaction="true"} > 200
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 200 tables needing compaction resolve to no effective preset and are never scheduled for maintenance"
+          runbook: "docs/operator-guide.md#unmatched-tables"

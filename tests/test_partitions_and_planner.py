@@ -723,6 +723,65 @@ def test_planner_routes_sub_pathological_but_unreachable_delete_skew_to_minor_re
     assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
 
 
+def test_delete_files_reads_the_real_scanner_key_not_just_the_test_fixture_key() -> None:
+    """Regression, confirmed live 2026-08-18 while verifying the fix above against real
+    production data: `_delete_files()` read `delete_files_in_partition_count`, a key that
+    has never existed in production -- both scanner producers (`cryo/scanner/analyze.py`'s
+    `raw={"partition_values": ..., "delete_files": accum.delete_files}` and
+    `cryo/scanner/go_scan.py`'s identical shape) write the count under the plain key
+    `delete_files`. `_delete_files()` therefore always read 0/None in prod, making both
+    `_has_pathological_delete_skew` and `_has_unreachable_delete_skew` silently dead code
+    despite every test above passing -- because every fixture here uses the same wrong key
+    the function was reading, not the real one the scanners actually emit. Confirmed against
+    a live pull of `mview.gold_dbt_test_results`'s real partition rows (the exact table
+    the test above is modeled on): before this fix, `_has_unreachable_delete_skew` returned
+    False against that table's real data (every partition's `delete_files` present and
+    non-zero, up to 798 in a single partition) purely because of the key mismatch.
+
+    This test reproduces the bug's exact shape: same partition data as the test above, but
+    using the real `delete_files` key instead of the fixture-only `delete_files_in_partition_count`
+    key, to prove the fix reads production data correctly and not just its own test fixtures.
+    `_delete_files()` still falls back to the old key too, so the test above needs no change.
+    """
+    partitions = [
+        {
+            "partition_value": str(20670 + i),
+            "small_files_in_partition_count": 0,
+            "files_per_partition": [40, 39, 37, 34, 28, 44, 20, 29][i],
+            "delete_files": [315, 299, 295, 267, 214, 178, 155, 74][i],
+        }
+        for i in range(8)
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "mview",
+            "table_name": "gold_dbt_test_results",
+            "small_files_count": 29,
+            "total_delete_files": 1797,
+            "position_delete_files": 1797,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 66.8,
+            "query_count_30d": 483,
+            "partition_fields": [
+                {
+                    "base_column": "test_attempted_at",
+                    "partition_field": "test_attempted_at_month",
+                    "transform": "month",
+                    "col_type": "timestamptz",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "convert_deletes_threshold_pct": 5.0,
+        },
+    )
+    assert OperationType.REWRITE_POSITION_DELETES in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
+
+
 def test_planner_routes_pathological_delete_skew_to_minor_rewrite() -> None:
     """Live incident, 2026-07-29: partition 20400 had 7 data files (already well-sized, 0 small
     files) but 11,845 position-delete files. convert_deletes -> rewrite_data_files (BIN-PACK)
