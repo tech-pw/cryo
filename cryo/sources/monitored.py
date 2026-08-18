@@ -4,6 +4,7 @@ from typing import Any
 
 from cryo.sources.base import SourceCatalog, TableIdentifier
 from cryo.sources.latency import get_catalog_latency_monitor, timed_catalog_call
+from cryo.sources.locations import CatalogTableLocation
 
 
 class MonitoredSourceCatalog:
@@ -38,6 +39,13 @@ class MonitoredSourceCatalog:
             self._monitor,
             "load_table",
             lambda: self._catalog.load_table(schema, table),
+        )
+
+    def list_table_locations(self) -> list[CatalogTableLocation]:
+        return timed_catalog_call(
+            self._monitor,
+            "list_table_locations",
+            self._catalog.list_table_locations,
         )
 
 

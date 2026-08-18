@@ -169,7 +169,7 @@ export const RunDetail = () => {
 
   const pipelineSteps = useMemo(() => {
     if (scan) return scanPipelineSteps(runData?.status);
-    const ops = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
+    const ops = ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
     const { completed, active, failed } = inferPipelineFromJobs(jobRows, ops);
     return maintenanceOpsToSteps(ops, active, completed, failed);
   }, [jobRows, runData?.status, scan]);

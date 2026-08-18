@@ -241,7 +241,7 @@ def _invariant_columns_exist(ctx: InvariantContext) -> None:
 
 
 def _invariant_operation_ordering(ctx: InvariantContext) -> None:
-    from cryo.planner.guardrails import CORRECT_ORDER
+    from cryo.planner.guardrails import CORRECT_ORDER, canonical_order_phrase
 
     canonical_rank = {op: idx for idx, op in enumerate(CORRECT_ORDER)}
     last_rank = -1
@@ -256,7 +256,7 @@ def _invariant_operation_ordering(ctx: InvariantContext) -> None:
                     severity="warning",
                     message=(
                         f"Operation {op.type.value} should run after earlier maintenance steps "
-                        "(expire → orphan → optimize → manifests)."
+                        f"({canonical_order_phrase()})."
                     ),
                     location=f"plan:{ctx.plan.table_ref}#op{index}",
                 )
