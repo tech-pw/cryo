@@ -182,6 +182,77 @@ def test_query_log_schema_has_expected_fields() -> None:
     assert required == {"query_id", "source_id", "engine", "executed_at"}
 
 
+# ---------------------------------------------------------------------------
+# Row -> PyArrow conversion (PDAE-8277)
+#
+# PyIceberg's Table.append() requires a pyarrow.Table -- passing a raw list of dicts fails
+# with "Expected PyArrow table, got: [...]". This was the fourth bug in the PDAE-8277 chain,
+# only surfaced once auth + the SQL column mismatch + the catalog-wrapper mismatch were all
+# fixed and a real batch of rows finally reached this call.
+# ---------------------------------------------------------------------------
+
+
+def test_rows_to_arrow_table_preserves_values_and_field_ids() -> None:
+    from cryo.telemetry.iceberg_writer import _rows_to_arrow_table
+
+    rows = [
+        {
+            "query_id": "q1",
+            "source_id": "s1",
+            "engine": "trino",
+            "executed_at": datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC),
+            "query_text": "SELECT 1",
+            "user_name": "bob",
+            "duration_ms": 100,
+        }
+    ]
+    table = _rows_to_arrow_table(rows)
+    assert table.num_rows == 1
+    assert table.column("query_id").to_pylist() == ["q1"]
+    assert table.column("user_name").to_pylist() == ["bob"]
+    # Field IDs must match the Iceberg schema's -- PyIceberg uses these to map Arrow columns
+    # to Iceberg fields on write, not column position or name alone.
+    query_id_field = table.schema.field("query_id")
+    assert query_id_field.metadata[b"PARQUET:field_id"] == b"1"
+
+
+def test_rows_to_arrow_table_handles_missing_optional_fields_as_null() -> None:
+    """Optional columns (everything except query_id/source_id/engine/executed_at) absent
+    from a row -- e.g. a Trino version missing bytes_read-equivalent columns -- must convert
+    to null, not raise.
+    """
+    from cryo.telemetry.iceberg_writer import _rows_to_arrow_table
+
+    rows = [
+        {
+            "query_id": "q1",
+            "source_id": "s1",
+            "engine": "trino",
+            "executed_at": datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC),
+        }
+    ]
+    table = _rows_to_arrow_table(rows)
+    assert table.column("bytes_read").to_pylist() == [None]
+    assert table.column("query_text").to_pylist() == [None]
+
+
+def test_rows_to_arrow_table_handles_multiple_rows() -> None:
+    from cryo.telemetry.iceberg_writer import _rows_to_arrow_table
+
+    rows = [
+        {
+            "query_id": f"q{i}",
+            "source_id": "s1",
+            "engine": "trino",
+            "executed_at": datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC),
+        }
+        for i in range(3)
+    ]
+    table = _rows_to_arrow_table(rows)
+    assert table.num_rows == 3
+    assert table.column("query_id").to_pylist() == ["q0", "q1", "q2"]
+
+
 def test_writer_skips_rows_with_no_query_id() -> None:
     """A row with no query_id is uncategorizable; the curator can't dedupe it. Drop
     rather than fail the whole batch.
@@ -396,8 +467,11 @@ class _FakeTable:
         self.ident = ident
         self._catalog = catalog
 
-    def append(self, rows: list[dict]) -> None:  # type: ignore[no-untyped-def]
-        self._catalog.last_appended.extend(rows)
+    def append(self, arrow_table) -> None:  # type: ignore[no-untyped-def]
+        # The real PyIceberg Table.append() takes a pyarrow.Table, not a list of dicts
+        # (PDAE-8277) -- convert back to plain dicts so existing assertions on
+        # last_appended stay simple.
+        self._catalog.last_appended.extend(arrow_table.to_pylist())
 
     def expire_snapshots(self, older_than):  # type: ignore[no-untyped-def]
         from types import SimpleNamespace

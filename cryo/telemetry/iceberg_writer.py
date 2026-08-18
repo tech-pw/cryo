@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pyarrow as pa
 from pyiceberg.exceptions import TableAlreadyExistsError
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
@@ -100,6 +101,20 @@ class QueryLogRetentionResult:
     snapshots_expired: int = 0
     files_removed: int = 0
     error: str | None = None
+
+
+def _rows_to_arrow_table(rows: Sequence[dict[str, Any]]) -> pa.Table:
+    """Convert cleaned row dicts into the PyArrow table PyIceberg's ``Table.append`` needs.
+
+    ``Table.append`` requires a ``pyarrow.Table`` -- passing a raw list of dicts fails with
+    ``Expected PyArrow table, got: [...]`` (confirmed live, PDAE-8277: this was the fourth
+    bug in the chain, only surfaced once the first three were fixed and a real batch of 518
+    rows finally reached this call). Building from the Iceberg schema's own ``as_arrow()``
+    keeps the Arrow field types/nullability in lockstep with ``build_query_log_schema`` --
+    a hand-written pa.schema() here would silently drift the day either schema changes.
+    """
+    arrow_schema = build_query_log_schema().as_arrow()
+    return pa.Table.from_pylist(list(rows), schema=arrow_schema)
 
 
 class QueryLogIcebergWriter:
@@ -191,7 +206,8 @@ class QueryLogIcebergWriter:
             )
 
         try:
-            table.append(cleaned)  # PyIceberg's Table.append returns None; snapshot is on the table
+            arrow_table = _rows_to_arrow_table(cleaned)
+            table.append(arrow_table)  # PyIceberg's Table.append returns None; snapshot is on the table
         except Exception as exc:  # noqa: BLE001 - PyIceberg + catalog errors vary widely
             logger.warning(
                 "Append to %s failed (%s rows attempted): %s",
