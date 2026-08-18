@@ -14,6 +14,7 @@ import {
   Scan,
   Shield,
   Sun,
+  TriangleAlert,
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -49,6 +50,7 @@ const ROUTE_ICONS: Record<string, React.ReactNode> = {
   "/smart-maintenance": <Cloud size={14} />,
   "/ai": <Bot size={14} />,
   "/governance": <Shield size={14} />,
+  "/anomalies": <TriangleAlert size={14} />,
   "/queries": <Zap size={14} />,
   "/cost": <DollarSign size={14} />,
   "/skillsets": <Lightbulb size={14} />,

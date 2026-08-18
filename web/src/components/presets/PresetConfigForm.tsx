@@ -39,7 +39,8 @@ import { formValuesToPresetWrite, presetToFormValues, validatePresetFormValues, 
 import { validateOperationOrder } from "../../lib/operationOrder";
 import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
 
-const operations = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
+// Selectable ops, listed in the canonical execution order (see ../../lib/operationOrder.ts).
+const operations = ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
 
 export const PresetConfigForm = ({
   preset,

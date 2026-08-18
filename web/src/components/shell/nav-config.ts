@@ -15,6 +15,7 @@ import {
   ScanSearch,
   Shield,
   Zap,
+  TriangleAlert,
   type LucideIcon
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/similarity", label: "Similarity", icon: Copy },
       { href: "/dark-tables", label: "Dark Tables", icon: EyeOff },
       { href: "/governance", label: "Governance", icon: Shield },
+      { href: "/anomalies", label: "Anomalies", icon: TriangleAlert },
       { href: "/queries", label: "Queries", icon: Zap },
       { href: "/cost", label: "Cost", icon: DollarSign },
       { href: "/scan-cost", label: "Scan Cost", icon: ScanSearch },
