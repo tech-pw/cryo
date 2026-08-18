@@ -452,15 +452,26 @@ def writer_for_destination(
 
 
 def _catalog_for(source: Source | None, destination: Destination) -> Any:
-    """Resolve a PyIceberg catalog for the query-log archive.
+    """Resolve a *raw* PyIceberg catalog for the query-log archive.
 
     Prefers the explicitly-linked Source; falls back to a ``Source`` shaped from the
     destination's own ``config`` (used by the read_through path and by tests).
+
+    ``source_catalog_for`` returns a ``SourceCatalog`` wrapper (``HiveSourceCatalog`` /
+    ``RestSourceCatalog`` / ``GlueSourceCatalog``) -- a narrower, read-oriented API
+    (``list_tables``, ``list_namespaces``, ``load_table``) meant for the scanner/discovery
+    paths. ``QueryLogIcebergWriter`` needs the full PyIceberg ``Catalog`` write interface
+    (``create_namespace_if_not_exists``, ``create_table_if_not_exists``) which that wrapper
+    doesn't expose -- confirmed live (PDAE-8277): every curator tick reached the append step
+    and crashed with ``AttributeError: 'HiveSourceCatalog' object has no attribute
+    'create_table_if_not_exists'``, after the fetch itself was already fixed. Unwrap to the
+    underlying PyIceberg catalog every ``PyIcebergSourceCatalog`` subclass stores on
+    ``._catalog`` rather than changing what ``source_catalog_for`` returns everywhere else.
     """
     if source is not None:
         from cryo.sources.factory import source_catalog_for
 
-        return source_catalog_for(source)
+        return _unwrap_pyiceberg_catalog(source_catalog_for(source))
     from types import SimpleNamespace
 
     from cryo.sources.factory import source_catalog_for
@@ -471,7 +482,19 @@ def _catalog_for(source: Source | None, destination: Destination) -> Any:
         type="rest",
         config=destination.config or {},
     )
-    return source_catalog_for(placeholder)
+    return _unwrap_pyiceberg_catalog(source_catalog_for(placeholder))
+
+
+def _unwrap_pyiceberg_catalog(source_catalog: Any) -> Any:
+    """Reach past a ``SourceCatalog`` wrapper to the raw PyIceberg catalog it holds.
+
+    Every real ``SourceCatalog`` implementation (``PyIcebergSourceCatalog`` and its Rest/
+    Hive/Glue subclasses) stores it on ``._catalog``. Fall back to the wrapper itself if
+    that attribute is ever missing -- callers still get a clear AttributeError from PyIceberg
+    at the actual missing-method call site rather than this function masking the shape
+    mismatch with a confusing early failure.
+    """
+    return getattr(source_catalog, "_catalog", source_catalog)
 
 
 # ---------------------------------------------------------------------------

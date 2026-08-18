@@ -299,6 +299,68 @@ def test_stream_key_uses_source_id() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Catalog unwrapping (PDAE-8277): writer_for_destination must hand the writer a raw
+# PyIceberg catalog, not the read-oriented SourceCatalog wrapper (HiveSourceCatalog etc)
+# that source_catalog_for() returns for every other caller. The wrapper doesn't expose
+# create_table_if_not_exists/create_namespace_if_not_exists, so passing it through
+# unmodified crashed every append with AttributeError once the fetch bug (above) was fixed.
+# ---------------------------------------------------------------------------
+
+
+def test_unwrap_pyiceberg_catalog_reaches_past_source_catalog_wrapper() -> None:
+    from types import SimpleNamespace
+
+    from cryo.telemetry.iceberg_writer import _unwrap_pyiceberg_catalog
+
+    raw_catalog = _FakeCatalog()
+    # Shape of a real PyIcebergSourceCatalog subclass: a wrapper object whose ._catalog
+    # is the actual PyIceberg catalog with the write-side methods.
+    wrapper = SimpleNamespace(_catalog=raw_catalog, list_tables=lambda: [])
+
+    assert _unwrap_pyiceberg_catalog(wrapper) is raw_catalog
+
+
+def test_unwrap_pyiceberg_catalog_falls_back_to_input_when_no_wrapper() -> None:
+    """A caller that already hands over a raw catalog (no ._catalog attribute) should pass
+    through unchanged rather than the unwrap silently losing it."""
+    from cryo.telemetry.iceberg_writer import _unwrap_pyiceberg_catalog
+
+    raw_catalog = _FakeCatalog()
+    assert _unwrap_pyiceberg_catalog(raw_catalog) is raw_catalog
+
+
+def test_catalog_for_unwraps_source_catalog_to_raw_pyiceberg_catalog() -> None:
+    """End-to-end: _catalog_for(source, destination) must return something with
+    create_table_if_not_exists -- the actual method QueryLogIcebergWriter._ensure_table
+    calls -- not the SourceCatalog wrapper's narrower list_tables/load_table-only API.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from cryo.telemetry.iceberg_writer import _catalog_for
+
+    raw_catalog = _FakeCatalog()
+
+    class _FakeSourceCatalogWrapper:
+        def __init__(self, name: str, config: dict) -> None:  # noqa: ARG002
+            self._catalog = raw_catalog
+
+        def list_tables(self):  # pragma: no cover - not exercised here
+            return []
+
+    fake_source = SimpleNamespace(id=uuid4(), name="s", type="rest", config={})
+
+    with patch(
+        "cryo.sources.factory.source_catalog_for",
+        return_value=_FakeSourceCatalogWrapper("s", {}),
+    ):
+        resolved = _catalog_for(fake_source, destination=SimpleNamespace(name="d", config={}))
+
+    assert resolved is raw_catalog
+    assert hasattr(resolved, "create_table_if_not_exists")
+
+
+# ---------------------------------------------------------------------------
 # Test doubles
 # ---------------------------------------------------------------------------
 
