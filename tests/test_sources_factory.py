@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cryo.sources.factory import catalog_from_config
+from cryo.sources.factory import catalog_from_config, is_hive_source_type
 from cryo.sources.glue import GlueSourceCatalog
 from cryo.sources.hive import HiveSourceCatalog
 from cryo.sources.rest import RestSourceCatalog
@@ -73,3 +73,10 @@ def test_factory_supports_polaris_and_nessie_as_rest() -> None:
 def test_factory_rejects_unknown_type() -> None:
     with pytest.raises(ValueError, match="Unsupported source type"):
         catalog_from_config("x", "made-up-catalog-type", {})
+
+
+def test_is_hive_source_type() -> None:
+    assert is_hive_source_type("hive") is True
+    assert is_hive_source_type("HMS") is True
+    assert is_hive_source_type("hive_metastore") is True
+    assert is_hive_source_type("rest") is False

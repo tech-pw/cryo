@@ -530,6 +530,19 @@ curl "http://<api>/api/v1/advanced/anomalies?lookback_days=30&threshold_sigma=3.
 
 Check `cryo_anomaly_alerts_total` after dispatch.
 
+### Shared S3 warehouse-path anomalies
+
+Distinct from the ML detector above. The **Anomalies** page (`/anomalies`) lists catalog
+tables whose warehouse locations are the same path or nested under another table — the
+failure mode in `docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md`.
+
+- Harvest uses Hive Metastore Thrift `sd.location` and Glue `StorageDescriptor.Location`
+  (not Iceberg `load_table`), so unreadable aliases still appear.
+- Slack fires at **10:00 IST** only when overlapping groups exist (`ReportScheduler`).
+- Manual: `make shared-s3-anomalies` / `POST /api/v1/anomalies/shared-s3/refresh`.
+
+See [`docs/shared-s3-anomalies.md`](./shared-s3-anomalies.md).
+
 ### Rate limiting (API)
 
 Expensive endpoints are token-bucket limited per client IP:
@@ -539,6 +552,7 @@ Expensive endpoints are token-bucket limited per client IP:
 - `GET /api/v1/advanced/anomalies`
 - `POST /api/v1/routing/preview`
 - `POST /api/v1/tables/{id}/clustering-plan`
+- `POST /api/v1/anomalies/shared-s3/refresh`
 
 HTTP 429 responses include `Retry-After: 2`. Tune via `CRYO_API_RATE_LIMIT_RPS` and
 `CRYO_API_RATE_LIMIT_BURST`.

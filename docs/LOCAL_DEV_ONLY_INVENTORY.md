@@ -109,6 +109,7 @@ repo; do not run or package them as part of a production deployment.
 | [`scripts/create_partition_fixture_tables.py`](../scripts/create_partition_fixture_tables.py) | Partition-rich fragmented fixtures in `fixtures` namespace | `gate` |
 | [`scripts/load_test_data.py`](../scripts/load_test_data.py) | On-demand fragmented snapshots for maintenance load testing | `gate` |
 | [`scripts/seed_local_config.py`](../scripts/seed_local_config.py) | Upsert DB rows pointing at `localhost` REST/HMS/Trino | `gate` (never run in prod bootstrap) |
+| [`scripts/seed_shared_s3_anomaly_fixture.py`](../scripts/seed_shared_s3_anomaly_fixture.py) | Register overlapping `demo.orders_evolving` / `orders_nested` names on local REST/HMS | `gate` |
 | [`scripts/validate_dense_compaction_memory.sh`](../scripts/validate_dense_compaction_memory.sh) | Docker `--memory=1g` compaction of `f_part_dense` (GeoIP OOM class) | `gate` |
 | [`tests/integration/hms/generate_hms_fixture_tables.py`](../tests/integration/hms/generate_hms_fixture_tables.py) | Large HMS fixture tables in `hms_issues` namespace (MinIO only) | `gate` |
 | [`tests/integration/hms/spark_hms_session.py`](../tests/integration/hms/spark_hms_session.py) | PySpark session wired to local HMS + MinIO (used by fixture generator) | `gate` |
@@ -183,4 +184,5 @@ Use this when preparing a production deployment or trimming a release artifact:
 
 | Date | Change |
 |------|--------|
+| 2026-08-18 | `scripts/seed_shared_s3_anomaly_fixture.py` — overlapping S3-path names for Anomalies page |
 | 2026-07-06 | Initial inventory after splitting `docker-compose.dev-datalake.yml` from Cryo platform compose |

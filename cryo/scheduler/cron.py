@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from datetime import tzinfo as TzInfo
 
 MAX_CRON_EXPRESSION_LENGTH = 100
 _ALLOWED_CRON_CHARS = frozenset("0123456789*/-, ")
@@ -11,16 +12,22 @@ def cron_is_due(
     *,
     now: datetime | None = None,
     last_run_at: datetime | None = None,
+    tz: TzInfo | str | None = None,
 ) -> bool:
     """Return True if a cron expression is due to fire.
 
     Supports standard 5-field cron: minute hour dom month dow.
     Uses a simple matcher without external dependencies.
+
+    ``tz`` converts ``now`` before matching clock fields so expressions like
+    ``0 10 * * *`` can mean 10:00 in ``Asia/Kolkata`` rather than 10:00 UTC.
     """
     if not expression:
         return False
 
     current = _ensure_aware(now or datetime.now(UTC))
+    if tz is not None:
+        current = current.astimezone(_coerce_tz(tz))
     if not validate_cron_expression(expression):
         return False
 
@@ -44,13 +51,18 @@ def cron_is_due(
     return True
 
 
-def next_cron_tick(expression: str, *, now: datetime | None = None) -> datetime:
+def next_cron_tick(
+    expression: str,
+    *,
+    now: datetime | None = None,
+    tz: TzInfo | str | None = None,
+) -> datetime:
     """Return the next datetime when the cron expression would fire."""
     validate_cron_expression(expression, raise_error=True)
     current = _ensure_aware(now or datetime.now(UTC))
     probe = current.replace(second=0, microsecond=0)
     for _ in range(60 * 24 * 366):
-        if cron_is_due(expression, now=probe, last_run_at=probe - timedelta(minutes=1)):
+        if cron_is_due(expression, now=probe, last_run_at=probe - timedelta(minutes=1), tz=tz):
             return probe
         probe += timedelta(minutes=1)
     return probe
@@ -148,3 +160,11 @@ def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
+
+
+def _coerce_tz(tz: TzInfo | str) -> TzInfo:
+    if isinstance(tz, str):
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(tz)
+    return tz

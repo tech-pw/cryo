@@ -1562,6 +1562,55 @@ export const listPendingApprovals = (api: ApiOptions) =>
 export const listFleetAnomalies = (api: ApiOptions) =>
   apiFetch<AnomalyAlertRead[]>("/advanced/anomalies", api);
 
+export interface SharedS3TableMember {
+  source_id: string;
+  source_name: string;
+  source_type: string;
+  schema_name: string;
+  table_name: string;
+  location: string;
+  table_id: string | null;
+  qualified_name: string;
+}
+
+export interface SharedS3Group {
+  shared_path: string;
+  kind: "exact" | "nested";
+  table_count: number;
+  tables: SharedS3TableMember[];
+}
+
+export interface SharedS3SourceSummary {
+  source_id: string;
+  source_name: string;
+  source_type: string;
+  mode: "live" | "db_fallback";
+  table_count: number;
+  skipped_count: number;
+  error: string | null;
+}
+
+export interface SharedS3Report {
+  id: string | null;
+  generated_at: string | null;
+  sources_harvested: number;
+  table_count: number;
+  overlapping_group_count: number;
+  overlapping_table_count: number;
+  skipped_count: number;
+  sources: SharedS3SourceSummary[];
+  groups: SharedS3Group[];
+  slack_sent?: boolean | null;
+  slack_skipped_reason?: string | null;
+  slack_targets?: number | null;
+}
+
+export const getSharedS3Anomalies = (api: ApiOptions) =>
+  apiFetch<SharedS3Report>("/anomalies/shared-s3", api);
+
+export const refreshSharedS3Anomalies = (api: ApiOptions) =>
+  apiFetch<SharedS3Report>("/anomalies/shared-s3/refresh", api, { method: "POST" });
+
 export const getCostForecast = (api: ApiOptions, budgetLimitUsd?: number) =>
   apiFetch<CostForecastRead>("/advanced/finops/forecast", api, {
     query: { budget_limit_usd: budgetLimitUsd }

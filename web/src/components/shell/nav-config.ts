@@ -13,6 +13,7 @@ import {
   RadioTower,
   Shield,
   Zap,
+  TriangleAlert,
   type LucideIcon
 } from "lucide-react";
 
@@ -54,6 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/ai", label: "Intelligence", icon: Bot },
       { href: "/similarity", label: "Similarity", icon: Copy },
       { href: "/governance", label: "Governance", icon: Shield },
+      { href: "/anomalies", label: "Anomalies", icon: TriangleAlert },
       { href: "/queries", label: "Queries", icon: Zap },
       { href: "/cost", label: "Cost", icon: DollarSign },
       { href: "/skillsets", label: "Skillsets", icon: Lightbulb, adminOnly: true }

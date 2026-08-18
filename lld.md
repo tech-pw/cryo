@@ -823,6 +823,11 @@ GET   /api/v1/dashboards/cost                                 # datalake current
 POST  /api/v1/scans                                           # trigger ad-hoc scan (optional scope)
         # body: {selection?, full_scan?, cost_full_scan?}  (cost_full_scan -> Tier-2 orphan pass)
 
+# Shared S3 warehouse-path anomalies (not ML fleet anomalies)
+GET   /api/v1/anomalies/shared-s3                             # latest harvest snapshot
+POST  /api/v1/anomalies/shared-s3/refresh                     # operator; live catalog harvest
+POST  /api/v1/anomalies/shared-s3/notify                      # Slack only if overlapping groups exist
+
 # Presets, rules, assignments
 GET/POST/PATCH/DELETE  /api/v1/presets
 POST  /api/v1/presets/{id}/simulate                           # -> {matched_count, est_load, sample}

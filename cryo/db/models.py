@@ -2010,6 +2010,40 @@ class TableSimilarityCluster(Base):
     table: Mapped[Table] = relationship()
 
 
+class SharedS3AnomalyReport(TimestampMixin, Base):
+    """Latest (and historical) snapshots of shared/nested S3 warehouse path collisions.
+
+    Harvest is expensive against production HMS, so the Anomalies page reads the latest
+    row instead of listing catalogs on every page load. A new row is written on refresh
+    and on the 10:00 IST scheduler tick.
+    """
+
+    __tablename__ = "shared_s3_anomaly_reports"
+    __table_args__ = (Index("ix_shared_s3_anomaly_reports_generated_at", "generated_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    table_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    group_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    overlapping_table_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    sources_scanned: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    source_errors: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    groups: Mapped[JsonList] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+
+
 __all__ = [
     "AIProvider",
     "AWSCostInsightConfig",
@@ -2037,6 +2071,7 @@ __all__ = [
     "Skillset",
     "SkillsetOutcome",
     "SlackConfig",
+    "SharedS3AnomalyReport",
     "Source",
     "Table",
     "TableAssignment",

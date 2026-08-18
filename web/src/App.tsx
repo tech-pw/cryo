@@ -41,6 +41,7 @@ const QueryPerformance = lazy(() =>
   import("./pages/QueryPerformance").then((m) => ({ default: m.QueryPerformance }))
 );
 const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
+const Anomalies = lazy(() => import("./pages/Anomalies").then((m) => ({ default: m.Anomalies })));
 const SearchResults = lazy(() =>
   import("./pages/SearchResults").then((m) => ({ default: m.SearchResults }))
 );
@@ -117,6 +118,7 @@ const AuthenticatedRoutes = () => (
             <Route path="/ai" element={<Intelligence />} />
             <Route path="/similarity" element={<TableSimilarity />} />
             <Route path="/governance" element={<Governance />} />
+            <Route path="/anomalies" element={<Anomalies />} />
             <Route path="/queries" element={<QueryPerformance />} />
             <Route path="/sla" element={<SLAStatus />} />
             <Route path="/search" element={<SearchResults />} />
