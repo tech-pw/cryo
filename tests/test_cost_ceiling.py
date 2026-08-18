@@ -19,6 +19,7 @@ from cryo.db.models import AuditLog, MaintenanceControlState
 from cryo.db.repositories.intents import set_pause_state
 from cryo.reporting.cost_ceiling import (
     enforce_cost_ceiling,
+    fetch_latest_billed_namespace_cost,
     fetch_namespace_cost_range,
     fetch_todays_namespace_cost,
 )
@@ -190,6 +191,49 @@ def test_fetch_namespace_cost_range_raises_on_grafana_query_error() -> None:
             )
 
 
+def test_fetch_latest_billed_cost_returns_most_recent_day_with_rows() -> None:
+    """PDAE-8541: the whole point of this function is picking the latest day that actually
+    has CUR rows, not literally today (which structurally never has rows yet -- see
+    fetch_todays_namespace_cost's docstring)."""
+    payload = _grafana_range_response(
+        [
+            ("2026-08-14", 40.0, 60.0),
+            ("2026-08-15", 50.0, 160.0),
+        ]
+    )
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
+        check = fetch_latest_billed_namespace_cost(
+            grafana_url="https://grafana.example.com",
+            grafana_token="tok",
+            cluster_name="data-platform-eks",
+            namespace="cryo",
+            ceiling_usd=100.0,
+        )
+
+    assert check is not None
+    assert check.day == date(2026, 8, 15)
+    assert check.used_cost_usd == 50.0
+    assert check.unused_cost_usd == 160.0
+    assert check.total_cost_usd == 210.0
+    assert check.over_ceiling is True
+
+
+def test_fetch_latest_billed_cost_returns_none_when_window_fully_lagging() -> None:
+    """A real Grafana/CUR outage (not just today's normal 24-48h lag) returns None -- the
+    caller must treat this as "can't evaluate", never silently as $0/under budget."""
+    empty = {"results": {"A": {"frames": []}}}
+    with patch("httpx.post", side_effect=_mock_httpx_post(empty)):
+        check = fetch_latest_billed_namespace_cost(
+            grafana_url="https://grafana.example.com",
+            grafana_token="tok",
+            cluster_name="data-platform-eks",
+            namespace="cryo",
+            ceiling_usd=100.0,
+        )
+
+    assert check is None
+
+
 class _FakeSettings:
     cost_ceiling_enabled = True
     cost_ceiling_daily_usd = 100.0
@@ -212,9 +256,8 @@ def test_enforce_ceiling_noop_when_disabled(session, monkeypatch) -> None:
 
 def test_enforce_ceiling_pauses_fleet_when_over_budget(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=80.0, unused=150.0))
-    ):
+    payload = _grafana_range_response([("2026-08-17", 80.0, 150.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
         result = enforce_cost_ceiling(
             session, grafana_url="https://g.example.com", grafana_token="tok"
         )
@@ -239,16 +282,14 @@ def test_enforce_ceiling_does_not_double_pause_or_bump_generation(session, monke
     """Once paused for a cost breach, a second over-budget check must not re-pause (no
     audit-log/generation churn) -- only the transition matters, not every tick."""
     monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=80.0, unused=150.0))
-    ):
+    payload_1 = _grafana_range_response([("2026-08-17", 80.0, 150.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_1)):
         enforce_cost_ceiling(session, grafana_url="https://g.example.com", grafana_token="tok")
     state_after_first = session.scalar(select(MaintenanceControlState))
     generation_after_first = state_after_first.generation
 
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=90.0, unused=160.0))
-    ):
+    payload_2 = _grafana_range_response([("2026-08-18", 90.0, 160.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_2)):
         enforce_cost_ceiling(session, grafana_url="https://g.example.com", grafana_token="tok")
     state_after_second = session.scalar(select(MaintenanceControlState))
 
@@ -257,15 +298,13 @@ def test_enforce_ceiling_does_not_double_pause_or_bump_generation(session, monke
 
 def test_enforce_ceiling_resumes_when_back_under_budget(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=80.0, unused=150.0))
-    ):
+    payload_over = _grafana_range_response([("2026-08-17", 80.0, 150.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_over)):
         enforce_cost_ceiling(session, grafana_url="https://g.example.com", grafana_token="tok")
     assert session.scalar(select(MaintenanceControlState)).paused is True
 
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=10.0, unused=20.0))
-    ):
+    payload_under = _grafana_range_response([("2026-08-18", 10.0, 20.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_under)):
         result = enforce_cost_ceiling(
             session, grafana_url="https://g.example.com", grafana_token="tok"
         )
@@ -291,9 +330,8 @@ def test_enforce_ceiling_never_resumes_an_operators_manual_pause(session, monkey
     )
     session.commit()
 
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=10.0, unused=20.0))
-    ):
+    payload = _grafana_range_response([("2026-08-18", 10.0, 20.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
         result = enforce_cost_ceiling(
             session, grafana_url="https://g.example.com", grafana_token="tok"
         )
@@ -324,9 +362,8 @@ def test_enforce_ceiling_never_overrides_an_operators_pause_with_its_own_reason(
     session.commit()
     generation_before = session.scalar(select(MaintenanceControlState)).generation
 
-    with patch(
-        "httpx.post", side_effect=_mock_httpx_post(_grafana_response(used=80.0, unused=150.0))
-    ):
+    payload = _grafana_range_response([("2026-08-17", 80.0, 150.0)])
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
         enforce_cost_ceiling(session, grafana_url="https://g.example.com", grafana_token="tok")
 
     state = session.scalar(select(MaintenanceControlState))

@@ -50,6 +50,10 @@ def test_create_scan_job_uses_scan_entrypoint_and_payload_secret() -> None:
     assert result.job_name.startswith("cryo-scan-")
     container = created_manifest["spec"]["template"]["spec"]["containers"][0]
     assert container["command"] == ["python", "-m", "cryo.scanner.job_runner"]
+    scan_labels = created_manifest["spec"]["template"]["metadata"]["labels"]
+    assert scan_labels["eks-workload-name"] == "cryo-scanner"
+    assert scan_labels["cryo-engine"] == "scanner"
+    assert scan_labels["cryo-operation"] == "scan"
     assert container["resources"]["requests"]["cpu"] == "500m"
     assert container["resources"]["requests"]["memory"] == "1024Mi"
     core_api.create_namespaced_secret.assert_called_once()

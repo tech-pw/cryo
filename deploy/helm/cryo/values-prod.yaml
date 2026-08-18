@@ -330,6 +330,9 @@ spark:
     # margin on memory (worst case is OOMKill) -- still ~2x observed peak on both,
     # not cut to the observed average. If real optimize_manifests OOMs start
     # showing up, raise executorMemMib first; that's the one with the least slack.
+    # PDAE-8544: Jobs still omit AWS-generated aws:eks:workload-name; native + Spark
+    # pods now set eks-workload-name / eks-workload-type / cryo-engine / cryo-operation.
+    # Activate those user tags; Athena: resource_tags_user_eks_workload_name.
     driverCpuMilli: 500
     driverMemMib: 1024
     executorCpuMilli: 1000

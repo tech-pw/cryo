@@ -21,22 +21,52 @@ ERROR_MESSAGE_TRUNCATE = 4000
 
 _CAUSED_BY_RE = re.compile(r"Caused by:[^\n]*")
 
+# PDAE-8346, confirmed live 2026-08-18: `Caused by:` alone still misses a real class of
+# failures. Not every JVM exception chain uses that literal marker -- Py4J wraps a Java
+# exception as `py4j.protocol.Py4JJavaError: An error occurred while calling ...\n: <the
+# real exception class>: <message>` (note the leading bare `: `, not `Caused by: `), and a
+# Spark driver log that fails deep in a shutdown/cleanup sequence can have its actual
+# `SomeException: message` header line sitting well before 200-2000 lines of INFO/shutdown
+# chatter that follows it -- if that header line scrolled out of whatever tail window was
+# captured, nothing (not even `Caused by:`) is left to front-load, and the stored error is
+# pure stack frames with no exception identity at all. Match a qualified Java/Scala
+# exception class name immediately followed by `: ` and a message, the same shape
+# `Caused by:` lines already have after the marker -- this is a superset, not a replacement.
+_EXCEPTION_HEADER_RE = re.compile(
+    r"(?:^|\n)\s*(?:[\w.$]+Error: [^\n]*\n)?:?\s*"
+    r"((?:[a-zA-Z_][\w$]*\.)+[A-Za-z_$][\w$]*(?:Exception|Error)):\s*[^\n]*"
+)
+
 
 def deepest_caused_by(message: str | None) -> str | None:
-    """Return the last (deepest, i.e. root) ``Caused by:`` line in a JVM-style stack trace.
+    """Return the most useful single "here's the real exception" line in a JVM-style trace.
 
-    A chained Java/Scala exception prints each wrapping layer as its own "Caused by:" line, in
-    outer-to-inner order -- the *last* one is the actual root cause the outer frames were just
-    propagating. On a multi-KB Spark-on-K8s stack trace that line routinely sits in the middle
-    of the text, well past what head+tail truncation in `truncate_error_message` keeps -- see
-    that function's docstring for the 2026-07-28/07-31 incidents this pattern already exists to
-    avoid for the narrower `is_table_not_found_error` case. This generalizes the same "front-load
-    the signature before truncating" idea to any exception, not just the table-not-found one.
+    Prefers the last (deepest, i.e. root) ``Caused by:`` line when present -- a chained
+    Java/Scala exception prints each wrapping layer as its own "Caused by:" line, in
+    outer-to-inner order, and the *last* one is the actual root cause the outer frames were
+    just propagating. On a multi-KB Spark-on-K8s stack trace that line routinely sits in the
+    middle of the text, well past what head+tail truncation in `truncate_error_message` keeps
+    -- see that function's docstring for the 2026-07-28/07-31 incidents this pattern already
+    exists to avoid for the narrower `is_table_not_found_error` case.
+
+    Falls back to the first bare qualified-exception-name header line (e.g.
+    `org.apache.iceberg.exceptions.ValidationException: ...` or the line right after Py4J's
+    `Py4JJavaError:` wrapper) when no `Caused by:` line exists -- some real failures never
+    print that literal marker at all, but still have a genuine exception identity+message
+    that's worth front-loading over losing it to truncation entirely.
     """
     if not message:
         return None
-    matches = _CAUSED_BY_RE.findall(message)
-    return matches[-1] if matches else None
+    caused_by_matches = _CAUSED_BY_RE.findall(message)
+    if caused_by_matches:
+        return caused_by_matches[-1]
+    header_match = _EXCEPTION_HEADER_RE.search(message)
+    if header_match:
+        # Return the matched line trimmed, not just the class-name group, so the message
+        # text after the colon comes along too.
+        line = message[header_match.start() : header_match.end()].strip()
+        return line
+    return None
 
 
 def truncate_error_message(
