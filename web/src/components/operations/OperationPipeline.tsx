@@ -19,11 +19,13 @@ const STEP_ICON: Record<PipelineStepStatus, ReactNode> = {
   skipped: <Circle className="ops-pipeline-icon ops-pipeline-icon--skipped size-4" />
 };
 
+// Fallback pipeline shown when a run reports no operations; sequence mirrors the canonical
+// order in ../../lib/operationOrder.ts.
 const MAINTENANCE_OPS = [
-  "expire_snapshots",
-  "remove_orphan_files",
   "optimize",
-  "optimize_manifests"
+  "optimize_manifests",
+  "expire_snapshots",
+  "remove_orphan_files"
 ] as const;
 
 const opLabel = (op: string) => op.replaceAll("_", " ");

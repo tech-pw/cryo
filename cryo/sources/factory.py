@@ -16,6 +16,11 @@ HIVE_SOURCE_TYPES = {"hive", "hms", "hive-metastore", "hive_metastore"}
 GLUE_SOURCE_TYPES = {"glue", "aws-glue", "aws_glue"}
 
 
+def is_hive_source_type(source_type: str) -> bool:
+    normalized = source_type.lower().replace("_", "-")
+    return normalized in {item.lower().replace("_", "-") for item in HIVE_SOURCE_TYPES}
+
+
 def source_catalog_for(source: Any) -> SourceCatalog:
     return catalog_from_config(
         _source_value(source, "name"),

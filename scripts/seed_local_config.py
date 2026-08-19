@@ -111,7 +111,7 @@ LOCAL_NATIVE_DESTINATION = {
 LOCAL_STANDARD_PRESET = {
     "name": "local-standard",
     "mode": "deep",
-    "operations": ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"],
+    "operations": ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"],
     "params": {"min_small_files": 10},
     "description": "Default local Trino maintenance profile (deep mode, all steps)",
     "guardrails": {},
@@ -120,7 +120,7 @@ LOCAL_STANDARD_PRESET = {
 LOCAL_LARGE_PRESET = {
     "name": "local-large",
     "mode": "standard",
-    "operations": ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"],
+    "operations": ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"],
     "params": {"min_small_files": 10, "delete_ratio_trigger": 20},
     "description": "Large-table preset routed to Spark when size_gb > 100",
     "guardrails": {
@@ -146,9 +146,9 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
     "name": "default-native-deep",
     "mode": "deep",
     "operations": [
+        "optimize",
         "expire_snapshots",
         "remove_orphan_files",
-        "optimize",
     ],
     "params": {
         "min_small_files": 10,
@@ -158,7 +158,7 @@ LOCAL_DEFAULT_NATIVE_PRESET = {
         "file_size_mb": 256,
     },
     "description": (
-        "Native deep maintenance: expire + orphan + COW/MOR optimize (iceberg-go). "
+        "Native deep maintenance: COW/MOR optimize + expire + orphan (iceberg-go). "
         "optimize_manifests is not configured (unsupported natively; never routed to Trino/Spark)."
     ),
     "guardrails": {"cooldown_hours": 24},

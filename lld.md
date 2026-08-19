@@ -305,7 +305,7 @@ CREATE TABLE cryo.presets (
     description     text,
     destination_id  uuid NOT NULL REFERENCES cryo.destinations(id),
     mode            text NOT NULL DEFAULT 'standard', -- light | standard | deep
-    operations      jsonb NOT NULL,                 -- ordered: ["expire_snapshots","optimize",...]
+    operations      jsonb NOT NULL,                 -- ordered: ["optimize","expire_snapshots",...]
     params          jsonb NOT NULL DEFAULT '{}',    -- thresholds: file_size_mb, retention_days,
                                                     -- min_small_files, max_chunks,
                                                     -- retention_days, … (chunk_size_gb is
@@ -565,10 +565,17 @@ now in testable Python. Transform → value mapping is preserved exactly (epoch-
 | Mode | Operations (in order) |
 |------|-----------------------|
 | light | `expire_snapshots` |
-| standard | `expire_snapshots`, `optimize` (partition-aware) |
-| deep | `expire_snapshots`, `remove_orphan_files`, `optimize` (partition-aware), `optimize_manifests` |
+| standard | `optimize` (partition-aware), `expire_snapshots` |
+| deep | `optimize` (partition-aware), `optimize_manifests`, `expire_snapshots`, `remove_orphan_files` |
 
-Operation order is enforced for correctness (expire before orphan removal, manifests last).
+Operation order is enforced for correctness: compact first, then rewrite manifests, then
+expire and remove orphans last, so a single run reclaims the space its own compaction freed.
+`compute_statistics` (when enabled) runs immediately after `optimize`, because Puffin blobs
+reference specific data files and would be stale otherwise.
+
+The canonical sequence lives in exactly one place — `CORRECT_ORDER` in
+`cryo/planner/guardrails.py`. `build_plan` sorts by it rather than hand-appending, presets are
+normalised into it on write and read, and `web/src/lib/operationOrder.ts` mirrors it for the UI.
 
 ---
 
@@ -815,6 +822,11 @@ GET   /api/v1/dashboards/cost                                 # datalake current
         # by operation + by schema, top savings opportunities, precision coverage
 POST  /api/v1/scans                                           # trigger ad-hoc scan (optional scope)
         # body: {selection?, full_scan?, cost_full_scan?}  (cost_full_scan -> Tier-2 orphan pass)
+
+# Shared S3 warehouse-path anomalies (not ML fleet anomalies)
+GET   /api/v1/anomalies/shared-s3                             # latest harvest snapshot
+POST  /api/v1/anomalies/shared-s3/refresh                     # operator; live catalog harvest
+POST  /api/v1/anomalies/shared-s3/notify                      # Slack only if overlapping groups exist
 
 # Presets, rules, assignments
 GET/POST/PATCH/DELETE  /api/v1/presets
