@@ -347,6 +347,106 @@ def test_batch_job_requires_approval_parameter_gated(session):
     assert batch_job_requires_approval(table.id, plan_unsafe, approved_keys) is True
 
 
+def test_standing_grant_with_null_expiry_is_matchable(session):
+    """Regression test for the live prod bug found 2026-08-19: prefetch_approved_operation_keys
+    used to require expires_at IS NOT NULL, which made every standing-grant approval
+    (expires_at=NULL, created outside create_approval_request's normal 72h-expiring path --
+    e.g. a manual fleet-wide pre-approval sweep) permanently unmatchable. Verified live: of
+    10,460 status='approved' rows in prod, 0 satisfied the old query's filters -- every one had
+    expires_at IS NULL. NULL means "no expiry constraint", not "always excluded"."""
+    from cryo.governor.prefetch import batch_job_requires_approval, prefetch_approved_operation_keys
+    from cryo.workflows.approvals import ApprovalRequest
+
+    table = _seed_table(session, schema_name="test", table_name="standing_grant_table")
+    session.commit()
+
+    session.add(
+        ApprovalRequest(
+            id=uuid4(),
+            table_id=table.id,
+            operation_type=OperationType.EXPIRE_SNAPSHOTS.value,
+            requested_by="fleet-sweep",
+            approved_by="ops",
+            status=ApprovalStatus.APPROVED,
+            operation_params={},
+            approved_at=datetime.now(UTC),
+            expires_at=None,
+        )
+    )
+    session.commit()
+
+    approved_keys = prefetch_approved_operation_keys(session, {table.id})
+    assert (table.id, OperationType.EXPIRE_SNAPSHOTS.value) in approved_keys
+
+    plan = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {}}]
+    assert batch_job_requires_approval(table.id, plan, approved_keys) is False
+
+
+def test_already_executed_standing_grant_still_matches_next_run(session):
+    """Regression test for the live prod bug found 2026-08-19: prefetch_approved_operation_keys
+    used to exclude every row with executed_at IS NOT NULL, silently turning every approval
+    into a single-use grant the moment the governor's own JobWatcher stamped it as executed.
+    expire_snapshots/remove_orphan_files are meant to run repeatedly forever -- an approval for
+    them must keep authorizing future runs after the first successful execution, not just the
+    first one. Verified live: 8,547 of 10,460 approved rows in prod already had a non-NULL
+    executed_at from a prior run and were being silently excluded by this filter."""
+    from cryo.governor.prefetch import batch_job_requires_approval, prefetch_approved_operation_keys
+    from cryo.workflows.approvals import ApprovalRequest
+
+    table = _seed_table(session, schema_name="test", table_name="already_executed_table")
+    session.commit()
+
+    session.add(
+        ApprovalRequest(
+            id=uuid4(),
+            table_id=table.id,
+            operation_type=OperationType.REMOVE_ORPHAN_FILES.value,
+            requested_by="fleet-sweep",
+            approved_by="ops",
+            status=ApprovalStatus.APPROVED,
+            operation_params={},
+            approved_at=datetime.now(UTC) - timedelta(days=10),
+            expires_at=None,
+            executed_at=datetime.now(UTC) - timedelta(days=5),
+            execution_job_id=uuid4(),
+        )
+    )
+    session.commit()
+
+    approved_keys = prefetch_approved_operation_keys(session, {table.id})
+    plan = [{"type": OperationType.REMOVE_ORPHAN_FILES.value, "params": {}}]
+    assert batch_job_requires_approval(table.id, plan, approved_keys) is False
+
+
+def test_expired_standing_grant_style_approval_is_excluded(session):
+    """A real expiry (expires_at in the past) must still exclude the row -- the NULL-handling
+    fix must not accidentally admit genuinely-expired approvals too."""
+    from cryo.governor.prefetch import batch_job_requires_approval, prefetch_approved_operation_keys
+    from cryo.workflows.approvals import ApprovalRequest
+
+    table = _seed_table(session, schema_name="test", table_name="expired_approval_table")
+    session.commit()
+
+    session.add(
+        ApprovalRequest(
+            id=uuid4(),
+            table_id=table.id,
+            operation_type=OperationType.EXPIRE_SNAPSHOTS.value,
+            requested_by="user@example.com",
+            approved_by="ops",
+            status=ApprovalStatus.APPROVED,
+            operation_params={},
+            approved_at=datetime.now(UTC) - timedelta(days=5),
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+    )
+    session.commit()
+
+    approved_keys = prefetch_approved_operation_keys(session, {table.id})
+    plan = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {}}]
+    assert batch_job_requires_approval(table.id, plan, approved_keys) is True
+
+
 def test_single_use_approval_retirement(session):
     """Test that a successful destructive operation retires its approved request."""
     from cryo.db.repositories.job_store import SQLJobStore
