@@ -8,7 +8,13 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from cryo.db.models import QueryCostAttributionDaily, SlackConfig, Source
-from cryo.reporting.query_cost_report import notify_query_cost_report
+from cryo.reporting.query_cost_report import _build_action_items, notify_query_cost_report
+from cryo.reporting.query_cost_signals import (
+    UNKNOWN_CLIENT,
+    DailyQueryCostTotals,
+    FailureRateSignal,
+    QueryCostSignal,
+)
 from cryo.security.crypto import encrypt_secret
 
 NOW = datetime(2026, 8, 10, 6, 0, tzinfo=UTC)
@@ -167,3 +173,19 @@ def test_notify_payload_includes_top_clients(session, monkeypatch) -> None:
     assert result["top_clients"]
     assert result["top_clients"][0]["client"] == "Metabase"
     assert result["current"]["estimated_scan_cost_usd"] == 10.0
+
+
+def test_notify_payload_includes_top_users(session, monkeypatch) -> None:
+    """See docs/QUERY_COST_USER_ATTRIBUTION_PLAN_2026-08.md -- _seed_row doesn't set user_name,
+    so this falls back to the model's 'unknown' default, same as every row ingested before the
+    user-attribution migration/ingestion change."""
+    source = _seed_source(session)
+    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), cost=10.0)
+    session.commit()
+
+    monkeypatch.setattr("cryo.reporting.query_cost_report.SlackClient", MagicMock())
+    result = asyncio.run(notify_query_cost_report(session, now=NOW))
+
+    assert result["top_users"]
+    assert result["top_users"][0]["user_name"] == "unknown"
+    assert result["top_users"][0]["estimated_scan_cost_usd"] == 10.0
