@@ -179,6 +179,7 @@ class S3LogIngestRunner(DaemonRunner):
     def _tick(self) -> None:
         from cryo.db.session import SessionLocal
         from cryo.scanner.s3_request_cost_ingest import (
+            prune_partition_access_daily,
             prune_s3_request_cost_daily,
             run_s3_ingest_tick,
         )
@@ -189,12 +190,19 @@ class S3LogIngestRunner(DaemonRunner):
             pruned = prune_s3_request_cost_daily(
                 session, retention_days=settings.s3_request_cost_retention_days
             )
+            # Same retention window as its sibling above -- see PartitionAccessDaily's
+            # docstring for why this doesn't warrant its own separate setting.
+            partition_pruned = prune_partition_access_daily(
+                session, retention_days=settings.s3_request_cost_retention_days
+            )
             session.commit()
-            if ingested or pruned:
+            if ingested or pruned or partition_pruned:
                 self._logger.info(
-                    "S3 request-cost tick: ingested %s bucket(s), pruned %s stale row(s)",
+                    "S3 request-cost tick: ingested %s bucket(s), pruned %s stale row(s), "
+                    "%s stale partition-access row(s)",
                     ingested,
                     pruned,
+                    partition_pruned,
                 )
 
 

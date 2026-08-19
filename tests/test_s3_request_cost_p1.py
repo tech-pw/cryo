@@ -255,6 +255,7 @@ def test_parse_log_line_extracts_operation_and_key() -> None:
     assert ingest_mod._parse_log_line(line) == (
         "REST.GET.OBJECT",
         "warehouse/db1/table_a/data/file1.parquet",
+        "arn:aws:iam::123456789012:user/test",
     )
 
 
@@ -290,6 +291,21 @@ def test_parse_log_line_handles_multi_word_quoted_user_agent() -> None:
     assert ingest_mod._parse_log_line(line) == (
         "REST.GET.OBJECT",
         "warehouse/db1/table_a/data/file1.parquet",
+        "arn:aws:iam::123456789012:user/etl-user",
+    )
+
+
+def test_parse_log_line_returns_none_requester_for_anonymous_dash() -> None:
+    """"-" is AWS's placeholder for "not applicable" -- unlike a missing operation/key, a
+    missing requester doesn't invalidate the line (anonymous/unsigned requests are routine),
+    it just means the requester is unknown."""
+    line = _SAMPLE_LOG_LINE.replace(
+        "arn:aws:iam::123456789012:user/test", "-"
+    ).format(operation="REST.GET.OBJECT", key="warehouse/db1/table_a/data/file1.parquet")
+    assert ingest_mod._parse_log_line(line) == (
+        "REST.GET.OBJECT",
+        "warehouse/db1/table_a/data/file1.parquet",
+        None,
     )
 
 

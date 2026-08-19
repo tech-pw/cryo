@@ -25,6 +25,7 @@ from cryo.db.models import (
     LLMObservation,
     MaintenanceJob,
     MaintenanceRun,
+    PartitionAccessDaily,
     Preset,
     PresetRule,
     QueryCostAttributionDaily,
@@ -68,6 +69,7 @@ UUID_ID_MODELS = (
     SilentDataLossEvent,
     DarkTableCandidate,
     SharedS3AnomalyReport,
+    PartitionAccessDaily,
 )
 _AUTOINCREMENT_ID_MODELS = (
     TablePartition,

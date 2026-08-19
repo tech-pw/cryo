@@ -15,6 +15,7 @@ import {
   getTableCost,
   getTableHealthTrends,
   getTableHistory,
+  getTablePartitionAccess,
   getTablePartitions,
   getTableS3Tiering,
   getTableSignals,
@@ -197,6 +198,11 @@ export function useTableDetail() {
   const partitions = useQuery({
     queryKey: ["table-partitions", tableId, token],
     queryFn: () => getTablePartitions(api, tableId),
+    retry: false
+  });
+  const partitionAccess = useQuery({
+    queryKey: ["table-partition-access", tableId, token],
+    queryFn: () => getTablePartitionAccess(api, tableId),
     retry: false
   });
   const history = useQuery({
@@ -718,6 +724,7 @@ export function useTableDetail() {
     destinations,
     compliance,
     partitions,
+    partitionAccess,
     history,
     bloomRecommendations,
     sources,

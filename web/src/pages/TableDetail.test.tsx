@@ -91,6 +91,12 @@ vi.mock("../api/client", () => ({
     }
   }),
   getTablePartitions: vi.fn().mockResolvedValue([]),
+  getTablePartitionAccess: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    since: "2026-05-21",
+    points: [],
+    partitions: []
+  }),
   getTableAudit: vi.fn().mockResolvedValue([]),
   getTableHistory: vi.fn().mockResolvedValue([]),
   getBloomFilterRecommendations: vi.fn().mockResolvedValue({
