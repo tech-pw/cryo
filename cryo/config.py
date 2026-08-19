@@ -87,6 +87,22 @@ class Settings(BaseSettings):
         gt=0,
         description="Week-over-week fleet cost decrease (%) that flags a decline worth noting.",
     )
+    # North-star maintenance-impact metric (PDAE, added 2026-08-19): unlike the cost thresholds
+    # above (less cost = good), more GB reclaimed = good -- direction is the sign of the pct
+    # change, not a spike/decline split. Wider bands than cost's for the same reason WoW is
+    # wider than DoD there: daily reclaim totals are lumpier than daily cost (a handful of large
+    # tables finishing on one day vs. spread across a week swings the total a lot without
+    # meaning anything changed about whether Cryo is working).
+    report_impact_dod_move_pct: float = Field(
+        default=25.0,
+        gt=0,
+        description="Day-over-day change (%) in GB reclaimed that's worth flagging either way.",
+    )
+    report_impact_wow_move_pct: float = Field(
+        default=20.0,
+        gt=0,
+        description="Week-over-week change (%) in GB reclaimed that's worth flagging either way.",
+    )
     scan_parallel_tables: int = Field(
         default=0,
         ge=0,

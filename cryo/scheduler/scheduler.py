@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -101,12 +102,42 @@ def drop_recently_maintained(
     return kept
 
 
+def _query_weight(table: TableCandidate) -> float:
+    """Trino-usage weight for ranking within a compaction_priority tier (PDAE, 2026-08-19).
+
+    Confirmed live: cohort dispatch order previously had zero awareness of how often a table
+    is actually queried -- ordering fell straight through to `small_files_count`, so two
+    tables in the same priority tier, one queried 10,000x/month by real users and one queried
+    zero times, had an equal shot at whichever slot came up first. That inverts the point of
+    prioritizing at all: a fix landing sooner on a hot table has real, immediate query-latency
+    and Trino-compute-cost impact; the same fix on a cold table has none until someone reads
+    it, if ever.
+
+    Blends two signals, both already present on TableStats and carried through in
+    TableCandidate.stats with no query changes needed:
+    - `query_count_30d`: real read volume, log-scaled so a 100,000-query table doesn't
+      completely drown out a 500-query one that's still meaningfully "hot" -- a hard linear
+      scale would make the tail (a handful of extremely hot tables) dominate every tier.
+    - `projected_savings_usd_month`: this table's own S3/compute savings potential, so a
+      table that's expensive to leave unmaintained (even at moderate query volume) doesn't
+      get buried under a marginally-more-queried but cheap one.
+
+    Returns higher = should sort earlier. Neither input existing (both 0/None) is the
+    zero-query cold-table case this was missing -- correctly sorts last within its tier,
+    same place it would have landed under the old small-file-only order.
+    """
+    query_count = float(table.stats.get("query_count_30d") or 0)
+    savings_usd = float(table.stats.get("projected_savings_usd_month") or 0)
+    return math.log1p(query_count) + math.log1p(max(savings_usd, 0.0))
+
+
 def apply_priority_order(tables: Iterable[TableCandidate]) -> list[TableCandidate]:
     priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     return sorted(
         tables,
         key=lambda table: (
             priority_rank.get(str(table.stats.get("compaction_priority", "LOW")), 3),
+            -_query_weight(table),
             -int(table.stats.get("small_files_count") or 0),
             table.schema_name,
             table.table_name,
