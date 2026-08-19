@@ -1,6 +1,14 @@
 # Current implementation state
 
-Last reconciled: 2026-08-04.
+Last reconciled: 2026-08-18.
+
+PDAE-8121 (umbrella "Iceberg maintenance via cryo") stays **Dev Complete**: the
+platform is deployed (schedule, expire/orphan/optimize, table-level cost
+heuristics). It is **not** "every table healthy." Wave 1 (PDAE-8274) is still
+In Progress; Wave 2 (PDAE-8276) is plan-only — see
+[`PDAE-8121-umbrella-reconciliation-2026-08-18.md`](./PDAE-8121-umbrella-reconciliation-2026-08-18.md)
+and [`PDAE-8276-wave2-rollout-plan.md`](./PDAE-8276-wave2-rollout-plan.md).
+Fleet fixes from 2026-08-18 are in `f967caa` (digest pin `f922d0c`).
 
 This is a concise snapshot, not a release claim. The generated
 [`CAPABILITIES.md`](./CAPABILITIES.md) is authoritative for catalog and
