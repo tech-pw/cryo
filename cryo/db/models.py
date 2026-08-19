@@ -1807,7 +1807,12 @@ class QueryCostAttributionDaily(Base):
     __tablename__ = "query_cost_attribution_daily"
     __table_args__ = (
         UniqueConstraint(
-            "source_id", "day", "client", "schema_name", name="uq_query_cost_attribution_key"
+            "source_id",
+            "day",
+            "client",
+            "schema_name",
+            "user_name",
+            name="uq_query_cost_attribution_key",
         ),
         Index("ix_query_cost_attribution_day", "day"),
         Index("ix_query_cost_attribution_client", "client"),
@@ -1820,6 +1825,11 @@ class QueryCostAttributionDaily(Base):
     day: Mapped[date] = mapped_column(Date, nullable=False)
     client: Mapped[str] = mapped_column(Text, nullable=False)
     schema_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Trino query-completion event's "user" field, read via IcebergQueryLogConfig.user_column
+    # (default "user"; None/False disables). Rows ingested before 20260819_0045 default to
+    # "unknown" -- same fallback _normalize_client uses -- since the (day, client, schema_name)
+    # rollup that predates this column has no way to recover the true user split retroactively.
+    user_name: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'unknown'"))
     query_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
     failed_query_count: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("0")

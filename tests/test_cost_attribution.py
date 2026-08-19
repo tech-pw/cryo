@@ -203,12 +203,120 @@ class TestAggregateQueryCostAttribution:
         )
 
         assert result.queries_read == 2
-        key = (query_time.date(), "Metabase v0.60.0", "pw_bq")
+        # No "user" column in this fixture's rows -- falls back to "unknown", same as an
+        # unconfigured/disabled user_column would.
+        key = (query_time.date(), "Metabase v0.60.0", "pw_bq", "unknown")
         assert key in captured
         query_count, failed_count, bytes_scanned = captured[key]
         assert query_count == 2
         assert failed_count == 1
         assert bytes_scanned == 1500
+
+    def test_rolls_up_by_user_when_user_column_present(self, session, monkeypatch) -> None:
+        source = _seed_source(session)
+        now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        source.config = {
+            "query_log": {"mode": "iceberg_table", "table": "ns.t", "executed_at_column": "d"},
+            "cost_attribution": {"last_aggregated_at": (now - timedelta(hours=6)).isoformat()},
+        }
+        session.commit()
+
+        query_time = now - timedelta(hours=1)
+        batch = _row_batch(
+            [
+                {
+                    "query": "select 1",
+                    "d": query_time,
+                    "source": "trino-python-client",
+                    "schema": "pw_bq",
+                    "query_state": "FINISHED",
+                    "inputs_json": json.dumps(
+                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 1000}]
+                    ),
+                    "user": "alice",
+                },
+                {
+                    "query": "select 2",
+                    "d": query_time,
+                    "source": "trino-python-client",
+                    "schema": "pw_bq",
+                    "query_state": "FINISHED",
+                    "inputs_json": json.dumps(
+                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 2000}]
+                    ),
+                    "user": "bob",
+                },
+            ]
+        )
+        _patch_source_catalog(monkeypatch, _FakeCatalog(_FakeIcebergTable([batch])))
+
+        captured: dict = {}
+
+        def _fake_upsert(session, source_id, rollup):
+            captured.update(rollup)
+            return len(rollup)
+
+        monkeypatch.setattr(cost_attribution, "_upsert_rollup", _fake_upsert)
+
+        result = aggregate_query_cost_attribution(
+            session, source, now=now, window_hours=6, max_windows_per_tick=4
+        )
+
+        assert result.queries_read == 2
+        alice_key = (query_time.date(), "trino-python-client", "pw_bq", "alice")
+        bob_key = (query_time.date(), "trino-python-client", "pw_bq", "bob")
+        assert captured[alice_key] == [1, 0, 1000]
+        assert captured[bob_key] == [1, 0, 2000]
+
+    def test_user_column_disabled_falls_back_to_unknown(self, session, monkeypatch) -> None:
+        """user_column explicitly disabled (null/false) must roll up under 'unknown' even when
+        the source's own event-listener table does carry a 'user' column -- disabling means
+        'don't read it', not 'read it but ignore the value'."""
+        source = _seed_source(session)
+        now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        source.config = {
+            "query_log": {
+                "mode": "iceberg_table",
+                "table": "ns.t",
+                "executed_at_column": "d",
+                "user_column": False,
+            },
+            "cost_attribution": {"last_aggregated_at": (now - timedelta(hours=6)).isoformat()},
+        }
+        session.commit()
+
+        query_time = now - timedelta(hours=1)
+        batch = _row_batch(
+            [
+                {
+                    "query": "select 1",
+                    "d": query_time,
+                    "source": "trino-python-client",
+                    "schema": "pw_bq",
+                    "query_state": "FINISHED",
+                    "inputs_json": json.dumps(
+                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 1000}]
+                    ),
+                    "user": "alice",
+                },
+            ]
+        )
+        _patch_source_catalog(monkeypatch, _FakeCatalog(_FakeIcebergTable([batch])))
+
+        captured: dict = {}
+
+        def _fake_upsert(session, source_id, rollup):
+            captured.update(rollup)
+            return len(rollup)
+
+        monkeypatch.setattr(cost_attribution, "_upsert_rollup", _fake_upsert)
+
+        aggregate_query_cost_attribution(
+            session, source, now=now, window_hours=6, max_windows_per_tick=4
+        )
+
+        key = (query_time.date(), "trino-python-client", "pw_bq", "unknown")
+        assert key in captured
 
     def test_watermark_advances_and_persists(self, session, monkeypatch) -> None:
         source = _seed_source(session)
