@@ -286,15 +286,13 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-19 from gitlab-main commit a084f75 -- the web image had gone
-    # stale since 2026-08-14 (3c213c3 above): every deploy since then only pinned the
-    # backend digest, so the Anomalies page (web/src/pages/Anomalies.tsx, gitlab-main
-    # a8915bd/8287fe4, shared-S3 warehouse-path detection) was merged but never actually
-    # shipped to prod -- confirmed live (page loaded blank/missing) before this rebuild.
-    # This pin catches the web bundle up to everything merged since 08-14, not just
-    # Anomalies. Still a manual build+push -- deploy/deploy.sh does not build this image,
-    # only the backend's.
-    digest: "sha256:888bbcdb1343c76bf294a86558444204a796819653b23c549d1bad70d169a324"
+    # Built + pushed 2026-08-19 from gitlab-main commit 294657a -- adds the Partition Access
+    # scatter chart (Table Detail -> Structure, docs/PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md)
+    # and the Iceberg Maintenance Intelligence RFC's UI (Health page "Recently discovered"
+    # card, Table Detail Overview fast-path banner, partition-evolution scan-ratio/trigger
+    # copy -- docs/ICEBERG_MAINTENANCE_INTELLIGENCE_RFC.md). Still a manual build+push --
+    # deploy/deploy.sh does not build this image, only the backend's.
+    digest: "sha256:97d30d985afd977e799a5d04c7c963b52dcb262e03c2402c4ad25c219f0a3304"
   # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
   # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
   # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
