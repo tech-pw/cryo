@@ -27,7 +27,7 @@ from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.native.optimize_properties import maybe_persist_optimize_properties
 from cryo.engines.native.runner import PROGRESS_PREFIX, split_stdout_lines
 from cryo.queue.locks import LockStore
-from cryo.queue.run_events import build_log_line, safe_publish
+from cryo.queue.run_events import DEFAULT_REPLAY_COUNT, build_log_line, safe_publish
 from cryo.worker.worker import AuditRecord
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,15 @@ class NativeJobWatcher:
                     reason = "native_job_oom" if oom else "native_job_failed"
                     if stderr:
                         reason = f"{reason}: {stderr[:500]}"
-                    self._finalize_failure(session, dispatch.id, reason)
+                    # PDAE-8546: no pods and no stderr is the DeadlineExceeded signature --
+                    # K8s deletes the pod immediately on activeDeadlineSeconds, unlike a normal
+                    # exit-code failure where it lingers for log collection, so _read_pod_logs
+                    # above has nothing to read even when some batch members genuinely
+                    # finished first. _publish_incremental_progress already streamed each
+                    # member's real per-table outcome to run_events every ~30s while the pod
+                    # was alive -- consult that before blanket-failing the whole batch.
+                    salvage = self._salvage_from_run_events(dispatch.run_id)
+                    self._finalize_failure(session, dispatch.id, reason, salvage=salvage)
                     _delete_payload_secret(core_api, dispatch.k8s_job_name, namespace)
                     finalized += 1
                     continue
@@ -257,14 +265,78 @@ class NativeJobWatcher:
         session: Session,
         dispatch_id: uuid.UUID,
         reason: str,
+        *,
+        salvage: dict[str, bool] | None = None,
     ) -> None:
+        """Mark every job in a failed dispatch, salvaging real per-table outcomes when known.
+
+        ``salvage`` (from ``_salvage_from_run_events``) maps job_id -> True for members whose
+        incrementally-streamed run_events already showed a real success before the batch died
+        with no recoverable pod logs (PDAE-8546). A member not in ``salvage`` genuinely has no
+        known outcome and stays FAILED with ``reason`` -- this only ever recovers jobs with
+        positive evidence of success, never invents one for silence.
+        """
+        salvage = salvage or {}
         jobs = jobs_for_dispatch(session, dispatch_id)
+        salvaged = 0
         for job in jobs:
-            self._mark_status(str(job.id), JobStatus.FAILED, error=reason)
-            self._record_plan_failure_audits(job, reason)
+            if salvage.get(str(job.id)):
+                self._mark_status(str(job.id), JobStatus.SUCCEEDED, error=None)
+                maybe_persist_optimize_properties(session, job)
+                salvaged += 1
+            else:
+                self._mark_status(str(job.id), JobStatus.FAILED, error=reason)
+                self._record_plan_failure_audits(job, reason)
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
+        if salvaged:
+            logger.info(
+                "Dispatch %s failed (%s) but salvaged %d/%d member(s) from run_events "
+                "history that had already streamed a real success before the pod was gone",
+                dispatch_id,
+                reason,
+                salvaged,
+                len(jobs),
+            )
         mark_dispatch_finished(session, dispatch_id, status="failed", error=reason)
         _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
+
+    def _salvage_from_run_events(self, run_id: Any) -> dict[str, bool]:
+        """Reconstruct per-job success from already-streamed run_events log_line events.
+
+        _publish_incremental_progress relays each CRYO_TABLE_RESULT line to run_events while
+        a dispatch's pod is still alive (~every 30s). When the pod is later deleted before
+        the failure path can read its logs directly (activeDeadlineSeconds' immediate-delete
+        behavior), this replayed history is the only surviving record of which batch members
+        actually finished. Best-effort: any error here must never block finalization, so an
+        empty result (treat everything as genuinely unknown/failed) is always a safe fallback.
+        """
+        if self._run_events is None:
+            return {}
+        try:
+            events = self._run_events.replay(run_id, count=DEFAULT_REPLAY_COUNT)
+        except Exception:
+            logger.debug("run_events salvage lookup failed for run_id=%s", run_id, exc_info=True)
+            return {}
+
+        succeeded: dict[str, bool] = {}
+        failed_job_ids: set[str] = set()
+        for event in events:
+            if event.get("type") != "log_line":
+                continue
+            job_id = event.get("job_id")
+            if not job_id:
+                continue
+            job_id = str(job_id)
+            if event.get("level") == "error":
+                failed_job_ids.add(job_id)
+            else:
+                succeeded[job_id] = True
+        # A job with any error-level event alongside an info one is not a clean success --
+        # e.g. one operation of a multi-operation table result failed. Only credit jobs whose
+        # entire streamed history for this run was clean.
+        for job_id in failed_job_ids:
+            succeeded.pop(job_id, None)
+        return succeeded
 
     def _finalize_cancelled(self, session: Session, dispatch_id: uuid.UUID) -> None:
         jobs = jobs_for_dispatch(session, dispatch_id)

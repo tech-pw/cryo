@@ -26,6 +26,7 @@ from cryo.reporting.cost_signals import (
     compute_cost_signal,
     correlate_with_maintenance,
 )
+from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal
 from cryo.reporting.slack import (
     SlackBlock,
     SlackClient,
@@ -72,6 +73,7 @@ class DailyReportData:
     projected_savings_usd: float = 0.0
     cost_signal: CostSignal | None = None
     cost_correlation: MaintenanceCorrelation | None = None
+    impact_signal: ImpactSignal | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -142,6 +144,33 @@ async def generate_daily_report(
                 else None
             ),
         },
+        "impact": (
+            {
+                "gb_freed_yesterday": round(report_data.impact_signal.today.gb_freed, 2),
+                "actions_succeeded": report_data.impact_signal.today.actions_succeeded,
+                "tables_touched": report_data.impact_signal.today.tables_touched,
+                "optimize_files_in": report_data.impact_signal.today.optimize_files_in,
+                "optimize_files_out": report_data.impact_signal.today.optimize_files_out,
+                "optimize_file_reduction_pct": (
+                    round(report_data.impact_signal.today.optimize_file_reduction_pct, 1)
+                    if report_data.impact_signal.today.optimize_file_reduction_pct is not None
+                    else None
+                ),
+                "direction": report_data.impact_signal.direction,
+                "dod_pct": (
+                    round(report_data.impact_signal.dod_pct, 1)
+                    if report_data.impact_signal.dod_pct is not None
+                    else None
+                ),
+                "wow_pct": (
+                    round(report_data.impact_signal.wow_pct, 1)
+                    if report_data.impact_signal.wow_pct is not None
+                    else None
+                ),
+            }
+            if report_data.impact_signal is not None
+            else None
+        ),
         "bottom_line": narrated_bottom_line,
         "bottom_line_used_llm": bottom_line is not None,
     }
@@ -167,6 +196,16 @@ async def generate_daily_report(
     return result
 
 
+def _impact_signal_sentence(data: DailyReportData) -> str:
+    signal = data.impact_signal
+    if signal is None or signal.direction == "flat":
+        return ""
+    pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    window = "DoD" if signal.primary_signal == "dod" else "WoW"
+    pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+    return f" Reclaim impact {signal.direction}{pct_str}: {signal.today.gb_freed:.1f} GB freed yesterday."
+
+
 def _cost_signal_sentence(data: DailyReportData) -> str:
     signal = data.cost_signal
     if signal is None or signal.direction == "stable":
@@ -181,9 +220,10 @@ def _cost_signal_sentence(data: DailyReportData) -> str:
 
 def _deterministic_bottom_line(data: DailyReportData) -> str:
     cost_sentence = _cost_signal_sentence(data)
+    impact_sentence = _impact_signal_sentence(data)
     if data.status == "CLEAR":
         base = f"All {data.total_tables} tables healthy, no anomalies detected."
-        return f"{base}{cost_sentence} No action required."
+        return f"{base}{impact_sentence}{cost_sentence} No action required."
     delta_str = ""
     if data.total_size_tb_delta is not None:
         direction = "up" if data.total_size_tb_delta >= 0 else "down"
@@ -191,7 +231,7 @@ def _deterministic_bottom_line(data: DailyReportData) -> str:
     noun = "anomaly" if len(data.critical_anomalies) == 1 else "anomalies"
     return (
         f"{data.unhealthy_tables} of {data.total_tables} tables need attention "
-        f"({len(data.critical_anomalies)} {noun} flagged).{delta_str}{cost_sentence}"
+        f"({len(data.critical_anomalies)} {noun} flagged).{delta_str}{impact_sentence}{cost_sentence}"
     )
 
 
@@ -292,6 +332,26 @@ def _add_cost_action_item(
     return [item, *items[:2]]
 
 
+def _add_impact_action_item(
+    items: list[dict[str, Any]],
+    signal: ImpactSignal,
+) -> list[dict[str, Any]]:
+    """Prepend an item when reclaim impact is worsening -- ahead of table-level items, same
+    reasoning as _add_cost_action_item: a fleet-wide trend outranks any single table's grade.
+    Only ever called for "worsening"; an "improving" day is good news, not an action item."""
+    pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    window = "day-over-day" if signal.primary_signal == "dod" else "week-over-week"
+    pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+    text = (
+        f"Reclaim impact worsening{pct_str} — {signal.today.gb_freed:.1f} GB freed "
+        f"yesterday from {signal.today.actions_succeeded} successful action"
+        f"{'s' if signal.today.actions_succeeded != 1 else ''} across "
+        f"{signal.today.tables_touched} table{'s' if signal.today.tables_touched != 1 else ''}."
+    )
+    item = {"severity": "high", "text": text, "owner": "no owner assigned"}
+    return [item, *items[:2]]
+
+
 def _collect_report_data(session: Session) -> DailyReportData:
     """Collect all data needed for the report."""
     now = datetime.now(UTC)
@@ -378,13 +438,18 @@ def _collect_report_data(session: Session) -> DailyReportData:
 
     cost_signal = compute_cost_signal(session, now=now)
     cost_correlation = correlate_with_maintenance(session, cost_signal, now=now)
+    impact_signal = compute_impact_signal(session, now=now)
 
     status = _classify_status(unhealthy, anomaly_alerts, cost_signal, cost_correlation)
+    if status != "CRITICAL" and impact_signal.direction == "worsening":
+        status = "WATCH"
     action_items = (
         _build_action_items(session, anomaly_alerts, top_issues) if status != "CLEAR" else []
     )
     if cost_signal.direction != "stable" and cost_correlation is not None:
         action_items = _add_cost_action_item(action_items, cost_signal, cost_correlation)
+    if impact_signal.direction == "worsening":
+        action_items = _add_impact_action_item(action_items, impact_signal)
 
     return DailyReportData(
         report_date=now,
@@ -404,6 +469,7 @@ def _collect_report_data(session: Session) -> DailyReportData:
         projected_savings_usd=projected_savings,
         cost_signal=cost_signal,
         cost_correlation=cost_correlation,
+        impact_signal=impact_signal,
         action_items=action_items,
     )
 
@@ -434,6 +500,24 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
         ),
         "monthly_cost_usd": round(data.total_cost_usd, 2),
         "maintenance_last_24h": data.maintenance_stats,
+        "impact_signal": (
+            {
+                "direction": data.impact_signal.direction,
+                "gb_freed_yesterday": round(data.impact_signal.today.gb_freed, 1),
+                "dod_pct": (
+                    round(data.impact_signal.dod_pct, 1)
+                    if data.impact_signal.dod_pct is not None
+                    else None
+                ),
+                "wow_pct": (
+                    round(data.impact_signal.wow_pct, 1)
+                    if data.impact_signal.wow_pct is not None
+                    else None
+                ),
+            }
+            if data.impact_signal is not None
+            else None
+        ),
         "cost_signal": (
             {
                 "direction": data.cost_signal.direction,
@@ -517,6 +601,36 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             ],
         )
     )
+
+    if data.impact_signal is not None:
+        blocks.append(divider_block())
+        impact = data.impact_signal
+        direction_emoji = {"improving": "📈", "worsening": "📉", "flat": "➖"}[impact.direction]
+        blocks.append(section_block(f"{direction_emoji} *North Star: Reclaim Impact*"))
+        opt_pct = impact.today.optimize_file_reduction_pct
+        opt_str = (
+            f"{impact.today.optimize_files_in:,} → {impact.today.optimize_files_out:,} "
+            f"({opt_pct:+.0f}%)"
+            if opt_pct is not None
+            else "no optimize runs"
+        )
+        blocks.append(
+            table_block(
+                ["Metric", "Yesterday"],
+                [
+                    ["💾 GB Reclaimed", f"{impact.today.gb_freed:.1f} GB"],
+                    ["✅ Successful Actions", str(impact.today.actions_succeeded)],
+                    ["📋 Tables Touched", str(impact.today.tables_touched)],
+                    ["🗂️ Optimize File Reduction", opt_str],
+                ],
+            )
+        )
+        if impact.direction != "flat":
+            pct = impact.dod_pct if impact.primary_signal == "dod" else impact.wow_pct
+            window = "day-over-day" if impact.primary_signal == "dod" else "week-over-week"
+            pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+            verdict = "Going the right direction." if impact.direction == "improving" else "Going the wrong direction — see action items."
+            blocks.append(section_block(f"{direction_emoji} *{impact.direction.title()}*{pct_str}. {verdict}"))
 
     if data.cost_signal is not None and data.cost_signal.direction != "stable":
         blocks.append(divider_block())
