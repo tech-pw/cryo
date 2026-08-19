@@ -10,7 +10,14 @@ import {
   YAxis
 } from "recharts";
 import { Link } from "react-router-dom";
-import { getDatalakeDashboard, getFleetTrends, getSmartMaintenanceOverview, listTables } from "../api/client";
+import {
+  getDatalakeDashboard,
+  getFastPathFindings,
+  getFleetTrends,
+  getSmartMaintenanceOverview,
+  listTables
+} from "../api/client";
+import type { FastPathFindingRead } from "../api/client";
 import type {
   DatalakeDashboard,
   FleetCostTrendPoint,
@@ -28,6 +35,7 @@ import {
 import { GradeDistributionMiniBar } from "../components/GradeDistributionMiniBar";
 import { GradePill, PriorityTag } from "../components/status";
 import { Alert } from "../components/ui/alert";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ChartDataTable } from "../components/ui/chart-data-table";
@@ -73,6 +81,80 @@ const ChartPanel = ({
     <CardContent>{children}</CardContent>
   </Card>
 );
+
+const FastPathFindingsCard = ({
+  findings,
+  isLoading,
+  error
+}: {
+  findings: FastPathFindingRead[];
+  isLoading: boolean;
+  error: unknown;
+}) => {
+  const severityVariant = (severity: string): "success" | "warning" | "danger" | "secondary" => {
+    const normalized = severity.toLowerCase();
+    if (normalized === "critical" || normalized === "error") return "danger";
+    if (normalized === "warning") return "warning";
+    if (normalized === "info") return "secondary";
+    return "secondary";
+  };
+
+  return (
+    <Card className="mb-4">
+      <CardHeader className="space-y-1 pb-3">
+        <CardTitle className="text-sm font-semibold">Recently discovered</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Fast-path flags for new or barely-scanned tables. These are not auto-compacted.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <QueryErrorAlert error={error} title="Failed to load fast-path findings" />
+        {isLoading ? (
+          <Skeleton className="h-16 w-full rounded-[var(--radius-default)]" />
+        ) : findings.length === 0 ? (
+          <EmptyState
+            title="No recently discovered flags"
+            description="New tables that fail an early file-count or target-file-size check will show up here."
+          />
+        ) : (
+          <ul className="space-y-3">
+            {findings.map((finding, index) => (
+              <li
+                key={`${finding.table_id}-${finding.finding_type}-${finding.detected_at}-${index}`}
+                className="rounded-[var(--radius-default)] border border-border p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    to={`/tables/${finding.table_id}`}
+                    className="font-medium text-foreground hover:text-primary"
+                  >
+                    {finding.table_name}
+                  </Link>
+                  <Badge variant={severityVariant(finding.severity)}>{finding.severity}</Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {finding.finding_type.replaceAll("_", " ")}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">{finding.reason}</p>
+                {finding.finding_type === "missing_target_file_size" ? (
+                  <p className="mt-1 text-xs">
+                    <Link
+                      to={`/tables/${finding.table_id}?tab=health-quality#hq-properties`}
+                      className="text-primary hover:underline"
+                    >
+                      Open property recommendations
+                    </Link>
+                  </p>
+                ) : null}
+                <p className="mt-1 text-xs text-muted-foreground">{formatTime(finding.detected_at)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 const FleetTrendChartPanel = <T extends FleetHealthTrendPoint | FleetCostTrendPoint>({
   title,
@@ -141,6 +223,11 @@ export const DatalakeHealth = () => {
   const fleetTrends = useQuery({
     queryKey: ["fleet-trends", token],
     queryFn: () => getFleetTrends(api, { days: 30 }),
+    retry: 1
+  });
+  const fastPathFindings = useQuery({
+    queryKey: ["fast-path-findings", token],
+    queryFn: () => getFastPathFindings(api),
     retry: 1
   });
 
@@ -395,6 +482,11 @@ export const DatalakeHealth = () => {
             />
             <MetricTile label="Monthly savings" value={formatCurrency(data.totals?.projected_savings_usd_month)} />
           </MetricGrid>
+          <FastPathFindingsCard
+            findings={fastPathFindings.data ?? []}
+            isLoading={fastPathFindings.isLoading}
+            error={fastPathFindings.error}
+          />
           {smartOverview.data ? (
             <Card className="my-3">
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">

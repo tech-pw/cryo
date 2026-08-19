@@ -7,6 +7,7 @@ import {
   getBloomFilterRecommendations,
   getComplianceStatus,
   getEffectivePreset,
+  getFastPathFindings,
   getPartitionEvolutionRecommendation,
   getTable,
   getTableAudit,
@@ -182,6 +183,11 @@ export function useTableDetail() {
   const partitionEvolution = useQuery({
     queryKey: ["table-partition-evolution", tableId, token],
     queryFn: () => getPartitionEvolutionRecommendation(api, tableId),
+    retry: false
+  });
+  const fastPathFindings = useQuery({
+    queryKey: ["fast-path-findings", token],
+    queryFn: () => getFastPathFindings(api),
     retry: false
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
@@ -719,6 +725,7 @@ export function useTableDetail() {
     benefitScores,
     s3Tiering,
     partitionEvolution,
+    fastPathFindings,
     presets,
     compatiblePresets,
     destinations,

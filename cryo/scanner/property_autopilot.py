@@ -80,19 +80,34 @@ def run_property_autopilot(
     """Apply safe property recommendations across a bounded batch of active tables.
 
     Newest-scanned tables first -- freshest stats are the most trustworthy signal for
-    whether a recommendation still applies. One table's analysis or apply failure is caught
-    and recorded per-table; it does not stop the rest of the batch (same pattern as the
-    curator-tick loop this reuses the calling cadence from).
+    whether a recommendation still applies. Active tables with no TableStats yet are
+    included first (Day-0 write.target-file-size-bytes and other tier1 apply items still
+    work without a scan). One table's analysis or apply failure is caught and recorded
+    per-table; it does not stop the rest of the batch (same pattern as the curator-tick
+    loop this reuses the calling cadence from).
     """
-    table_ids = list(
+    no_stats_ids = list(
         session.scalars(
-            select(TableStats.table_id)
-            .join(Table, Table.id == TableStats.table_id)
-            .where(Table.is_active.is_(True))
-            .order_by(TableStats.scan_at.desc())
+            select(Table.id)
+            .outerjoin(TableStats, TableStats.table_id == Table.id)
+            .where(Table.is_active.is_(True), TableStats.table_id.is_(None))
+            .order_by(Table.first_seen_at.desc())
             .limit(max_tables)
         )
     )
+    remaining = max_tables - len(no_stats_ids)
+    stats_ids: list[uuid.UUID] = []
+    if remaining > 0:
+        stats_ids = list(
+            session.scalars(
+                select(TableStats.table_id)
+                .join(Table, Table.id == TableStats.table_id)
+                .where(Table.is_active.is_(True))
+                .order_by(TableStats.scan_at.desc())
+                .limit(remaining)
+            )
+        )
+    table_ids = no_stats_ids + stats_ids
 
     per_table: list[PropertyAutopilotTableResult] = []
     tables_changed = 0

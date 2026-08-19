@@ -1,6 +1,12 @@
 # Current implementation state
 
-Last reconciled: 2026-08-18.
+Last reconciled: 2026-08-19.
+
+Iceberg maintenance intelligence (`docs/ICEBERG_MAINTENANCE_INTELLIGENCE_RFC.md`) is
+implemented against existing modules: partition evolution now also fires on Algoscale
+scan-ratio and re-checks `bucket(N)`; new-table fast-path flags small files and missing
+`write.target-file-size-bytes` (`GET /api/v1/advanced/fast-path-findings`, Health + table
+detail). Fast-path does **not** enqueue compaction; property apply remains autopilot/opt-in.
 
 PDAE-8121 (umbrella "Iceberg maintenance via cryo") stays **Dev Complete**: the
 platform is deployed (schedule, expire/orphan/optimize, table-level cost

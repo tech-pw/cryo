@@ -19,6 +19,7 @@ def _seed_table(
     write_mode: str | None = None,
     has_sort: bool = False,
     raw_extra: dict | None = None,
+    with_stats: bool = True,
 ) -> uuid.UUID:
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
@@ -53,33 +54,53 @@ def _seed_table(
             is_active=True,
         )
     )
-    session.add(
-        TableStats(
-            table_id=table_id,
-            scan_at=scan_at,
-            needs_compaction=True,
-            compaction_priority="HIGH",
-            grade="C",
-            overall_score=65,
-            total_files=120_000,
-            small_files_count=45_000,
-            total_size_gb=480.0,
-            avg_file_size_mb=41.0,
-            total_partitions=120,
-            partition_skew_ratio=18.5,
-            manifest_count=220,
-            total_snapshots=80,
-            delete_file_pct=12.5,
-            total_delete_files=1500,
-            write_distribution_mode=write_mode,
-            has_sort_order=has_sort,
-            target_file_size_bytes=target_bytes,
-            query_count_30d=0,
-            raw=raw,
+    if with_stats:
+        session.add(
+            TableStats(
+                table_id=table_id,
+                scan_at=scan_at,
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="C",
+                overall_score=65,
+                total_files=120_000,
+                small_files_count=45_000,
+                total_size_gb=480.0,
+                avg_file_size_mb=41.0,
+                total_partitions=120,
+                partition_skew_ratio=18.5,
+                manifest_count=220,
+                total_snapshots=80,
+                delete_file_pct=12.5,
+                total_delete_files=1500,
+                write_distribution_mode=write_mode,
+                has_sort_order=has_sort,
+                target_file_size_bytes=target_bytes,
+                query_count_30d=0,
+                raw=raw,
+            )
         )
-    )
     session.commit()
     return table_id
+
+
+def test_compute_property_recommendations_without_stats_defaults_target_file_size(
+    api_db: ApiDb,
+) -> None:
+    session = api_db.session_factory()
+    table_id = _seed_table(session, with_stats=False)
+    session.close()
+
+    session = api_db.session_factory()
+    items = compute_property_recommendations(session, table_id)
+    session.close()
+
+    target = next(
+        item for item in items if item.property_key == "write.target-file-size-bytes"
+    )
+    assert target.action == "apply"
+    assert target.tier == "tier1"
+    assert target.recommended_value == str(256 * 1024 * 1024)
 
 
 def test_compute_property_recommendations_tier1_keys(api_db: ApiDb) -> None:

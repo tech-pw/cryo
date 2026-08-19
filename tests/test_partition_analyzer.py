@@ -7,10 +7,11 @@ Covers the two anti-patterns the module is meant to avoid recommending:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
-from cryo.db.models import QueryPattern, Source, Table, TableStats
-from cryo.optimizer.partition_analyzer import analyze_partition_evolution
+from cryo.db.models import QueryLog, QueryPattern, Source, Table, TableStats
+from cryo.optimizer.partition_analyzer import analyze_partition_evolution, bucket_count_for
 
 
 def _seed_source(session) -> Source:
@@ -70,6 +71,7 @@ def _seed_pattern(
     filter_count: int,
     equality_filter_count: int = 0,
     range_filter_count: int = 0,
+    avg_selectivity: float | None = None,
 ) -> QueryPattern:
     pattern = QueryPattern(
         table_id=table.id,
@@ -77,10 +79,33 @@ def _seed_pattern(
         filter_count=filter_count,
         equality_filter_count=equality_filter_count,
         range_filter_count=range_filter_count,
+        avg_selectivity=avg_selectivity,
     )
     session.add(pattern)
     session.flush()
     return pattern
+
+
+def _seed_query_logs(
+    session,
+    table: Table,
+    *,
+    n: int,
+    bytes_read: int,
+) -> None:
+    now = datetime.now(UTC)
+    for i in range(n):
+        session.add(
+            QueryLog(
+                source_id=table.source_id,
+                table_id=table.id,
+                query_id=f"q-{i}-{uuid4()}",
+                engine="trino",
+                executed_at=now,
+                bytes_read=bytes_read,
+            )
+        )
+    session.flush()
 
 
 def test_recommends_bucket_not_identity_for_high_cardinality_column(session) -> None:
@@ -196,3 +221,92 @@ def test_returns_none_below_min_query_threshold(session) -> None:
     rec = analyze_partition_evolution(session, table.id, min_query_threshold=100)
 
     assert rec is None
+
+
+def test_scan_ratio_trigger_when_filter_pct_below_eighty(session) -> None:
+    """PDAE-8357-shaped: scans are large even though no column dominates at >=80%."""
+    table = _seed_table(session, table_name="pdae_events")
+    total_size_gb = 10.0
+    _seed_stats(
+        session,
+        table,
+        partition_spec=[{"name": "event_date", "transform": "day"}],
+        total_size_gb=total_size_gb,
+    )
+    _seed_pattern(
+        session,
+        table,
+        column_name="user_id",
+        filter_count=35,
+        equality_filter_count=35,
+        avg_selectivity=0.4,
+    )
+    _seed_pattern(session, table, column_name="misc_a", filter_count=33)
+    _seed_pattern(session, table, column_name="misc_b", filter_count=32)
+    table_bytes = int(total_size_gb * (1024**3))
+    _seed_query_logs(session, table, n=12, bytes_read=int(table_bytes * 0.20))
+
+    rec = analyze_partition_evolution(session, table.id, min_query_threshold=1)
+
+    assert rec is not None
+    assert rec.trigger == "scan_ratio"
+    assert rec.scan_ratio is not None
+    assert rec.scan_ratio > 0.10
+    assert rec.avg_selectivity == 0.4
+    assert "user_id" in rec.recommended_partition_spec
+
+
+def test_bucket_too_coarse_recommends_larger_n(session) -> None:
+    table = _seed_table(session, table_name="coarse_buckets")
+    total_size_gb = 37.0
+    _seed_stats(
+        session,
+        table,
+        partition_spec=[{"name": "user_id", "transform": "bucket[64]"}],
+        total_size_gb=total_size_gb,
+    )
+
+    rec = analyze_partition_evolution(session, table.id, min_query_threshold=100)
+
+    expected_n = bucket_count_for(total_size_gb)
+    assert expected_n == 128
+    assert rec is not None
+    assert rec.trigger == "bucket_sizing"
+    assert str(expected_n) in rec.recommended_partition_spec
+    assert expected_n >= 64 * 2
+
+
+def test_healthy_bucket_count_returns_none(session) -> None:
+    table = _seed_table(session, table_name="healthy_buckets")
+    total_size_gb = 32.0
+    n = bucket_count_for(total_size_gb)
+    _seed_stats(
+        session,
+        table,
+        partition_spec=[{"name": "user_id", "transform": f"bucket[{n}]"}],
+        total_size_gb=total_size_gb,
+    )
+
+    rec = analyze_partition_evolution(session, table.id, min_query_threshold=100)
+
+    assert rec is None
+
+
+def test_bucket_too_fine_recommends_smaller_n(session) -> None:
+    table = _seed_table(session, table_name="fine_buckets")
+    total_size_gb = 1.0
+    _seed_stats(
+        session,
+        table,
+        partition_spec=[{"name": "user_id", "transform": "bucket[512]"}],
+        total_size_gb=total_size_gb,
+    )
+
+    rec = analyze_partition_evolution(session, table.id, min_query_threshold=100)
+
+    expected_n = bucket_count_for(total_size_gb)
+    assert rec is not None
+    assert rec.trigger == "bucket_sizing"
+    assert "too fine" in rec.reason.lower()
+    assert str(expected_n) in rec.recommended_partition_spec
+    assert expected_n < 512

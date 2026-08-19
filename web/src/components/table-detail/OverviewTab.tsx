@@ -35,6 +35,38 @@ import type {
   PartitionEvolutionRecommendationRead,
   TableHealthTrends
 } from "../../api/client";
+
+const formatScanRatioPct = (ratio: number | null | undefined): string | null => {
+  if (ratio == null || Number.isNaN(ratio)) return null;
+  const pct = ratio <= 1 ? ratio * 100 : ratio;
+  return `${Math.round(pct)}%`;
+};
+
+const appendPartitionEvolutionWhy = (
+  why: string,
+  rec: PartitionEvolutionRecommendationRead | undefined
+): string => {
+  if (!rec) return why;
+  const extras: string[] = [];
+  if (rec.trigger === "scan_ratio") {
+    const pct = formatScanRatioPct(rec.scan_ratio);
+    extras.push(
+      pct
+        ? `Triggered by scan ratio: queries read ${pct} of table size on average.`
+        : "Triggered by scan ratio: queries read a large share of this table."
+    );
+  } else if (rec.trigger === "bucket_sizing") {
+    const pct = formatScanRatioPct(rec.scan_ratio);
+    extras.push(
+      pct
+        ? `Triggered by bucket sizing (scan ratio ${pct}). Existing bucket count no longer matches table volume.`
+        : "Triggered by bucket sizing: existing bucket count no longer matches table volume."
+    );
+  }
+  if (rec.reason.trim()) extras.push(rec.reason.trim());
+  if (!extras.length) return why;
+  return `${why} ${extras.join(" ")}`;
+};
 import { EmptyState } from "../common";
 import { Alert } from "../ui/alert";
 import { Badge } from "../ui/badge";
@@ -165,7 +197,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
         tagText: "Partition Recommended",
         tagColor: "warning",
         what: "Table is unpartitioned but needs partition keys",
-        why: `High-volume queries frequently filter on columns aligned with "${recommendedSpec}". Partitioning on these columns would reduce plan-time overhead and accelerate searches.`,
+        why: appendPartitionEvolutionWhy(
+          `High-volume queries frequently filter on columns aligned with "${recommendedSpec}". Partitioning on these columns would reduce plan-time overhead and accelerate searches.`,
+          partitionEvolution
+        ),
         current: "Unpartitioned",
         ideal: recommendedSpec
       };
@@ -191,7 +226,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
         tagText: "Optimal (Aligned)",
         tagColor: "success",
         what: `Partition column "${currentCol}" is optimal`,
-        why: `Historical access patterns successfully utilize "${currentCol}" as the pruning index. No partition column evolution required.`,
+        why: appendPartitionEvolutionWhy(
+          `Historical access patterns successfully utilize "${currentCol}" as the pruning index. No partition column evolution required.`,
+          partitionEvolution
+        ),
         current: currentSpec,
         ideal: recommendedSpec
       };
@@ -211,7 +249,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
         tagText: "Evolution Suggested",
         tagColor: "warning",
         what: "Additional partition keys recommended",
-        why: `Queries frequently filter on "${missingCols.join(", ")}" alongside your current partition key. Evolving the partition spec to "${recommendedSpec}" will reduce raw bytes scanned.`,
+        why: appendPartitionEvolutionWhy(
+          `Queries frequently filter on "${missingCols.join(", ")}" alongside your current partition key. Evolving the partition spec to "${recommendedSpec}" will reduce raw bytes scanned.`,
+          partitionEvolution
+        ),
         current: currentSpec,
         ideal: recommendedSpec
       };
@@ -221,7 +262,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
       tagText: "Column Mismatch",
       tagColor: "error",
       what: "Suboptimal partition column layout",
-      why: `Access patterns show query filters target "${recommendedSpec}" instead of current key "${currentSpec}". This layout forces the execution engine to perform costly full table scans.`,
+      why: appendPartitionEvolutionWhy(
+        `Access patterns show query filters target "${recommendedSpec}" instead of current key "${currentSpec}". This layout forces the execution engine to perform costly full table scans.`,
+        partitionEvolution
+      ),
       current: currentSpec,
       ideal: recommendedSpec
     };
@@ -262,7 +306,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
         tagText: "Granularity Too Fine",
         tagColor: "error",
         what: "Over-partitioning complexity triggered",
-        why: `The table contains ${totalPartitions.toLocaleString()} partitions, causing partition bloating. This high directory complexity degrades query compilation and catalog list performance.`,
+        why: appendPartitionEvolutionWhy(
+          `The table contains ${totalPartitions.toLocaleString()} partitions, causing partition bloating. This high directory complexity degrades query compilation and catalog list performance.`,
+          partitionEvolution
+        ),
         current: `${totalPartitions.toLocaleString()} partitions (${stats?.partition_col_type || "identity"})`,
         ideal: "< 5,000 partitions (e.g. Month transform)"
       };
@@ -273,7 +320,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
         tagText: "Suboptimal (Too Granular)",
         tagColor: "warning",
         what: "Oversized partition catalog metadata",
-        why: `Average files per partition is too low (${avgFilesPerPartition.toFixed(1)}). The current transform creates too many sparse directories. Consolidate to daily or monthly.`,
+        why: appendPartitionEvolutionWhy(
+          `Average files per partition is too low (${avgFilesPerPartition.toFixed(1)}). The current transform creates too many sparse directories. Consolidate to daily or monthly.`,
+          partitionEvolution
+        ),
         current: `${avgFilesPerPartition.toFixed(1)} files/partition`,
         ideal: "10 to 100 files/partition"
       };
@@ -296,9 +346,12 @@ export const OverviewTab = (props: OverviewTabProps) => {
           tagText: isFiner ? "Suboptimal (Too Fine)" : "Suboptimal (Too Coarse)",
           tagColor: "warning",
           what: isFiner ? "Partition transform is too granular" : "Partition transform is too coarse",
-          why: isFiner
-            ? `Current transform "${currentTrans}" creates sparse directories. Evolving to "${recTrans}" will combine small write commits and speed up snapshot metadata planning.`
-            : `Current transform "${currentTrans}" is too broad. Query engines must scan large ranges. Evolving to "${recTrans}" restricts bounds and speeds up execution.`,
+          why: appendPartitionEvolutionWhy(
+            isFiner
+              ? `Current transform "${currentTrans}" creates sparse directories. Evolving to "${recTrans}" will combine small write commits and speed up snapshot metadata planning.`
+              : `Current transform "${currentTrans}" is too broad. Query engines must scan large ranges. Evolving to "${recTrans}" restricts bounds and speeds up execution.`,
+            partitionEvolution
+          ),
           current: currentTrans || "identity",
           ideal: recTrans || "identity"
         };
@@ -309,7 +362,10 @@ export const OverviewTab = (props: OverviewTabProps) => {
       tagText: "Optimal Granularity",
       tagColor: "success",
       what: "Partition granularity is correct",
-      why: `The average file count (${avgFilesPerPartition.toFixed(1)} files/partition) and partition count (${totalPartitions}) represent a balanced data-to-metadata distribution.`,
+      why: appendPartitionEvolutionWhy(
+        `The average file count (${avgFilesPerPartition.toFixed(1)} files/partition) and partition count (${totalPartitions}) represent a balanced data-to-metadata distribution.`,
+        partitionEvolution
+      ),
       current: stats?.partition_col_type ? `${stats.partition_col_type} granularity` : "Balanced",
       ideal: stats?.partition_col_type ? `${stats.partition_col_type} granularity` : "Balanced"
     };
