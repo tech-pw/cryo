@@ -30,6 +30,7 @@ class ReportScheduler:
         self._last_runs: dict[str, datetime] = {}  # config_id -> last_run
         self._last_shared_s3_run: datetime | None = None
         self._last_query_cost_run: datetime | None = None
+        self._last_health_check_run: datetime | None = None
         self._running = False
 
     async def start(self, poll_interval_sec: int = 60) -> None:
@@ -81,6 +82,7 @@ class ReportScheduler:
 
             await self._maybe_send_shared_s3_report(now)
             await self._maybe_send_query_cost_report(now)
+            await self._maybe_send_production_health_check(now)
         finally:
             session.close()
 
@@ -149,6 +151,40 @@ class ReportScheduler:
             self._last_query_cost_run = now
         except Exception:
             logger.exception("Failed to run Trino query-cost report")
+        finally:
+            session.close()
+
+    async def _maybe_send_production_health_check(self, now: datetime) -> None:
+        from cryo.reporting.health_check_report import (
+            PRODUCTION_HEALTH_CHECK_CRON,
+            PRODUCTION_HEALTH_CHECK_TZ,
+            notify_production_health_check,
+        )
+
+        if not cron_is_due(
+            PRODUCTION_HEALTH_CHECK_CRON,
+            now=now,
+            last_run_at=self._last_health_check_run,
+            tz=PRODUCTION_HEALTH_CHECK_TZ,
+        ):
+            return
+
+        logger.info("Production health check is due (09:45 IST)")
+        session = SessionLocal()
+        try:
+            result = await notify_production_health_check(session, now=now)
+            if result.get("slack_sent"):
+                logger.info(
+                    "Production health check sent to Slack (%s)", result.get("overall_status")
+                )
+            else:
+                logger.warning(
+                    "Production health check ready but Slack was not sent (%s)",
+                    result.get("slack_skipped_reason"),
+                )
+            self._last_health_check_run = now
+        except Exception:
+            logger.exception("Failed to run production health check")
         finally:
             session.close()
 
