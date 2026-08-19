@@ -1,19 +1,64 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import TypeGuard
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import TypeGuard, cast
 
 from cryo.domain.enums import OperationType
 from cryo.domain.predicates import LEAF_OPERATORS, SUPPORTED_FIELDS
 
+# Canonical maintenance order. Compact first, then rewrite manifests, then clean up -- so a
+# single run reclaims the space its own compaction freed, instead of expiring while the
+# pre-compaction data files are still live and waiting a whole cycle for the next pass.
+#
+# COMPUTE_STATISTICS sits right after OPTIMIZE: Puffin blobs reference specific data files, so
+# stats must be computed on the post-compaction files, and before the cleanup steps.
+#
+# This tuple is the ONLY place the order is defined. ``build_plan`` sorts by it rather than
+# hand-appending in sequence, and ``web/src/lib/operationOrder.ts`` mirrors it for the UI --
+# keep the two in sync.
 CORRECT_ORDER: tuple[OperationType, ...] = (
-    OperationType.EXPIRE_SNAPSHOTS,
-    OperationType.REMOVE_ORPHAN_FILES,
     OperationType.CONVERT_DELETES,
     OperationType.REWRITE_POSITION_DELETES,
     OperationType.OPTIMIZE,
+    OperationType.COMPUTE_STATISTICS,
     OperationType.OPTIMIZE_MANIFESTS,
+    OperationType.EXPIRE_SNAPSHOTS,
+    OperationType.REMOVE_ORPHAN_FILES,
 )
+
+_CANONICAL_RANK: dict[OperationType, int] = {op: idx for idx, op in enumerate(CORRECT_ORDER)}
+
+
+def canonical_rank(operation: OperationType | str) -> int:
+    """Sort rank for an operation. Unknown/future ops sink to the end rather than raising."""
+    try:
+        return _CANONICAL_RANK[OperationType(operation)]
+    except (ValueError, KeyError):
+        return len(CORRECT_ORDER)
+
+
+def canonical_order_phrase() -> str:
+    """Human-readable canonical order, derived from CORRECT_ORDER so it cannot drift."""
+    return "recommended order is " + " → ".join(op.value for op in CORRECT_ORDER)
+
+
+def sort_operations_canonically[T](
+    operations: Iterable[T],
+    *,
+    key: Callable[[T], OperationType | str] | None = None,
+) -> list[T]:
+    """Stable-sort operations into CORRECT_ORDER.
+
+    Stable, so entries sharing a rank keep their input order -- notably the N per-chunk
+    OPTIMIZE operations, whose relative order encodes their benefit-score ranking.
+
+    ``key`` extracts the operation type when the items are not themselves operation values
+    (e.g. ``key=lambda op: op.type`` for ``Operation`` objects).
+    """
+    resolve: Callable[[T], OperationType | str] = (
+        key if key is not None else cast("Callable[[T], OperationType | str]", lambda item: item)
+    )
+    return sorted(operations, key=lambda item: canonical_rank(resolve(item)))
 
 
 def validate_operation_order(operations: Sequence[OperationType | str]) -> list[str]:
@@ -29,7 +74,7 @@ def validate_operation_order(operations: Sequence[OperationType | str]) -> list[
         if index < last_index:
             warnings.append(
                 f"Operation {operation.value} should run after earlier maintenance steps; "
-                "recommended order is expire → orphan → convert_deletes → optimize → manifests."
+                f"{canonical_order_phrase()}."
             )
         last_index = max(last_index, index)
     return warnings

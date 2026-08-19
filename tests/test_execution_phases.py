@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from cryo.domain.enums import Mode
-from cryo.planner.guardrails import validate_operation_order
+from cryo.planner.guardrails import (
+    CORRECT_ORDER,
+    sort_operations_canonically,
+    validate_operation_order,
+)
 from cryo.planner.planner import build_plan
 from cryo.scanner.signals import detect_streaming_from_history, metadata_to_data_ratio
 from cryo.scheduler.cron import cron_is_due
@@ -40,8 +44,64 @@ def test_routing_large_table_to_spark() -> None:
 
 
 def test_guardrails_warn_on_out_of_order_ops() -> None:
-    warnings = validate_operation_order(["optimize", "expire_snapshots"])
-    assert warnings
+    # Cleanup now runs last, so optimize-before-expire is canonical...
+    assert validate_operation_order(["optimize", "expire_snapshots"]) == []
+    # ...and the reverse is what's out of order.
+    assert validate_operation_order(["expire_snapshots", "optimize"])
+
+
+def test_guardrails_accept_full_canonical_order() -> None:
+    assert validate_operation_order([op.value for op in CORRECT_ORDER]) == []
+
+
+def test_sort_operations_canonically_reorders_and_is_stable() -> None:
+    assert sort_operations_canonically(
+        ["remove_orphan_files", "optimize", "expire_snapshots", "convert_deletes"]
+    ) == ["convert_deletes", "optimize", "expire_snapshots", "remove_orphan_files"]
+
+    # Already canonical input is left alone.
+    canonical = [op.value for op in CORRECT_ORDER]
+    assert sort_operations_canonically(canonical) == canonical
+
+    # Equal-rank entries keep input order -- build_plan relies on this so the per-chunk
+    # OPTIMIZE operations retain their benefit-score ranking.
+    tagged = [("remove_orphan_files", "orphan")] + [("optimize", i) for i in range(5)]
+    assert [item[1] for item in sort_operations_canonically(tagged, key=lambda t: t[0])] == [
+        0,
+        1,
+        2,
+        3,
+        4,
+        "orphan",
+    ]
+
+
+def test_sort_operations_canonically_sinks_unknown_ops() -> None:
+    assert sort_operations_canonically(["mystery_op", "optimize", "expire_snapshots"]) == [
+        "optimize",
+        "expire_snapshots",
+        "mystery_op",
+    ]
+
+
+def test_build_plan_emits_canonical_order() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "s",
+            "table_name": "t",
+            "small_files_count": 5000,
+            "total_size_gb": 500,
+        },
+        [],
+        Mode.DEEP,
+        {"min_small_files": 10, "compute_statistics": True},
+    )
+    ranks = [CORRECT_ORDER.index(op.type) for op in plan.operations]
+    assert ranks == sorted(ranks)
+    assert [op.type.value for op in plan.operations][-2:] == [
+        "expire_snapshots",
+        "remove_orphan_files",
+    ]
 
 
 def test_manifest_only_mode() -> None:

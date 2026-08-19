@@ -165,6 +165,8 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
       not yet in CI unit suite.
 
 ## P7 — Reporting, alerting & hardening
+- [x] Shared S3 warehouse-path anomalies: `/anomalies` page, catalog-native harvest (Hive/Glue/REST),
+      10:00 IST Slack only when overlapping groups exist (`docs/shared-s3-anomalies.md`).
 - [~] `reporting/daily_report.py` + `reporting/slack.py` + `reporting/scheduler.py` — daily anomaly
       report with optional AI summary; full HTML email KPI report from `lld.md` not yet ported.
 - [~] Slack notifier scaffold; in-app drift/cost alerts (`reporting/alerts.py`) not yet complete.

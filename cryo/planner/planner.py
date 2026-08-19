@@ -8,6 +8,7 @@ from typing import Any
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
 from cryo.planner.chunking import greedy_pack
+from cryo.planner.guardrails import sort_operations_canonically
 from cryo.planner.partitions import (
     DEFAULT_RENDERABLE_CAPABILITIES,
     PartitionFieldSpec,
@@ -144,7 +145,7 @@ def build_plan(
             f"mode={resolved_mode.value}."
         )
 
-    # Puffin statistics: always last, after manifests, so new file stats are current.
+    # Puffin statistics: computed on the freshly-compacted files, before the cleanup steps.
     # Only runs when at least one OPTIMIZE was planned (stats would be stale otherwise).
     if (
         resolved_mode in {Mode.STANDARD, Mode.DEEP}
@@ -153,6 +154,11 @@ def build_plan(
     ):
         operations.append(Operation(OperationType.COMPUTE_STATISTICS, _stats_params(params)))
 
+    # The blocks above append in mode/gating order, not execution order. Sorting here makes
+    # guardrails.CORRECT_ORDER the single source of sequencing truth. The sort is stable, so
+    # the per-chunk OPTIMIZE operations keep the benefit-score order _optimize_operations gave
+    # them (they all share one rank).
+    operations = sort_operations_canonically(operations, key=lambda op: op.type)
     return MaintenancePlan(
         table_ref=_table_ref(stats, params),
         mode=resolved_mode,

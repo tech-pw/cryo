@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from cryo.sources.locations import CatalogTableLocation
+
 TableIdentifier = tuple[str, str]
 
 
@@ -36,3 +38,11 @@ class SourceCatalog(Protocol):
 
     def load_table(self, schema: str, table: str) -> Any:
         """Load and return a PyIceberg table object."""
+
+    def list_table_locations(self) -> list[CatalogTableLocation]:
+        """Return warehouse locations from catalog metadata (not Iceberg metadata.json).
+
+        Hive implementations MUST query HMS over Thrift (``ThriftHiveMetastore``)
+        for ``StorageDescriptor.location``. Glue MUST use ``GetTables``. REST
+        catalogs fall back to ``load_table().location()`` and record per-table errors.
+        """

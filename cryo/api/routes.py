@@ -155,7 +155,12 @@ from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
-from cryo.planner.guardrails import validate_guardrails, validate_operation_order, validate_params
+from cryo.planner.guardrails import (
+    sort_operations_canonically,
+    validate_guardrails,
+    validate_operation_order,
+    validate_params,
+)
 from cryo.planner.planner import build_plan
 from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
 from cryo.scanner.orphans import estimate_orphan_scan_cost
@@ -707,6 +712,8 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
     param_errors = validate_params(values.get("params") or {})
     if param_errors:
         raise HTTPException(status_code=400, detail={"params": param_errors})
+    if values.get("operations"):
+        values["operations"] = sort_operations_canonically(values["operations"])
     if values.get("is_default"):
         presets.clear_other_default_presets(
             session,
@@ -748,6 +755,8 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
         param_errors = validate_params(values.get("params") or {})
         if param_errors:
             raise HTTPException(status_code=400, detail={"params": param_errors})
+    if values.get("operations"):
+        values["operations"] = sort_operations_canonically(values["operations"])
     if values.get("is_default"):
         presets.clear_other_default_presets(
             session,
@@ -1681,10 +1690,11 @@ def create_maintenance_run(
                 requested_ops.append(op)
             elif isinstance(op, dict) and "type" in op:
                 requested_ops.append(str(op["type"]))
-    if requested_ops:
-        warnings = validate_operation_order(requested_ops)
-        if warnings:
-            raise HTTPException(status_code=400, detail={"warnings": warnings, "blocking": True})
+    # Presets are stored canonically (sorted on write, plus a backfill migration), but a
+    # hand-edited row must not brick the run: build_plan sorts by CORRECT_ORDER regardless,
+    # so the executed order is canonical either way. Normalizing here keeps what we hand the
+    # planner consistent with what actually runs, rather than rejecting the request.
+    requested_ops = sort_operations_canonically(requested_ops)
 
     if payload.scheduled_at is not None:
         now = datetime.now(UTC)
@@ -2531,7 +2541,7 @@ def _build_plan_for_table(
     if preset is None:
         return None
     raw_ops = preset.operations or []
-    parsed_ops: list[object] = []
+    parsed_ops: list[Operation] = []
     for op in raw_ops:
         if isinstance(op, str):
             from cryo.domain.enums import OperationType
@@ -2554,6 +2564,9 @@ def _build_plan_for_table(
                 continue
     if not parsed_ops:
         return None
+    # Match the order the worker will actually execute (build_plan sorts by CORRECT_ORDER),
+    # so the verifier's operation_ordering invariant sees the real sequence.
+    parsed_ops = sort_operations_canonically(parsed_ops, key=lambda op: op.type)
     table = session.get(Table, table_id)
     if table is None:
         return None
@@ -2569,7 +2582,7 @@ def _build_plan_for_table(
     return MaintenancePlan(
         table_ref=table_ref,
         mode=mode,
-        operations=tuple(parsed_ops),  # type: ignore[arg-type]
+        operations=tuple(parsed_ops),
         notes=("verifier-checked",),
     )
 

@@ -72,8 +72,10 @@ published SLO attainment, or an independently reproduced benchmark.
 - GB-budgeted chunks, max partitions per chunk, oversize-partition isolation,
   small-table bypass, small-file gating, cooldown, deadlines, and hot-partition
   checks.
-- Canonical operation ordering and engine-specific SQL renderers with golden
-  tests.
+- Canonical operation ordering (`CORRECT_ORDER`: convert_deletes →
+  rewrite_position_deletes → compact → compute_statistics → manifests → expire
+  → orphan) via `sort_operations_canonically()`, plus engine-specific SQL
+  renderers with golden tests.
 
 ### Scheduling, admission, and execution
 

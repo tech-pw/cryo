@@ -389,7 +389,13 @@ def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
 
     Returns None when the preset does not declare an operations list so callers can
     distinguish "not configured" from "configured as empty". Unknown values are dropped.
+
+    The result is sorted into the canonical maintenance order -- the worker iterates these
+    in sequence, so a preset row written before the ordering backfill (or hand-edited since)
+    must not dictate a stale execution order.
     """
+    from cryo.planner.guardrails import sort_operations_canonically
+
     if not isinstance(raw, (list, tuple)):
         return None
     operations: list[OperationType] = []
@@ -398,7 +404,7 @@ def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
             operations.append(OperationType(value))
         except ValueError:
             continue
-    return tuple(operations)
+    return tuple(sort_operations_canonically(operations))
 
 
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:

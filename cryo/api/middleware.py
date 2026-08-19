@@ -49,6 +49,8 @@ def _is_expensive_request(method: str, path: str) -> bool:
         return True
     if path.startswith("/api/v1/advanced/anomalies") and method == "GET":
         return True
+    if path == "/api/v1/anomalies/shared-s3/refresh" and method == "POST":
+        return True
     if path == "/api/v1/routing/preview" and method == "POST":
         return True
     return False
