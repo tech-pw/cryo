@@ -286,12 +286,15 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-14 from gitlab-main commit a41b9a1 -- adds the Dark Tables
-    # (/dark-tables) and Scan Cost (/scan-cost) pages, frontend for the two same-day
-    # backend features (GET /api/v1/dark-tables + dismiss, GET /api/v1/cost-attribution).
-    # Still a manual build+push -- deploy/deploy.sh does not build this image, only the
-    # backend's.
-    digest: "sha256:194d0f801a853f3685004ff4adc4da1e671b31a90b380765081dd674dc6ea41c"
+    # Built + pushed 2026-08-19 from gitlab-main commit a084f75 -- the web image had gone
+    # stale since 2026-08-14 (3c213c3 above): every deploy since then only pinned the
+    # backend digest, so the Anomalies page (web/src/pages/Anomalies.tsx, gitlab-main
+    # a8915bd/8287fe4, shared-S3 warehouse-path detection) was merged but never actually
+    # shipped to prod -- confirmed live (page loaded blank/missing) before this rebuild.
+    # This pin catches the web bundle up to everything merged since 08-14, not just
+    # Anomalies. Still a manual build+push -- deploy/deploy.sh does not build this image,
+    # only the backend's.
+    digest: "sha256:888bbcdb1343c76bf294a86558444204a796819653b23c549d1bad70d169a324"
   # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
   # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
   # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
