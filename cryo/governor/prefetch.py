@@ -98,15 +98,40 @@ def prefetch_approved_operation_keys(
     session: Session,
     table_ids: set[uuid.UUID],
 ) -> dict[tuple[uuid.UUID, str], list[dict[str, Any]]]:
-    """Approved-but-not-yet-executed operations per table."""
+    """Approved operations per table, still valid for admission.
+
+    BUGFIX 2026-08-19: the two filters this query used to apply --
+    ``executed_at.is_(None)`` and ``expires_at.is_not(None) AND expires_at > now()`` --
+    together made every approved row in prod permanently unmatchable. Verified live: of
+    10,460 ``status='approved'`` rows, 0 satisfied both conditions -- every single one had
+    ``expires_at IS NULL`` (the model's own ``create_approval_request`` always sets a real
+    expiry via ``auto_expire_hours``, so a NULL here is a deliberately-created standing grant,
+    not an oversight; the previous query's ``is_not(None)`` treated SQL NULL's natural "no
+    constraint" meaning as "always excluded" instead), and 8,547 already had a non-NULL
+    ``executed_at`` from a prior run. That second part was also wrong on its own terms:
+    ``expire_snapshots``/``remove_orphan_files`` are operations meant to run repeatedly
+    forever, not once -- gating re-use on "never yet executed" turns every approval into a
+    silent single-use grant the moment the governor's own JobWatcher marks it executed,
+    which is exactly the class of table this query exists to keep unblocked. Net effect: the
+    entire fleet-wide approval-gated maintenance path (the default `requires_approval` set
+    for these two operations) had been non-functional since the safety-kernel commit that
+    introduced it (eee1788, 2026-08-05) -- confirmed live via a stuck cron run whose 2,173
+    queued jobs were deferring 100% of the time with reason "destructive operation requires
+    approval" despite a real, permanent, already-successfully-used approval existing for the
+    table in question.
+
+    Correct semantics: a row counts as still-approved when its ``expires_at`` is either NULL
+    (no expiry constraint -- a standing grant) or in the future, regardless of whether it has
+    already been executed before -- the same approval authorizes every future run of that
+    operation on that table until it expires or is revoked, not just the first.
+    """
     if not table_ids:
         return {}
+    now = datetime.now(UTC)
     stmt = select(ApprovalRequestModel).where(
         ApprovalRequestModel.table_id.in_(table_ids),
         ApprovalRequestModel.status == ApprovalStatus.APPROVED,
-        ApprovalRequestModel.executed_at.is_(None),
-        ApprovalRequestModel.expires_at.is_not(None),
-        ApprovalRequestModel.expires_at > datetime.now(UTC),
+        (ApprovalRequestModel.expires_at.is_(None)) | (ApprovalRequestModel.expires_at > now),
     )
     result: dict[tuple[uuid.UUID, str], list[dict[str, Any]]] = {}
     for row in session.scalars(stmt):
