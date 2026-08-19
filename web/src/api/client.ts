@@ -1763,6 +1763,32 @@ export const getTableS3Tiering = (api: ApiOptions, tableId: UUID, lookbackDays =
     api
   );
 
+// docs/PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md -- inspired by Yelp's engineering blog
+// post on partition access visualizations (S3 access logs -> partition-vs-time scatter plot).
+export interface PartitionAccessPoint {
+  day: string;
+  partition_path: string;
+  request_count: number;
+}
+
+export interface PartitionAccessSummary {
+  partition_path: string;
+  total_requests: number;
+  first_seen: string;
+  last_seen: string;
+  days_since_last_access: number;
+}
+
+export interface PartitionAccessResponse {
+  table_id: UUID;
+  since: string;
+  points: PartitionAccessPoint[];
+  partitions: PartitionAccessSummary[];
+}
+
+export const getTablePartitionAccess = (api: ApiOptions, tableId: UUID, days = 90) =>
+  dashboardFetch<PartitionAccessResponse>(`/tables/${tableId}/partition-access?days=${days}`, api);
+
 export interface TierCandidateRead {
   table_ref: string;
   partition_value: string | null;

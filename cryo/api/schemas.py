@@ -1610,3 +1610,28 @@ class CostAttributionResponse(BaseModel):
     by_client: list[CostAttributionByClient]
     total_query_count: int = 0
     total_physical_gb_scanned: float = 0
+
+
+class PartitionAccessPoint(BaseModel):
+    """One (day, partition) cell for the scatter chart -- docs/
+    PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md. ``partition_path`` is the raw Hive-style
+    fragment (e.g. "dt=2026-08-19/"), "" for an unpartitioned table's data files."""
+
+    day: date
+    partition_path: str
+    request_count: int
+
+
+class PartitionAccessSummary(BaseModel):
+    partition_path: str
+    total_requests: int
+    first_seen: date
+    last_seen: date
+    days_since_last_access: int
+
+
+class PartitionAccessResponse(BaseModel):
+    table_id: uuid.UUID
+    since: date
+    points: list[PartitionAccessPoint]
+    partitions: list[PartitionAccessSummary]
