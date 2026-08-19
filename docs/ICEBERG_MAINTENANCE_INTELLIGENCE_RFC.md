@@ -1,9 +1,48 @@
 # Iceberg Maintenance Intelligence — Four New Cryo Capabilities
 
-**Status:** Proposed, not yet built
+**Status:** Proposed, not yet built — **but see the validation notice below before starting
+work.**
 **Owner:** Aamir
 **Last updated:** 2026-08-19
 **Scope:** Full-stack (backend scanner/analyzer changes, new API surface, UI in Table Detail / Catalogs / Health)
+
+> ## ⚠️ Validation notice (2026-08-19, before handoff to another AI/engineer)
+>
+> This RFC was checked against the live codebase after the first draft was written. Most
+> citations held up (the small-file-ratio threshold, `TIER1_APPLYABLE_KEYS`, the AutoComp
+> lineage, `getAutoCompCandidates`). **Two findings materially change the scope and priority
+> of this RFC and must be read before starting any of the four features:**
+>
+> 1. **Feature 1 (Partition-Fit Detector) is already ~80% built.**
+>    `cryo/optimizer/partition_analyzer.py::analyze_partition_evolution` already does almost
+>    exactly what §3 proposes: it reads `QueryPattern` (a real, populated table —
+>    `cryo/telemetry/patterns.py` ingests it from `QueryLog`, and it's already consumed by
+>    `layout_analyzer.py`, `pto/recommend.py`, `pto/drift.py`, `anomaly_brief.py`, and the
+>    scheduler), finds the dominant filter column, checks whether it's in the current
+>    partition spec, and — if not, and if that column looks high-cardinality by name —
+>    recommends `bucket(N)` sized via `_bucket_count_for(total_size_gb)` (target ~0.5GB per
+>    bucket, matching this RFC's own 100MB–1GB target almost exactly). This is already wired
+>    to a real endpoint (`getPartitionEvolutionRecommendation`) and a real UI panel
+>    (`OverviewTab.tsx`). **This also substantially covers Feature 4's bucket-sizing logic**
+>    (`_bucket_count_for` is effectively Feature 4's step 3 formula already).
+>    See the inline correction in §6/§7 for what's genuinely still missing (scan-ratio-based
+>    triggering per Algoscale's >10% rule, `$partitions`-table-exact bucket-size validation
+>    instead of the current name-based cardinality heuristic, and re-checking an *existing*
+>    bucket count against *current* volume rather than only recommending a spec change on
+>    first detection).
+> 2. **Feature 3 (Day-0 property check) needs no new "zero-stats" code.**
+>    `compute_property_recommendations` in `cryo/scanner/property_recommendations.py` already
+>    handles `TableStats` being `None` end-to-end and already flags a missing
+>    `write.target-file-size-bytes` from DDL-derived properties alone. The real gap is
+>    scheduling (nothing calls this proactively for a brand-new table today), not the check
+>    itself. See the inline correction in §5.
+>
+> **Recommended next step before building anything:** re-read `partition_analyzer.py` and
+> `analyze_partition_evolution` in full, and re-scope §3/§6 (and the build-order in §7) around
+> "extend the existing partition-evolution recommender" rather than "build a new Partition-Fit
+> Detector from scratch." The evidence in §1 (PDAE-8357, the small-file case study) and the
+> external research in §2 are still valid and worth keeping — only the "what already exists in
+> Cryo vs. what's net-new" framing in §3/§5/§6 needed correcting.
 
 ---
 
@@ -13,14 +52,14 @@ This RFC proposes four new Cryo capabilities, each grounded in (a) published res
 
 The four capabilities:
 
-| # | Capability | Closes the gap that... |
-|---|---|---|
-| 1 | **Partition-Fit Detector** | ...meant PDAE-8357 took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag |
-| 2 | **Fast-Path Health Check for New Tables** | ...let a brand-new table fragment into 129K files before any scan ever looked at it |
-| 3 | **Day-0 `write.target-file-size-bytes` Check** | ...meant that same table's writer never had a target file size to aim for in the first place |
-| 4 | **Bucket/Partition Cardinality Sizing Validator** | ...meant an educated-guess bucket count (`bucket(id, 64)`) went unverified against real row-volume growth |
+| # | Capability | Closes the gap that... | Build status (validated 2026-08-19) |
+|---|---|---|---|
+| 1 | **Partition-Fit Detector** | ...meant PDAE-8357 took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag | **~80% exists** — see `partition_analyzer.py::analyze_partition_evolution`; §3 re-scoped to an extension |
+| 2 | **Fast-Path Health Check for New Tables** | ...let a brand-new table fragment into 129K files before any scan ever looked at it | Net-new — genuine gap, unaffected by validation |
+| 3 | **Day-0 `write.target-file-size-bytes` Check** | ...meant that same table's writer never had a target file size to aim for in the first place | **Check already exists** — `compute_property_recommendations` already handles zero-stats tables; only the *scheduling* is missing, see §5 |
+| 4 | **Bucket/Partition Cardinality Sizing Validator** | ...meant an educated-guess bucket count (`bucket(id, 64)`) went unverified against real row-volume growth | Net-new (re-validating an *existing* bucket count), but reuses `_bucket_count_for` from Feature 1's module — see §6 |
 
-None of these replace existing Cryo capabilities (compaction, `expire_snapshots`, `remove_orphan_files`, manifest rewriting, the existing AutoComp-derived benefit-score ranking — see §2 for the current baseline). They extend Cryo from "detect and fix file-layout problems on tables I've already scanned" to "detect partition-*strategy* mismatches and catch fragmentation before it accumulates."
+None of these replace existing Cryo capabilities (compaction, `expire_snapshots`, `remove_orphan_files`, manifest rewriting, the existing AutoComp-derived benefit-score ranking — see §2 for the current baseline). They extend Cryo from "detect and fix file-layout problems on tables I've already scanned" to "detect partition-*strategy* mismatches and catch fragmentation before it accumulates." **See the validation notice above the title for what changed after this RFC was checked against the live codebase — two of the four features are substantially smaller builds than originally scoped.**
 
 ---
 
@@ -131,49 +170,65 @@ Confirmed present in Cryo as of this session (do not duplicate):
 
 - Core maintenance operations: `optimize` (compaction), `expire_snapshots`, `remove_orphan_files`, `optimize_manifests` — `cryo/engines/*`.
 - AutoComp-derived compaction-candidate ranking (`cryo/scanner/property_recommendations.py` neighbors, `getAutoCompCandidates`, benefit-score/MOOP-score fields) — Cost & Savings tab and Health & Quality tab's Compaction zone.
-- Small-file-ratio threshold trigger signals (`file_degradation` / "Small file ratio 86.4% ≥ threshold 40%" — `cryo/scanner/signals.py`-adjacent logic).
-- Iceberg property recommendations panel (Tier 1/2/3 model — `cryo/scanner/property_recommendations.py`, `cryo/api/routes_property_recommendations.py`), covering `write.target-file-size-bytes`, `write.distribution-mode`, sort-order, bloom filters — **explicitly scoped to exclude partition-*spec* changes** (a deliberate boundary, noted in the panel's own design rationale: partition-spec changes only affect future writes and require careful, non-blind handling).
+- Small-file-ratio threshold trigger signals — confirmed exact match: `cryo/triggers/signals.py`, `threshold_ratio: float = 0.40` (40% small files triggers regardless of schedule). Path corrected 2026-08-19 — the original draft cited `cryo/scanner/signals.py`, which is not where this lives.
+- Iceberg property recommendations panel (Tier 1/2/3 model — `cryo/scanner/property_recommendations.py`, `cryo/api/routes_property_recommendations.py`), covering `write.target-file-size-bytes`, `write.distribution-mode`, sort-order, bloom filters — **excludes partition-*spec* changes** (that's a separate module, see below, not because Cryo doesn't have one).
+- **Correction (added on validation pass, 2026-08-19): a partition-evolution recommender already exists and was missed in the original baseline survey.** `cryo/optimizer/partition_analyzer.py::analyze_partition_evolution` reads `QueryPattern` (populated by `cryo/telemetry/patterns.py` from `QueryLog`), finds the dominant filter column, checks it against the current partition spec, and recommends a specific transform (`bucket(N)` via `_bucket_count_for`, or `identity`, or a finer time granularity via `_finer_transforms`) when it's missing — already exposed via `GET` (see `getPartitionEvolutionRecommendation` in the frontend) and already rendered in `OverviewTab.tsx`. This is functionally most of Feature 1 and a meaningful chunk of Feature 4 (see the validation notice at the top of this document) — read this module before designing either feature's backend.
 - Health scoring / grade system, scheduled scans, preset-driven maintenance runs — Cryo's primary detection cadence today is **scan-triggered**, not event/write-triggered.
 
 ---
 
 ## 3. Feature 1 — Partition-Fit Detector
 
+> **Re-scoped 2026-08-19 after validation — read this before the rest of the section.**
+> The original draft below described this as a green-field build (`cryo/scanner/
+> partition_fit.py`, a new `partition_fit_recommendations` table, a new endpoint). **That's
+> not the right frame.** `cryo/optimizer/partition_analyzer.py::analyze_partition_evolution`
+> already implements the core of this: it reads `QueryPattern` (populated, not a stub — see
+> the §2.3 correction), finds the dominant filter column via `filter_column_counts`, checks
+> `is_partitioned_by_filter_col`, and at `filter_pct >= 80` recommends a specific transform
+> (`bucket(N)` sized by `_bucket_count_for`, or `identity`, or a finer transform via
+> `_finer_transforms`). It's already exposed (`GET .../partition-evolution` via
+> `getPartitionEvolutionRecommendation`) and already rendered in `OverviewTab.tsx`.
+> **Both of the original "Risks / open questions" below are now answered**: Cryo does retain
+> per-query predicate-column data (`QueryPattern.filter_count`/`equality_filter_count`, plus
+> `avg_selectivity` as a scan-ratio proxy — see `cryo/telemetry/patterns.py`), so the
+> "may not currently retain this" risk doesn't apply. The rest of this section is kept as
+> useful design material (Algoscale's specific >10% scan-ratio rule, the `EXPLAIN`-derived
+> column-constraint list, the false-positive risk) but should be read as **"what to add to
+> `analyze_partition_evolution`,"** not "what to build from scratch."
+
 ### Problem
 
-A table's partition spec can be structurally wrong for its actual query workload — as PDAE-8357 was — and nothing in Cryo's current scope catches this. The property-recommendations panel is explicitly out of scope for partition-spec changes (§2.3). Diagnosing this today requires a human reading `EXPLAIN (TYPE IO)` plans and cross-referencing the table's `CREATE TABLE` DDL by hand, exactly as was done for PDAE-8357 (§1.1).
+A table's partition spec can be structurally wrong for its actual query workload — as PDAE-8357 was. Cryo's existing `analyze_partition_evolution` catches this class of problem already for the "dominant filter column, >=80% of queries" case, but has gaps worth closing: it triggers on filter-column *frequency* alone, not on Algoscale's more precise *scan-ratio* signal (§2.1's `avg(bytes_scanned_per_query) / total_table_size_bytes > 10%` rule), and its cardinality check is a **column-name heuristic** (`cardinality_hint`, matching keywords like "id"/"date") rather than a real distinct-value count — both are real gaps, but they're refinements to an existing detector, not evidence one needs to be built.
 
 ### Design
 
-**Signal:** for each table, compute `avg(bytes_scanned_per_query) / total_table_size_bytes` from query-log telemetry, per Algoscale's stated rule of thumb (§2.1) — flag when this ratio is high (proposed starting threshold: >10%, per the source article; tunable) **and** the query log shows queries consistently filtering/joining on a column that is *not* the table's partition column.
+**What to add to the existing detector, not a new one:**
 
-**Data requirement:** a query log with per-query table references, filter/join columns, and bytes-scanned — the equivalent of `cdp.trino_logs.trino_queries` (columns confirmed present this session: `query_state`, `cpu_time_millis`, `physical_input_bytes`, `wall_time_millis`, `query_date`) or Cryo's own query-performance telemetry if it already ingests something equivalent (Cryo has a Query Performance page — verify its underlying data source covers filter-column extraction, not just aggregate timing, before assuming this is a green-field build).
+1. **Scan-ratio signal, alongside the existing filter-frequency signal.** `QueryPattern.avg_selectivity` (rows matched / table's total rows, already computed per column — see `cryo/telemetry/patterns.py`'s `ColumnPatternStats` docstring) is a usable proxy for Algoscale's bytes-scanned ratio without needing new ingestion. Add a check: flag even below the current 80%-of-queries threshold if `avg_selectivity` for the dominant filter column is poor (i.e., pruning isn't actually working) — this catches PDAE-8357-shaped cases where a *minority* of expensive queries dominate cost even if they're not the majority of query *count*.
+2. **Real cardinality instead of the name heuristic.** `cardinality_hint()` currently guesses "high"/"low" from column-name keywords (`_LOW_CARDINALITY_HINTS`/`_HIGH_CARDINALITY_HINTS`). The module's own docstring already flags this as a known gap ("no real NDV stats are available yet — Puffin NDV reading is still a stub"). If/when Puffin NDV stats land, wire them in here first — this directly improves both Feature 1 and Feature 4's bucket-sizing accuracy.
+3. **Confidence/frequency numbers surfaced in the UI**, not just a verdict — this part of the original design is still correct and worth keeping regardless of where the detection logic lives.
 
-**Algorithm (proposed):**
+**Algorithm additions (on top of what `analyze_partition_evolution` already does):**
 
-1. For each table with query-log coverage, parse `WHERE`/`JOIN ON` predicates from logged queries (or use the query engine's own `EXPLAIN`-derived column-constraint list, which Trino already exposes per query, per `trino_analyze_query_performance`'s output structure observed this session — `inputTableColumnInfos[].constraint.columnConstraints[].columnName`).
-2. Rank predicate columns by frequency across the table's query log.
-3. Compare the top predicate column(s) against the table's actual partition-spec columns (available from `SHOW CREATE TABLE` / Iceberg metadata, already scanned by Cryo).
-4. If the top predicate column is absent from the partition spec **and** the measured scan-ratio exceeds the threshold, emit a recommendation.
-5. **Recommend a specific transform**, not just "your partitioning is wrong": if the predicate column is high-cardinality (distinct-value count, derivable from existing scanned stats) → recommend `bucket(col, N)`; if low-cardinality (<50 distinct values, per Starburst's guide) → recommend identity partition; if it's a timestamp already covered by a coarser existing transform but queries filter at finer grain → recommend a finer transform.
+- Compute `avg(bytes_scanned_per_query) / total_table_size_bytes` where derivable (from `QueryLog`/telemetry, if it already tracks per-query bytes scanned — verify against `cryo/telemetry/parser.py` and `iceberg_source.py` before assuming a gap) and use it as a *second* trigger path alongside the existing `filter_pct >= 80` one.
+- Where Trino's own `EXPLAIN`-derived column-constraint list is available per query (`inputTableColumnInfos[].constraint.columnConstraints[].columnName`, confirmed present via `trino_analyze_query_performance`'s output this session), cross-check it against `QueryPattern`'s parsed predicates as a second, independent source — useful for validating `QueryPattern`'s own parse accuracy, not just for net-new detection.
 
 ### Backend implementation
 
-- New module, e.g. `cryo/scanner/partition_fit.py`, mirroring the shape of `cryo/scanner/property_recommendations.py`.
-- Requires a query-log ingestion path if Cryo doesn't already have one with per-query column-level detail (check Query Performance page's data model first — do not build a second one if `cryo/ai/` or similar already ingests this for the existing QPP/query-pattern features).
-- New DB table or extension of existing recommendation storage: `partition_fit_recommendations` (table_id, predicate_column, current_partition_spec, recommended_transform, scan_ratio_pct, confidence, computed_at).
-- New endpoint: `GET /tables/{id}/partition-fit` (read) — mirrors `GET /tables/{id}/property-recommendations`'s existing shape.
+- **Extend `cryo/optimizer/partition_analyzer.py`, do not create a parallel module.** Add the scan-ratio trigger path to `analyze_partition_evolution` (or a sibling function it calls), reusing its existing `PartitionEvolutionRecommendation` return shape so the existing endpoint/UI don't need a second integration.
+- If per-query bytes-scanned isn't already retained at the needed granularity, that's the one real remaining data-gap to validate — check before committing to the scan-ratio path specifically (the filter-frequency path needs no new data at all).
 
 ### UI/UX
 
-- **New zone in Table Detail → Health & Quality tab**, alongside the existing Property Recommendations panel (which already explicitly excludes this case — this is the natural sibling panel). One row per finding: predicate column, current spec, recommended transform, one-line reason grounded in real numbers (e.g. *"queries filter on `prospectactivityautoid` in 94% of scans against this table; it's not in the partition spec (`ingest_date` only); avg scan ratio 87% of table size per query"*).
-- **No one-click apply** — per Iceberg's own semantics (`DBT_ICEBERG_BEST_PRACTICES.md` §9: *"partition changes on large tables require full-refresh; existing data stays in the old partition layout for a spec-only change"*), this is a Tier-3-equivalent, human-reviewed recommendation only, consistent with the existing property-recommendations panel's own tiering model (§2.3). Action button: "Learn more" + a generated migration snippet (new table DDL / dbt model config), not an apply button.
-- **Catalogs page**: optional new filter/column — "partition mismatch" flag — so this is discoverable fleet-wide, not just per-table.
+- **Extend the existing `OverviewTab.tsx` partition-evolution panel** — add the scan-ratio number and real-vs-heuristic cardinality confidence to the existing recommendation card, rather than building a second panel that would compete with it for the same real estate and confuse operators about which one is authoritative.
+- **No one-click apply** — this was already correct in the original draft and still holds: per Iceberg's own semantics (`DBT_ICEBERG_BEST_PRACTICES.md` §9), partition-spec changes need a human-reviewed migration path, not a blind apply button. Check whether `analyze_partition_evolution`'s existing UI already enforces this (likely does, given the property-recommendations panel's precedent) before adding new guardrails.
+- **Catalogs page**: optional new filter/column — "partition mismatch" flag — still a reasonable addition, unaffected by the re-scoping above.
 
 ### Risks / open questions
 
-- False positives on tables with genuinely mixed query patterns (some queries filter by date, others by ID) — the recommendation must show its confidence/frequency numbers plainly so an operator can judge, not present a bare verdict.
-- Requires query-log data Cryo may not currently retain at the granularity needed (per-query predicate columns, not just aggregate bytes) — this is a real, non-trivial prerequisite to validate before committing to a build estimate.
+- ~~False positives on tables with genuinely mixed query patterns~~ — still a real design concern, but the existing `filter_pct >= 80` threshold already partially addresses it; tune rather than redesign.
+- ~~Requires query-log data Cryo may not currently retain~~ — **resolved**: `QueryPattern` already retains per-column filter frequency and a selectivity proxy. The only still-open data question is whether per-query *bytes scanned* (not just selectivity) is retained anywhere at query-log grain — needed only for the Algoscale-style scan-ratio trigger, not for the filter-frequency path that already works today.
 
 ---
 
@@ -218,7 +273,9 @@ A lightweight, cheap-to-run detection path, decoupled from Cryo's full statistic
 
 ### Problem
 
-§1.2's table never had `write.target-file-size-bytes` set at creation. Cryo's existing property-recommendations panel already flags this property — but only *after* a table has been scanned and has stats. By the time that happens, the fragmentation has already occurred and the cost has already been paid. Per LakeOps' framing (§2.1): *"prevention includes configuring `write.target-file-size-bytes` at the source"* — prevention, not just after-the-fact detection.
+§1.2's table never had `write.target-file-size-bytes` set at creation. Per LakeOps' framing (§2.1): *"prevention includes configuring `write.target-file-size-bytes` at the source"* — prevention, not just after-the-fact detection.
+
+**Correction (validated 2026-08-19, before handoff):** the paragraph originally here claimed the existing property-recommendations panel only flags this property "*after* a table has been scanned and has stats," and that Feature 3's backend work would need to build "a zero-stats-required code path." **That's not accurate — verify against the code before re-adding this framing.** `compute_property_recommendations` in `cryo/scanner/property_recommendations.py` (line ~135) already does `stats = session.get(TableStats, table_id)`, which is `None` for an unscanned table, and every downstream helper (`_props_from_stats`, `_stats_dict`) already has an explicit `if stats is not None` / `if stats is None` branch that falls back cleanly (`_props_from_stats` returns `{}`, `_stats_dict` returns `dict(raw)`). `write.target-file-size-bytes` presence is read from `props`, which itself comes from `raw.get("iceberg_properties")` — i.e., DDL-derived table properties, not scan stats. **Ran this reasoning against the real function; the "Day-0, zero-stats" check this feature wants already exists and already works with zero scan history.** This materially shrinks Feature 3's scope: there is likely no new "zero-stats code path" to build at all. What's still missing (and is the actual gap) is the *scheduling* side — nothing currently runs `compute_property_recommendations` proactively for a just-discovered, never-scanned table; today it only gets computed when something else (a scan, a UI page load) calls it. Feature 3 should be re-scoped as "call the existing check earlier/more eagerly," not "build a new stats-free check."
 
 ### Design
 
@@ -230,8 +287,9 @@ This check needs **no scan, no statistics, and no query history** — only the t
 
 ### Backend implementation
 
-- Small, standalone check — extend the existing property-recommendations scanner (§2.3, `cryo/scanner/property_recommendations.py`) with a **zero-stats-required code path**, since that module currently gates on `TableStats` existing (`stats = session.get(TableStats, table_id); ...` per this session's earlier reading of that file) — this check must work even when `stats` is `None`.
-- Natural integration point: run this specific check as part of Feature 2's fast-path sweep (§4), since both are meant to run before/independent of a full scan — no need for a third separate scheduling mechanism.
+- **Revised per the correction above:** `cryo/scanner/property_recommendations.py::compute_property_recommendations` already tolerates `stats is None` end-to-end and already flags a missing `write.target-file-size-bytes` from DDL-derived properties alone — there is no zero-stats code path left to build. Confirm this holds (write a quick test calling `compute_property_recommendations` against a `Table` row with no `TableStats` row at all) before writing any new scanner code, since this could shrink Feature 3 to a scheduling-only change.
+- The actual remaining gap is **when** this gets computed for a brand-new table. Today it's presumably called on-demand (Table Detail page load) or as part of the standard scan cycle — check `cryo/api/routes_property_recommendations.py` and any scheduler call sites to confirm there's no proactive trigger yet for a just-discovered table.
+- Natural integration point: run the existing check as part of Feature 2's fast-path sweep (§4), since both are meant to run before/independent of a full scan — no need for a third separate scheduling mechanism.
 
 ### UI/UX
 
@@ -247,6 +305,19 @@ This check needs **no scan, no statistics, and no query history** — only the t
 ---
 
 ## 6. Feature 4 — Bucket/Partition Cardinality Sizing Validator
+
+> **Note (2026-08-19, after validation): this feature is genuinely still a gap, unlike
+> Feature 1/3 above — but reuse `_bucket_count_for` rather than reinventing it.**
+> `cryo/optimizer/partition_analyzer.py::_bucket_count_for(total_size_gb)` already computes
+> "how many buckets should this table have, given its current size" (targeting
+> `_TARGET_HEALTHY_PARTITION_GB = 0.5`) — but only as part of *recommending a new partition
+> spec for an unpartitioned/mis-partitioned column*, never as a **re-check of an
+> already-`bucket()`-partitioned table's existing `N` against its current volume**, which is
+> §1.2's actual failure mode (the table already had `bucket(64)`; nothing re-validated it as
+> the table grew). That re-check is the real, still-open gap this feature should close. Reuse
+> `_bucket_count_for` for the "what should N be" calculation (don't write a second formula);
+> the net-new work is (a) detecting tables that already use `bucket(col, N)` and (b) running
+> the comparison periodically instead of only at spec-recommendation time.
 
 ### Problem
 
@@ -280,12 +351,14 @@ For any table using a `bucket(col, N)` partition transform (detectable from `SHO
 
 ## 7. Cross-cutting implementation plan
 
-**Suggested build order**, weighing cost/complexity against value (not a hard commitment, a reasoned starting point):
+**Suggested build order (revised 2026-08-19 after validation):**
 
-1. **Feature 3** (Day-0 property check) — cheapest, no new data dependencies, extends an existing panel, immediate value.
-2. **Feature 2** (fast-path health check) — needs a scoping pass on trigger mechanism (write-event hook vs. cheap sweep) but doesn't need new external data sources; naturally bundles Feature 3's check as one of its outputs.
-3. **Feature 4** (bucket sizing validator) — needs real scanned data to be useful, so sequence after a table has at least one real scan; shares infrastructure with Feature 1.
-4. **Feature 1** (partition-fit detector) — the highest-value, most novel capability, but has the largest open dependency: confirm what query-log/predicate-column data Cryo already retains before committing to a timeline. Scope this first as a data-availability spike, separate from the feature build itself.
+1. **Feature 3** (Day-0 property check) — still first, and now even cheaper than originally scoped: the check itself already exists (§5's correction) and needs zero new backend code, only a scheduling change (call `compute_property_recommendations` proactively on table discovery instead of waiting for a scan/page-load).
+2. **Feature 1** (partition-fit detector) — **moved up**, since it's now known to be ~80% built (`analyze_partition_evolution`, §3's correction) rather than the highest-open-dependency item it was originally ranked as. Remaining work is genuinely small: add the scan-ratio trigger path alongside the existing filter-frequency one, and confirm whether per-query bytes-scanned data exists for that specific addition.
+3. **Feature 4** (bucket sizing re-validator) — do this alongside/right after Feature 1, since it reuses `_bucket_count_for` from the same module (§6's note) — genuinely still net-new work (re-checking an *existing* bucket count periodically, not just at first recommendation), but small once Feature 1's extension work has already touched `partition_analyzer.py`.
+4. **Feature 2** (fast-path health check) — unaffected by the validation pass, still needs the trigger-mechanism scoping pass (write-event hook vs. cheap sweep) called out in the original draft. Moved last since it's the one feature that's genuinely a from-scratch build with an open design question, not a scope reduction on existing code.
+
+**What this reordering means in practice:** three of the four features (1, 3, and part of 4) turned out to be extensions of existing, working code rather than green-field builds. Re-scope the overall estimate accordingly before committing to a timeline — this is very likely a smaller project than the original draft's four-independent-features framing suggested.
 
 **Shared infrastructure to build once, not four times:**
 - A single "Partition health" panel/zone in Table Detail → Health & Quality, hosting Features 1 and 4's findings together.
