@@ -27,7 +27,7 @@ from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.native.optimize_properties import maybe_persist_optimize_properties
 from cryo.engines.native.runner import PROGRESS_PREFIX, split_stdout_lines
 from cryo.queue.locks import LockStore
-from cryo.queue.run_events import DEFAULT_REPLAY_COUNT, build_log_line, safe_publish
+from cryo.queue.run_events import MAX_STREAM_LEN, build_log_line, safe_publish
 from cryo.worker.worker import AuditRecord
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,23 @@ class NativeJobWatcher:
                     # finished first. _publish_incremental_progress already streamed each
                     # member's real per-table outcome to run_events every ~30s while the pod
                     # was alive -- consult that before blanket-failing the whole batch.
-                    salvage = self._salvage_from_run_events(dispatch.run_id)
+                    #
+                    # BUGFIX 2026-08-19: run_events is keyed per-*run*, not per-dispatch, and a
+                    # single governor wave routinely fans a run out into a dozen-plus concurrent
+                    # native dispatches sharing that one stream. The old
+                    # replay(count=DEFAULT_REPLAY_COUNT=200) pulled the run's 200 most-recent
+                    # events regardless of source dispatch -- with several dispatches logging
+                    # concurrently, this dispatch's own history routinely got crowded out by
+                    # sibling dispatches' events by the time it failed. Verified live: a 32-table
+                    # dispatch's salvage lookup returned only 1/32 of its own job_ids present in
+                    # the replay window, out of 86 total salvageable job_ids belonging almost
+                    # entirely to OTHER dispatches on the same run. Every one of the 1,769
+                    # native_job_failed dispatches since the deadline fix landed salvaged zero
+                    # jobs as a result. Fix: scope the lookup to this dispatch's own job_ids and
+                    # read the full stream (bounded by MAX_STREAM_LEN, not an arbitrary replay
+                    # count) so cross-dispatch interleaving can no longer starve it out.
+                    own_job_ids = {str(job.id) for job in jobs_for_dispatch(session, dispatch.id)}
+                    salvage = self._salvage_from_run_events(dispatch.run_id, own_job_ids)
                     self._finalize_failure(session, dispatch.id, reason, salvage=salvage)
                     _delete_payload_secret(core_api, dispatch.k8s_job_name, namespace)
                     finalized += 1
@@ -300,7 +316,9 @@ class NativeJobWatcher:
         mark_dispatch_finished(session, dispatch_id, status="failed", error=reason)
         _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
 
-    def _salvage_from_run_events(self, run_id: Any) -> dict[str, bool]:
+    def _salvage_from_run_events(
+        self, run_id: Any, own_job_ids: set[str]
+    ) -> dict[str, bool]:
         """Reconstruct per-job success from already-streamed run_events log_line events.
 
         _publish_incremental_progress relays each CRYO_TABLE_RESULT line to run_events while
@@ -309,11 +327,18 @@ class NativeJobWatcher:
         behavior), this replayed history is the only surviving record of which batch members
         actually finished. Best-effort: any error here must never block finalization, so an
         empty result (treat everything as genuinely unknown/failed) is always a safe fallback.
+
+        ``run_events`` is keyed per-*run*, not per-dispatch -- a run routinely fans out into
+        many concurrent native dispatches sharing one stream. ``own_job_ids`` scopes salvage
+        to only this dispatch's members; reading up to ``MAX_STREAM_LEN`` (the stream's own
+        cap) rather than a small fixed replay count means sibling dispatches interleaving
+        their own events into the same stream can no longer crowd this dispatch's history out
+        of the window before it gets read.
         """
-        if self._run_events is None:
+        if self._run_events is None or not own_job_ids:
             return {}
         try:
-            events = self._run_events.replay(run_id, count=DEFAULT_REPLAY_COUNT)
+            events = self._run_events.replay(run_id, count=MAX_STREAM_LEN)
         except Exception:
             logger.debug("run_events salvage lookup failed for run_id=%s", run_id, exc_info=True)
             return {}
@@ -327,6 +352,8 @@ class NativeJobWatcher:
             if not job_id:
                 continue
             job_id = str(job_id)
+            if job_id not in own_job_ids:
+                continue
             if event.get("level") == "error":
                 failed_job_ids.add(job_id)
             else:
