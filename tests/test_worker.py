@@ -24,12 +24,12 @@ def test_worker_builds_plan_executes_statements_and_marks_success() -> None:
     assert queue.status("job-1") is JobStatus.SUCCEEDED
     assert result.plan is not None
     assert [operation["type"] for operation in result.plan["operations"]] == [
-        "expire_snapshots",
         "optimize",
+        "expire_snapshots",
     ]
     assert [record.action for record in store.audit] == [
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.OPTIMIZE,
+        OperationType.EXPIRE_SNAPSHOTS,
     ]
     assert all(record.status == "OK" for record in store.audit)
     assert not locks.is_table_locked("table-1")
@@ -46,18 +46,18 @@ def test_worker_records_actual_bytes_freed_when_engine_returns_them() -> None:
 
     Worker(queue, store, lambda destination: engine, locks).process_next()
 
-    assert [record.actual_bytes_freed for record in store.audit] == [1024**3, 512 * 1024**2]
+    assert [record.actual_bytes_freed for record in store.audit] == [512 * 1024**2, 1024**3]
 
 
 def test_worker_marks_failed_when_engine_statement_fails() -> None:
     queue, locks, store = _worker_fixture()
-    engine = FakeMaintenanceEngine(fail_actions={OperationType.OPTIMIZE})
+    engine = FakeMaintenanceEngine(fail_actions={OperationType.EXPIRE_SNAPSHOTS})
 
     result = Worker(queue, store, lambda destination: engine, locks).process_next()
 
     assert result is not None
     assert result.status is JobStatus.FAILED
-    assert result.error == "fake engine failed optimize"
+    assert result.error == "fake engine failed expire_snapshots"
     assert queue.status("job-1") is JobStatus.FAILED
     assert [record.status for record in store.audit] == ["OK", "FAILED"]
     assert not locks.is_table_locked("table-1")
@@ -65,7 +65,7 @@ def test_worker_marks_failed_when_engine_statement_fails() -> None:
 
 def test_worker_continues_when_engine_skips_unsupported_operation() -> None:
     queue, locks, store = _worker_fixture()
-    engine = FakeMaintenanceEngine(skip_actions={OperationType.OPTIMIZE})
+    engine = FakeMaintenanceEngine(skip_actions={OperationType.EXPIRE_SNAPSHOTS})
 
     result = Worker(queue, store, lambda destination: engine, locks).process_next()
 

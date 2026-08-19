@@ -71,12 +71,17 @@ def test_preview_renders_trino_partition_filtered_sql() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["items"][0]["table_ref"] == "iceberg.fixtures.fixture_multi_column"
-    assert body["items"][0]["statements"][1]["sql"] == (
+    optimize_sql = [
+        statement["sql"]
+        for statement in body["items"][0]["statements"]
+        if statement["action"] == "optimize"
+    ]
+    assert optimize_sql == [
         "ALTER TABLE iceberg.fixtures.fixture_multi_column "
         "EXECUTE optimize(file_size_threshold => '256MB') "
         "WHERE (event_date >= DATE '2025-01-01' AND event_date < DATE '2025-01-02' "
         "AND region = 'us')"
-    )
+    ]
 
 
 def test_preview_skips_bucket_filter_without_unsafe_sql() -> None:

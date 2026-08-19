@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -26,6 +26,7 @@ from cryo.db.models import (
     MaintenanceRun,
     Preset,
     PresetRule,
+    SharedS3AnomalyReport,
     Source,
     Table,
     TableAlertDispatch,
@@ -51,6 +52,7 @@ UUID_ID_MODELS = (
     MaintenanceJob,
     TableAlertSubscription,
     TableAlertDispatch,
+    SharedS3AnomalyReport,
 )
 
 _AUTOINCREMENT_ID_MODELS = (AuditLog, TableStatsHistory, TableCostHistory)
