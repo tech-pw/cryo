@@ -347,6 +347,8 @@ class SchedulerService:
                 self._generate_layout_recommendations(settings)
             if settings.property_autopilot_enabled:
                 self._run_property_autopilot(settings)
+            if settings.fast_path_check_enabled:
+                self._run_fast_path_check(settings)
             if settings.layout_autopilot_enabled:
                 self._run_layout_autopilot(settings)
             self._measure_layout_recommendation_effectiveness(settings)
@@ -355,6 +357,24 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Telemetry tick failed: %s", exc)
+
+    def _run_fast_path_check(self, settings: Any) -> None:
+        """Detect small-file / missing target-file-size on newly discovered tables.
+
+        Detection only — Feature 3 scheduling is calling compute_property_recommendations
+        here, not applying properties (that remains property_autopilot, still opt-in).
+        """
+        import logging
+
+        from cryo.scanner.fast_path_check import run_fast_path_check
+
+        logger = logging.getLogger(__name__)
+        with SessionLocal() as session:
+            findings = run_fast_path_check(
+                session, max_tables=settings.fast_path_check_max_tables_per_tick
+            )
+        if findings:
+            logger.info("Fast-path check tick: %s finding(s)", len(findings))
 
     def _run_property_autopilot(self, settings: Any) -> None:
         """Apply each active table's safe (tier1, non-risky) property recommendations.

@@ -150,8 +150,12 @@ vi.mock("../api/client", () => ({
     estimated_pruning_improvement_pct: 34,
     query_patterns_analyzed: 124,
     cardinality_estimate: "high",
-    warnings: []
+    warnings: [],
+    scan_ratio: null,
+    avg_selectivity: null,
+    trigger: "filter_frequency"
   }),
+  getFastPathFindings: vi.fn().mockResolvedValue([]),
   getTableBenefitScores: vi.fn().mockResolvedValue({
     table_id: "table-1",
     partitions_scored: 1,

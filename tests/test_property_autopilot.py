@@ -29,6 +29,7 @@ def _seed_table(
     manifest_count: int = 220,
     total_snapshots: int = 80,
     raw_extra: dict | None = None,
+    with_stats: bool = True,
 ) -> uuid.UUID:
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
@@ -63,31 +64,32 @@ def _seed_table(
             is_active=True,
         )
     )
-    session.add(
-        TableStats(
-            table_id=table_id,
-            scan_at=scan_at,
-            needs_compaction=True,
-            compaction_priority="HIGH",
-            grade="C",
-            overall_score=65,
-            total_files=120_000,
-            small_files_count=45_000,
-            total_size_gb=480.0,
-            avg_file_size_mb=41.0,
-            total_partitions=120,
-            partition_skew_ratio=18.5,
-            manifest_count=manifest_count,
-            total_snapshots=total_snapshots,
-            delete_file_pct=12.5,
-            total_delete_files=1500,
-            write_distribution_mode=write_mode,
-            has_sort_order=has_sort,
-            target_file_size_bytes=target_bytes,
-            query_count_30d=0,
-            raw=raw,
+    if with_stats:
+        session.add(
+            TableStats(
+                table_id=table_id,
+                scan_at=scan_at,
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="C",
+                overall_score=65,
+                total_files=120_000,
+                small_files_count=45_000,
+                total_size_gb=480.0,
+                avg_file_size_mb=41.0,
+                total_partitions=120,
+                partition_skew_ratio=18.5,
+                manifest_count=manifest_count,
+                total_snapshots=total_snapshots,
+                delete_file_pct=12.5,
+                total_delete_files=1500,
+                write_distribution_mode=write_mode,
+                has_sort_order=has_sort,
+                target_file_size_bytes=target_bytes,
+                query_count_30d=0,
+                raw=raw,
+            )
         )
-    )
     session.commit()
     return table_id
 
@@ -236,3 +238,19 @@ def test_property_autopilot_isolates_one_table_apply_failure_from_the_rest(sessi
     ok = next(r for r in result.per_table if r.table_id == ok_table_id)
     assert ok.error is None
     assert ok.applied
+
+
+def test_property_autopilot_includes_tables_without_stats(session) -> None:
+    table_id = _seed_table(session, table_name="day0", with_stats=False)
+
+    mock_table, mock_txn = _mock_catalog()
+    with patch("cryo.sources.pyiceberg_catalog.PyIcebergSourceCatalog") as catalog_cls:
+        catalog_cls.return_value.load_table.return_value = mock_table
+        result = run_property_autopilot(session, max_tables=10)
+
+    assert result.tables_considered == 1
+    assert result.tables_changed == 1
+    applied = mock_txn.set_properties.call_args.kwargs
+    assert "write.target-file-size-bytes" in applied
+    audit = session.query(AuditLog).filter(AuditLog.table_id == table_id).one()
+    assert audit.actor == AUTOPILOT_ACTOR

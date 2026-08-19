@@ -254,6 +254,9 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       `LayoutOptimization`.
 - [~] Query-pattern-aware sort/layout optimization (`cryo/optimizer/`) — logic exists; needs sustained
       query-log volume for calibration.
+- [x] Iceberg maintenance intelligence RFC (2026-08-19): scan-ratio + bucket re-size in
+      `partition_analyzer`; day-0 target file size via existing property recs; fast-path new-table
+      sweep (`cryo/scanner/fast_path_check.py`) + Health UI. Detect-only; no auto-compact.
 - [x] **Tiered query-log pipeline** (`cryo/telemetry/iceberg_writer.py`, `curator.py`, `query_buffer.py`)
       — Redis Streams buffer -> Iceberg archive (`cryo_internal.queries`) -> curated Postgres `query_logs`
       -> `query_patterns`. Per-destination config block in Connections drawer; retention via

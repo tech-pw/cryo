@@ -1065,6 +1065,12 @@ export interface SmartLayoutRecommendationRead {
   applied_run_id?: UUID | null;
 }
 
+export type PartitionEvolutionTrigger =
+  | "filter_frequency"
+  | "scan_ratio"
+  | "granularity"
+  | "bucket_sizing";
+
 export interface PartitionEvolutionRecommendationRead {
   table_id: UUID;
   table_name: string;
@@ -1076,6 +1082,19 @@ export interface PartitionEvolutionRecommendationRead {
   query_patterns_analyzed: number;
   cardinality_estimate: string;
   warnings: string[];
+  scan_ratio?: number | null;
+  avg_selectivity?: number | null;
+  trigger?: PartitionEvolutionTrigger | null;
+}
+
+export interface FastPathFindingRead {
+  table_id: UUID;
+  table_name: string;
+  finding_type: string;
+  reason: string;
+  severity: string;
+  metric_value?: number | null;
+  detected_at: string;
 }
 
 export interface BloomFilterRecommendationRead {
@@ -1105,6 +1124,16 @@ export const getPartitionEvolutionRecommendation = (
     api,
     { query: { min_query_threshold: minQueryThreshold } }
   );
+
+export const getFastPathFindings = async (api: ApiOptions): Promise<FastPathFindingRead[]> => {
+  const payload = await apiFetch<
+    FastPathFindingRead[] | { findings: FastPathFindingRead[] } | { items: FastPathFindingRead[] }
+  >("/advanced/fast-path-findings", api);
+  if (Array.isArray(payload)) return payload;
+  if (payload && "findings" in payload && Array.isArray(payload.findings)) return payload.findings;
+  if (payload && "items" in payload && Array.isArray(payload.items)) return payload.items;
+  return [];
+};
 
 export const getBloomFilterRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<BloomFilterRecommendationsResponse>(`/advanced/bloom-filter-recommendations/${tableId}`, api);

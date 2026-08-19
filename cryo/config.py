@@ -608,6 +608,24 @@ class Settings(BaseSettings):
             "tick rather than trying to sweep the whole fleet in one pass."
         ),
     )
+    fast_path_check_enabled: bool = Field(
+        default=True,
+        description=(
+            "Cheap new-table health sweep on the telemetry tick (RFC Features 2+3). "
+            "Flags FileDegradationSignal small-file risk and missing "
+            "write.target-file-size-bytes via compute_property_recommendations; never "
+            "enqueues optimize. Default on because the work is metadata/stats already "
+            "in Postgres, not catalog I/O. See cryo/scanner/fast_path_check.py."
+        ),
+    )
+    fast_path_check_max_tables_per_tick: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Cap on how many newly discovered tables the fast-path sweep inspects per "
+            "telemetry tick when fast_path_check_enabled is true."
+        ),
+    )
     layout_autopilot_enabled: bool = Field(
         default=False,
         description=(

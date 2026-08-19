@@ -6832,6 +6832,32 @@ export interface components {
              * @default []
              */
             warnings: string[];
+            /** Scan Ratio */
+            scan_ratio?: number | null;
+            /** Avg Selectivity */
+            avg_selectivity?: number | null;
+            /**
+             * Trigger
+             * filter_frequency | scan_ratio | granularity | bucket_sizing
+             */
+            trigger?: "filter_frequency" | "scan_ratio" | "granularity" | "bucket_sizing" | null;
+        };
+        /** FastPathFindingRead */
+        FastPathFindingRead: {
+            /** Table Id */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Finding Type */
+            finding_type: string;
+            /** Reason */
+            reason: string;
+            /** Severity */
+            severity: string;
+            /** Metric Value */
+            metric_value: number | null;
+            /** Detected At */
+            detected_at: string;
         };
         /** PartitionPredicateRead */
         PartitionPredicateRead: {
@@ -15548,6 +15574,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PartitionEvolutionRecommendationRead"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_fast_path_findings_api_v1_advanced_fast_path_findings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        findings: components["schemas"]["FastPathFindingRead"][];
+                    };
                 };
             };
             /** @description Validation Error */

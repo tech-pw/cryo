@@ -47,6 +47,7 @@ vi.mock("../api/client", () => ({
     cost_trend: []
   }),
   getSmartMaintenanceOverview: vi.fn().mockResolvedValue(null),
+  getFastPathFindings: vi.fn().mockResolvedValue([]),
   listTables: vi.fn()
 }));
 
@@ -148,5 +149,19 @@ describe("DatalakeHealth page", () => {
     );
     chartBarLink.focus();
     expect(chartBarLink).toHaveFocus();
+  });
+
+  it("shows an empty recently-discovered card when there are no fast-path findings", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("Recently discovered")).toBeInTheDocument();
+    expect(screen.getByText("No recently discovered flags")).toBeInTheDocument();
   });
 });
