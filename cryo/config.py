@@ -87,6 +87,31 @@ class Settings(BaseSettings):
         gt=0,
         description="Week-over-week fleet cost decrease (%) that flags a decline worth noting.",
     )
+    # Trino QUERY/compute cost day-over-day / week-over-week thresholds (see
+    # cryo/reporting/query_cost_signals.py) -- deliberately separate from the report_cost_*
+    # fleet-STORAGE thresholds above. Query cost is driven by workload (who ran what, when),
+    # not table state, so it has its own noise profile and its own thresholds rather than
+    # reusing the storage-cost ones.
+    report_query_cost_dod_spike_pct: float = Field(
+        default=15.0,
+        gt=0,
+        description="Day-over-day Trino query cost increase (%) that flags a spike.",
+    )
+    report_query_cost_dod_decline_pct: float = Field(
+        default=30.0,
+        gt=0,
+        description="Day-over-day Trino query cost decrease (%) that flags a decline worth noting.",
+    )
+    report_query_cost_wow_spike_pct: float = Field(
+        default=20.0,
+        gt=0,
+        description="Week-over-week Trino query cost increase (%) that flags a spike.",
+    )
+    report_query_cost_wow_decline_pct: float = Field(
+        default=35.0,
+        gt=0,
+        description="Week-over-week Trino query cost decrease (%) that flags a decline.",
+    )
     # North-star maintenance-impact metric (PDAE, added 2026-08-19): unlike the cost thresholds
     # above (less cost = good), more GB reclaimed = good -- direction is the sign of the pct
     # change, not a spike/decline split. Wider bands than cost's for the same reason WoW is

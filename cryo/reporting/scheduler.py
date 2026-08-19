@@ -29,6 +29,7 @@ class ReportScheduler:
     def __init__(self) -> None:
         self._last_runs: dict[str, datetime] = {}  # config_id -> last_run
         self._last_shared_s3_run: datetime | None = None
+        self._last_query_cost_run: datetime | None = None
         self._running = False
 
     async def start(self, poll_interval_sec: int = 60) -> None:
@@ -79,6 +80,7 @@ class ReportScheduler:
                     self._last_runs[str(config.id)] = now
 
             await self._maybe_send_shared_s3_report(now)
+            await self._maybe_send_query_cost_report(now)
         finally:
             session.close()
 
@@ -115,6 +117,38 @@ class ReportScheduler:
             self._last_shared_s3_run = now
         except Exception:
             logger.exception("Failed to run shared S3 anomaly report")
+        finally:
+            session.close()
+
+    async def _maybe_send_query_cost_report(self, now: datetime) -> None:
+        from cryo.reporting.query_cost_report import (
+            QUERY_COST_REPORT_CRON,
+            QUERY_COST_REPORT_TZ,
+            notify_query_cost_report,
+        )
+
+        if not cron_is_due(
+            QUERY_COST_REPORT_CRON,
+            now=now,
+            last_run_at=self._last_query_cost_run,
+            tz=QUERY_COST_REPORT_TZ,
+        ):
+            return
+
+        logger.info("Trino query-cost report is due (10:15 IST)")
+        session = SessionLocal()
+        try:
+            result = await notify_query_cost_report(session, now=now)
+            if result.get("slack_sent"):
+                logger.info("Trino query-cost report sent to Slack")
+            else:
+                logger.warning(
+                    "Trino query-cost report ready but Slack was not sent (%s)",
+                    result.get("slack_skipped_reason"),
+                )
+            self._last_query_cost_run = now
+        except Exception:
+            logger.exception("Failed to run Trino query-cost report")
         finally:
             session.close()
 
