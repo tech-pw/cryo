@@ -5,6 +5,15 @@ parsing) over the trailing 2-3 day reconciliation window, longest-prefix-matches
 key against ``Table.location``, and UPSERTs the result into ``S3RequestCostDaily`` before rolling
 the trailing 30 days up onto ``TableCost`` (§6.3).
 
+Also aggregates GET requests down to the partition level into ``PartitionAccessDaily`` (see
+docs/PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md, inspired by Yelp's engineering blog post
+on the same idea) -- a second, independent aggregation over the same already-read log lines,
+using ``cryo.scanner.s3_partition_match`` to resolve each key's residual path against the
+table's latest-scanned ``TablePartition`` rows. Deliberately kept separate from the
+table/operation_tier aggregation above rather than threading a partition dimension through it:
+that aggregation is proven and feeds a different, already-correct rollup (``TableCost``), and
+partition matching only makes sense for GET traffic in the first place.
+
 **Not a Trino/Hive-connector dependency.** An earlier version of this pipeline registered the
 log-target bucket as an external Trino Hive-connector table and ran the aggregation as SQL --
 that turned out to be fragile in practice: it requires a Trino catalog that is *both*
@@ -35,23 +44,35 @@ from typing import Any
 from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 from trino.auth import BasicAuthentication
 
 from cryo.config import Settings, get_settings
-from cryo.db.models import S3BucketLogConfig, S3RequestCostDaily, Table, TableCost
+from cryo.db.models import (
+    PartitionAccessDaily,
+    S3BucketLogConfig,
+    S3RequestCostDaily,
+    Table,
+    TableCost,
+    TablePartition,
+)
 from cryo.engines.trino.client import TrinoCoordinator
 from cryo.integrations import s3_bucket_logging
 from cryo.integrations.aws_s3_metrics import S3RequestPriceInfo, fetch_s3_request_prices
 from cryo.scanner.orphans import parse_s3_location
+from cryo.scanner.s3_partition_match import match_partition_path
 
 logger = logging.getLogger(__name__)
 
 # AWS's documented S3 server access log line format -- space-delimited, quoted where a field
-# may itself contain spaces. Group 7 is `operation` (e.g. REST.GET.OBJECT), group 8 is `key`
-# (bucket-relative object path) -- the only two fields this pipeline needs per log line.
+# may itself contain spaces. Field order: bucket_owner(1) bucket(2) [time](3) remote_ip(4)
+# requester(5) request_id(6) operation(7) key(8). Group 5 is `requester` (the IAM
+# principal/role ARN, or "-" for anonymous/unsigned requests), group 7 is `operation` (e.g.
+# REST.GET.OBJECT), group 8 is `key` (bucket-relative object path) -- the three fields this
+# pipeline needs per log line (requester added for PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08,
+# same "-" -> None placeholder handling as operation/key already had).
 #
 # Deliberately doesn't model anything past group 8: an earlier version tried to match every
 # trailing field (request-URI, referrer, user-agent, ..., through the newest access-point-arn/
@@ -118,17 +139,20 @@ def _log_table_name(bucket: str) -> str:
     return f"s3logs_{safe}"
 
 
-def _parse_log_line(line: str) -> tuple[str, str] | None:
-    """Extract ``(operation, key)`` from one raw S3 access-log line, or ``None`` if the line
-    doesn't match the expected format (partial writes, truncated lines) or carries no usable
-    operation/key (``-`` is AWS's placeholder for "not applicable")."""
+def _parse_log_line(line: str) -> tuple[str, str, str | None] | None:
+    """Extract ``(operation, key, requester)`` from one raw S3 access-log line, or ``None`` if
+    the line doesn't match the expected format (partial writes, truncated lines) or carries no
+    usable operation/key (``-`` is AWS's placeholder for "not applicable"). ``requester`` is
+    ``None`` on the same placeholder, since anonymous/unsigned requests are common and not an
+    error -- unlike operation/key, a missing requester doesn't invalidate the line."""
     match = _S3_LOG_LINE_RE.match(line)
     if not match:
         return None
     operation, key = match.group(7), match.group(8)
     if not operation or not key or operation == "-" or key == "-":
         return None
-    return operation, key
+    requester = match.group(5)
+    return operation, key, (requester if requester and requester != "-" else None)
 
 
 def _operation_tier(operation: str) -> str:
@@ -187,6 +211,19 @@ def _match_table_prefix(key: str, index: dict[str, list[tuple[str, str]]]) -> st
 class _AggregationOutcome:
     counts: dict[tuple[str | None, date, str], int]
     truncated_dates: list[date]
+    # (table_id, log_date, partition_path, requester_role) -> request_count. Only populated
+    # for tables present in ``table_partition_context`` (i.e. matched AND have at least one
+    # scanned TablePartition row) -- GET-only, see the module docstring for why.
+    partition_counts: dict[tuple[str, date, str, str | None], int]
+
+
+@dataclass(frozen=True)
+class TablePartitionContext:
+    """Everything ``_aggregate_log_objects`` needs to resolve one table's request keys down to
+    a partition, pre-loaded once per ``ingest_bucket`` call rather than per log line."""
+
+    data_prefix: str
+    known_partitions: list[dict[str, Any]]
 
 
 def _aggregate_log_objects(
@@ -197,6 +234,7 @@ def _aggregate_log_objects(
     table_prefixes: list[tuple[str, str]],
     max_objects_per_day: int,
     max_workers: int,
+    table_partition_context: dict[str, TablePartitionContext] | None = None,
 ) -> _AggregationOutcome:
     """Read every log object under each located date-partition, parse each line, and aggregate
     into ``(table_id_or_None, log_date, operation_tier) -> request_count`` -- the same grouping
@@ -206,13 +244,18 @@ def _aggregate_log_objects(
     since a busy bucket delivers many small per-flush log files rather than a few large ones.
     Memory stays bounded regardless of log volume: only the aggregated counts are retained, not
     raw log lines -- each object's parsed lines are folded into the running counts and discarded.
+
+    Also aggregates GET requests for tables with a known partition context into
+    ``partition_counts`` -- see ``TablePartitionContext`` and ``cryo.scanner.s3_partition_match``.
     """
     index = _build_prefix_index(table_prefixes)
+    table_partition_context = table_partition_context or {}
     counts: Counter[tuple[str | None, date, str]] = Counter()
+    partition_counts: Counter[tuple[str, date, str, str | None]] = Counter()
     truncated_dates: list[date] = []
     location_prefix = f"s3a://{log_target_bucket}/"
 
-    def _read_and_parse(object_key: str) -> list[tuple[str, str]]:
+    def _read_and_parse(object_key: str) -> list[tuple[str, str, str | None]]:
         body = s3_client.get_object(Bucket=log_target_bucket, Key=object_key)["Body"].read()
         results = []
         for line in body.decode("utf-8", errors="replace").splitlines():
@@ -244,11 +287,30 @@ def _aggregate_log_objects(
                 truncated_dates.append(log_date)
 
             for parsed_lines in executor.map(_read_and_parse, object_keys):
-                for operation, request_key in parsed_lines:
+                for operation, request_key, requester in parsed_lines:
                     table_id = _match_table_prefix(request_key, index)
-                    counts[(table_id, log_date, _operation_tier(operation))] += 1
+                    tier = _operation_tier(operation)
+                    counts[(table_id, log_date, tier)] += 1
 
-    return _AggregationOutcome(counts=dict(counts), truncated_dates=truncated_dates)
+                    if tier != "get" or table_id is None:
+                        continue
+                    context = table_partition_context.get(table_id)
+                    if context is None:
+                        continue
+                    residual = request_key.removeprefix(context.data_prefix)
+                    if residual == request_key:
+                        # data_prefix didn't actually prefix this key -- shouldn't happen
+                        # given table_id came from the same prefix match above, but skip
+                        # rather than record a nonsensical residual path.
+                        continue
+                    match = match_partition_path(residual, context.known_partitions)
+                    partition_counts[(table_id, log_date, match.partition_path, requester)] += 1
+
+    return _AggregationOutcome(
+        counts=dict(counts),
+        truncated_dates=truncated_dates,
+        partition_counts=dict(partition_counts),
+    )
 
 
 def locate_date_partition(
@@ -336,6 +398,105 @@ def _resolve_request_prices(config: S3BucketLogConfig, settings: Settings) -> S3
     )
 
 
+def _load_table_partition_context(
+    session: Session,
+    table_ids: list[uuid.UUID],
+    table_data_prefixes: dict[str, str],
+) -> dict[str, TablePartitionContext]:
+    """Bulk-load each table's data-prefix + latest-scanned partition values, one query for
+    "latest scan_at per table" plus one for the matching rows -- not N+1 like
+    ``job_store._latest_partitions`` (that helper is written for a single already-known table;
+    this ingestion path handles a whole bucket's worth of tables per run).
+
+    Tables with no ``TablePartition`` rows yet (never scanned, or genuinely unpartitioned) are
+    simply absent from the returned dict -- ``_aggregate_log_objects`` treats a missing context
+    the same as "no partition data available", which is correct: there's nothing to match
+    against yet, not an error.
+    """
+    if not table_ids:
+        return {}
+
+    latest_scans = dict(
+        session.execute(
+            select(TablePartition.table_id, func.max(TablePartition.scan_at))
+            .where(TablePartition.table_id.in_(table_ids))
+            .group_by(TablePartition.table_id)
+        ).all()
+    )
+    if not latest_scans:
+        return {}
+
+    # Matched as (table_id, scan_at) pairs, not two separate IN()s -- two tables can share an
+    # identical latest scan_at (e.g. both scanned in the same scheduler tick), and a separate
+    # table_id IN (...) AND scan_at IN (...) would then cross-match table A's rows at table B's
+    # timestamp if that timestamp also happened to be some (unrelated, older) scan of A's.
+    rows = session.execute(
+        select(TablePartition.table_id, TablePartition.partition_values).where(
+            tuple_(TablePartition.table_id, TablePartition.scan_at).in_(
+                [(tid, scan_at) for tid, scan_at in latest_scans.items()]
+            )
+        )
+    ).all()
+
+    by_table: dict[str, list[dict[str, Any]]] = {}
+    for table_id, partition_values in rows:
+        by_table.setdefault(str(table_id), []).append(
+            {"partition_values": dict(partition_values or {})}
+        )
+
+    return {
+        table_id: TablePartitionContext(
+            data_prefix=table_data_prefixes[table_id], known_partitions=partitions
+        )
+        for table_id, partitions in by_table.items()
+        if table_id in table_data_prefixes
+    }
+
+
+def _upsert_partition_access(
+    session: Session,
+    partition_counts: dict[tuple[str, date, str, str | None], int],
+    *,
+    now: datetime,
+) -> None:
+    """UPSERT ``PartitionAccessDaily`` rows from one ingestion pass's partition-level counts.
+
+    Same select-then-update-or-insert pattern as the ``S3RequestCostDaily`` loop above, for
+    the same reason: ``requester_role`` can be NULL (anonymous/unsigned requests, or a log
+    line whose requester field didn't parse), and Postgres's ``ON CONFLICT`` doesn't dedupe
+    across NULL values.
+    """
+    for (table_id_raw, log_date, partition_path, requester_role), request_count in (
+        partition_counts.items()
+    ):
+        table_id = uuid.UUID(table_id_raw)
+        existing = session.scalar(
+            select(PartitionAccessDaily).where(
+                PartitionAccessDaily.table_id == table_id,
+                PartitionAccessDaily.day == log_date,
+                PartitionAccessDaily.partition_path == partition_path,
+                PartitionAccessDaily.requester_role == requester_role
+                if requester_role is not None
+                else PartitionAccessDaily.requester_role.is_(None),
+            )
+        )
+        if existing is None:
+            session.add(
+                PartitionAccessDaily(
+                    table_id=table_id,
+                    day=log_date,
+                    partition_path=partition_path,
+                    requester_role=requester_role,
+                    request_count=request_count,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                )
+            )
+        else:
+            existing.request_count = request_count
+            existing.last_seen_at = now
+
+
 def ingest_bucket(
     session: Session,
     config: S3BucketLogConfig,
@@ -395,10 +556,16 @@ def ingest_bucket(
         )
     ).all()
     table_prefixes: list[tuple[str, str]] = []
+    table_data_prefixes: dict[str, str] = {}
     for table_id, location in table_locations:
         row_bucket, prefix = parse_s3_location(location)
         if row_bucket == config.bucket:
             table_prefixes.append((str(table_id), prefix))
+            table_data_prefixes[str(table_id)] = prefix
+
+    table_partition_context = _load_table_partition_context(
+        session, [uuid.UUID(tid) for tid in table_data_prefixes], table_data_prefixes
+    )
 
     try:
         outcome = _aggregate_log_objects(
@@ -406,6 +573,7 @@ def ingest_bucket(
             log_target_bucket=config.log_target_bucket,
             located=located,
             table_prefixes=table_prefixes,
+            table_partition_context=table_partition_context,
             max_objects_per_day=settings.s3_log_ingest_max_objects_per_day,
             max_workers=settings.s3_log_ingest_concurrency,
         )
@@ -474,6 +642,8 @@ def ingest_bucket(
             existing.cost_usd = cost_usd
             existing.pricing_source = price_info.source
         upserted += 1
+
+    _upsert_partition_access(session, outcome.partition_counts, now=now)
 
     config.last_ingested_at = now
     config.last_ingested_date = today
@@ -592,6 +762,21 @@ def prune_s3_request_cost_daily(
     cutoff = now.date() - timedelta(days=retention_days)
     result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         delete(S3RequestCostDaily).where(S3RequestCostDaily.day < cutoff)
+    )
+    return int(result.rowcount or 0)
+
+
+def prune_partition_access_daily(
+    session: Session, *, retention_days: int = 35, now: datetime | None = None
+) -> int:
+    """Bound ``PartitionAccessDaily``'s footprint. Same 35-day default and rationale as
+    ``prune_s3_request_cost_daily`` -- this is an operational-visibility table, not a billing
+    record, so there's no reason to retain it any longer than its sibling. Returns the number
+    of rows deleted. Caller is responsible for committing."""
+    now = now or datetime.now(UTC)
+    cutoff = now.date() - timedelta(days=retention_days)
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
+        delete(PartitionAccessDaily).where(PartitionAccessDaily.day < cutoff)
     )
     return int(result.rowcount or 0)
 

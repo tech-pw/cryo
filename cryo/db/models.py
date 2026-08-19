@@ -1790,6 +1790,75 @@ class S3RequestCostDaily(TimestampMixin, Base):
     )
 
 
+class PartitionAccessDaily(TimestampMixin, Base):
+    """Per-table, per-day, per-partition S3 GET request counts, keyed also by requester role.
+
+    docs/PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md -- inspired by Yelp's engineering blog
+    post on the same idea (S3 access logs -> partition-key-vs-time scatter plot -> storage
+    class/retention decisions). Deliberately a **separate** table from ``S3RequestCostDaily``
+    rather than adding a ``partition_path`` column there: that table's whole read path
+    (``recompute_table_cost_rollup``, ``TableCost``) is table-day granularity by design, and
+    adding partition cardinality to it would blow up every existing cost query's row count for
+    no benefit to cost reporting -- the same reasoning ``QueryCostAttributionDaily``'s own
+    docstring uses to justify being its own table rather than extending an existing one.
+
+    ``partition_path`` here is the raw Hive-style path fragment as it actually appears in the
+    S3 key (e.g. ``"dt=2026-08-19/"``, slash- and ``=``-delimited, URL-decoded) -- NOT the same
+    string as ``TablePartition.partition_path`` (that column is pipe-delimited
+    ``"col=value|col2=value2"``, built by ``cryo.scanner.analyze.partition_key`` for a
+    different purpose, planner-facing partition identity). ``cryo.scanner.
+    s3_partition_match.match_partition_path`` is what reconciles the two: it parses this raw
+    path into ``{column: value}`` pairs and matches them against ``TablePartition.
+    partition_values`` (the structured JSONB dict, not the pipe-delimited string) for that
+    table's latest scan. A key whose path doesn't match any currently-known partition still
+    gets a row here with whatever raw path was parsed (partition scanned away since, or a
+    scan that hasn't run yet) -- unmatched is a real, visible state, not a dropped row.
+
+    ``operation`` is filtered to GET at ingestion time (see ``s3_request_cost_ingest.
+    _operation_tier`` for the general tiering; this table only cares about the read side,
+    same as Yelp's ``REST.GET.OBJECT`` filter) -- PUT/write events don't inform "is this
+    partition still being read", which is the whole point of this table.
+
+    Same bounded/retained-window shape as ``S3RequestCostDaily`` -- see
+    ``cryo.scanner.s3_request_cost_ingest.prune_partition_access_daily``.
+    """
+
+    __tablename__ = "partition_access_daily"
+    __table_args__ = (
+        # Mirrors S3RequestCostDaily's own NOTE: Postgres treats NULL as distinct for
+        # UNIQUE purposes, so requester_role IS NULL rows (log lines with no parseable
+        # principal) don't dedupe via ON CONFLICT -- the ingestion writer uses the same
+        # select-then-update-or-insert pattern ingest_bucket() already uses for that reason.
+        UniqueConstraint(
+            "table_id",
+            "day",
+            "partition_path",
+            "requester_role",
+            name="uq_partition_access_daily_row",
+        ),
+        Index("ix_partition_access_daily_table_day", "table_id", "day"),
+        Index("ix_partition_access_daily_table_partition", "table_id", "partition_path"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    # Raw Hive-style path fragment, e.g. "dt=2026-08-19/" -- "" for an unpartitioned table's
+    # data files, distinct from NULL (NULL isn't used here; see the UniqueConstraint note
+    # above for why a sentinel beats NULL for this particular column).
+    partition_path: Mapped[str] = mapped_column(Text, nullable=False)
+    requester_role: Mapped[str | None] = mapped_column(Text)
+    request_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    first_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+
 class QueryCostAttributionDaily(Base):
     """Per-day, per-client, per-schema rollup of real Trino query scan bytes -- a "who/what is
     driving scan cost" report, built entirely from data Trino's own query-completion event

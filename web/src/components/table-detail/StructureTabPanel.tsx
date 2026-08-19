@@ -10,6 +10,7 @@ import {
 import { AsyncBoundary } from "../AsyncBoundary";
 import { ColumnStatsTab } from "./ColumnStatsTab";
 import { ChartCard } from "./ChartCard";
+import { PartitionAccessChart } from "./PartitionAccessChart";
 import { PartitionHistogram } from "./PartitionHistogram";
 import { SchemaTab, type SchemaColumn } from "./SchemaTab";
 import { SectionNav } from "./SectionNav";
@@ -27,6 +28,7 @@ export const StructureTabPanel = () => {
     pii,
     dataQuality,
     partitions,
+    partitionAccess,
     history,
     historyPoints,
     bloomRecommendations,
@@ -42,6 +44,7 @@ export const StructureTabPanel = () => {
         sections={[
           { id: "structure-schema", label: "Schema" },
           { id: "structure-partitions", label: "Partitions" },
+          { id: "structure-partition-access", label: "Partition Access" },
           { id: "structure-history", label: "History" },
           { id: "structure-bloom", label: "Bloom Filters" }
         ]}
@@ -76,6 +79,28 @@ export const StructureTabPanel = () => {
           </AsyncBoundary>
         </ChartCard>
         <ColumnStatsTab api={api} tableId={tableId} />
+      </div>
+      <div id="structure-partition-access" style={{ marginTop: 16 }}>
+        <ChartCard
+          title="Partition access"
+          subtitle="Which partitions are actually being read, and when — from real S3 request logs"
+        >
+          <AsyncBoundary
+            isLoading={partitionAccess.isLoading}
+            isError={Boolean(partitionAccess.error)}
+            error={partitionAccess.error}
+            onRetry={() => void partitionAccess.refetch()}
+            isEmpty={!(partitionAccess.data?.points.length)}
+            emptyTitle="No partition access data yet"
+            emptyDescription="Requires an enabled S3 request-log bucket and at least one completed partition scan for this table -- see Settings → S3 Request Logging."
+            skeleton={<span className="text-sm text-muted-foreground">Loading partition access…</span>}
+          >
+            <PartitionAccessChart
+              points={partitionAccess.data?.points ?? []}
+              partitions={partitionAccess.data?.partitions ?? []}
+            />
+          </AsyncBoundary>
+        </ChartCard>
       </div>
       <div id="structure-history" style={{ marginTop: 16 }}>
         <ChartCard title="Stats history" subtitle="Scan-over-scan trend">
