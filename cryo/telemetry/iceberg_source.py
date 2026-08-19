@@ -20,7 +20,8 @@ Enable per-Source by setting, in `Source.config`::
         "table": "logging.trino_query_log",   # namespace.table, read via this source's own catalog
         "query_text_column": "query",          # optional, defaults shown
         "executed_at_column": "create_time",   # optional, defaults shown
-        "inputs_json_column": "inputs_json"    # optional, defaults shown; null/false disables
+        "inputs_json_column": "inputs_json",   # optional, defaults shown; null/false disables
+        "user_column": "user"                  # optional, defaults shown; null/false disables
       }
     }
 
@@ -76,6 +77,15 @@ _DEFAULT_EXECUTED_AT_COLUMN = "create_time"
 # column or may leave connectorInfo empty, in which case selectivity is simply not recorded for
 # those queries rather than the whole read-through path failing.
 _DEFAULT_INPUTS_JSON_COLUMN = "inputs_json"
+# Trino's query-completion event listener writes the query's principal under this column
+# (Trino's own convention). Cryo's own internal query-log archive already calls this concept
+# "user_name" (see cryo.telemetry.iceberg_writer._build_query_log_schema and
+# cryo.telemetry.ingestion.py's `user AS user_name`) -- this is the same field, just not read
+# by this read-through path until PDAE query-cost-user-attribution follow-up (2026-08-19).
+# Deployment-specific like inputs_json_column: not guaranteed to be named "user" on every
+# event-listener table, so this is configurable, not hardcoded. None/False disables user-level
+# attribution for sources whose table doesn't have one.
+_DEFAULT_USER_COLUMN = "user"
 _DEFAULT_LOOKBACK_DAYS = 7  # only used the first time a source has no persisted watermark yet
 
 
@@ -87,6 +97,7 @@ class IcebergQueryLogConfig:
     query_text_column: str = _DEFAULT_QUERY_TEXT_COLUMN
     executed_at_column: str = _DEFAULT_EXECUTED_AT_COLUMN
     inputs_json_column: str | None = _DEFAULT_INPUTS_JSON_COLUMN
+    user_column: str | None = _DEFAULT_USER_COLUMN
     last_aggregated_at: datetime | None = None
 
     @property
@@ -125,11 +136,19 @@ def parse_iceberg_query_log_config(source_config: dict[str, Any]) -> IcebergQuer
         raw_col = block.get("inputs_json_column")
         inputs_json_column = str(raw_col) if raw_col else None
 
+    # Same explicit-false/null-disables shape as inputs_json_column, for sources whose
+    # event-listener table doesn't carry a user/principal column under this name.
+    user_column: str | None = _DEFAULT_USER_COLUMN
+    if "user_column" in block:
+        raw_user_col = block.get("user_column")
+        user_column = str(raw_user_col) if raw_user_col else None
+
     return IcebergQueryLogConfig(
         table_identifier=str(table_identifier),
         query_text_column=str(block.get("query_text_column") or _DEFAULT_QUERY_TEXT_COLUMN),
         executed_at_column=str(block.get("executed_at_column") or _DEFAULT_EXECUTED_AT_COLUMN),
         inputs_json_column=inputs_json_column,
+        user_column=user_column,
         last_aggregated_at=last_aggregated_at,
     )
 

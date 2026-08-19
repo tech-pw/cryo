@@ -157,6 +157,18 @@ async def generate_daily_report(
                     else None
                 ),
                 "direction": report_data.impact_signal.direction,
+                # Absolute baselines alongside the pct change -- a bare "-94.9%" doesn't say
+                # what it's relative to; gb_freed_yesterday vs dod/wow_baseline_gb does.
+                "dod_baseline_gb": (
+                    round(report_data.impact_signal.dod_baseline_gb, 2)
+                    if report_data.impact_signal.dod_baseline_gb is not None
+                    else None
+                ),
+                "wow_baseline_gb": (
+                    round(report_data.impact_signal.wow_baseline_gb, 2)
+                    if report_data.impact_signal.wow_baseline_gb is not None
+                    else None
+                ),
                 "dod_pct": (
                     round(report_data.impact_signal.dod_pct, 1)
                     if report_data.impact_signal.dod_pct is not None
@@ -201,9 +213,17 @@ def _impact_signal_sentence(data: DailyReportData) -> str:
     if signal is None or signal.direction == "flat":
         return ""
     pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    baseline = signal.dod_baseline_gb if signal.primary_signal == "dod" else signal.wow_baseline_gb
     window = "DoD" if signal.primary_signal == "dod" else "WoW"
-    pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
-    return f" Reclaim impact {signal.direction}{pct_str}: {signal.today.gb_freed:.1f} GB freed yesterday."
+    # Always pair the pct with what it's relative to -- "-94.9%" alone doesn't say from what.
+    comparison = (
+        f" ({pct:+.1f}% {window}, vs {baseline:.1f} GB baseline)"
+        if pct is not None and baseline is not None
+        else f" ({pct:+.1f}% {window})"
+        if pct is not None
+        else ""
+    )
+    return f" Reclaim impact {signal.direction}{comparison}: {signal.today.gb_freed:.1f} GB freed yesterday."
 
 
 def _cost_signal_sentence(data: DailyReportData) -> str:
@@ -340,10 +360,19 @@ def _add_impact_action_item(
     reasoning as _add_cost_action_item: a fleet-wide trend outranks any single table's grade.
     Only ever called for "worsening"; an "improving" day is good news, not an action item."""
     pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
+    baseline = signal.dod_baseline_gb if signal.primary_signal == "dod" else signal.wow_baseline_gb
     window = "day-over-day" if signal.primary_signal == "dod" else "week-over-week"
-    pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
+    # Always pair the pct with the absolute baseline it's relative to -- a bare "-94.9%" forces
+    # the reader to do the arithmetic themselves to find out this dropped from ~1268 GB to 65 GB.
+    comparison = (
+        f" ({pct:+.1f}% {window}, down from {baseline:.1f} GB)"
+        if pct is not None and baseline is not None
+        else f" ({pct:+.1f}% {window})"
+        if pct is not None
+        else ""
+    )
     text = (
-        f"Reclaim impact worsening{pct_str} — {signal.today.gb_freed:.1f} GB freed "
+        f"Reclaim impact worsening{comparison} — {signal.today.gb_freed:.1f} GB freed "
         f"yesterday from {signal.today.actions_succeeded} successful action"
         f"{'s' if signal.today.actions_succeeded != 1 else ''} across "
         f"{signal.today.tables_touched} table{'s' if signal.today.tables_touched != 1 else ''}."
@@ -504,6 +533,16 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
             {
                 "direction": data.impact_signal.direction,
                 "gb_freed_yesterday": round(data.impact_signal.today.gb_freed, 1),
+                "dod_baseline_gb": (
+                    round(data.impact_signal.dod_baseline_gb, 1)
+                    if data.impact_signal.dod_baseline_gb is not None
+                    else None
+                ),
+                "wow_baseline_gb": (
+                    round(data.impact_signal.wow_baseline_gb, 1)
+                    if data.impact_signal.wow_baseline_gb is not None
+                    else None
+                ),
                 "dod_pct": (
                     round(data.impact_signal.dod_pct, 1)
                     if data.impact_signal.dod_pct is not None
@@ -625,12 +664,37 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
                 ],
             )
         )
-        if impact.direction != "flat":
-            pct = impact.dod_pct if impact.primary_signal == "dod" else impact.wow_pct
-            window = "day-over-day" if impact.primary_signal == "dod" else "week-over-week"
-            pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
-            verdict = "Going the right direction." if impact.direction == "improving" else "Going the wrong direction — see action items."
-            blocks.append(section_block(f"{direction_emoji} *{impact.direction.title()}*{pct_str}. {verdict}"))
+        # DoD/WoW absolute numbers side by side with the delta -- a bare "-94.9%" tells a
+        # reader the direction but not what it's relative to. Always show both baselines
+        # (even on a "flat" day) so a reader never has to reconstruct "compared to what?"
+        # from a percentage alone.
+        dod_arrow = "↑" if (impact.dod_pct or 0) >= 0 else "↓"
+        wow_arrow = "↑" if (impact.wow_pct or 0) >= 0 else "↓"
+        dod_baseline_str = (
+            f"{impact.dod_baseline_gb:.1f} GB" if impact.dod_baseline_gb is not None else "n/a"
+        )
+        wow_baseline_str = (
+            f"{impact.wow_baseline_gb:.1f} GB" if impact.wow_baseline_gb is not None else "n/a"
+        )
+        dod_pct_str = f"{dod_arrow} {impact.dod_pct:+.1f}%" if impact.dod_pct is not None else "n/a"
+        wow_pct_str = f"{wow_arrow} {impact.wow_pct:+.1f}%" if impact.wow_pct is not None else "n/a"
+        blocks.append(
+            table_block(
+                ["Trend", "Baseline", "Yesterday", "Change"],
+                [
+                    ["Day-over-day (vs 2 days ago)", dod_baseline_str,
+                     f"{impact.today.gb_freed:.1f} GB", dod_pct_str],
+                    ["Week-over-week (vs same day last week)", wow_baseline_str,
+                     f"{impact.today.gb_freed:.1f} GB", wow_pct_str],
+                ],
+            )
+        )
+        verdict = {
+            "improving": "Reclaiming more than usual — going the right direction.",
+            "worsening": "Reclaiming less than usual — going the wrong direction, see action items.",
+            "flat": "No significant change from baseline.",
+        }[impact.direction]
+        blocks.append(section_block(f"{direction_emoji} *{impact.direction.title()}*. {verdict}"))
 
     if data.cost_signal is not None and data.cost_signal.direction != "stable":
         blocks.append(divider_block())

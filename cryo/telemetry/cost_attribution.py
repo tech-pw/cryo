@@ -63,6 +63,14 @@ def _normalize_client(raw_source: str | None) -> str:
     return raw_source.strip()
 
 
+def _normalize_user(raw_user: str | None) -> str:
+    """Same 'unknown' fallback _normalize_client uses -- a report never has to special-case a
+    missing value differently for client vs. user (see the user-attribution follow-up plan)."""
+    if not raw_user:
+        return "unknown"
+    return raw_user.strip() or "unknown"
+
+
 def _sum_physical_bytes(inputs_json: str | None) -> int:
     """Sum physicalInputBytes across every table this one query actually read.
 
@@ -157,15 +165,19 @@ def aggregate_query_cost_attribution(
         "query_state",
         "inputs_json",
     )
+    if config.user_column:
+        fields = (*fields, config.user_column)
 
     while cursor < now and windows_processed < max_windows_per_tick:
         window_end = min(cursor + window, now)
-        # (day, client, schema_name) -> [query_count, failed_count, bytes] -- one rollup dict
-        # per window, upserted and committed before the watermark advances past this window
-        # (below), not accumulated across the whole call and flushed once at the end: a crash
-        # partway through a multi-window call would otherwise lose an earlier window's already-
-        # read data even though its watermark had already moved past it.
-        rollup: defaultdict[tuple[date, str, str], list[int]] = defaultdict(lambda: [0, 0, 0])
+        # (day, client, schema_name, user_name) -> [query_count, failed_count, bytes] -- one
+        # rollup dict per window, upserted and committed before the watermark advances past
+        # this window (below), not accumulated across the whole call and flushed once at the
+        # end: a crash partway through a multi-window call would otherwise lose an earlier
+        # window's already-read data even though its watermark had already moved past it.
+        rollup: defaultdict[tuple[date, str, str, str], list[int]] = defaultdict(
+            lambda: [0, 0, 0]
+        )
         try:
             scan = iceberg_table.scan(
                 row_filter=And(
@@ -201,8 +213,13 @@ def aggregate_query_cost_attribution(
                     schema_name = columns.get("schema", [None] * n)[i] or "unknown"
                     query_state = columns.get("query_state", [None] * n)[i]
                     inputs_json = columns.get("inputs_json", [None] * n)[i]
+                    user_name = (
+                        _normalize_user(columns.get(config.user_column, [None] * n)[i])
+                        if config.user_column
+                        else "unknown"
+                    )
 
-                    key = (day, client, schema_name)
+                    key = (day, client, schema_name, user_name)
                     bucket = rollup[key]
                     bucket[0] += 1
                     if query_state == "FAILED":
@@ -256,18 +273,23 @@ def aggregate_query_cost_attribution(
 def _upsert_rollup(
     session: Session,
     source_id: Any,
-    rollup: dict[tuple[date, str, str], list[int]],
+    rollup: dict[tuple[date, str, str, str], list[int]],
 ) -> int:
     """Stage the additive upsert on ``session`` without committing -- the caller commits this
     together with the watermark advance in a single transaction (see the atomicity comment at
     the call site in ``aggregate_query_cost_attribution``)."""
     upserted = 0
-    for (day, client, schema_name), (query_count, failed_count, bytes_scanned) in rollup.items():
+    for (day, client, schema_name, user_name), (
+        query_count,
+        failed_count,
+        bytes_scanned,
+    ) in rollup.items():
         stmt = insert(QueryCostAttributionDaily).values(
             source_id=source_id,
             day=day,
             client=client,
             schema_name=schema_name,
+            user_name=user_name,
             query_count=query_count,
             failed_query_count=failed_count,
             physical_bytes_scanned=bytes_scanned,
