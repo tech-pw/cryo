@@ -39,7 +39,20 @@ logger = logging.getLogger(__name__)
 
 _MAX_CPU_MILLI = MAX_POD_CPU_MILLI
 _MAX_MEM_MIB = MAX_POD_MEM_MIB
-_ACTIVE_DEADLINE_SECONDS = 7200
+# Raised 7200 -> 14400 (2h -> 4h), PDAE-8546, 2026-08-19: this was not a generous ceiling with
+# a rare tail miss -- it was routinely marginal. Live query against Wave 1's (PDAE-8274) real
+# job history: even *successful* 32-table batches (max_tables_per_pod) commonly finished at
+# 114-132 minutes, right up against the old 120-minute deadline (421 succeeded at exactly 120
+# min alone). 98% of the 5,553 native_job_failed failures in that same cohort clustered in the
+# same 120-130 minute band -- these were batches that would very likely have succeeded given a
+# few more minutes, not genuine per-table failures. Worse: K8s deletes a Job's pod immediately
+# on activeDeadlineSeconds (unlike a normal exit-code failure, where the pod lingers for log
+# collection), so every table in a killed batch lost its diagnostic trail and any of its own
+# members that had already finished -- see cryo.engines.native.watcher's failure path and the
+# run_events salvage added alongside this change. 4h gives real margin against the observed
+# 114-132min real-world spread without materially changing per-table throughput (the batch
+# still returns as soon as all members finish; this only raises the hard ceiling).
+_ACTIVE_DEADLINE_SECONDS = 14400
 _DEFAULT_GB_PER_HOUR = 40.0
 
 __all__ = [
