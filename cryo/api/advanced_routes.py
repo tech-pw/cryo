@@ -57,6 +57,52 @@ from cryo.observability.observation_lakehouse import ObservationLakehouse
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
 
 
+# ==================== Fast-path new-table findings (RFC Features 2+3) ====================
+
+
+class FastPathFindingRead(BaseModel):
+    table_id: UUID
+    table_name: str
+    finding_type: str
+    reason: str
+    severity: str
+    metric_value: float | None = None
+    detected_at: datetime
+
+
+class FastPathFindingsResponse(BaseModel):
+    findings: list[FastPathFindingRead]
+
+
+@router.get("/fast-path-findings", response_model=FastPathFindingsResponse)
+def get_fast_path_findings(
+    session: SessionDep,
+    _principal: Annotated[Principal, Depends(require_viewer)],
+) -> FastPathFindingsResponse:
+    """Current fast-path findings for newly discovered tables.
+
+    On-read compute (cheap: Postgres stats + stored properties, no catalog I/O).
+    Does not enqueue compaction and does not apply table properties.
+    """
+    from cryo.scanner.fast_path_check import run_fast_path_check
+
+    findings = run_fast_path_check(session, persist=False, respect_cooldown=False)
+    return FastPathFindingsResponse(
+        findings=[
+            FastPathFindingRead(
+                table_id=item.table_id,
+                table_name=item.table_name,
+                finding_type=item.finding_type,
+                reason=item.reason,
+                severity=item.severity,
+                metric_value=item.metric_value,
+                detected_at=item.detected_at,
+            )
+            for item in findings
+        ]
+    )
+
+
 # ==================== Bloom Filter Recommendations ====================
 
 
@@ -497,6 +543,9 @@ class PartitionEvolutionRecommendationRead(BaseModel):
     query_patterns_analyzed: int
     cardinality_estimate: str = "unknown"
     warnings: list[str] = []
+    scan_ratio: float | None = None
+    avg_selectivity: float | None = None
+    trigger: str | None = None
 
 
 @router.get(
@@ -512,9 +561,7 @@ def get_partition_evolution_recommendation(
     """Get partition evolution recommendation for a table."""
     from cryo.optimizer.partition_analyzer import analyze_partition_evolution
 
-    rec = analyze_partition_evolution(
-        session, str(table_id), min_query_threshold=min_query_threshold
-    )
+    rec = analyze_partition_evolution(session, table_id, min_query_threshold=min_query_threshold)
 
     if not rec:
         return None
@@ -530,6 +577,9 @@ def get_partition_evolution_recommendation(
         query_patterns_analyzed=rec.query_patterns_analyzed,
         cardinality_estimate=rec.cardinality_estimate,
         warnings=rec.warnings,
+        scan_ratio=rec.scan_ratio,
+        avg_selectivity=rec.avg_selectivity,
+        trigger=rec.trigger,
     )
 
 

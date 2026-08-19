@@ -1,11 +1,64 @@
+import { Link } from "react-router-dom";
 import { OverviewTab } from "./OverviewTab";
 import { ComplianceOwnershipSummary } from "./ComplianceOwnershipSummary";
 import { TableParamOverrides } from "../TableParamOverrides";
 import { AsyncBoundary } from "../AsyncBoundary";
+import { Alert } from "../ui/alert";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
+import { formatTime } from "../../lib/format";
+import type { FastPathFindingRead } from "../../api/client";
+
+const MISSING_TARGET_FILE_SIZE = "missing_target_file_size";
+
+const findingAlertVariant = (severity: string): "error" | "warning" | "info" => {
+  const normalized = severity.toLowerCase();
+  if (normalized === "critical" || normalized === "error") return "error";
+  if (normalized === "warning") return "warning";
+  return "info";
+};
+
+const FastPathTableBanner = ({
+  tableId,
+  findings
+}: {
+  tableId: string;
+  findings: FastPathFindingRead[];
+}) => {
+  if (!findings.length) return null;
+  const propertiesHref = `/tables/${tableId}?tab=health-quality#hq-properties`;
+
+  return (
+    <div className="mb-3 flex flex-col gap-2">
+      {findings.map((finding, index) => (
+        <Alert
+          key={`${finding.finding_type}-${finding.detected_at}-${index}`}
+          variant={findingAlertVariant(finding.severity)}
+          title="Recently discovered — early health flag"
+          description={
+            <span>
+              {finding.reason}
+              {finding.detected_at ? ` Flagged ${formatTime(finding.detected_at)}.` : ""}
+              {finding.finding_type === MISSING_TARGET_FILE_SIZE ? (
+                <>
+                  {" "}
+                  This table has no <code>write.target-file-size-bytes</code> set — see{" "}
+                  <Link to={propertiesHref} className="font-medium text-primary hover:underline">
+                    property recommendations
+                  </Link>{" "}
+                  for the one-click fix. Compaction is not started automatically.
+                </>
+              ) : null}
+            </span>
+          }
+        />
+      ))}
+    </div>
+  );
+};
 
 export const OverviewTabPanel = () => {
   const ctx = useTableDetailContext();
+  const tableFindings = (ctx.fastPathFindings.data ?? []).filter((item) => item.table_id === ctx.tableId);
 
   return (
     <AsyncBoundary
@@ -15,6 +68,7 @@ export const OverviewTabPanel = () => {
       onRetry={() => void ctx.table.refetch()}
     >
       <div className="td-tab-content">
+        <FastPathTableBanner tableId={ctx.tableId} findings={tableFindings} />
         <OverviewTab
           score={ctx.score}
           scoreFactors={ctx.scoreFactors}

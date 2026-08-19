@@ -1,7 +1,7 @@
 # Iceberg Maintenance Intelligence — Four New Cryo Capabilities
 
-**Status:** Proposed, not yet built — **but see the validation notice below before starting
-work.**
+**Status:** Implemented 2026-08-19 (extend existing analyzers; no one-click partition apply;
+fast-path detects only — does not compact). See §7 for code map, tests, and leftover gaps.
 **Owner:** Aamir
 **Last updated:** 2026-08-19
 **Scope:** Full-stack (backend scanner/analyzer changes, new API surface, UI in Table Detail / Catalogs / Health)
@@ -52,14 +52,16 @@ This RFC proposes four new Cryo capabilities, each grounded in (a) published res
 
 The four capabilities:
 
-| # | Capability | Closes the gap that... | Build status (validated 2026-08-19) |
+| # | Capability | Closes the gap that... | Build status (shipped 2026-08-19) |
 |---|---|---|---|
-| 1 | **Partition-Fit Detector** | ...meant PDAE-8357 took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag | **~80% exists** — see `partition_analyzer.py::analyze_partition_evolution`; §3 re-scoped to an extension |
-| 2 | **Fast-Path Health Check for New Tables** | ...let a brand-new table fragment into 129K files before any scan ever looked at it | Net-new — genuine gap, unaffected by validation |
-| 3 | **Day-0 `write.target-file-size-bytes` Check** | ...meant that same table's writer never had a target file size to aim for in the first place | **Check already exists** — `compute_property_recommendations` already handles zero-stats tables; only the *scheduling* is missing, see §5 |
-| 4 | **Bucket/Partition Cardinality Sizing Validator** | ...meant an educated-guess bucket count (`bucket(id, 64)`) went unverified against real row-volume growth | Net-new (re-validating an *existing* bucket count), but reuses `_bucket_count_for` from Feature 1's module — see §6 |
+| 1 | **Partition-Fit Detector** | ...meant PDAE-8357 took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag | **Shipped as an extension** of `analyze_partition_evolution`: Algoscale scan-ratio (`avg(QueryLog.bytes_read) / table_bytes > 10%`) plus existing `filter_pct >= 80`. See §3. |
+| 2 | **Fast-Path Health Check for New Tables** | ...let a brand-new table fragment into 129K files before any scan ever looked at it | **Shipped** — `cryo/scanner/fast_path_check.py`, scheduler sweep, Health + table-detail UI. Detect-only (no auto-compact). See §4. |
+| 3 | **Day-0 `write.target-file-size-bytes` Check** | ...meant that same table's writer never had a target file size to aim for in the first place | **Shipped as scheduling** — existing `compute_property_recommendations` (works with no `TableStats`); fast-path + optional property autopilot now call it for new tables. See §5. |
+| 4 | **Bucket/Partition Cardinality Sizing Validator** | ...meant an educated-guess bucket count (`bucket(id, 64)`) went unverified against real row-volume growth | **Shipped** — `analyze_bucket_sizing` / public `bucket_count_for` re-checks existing `bucket(N)` vs volume. Coarse estimate (`total_size_gb / N`), not live `$partitions`. See §6. |
 
-None of these replace existing Cryo capabilities (compaction, `expire_snapshots`, `remove_orphan_files`, manifest rewriting, the existing AutoComp-derived benefit-score ranking — see §2 for the current baseline). They extend Cryo from "detect and fix file-layout problems on tables I've already scanned" to "detect partition-*strategy* mismatches and catch fragmentation before it accumulates." **See the validation notice above the title for what changed after this RFC was checked against the live codebase — two of the four features are substantially smaller builds than originally scoped.**
+None of these replace existing Cryo capabilities (compaction, `expire_snapshots`, `remove_orphan_files`, manifest rewriting, the existing AutoComp-derived benefit-score ranking — see §2 for the current baseline). They extend Cryo from "detect and fix file-layout problems on tables I've already scanned" to "detect partition-*strategy* mismatches and catch fragmentation before it accumulates."
+
+**Explicit non-goals (still true after implementation):** no one-click partition-spec apply; fast-path never enqueues `optimize`; property apply remains behind `property_autopilot_enabled` (default off) or the existing manual apply API. Puffin NDV, Trino `EXPLAIN` column-constraint cross-check, write-event / Airflow hooks, Catalogs-page filters, and exact `$partitions` per-bucket sizes were **not** built (see remaining gaps in §7).
 
 ---
 
@@ -214,21 +216,19 @@ A table's partition spec can be structurally wrong for its actual query workload
 - Compute `avg(bytes_scanned_per_query) / total_table_size_bytes` where derivable (from `QueryLog`/telemetry, if it already tracks per-query bytes scanned — verify against `cryo/telemetry/parser.py` and `iceberg_source.py` before assuming a gap) and use it as a *second* trigger path alongside the existing `filter_pct >= 80` one.
 - Where Trino's own `EXPLAIN`-derived column-constraint list is available per query (`inputTableColumnInfos[].constraint.columnConstraints[].columnName`, confirmed present via `trino_analyze_query_performance`'s output this session), cross-check it against `QueryPattern`'s parsed predicates as a second, independent source — useful for validating `QueryPattern`'s own parse accuracy, not just for net-new detection.
 
-### Backend implementation
+### As shipped (2026-08-19)
 
-- **Extend `cryo/optimizer/partition_analyzer.py`, do not create a parallel module.** Add the scan-ratio trigger path to `analyze_partition_evolution` (or a sibling function it calls), reusing its existing `PartitionEvolutionRecommendation` return shape so the existing endpoint/UI don't need a second integration.
-- If per-query bytes-scanned isn't already retained at the needed granularity, that's the one real remaining data-gap to validate — check before committing to the scan-ratio path specifically (the filter-frequency path needs no new data at all).
+- Extended `cryo/optimizer/partition_analyzer.py` only — no `partition_fit.py`, no new recommendations table.
+- Scan-ratio is **`avg(QueryLog.bytes_read) / table_bytes`**, not `QueryPattern.avg_selectivity` as the trigger (selectivity is still copied onto the rec when present). `table_scan_ratio()` coerces `table_id` to `UUID` so it matches `QueryLog.table_id`.
+- Second trigger fires when the dominant filter column is **not** in the spec **and** `scan_ratio > 10%` **and** `filter_pct >= 20` **and** ≥10 `QueryLog` rows with `bytes_read > 0`. Existing `filter_pct >= 80` path unchanged. `PartitionEvolutionRecommendation.trigger` is `scan_ratio` | `filter_frequency` | `granularity` | `bucket_sizing`.
+- API `GET /api/v1/advanced/partition-evolution/{table_id}` returns optional `scan_ratio`, `avg_selectivity`, `trigger`.
+- UI: `OverviewTab.tsx` appends trigger + scan-ratio percent + `reason` in the partition analyzer “why” copy. **No apply button.**
+- **Not shipped:** Puffin NDV instead of `cardinality_hint`; Trino `EXPLAIN` column-constraint cross-check; Catalogs-page “partition mismatch” filter.
 
-### UI/UX
+### Risks / remaining
 
-- **Extend the existing `OverviewTab.tsx` partition-evolution panel** — add the scan-ratio number and real-vs-heuristic cardinality confidence to the existing recommendation card, rather than building a second panel that would compete with it for the same real estate and confuse operators about which one is authoritative.
-- **No one-click apply** — this was already correct in the original draft and still holds: per Iceberg's own semantics (`DBT_ICEBERG_BEST_PRACTICES.md` §9), partition-spec changes need a human-reviewed migration path, not a blind apply button. Check whether `analyze_partition_evolution`'s existing UI already enforces this (likely does, given the property-recommendations panel's precedent) before adding new guardrails.
-- **Catalogs page**: optional new filter/column — "partition mismatch" flag — still a reasonable addition, unaffected by the re-scoping above.
-
-### Risks / open questions
-
-- ~~False positives on tables with genuinely mixed query patterns~~ — still a real design concern, but the existing `filter_pct >= 80` threshold already partially addresses it; tune rather than redesign.
-- ~~Requires query-log data Cryo may not currently retain~~ — **resolved**: `QueryPattern` already retains per-column filter frequency and a selectivity proxy. The only still-open data question is whether per-query *bytes scanned* (not just selectivity) is retained anywhere at query-log grain — needed only for the Algoscale-style scan-ratio trigger, not for the filter-frequency path that already works today.
+- Mixed workloads can still false-positive; 80% frequency and 20%+scan-ratio floors are the current guards.
+- Cardinality is still a name heuristic until Puffin NDV exists.
 
 ---
 
@@ -242,30 +242,22 @@ A table's partition spec can be structurally wrong for its actual query workload
 
 A lightweight, cheap-to-run detection path, decoupled from Cryo's full statistical scan cycle, targeting tables with **zero or one prior scan** (i.e., newly discovered in the catalog, or scanned exactly once with no maintenance history yet).
 
-**Trigger options (pick one or combine, in priority order):**
+**Trigger shipped:** option 3 (cheap sweep), not catalog-discovery or write-event hooks. The sweep uses **Postgres only** (`Table.first_seen_at` within 7 days and/or `TableStatsHistory` count ≤ 1). It does **not** query Iceberg `$files` live — small-file detection reuses stored `TableStats` via `FileDegradationSignal` (40% / min 20 files). Missing target file size uses `compute_property_recommendations` (works with no stats).
 
-1. **Catalog-discovery hook** — when Cryo's scanner discovers a table it has never seen before, immediately queue a lightweight file-count/size check (not a full statistical scan) rather than waiting for the next scheduled cycle.
-2. **Write-event hook**, where available — if the ingestion orchestrator (Airflow, dbt) can emit a completion signal Cryo can subscribe to (Cryo already models `Asset`-triggered dependencies conceptually, per the broader platform's own Airflow-3 Asset pattern used in `internal-dbt-repo`), trigger the fast-path check immediately after a table's first successful write, not on Cryo's own schedule at all. This is the "optimize-after-write" mode from AutoComp §2.2, and the closest match to Apache Amoro's "continuously monitor... without manual intervention" positioning (§2.1).
-3. **Fallback, if neither hook is feasible short-term:** a cheap, frequent (e.g. every 15–30 min) sweep that lists only `information_schema`/catalog-metadata for tables with `scan_count <= 1`, checking file count via Iceberg's `$files` metadata table alone (no full stats computation) — this is materially cheaper than a full Cryo scan and matches LakeOps' "detection first using `table_files()` to establish a baseline" pattern (§2.1).
+**Decision rule:** flag only. **Do not auto-run compaction.** Governor/benefit scoring is unchanged; operators compact through existing run/preset flows.
 
-**Decision rule once a new/near-new table is checked:** flag immediately if `file_count > N` and `avg_file_size < target_floor` (reuse the same small-file-ratio threshold Cryo's existing signal already uses, per §2.3, rather than inventing a second threshold system) — but **do not auto-run compaction unconditionally**. Per AutoComp's own cost-model caveat (§2.2, the TPC-H counter-example), route the flag through the same benefit/cost-weighed governor decision Cryo already uses for scheduled compaction, just triggered sooner.
+### As shipped (2026-08-19)
 
-### Backend implementation
+- `cryo/scanner/fast_path_check.py` — `run_fast_path_check(..., persist=, respect_cooldown=)`.
+- Scheduler telemetry tick: `Settings.fast_path_check_enabled` (default **true**), `fast_path_check_max_tables_per_tick` (50). Persist + 24h cooldown via existing `AuditLog` (`action=fast_path.small_files` / `fast_path.missing_target_file_size`, actor `cryo-fast-path-check`).
+- `GET /api/v1/advanced/fast-path-findings` → `{ "findings": [...] }` (viewer). On-read compute with `persist=False`, `respect_cooldown=False` so the UI shows current flags.
+- Health page “Recently discovered” card; table-detail Overview banner; `missing_target_file_size` links to property recommendations (`?tab=health-quality#hq-properties`).
+- **Not shipped:** write-event / Airflow webhook; live `$files` sweep; auto-enqueue optimize.
 
-- New lightweight check function, e.g. `cryo/scanner/fast_path_check.py`, callable independent of the full `analyze.py` scan path — must not require the full column-quality/stats pipeline, only Iceberg metadata (`$files`, `$snapshots`) which is cheap to query.
-- New scheduler entry (or extension of the existing scan-scheduling logic) for "new/near-new table sweep," decoupled from the standard preset-driven cadence.
-- If a write-event hook is pursued: new webhook/event-ingestion endpoint Cryo can receive from Airflow (`on_success_callback`-style, matching the failure-callback pattern already used throughout `internal-dbt-repo`'s DAGs).
+### Risks / remaining
 
-### UI/UX
-
-- **Health page**: a new, distinct "Recently discovered — needs first health check" or "New table, small-file risk" bucket, separate from the standard grade-sorted top-offenders list, so operators can see fast-path findings without them being buried under long-standing large-table problems.
-- **Table Detail Overview tab**: if a table is flagged via the fast-path, show a distinct banner — *"First build produced N files averaging X — flagged within [time] of creation"* — visually distinct from the standard "Grade F, needs compaction" banner, so an operator understands this is a fresh, catchable-early problem, not chronic neglect.
-- **Operations / Catalogs**: surfaces the same way existing scan-triggered findings do, just with a "first-seen" timestamp badge showing how quickly it was caught.
-
-### Risks / open questions
-
-- Whether a write-event hook is actually feasible depends entirely on what Cryo's current scanner architecture already supports for triggering outside its own schedule — needs a scoping pass before commit; the metadata-only sweep (option 3) is the safe fallback that needs no new integration points.
-- Must not fire the same alert repeatedly as a table continues its normal early-life write pattern — needs a cooldown/dedup rule (Cryo already has cooldown-gate logic for its `conditional_table_optimize`-equivalent maintenance triggers per the PW platform's own documented gates — reuse that pattern, don't invent a new one).
+- Until a first scan writes `TableStats`, small-file findings cannot fire (only the missing-property finding can). That is intentional given “no live `$files` on request paths.”
+- Write-event hook remains a future option (AutoComp optimize-after-write); not required for v1.
 
 ---
 
@@ -285,22 +277,16 @@ This check needs **no scan, no statistics, and no query history** — only the t
 
 **Stretch goal, tying back to Feature 1's infrastructure:** if the property is present but implausible for the table's ingestion pattern (e.g., set far too low for a table expected to grow to billions of rows, inferable from naming/schema conventions or from the pipeline's own declared expected volume, if such metadata exists), flag that too — though this is materially harder to do reliably and should be scoped as a v2, not blocking v1.
 
-### Backend implementation
+### As shipped (2026-08-19)
 
-- **Revised per the correction above:** `cryo/scanner/property_recommendations.py::compute_property_recommendations` already tolerates `stats is None` end-to-end and already flags a missing `write.target-file-size-bytes` from DDL-derived properties alone — there is no zero-stats code path left to build. Confirm this holds (write a quick test calling `compute_property_recommendations` against a `Table` row with no `TableStats` row at all) before writing any new scanner code, since this could shrink Feature 3 to a scheduling-only change.
-- The actual remaining gap is **when** this gets computed for a brand-new table. Today it's presumably called on-demand (Table Detail page load) or as part of the standard scan cycle — check `cryo/api/routes_property_recommendations.py` and any scheduler call sites to confirm there's no proactive trigger yet for a just-discovered table.
-- Natural integration point: run the existing check as part of Feature 2's fast-path sweep (§4), since both are meant to run before/independent of a full scan — no need for a third separate scheduling mechanism.
+- Confirmed: `compute_property_recommendations` with **no `TableStats` row** still recommends `write.target-file-size-bytes` = 256MiB, tier1 / apply (`tests/test_property_recommendations_api.py`).
+- Scheduling: Feature 2 fast-path emits `missing_target_file_size`. Property autopilot now also considers active tables **without** stats (still only tier1 apply, still gated by `property_autopilot_enabled`, default **off**). Fast-path itself **does not** `set_properties`.
+- UI: existing Property Recommendations panel + fast-path banner cross-link. **Catalogs “missing target file size” column not shipped.**
 
-### UI/UX
+### Risks / remaining
 
-- Surfaces in the **existing Property Recommendations panel** (Table Detail → Health & Quality), not a new panel — it's a natural Tier 1 entry in that already-established tiered model (§2.3), just reachable without requiring scan history first.
-- If reached via Feature 2's fast-path banner, cross-link directly: *"This table has no `write.target-file-size-bytes` set — see Property Recommendations for the one-click fix"* (Tier 1 properties already support one-click apply via the existing PyIceberg `set_properties()` transaction path, per this session's earlier work on that panel — reuse that execution mechanism unchanged).
-- **Catalogs page**: a lightweight new column/filter, "missing target file size," computable fleet-wide without a scan — genuinely cheap to add given the check itself requires no stats.
-
-### Risks / open questions
-
-- Setting `write.target-file-size-bytes` only affects *future* writes, same caveat as every other Tier-1 property recommendation already documented in the existing panel — this needs the same "won't retroactively fix existing files" messaging already established there, not a new caveat to design.
-- Low risk overall — this is the cheapest, most mechanical of the four features and a reasonable first one to build.
+- Property only affects future writes — same messaging as other Tier 1 recs.
+- Autopilot applying Day-0 target size fleet-wide is opt-in; detection is on by default via fast-path.
 
 ---
 
@@ -332,38 +318,60 @@ For any table using a `bucket(col, N)` partition transform (detectable from `SHO
 3. If average per-bucket size is outside range, recommend a new `N`: `N_recommended = total_table_size_bytes / target_midpoint_bytes` (e.g., targeting ~500MB per bucket), rounded to a sensible power-of-two or round number for hash-distribution evenness.
 4. Distinguish "too coarse" (buckets too large, under-partitioned — §1.2's case) from "too fine" (buckets too small, itself a small-file risk, per `DBT_ICEBERG_BEST_PRACTICES.md`'s own "< 10 MB per partition: too fine-grained" rule) — both are real failure modes in opposite directions.
 
-### Backend implementation
+### As shipped (2026-08-19)
 
-- Extends the same property/layout-recommendation infrastructure as Features 1 and 3 (`cryo/scanner/property_recommendations.py` or a shared sibling module) — this is fundamentally the same *kind* of check as Feature 1 (partition strategy validation), scoped narrower (validating a chosen transform's parameter rather than recommending the transform itself). Worth building Features 1 and 4 on a shared "partition health" code path rather than two independent ones.
-- Query source: Iceberg's `$partitions` metadata table (confirmed queryable this session, e.g. `SELECT ... FROM catalog.schema."table$files"` pattern) — exact, not estimated, data.
+- `analyze_bucket_sizing()` in `partition_analyzer.py`; `bucket_count_for` is public (`_bucket_count_for` is an alias). Same 0.5GB target, power-of-two N, cap 2048.
+- Runs when query-pattern volume is below threshold **or** after case 1/2 do not fire. Parses `bucket[N]` / `bucket(N)` from `TableStats.raw.partition_spec`.
+- Too coarse: recommended N ≥ 2× current **or** avg bucket > 1GB. Too fine: recommended N × 2 ≤ current **or** avg bucket < 128MB.
+- Average size is **`total_size_gb / N`**, not Iceberg `$partitions`. `trigger=bucket_sizing`. Warning: evolution needs a rewrite for existing data.
+- UI: same Overview partition analyzer (`reason` + trigger), no separate panel, no one-click apply.
 
-### UI/UX
+### Risks / remaining
 
-- Same Health & Quality zone as Feature 1 (a shared "Partition health" panel makes more sense than three separate small panels for Features 1, 3, 4 — consolidate at build time into one coherent section with distinct row-types, rather than three visually separate cards, per the broader Cryo UI work this session on avoiding panel sprawl).
-- Recommendation row: *"bucket(prospectactivityautoid, 64) — actual avg bucket size 581MB [or whatever the real number is]... recommend N=128"* with the same tier-appropriate caution as Feature 1 (spec changes need a rewrite to fully apply — link to the existing compaction/rewrite flow for execution, don't invent a new apply mechanism).
-
-### Risks / open questions
-
-- Changing `N` in a bucket transform is a partition-spec evolution, same caveats as Feature 1 (only affects future writes without a full rewrite) — messaging must be consistent across both features since operators will see them as clearly related.
-- Needs real per-bucket size data, which requires at least one scan to exist — this feature is scan-dependent in a way Features 2/3 deliberately are not; sequence it after a table has meaningful data, not as part of the Day-0 fast path.
+- Changing N is partition-spec evolution (future writes only without rewrite).
+- Exact per-bucket sizes via `$partitions` still a v2 improvement.
 
 ---
 
-## 7. Cross-cutting implementation plan
+## 7. As-built map, tests, remaining gaps
 
-**Suggested build order (revised 2026-08-19 after validation):**
+Build order was executed as planned (3 → 1 → 4 → 2). Shared infrastructure:
 
-1. **Feature 3** (Day-0 property check) — still first, and now even cheaper than originally scoped: the check itself already exists (§5's correction) and needs zero new backend code, only a scheduling change (call `compute_property_recommendations` proactively on table discovery instead of waiting for a scan/page-load).
-2. **Feature 1** (partition-fit detector) — **moved up**, since it's now known to be ~80% built (`analyze_partition_evolution`, §3's correction) rather than the highest-open-dependency item it was originally ranked as. Remaining work is genuinely small: add the scan-ratio trigger path alongside the existing filter-frequency one, and confirm whether per-query bytes-scanned data exists for that specific addition.
-3. **Feature 4** (bucket sizing re-validator) — do this alongside/right after Feature 1, since it reuses `_bucket_count_for` from the same module (§6's note) — genuinely still net-new work (re-checking an *existing* bucket count periodically, not just at first recommendation), but small once Feature 1's extension work has already touched `partition_analyzer.py`.
-4. **Feature 2** (fast-path health check) — unaffected by the validation pass, still needs the trigger-mechanism scoping pass (write-event hook vs. cheap sweep) called out in the original draft. Moved last since it's the one feature that's genuinely a from-scratch build with an open design question, not a scope reduction on existing code.
+- Partition findings stay on the existing Overview partition analyzer (Features 1 + 4).
+- Fast-path sweep hosts Features 2 + 3 detection together.
+- Feature 3 apply reuses Tier 1 `set_properties` (manual API or opt-in autopilot), not a new apply path.
 
-**What this reordering means in practice:** three of the four features (1, 3, and part of 4) turned out to be extensions of existing, working code rather than green-field builds. Re-scope the overall estimate accordingly before committing to a timeline — this is very likely a smaller project than the original draft's four-independent-features framing suggested.
+### Code map
 
-**Shared infrastructure to build once, not four times:**
-- A single "Partition health" panel/zone in Table Detail → Health & Quality, hosting Features 1 and 4's findings together.
-- A single new fast-path/lightweight-check scheduling path, hosting Features 2 and 3's triggers together.
-- Reuse of the existing property-recommendations Tier 1/2/3 execution model and PyIceberg `set_properties()` transaction mechanism wherever a recommendation is one-click-appliable (Feature 3); reuse the existing cross-link-to-existing-flow pattern wherever it isn't (Features 1, 4 → link to compaction/rewrite, don't reinvent).
+| Area | Path |
+|---|---|
+| Scan-ratio + bucket re-size | `cryo/optimizer/partition_analyzer.py` |
+| Fast-path sweep | `cryo/scanner/fast_path_check.py` |
+| Day-0 property check | `cryo/scanner/property_recommendations.py` (unchanged logic) |
+| Autopilot includes no-stats tables | `cryo/scanner/property_autopilot.py` |
+| Scheduler | `cryo/scheduler/service.py` (`_run_fast_path_check`) |
+| Settings | `cryo/config.py` (`fast_path_check_enabled`, `fast_path_check_max_tables_per_tick`) |
+| API | `cryo/api/advanced_routes.py` |
+| UI | `web/src/api/client.ts`, `OverviewTab.tsx`, `OverviewTabPanel.tsx`, `DatalakeHealth.tsx`, `useTableDetail.ts` |
+
+### Tests
+
+| File | What it covers |
+|---|---|
+| `tests/test_partition_analyzer.py` | Existing cardinality/granularity guards; **scan-ratio trigger** (filter_pct below 80%); **bucket too coarse** (N=64, 37GB → 128); **healthy bucket → None**; **bucket too fine** (N=512, 1GB). |
+| `tests/test_fast_path_check.py` | New table small-file flag; old table skipped; missing target size without stats; 24h AuditLog cooldown; AST guard that the module never imports planner/engines/worker. |
+| `tests/test_property_recommendations_api.py` | `test_compute_property_recommendations_without_stats_defaults_target_file_size` — 256MiB, tier1 apply. |
+| `tests/test_property_autopilot.py` | Autopilot includes tables with no `TableStats`. |
+| `tests/test_iceberg_maintenance_intelligence_api.py` | `GET .../partition-evolution/{id}` returns `trigger=scan_ratio`; `GET .../fast-path-findings` returns `{ findings }` with `missing_target_file_size`. |
+| `web/src/pages/DatalakeHealth.test.tsx`, `TableDetail.test.tsx` | Fast-path query mocks / empty state; table-detail mocks. |
+
+### Remaining gaps (not in this implementation)
+
+- Puffin NDV for real cardinality.
+- Exact `$partitions` bucket sizes.
+- Write-event / catalog-discovery hooks (still periodic sweep).
+- Catalogs-page filters for partition mismatch / missing target file size.
+- Fast-path live `$files` when there is no `TableStats` yet.
 
 ---
 
