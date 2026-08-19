@@ -98,12 +98,26 @@ def _seed_dispatch_jobs(session, *, n: int) -> tuple[uuid.UUID, list[Maintenance
 
 def test_salvage_returns_empty_with_no_run_events(session) -> None:
     watcher = _watcher(session, run_events=InMemoryRunEventBus())
-    assert watcher._salvage_from_run_events(uuid4()) == {}
+    assert watcher._salvage_from_run_events(uuid4(), {str(uuid4())}) == {}
 
 
 def test_salvage_returns_empty_when_run_events_is_none(session) -> None:
     watcher = _watcher(session, run_events=None)
-    assert watcher._salvage_from_run_events(uuid4()) == {}
+    assert watcher._salvage_from_run_events(uuid4(), {str(uuid4())}) == {}
+
+
+def test_salvage_returns_empty_when_own_job_ids_is_empty(session) -> None:
+    """No point replaying the stream at all if the dispatch has no members to match against."""
+    bus = InMemoryRunEventBus()
+    run_id = uuid4()
+    job_id = str(uuid4())
+    bus.publish(
+        run_id,
+        build_log_line(run_id=run_id, job_id=job_id, message="optimize: done", level="info"),
+    )
+    watcher = _watcher(session, run_events=bus)
+
+    assert watcher._salvage_from_run_events(run_id, set()) == {}
 
 
 def test_salvage_credits_a_job_with_a_clean_info_event(session) -> None:
@@ -116,7 +130,7 @@ def test_salvage_credits_a_job_with_a_clean_info_event(session) -> None:
     )
     watcher = _watcher(session, run_events=bus)
 
-    salvage = watcher._salvage_from_run_events(run_id)
+    salvage = watcher._salvage_from_run_events(run_id, {job_id})
 
     assert salvage == {job_id: True}
 
@@ -133,7 +147,7 @@ def test_salvage_excludes_a_job_with_an_error_event(session) -> None:
     )
     watcher = _watcher(session, run_events=bus)
 
-    salvage = watcher._salvage_from_run_events(run_id)
+    salvage = watcher._salvage_from_run_events(run_id, {job_id})
 
     assert salvage == {}
 
@@ -159,7 +173,7 @@ def test_salvage_excludes_a_job_with_mixed_success_and_error_events(session) -> 
     )
     watcher = _watcher(session, run_events=bus)
 
-    salvage = watcher._salvage_from_run_events(run_id)
+    salvage = watcher._salvage_from_run_events(run_id, {job_id})
 
     assert salvage == {}
 
@@ -177,7 +191,7 @@ def test_salvage_only_credits_jobs_with_a_streamed_event(session) -> None:
     )
     watcher = _watcher(session, run_events=bus)
 
-    salvage = watcher._salvage_from_run_events(run_id)
+    salvage = watcher._salvage_from_run_events(run_id, {seen_job, never_reached_job})
 
     assert salvage == {seen_job: True}
     assert never_reached_job not in salvage
@@ -186,10 +200,11 @@ def test_salvage_only_credits_jobs_with_a_streamed_event(session) -> None:
 def test_salvage_ignores_non_log_line_events(session) -> None:
     bus = InMemoryRunEventBus()
     run_id = uuid4()
-    bus.publish(run_id, {"type": "progress", "job_id": str(uuid4())})
+    job_id = str(uuid4())
+    bus.publish(run_id, {"type": "progress", "job_id": job_id})
     watcher = _watcher(session, run_events=bus)
 
-    assert watcher._salvage_from_run_events(run_id) == {}
+    assert watcher._salvage_from_run_events(run_id, {job_id}) == {}
 
 
 def test_salvage_swallows_a_broken_event_bus(session) -> None:
@@ -199,7 +214,63 @@ def test_salvage_swallows_a_broken_event_bus(session) -> None:
 
     watcher = _watcher(session, run_events=_BrokenBus())
 
-    assert watcher._salvage_from_run_events(uuid4()) == {}
+    assert watcher._salvage_from_run_events(uuid4(), {str(uuid4())}) == {}
+
+
+def test_salvage_ignores_events_from_other_dispatches_sharing_the_run(session) -> None:
+    """Regression test for the real bug found live 2026-08-19: run_events is keyed per-run,
+    and a run routinely fans out into many concurrent native dispatches sharing one stream.
+    A job_id belonging to a *different* dispatch on the same run must never be salvaged into
+    this dispatch's result, even if its own event stream reads clean."""
+    bus = InMemoryRunEventBus()
+    run_id = uuid4()
+    own_job = str(uuid4())
+    sibling_dispatch_job = str(uuid4())
+    bus.publish(
+        run_id,
+        build_log_line(run_id=run_id, job_id=own_job, message="optimize: done", level="info"),
+    )
+    bus.publish(
+        run_id,
+        build_log_line(
+            run_id=run_id, job_id=sibling_dispatch_job, message="optimize: done", level="info"
+        ),
+    )
+    watcher = _watcher(session, run_events=bus)
+
+    salvage = watcher._salvage_from_run_events(run_id, {own_job})
+
+    assert salvage == {own_job: True}
+    assert sibling_dispatch_job not in salvage
+
+
+def test_salvage_finds_own_events_crowded_by_many_sibling_dispatches(session) -> None:
+    """Reproduces the live failure mode directly: with enough sibling-dispatch events
+    interleaved ahead of it, a small fixed replay count would starve this dispatch's own
+    history out of the window. Reading the full stream (bounded by MAX_STREAM_LEN) instead
+    of a small count, combined with own_job_ids filtering, must still find it."""
+    bus = InMemoryRunEventBus()
+    run_id = uuid4()
+    own_job = str(uuid4())
+    bus.publish(
+        run_id,
+        build_log_line(run_id=run_id, job_id=own_job, message="optimize: done", level="info"),
+    )
+    # 250 sibling-dispatch events published after -- larger than the old
+    # DEFAULT_REPLAY_COUNT=200, which would have pushed own_job's event out of a
+    # count-capped xrevrange read entirely.
+    for _ in range(250):
+        bus.publish(
+            run_id,
+            build_log_line(
+                run_id=run_id, job_id=str(uuid4()), message="optimize: done", level="info"
+            ),
+        )
+    watcher = _watcher(session, run_events=bus)
+
+    salvage = watcher._salvage_from_run_events(run_id, {own_job})
+
+    assert salvage == {own_job: True}
 
 
 # ---------------------------------------------------------------------------
