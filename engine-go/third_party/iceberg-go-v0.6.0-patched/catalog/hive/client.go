@@ -22,10 +22,38 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/beltran/gohive"
 	"github.com/beltran/gohive/hive_metastore"
 )
+
+// hiveConnectTimeout bounds a single ConnectToMetastore attempt. gohive.ConnectToMetastore
+// (meta.go, v1.8.1) opens the socket via thrift.NewTSocket(addr) -- a bare hostPort string, not
+// thrift's own NewTSocketTimeout/SetConnTimeout constructors -- so the underlying net.Dial has
+// no deadline at all and blocks on Go's/the OS's own default, which for a black-holed
+// connection (packets silently dropped, no RST -- the common case for a stale/rotated metastore
+// IP behind an internal DNS record, as opposed to an actively-refused port) can run for minutes.
+//
+// Found live, 2026-08-20: a batched native dispatch stuck at the (then-already-raised, per
+// PDAE-8546) 4h activeDeadlineSeconds killed the whole pod, wiping every member's outcome the
+// deadline-kill path can't recover logs for. Root cause traced to individual catalog.Load
+// attempts each taking ~1,664s (27.7 min) against a metastore hostname whose DNS had rotated to
+// a since-recycled pod IP (confirmed live: the failing IPs in the pod's own logs matched no
+// currently-running pod, while a fresh in-pod DNS lookup of the same hostname resolved to a
+// third, different address entirely -- an internal NLB/DNS-based failover, not a Cryo-side
+// cache). catalogLoadAttempts' own 4-attempt/2-4-8s-backoff design (this package's other
+// comment, catalog.go) already assumes each attempt is cheap and fails fast; it silently stops
+// being true the moment a single attempt can itself run for half an hour, which is exactly what
+// turned a 32-table batch that normally finishes in ~11 minutes (see cryo/native_admit.py's own
+// timing baseline) into one still running two hours in with 1 millicore of CPU used -- not slow,
+// genuinely hung waiting on a dead socket.
+//
+// 45s is comfortably longer than any real, live metastore round-trip (sub-second per the
+// GetDatabase/GetTable calls actually made) while still bounding the worst case to a small,
+// known cost per attempt -- 4 attempts * 45s cap + the existing 14s of backoff is at most ~3.3
+// minutes total per table, not up to 4 hours.
+const hiveConnectTimeout = 45 * time.Second
 
 type HiveClient interface {
 	Close() error
@@ -70,12 +98,63 @@ func newHiveClient(uri string, opts *HiveOptions) (HiveClient, error) {
 	config := gohive.NewMetastoreConnectConfiguration()
 	config.TransportMode = "binary"
 
-	client, err := gohive.ConnectToMetastore(host, port, "NOSASL", config)
+	client, err := connectToMetastoreWithTimeout(host, port, config, hiveConnectTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to metastore: %w", err)
 	}
 
 	return &thriftClient{HiveMetastoreClient: client}, nil
+}
+
+// connectToMetastoreWithTimeout bounds gohive.ConnectToMetastore, which has no timeout of its
+// own -- see hiveConnectTimeout's doc comment for why this exists. gohive.ConnectToMetastore
+// takes no context/deadline parameter, so the only way to bound it from the outside is to run it
+// on its own goroutine and stop waiting on the result channel after the deadline; a timed-out
+// attempt's goroutine is deliberately abandoned rather than killed (Go has no API to forcibly
+// cancel a blocked syscall) -- it either eventually completes and its result is discarded here,
+// or is cleaned up whenever its own underlying connection attempt errors out. This does not leak
+// unboundedly: loadCatalogWithRetry's own attempt cap (4) bounds how many can ever be in flight
+// per LoadTable call, and each one that does eventually connect closes its socket normally via
+// gohive's own client lifecycle once garbage collected.
+func connectToMetastoreWithTimeout(
+	host string,
+	port int,
+	config *gohive.MetastoreConnectConfiguration,
+	timeout time.Duration,
+) (*gohive.HiveMetastoreClient, error) {
+	return connectWithTimeout(
+		func() (*gohive.HiveMetastoreClient, error) {
+			return gohive.ConnectToMetastore(host, port, "NOSASL", config)
+		},
+		timeout,
+	)
+}
+
+// connectWithTimeout races an arbitrary blocking connect func against a deadline. Split out from
+// connectToMetastoreWithTimeout so the race/timeout logic itself is unit-testable with an
+// injected func that sleeps/blocks deterministically, without needing a real (or even fake)
+// Thrift metastore listener.
+func connectWithTimeout[T any](
+	connect func() (T, error),
+	timeout time.Duration,
+) (T, error) {
+	type result struct {
+		client T
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		client, err := connect()
+		resultCh <- result{client: client, err: err}
+	}()
+
+	select {
+	case r := <-resultCh:
+		return r.client, r.err
+	case <-time.After(timeout):
+		var zero T
+		return zero, fmt.Errorf("connect timed out after %s", timeout)
+	}
 }
 
 func (c *thriftClient) Close() error {
