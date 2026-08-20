@@ -53,6 +53,19 @@ _MAX_MEM_MIB = MAX_POD_MEM_MIB
 # 114-132min real-world spread without materially changing per-table throughput (the batch
 # still returns as soon as all members finish; this only raises the hard ceiling).
 _ACTIVE_DEADLINE_SECONDS = 14400
+# Follow-up, 2026-08-20: the 4h raise above bought real margin but batches were still
+# hitting native_job_failed at close to the same rate as before -- confirmed live, still-running
+# 32-table pods observed at 1 millicore CPU / 76MB memory two hours in, i.e. genuinely hung, not
+# slow. Root cause: engine-go's Hive Metastore connect path (gohive.ConnectToMetastore, wrapped
+# by third_party/iceberg-go-v0.6.0-patched/catalog/hive/client.go) had no socket timeout at all,
+# so a single catalog.Load attempt against a stale/black-holed metastore IP (DNS-rotated NLB
+# backend, not a Cryo-side cache issue) could block for ~27.7 minutes per attempt -- confirmed
+# live via pod logs, 4 retries * ~27.7min ≈ 111min lost to two bad tables alone in one sampled
+# batch. The 114-132min "successful" baseline this comment originally cited was real per-table
+# processing time; the failures were a different, previously-invisible failure mode wearing the
+# same activeDeadlineSeconds symptom. Fixed at the source (connectWithTimeout, 45s cap per
+# attempt) rather than by raising this deadline further -- a longer deadline only delays a hang
+# that should instead fail fast and retry, per catalogLoadAttempts' own design intent.
 _DEFAULT_GB_PER_HOUR = 40.0
 
 __all__ = [
