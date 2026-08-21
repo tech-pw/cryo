@@ -1,13 +1,16 @@
-"""Tests for cryo/scheduler/scheduler.py's apply_priority_order -- specifically the
-Trino-usage/cost weighting added 2026-08-19 (PDAE), which previously did not exist: cohort
-dispatch order fell straight from compaction_priority to small_files_count, with zero
-awareness of how often a table is actually queried or how much fixing it would save.
+"""Tests for cryo/scheduler/scheduler.py's apply_priority_order -- the Trino-usage/cost
+weighting added 2026-08-19 (PDAE), which previously did not exist: cohort dispatch order fell
+straight from compaction_priority to small_files_count, with zero awareness of how often a
+table is actually queried or how much fixing it would save; and the reclaimable-bytes
+weighting added 2026-08-21 after a live investigation into safely draining a 57.95TB backlog
+without overwhelming the shared Hive Metastore -- see _reclaimable_weight's own docstring for
+the full incident/research writeup.
 """
 
 from __future__ import annotations
 
 from cryo.scheduler.rules import TableCandidate
-from cryo.scheduler.scheduler import _query_weight, apply_priority_order
+from cryo.scheduler.scheduler import _query_weight, _reclaimable_weight, apply_priority_order
 
 
 def _table(name: str, **stats) -> TableCandidate:
@@ -102,3 +105,94 @@ def test_apply_priority_order_is_deterministic_for_fully_tied_tables() -> None:
     ordered = apply_priority_order([a, b])
 
     assert [t.id for t in ordered] == ["aaa", "zzz"]
+
+
+def test_reclaimable_weight_zero_for_untouched_table() -> None:
+    table = _table("clean")
+    assert _reclaimable_weight(table) == 0.0
+
+
+def test_reclaimable_weight_increases_with_reclaimable_bytes() -> None:
+    small = _table("small", reclaimable_bytes=1024**3)  # 1 GB
+    large = _table("large", reclaimable_bytes=1024**4)  # 1 TB
+    assert _reclaimable_weight(large) > _reclaimable_weight(small)
+
+
+def test_reclaimable_weight_log_scaled_not_linear() -> None:
+    """A 4.5TB table (the real largest backlog table found live 2026-08-21) must not
+    completely drown out a 50GB one -- log1p keeps the tail from dominating the way a hard
+    linear scale would, same reasoning as _query_weight's own log-scaling."""
+    huge = _table("huge", reclaimable_bytes=4_500 * 1024**3)  # 4.5 TB
+    moderate = _table("moderate", reclaimable_bytes=50 * 1024**3)  # 50 GB
+    # Linear would be a 90x gap; log-scaled must be far smaller.
+    assert _reclaimable_weight(huge) / max(_reclaimable_weight(moderate), 1e-9) < 3.0
+
+
+def test_reclaimable_weight_ignores_negative_values() -> None:
+    """reclaimable_bytes has no business being negative, but a stray bad value must not push
+    a table's weight below the true-zero baseline via log of a negative number."""
+    table = _table("weird", reclaimable_bytes=-1024**3)
+    assert _reclaimable_weight(table) == 0.0
+
+
+def test_apply_priority_order_ranks_by_reclaimable_bytes_within_tier() -> None:
+    """Direct regression test for the live finding this was built from: the 58TB backlog is
+    extremely concentrated by a power-law curve (top 20 tables = 57% of total), so draining
+    highest-reclaimable-first reaches most of the backlog's value in far fewer metastore
+    round-trips than an unordered or usage-only sweep."""
+    tiny = _table("tiny", compaction_priority="MEDIUM", reclaimable_bytes=1024**2)  # 1 MB
+    huge = _table("huge", compaction_priority="MEDIUM", reclaimable_bytes=4_500 * 1024**3)
+    moderate = _table("moderate", compaction_priority="MEDIUM", reclaimable_bytes=50 * 1024**3)
+
+    ordered = apply_priority_order([tiny, moderate, huge])
+
+    assert [t.id for t in ordered] == ["huge", "moderate", "tiny"]
+
+
+def test_apply_priority_order_reclaimable_bytes_outranks_query_weight_within_tier() -> None:
+    """reclaimable_bytes is the primary within-tier signal for backlog draining -- a large,
+    cold table must still sort ahead of a small, extremely hot one in the same tier, since the
+    whole point is minimizing metastore round-trips per GB reclaimed, not query-latency
+    impact (that's what compaction_priority/query_weight already optimize for on the
+    steady-state maintenance path, not the one-off backlog-drain path this was built for)."""
+    large_cold = _table(
+        "large_cold", compaction_priority="LOW", reclaimable_bytes=2_000 * 1024**3, query_count_30d=0
+    )
+    small_hot = _table(
+        "small_hot", compaction_priority="LOW", reclaimable_bytes=1024**2, query_count_30d=1_000_000
+    )
+
+    ordered = apply_priority_order([small_hot, large_cold])
+
+    assert ordered[0].id == "large_cold"
+
+
+def test_apply_priority_order_query_weight_breaks_ties_when_reclaimable_bytes_equal() -> None:
+    cold = _table(
+        "cold", compaction_priority="LOW", reclaimable_bytes=1024**3, query_count_30d=0
+    )
+    hot = _table(
+        "hot", compaction_priority="LOW", reclaimable_bytes=1024**3, query_count_30d=50_000
+    )
+
+    ordered = apply_priority_order([cold, hot])
+
+    assert ordered[0].id == "hot"
+
+
+def test_apply_priority_order_still_respects_compaction_priority_first_over_reclaimable_bytes() -> (
+    None
+):
+    """An operator-set HIGH priority must still outrank a MEDIUM table sitting on a huge
+    reclaimable backlog -- reclaimable-bytes weighting only breaks ties within a tier, same
+    invariant query_weight already had to preserve."""
+    high_priority_tiny = _table(
+        "a", compaction_priority="HIGH", reclaimable_bytes=1024**2
+    )
+    medium_priority_huge = _table(
+        "b", compaction_priority="MEDIUM", reclaimable_bytes=4_500 * 1024**3
+    )
+
+    ordered = apply_priority_order([medium_priority_huge, high_priority_tiny])
+
+    assert ordered[0].id == "a"
