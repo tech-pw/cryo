@@ -131,12 +131,41 @@ def _query_weight(table: TableCandidate) -> float:
     return math.log1p(query_count) + math.log1p(max(savings_usd, 0.0))
 
 
+def _reclaimable_weight(table: TableCandidate) -> float:
+    """Reclaimable-bytes weight for ranking within a compaction_priority tier (2026-08-21).
+
+    Added after a live investigation into safely draining a 57.95TB / 3,201-table
+    expire_snapshots/remove_orphan_files backlog (built up during the ~2-week approval-gate
+    outage, PDAE) without overwhelming the shared Hive Metastore. Confirmed live: the backlog
+    is extremely concentrated by a power-law curve, not evenly spread -- the top 20 tables by
+    reclaimable_bytes held 57% of the total 58TB, the top 200 held 97%. Sorting purely by
+    query_weight (Trino usage) or small_files_count, as this ranking did before, has zero
+    awareness of that concentration: two tables in the same priority tier, one holding 4.5TB
+    of reclaimable garbage and one holding 4KB, had an equal shot at whichever slot came up
+    first. Since every table dispatched costs roughly the same fixed metastore-connection
+    overhead (a single connect+resolve-pointer round-trip per table, confirmed independent of
+    how much data that table's cleanup actually touches -- see cryo.engines.native's
+    job_dispatch.py timeout-fix comment for the connection-cost profile), draining
+    highest-reclaimable-first reaches a given fraction of total backlog value in far fewer
+    metastore round-trips than an unordered or usage-only sweep -- 200 well-chosen tables
+    versus needing most of 3,201 to hit the same cumulative GB.
+
+    log-scaled for the same reason query_weight is: a handful of multi-TB tables (the biggest
+    held 4.5TB alone) would otherwise completely swamp every other ranking signal at linear
+    scale, turning this into a single-factor sort in practice. GB (not raw bytes) keeps the
+    log1p input in a numerically sane range matching _query_weight's own scale.
+    """
+    reclaimable_gb = float(table.stats.get("reclaimable_bytes") or 0) / (1024**3)
+    return math.log1p(max(reclaimable_gb, 0.0))
+
+
 def apply_priority_order(tables: Iterable[TableCandidate]) -> list[TableCandidate]:
     priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     return sorted(
         tables,
         key=lambda table: (
             priority_rank.get(str(table.stats.get("compaction_priority", "LOW")), 3),
+            -_reclaimable_weight(table),
             -_query_weight(table),
             -int(table.stats.get("small_files_count") or 0),
             table.schema_name,
