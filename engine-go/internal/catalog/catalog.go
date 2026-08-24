@@ -34,6 +34,31 @@ const catalogLoadAttempts = 4
 
 var catalogLoadBackoff = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
 
+// hiveConnectTimeoutErrSubstring must match connectWithTimeout's error text in
+// third_party/iceberg-go-v0.6.0-patched/catalog/hive/client.go ("connect timed out after %s").
+// Duplicated as a string rather than imported because this package (internal/catalog) sits
+// above the vendored hive client and importing it here would be a layering inversion -- the
+// substring match is the intentional, narrow coupling point instead.
+const hiveConnectTimeoutErrSubstring = "connect timed out after"
+
+// isMetastoreUnreachable reports whether err is the bounded connect-timeout error added
+// 2026-08-21 (client.go's connectWithTimeout), as opposed to a fast Thrift-level rejection.
+//
+// Found live 2026-08-24: after that fix landed, catalogLoadAttempts' 4-attempt design -- built
+// for the transient-overload failure mode described above, where each attempt is cheap and
+// fails fast -- was silently being applied to a *different* failure mode it was never tuned
+// for: a sustained metastore outage where every attempt burns the full 45s timeout. 739 job
+// failures in 24h each showed all 4 attempts timing out at the full 45s, for an average total
+// duration of 4,103s (68min) and a max of 14,424s (4h) per table -- and since native batch pods
+// run tables fully serially (cryo/engines/native/batch.py's execute_batch, no early-exit), a
+// 32-table batch hitting this could burn over an hour and a half before even reaching its
+// healthy tables. A timed-out attempt is a much stronger "unreachable right now" signal than a
+// fast rejection, so retrying it 3 more times at the same 45s cost each is pure waste for this
+// table and everything queued behind it in the same batch.
+func isMetastoreUnreachable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), hiveConnectTimeoutErrSubstring)
+}
+
 // LoadTable opens the REST (or configured) catalog and loads the target table.
 func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catalog, *table.Table, error) {
 	props := buildProperties(req)
@@ -61,6 +86,11 @@ func LoadTable(ctx context.Context, req *protocol.ExecuteRequest) (catalog.Catal
 
 // loadCatalogWithRetry retries a catalog-connect function on failure. loader is injected so the
 // retry/backoff behavior itself is unit-testable without a real catalog endpoint.
+//
+// Stops early -- without spending the remaining attempts/backoff -- the first time loader
+// returns a bounded connect-timeout error (isMetastoreUnreachable): see that function's
+// docstring for the live incident this fixes. Any other error keeps the original
+// transient-overload retry behavior unchanged.
 func loadCatalogWithRetry(
 	ctx context.Context,
 	loader func(context.Context) (catalog.Catalog, error),
@@ -68,6 +98,7 @@ func loadCatalogWithRetry(
 	backoff []time.Duration,
 ) (catalog.Catalog, error) {
 	var lastErr error
+	attemptsMade := 0
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			select {
@@ -77,12 +108,16 @@ func loadCatalogWithRetry(
 			}
 		}
 		cat, err := loader(ctx)
+		attemptsMade++
 		if err == nil {
 			return cat, nil
 		}
 		lastErr = err
+		if isMetastoreUnreachable(err) {
+			break
+		}
 	}
-	return nil, fmt.Errorf("after %d attempts: %w", attempts, lastErr)
+	return nil, fmt.Errorf("after %d attempts: %w", attemptsMade, lastErr)
 }
 
 // WithSourceAWSConfig attaches an explicit static-credential aws.Config to ctx when the request
