@@ -84,6 +84,11 @@ class TestRunFinalizerPartial:
             "failed",
             "skipped",
             "partial",
+            # deferred added 2026-08-24: see run_finalizer.py's TERMINAL docstring comment --
+            # a job the governor declined to admit this cycle never transitions on its own, so
+            # excluding it here left any run with a deferred job stuck at status="running"
+            # forever (confirmed live: 20 runs open up to 321h with 100% of jobs terminal).
+            "deferred",
         }
         assert JobStatus.PARTIAL.value == "partial"
 

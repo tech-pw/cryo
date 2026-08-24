@@ -174,7 +174,12 @@ def _test_jwt_secret() -> None:
 
 
 @pytest.fixture()
-def session() -> Iterator[Session]:
+def _session_maker() -> Iterator[sessionmaker]:
+    """Shared engine/sessionmaker setup backing both the `session` and `session_factory`
+    fixtures. StaticPool means every session opened against this engine sees the same
+    in-memory database, so code under test (like run_finalizer) that opens its own session via
+    a factory -- rather than reusing a caller-held session -- still reads/writes the same data
+    the test set up."""
     _patch_sqlite_incompatible_defaults()
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -185,21 +190,34 @@ def session() -> Iterator[Session]:
         connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
         Base.metadata.create_all(connection)
 
-    session_factory = sessionmaker(
+    maker = sessionmaker(
         bind=engine,
         autoflush=False,
         autocommit=False,
         expire_on_commit=False,
     )
-    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
-    event.listen(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
+    event.listen(maker, "before_flush", _assign_missing_uuid_primary_keys)
+    event.listen(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
 
-    with session_factory() as db_session:
+    yield maker
+
+    event.remove(maker, "before_flush", _assign_missing_uuid_primary_keys)
+    event.remove(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
+    engine.dispose()
+
+
+@pytest.fixture()
+def session(_session_maker: sessionmaker) -> Iterator[Session]:
+    with _session_maker() as db_session:
         yield db_session
 
-    event.remove(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
-    event.remove(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
-    engine.dispose()
+
+@pytest.fixture()
+def session_factory(_session_maker: sessionmaker) -> sessionmaker:
+    """The bare sessionmaker, for code under test that takes a session *factory* (opens and
+    commits its own session) rather than a caller-held session -- e.g.
+    cryo.db.repositories.run_finalizer.finalize_open_runs."""
+    return _session_maker
 
 
 def _assign_missing_autoincrement_primary_keys(

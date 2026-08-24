@@ -14,6 +14,15 @@ TERMINAL = {
     JobStatus.FAILED.value,
     JobStatus.SKIPPED.value,
     JobStatus.PARTIAL.value,
+    # DEFERRED means the governor chose not to admit this job this cycle (capacity/cooldown/
+    # guardrail reasons, see governor.py's _defer_native_job) -- it does not requeue itself or
+    # transition back to QUEUED under the same job row, so a job sitting at DEFERRED will never
+    # become non-DEFERRED on its own. Treating it as non-terminal here left every run with any
+    # deferred jobs stuck re-affirming status="running" forever: confirmed live 2026-08-24, 20
+    # runs stuck open up to 321h (13+ days) despite 100% of their jobs already being in a
+    # terminal state -- e.g. one run had 9,236 total jobs, all accounted for across
+    # succeeded/failed/deferred, zero actually in flight.
+    JobStatus.DEFERRED.value,
 }
 
 
@@ -39,9 +48,15 @@ def finalize_open_runs(session_factory: Callable[[], Session]) -> int:
             failed_count = counts.get(JobStatus.FAILED.value, 0)
             skipped_count = counts.get(JobStatus.SKIPPED.value, 0)
             partial_count = counts.get(JobStatus.PARTIAL.value, 0)
-            if failed_count == 0 and partial_count == 0:
+            deferred_count = counts.get(JobStatus.DEFERRED.value, 0)
+            if failed_count == 0 and partial_count == 0 and deferred_count == 0:
                 run.status = "succeeded"
-            elif succeeded_count > 0 or partial_count > 0:
+            elif succeeded_count > 0 or partial_count > 0 or deferred_count > 0:
+                # A deferred job means the governor chose not to admit it this cycle
+                # (capacity/cooldown/guardrails) -- not a failure of anything that ran, but also
+                # not the full intended scope, so "succeeded" would overstate it. "partial"
+                # covers both: some real failures alongside successes, and admitted-but-
+                # incomplete-scope runs with nothing but successes and deferrals.
                 run.status = "partial"
             else:
                 run.status = "failed"
