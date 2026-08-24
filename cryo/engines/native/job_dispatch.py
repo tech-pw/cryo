@@ -66,6 +66,17 @@ _ACTIVE_DEADLINE_SECONDS = 14400
 # same activeDeadlineSeconds symptom. Fixed at the source (connectWithTimeout, 45s cap per
 # attempt) rather than by raising this deadline further -- a longer deadline only delays a hang
 # that should instead fail fast and retry, per catalogLoadAttempts' own design intent.
+#
+# Follow-up, 2026-08-24: the 45s cap stopped the unbounded hang, but 739 job failures in 24h
+# still showed every one of the 4 attempts burning the full 45s against a sustained metastore
+# outage (not the transient, fails-fast-most-of-the-time case catalogLoadAttempts=4 was tuned
+# for) -- averaging 4,103s (68min), max 14,424s (4h) per table, and since batch pods run tables
+# fully serially (batch.py's execute_batch), a 32-table batch hitting this could burn well over
+# an hour before reaching its healthy tables. Fixed at the retry layer: loadCatalogWithRetry now
+# stops after the first bounded-timeout error instead of spending the remaining 3 attempts on a
+# failure a timeout has already strongly signaled won't recover within this call (see
+# isMetastoreUnreachable in engine-go/internal/catalog/catalog.go). Fast/transient errors
+# (Thrift busy, connection refused) still retry the full 4 attempts as before.
 _DEFAULT_GB_PER_HOUR = 40.0
 
 __all__ = [
