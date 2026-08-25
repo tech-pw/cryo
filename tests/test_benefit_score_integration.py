@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from cryo.db.models import AuditLog, QueryLog, Source, Table, TablePartition, TableStats
 from cryo.planner.benefit_score import (
+    _GC_COLLECT_EVERY_N_TABLES,
     DEFAULT_MOOP_WEIGHTS,
     compute_benefit_score,
     compute_moop_scores,
@@ -773,6 +774,48 @@ def test_update_all_benefit_scores_expunges_session_after_each_table(session):
 
     assert table not in session
     assert partition not in session
+
+
+def test_update_all_benefit_scores_forces_gc_collect_periodically(session, monkeypatch):
+    """Regression test for the 2026-08-25 incident: the scheduler pod was still hitting 8.9GB+
+    RSS and getting OOMKilled/node-evicted across a ~99min, 1.56M-partition sweep even though
+    expunge_all() was already correctly firing every table (see that test above) -- consistent
+    with heap fragmentation across ~13k short-lived per-table object graphs rather than a true
+    reference leak. Confirms gc.collect() is actually invoked at the configured cadence, not
+    just that _GC_COLLECT_EVERY_N_TABLES exists as an unused constant."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    call_count = 0
+
+    def _fake_gc_collect() -> int:
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(benefit_score_module.gc, "collect", _fake_gc_collect)
+
+    table_count = _GC_COLLECT_EVERY_N_TABLES + 1
+    scan_at = datetime.now(UTC)
+    for i in range(table_count):
+        table = _seed_table(session, schema_name="test", table_name=f"gc_check_{i}")
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=1.0,
+                small_files_in_partition_count=10,
+                scan_at=scan_at,
+            )
+        )
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    # index 0 and index _GC_COLLECT_EVERY_N_TABLES both satisfy `index % N == 0` -- two
+    # collections across table_count = N + 1 tables.
+    assert call_count == 2
 
 
 def test_get_top_compaction_candidates(session):
