@@ -1,16 +1,24 @@
 """Tests for cryo/scheduler/scheduler.py's apply_priority_order -- the Trino-usage/cost
 weighting added 2026-08-19 (PDAE), which previously did not exist: cohort dispatch order fell
 straight from compaction_priority to small_files_count, with zero awareness of how often a
-table is actually queried or how much fixing it would save; and the reclaimable-bytes
-weighting added 2026-08-21 after a live investigation into safely draining a 57.95TB backlog
-without overwhelming the shared Hive Metastore -- see _reclaimable_weight's own docstring for
-the full incident/research writeup.
+table is actually queried or how much fixing it would save; the reclaimable-bytes weighting
+added 2026-08-21 after a live investigation into safely draining a 57.95TB backlog without
+overwhelming the shared Hive Metastore -- see _reclaimable_weight's own docstring for the full
+incident/research writeup; and the combined-weight blend added 2026-08-25 after reclaimable_bytes
+being the strict primary signal (with query_weight only breaking exact ties) left real, actively
+queried tables starved behind cold ones with merely larger backlogs -- see
+_combined_priority_weight's own docstring for the full incident.
 """
 
 from __future__ import annotations
 
 from cryo.scheduler.rules import TableCandidate
-from cryo.scheduler.scheduler import _query_weight, _reclaimable_weight, apply_priority_order
+from cryo.scheduler.scheduler import (
+    _combined_priority_weight,
+    _query_weight,
+    _reclaimable_weight,
+    apply_priority_order,
+)
 
 
 def _table(name: str, **stats) -> TableCandidate:
@@ -149,22 +157,71 @@ def test_apply_priority_order_ranks_by_reclaimable_bytes_within_tier() -> None:
     assert [t.id for t in ordered] == ["huge", "moderate", "tiny"]
 
 
-def test_apply_priority_order_reclaimable_bytes_outranks_query_weight_within_tier() -> None:
-    """reclaimable_bytes is the primary within-tier signal for backlog draining -- a large,
-    cold table must still sort ahead of a small, extremely hot one in the same tier, since the
-    whole point is minimizing metastore round-trips per GB reclaimed, not query-latency
-    impact (that's what compaction_priority/query_weight already optimize for on the
-    steady-state maintenance path, not the one-off backlog-drain path this was built for)."""
+def test_apply_priority_order_reclaimable_bytes_outranks_mildly_hot_table_within_tier() -> None:
+    """reclaimable_bytes still dominates a merely-warm table -- the combined-weight blend
+    (2026-08-25) lets real hotness offset backlog size, it doesn't invert the ranking outright
+    for every hot table. A few hundred queries/30d is nowhere near enough to out-blend a
+    2,000GB backlog."""
     large_cold = _table(
         "large_cold", compaction_priority="LOW", reclaimable_bytes=2_000 * 1024**3, query_count_30d=0
     )
-    small_hot = _table(
-        "small_hot", compaction_priority="LOW", reclaimable_bytes=1024**2, query_count_30d=1_000_000
+    small_warm = _table(
+        "small_warm", compaction_priority="LOW", reclaimable_bytes=1024**2, query_count_30d=500
     )
 
-    ordered = apply_priority_order([small_hot, large_cold])
+    ordered = apply_priority_order([small_warm, large_cold])
 
     assert ordered[0].id == "large_cold"
+
+
+def test_apply_priority_order_extreme_hotness_can_outrank_a_large_backlog_within_tier() -> None:
+    """Direct regression test for the combined-weight fix (2026-08-25): before this, a table's
+    query hotness had literally zero pull against reclaimable size (query_weight was only a
+    tie-breaker) -- confirmed live, lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup
+    (2,610 queries/30d, HIGH priority, real Metabase traffic) sat behind 146 other HIGH-tier
+    tables purely on reclaimable-bytes size while its own small-file count climbed monotonically
+    every day (1,431 -> 17,879 files, Aug 13-24) because the fix that would have controlled it
+    never got a turn. An extremely hot table must now be able to outrank a merely-larger-backlog
+    one, not just tie-break against an exactly-equal one."""
+    large_cold = _table(
+        "large_cold", compaction_priority="LOW", reclaimable_bytes=2_000 * 1024**3, query_count_30d=0
+    )
+    extremely_hot = _table(
+        "extremely_hot",
+        compaction_priority="LOW",
+        reclaimable_bytes=1024**2,
+        query_count_30d=1_000_000,
+    )
+
+    ordered = apply_priority_order([extremely_hot, large_cold])
+
+    assert ordered[0].id == "extremely_hot"
+
+
+def test_combined_priority_weight_is_sum_of_reclaimable_and_query_weight() -> None:
+    table = _table("t", reclaimable_bytes=5 * 1024**3, query_count_30d=1000)
+    assert _combined_priority_weight(table) == _reclaimable_weight(table) + _query_weight(table)
+
+
+def test_apply_priority_order_hot_small_table_now_outranks_146x_bigger_cold_backlog() -> None:
+    """Regression test using the exact real-world magnitudes confirmed live 2026-08-25: a table
+    with a small reclaimable backlog but real query traffic must rank ahead of a pack of cold
+    tables individually larger than it but collectively representing the kind of "146 other
+    HIGH-tier tables" starvation this fix exists to prevent."""
+    hot_small = _table(
+        "hot_small",
+        compaction_priority="HIGH",
+        reclaimable_bytes=9_063_196_314,  # ~8.4GB, real lsq_pw value
+        query_count_30d=2610,  # real lsq_pw value
+    )
+    cold_medium_tables = [
+        _table(f"cold_{i}", compaction_priority="HIGH", reclaimable_bytes=15 * 1024**3, query_count_30d=0)
+        for i in range(5)
+    ]
+
+    ordered = apply_priority_order([*cold_medium_tables, hot_small])
+
+    assert ordered[0].id == "hot_small"
 
 
 def test_apply_priority_order_query_weight_breaks_ties_when_reclaimable_bytes_equal() -> None:
