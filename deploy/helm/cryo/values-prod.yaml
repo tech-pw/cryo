@@ -247,7 +247,22 @@ scheduler:
       memory: 512Mi
     limits:
       cpu: "2"
-      memory: 6Gi
+      # Raised 6Gi -> 10Gi 2026-08-25: OOMKilled 9x in 15h (exit 137), confirmed live via
+      # kubectl describe. Same root shape as the 2Gi->6Gi raise noted above (benefit_score.py's
+      # update_all_benefit_scores, run every benefit_score_update_interval_hours) -- that fix's
+      # own comment already flagged 1.27M partitions as the trigger and added session.expunge_all()
+      # per table to stop the SQLAlchemy identity map from holding every Table/TablePartition
+      # object live for the whole sweep; the fleet has since grown to 1.56M+ partitions processed
+      # per sweep (confirmed live in the crashing pod's own logs: "Updated benefit scores for
+      # 1556325 partitions in 5932.5s" immediately preceding the OOM), past the headroom that fix
+      # bought. Each restart re-starts the full ~99min sweep from scratch rather than resuming, so
+      # the crash-loop was actively costing scheduling throughput, not just restarting harmlessly --
+      # confirmed live: north-star GB-freed/day fell 1,443.7 (Aug 23) -> 308.9 (Aug 24, -78.6%) over
+      # the same window this started. Cluster has ample headroom for this (nodes at 5-40% memory
+      # utilization, kubectl top nodes) -- stop-gap like the 1Gi->3Gi/2Gi->6Gi raises before it; the
+      # real fix (bounding update_all_benefit_scores' peak memory instead of just raising the
+      # ceiling to match it) is a separate, larger change, not done here.
+      memory: 10Gi
 
 scannerWorker:
   # `replicas: 8` was a fixed floor, not a target -- provisioned for this fleet's largest
