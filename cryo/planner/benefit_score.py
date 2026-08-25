@@ -16,6 +16,7 @@ count/frequency alone can't see that gap.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import logging
 import math
@@ -40,6 +41,15 @@ _QUERY_WINDOW_HOURS = 168  # 7 days
 
 # Minimum benefit score to be eligible for compaction (below this = skip)
 DEFAULT_MIN_BENEFIT_SCORE = 1.0
+
+# How often (every N tables) update_all_benefit_scores forces a full gc.collect() pass to fight
+# heap fragmentation across a long sweep -- see that function's own comment at the call site for
+# the live incident this addresses. 250 is a compromise: frequent enough to keep peak RSS well
+# below the scheduler's memory limit across a 13k+ table fleet, infrequent enough that gc.collect()
+# itself (a stop-the-world pause proportional to live object count) doesn't meaningfully slow the
+# sweep down -- expunge_all() has already dropped this table's objects to typically near-zero live
+# references by the time each collection runs, so each pass stays cheap.
+_GC_COLLECT_EVERY_N_TABLES = 250
 
 
 class _SchedulingBaseline(TypedDict):
@@ -606,12 +616,26 @@ def update_all_benefit_scores(session: Session) -> int:
     session.expunge_all()
 
     total = 0
-    for table_id in table_ids:
+    for index, table_id in enumerate(table_ids):
         total += update_partition_benefit_scores(session, table_id)
         update_table_effectiveness(session, table_id)
         # update_partition_benefit_scores already commits its own partitions before returning;
         # expunge right after so this table's (and its partitions') objects don't linger either.
         session.expunge_all()
+        if index % _GC_COLLECT_EVERY_N_TABLES == 0:
+            # expunge_all() releases every object's *references*, but CPython doesn't
+            # necessarily reclaim their memory back to the OS immediately or ever (freed
+            # arenas can sit unused rather than being returned via malloc_trim) -- especially
+            # for cyclic garbage (e.g. SQLAlchemy ORM instances' back-references to their
+            # InstanceState/session), which needs a real GC pass, not just refcounting, to be
+            # collected at all. Confirmed live 2026-08-25: even with expunge_all() already
+            # firing correctly every table (verified via code review, not a regression), the
+            # scheduler pod's RSS still climbed to 8.9GB+ over a ~99min, 1.56M-partition sweep
+            # and was OOMKilled/evicted -- consistent with heap fragmentation across ~13k
+            # short-lived per-table object graphs rather than a true reference leak. Forcing a
+            # full collection periodically (not every table -- gc.collect() itself isn't free)
+            # trades a small amount of CPU for materially lower peak RSS across the sweep.
+            gc.collect()
     return total
 
 
