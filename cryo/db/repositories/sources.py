@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from cryo.db.models import Source, Table
 
@@ -99,3 +99,55 @@ def load_sources_by_id(
         return {}
     rows = session.scalars(select(Source).where(Source.id.in_(source_ids)))
     return {row.id: row for row in rows}
+
+
+def deactivate_orphaned_evolving_catalog_entries(session: Session) -> int:
+    """One-time cleanup for a historical table-rename artifact (investigated 2026-08-22..25).
+
+    Found live: 1,371 active tables with ``table_name LIKE '%_evolving'`` and ``location IS
+    NULL`` -- e.g. ``ezpay.gold_notifications_evolving`` (location=None) alongside a real,
+    correctly-located sibling ``ezpay.gold_notifications``
+    (location='s3a://.../notifications_evolving' -- the S3 path itself still carries the old
+    "_evolving" name as a directory segment). This is consistent with a historical rename/
+    re-registration event where the old catalog entry was never deactivated: something renamed
+    the table but the stale ``*_evolving`` row kept getting scanned/dispatched forever after,
+    with no location to actually load. Confirmed via the production health checklist's
+    repeat_failures check: this is the single worst repeat-failure pattern in the fleet
+    (orphaned_catalog_entry/NoSuchKey, 600-3,000+ failures in any 3-day window depending on
+    scan cadence, 480-1,260 distinct tables), burning a metastore round-trip and a
+    guaranteed-failing scan every cycle for weeks (``consecutive_scan_failures`` observed up to
+    151, averaging ~76, ``first_seen_at`` as early as 2026-07-09) for zero possible benefit --
+    ``location IS NULL`` means there is nothing Cryo could ever successfully scan here.
+
+    Deactivates (``is_active=False``, the same mechanism ``deactivate_out_of_scope_tables``
+    above uses -- excluded from scheduling via ``scheduler/rules.py``'s ``is_active`` gate, not
+    deleted, so the row and its history stay inspectable/reversible) only rows matching ALL of:
+    table_name ends in ``_evolving``, location IS NULL, AND a same-schema sibling exists under
+    the name with the suffix stripped that DOES have a non-null location. That third condition
+    is the actual safety boundary -- confirmed live, 100% (1,371/1,371) of the matched rows had
+    such a sibling, so this only touches entries with a verified-good replacement already doing
+    the real work, never an ambiguous or genuinely-unresolved one.
+    """
+    stale = aliased(Table)
+    sibling = aliased(Table)
+
+    # sibling.table_name + "_evolving" == stale.table_name, via concatenation (portable across
+    # Postgres and sqlite -- the test suite's engine) rather than a substring/LEFT() function,
+    # which differ across dialects. Equivalent to stripping the suffix off stale.table_name, just
+    # expressed the other direction so it works everywhere.
+    stale_ids = select(stale.id).where(
+        stale.is_active.is_(True),
+        stale.table_name.like("%\\_evolving", escape="\\"),
+        stale.location.is_(None),
+        select(sibling.id)
+        .where(
+            sibling.schema_name == stale.schema_name,
+            (sibling.table_name + "_evolving") == stale.table_name,
+            sibling.location.is_not(None),
+        )
+        .exists(),
+    )
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
+        update(Table).where(Table.id.in_(stale_ids)).values(is_active=False)
+    )
+    return int(result.rowcount or 0)
