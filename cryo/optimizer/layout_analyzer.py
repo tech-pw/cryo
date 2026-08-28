@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -26,6 +29,54 @@ from cryo.db.models import LayoutRecommendation, QueryPattern, Source, Table, Ta
 from cryo.telemetry.patterns import get_recommended_sort_columns, get_table_query_patterns
 
 logger = logging.getLogger(__name__)
+
+# fetch_file_stats' catalog.load_table() call goes through pyiceberg's own Hive Thrift client
+# (pyiceberg.catalog.hive._HiveClient), which constructs its socket via bare
+# thrift.transport.TSocket.TSocket(host, port) with no timeout -- pyiceberg 0.11.1 never passes
+# one through, and there's no config knob for it. A black-holed/stale metastore IP (DNS-rotated
+# NLB backend, same shape as the Go engine's own metastore-timeout incident, see
+# engine-go/third_party/iceberg-go-v0.6.0-patched/catalog/hive/client.go's docstring) then blocks
+# the OS-level TCP connect indefinitely.
+#
+# Found live, 2026-08-28: cryo.scheduler.service.py's tick() calls _generate_layout_recommendations
+# synchronously, before _dispatch_scheduled_runs -- a try/except around the per-table loop there
+# only catches a *raised* exception, it does nothing for a call that never returns. With the
+# metastore unreachable, this single step blocked the entire tick every time it ran, so
+# _dispatch_scheduled_runs never got a turn: confirmed live, zero new MaintenanceRun rows created
+# for 3 days straight (last one 2026-08-25 10:49 UTC) despite the scheduler pod itself staying
+# Running/healthy the whole time -- not crashed, just perpetually stuck earlier in the same tick.
+#
+# Bounds it the same way cryo.scanner.run.py's own _run_bounded already does for the identical
+# failure shape there ("one table hung for 100+ minutes and starved every subsequently queued
+# scan") -- a dedicated small pool, isolated from the scanner's own executor so the two can't
+# compete for capacity, since this runs from the scheduler tick, not the scan poll loop. A
+# timed-out call is abandoned, not cancelled (Python has no API to forcibly kill a blocked
+# syscall in another thread) -- its result is simply discarded if it ever resolves.
+_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS = 30.0
+
+_layout_analyzer_executor: ThreadPoolExecutor | None = None
+
+
+def _catalog_call_executor() -> ThreadPoolExecutor:
+    global _layout_analyzer_executor
+    if _layout_analyzer_executor is None:
+        _layout_analyzer_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="layout-analyzer-catalog"
+        )
+    return _layout_analyzer_executor
+
+
+def _run_catalog_call_bounded[R](fn: Callable[[], R], *, description: str) -> R:
+    """Run a blocking catalog call with a hard wall-clock bound. Raises TimeoutError (caught by
+    fetch_file_stats' own existing except-Exception block, same as any other catalog failure) if
+    it doesn't return in time -- see this module's own comment above for the incident."""
+    future = _catalog_call_executor().submit(fn)
+    try:
+        return future.result(timeout=_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS)
+    except FuturesTimeoutError as exc:
+        raise TimeoutError(
+            f"{description} exceeded {_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS:.0f}s and was abandoned"
+        ) from exc
 
 # Real-data cap for fetch_file_stats: a busy table can have 90K+ data files (confirmed live,
 # 2026-08-14: pw_experimentation.gold_unleash_experiments_v1 alone has 93,699), and this whole
@@ -159,7 +210,10 @@ def fetch_file_stats(
 
     try:
         catalog = source_catalog_for(source)
-        iceberg_table = catalog.load_table(table.schema_name, table.table_name)
+        iceberg_table = _run_catalog_call_bounded(
+            lambda: catalog.load_table(table.schema_name, table.table_name),
+            description=f"catalog.load_table({table.schema_name}.{table.table_name})",
+        )
         schema = iceberg_table.schema()
     except Exception:
         logger.warning(
