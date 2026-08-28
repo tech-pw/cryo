@@ -216,6 +216,39 @@ class TestFetchFileStats:
 
         assert fetch_file_stats(session, table) is None
 
+    def test_hung_catalog_load_table_times_out_instead_of_blocking_forever(
+        self, session, monkeypatch
+    ) -> None:
+        """Direct regression test for the live incident, 2026-08-28: pyiceberg's Hive Thrift
+        client has no socket timeout of its own (TSocket.TSocket(host, port), no deadline), so a
+        black-holed metastore IP blocks catalog.load_table() indefinitely. That blocked the
+        scheduler's entire tick() before it ever reached run creation -- confirmed live, zero
+        new MaintenanceRun rows for 3 days straight despite the scheduler pod staying healthy.
+        fetch_file_stats must now bound that call and return None (its existing "couldn't load
+        the table" contract) rather than hang."""
+        import time
+
+        table = _seed_table(session)
+
+        class _HangingCatalog:
+            def load_table(self, namespace: str, table_name: str) -> None:
+                time.sleep(30)  # far longer than the patched timeout below
+                raise AssertionError("should have timed out long before this returned")
+
+        monkeypatch.setattr(
+            "cryo.sources.factory.source_catalog_for", lambda source: _HangingCatalog()
+        )
+        monkeypatch.setattr(
+            "cryo.optimizer.layout_analyzer._LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS", 0.2
+        )
+
+        started = time.monotonic()
+        result = fetch_file_stats(session, table)
+        elapsed = time.monotonic() - started
+
+        assert result is None
+        assert elapsed < 5.0, f"fetch_file_stats blocked for {elapsed:.1f}s instead of timing out"
+
     def test_missing_source_returns_none(self, session) -> None:
         table = Table(
             id=uuid.uuid4(),
