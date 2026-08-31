@@ -87,8 +87,12 @@ _QUEUE_GROWTH_MIN_BASELINE = 50  # live-verified 2026-08-31: a baseline of 5 tur
 # MaintenanceJob (a table can be perfectly scanned and cost-priced with zero jobs ever run
 # against it, e.g. brand new or already-optimal) -- so these need their own checks, not a
 # derivation of the existing job-shaped ones.
-_SCAN_STALE_HOURS = 48  # scanner/README's own daily-cadence cron target is 24h; double that
-# before flagging catches a table that's merely due for its next run, not actually broken
+_SCAN_STALE_HOURS = 168  # live-verified 2026-08-31 against the real fleet (~12,600 active
+# tables): age distribution is a normal long tail (5,206 <48h, 4,736 at 2-7d, 2,453 at 7-30d,
+# only 132 at 30d+) -- 48h flagged ~59% of the fleet as "stale" purely from real cadence at
+# this scale, not a stalled scanner. 7 days covers fresh+2-7d (~79% of the fleet, the
+# steady-state norm) and leaves only the genuine long tail (7-30d+) as the signal worth acting
+# on. Revisit if scan capacity/parallelism changes meaningfully.
 _SCAN_STALE_MIN_COUNT = 25  # a handful of stale tables in a multi-thousand-table fleet is
 # normal skew from scan ordering; a large chunk stale together means the scanner itself stalled
 _SCAN_CONSECUTIVE_FAILURE_THRESHOLD = 3  # matches consecutive_scan_failures' own reset-on-
@@ -96,7 +100,9 @@ _SCAN_CONSECUTIVE_FAILURE_THRESHOLD = 3  # matches consecutive_scan_failures' ow
 _SCAN_FAILING_TABLES_MIN_COUNT = 10  # a handful of genuinely broken tables (deleted, bad
 # credentials) is an expected steady-state; a cluster of them appearing together is the
 # scanner-itself-broken shape, not individually-broken tables
-_COST_STALE_HOURS = 48  # table_cost.scan_at freshness -- same reasoning as scan staleness
+_COST_STALE_HOURS = 168  # table_cost.scan_at freshness -- live-verified 2026-08-31 to track
+# almost the exact same age distribution as scanning (cost pricing runs off the same cadence),
+# so the same 7-day recalibration applies for the same reason
 
 # Live-verified 2026-08-31, first real run of scan_freshness/scan_failures/
 # cost_ingestion_freshness against prod: 680 of 817 scan-failing tables and 648 of 755
