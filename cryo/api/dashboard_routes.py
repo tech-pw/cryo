@@ -27,6 +27,7 @@ from cryo.db.models import (
 )
 from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
+from cryo.reporting.vitals import compute_cryo_vitals, cryo_vitals_to_payload
 from cryo.scheduler.rules import effective_preset
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
@@ -680,6 +681,20 @@ def get_job_detail(
         partition_predicates=partition_predicates,
         force_admit=job.force_admit,
     )
+
+
+@router.get("/vitals", tags=["dashboards"])
+def get_cryo_vitals(
+    session: SessionDep,
+    _principal: Annotated[dict, Depends(require_viewer)],
+) -> dict[str, Any]:
+    """Cryo's own vitals: one 0-100 score + HEALTHY/DEGRADED/CRITICAL status answering "is
+    everything in Cryo working as expected right now" -- the operational-health counterpart to
+    /dashboard/fleet-trends' "how much good are we doing" north-star metric. Fleet-wide, not
+    tenant-scoped, same as the health_check.py checklist it's built on (see
+    cryo/reporting/vitals.py for the composition and scoring rationale)."""
+    vitals = compute_cryo_vitals(session)
+    return cryo_vitals_to_payload(vitals)
 
 
 @router.get("/sla-status", response_model=SLAResponse, tags=["dashboards"])
