@@ -134,10 +134,39 @@ class SchedulerService:
         self._last_trino_cost_pricing: datetime | None = None
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
+        """One scheduler cycle: dispatch real maintenance work first, diagnostics/telemetry
+        housekeeping after.
+
+        Ordering here is deliberate, not incidental -- found live, 2026-08-31, following the
+        _maybe_check_ml_drift incident (see that method's own docstring): even after bounding
+        that one step, dispatch was still reachable only after up to ~25-30min of *other*
+        unbounded, sequential housekeeping (a full first-run telemetry/query-log catch-up being
+        the single biggest contributor observed live -- tens of thousands of buffered Metabase
+        query statements to parse through _maybe_ingest_telemetry). None of that housekeeping
+        writes anything the dispatch path below reads -- they're independent side-effecting
+        tasks that happened to share this synchronous call sequence purely by original code
+        organization, not by a real dependency -- so there was no correctness reason for
+        dispatch to wait behind them. Worse, every pod restart (deploys, node reschedules, both
+        frequent in practice) resets every _last_* in-memory timestamp gating these tasks,
+        re-paying the full first-run cost each time and pushing dispatch back by that same
+        20-30min window on every restart.
+
+        Moving the actual dispatch (_dispatch_scheduled_runs + the due-preset loop) to run
+        immediately after the leader check means a fresh pod (or a pod that's been blocked for
+        days, the original incident's shape) reaches real maintenance dispatch on its very
+        first tick, in the time _dispatch_due_presets itself takes -- typically seconds -- not
+        after clearing 11 other steps first. The housekeeping steps still run every tick, just
+        after dispatch instead of before it; their own individual cadence gating
+        (_last_ml_drift_check etc.) and bounds (where added, see _maybe_check_ml_drift) are
+        unchanged.
+        """
         if not self._leader_check():
             return SchedulerTickResult()
 
         current = now or datetime.now(UTC)
+
+        self._dispatch_scheduled_runs(current)
+        result = self._dispatch_due_presets(current)
 
         self._expire_stale_approval_requests()
 
@@ -153,7 +182,12 @@ class SchedulerService:
         self._maybe_aggregate_cost_attribution(current)
         self._maybe_price_trino_scan_cost(current)
         self._sweep_pending_fallback_dispatches()
-        self._dispatch_scheduled_runs(current)
+
+        return result
+
+    def _dispatch_due_presets(self, current: datetime) -> SchedulerTickResult:
+        """The actual cron-preset dispatch loop, extracted out of tick() so it can run first
+        -- see tick()'s own docstring for why. Behavior unchanged from before that reordering."""
         due_presets = self._store.list_due_presets(current)
         if not due_presets:
             return SchedulerTickResult()
