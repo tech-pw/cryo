@@ -76,6 +76,10 @@ _REPEAT_FAILURE_MIN_COUNT = 5  # a table hitting the identical error 5+ times in
 # clearly not a transient blip
 _QUEUE_GROWTH_ALERT_PCT = 25.0  # pending-queue depth growing >25% day-over-day without a
 # corresponding admission-rate increase is the queue losing ground, not just being busy
+_QUEUE_GROWTH_MIN_BASELINE = 50  # live-verified 2026-08-31: a baseline of 5 turned a real
+# ~20k-deep queue into a nonsensical "+412,240%" reading -- percent-growth off a tiny baseline
+# is statistical noise, not a genuine trend, so below this the check falls back to judging the
+# absolute depth directly instead of a distorted percentage
 
 # 2026-08-31: user asked for vitals to cover "governer, cost ingestion, scanning etc" by name,
 # not just the job-execution-shaped incidents the checks above were built for. Scanning and
@@ -93,6 +97,17 @@ _SCAN_FAILING_TABLES_MIN_COUNT = 10  # a handful of genuinely broken tables (del
 # credentials) is an expected steady-state; a cluster of them appearing together is the
 # scanner-itself-broken shape, not individually-broken tables
 _COST_STALE_HOURS = 48  # table_cost.scan_at freshness -- same reasoning as scan staleness
+
+# Live-verified 2026-08-31, first real run of scan_freshness/scan_failures/
+# cost_ingestion_freshness against prod: 680 of 817 scan-failing tables and 648 of 755
+# never-scanned tables were `_evolving` -- the exact orphaned-catalog-entry class from
+# ace7f4b (cleanup exists, deliberately not run against these -- see git log and prior session
+# instruction to leave `_evolving` cleanup alone). Their metadata.json is permanently gone by
+# design of that class of problem, not a live scanner malfunction, so scoring them here just
+# duplicates repeat_failures' job-side signal on the same known issue under a new name and
+# drowns out genuine scanner problems. Excluded from all three new checks; the *_evolving
+# suffix is the same marker the source pipeline and ace7f4b's own cleanup already key on.
+_EVOLVING_SUFFIX = "_evolving"
 
 
 @dataclass(frozen=True)
@@ -466,12 +481,29 @@ def _check_queue_growth(session: Session, *, now: datetime) -> CheckResult:
         ).scalar_one()
     )
 
-    if yesterday_depth == 0:
+    if yesterday_depth < _QUEUE_GROWTH_MIN_BASELINE:
+        # A tiny baseline (or zero) makes percent-growth meaningless -- e.g. 5 -> 20,617 reads
+        # as "+412,240%" which is technically correct but tells an operator nothing. Fall back
+        # to judging the absolute depth against admission_stall's own "meaningfully large"
+        # threshold instead, so a real backlog still surfaces, just not via a distorted ratio.
+        if today_depth < 100:
+            return CheckResult(
+                name="queue_growth",
+                passed=True,
+                severity="info",
+                summary=f"Queue depth {today_depth} (baseline too small yesterday "
+                f"[{yesterday_depth}] for a percentage to be meaningful)",
+            )
         return CheckResult(
             name="queue_growth",
-            passed=True,
-            severity="info",
-            summary=f"Queue depth {today_depth} (no comparable baseline yesterday)",
+            passed=False,
+            severity="warning",
+            summary=f"Queue depth {today_depth} -- yesterday's baseline ({yesterday_depth}) was "
+            f"too small for a percentage to be meaningful, but the absolute depth is real",
+            detail="admission_stall (above) is the check that judges whether this depth is "
+            "actually draining -- this one exists only to flag the depth itself when the "
+            "day-over-day percentage can't be trusted.",
+            evidence={"today": today_depth, "yesterday": yesterday_depth},
         )
     growth_pct = 100.0 * (today_depth - yesterday_depth) / yesterday_depth
     if growth_pct <= _QUEUE_GROWTH_ALERT_PCT:
@@ -501,7 +533,11 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
     together is the scanner-stalled shape (cron not firing, scan_queue backed up, go_scan
     binary erroring on startup), not individually slow tables."""
     active_total = int(
-        session.execute(select(func.count()).select_from(Table).where(Table.is_active.is_(True))).scalar_one()
+        session.execute(
+            select(func.count())
+            .select_from(Table)
+            .where(Table.is_active.is_(True), Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"))
+        ).scalar_one()
     )
     if active_total == 0:
         return CheckResult(
@@ -516,7 +552,11 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
             select(func.count())
             .select_from(TableStats)
             .join(Table, Table.id == TableStats.table_id)
-            .where(Table.is_active.is_(True), TableStats.scan_at >= cutoff)
+            .where(
+                Table.is_active.is_(True),
+                Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+                TableStats.scan_at >= cutoff,
+            )
         ).scalar_one()
     )
     stale_count = active_total - fresh_count
@@ -552,6 +592,7 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
         select(Table.id, Table.schema_name, Table.table_name, Table.consecutive_scan_failures)
         .where(
             Table.is_active.is_(True),
+            Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
             Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
         )
         .order_by(Table.consecutive_scan_failures.desc())
@@ -573,6 +614,7 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
             .select_from(Table)
             .where(
                 Table.is_active.is_(True),
+                Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
                 Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
             )
         ).scalar_one()
@@ -601,7 +643,11 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
     the cost-ceiling admission gate -- stale cost data doesn't fail loudly, it just quietly
     freezes cost numbers and ROI-gate decisions at whatever they were last computed."""
     active_total = int(
-        session.execute(select(func.count()).select_from(Table).where(Table.is_active.is_(True))).scalar_one()
+        session.execute(
+            select(func.count())
+            .select_from(Table)
+            .where(Table.is_active.is_(True), Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"))
+        ).scalar_one()
     )
     if active_total == 0:
         return CheckResult(
@@ -612,7 +658,12 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
         )
     cutoff = now - timedelta(hours=_COST_STALE_HOURS)
     priced_total = int(
-        session.execute(select(func.count()).select_from(TableCost)).scalar_one()
+        session.execute(
+            select(func.count())
+            .select_from(TableCost)
+            .join(Table, Table.id == TableCost.table_id)
+            .where(Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"))
+        ).scalar_one()
     )
     if priced_total == 0:
         return CheckResult(
@@ -623,7 +674,10 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
         )
     fresh_count = int(
         session.execute(
-            select(func.count()).select_from(TableCost).where(TableCost.scan_at >= cutoff)
+            select(func.count())
+            .select_from(TableCost)
+            .join(Table, Table.id == TableCost.table_id)
+            .where(Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"), TableCost.scan_at >= cutoff)
         ).scalar_one()
     )
     stale_count = priced_total - fresh_count
