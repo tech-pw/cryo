@@ -589,7 +589,7 @@ class TestScanFreshness:
         _seed_scan_stats(session, fresh_table, scan_at=NOW - timedelta(hours=1))
         for i in range(5):
             _, stale_table = _seed_source_table(session, name=f"stale{i}")
-            _seed_scan_stats(session, stale_table, scan_at=NOW - timedelta(hours=100))
+            _seed_scan_stats(session, stale_table, scan_at=NOW - timedelta(hours=200))
         session.commit()
 
         report = run_production_health_checks(session, now=NOW)
@@ -599,7 +599,7 @@ class TestScanFreshness:
     def test_fails_when_many_active_tables_are_stale_together(self, session) -> None:
         for i in range(30):
             _, table = _seed_source_table(session, name=f"stale{i}")
-            _seed_scan_stats(session, table, scan_at=NOW - timedelta(hours=100))
+            _seed_scan_stats(session, table, scan_at=NOW - timedelta(hours=200))
         session.commit()
 
         report = run_production_health_checks(session, now=NOW)
@@ -723,7 +723,7 @@ class TestCostIngestionFreshness:
     def test_fails_when_most_priced_tables_are_stale(self, session) -> None:
         for i in range(10):
             _, table = _seed_source_table(session, name=f"t{i}")
-            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=100))
+            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=200))
         session.commit()
 
         report = run_production_health_checks(session, now=NOW)
@@ -734,7 +734,7 @@ class TestCostIngestionFreshness:
     def test_severity_escalates_to_critical_when_almost_all_stale(self, session) -> None:
         for i in range(10):
             _, table = _seed_source_table(session, name=f"t{i}")
-            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=100))
+            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=200))
         session.commit()
 
         report = run_production_health_checks(session, now=NOW)
