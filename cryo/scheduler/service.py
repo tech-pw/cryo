@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -13,6 +15,69 @@ from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
 from cryo.scheduler.scheduler import ScheduledRunDraft, build_scheduled_run, enqueue_run
+
+# _maybe_check_ml_drift's own body (detect_all_anomalies) is bounded by this -- see that
+# method's own comment for the incident. A dedicated single-worker pool, isolated from
+# scanner.run.py's and layout_analyzer.py's own executors (different subsystem, different
+# call volume -- this only ever needs to bound one call at a time, from tick()'s own thread).
+_ML_DRIFT_CHECK_TIMEOUT_SECONDS = 60.0
+_ml_drift_executor: ThreadPoolExecutor | None = None
+
+
+def _ml_drift_check_executor() -> ThreadPoolExecutor:
+    global _ml_drift_executor
+    if _ml_drift_executor is None:
+        _ml_drift_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ml-drift-check")
+    return _ml_drift_executor
+
+
+def _run_ml_drift_scan() -> dict[str, object]:
+    """The actual scan body, unchanged in behavior from before the 2026-08-31 timeout fix --
+    only extracted out of _maybe_check_ml_drift so it can run on the bounded executor thread
+    (see that method's own docstring for why). Opens its own session since it now runs on a
+    separate thread from tick()'s caller."""
+    from sqlalchemy import select
+
+    from cryo.db.models import Table, TableStats
+    from cryo.ml.anomaly_detector import detect_all_anomalies
+    from cryo.ml.health_classifier import HealthLabel, evaluate_classifier
+
+    with SessionLocal() as session:
+        anomalies = detect_all_anomalies(session, min_severity="high")
+        drift_report: dict[str, object] = {"anomalies": len(anomalies)}
+
+        rows = session.execute(
+            select(Table, TableStats).join(TableStats, TableStats.table_id == Table.id).limit(200)
+        ).all()
+        labeled: list[HealthLabel] = []
+        stats_by_table: dict[str, dict[str, object]] = {}
+        for table, stats in rows:
+            if stats is None:
+                continue
+            tid = str(table.id)
+            stats_dict = {
+                "table_id": tid,
+                "total_files": stats.total_files,
+                "small_files_count": stats.small_files_count,
+                "overall_score": stats.overall_score,
+                "delete_file_pct": (stats.raw or {}).get("delete_file_pct", 0) if stats.raw else 0,
+            }
+            stats_by_table[tid] = stats_dict
+            needs = (
+                float(stats.small_files_count or 0) > 500 or float(stats.overall_score or 100) < 50
+            )
+            labeled.append(HealthLabel(table_id=tid, needs_emergency_compaction=needs))
+        if len(labeled) >= 4:
+            eval_result = evaluate_classifier(labeled, stats_by_table)
+            drift_report["classifier"] = eval_result
+            if not eval_result.get("beats_threshold"):
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Health classifier drift: accuracy below threshold baseline %s", eval_result
+                )
+        session.commit()
+    return drift_report
 
 
 class SchedulerStore(Protocol):
@@ -158,6 +223,28 @@ class SchedulerService:
             logging.getLogger(__name__).warning("Failed to expire stale approval requests: %s", e)
 
     def _maybe_check_ml_drift(self, current: datetime) -> None:
+        """Runs the ML-drift diagnostic scan on ``ml_drift_check_interval_hours`` cadence,
+        bounded by ``_ML_DRIFT_CHECK_TIMEOUT_SECONDS``.
+
+        Found live, 2026-08-31: ``detect_all_anomalies`` runs 2+ unbatched, sequential DB
+        queries per table with recent scan history (4,287 tables observed live) -- fine at a
+        smaller fleet size, but past ~5 minutes at this scale, with no timeout of its own. Since
+        this is the *first* step in tick() (called before ``_dispatch_scheduled_runs``), and
+        ``self._last_ml_drift_check`` only gets set *after* a successful completion, a single
+        slow/hung call here meant it never updated -- so every subsequent tick re-attempted the
+        same expensive scan from scratch, forever, never reaching dispatch even once. Confirmed
+        live: zero new MaintenanceRun rows created for days despite the scheduler pod staying
+        healthy and cron_is_due (fixed earlier the same day) correctly reporting every preset as
+        due on every single tick -- the loop never got that far.
+
+        Bounding this call (same ThreadPoolExecutor + future.result(timeout=...) pattern already
+        proven in scanner/run.py and layout_analyzer.py for the identical shape of problem) and
+        -- critically -- still recording ``_last_ml_drift_check`` on timeout, not just success,
+        so a slow/failing scan degrades to "skipped this cycle" rather than "silently blocks
+        every tick forever." The scan itself is a best-effort diagnostic (already wrapped in its
+        own try/except, logs a warning and moves on) -- skipping one cycle costs nothing that
+        blocking dispatch doesn't cost far more.
+        """
         from datetime import timedelta
 
         from cryo.config import get_settings
@@ -167,62 +254,27 @@ class SchedulerService:
             elapsed = current - self._last_ml_drift_check
             if elapsed < timedelta(hours=interval_hours):
                 return
+
+        import logging
+
+        logger = logging.getLogger(__name__)
+        future = _ml_drift_check_executor().submit(_run_ml_drift_scan)
         try:
-            from cryo.ml.anomaly_detector import detect_all_anomalies
-            from cryo.ml.health_classifier import HealthLabel, evaluate_classifier
-
-            with SessionLocal() as session:
-                anomalies = detect_all_anomalies(session, min_severity="high")
-                drift_report: dict[str, object] = {"anomalies": len(anomalies)}
-                from sqlalchemy import select
-
-                from cryo.db.models import Table, TableStats
-
-                rows = session.execute(
-                    select(Table, TableStats)
-                    .join(TableStats, TableStats.table_id == Table.id)
-                    .limit(200)
-                ).all()
-                labeled: list[HealthLabel] = []
-                stats_by_table: dict[str, dict[str, object]] = {}
-                for table, stats in rows:
-                    if stats is None:
-                        continue
-                    tid = str(table.id)
-                    stats_dict = {
-                        "table_id": tid,
-                        "total_files": stats.total_files,
-                        "small_files_count": stats.small_files_count,
-                        "overall_score": stats.overall_score,
-                        "delete_file_pct": (stats.raw or {}).get("delete_file_pct", 0)
-                        if stats.raw
-                        else 0,
-                    }
-                    stats_by_table[tid] = stats_dict
-                    needs = (
-                        float(stats.small_files_count or 0) > 500
-                        or float(stats.overall_score or 100) < 50
-                    )
-                    labeled.append(HealthLabel(table_id=tid, needs_emergency_compaction=needs))
-                if len(labeled) >= 4:
-                    eval_result = evaluate_classifier(labeled, stats_by_table)
-                    drift_report["classifier"] = eval_result
-                    if not eval_result.get("beats_threshold"):
-                        import logging
-
-                        logging.getLogger(__name__).warning(
-                            "Health classifier drift: accuracy below threshold baseline %s",
-                            eval_result,
-                        )
-                session.commit()
-            import logging
-
-            logging.getLogger(__name__).info("Scheduled ML drift scan: %s", drift_report)
-            self._last_ml_drift_check = current
+            drift_report = future.result(timeout=_ML_DRIFT_CHECK_TIMEOUT_SECONDS)
+            logger.info("Scheduled ML drift scan: %s", drift_report)
+        except FuturesTimeoutError:
+            logger.warning(
+                "ML drift check exceeded %.0fs and was abandoned -- skipping this cycle "
+                "(the abandoned scan keeps running in the background and its result is "
+                "discarded if it eventually completes)",
+                _ML_DRIFT_CHECK_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
-            import logging
-
-            logging.getLogger(__name__).warning("ML drift check failed: %s", exc)
+            logger.warning("ML drift check failed: %s", exc)
+        finally:
+            # Set on timeout/failure too, not just success -- see this method's own docstring
+            # for why: the alternative is re-attempting a slow/hanging scan every single tick.
+            self._last_ml_drift_check = current
 
     def _maybe_ingest_telemetry(self, current: datetime) -> None:
         """Per-tick telemetry pipeline. Two stages run on the same tick:
