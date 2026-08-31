@@ -440,10 +440,24 @@ def test_slack_blocks_include_groups() -> None:
 
 
 def test_cron_10am_ist_not_10am_utc() -> None:
+    """10:00 IST (04:30 UTC) is the real scheduled fire time; 10:00 UTC (15:30 IST) is a
+    different clock time entirely and must not accidentally also match a timezone bug.
+
+    cron_is_due now scans backward for a due-but-unrun fire time within its lookback window
+    (see its own docstring for why -- a tick landing even slightly late must not silently skip
+    a whole day's cron), so simply calling it again later the same day with no last_run_at would
+    still correctly report the still-outstanding 04:30 UTC fire as due -- that's the intended
+    fix, not a leak of this test's real assertion. Passing last_run_at=ist_tick (this cron
+    already ran for today) isolates what this test actually checks: whether 10:00 UTC clock time
+    itself is mistaken for a second, distinct fire -- it is not, since only one fire (04:30 UTC)
+    exists per day for this expression.
+    """
     ist_tick = datetime(2026, 8, 18, 4, 30, tzinfo=UTC)
     utc_ten = datetime(2026, 8, 18, 10, 0, tzinfo=UTC)
     assert cron_is_due(SHARED_S3_REPORT_CRON, now=ist_tick, tz=SHARED_S3_REPORT_TZ)
-    assert not cron_is_due(SHARED_S3_REPORT_CRON, now=utc_ten, tz=SHARED_S3_REPORT_TZ)
+    assert not cron_is_due(
+        SHARED_S3_REPORT_CRON, now=utc_ten, last_run_at=ist_tick, tz=SHARED_S3_REPORT_TZ
+    )
 
 
 def test_shared_s3_api_refresh_and_get(api_db: ApiDb, monkeypatch) -> None:
