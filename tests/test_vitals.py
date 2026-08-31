@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table
+from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table, TableCost, TableStats
 from cryo.reporting.vitals import (
     _SUCCESS_RATE_MIN_TERMINAL_JOBS,
     compute_cryo_vitals,
@@ -229,6 +229,73 @@ class TestSuccessRatePulse:
         assert vitals.success_rate.success_rate_pct == 85.0
         assert vitals.dispatch_heartbeat.is_stalled is False
         assert vitals.status == "DEGRADED"
+
+
+class TestGovernorScanCostChecksFlowIntoVitals:
+    """Direct regression coverage that health_check.py's scan_freshness/scan_failures/
+    cost_ingestion_freshness checks -- added per explicit feedback that vitals should cover
+    "governer, cost ingestion, scanning etc", not just job-execution-shaped incidents -- are
+    actually wired into the composed vitals score/status, not just present in health_check.py's
+    own report in isolation."""
+
+    def test_scanner_stalled_across_fleet_degrades_vitals(self, session) -> None:
+        for i in range(30):
+            source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
+            table = Table(
+                id=uuid4(), source_id=source.id, schema_name="s", table_name=f"t{i}", is_active=True
+            )
+            session.add_all([source, table])
+            session.flush()
+            session.add(
+                TableStats(
+                    table_id=table.id,
+                    scan_at=NOW - timedelta(hours=200),
+                    needs_compaction=False,
+                    compaction_priority="LOW",
+                    grade="A",
+                    overall_score=90,
+                    total_files=10,
+                    small_files_count=1,
+                    total_size_gb=1.0,
+                )
+            )
+        session.commit()
+
+        vitals = compute_cryo_vitals(session, now=NOW)
+        scan_check = next(c for c in vitals.health.checks if c.name == "scan_freshness")
+        assert scan_check.passed is False
+        assert any("scan_freshness" in d.reason for d in vitals.deductions)
+        assert vitals.status in ("DEGRADED", "CRITICAL")
+
+    def test_cost_ingestion_stalled_degrades_vitals(self, session) -> None:
+        for i in range(10):
+            source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
+            table = Table(
+                id=uuid4(), source_id=source.id, schema_name="s", table_name=f"t{i}", is_active=True
+            )
+            session.add_all([source, table])
+            session.flush()
+            session.add(
+                TableCost(
+                    table_id=table.id,
+                    scan_at=NOW - timedelta(hours=200),
+                    precision="exact",
+                    price_per_gb_month=0.023,
+                    live_bytes=1_000_000,
+                    dead_bytes=0,
+                    metadata_bytes=0,
+                    current_monthly_cost_usd=1.0,
+                    projected_monthly_cost_usd=0.95,
+                    projected_savings_usd_month=0.05,
+                )
+            )
+        session.commit()
+
+        vitals = compute_cryo_vitals(session, now=NOW)
+        cost_check = next(c for c in vitals.health.checks if c.name == "cost_ingestion_freshness")
+        assert cost_check.passed is False
+        assert any("cost_ingestion_freshness" in d.reason for d in vitals.deductions)
+        assert vitals.status in ("DEGRADED", "CRITICAL")
 
 
 class TestScoreAndPayload:

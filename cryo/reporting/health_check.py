@@ -43,7 +43,14 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import MaintenanceJob, MaintenanceRun, TableStats, TableStatsHistory
+from cryo.db.models import (
+    MaintenanceJob,
+    MaintenanceRun,
+    Table,
+    TableCost,
+    TableStats,
+    TableStatsHistory,
+)
 from cryo.workflows.approvals import ApprovalRequest, ApprovalStatus
 
 logger = logging.getLogger(__name__)
@@ -69,6 +76,23 @@ _REPEAT_FAILURE_MIN_COUNT = 5  # a table hitting the identical error 5+ times in
 # clearly not a transient blip
 _QUEUE_GROWTH_ALERT_PCT = 25.0  # pending-queue depth growing >25% day-over-day without a
 # corresponding admission-rate increase is the queue losing ground, not just being busy
+
+# 2026-08-31: user asked for vitals to cover "governer, cost ingestion, scanning etc" by name,
+# not just the job-execution-shaped incidents the checks above were built for. Scanning and
+# cost ingestion write their own per-table freshness/error columns independent of any
+# MaintenanceJob (a table can be perfectly scanned and cost-priced with zero jobs ever run
+# against it, e.g. brand new or already-optimal) -- so these need their own checks, not a
+# derivation of the existing job-shaped ones.
+_SCAN_STALE_HOURS = 48  # scanner/README's own daily-cadence cron target is 24h; double that
+# before flagging catches a table that's merely due for its next run, not actually broken
+_SCAN_STALE_MIN_COUNT = 25  # a handful of stale tables in a multi-thousand-table fleet is
+# normal skew from scan ordering; a large chunk stale together means the scanner itself stalled
+_SCAN_CONSECUTIVE_FAILURE_THRESHOLD = 3  # matches consecutive_scan_failures' own reset-on-
+# success semantics (persistence.py) -- 1-2 is plausibly still a transient blip in progress
+_SCAN_FAILING_TABLES_MIN_COUNT = 10  # a handful of genuinely broken tables (deleted, bad
+# credentials) is an expected steady-state; a cluster of them appearing together is the
+# scanner-itself-broken shape, not individually-broken tables
+_COST_STALE_HOURS = 48  # table_cost.scan_at freshness -- same reasoning as scan staleness
 
 
 @dataclass(frozen=True)
@@ -470,6 +494,160 @@ def _check_queue_growth(session: Session, *, now: datetime) -> CheckResult:
     )
 
 
+def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
+    """Is the scanner itself still running -- distinct from any single table's scan being
+    old. Compares each active table's table_stats.scan_at (the scanner's one-row-per-table
+    write) against a generous staleness window; a large cluster of active tables all stale
+    together is the scanner-stalled shape (cron not firing, scan_queue backed up, go_scan
+    binary erroring on startup), not individually slow tables."""
+    active_total = int(
+        session.execute(select(func.count()).select_from(Table).where(Table.is_active.is_(True))).scalar_one()
+    )
+    if active_total == 0:
+        return CheckResult(
+            name="scan_freshness",
+            passed=True,
+            severity="info",
+            summary="No active tables to check",
+        )
+    cutoff = now - timedelta(hours=_SCAN_STALE_HOURS)
+    fresh_count = int(
+        session.execute(
+            select(func.count())
+            .select_from(TableStats)
+            .join(Table, Table.id == TableStats.table_id)
+            .where(Table.is_active.is_(True), TableStats.scan_at >= cutoff)
+        ).scalar_one()
+    )
+    stale_count = active_total - fresh_count
+    if stale_count < _SCAN_STALE_MIN_COUNT:
+        return CheckResult(
+            name="scan_freshness",
+            passed=True,
+            severity="info",
+            summary=f"{fresh_count}/{active_total} active tables scanned within {_SCAN_STALE_HOURS}h",
+        )
+    severity = "critical" if stale_count > active_total * 0.5 else "warning"
+    return CheckResult(
+        name="scan_freshness",
+        passed=False,
+        severity=severity,
+        summary=f"{stale_count}/{active_total} active tables have no scan within {_SCAN_STALE_HOURS}h",
+        detail="A large cluster of stale scans together (not just a few individually old "
+        "tables) usually means the scanner's own cron/queue stopped feeding it, not that "
+        "these specific tables are broken -- check scan_queue depth and go_scan's own liveness "
+        "before assuming a per-table problem.",
+        evidence={"active_total": active_total, "fresh_count": fresh_count, "stale_count": stale_count},
+    )
+
+
+def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
+    """Tables the scanner can reach but can't successfully read -- consecutive_scan_failures
+    already resets to 0 on any success (persistence.py), so a nonzero streak here is real,
+    ongoing breakage, not noise from one bad run. A cluster of these appearing together (not
+    just steady-state individually-broken tables) is itself worth flagging -- it's the same
+    "orphaned catalog entry" shape health_check.py's repeat_failures check catches on the job
+    side, mirrored here on the scan side."""
+    rows = session.execute(
+        select(Table.id, Table.schema_name, Table.table_name, Table.consecutive_scan_failures)
+        .where(
+            Table.is_active.is_(True),
+            Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
+        )
+        .order_by(Table.consecutive_scan_failures.desc())
+        .limit(10)
+    ).all()
+    if not rows:
+        return CheckResult(
+            name="scan_failures",
+            passed=True,
+            severity="info",
+            summary=f"No active table with {_SCAN_CONSECUTIVE_FAILURE_THRESHOLD}+ consecutive scan failures",
+        )
+    total_failing = len(rows)
+    # rows is capped at 10 by the query LIMIT -- get the real total separately so a fleet with
+    # e.g. 400 failing tables doesn't under-report as "10".
+    real_total = int(
+        session.execute(
+            select(func.count())
+            .select_from(Table)
+            .where(
+                Table.is_active.is_(True),
+                Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
+            )
+        ).scalar_one()
+    )
+    examples = [f"{r.schema_name}.{r.table_name} ({r.consecutive_scan_failures} failures)" for r in rows[:3]]
+    passed = real_total < _SCAN_FAILING_TABLES_MIN_COUNT
+    return CheckResult(
+        name="scan_failures",
+        passed=passed,
+        severity="info" if passed else ("critical" if real_total > 200 else "warning"),
+        summary=f"{real_total} active table(s) with {_SCAN_CONSECUTIVE_FAILURE_THRESHOLD}+ "
+        f"consecutive scan failures",
+        detail=None
+        if passed
+        else "Each of these fails to even read, not just needs maintenance -- check "
+        "last_scan_error on the worst offenders; a cluster appearing together (vs. steady "
+        "individually-broken tables) suggests a shared cause (credentials, a source-wide "
+        "outage) rather than N unrelated table problems.",
+        evidence={"total_failing": real_total, "examples": examples} if not passed else {},
+    )
+
+
+def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> CheckResult:
+    """Is cost ingestion (table_cost, written by cost_signals.py / s3_request_cost_ingest.py)
+    still running. Cost pricing directly feeds the S3-cost side of the north-star reporting and
+    the cost-ceiling admission gate -- stale cost data doesn't fail loudly, it just quietly
+    freezes cost numbers and ROI-gate decisions at whatever they were last computed."""
+    active_total = int(
+        session.execute(select(func.count()).select_from(Table).where(Table.is_active.is_(True))).scalar_one()
+    )
+    if active_total == 0:
+        return CheckResult(
+            name="cost_ingestion_freshness",
+            passed=True,
+            severity="info",
+            summary="No active tables to check",
+        )
+    cutoff = now - timedelta(hours=_COST_STALE_HOURS)
+    priced_total = int(
+        session.execute(select(func.count()).select_from(TableCost)).scalar_one()
+    )
+    if priced_total == 0:
+        return CheckResult(
+            name="cost_ingestion_freshness",
+            passed=True,
+            severity="info",
+            summary="No table_cost rows yet -- cost ingestion not yet run for any table",
+        )
+    fresh_count = int(
+        session.execute(
+            select(func.count()).select_from(TableCost).where(TableCost.scan_at >= cutoff)
+        ).scalar_one()
+    )
+    stale_count = priced_total - fresh_count
+    stale_pct = 100.0 * stale_count / priced_total if priced_total else 0.0
+    if stale_pct < 50.0:
+        return CheckResult(
+            name="cost_ingestion_freshness",
+            passed=True,
+            severity="info",
+            summary=f"{fresh_count}/{priced_total} priced tables refreshed within {_COST_STALE_HOURS}h",
+        )
+    return CheckResult(
+        name="cost_ingestion_freshness",
+        passed=False,
+        severity="critical" if stale_pct > 90.0 else "warning",
+        summary=f"{stale_count}/{priced_total} priced tables ({stale_pct:.0f}%) not refreshed "
+        f"within {_COST_STALE_HOURS}h",
+        detail="Cost ingestion feeds both the north-star S3-cost reporting and the cost-"
+        "ceiling admission gate -- when this goes stale, both keep reporting old numbers "
+        "without any error, which reads as 'nothing changed' rather than 'ingestion stopped'.",
+        evidence={"priced_total": priced_total, "fresh_count": fresh_count, "stale_count": stale_count},
+    )
+
+
 def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -> FleetFileTrend:
     now = now or datetime.now(UTC)
     today_row = session.execute(
@@ -545,6 +723,9 @@ _ALL_CHECKS = (
     _check_approval_match_rate,
     _check_repeat_failures,
     _check_queue_growth,
+    _check_scan_freshness,
+    _check_scan_failures,
+    _check_cost_ingestion_freshness,
 )
 
 

@@ -21,6 +21,16 @@ headline number: whether dispatch has produced a run recently (the scheduler's o
 distinct from "is a queue draining") and the fleet's job success rate over a real window (the
 same ground truth impact_signals.py sums bytes from, viewed as a rate instead of a total).
 
+2026-08-31, same day: extended per explicit feedback that vitals should cover "governer, cost
+ingestion, scanning etc" by name, not just job-execution-shaped incidents. health_check.py now
+also carries scan_freshness/scan_failures (is the scanner itself still running, and can it
+actually read what it's pointed at) and cost_ingestion_freshness (is table_cost still being
+refreshed -- it feeds both the north-star S3-cost number and the cost-ceiling admission gate,
+and goes stale silently, with no error, looking exactly like "nothing changed"). Governor
+health specifically is covered by the existing dispatch_heartbeat pulse below plus
+admission_stall in the checklist -- the governor has no DB row of its own recording "a wave
+ran"; its only observable footprint is the jobs it admits, which both of those already watch.
+
 Score design: starts at 100, each health_check.py failure deducts by severity (critical costs
 more than warning), the dispatch-heartbeat and success-rate pulses each contribute their own
 deduction on their own thresholds. This is deliberately a smooth score, not a re-skinned
