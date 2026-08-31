@@ -12,7 +12,16 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table, TableStats, TableStatsHistory
+from cryo.db.models import (
+    Destination,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableCost,
+    TableStats,
+    TableStatsHistory,
+)
 from cryo.domain.enums import OperationType
 from cryo.reporting.health_check import (
     FleetFileTrend,
@@ -455,6 +464,185 @@ class TestFleetFileTrend:
             tables_counted=10,
         )
         assert trend_mixed.is_worsening is False
+
+
+def _seed_scan_stats(session, table: Table, *, scan_at: datetime) -> TableStats:
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=scan_at,
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=90,
+        total_files=10,
+        small_files_count=1,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    session.flush()
+    return stats
+
+
+def _seed_table_cost(session, table: Table, *, scan_at: datetime) -> TableCost:
+    cost = TableCost(
+        table_id=table.id,
+        scan_at=scan_at,
+        precision="exact",
+        price_per_gb_month=0.023,
+        live_bytes=1_000_000,
+        dead_bytes=0,
+        metadata_bytes=0,
+        current_monthly_cost_usd=1.0,
+        projected_monthly_cost_usd=0.95,
+        projected_savings_usd_month=0.05,
+    )
+    session.add(cost)
+    session.flush()
+    return cost
+
+
+class TestScanFreshness:
+    def test_passes_with_no_active_tables(self, session) -> None:
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is True
+
+    def test_passes_when_recently_scanned(self, session) -> None:
+        _, table = _seed_source_table(session)
+        _seed_scan_stats(session, table, scan_at=NOW - timedelta(hours=2))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is True
+
+    def test_passes_when_a_handful_of_tables_are_stale(self, session) -> None:
+        """Below _SCAN_STALE_MIN_COUNT -- normal skew from scan ordering, not a scanner
+        outage. Seeds one fresh table (fresh_count=1) and a small number stale, well under
+        the 25-table alert threshold."""
+        _, fresh_table = _seed_source_table(session, name="fresh")
+        _seed_scan_stats(session, fresh_table, scan_at=NOW - timedelta(hours=1))
+        for i in range(5):
+            _, stale_table = _seed_source_table(session, name=f"stale{i}")
+            _seed_scan_stats(session, stale_table, scan_at=NOW - timedelta(hours=100))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is True
+
+    def test_fails_when_many_active_tables_are_stale_together(self, session) -> None:
+        for i in range(30):
+            _, table = _seed_source_table(session, name=f"stale{i}")
+            _seed_scan_stats(session, table, scan_at=NOW - timedelta(hours=100))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is False
+        assert check.evidence["stale_count"] == 30
+
+    def test_table_with_no_scan_at_all_counts_as_stale(self, session) -> None:
+        """An active table that's never been scanned even once (no TableStats row) must still
+        count toward stale_count -- it's the clearest possible sign scanning isn't reaching
+        this table, not something to silently exclude from the denominator."""
+        for i in range(30):
+            _seed_source_table(session, name=f"never-scanned{i}")
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is False
+        assert check.evidence["active_total"] == 30
+        assert check.evidence["fresh_count"] == 0
+
+
+class TestScanFailures:
+    def test_passes_with_no_failing_tables(self, session) -> None:
+        _, table = _seed_source_table(session)
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_failures")
+        assert check.passed is True
+
+    def test_ignores_tables_below_consecutive_failure_threshold(self, session) -> None:
+        _, table = _seed_source_table(session)
+        table.consecutive_scan_failures = 2
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_failures")
+        assert check.passed is True
+
+    def test_passes_when_a_handful_of_tables_fail_individually(self, session) -> None:
+        for i in range(5):
+            _, table = _seed_source_table(session, name=f"broken{i}")
+            table.consecutive_scan_failures = 4
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_failures")
+        assert check.passed is True
+
+    def test_fails_when_a_cluster_of_tables_fail_together(self, session) -> None:
+        for i in range(15):
+            _, table = _seed_source_table(session, name=f"broken{i}")
+            table.consecutive_scan_failures = 4
+            table.last_scan_error = "NoSuchKey"
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_failures")
+        assert check.passed is False
+        assert check.evidence["total_failing"] == 15
+
+
+class TestCostIngestionFreshness:
+    def test_passes_with_no_active_tables(self, session) -> None:
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is True
+
+    def test_passes_when_no_cost_rows_ingested_yet(self, session) -> None:
+        """Zero table_cost rows means ingestion hasn't run for anyone yet -- distinct from
+        'ingestion ran and is now stale', which needs at least one row to compare against."""
+        _seed_source_table(session)
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is True
+
+    def test_passes_when_recently_priced(self, session) -> None:
+        _, table = _seed_source_table(session)
+        _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=3))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is True
+
+    def test_fails_when_most_priced_tables_are_stale(self, session) -> None:
+        for i in range(10):
+            _, table = _seed_source_table(session, name=f"t{i}")
+            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=100))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is False
+        assert check.evidence["stale_count"] == 10
+
+    def test_severity_escalates_to_critical_when_almost_all_stale(self, session) -> None:
+        for i in range(10):
+            _, table = _seed_source_table(session, name=f"t{i}")
+            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=100))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.severity == "critical"
 
 
 class TestOverallReport:
