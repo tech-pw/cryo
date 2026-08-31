@@ -64,6 +64,59 @@ class WatchResult:
 # tick duration under load says otherwise.
 _MAX_DISPATCHES_PER_TICK = 200
 
+# Substring match for engine-go's own connect-timeout error text (connectWithTimeout,
+# third_party/iceberg-go-v0.6.0-patched/catalog/hive/client.go: "connect timed out after
+# %s") as it surfaces through catalog.go's wrapping ("failed to connect to catalog: after
+# N attempts: failed to create Hive client: failed to connect to metastore: connect timed
+# out after 45s"). Deliberately narrow -- this must only match the specific bounded-timeout
+# signature the 2026-08-28 fix produces, not every metastore-adjacent error string, so a
+# genuinely broken/misconfigured table (bad credentials, malformed URI, table truly deleted)
+# still fails fast instead of retrying pointlessly.
+_TRANSIENT_METASTORE_ERROR_SUBSTRING = "connect timed out after"
+
+# How many times a single table may be deferred (not terminally failed) for a transient
+# metastore-connect timeout within the lookback window below, before the next occurrence is
+# treated as a real, terminal failure instead. Bounds the retry loop -- a table whose every
+# attempt keeps timing out (a genuinely unreachable/misconfigured source, not a transient
+# blip) must still surface as `failed` eventually rather than cycle through
+# queued->deferred->queued forever via reconcile_deferred_jobs' automatic requeue
+# (cryo/queue/reconcile.py, called every governor wave).
+_METASTORE_RETRY_CAP = 3
+_METASTORE_RETRY_LOOKBACK_HOURS = 24
+
+
+def _is_transient_metastore_error(error: str) -> bool:
+    return _TRANSIENT_METASTORE_ERROR_SUBSTRING in error
+
+
+def _under_retry_cap(session: Session, *, table_id: uuid.UUID) -> bool:
+    """Found live, 2026-08-31: 490 distinct tables hit this exact bounded-timeout error in a
+    single 24h window, each terminally failed on the very first occurrence -- a real metastore
+    blip (the same underlying flakiness the 2026-08-21/28 timeout fixes were built around, still
+    ongoing) cost each of those tables a full dispatch slot for zero benefit, with no retry until
+    whatever cron/manual trigger happened to pick it up again, sometimes 24h later. Counts this
+    table's own recent transient-metastore failures (both DEFERRED -- already-retried -- and
+    FAILED, so a table that exhausted its cap once doesn't reset the count on its next natural
+    failure) to decide whether one more deferral is still worth it."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from cryo.db.models import MaintenanceJob
+
+    since = datetime.now(UTC) - timedelta(hours=_METASTORE_RETRY_LOOKBACK_HOURS)
+    count = session.scalar(
+        select(func.count())
+        .select_from(MaintenanceJob)
+        .where(
+            MaintenanceJob.table_id == table_id,
+            MaintenanceJob.status.in_((JobStatus.DEFERRED.value, JobStatus.FAILED.value)),
+            MaintenanceJob.finished_at >= since,
+            MaintenanceJob.error.like(f"%{_TRANSIENT_METASTORE_ERROR_SUBSTRING}%"),
+        )
+    )
+    return (count or 0) < _METASTORE_RETRY_CAP
+
 
 class NativeJobWatcher:
     """Poll active native_dispatches and finalize MaintenanceJobs on Job completion."""
@@ -244,6 +297,7 @@ class NativeJobWatcher:
         jobs = jobs_for_dispatch(session, dispatch_id)
         succeeded = 0
         failed = 0
+        deferred = 0
         errors: list[str] = []
         for job in jobs:
             entry = per_table.get(str(job.id))
@@ -252,19 +306,32 @@ class NativeJobWatcher:
                 entry = next(iter(per_table.values()))
             ok = bool(entry.get("ok", False)) if entry else False
             error = None if ok else (entry or {}).get("error") or "native_job_no_result"
-            status = JobStatus.SUCCEEDED if ok else JobStatus.FAILED
+            if ok:
+                status = JobStatus.SUCCEEDED
+            elif error and _is_transient_metastore_error(error) and _under_retry_cap(
+                session, table_id=job.table_id
+            ):
+                status = JobStatus.DEFERRED
+            else:
+                status = JobStatus.FAILED
             self._mark_status(str(job.id), status, error=error)
             self._record_result_audits(job, entry, fallback_error=error)
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
             if ok:
                 maybe_persist_optimize_properties(session, job)
                 succeeded += 1
+            elif status is JobStatus.DEFERRED:
+                deferred += 1
             else:
                 failed += 1
                 errors.append(f"{job.id}: {error}")
-        if failed == 0 and succeeded:
+        if failed == 0 and deferred == 0 and succeeded:
             dispatch_status = "succeeded"
-        elif succeeded:
+        elif succeeded or deferred:
+            # A deferred member isn't a hard failure -- it's already been requeued for another
+            # attempt (reconcile_deferred_jobs, called every governor wave) -- so it belongs in
+            # the same "not a clean success, but not a dead loss either" bucket "partial" already
+            # covers for a mix of successes and real failures.
             dispatch_status = "partial"
         else:
             dispatch_status = "failed"
