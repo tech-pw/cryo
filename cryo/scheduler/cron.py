@@ -7,6 +7,24 @@ MAX_CRON_EXPRESSION_LENGTH = 100
 _ALLOWED_CRON_CHARS = frozenset("0123456789*/-, ")
 
 
+# How far back cron_is_due will scan looking for a missed fire-time before giving up and
+# reporting not-due. See cron_is_due's own docstring for the incident this bounds against --
+# 24h covers every real schedule_cron in the fleet (all once-daily) with room to spare, without
+# risking an unbounded scan if a caller passes a wildly stale last_run_at.
+_MISSED_FIRE_LOOKBACK = timedelta(hours=24)
+
+
+def _fields_match_minute(fields: list[str], moment: datetime) -> bool:
+    minute, hour, dom, month, dow = fields
+    return (
+        _field_matches(minute, moment.minute, 0, 59)
+        and _field_matches(hour, moment.hour, 0, 23)
+        and _field_matches(dom, moment.day, 1, 31)
+        and _field_matches(month, moment.month, 1, 12)
+        and _field_matches(dow, moment.weekday(), 0, 6)
+    )
+
+
 def cron_is_due(
     expression: str | None,
     *,
@@ -14,13 +32,28 @@ def cron_is_due(
     last_run_at: datetime | None = None,
     tz: TzInfo | str | None = None,
 ) -> bool:
-    """Return True if a cron expression is due to fire.
+    """Return True if a cron expression has a fire-time due, scanning back up to
+    ``_MISSED_FIRE_LOOKBACK`` for one that hasn't been run yet.
 
     Supports standard 5-field cron: minute hour dom month dow.
     Uses a simple matcher without external dependencies.
 
     ``tz`` converts ``now`` before matching clock fields so expressions like
     ``0 10 * * *`` can mean 10:00 in ``Asia/Kolkata`` rather than 10:00 UTC.
+
+    Scans backward minute-by-minute from ``now`` (previously: checked only the exact current
+    minute) so a tick that runs even slightly late doesn't silently skip that day's fire
+    entirely. Found live, 2026-08-28..31: the scheduler daemon's tick() loop calls this once per
+    minute, but a single tick's own duration had grown past 60s (each of several sequential
+    per-table metastore-connect attempts now individually bounded at 30s, see
+    layout_analyzer.py's own timeout-fix comment for why that bound exists at all -- the
+    underlying metastore connectivity issue itself was, and still is, real and ongoing). The old
+    exact-minute match meant any tick spanning past its cron target minute caused that preset to
+    be silently skipped for the entire day, with no retry until the next day's identical window
+    -- confirmed live: zero new MaintenanceRun rows created for 3+ days straight across every
+    daily preset, despite the scheduler pod itself staying healthy the whole time. The bounded
+    backward scan means a late tick still catches yesterday-or-today's missed fire on its very
+    next invocation, without needing to hit the literal instant.
     """
     if not expression:
         return False
@@ -32,23 +65,15 @@ def cron_is_due(
         return False
 
     fields = normalize_cron_expression(expression).split()
-    minute, hour, dom, month, dow = fields
-    if not _field_matches(minute, current.minute, 0, 59):
-        return False
-    if not _field_matches(hour, current.hour, 0, 23):
-        return False
-    if not _field_matches(dom, current.day, 1, 31):
-        return False
-    if not _field_matches(month, current.month, 1, 12):
-        return False
-    if not _field_matches(dow, current.weekday(), 0, 6):
-        return False
+    last = _ensure_aware(last_run_at) if last_run_at is not None else None
 
-    if last_run_at is not None:
-        last = _ensure_aware(last_run_at)
-        if current.replace(second=0, microsecond=0) <= last.replace(second=0, microsecond=0):
-            return False
-    return True
+    probe = current.replace(second=0, microsecond=0)
+    earliest = probe - _MISSED_FIRE_LOOKBACK
+    while probe >= earliest:
+        if _fields_match_minute(fields, probe):
+            return last is None or probe > last.replace(second=0, microsecond=0)
+        probe -= timedelta(minutes=1)
+    return False
 
 
 def next_cron_tick(
@@ -57,12 +82,22 @@ def next_cron_tick(
     now: datetime | None = None,
     tz: TzInfo | str | None = None,
 ) -> datetime:
-    """Return the next datetime when the cron expression would fire."""
+    """Return the next datetime when the cron expression would fire.
+
+    Uses the same exact-minute field matcher cron_is_due's backward scan is built on
+    (_fields_match_minute), not cron_is_due itself -- cron_is_due now looks *backward* for a
+    due-but-unrun fire time (see its own docstring), which is the wrong direction for "what's
+    the next one", and would make this walk terminate on its very first iteration whenever the
+    cron already fired earlier today.
+    """
     validate_cron_expression(expression, raise_error=True)
     current = _ensure_aware(now or datetime.now(UTC))
+    if tz is not None:
+        current = current.astimezone(_coerce_tz(tz))
+    fields = normalize_cron_expression(expression).split()
     probe = current.replace(second=0, microsecond=0)
     for _ in range(60 * 24 * 366):
-        if cron_is_due(expression, now=probe, last_run_at=probe - timedelta(minutes=1), tz=tz):
+        if _fields_match_minute(fields, probe):
             return probe
         probe += timedelta(minutes=1)
     return probe
