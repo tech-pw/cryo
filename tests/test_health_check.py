@@ -188,6 +188,71 @@ class TestAdmissionStall:
         assert check.passed is True
 
 
+class TestQueueGrowth:
+    def test_passes_when_baseline_too_small_and_depth_moderate(self, session) -> None:
+        """Live-verified 2026-08-31: a yesterday baseline of 5 turned a real ~20k queue into
+        a nonsensical '+412,240%' reading. Below _QUEUE_GROWTH_MIN_BASELINE, a moderate
+        absolute depth (<100) should pass -- there's no meaningful percentage AND nothing
+        alarming in absolute terms either."""
+        destination = _seed_destination(session)
+        run_yesterday = _seed_run(session, status="running", created_at=NOW - timedelta(days=2))
+        for _ in range(3):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_yesterday, table=t, destination=destination, status="queued")
+        run_today = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(10):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_today, table=t, destination=destination, status="queued")
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "queue_growth")
+        assert check.passed is True
+
+    def test_fails_when_baseline_too_small_but_depth_is_large(self, session) -> None:
+        """Same tiny-baseline situation, but the absolute depth is genuinely large (>=100) --
+        the percentage still can't be trusted, but the real backlog must still surface rather
+        than silently passing just because the ratio was undefined."""
+        destination = _seed_destination(session)
+        run_yesterday = _seed_run(session, status="running", created_at=NOW - timedelta(days=2))
+        for _ in range(5):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_yesterday, table=t, destination=destination, status="queued")
+        run_today = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(150):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_today, table=t, destination=destination, status="queued")
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "queue_growth")
+        assert check.passed is False
+        assert check.evidence["today"] == 155  # 5 still-queued yesterday jobs + 150 new today
+        assert "412" not in check.summary  # must not produce a distorted percentage
+
+    def test_percentage_growth_still_used_above_min_baseline(self, session) -> None:
+        """Above _QUEUE_GROWTH_MIN_BASELINE, the original percentage-based logic must still
+        apply unchanged -- this fix only touches the small-baseline edge case. yesterday_depth
+        is 100 (still-queued) -> today_depth is that same 100 plus 200 newly-seeded = 300,
+        i.e. +200% growth off a real, non-distorted baseline."""
+        destination = _seed_destination(session)
+        run_yesterday = _seed_run(session, status="running", created_at=NOW - timedelta(days=2))
+        for _ in range(100):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_yesterday, table=t, destination=destination, status="queued")
+        run_today = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(200):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_today, table=t, destination=destination, status="queued")
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "queue_growth")
+        assert check.passed is False
+        assert check.evidence["today"] == 300
+        assert check.evidence["growth_pct"] == 200.0
+
+
 class TestApprovalMatchRate:
     def test_passes_when_no_approved_rows(self, session) -> None:
         report = run_production_health_checks(session, now=NOW)
@@ -556,6 +621,23 @@ class TestScanFreshness:
         assert check.evidence["active_total"] == 30
         assert check.evidence["fresh_count"] == 0
 
+    def test_evolving_tables_excluded_from_denominator_and_stale_count(self, session) -> None:
+        """Live-verified 2026-08-31: 648 of 755 never-scanned tables in prod were `_evolving`
+        -- the known orphaned-catalog-entry class (ace7f4b) whose metadata.json is permanently
+        gone by design, deliberately left uncleaned per a standing decision. These must not
+        count toward active_total or stale_count, or a permanent, already-known-about class of
+        table quietly dominates the score every single day."""
+        for i in range(40):
+            _seed_source_table(session, name=f"orphan{i}_evolving")
+        _, real_table = _seed_source_table(session, name="real_table")
+        _seed_scan_stats(session, real_table, scan_at=NOW - timedelta(hours=1))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_freshness")
+        assert check.passed is True
+        assert check.evidence == {} or check.evidence.get("active_total", 1) == 1
+
 
 class TestScanFailures:
     def test_passes_with_no_failing_tables(self, session) -> None:
@@ -596,6 +678,21 @@ class TestScanFailures:
         check = next(c for c in report.checks if c.name == "scan_failures")
         assert check.passed is False
         assert check.evidence["total_failing"] == 15
+
+    def test_evolving_tables_excluded_even_when_failing(self, session) -> None:
+        """Live-verified 2026-08-31: 680 of 817 scan-failing tables in prod were `_evolving`
+        -- the same known, deliberately-uncleaned orphan class as scan_freshness. A large
+        `_evolving` failure cluster must not trip this check; it would just re-flag the same
+        known issue repeat_failures already surfaces on the job side, under a new name."""
+        for i in range(20):
+            _, table = _seed_source_table(session, name=f"orphan{i}_evolving")
+            table.consecutive_scan_failures = 10
+            table.last_scan_error = "NoSuchKey"
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "scan_failures")
+        assert check.passed is True
 
 
 class TestCostIngestionFreshness:
@@ -643,6 +740,22 @@ class TestCostIngestionFreshness:
         report = run_production_health_checks(session, now=NOW)
         check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
         assert check.severity == "critical"
+
+    def test_evolving_tables_excluded_from_stale_denominator(self, session) -> None:
+        """Live-verified 2026-08-31: only 66 of 7,306 stale-priced tables in prod were
+        `_evolving` -- the opposite finding from the scan checks (cost staleness is a real,
+        dominant, non-evolving signal). Still confirms `_evolving` rows themselves don't
+        distort the ratio when present."""
+        for i in range(20):
+            _, table = _seed_source_table(session, name=f"orphan{i}_evolving")
+            _seed_table_cost(session, table, scan_at=NOW - timedelta(hours=200))
+        _, real_table = _seed_source_table(session, name="real_table")
+        _seed_table_cost(session, real_table, scan_at=NOW - timedelta(hours=1))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is True
 
 
 class TestOverallReport:
