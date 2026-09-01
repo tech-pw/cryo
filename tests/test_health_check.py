@@ -112,6 +112,86 @@ class TestStuckRuns:
         check = next(c for c in report.checks if c.name == "stuck_runs")
         assert check.passed is True
 
+    def test_large_run_still_landing_jobs_recently_is_not_stuck(self, session) -> None:
+        """Live-verified 2026-09-01 regression: a run open 19h with 6,640 total jobs and 195
+        finished in the prior 2h is a large run still converging, not a stall. Raw age alone
+        would have flagged this identically to a genuinely dead run -- must require BOTH past
+        the age threshold AND no recent job completions."""
+        source, table = _seed_source_table(session)
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW - timedelta(hours=19))
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="succeeded",
+            finished_at=NOW - timedelta(minutes=30),
+        )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is True
+
+    def test_old_run_with_no_recent_job_activity_is_stuck(self, session) -> None:
+        """The genuine incident shape: a run open well past the age threshold where the most
+        recent job activity is also well outside the recency window -- age alone and
+        job-recency alone would both catch this; confirms the AND doesn't accidentally require
+        stronger evidence than either check alone would need."""
+        source, table = _seed_source_table(session)
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW - timedelta(days=5))
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="succeeded",
+            finished_at=NOW - timedelta(days=4),
+        )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is False
+        assert check.evidence["count"] == 1
+
+    def test_recently_active_run_excluded_but_others_still_flagged(self, session) -> None:
+        """Mixed scenario: one old run is still converging (must be excluded), another old run
+        has gone quiet (must still be flagged) -- confirms the recency filter is applied
+        per-run, not fleet-wide."""
+        destination = _seed_destination(session)
+
+        _, active_table = _seed_source_table(session, name="active")
+        active_run = _seed_run(session, status="running", created_at=NOW - timedelta(hours=20))
+        _seed_job(
+            session,
+            run=active_run,
+            table=active_table,
+            destination=destination,
+            status="succeeded",
+            finished_at=NOW - timedelta(minutes=10),
+        )
+
+        _, quiet_table = _seed_source_table(session, name="quiet")
+        quiet_run = _seed_run(session, status="running", created_at=NOW - timedelta(days=3))
+        _seed_job(
+            session,
+            run=quiet_run,
+            table=quiet_table,
+            destination=destination,
+            status="succeeded",
+            finished_at=NOW - timedelta(days=2),
+        )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is False
+        assert check.evidence["count"] == 1
+        assert str(quiet_run.id) in check.evidence["examples"][0]
+
 
 class TestStaleJobs:
     def test_passes_when_no_stale_jobs(self, session) -> None:
