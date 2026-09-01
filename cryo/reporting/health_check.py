@@ -109,6 +109,22 @@ _COST_STALE_HOURS = 168  # table_cost.scan_at freshness -- live-verified 2026-08
 # almost the exact same age distribution as scanning (cost pricing runs off the same cadence),
 # so the same 7-day recalibration applies for the same reason
 
+# 2026-09-01, user request: "check the cryo namespace cost in either north star or vitals.
+# unused cost should not be higher than used cost". This is the real cryo K8s namespace bill
+# (worker/api/governor/scheduler pods -- requested vs. actually-used CPU/memory, from AWS CUR
+# via cryo.reporting.cost_ceiling, the same source cost_ceiling_enabled's $/day circuit breaker
+# already reads) -- not fleet S3 storage cost, which is what cost_ingestion_freshness above
+# tracks. Live-verified 2026-09-01: unused_cost > used_cost every single day of the trailing
+# 14 -- 51-80% of the namespace's own spend is idle/oversized capacity, matching what
+# cost_ceiling.py's own 2026-08-12 docstring already documented ($210.82/day average, "driven
+# mostly by idle/unused capacity") and confirming it's still true three weeks later, not a
+# one-off spike.
+_NAMESPACE_UNUSED_COST_RATIO_WARN = 1.0  # unused > used at all is the condition asked for
+_NAMESPACE_UNUSED_COST_RATIO_CRITICAL = 3.0  # unused 3x+ used is a severe rightsizing gap,
+# not just "a bit more idle than active" -- distinguishes mild overprovisioning from the kind
+# of gap the 2026-08-12 investigation found ($60.78 unused vs $20.60 used live-verified
+# 2026-09-01 is ~3x, right at this boundary)
+
 # Live-verified 2026-08-31, first real run of scan_freshness/scan_failures/
 # cost_ingestion_freshness against prod: 680 of 817 scan-failing tables and 648 of 755
 # never-scanned tables were `_evolving` -- the exact orphaned-catalog-entry class from
@@ -750,6 +766,100 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
     )
 
 
+def _check_namespace_unused_cost(session: Session, *, now: datetime) -> CheckResult:
+    """Is the cryo K8s namespace's own real AWS bill mostly idle capacity, not active work.
+    Reuses cost_ceiling.fetch_latest_billed_namespace_cost -- the exact source
+    cost_ceiling_enabled's $/day circuit breaker already reads (CUR lag-aware: the most recent
+    day with real committed rows, never a structurally-empty "today"), so this reports the same
+    number an operator would see paging through that breach, not a second, possibly-
+    disagreeing estimate.
+
+    Requires CRYO_GRAFANA_TOKEN (same env var cost_ceiling's own scheduler calls use) --
+    absent token, unreachable Grafana, or no committed CUR rows yet are all reported as
+    passing/info ("can't evaluate," matching fetch_latest_billed_namespace_cost's own contract
+    of returning None rather than a false $0), never as a failure of this check itself. session
+    is unused (the real query is an HTTP call to Grafana, not SQL) but kept for the same
+    signature every other check in _ALL_CHECKS uses."""
+    import os
+
+    token = os.environ.get("CRYO_GRAFANA_TOKEN")
+    if not token:
+        return CheckResult(
+            name="namespace_unused_cost",
+            passed=True,
+            severity="info",
+            summary="CRYO_GRAFANA_TOKEN not set -- cannot evaluate namespace cost",
+        )
+
+    from cryo.config import get_settings
+    from cryo.reporting.cost_ceiling import fetch_latest_billed_namespace_cost
+
+    settings = get_settings()
+    try:
+        check = fetch_latest_billed_namespace_cost(
+            grafana_url=settings.grafana_base_url,
+            grafana_token=token,
+            cluster_name=settings.cost_ceiling_cluster_name,
+            namespace=settings.cost_ceiling_namespace,
+            ceiling_usd=settings.cost_ceiling_daily_usd,
+        )
+    except Exception as exc:  # noqa: BLE001 - a Grafana/network failure isn't this check failing
+        return CheckResult(
+            name="namespace_unused_cost",
+            passed=True,
+            severity="info",
+            summary=f"Could not reach Grafana to evaluate namespace cost: {exc}",
+        )
+
+    if check is None:
+        return CheckResult(
+            name="namespace_unused_cost",
+            passed=True,
+            severity="info",
+            summary="No committed CUR rows in the trailing lookback window yet",
+        )
+
+    if check.used_cost_usd <= 0:
+        # A genuinely $0-used day (nothing running, or CUR hasn't split cost yet) makes the
+        # ratio undefined/infinite -- not evaluable, not a pass-with-good-news.
+        return CheckResult(
+            name="namespace_unused_cost",
+            passed=True,
+            severity="info",
+            summary=f"{check.day}: used cost is ${check.used_cost_usd:.2f} -- ratio not "
+            f"meaningful",
+        )
+
+    ratio = check.unused_cost_usd / check.used_cost_usd
+    if ratio <= _NAMESPACE_UNUSED_COST_RATIO_WARN:
+        return CheckResult(
+            name="namespace_unused_cost",
+            passed=True,
+            severity="info",
+            summary=f"{check.day}: unused ${check.unused_cost_usd:.2f} <= used "
+            f"${check.used_cost_usd:.2f}",
+        )
+    severity = "critical" if ratio >= _NAMESPACE_UNUSED_COST_RATIO_CRITICAL else "warning"
+    return CheckResult(
+        name="namespace_unused_cost",
+        passed=False,
+        severity=severity,
+        summary=f"{check.day}: unused cost ${check.unused_cost_usd:.2f} is {ratio:.1f}x used "
+        f"cost ${check.used_cost_usd:.2f} (namespace={settings.cost_ceiling_namespace})",
+        detail="The cryo namespace's own AWS bill (worker/api/governor/scheduler pods) is "
+        "spending more on idle/oversized capacity than on active work -- check replica counts "
+        "and resource requests against real utilization; the scanner-worker autoscaler and "
+        "fixed replica counts in deploy/helm/cryo values are the levers, per cost_ceiling.py's "
+        "2026-08-12 investigation.",
+        evidence={
+            "day": str(check.day),
+            "used_cost_usd": check.used_cost_usd,
+            "unused_cost_usd": check.unused_cost_usd,
+            "ratio": ratio,
+        },
+    )
+
+
 def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -> FleetFileTrend:
     now = now or datetime.now(UTC)
     today_row = session.execute(
@@ -828,6 +938,7 @@ _ALL_CHECKS = (
     _check_scan_freshness,
     _check_scan_failures,
     _check_cost_ingestion_freshness,
+    _check_namespace_unused_cost,
 )
 
 

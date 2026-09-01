@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
+
 from cryo.db.models import (
     Destination,
     MaintenanceJob,
@@ -835,6 +837,106 @@ class TestCostIngestionFreshness:
 
         report = run_production_health_checks(session, now=NOW)
         check = next(c for c in report.checks if c.name == "cost_ingestion_freshness")
+        assert check.passed is True
+
+
+class TestNamespaceUnusedCost:
+    def test_passes_when_token_not_configured(self, session, monkeypatch) -> None:
+        monkeypatch.delenv("CRYO_GRAFANA_TOKEN", raising=False)
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is True
+        assert check.severity == "info"
+
+    def test_passes_when_grafana_unreachable(self, session, monkeypatch) -> None:
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection refused")),
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is True
+        assert check.severity == "info"
+
+    def test_passes_when_no_committed_cur_rows_yet(self, session, monkeypatch) -> None:
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: None,
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is True
+        assert check.severity == "info"
+
+    def test_passes_when_unused_at_or_below_used(self, session, monkeypatch) -> None:
+        from cryo.reporting.cost_ceiling import NamespaceCostCheck
+
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: NamespaceCostCheck(
+                day=NOW.date(), used_cost_usd=50.0, unused_cost_usd=30.0, ceiling_usd=100.0
+            ),
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is True
+
+    def test_fails_when_unused_exceeds_used(self, session, monkeypatch) -> None:
+        """Live-verified 2026-09-01: real cryo namespace CUR data, unused $60.78 vs used
+        $20.60 -- ~3x. Direct regression for the exact live finding."""
+        from cryo.reporting.cost_ceiling import NamespaceCostCheck
+
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: NamespaceCostCheck(
+                day=NOW.date(), used_cost_usd=20.60, unused_cost_usd=60.78, ceiling_usd=100.0
+            ),
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is False
+        assert check.evidence["ratio"] == pytest.approx(2.951, abs=0.01)
+
+    def test_severity_escalates_to_critical_at_3x_ratio(self, session, monkeypatch) -> None:
+        from cryo.reporting.cost_ceiling import NamespaceCostCheck
+
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: NamespaceCostCheck(
+                day=NOW.date(), used_cost_usd=10.0, unused_cost_usd=40.0, ceiling_usd=100.0
+            ),
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
+        assert check.passed is False
+        assert check.severity == "critical"
+
+    def test_passes_when_used_cost_is_zero(self, session, monkeypatch) -> None:
+        """A $0-used day makes the ratio undefined, not automatically a violation -- must not
+        divide by zero or report a false failure."""
+        from cryo.reporting.cost_ceiling import NamespaceCostCheck
+
+        monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "fake-token")
+        monkeypatch.setattr(
+            "cryo.reporting.cost_ceiling.fetch_latest_billed_namespace_cost",
+            lambda **kwargs: NamespaceCostCheck(
+                day=NOW.date(), used_cost_usd=0.0, unused_cost_usd=5.0, ceiling_usd=100.0
+            ),
+        )
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "namespace_unused_cost")
         assert check.passed is True
 
 
