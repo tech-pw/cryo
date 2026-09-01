@@ -37,6 +37,30 @@ _REWRITE_MEM_PER_1K_FILES = 64
 _REWRITE_MEM_PER_MAX_PART_FILES = 0.25  # MiB per file in hottest partition
 _REWRITE_MEM_PER_DELETE_PCT = 8  # MiB per percentage point of delete files
 
+# Fallback sizing when total_size_gb is missing/zero (new table, not yet scanned, or a scan
+# that hasn't populated size yet). Live-verified 2026-09-01: the flat "assume 100GB" fallback
+# this replaced was the dominant driver of the cryo namespace's own unused-vs-used AWS cost
+# ratio (589 of 699 live native pods requesting the 2.4 CPU/12Gi ceiling regardless of real
+# table size) -- 73% of jobs in an 8h sample were on tables under 1GB, and any of those
+# lacking a fresh stats row got sized as if it were 100GB. Missing data should default toward
+# the fleet's actual common case, not the worst case: this fleet's median table is small.
+# Two-tier estimate instead of one flat guess:
+#   1. total_files present (row exists, size just didn't populate) -> files * assumed avg
+#      file size, a real per-table signal instead of a constant.
+#   2. No stats row at all -> a small fixed floor. A genuinely huge never-scanned table will
+#      OOM-fail once and get real stats on its next attempt (the same retry path Item 1's
+#      transient-metastore-retry fix and the watcher's finalize-to-DEFERRED mechanism already
+#      exercise) rather than every unscanned table permanently paying max-ceiling cost.
+# Live-verified 2026-09-01 against real fleet table_stats (total_files > 0, total_size_gb >
+# 0): median real per-file size is 0.44MB, p90 74MB, mean 30MB (skewed by a long tail of
+# larger tables). Compaction targets are dominated by small-file-fragmented tables --
+# exactly the ones needing OPTIMIZE -- so the p90, not the mean, is the safer assumption: it
+# covers the large majority of real tables without inheriting the long tail's skew the way a
+# flat mean would.
+_MISSING_SIZE_ASSUMED_AVG_FILE_MB = 75
+_MISSING_SIZE_FILES_ONLY_FLOOR_GB = 1.0
+_MISSING_SIZE_NO_STATS_FLOOR_GB = 1.0
+
 # Expire / orphan are lighter metadata / listing workloads.
 _EXPIRE_MEM_BASE = 256
 _EXPIRE_MEM_PER_1K_SNAPSHOTS = 32
@@ -180,6 +204,7 @@ def estimate_table_resources(
     op_types = _normalize_operations(operations, plan)
 
     total_size_gb = _as_float(stats.get("total_size_gb"), 0.0)
+    total_files = _as_int(stats.get("total_files"), 0)
     # Provisional rewrite working set: grow with table size up to what fits
     # under the memory ceiling (inverse of the rewrite mem formula, ignoring
     # file pressure for the provisional cap so large tables request near-max).
@@ -189,10 +214,19 @@ def estimate_table_resources(
     )
     if total_size_gb > 0:
         rewrite_gb = min(total_size_gb, max_rewrite_gb_for_ceiling)
+    elif total_files > 0:
+        # A real per-table signal (row exists, size just didn't populate) beats a constant.
+        estimated_gb = total_files * _MISSING_SIZE_ASSUMED_AVG_FILE_MB / 1024.0
+        rewrite_gb = min(
+            max(estimated_gb, _MISSING_SIZE_FILES_ONLY_FLOOR_GB), max_rewrite_gb_for_ceiling
+        )
     else:
-        rewrite_gb = min(100.0, max_rewrite_gb_for_ceiling)
+        # No stats row at all -- small conservative floor, not a worst-case guess. A genuinely
+        # huge never-scanned table fails once and retries with real stats rather than every
+        # unscanned table (the common case: new/small tables, per live 2026-09-01 data) paying
+        # near-ceiling cost by default.
+        rewrite_gb = min(_MISSING_SIZE_NO_STATS_FLOOR_GB, max_rewrite_gb_for_ceiling)
 
-    total_files = _as_int(stats.get("total_files"), 0)
     max_files_per_partition = _as_int(stats.get("max_files_per_partition"), 0)
     total_snapshots = _as_int(stats.get("total_snapshots"), 0)
     manifest_count = _as_int(stats.get("manifest_count"), 0)
@@ -241,8 +275,12 @@ def estimate_table_resources(
     mem_mib = _clamp(raw_mem, _MIN_MEM_MIB, caps.max_mem_mib)
     if has_rewrite:
         # Ensure group coalesce can keep ≥ packing-floor output file size,
-        # but don't size for a floor the table's own data could never fill.
-        table_total_bytes = int(total_size_gb * (1024**3)) if total_size_gb > 0 else None
+        # but don't size for a floor the table's own data could never fill. Uses rewrite_gb
+        # (the estimate computed above -- real size when known, otherwise the small
+        # files-based or floor default) rather than raw total_size_gb, so a missing/zero
+        # total_size_gb doesn't fall back to None here and re-inherit the uncapped packing
+        # floor this same fix is meant to avoid for the size estimate itself.
+        table_total_bytes = int(rewrite_gb * (1024**3))
         mem_mib = _clamp(
             mem_mib_for_group_packing(mem_mib, params, table_total_bytes=table_total_bytes),
             _MIN_MEM_MIB,
