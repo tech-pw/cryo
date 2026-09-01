@@ -13,11 +13,25 @@ job actually succeeded unless something asks -- this sweep is that something. It
 async counterpart to how native K8s jobs are "fire-and-forget and watched separately"
 (see native_admit.py's own docstring) -- fallback dispatches now follow the identical
 shape, and this module is the "watched separately" half that was previously missing.
+
+2026-09-01: also finalizes the underlying cryo.jobs row, not just the audit_log row --
+the original version resolved AuditLog.status but never touched MaintenanceJob.status,
+so a job dispatched through this path stayed 'running' forever regardless of real
+outcome. Live-verified: one job (f204ecbc) had 4 separate AuditLog rows all resolved OK
+across a single day (real successful re-dispatches, each ~30-120min), while its own
+MaintenanceJob row stayed status='running' with started_at frozen at the very first
+attempt -- 19h+ stale by the time it was noticed, and would have stayed stuck open
+indefinitely since nothing else in the system was watching this job's row at all. Native
+jobs don't have this gap (NativeJobWatcher finalizes the job row directly); this sweep
+now does the equivalent for the fallback path, using the same status mapping
+finalize_open_runs already uses for job-status vocabulary (succeeded/failed) so a job
+resolved here reads identically to one finalized any other way.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -25,7 +39,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, Destination
+from cryo.db.models import AuditLog, Destination, MaintenanceJob
+from cryo.domain.enums import JobStatus
 from cryo.engines.spark.k8s import JobRunState
 
 if TYPE_CHECKING:
@@ -106,6 +121,7 @@ def sweep_pending_fallback_dispatches(
         if result.state == JobRunState.SUCCESS:
             row.status = "OK"
             resolved_ok += 1
+            job_status = JobStatus.SUCCEEDED
         elif result.state == JobRunState.UNKNOWN:
             # Job + driver both gone (TTL-expired) before anything ever resolved this row
             # -- the real outcome is unrecoverable, not "known to have failed". Distinct
@@ -115,11 +131,16 @@ def sweep_pending_fallback_dispatches(
             row.status = "UNKNOWN"
             row.detail = result.state_details or row.detail
             resolved_unknown += 1
+            # No positive evidence of success -- FAILED (not SUCCEEDED) is the safe default
+            # for the job row, matching how a genuinely-failed dispatch is treated below.
+            job_status = JobStatus.FAILED
         else:
             row.status = "FAILED"
             row.detail = result.state_details or row.detail
             resolved_failed += 1
+            job_status = JobStatus.FAILED
         row.resolved_at = datetime.now(UTC)
+        _finalize_job_row(session, job_id=row.job_id, status=job_status, error=row.detail)
         # submit() (the async fire-and-forget path this sweep resolves) deliberately
         # skips cleanup at dispatch time -- the driver pod/credentials Secret are still
         # in use while the job runs (see SparkK8sEngine.submit's own docstring). Now that
@@ -147,6 +168,28 @@ def sweep_pending_fallback_dispatches(
     return FallbackSweepResult(
         resolved_ok, resolved_failed, resolved_unknown, still_pending, lookup_errors
     )
+
+
+def _finalize_job_row(
+    session: Session, *, job_id: uuid.UUID | None, status: JobStatus, error: str | None
+) -> None:
+    """Mirrors mark_status's own started_at/finished_at semantics (job_store.py) so a job
+    finalized here reads identically to one finalized through the normal admission path.
+
+    Only touches a job still in RUNNING -- a job that already reached a terminal state some
+    other way (a later dispatch superseded it, an operator intervened) is left alone rather
+    than overwritten by a possibly-stale resolution of an older audit row. job_id can, in
+    principle, reference a since-deleted job (FK is nullable) -- silently no-ops rather than
+    erroring, since a missing job row means there's nothing left to finalize."""
+    if job_id is None:
+        return
+    job = session.get(MaintenanceJob, job_id)
+    if job is None or job.status != JobStatus.RUNNING.value:
+        return
+    job.status = status.value
+    job.finished_at = datetime.now(UTC)
+    if status is not JobStatus.SUCCEEDED:
+        job.error = error
 
 
 def _spark_engine_for_fallback_lookups(session: Session) -> SparkK8sEngine | None:
