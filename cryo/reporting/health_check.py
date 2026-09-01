@@ -67,6 +67,11 @@ PRODUCTION_HEALTH_CHECK_TZ = ZoneInfo("Asia/Kolkata")
 _STUCK_RUN_HOURS = 12  # the real stuck run found live was 5 days old; even a slow cron run
 # finishing in under 12h is the overwhelmingly common case (schedule_cron fires daily), so a
 # run open longer than that is either genuinely stuck or needs its own investigation either way.
+_STUCK_RUN_RECENCY_HOURS = 2  # live-verified 2026-09-01: age alone false-positived on the
+# fleet's own large cron runs (6,640 jobs, 19h open, 195 finished in the prior 2h -- clearly
+# still converging). Paired with _STUCK_RUN_HOURS: a run only counts as stuck once it's BOTH
+# past the age threshold AND has had zero jobs finish in this recency window -- large-but-
+# active runs never trip it regardless of total job count or how long they legitimately take.
 _STUCK_JOB_HOURS = 6  # matches k8s_ttl_seconds_after_finished's typical 6h window elsewhere
 _MIN_APPROVAL_MATCH_RATE_PCT = 50.0  # 0% is exactly what the real bug produced; a healthy
 # fleet has some fraction of approvals genuinely expired/consumed-and-not-reused at any moment,
@@ -234,36 +239,73 @@ def _hours_between(later: datetime, earlier: datetime) -> float:
 
 
 def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
-    """Catches PDAE-8546-shaped incidents directly: a MaintenanceRun open in status='running'
-    far longer than any real run should take. This is exactly the signal that would have
-    caught the Aug 14 stuck cron run (open 5 days) on day one instead of two weeks later."""
-    cutoff = now - timedelta(hours=_STUCK_RUN_HOURS)
-    rows = session.execute(
+    """Catches PDAE-8546-shaped incidents: a MaintenanceRun open in status='running' with
+    nothing happening underneath it -- not just "open a long time".
+
+    Live-verified 2026-09-01: raw age alone (the original check) false-positived on the
+    fleet's own large cron runs -- one open 19h had 6,640 total jobs, 2,575 still non-terminal,
+    and 195 jobs genuinely finished in the prior 2h alone. That's a big run doing real,
+    converging work, not a stall; age-only would flag it identically to the real Aug 14
+    incident (open 5 days, nothing moving at all). The two look the same on created_at alone
+    and only differ on whether jobs are still landing underneath.
+
+    So this now requires BOTH conditions: open past the age threshold AND no job under it has
+    reached a terminal state in the last _STUCK_RUN_RECENCY_HOURS. A run can be open for days
+    doing legitimate work (large fleet, big cohort) and never trip this as long as it keeps
+    making progress; a run that's genuinely wedged (governor lock lost, watcher stopped
+    finding its dispatches, whatever the next incident's specific shape turns out to be) stops
+    producing terminal jobs and gets caught here regardless of how large its job count is."""
+    age_cutoff = now - timedelta(hours=_STUCK_RUN_HOURS)
+    recency_cutoff = now - timedelta(hours=_STUCK_RUN_RECENCY_HOURS)
+    candidates = session.execute(
         select(MaintenanceRun.id, MaintenanceRun.trigger, MaintenanceRun.created_at)
-        .where(MaintenanceRun.status == "running", MaintenanceRun.created_at < cutoff)
+        .where(MaintenanceRun.status == "running", MaintenanceRun.created_at < age_cutoff)
         .order_by(MaintenanceRun.created_at.asc())
-        .limit(10)
     ).all()
-    if not rows:
+    if not candidates:
         return CheckResult(
             name="stuck_runs",
             passed=True,
             severity="info",
             summary=f"No MaintenanceRun open longer than {_STUCK_RUN_HOURS}h",
         )
-    oldest_hours = _hours_between(now, rows[0].created_at)
+
+    candidate_ids = [c.id for c in candidates]
+    recently_active_ids = set(
+        session.execute(
+            select(MaintenanceJob.run_id)
+            .where(
+                MaintenanceJob.run_id.in_(candidate_ids),
+                MaintenanceJob.finished_at >= recency_cutoff,
+            )
+            .distinct()
+        ).scalars()
+    )
+    stuck = [c for c in candidates if c.id not in recently_active_ids]
+    if not stuck:
+        return CheckResult(
+            name="stuck_runs",
+            passed=True,
+            severity="info",
+            summary=f"{len(candidates)} run(s) open >{_STUCK_RUN_HOURS}h, all still landing "
+            f"jobs within the last {_STUCK_RUN_RECENCY_HOURS}h -- large runs still converging, "
+            f"not stalled",
+        )
+    stuck = stuck[:10]
+    oldest_hours = _hours_between(now, stuck[0].created_at)
     examples = [
-        f"{r.id} ({r.trigger}, {_hours_between(now, r.created_at):.0f}h open)" for r in rows[:3]
+        f"{r.id} ({r.trigger}, {_hours_between(now, r.created_at):.0f}h open)" for r in stuck[:3]
     ]
     return CheckResult(
         name="stuck_runs",
         passed=False,
         severity="critical",
-        summary=f"{len(rows)} run(s) stuck open >{_STUCK_RUN_HOURS}h (oldest {oldest_hours:.0f}h)",
+        summary=f"{len(stuck)} run(s) stuck open >{_STUCK_RUN_HOURS}h with no job finishing in "
+        f"the last {_STUCK_RUN_RECENCY_HOURS}h (oldest {oldest_hours:.0f}h)",
         detail="A stuck run's own jobs never finalize, which can block that run's preset from "
         "building a fresh scheduled run at all -- check cryo.jobs for those run_ids' non-"
         "terminal jobs (queued/running) to find what's actually stalled underneath.",
-        evidence={"count": len(rows), "examples": examples, "oldest_hours": oldest_hours},
+        evidence={"count": len(stuck), "examples": examples, "oldest_hours": oldest_hours},
     )
 
 
