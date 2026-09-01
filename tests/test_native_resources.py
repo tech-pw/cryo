@@ -89,6 +89,49 @@ def test_pathological_table_never_exceeds_16gi() -> None:
     assert est.hot
 
 
+def test_missing_size_with_no_stats_at_all_gets_small_floor_not_100gb_assumption() -> None:
+    """Live-verified 2026-09-01 regression: the old fallback assumed 100GB for ANY table
+    missing total_size_gb -- confirmed the dominant driver of 589 of 699 live native pods
+    hitting the 2.4 CPU/12Gi ceiling regardless of real table size (73% of jobs in an 8h
+    sample were on tables under 1GB). A table with genuinely no stats row at all (stats={})
+    must now size the same as a real, known 1GB table (the new floor), far below the old
+    100GB-driven near-ceiling default -- not literally the smallest possible request, since
+    the packing-floor logic still applies its own real minimum for a genuinely tiny table."""
+    no_stats = estimate_table_resources({}, operations=(OperationType.OPTIMIZE,))
+    known_1gb = estimate_table_resources(
+        {"total_size_gb": 1}, operations=(OperationType.OPTIMIZE,)
+    )
+    known_100gb = estimate_table_resources(
+        {"total_size_gb": 100}, operations=(OperationType.OPTIMIZE,)
+    )
+    assert no_stats.mem_mib == known_1gb.mem_mib
+    assert no_stats.mem_mib < known_100gb.mem_mib
+
+
+def test_missing_size_but_total_files_present_scales_with_file_count() -> None:
+    """A stats row that exists but has no total_size_gb (size didn't populate this scan) --
+    total_files, when present, is real per-table signal and should size larger for a table
+    with many more files than one with few, using an estimate calibrated against the fleet's
+    own real median/p90 per-file size (live-verified 2026-09-01: 0.44MB median, 74MB p90),
+    not the old flat 100GB assumption regardless of file count."""
+    few_files = estimate_table_resources(
+        {"total_files": 50}, operations=(OperationType.OPTIMIZE,)
+    )
+    many_files = estimate_table_resources(
+        {"total_files": 5_000}, operations=(OperationType.OPTIMIZE,)
+    )
+    assert many_files.mem_mib > few_files.mem_mib
+
+
+def test_missing_size_estimate_still_respects_16gi_ceiling() -> None:
+    """A missing-size table with an enormous total_files count must still clamp to the same
+    hard ceiling as a known-huge table -- the fix changes the *default*, not the safety cap."""
+    est = estimate_table_resources(
+        {"total_files": 50_000_000}, operations=(OperationType.OPTIMIZE,)
+    )
+    assert est.mem_mib <= MAX_POD_MEM_MIB
+
+
 def test_config_above_16gi_is_clamped() -> None:
     ceilings = ResourceCeilings.from_config({"maxMemory": "32Gi", "maxCpu": "8"})
     assert ceilings.max_mem_mib == MAX_POD_MEM_MIB
