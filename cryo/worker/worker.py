@@ -269,8 +269,11 @@ class InMemoryJobStore:
     def list_queued_jobs(self) -> list[MaintenanceJobRecord]:
         return [job for job in self.jobs.values() if job.status is JobStatus.QUEUED]
 
-    def list_deferred_jobs(self) -> list[MaintenanceJobRecord]:
-        return [job for job in self.jobs.values() if job.status is JobStatus.DEFERRED]
+    def list_deferred_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        deferred = [job for job in self.jobs.values() if job.status is JobStatus.DEFERRED]
+        if limit is not None:
+            return deferred[:limit]
+        return deferred
 
     def list_running_jobs(self) -> list[MaintenanceJobRecord]:
         return [job for job in self.jobs.values() if job.status is JobStatus.RUNNING]
