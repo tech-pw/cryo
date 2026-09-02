@@ -96,8 +96,8 @@ def build_plan(
                     f"concentrated on partitions whose data files are already reasonably sized -- "
                     f"convert_deletes/optimize select rewrite candidates by file size and would "
                     f"very likely form zero rewrite groups here despite delete_file_pct "
-                    f"({float(stats.get('delete_file_pct') or 0):.2f}%) being past the major-rewrite "
-                    f"threshold."
+                    f"({float(stats.get('delete_file_pct') or 0):.2f}%) being past the "
+                    f"major-rewrite threshold."
                 )
             else:
                 notes.append(
@@ -205,8 +205,8 @@ def _optimize_operations(
     delete_ratio_trigger = float(params.get("delete_ratio_trigger", 0))
     delete_file_pct = float(stats.get("delete_file_pct") or 0)
     table_small_files = int(stats.get("small_files_count") or stats.get("table_small_files") or 0)
-    total_size_gb = float(stats.get("total_size_gb") or 0.0)
-    chunk_size_gb = float(params.get("chunk_size_gb", 100))
+    total_size_gb = _total_size_gb(stats)
+    configured_chunk_size_gb = float(params.get("chunk_size_gb", 100))
     fields = partition_fields_from_stats(stats, params)
 
     # Streaming-aware compaction cadence: high-velocity tables fragment faster, so we
@@ -223,19 +223,13 @@ def _optimize_operations(
     # streaming flag used elsewhere.
     is_streaming = bool(stats.get("is_streaming"))
     commits_per_day = float(stats.get("commits_per_day") or 0.0)
-    streaming_aware = params.get("streaming_aware_cadence", True)
-    extra_care = (
-        streaming_aware
-        and not is_streaming
-        and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
-    )
-    write_aware = streaming_aware and (is_streaming or extra_care)
+    write_aware = _is_write_aware(stats, params)
     max_parts = int(params.get("max_partitions_per_chunk", 100))
+    chunk_size_gb = _effective_chunk_size_gb(configured_chunk_size_gb, write_aware)
     if write_aware:
-        original_chunk = chunk_size_gb
+        original_chunk = configured_chunk_size_gb
         original_min_small = min_small_files
         original_max_parts = max_parts
-        chunk_size_gb = max(1.0, chunk_size_gb / 2.0)
         min_small_files = max(1, int(min_small_files * 0.75))
         max_parts = max(1, max_parts // 2)
         band = "streaming" if is_streaming else "moderate-write extra-care"
@@ -261,10 +255,21 @@ def _optimize_operations(
         )
 
     if not fields or all(field.transform is PartitionTransform.UNPARTITIONED for field in fields):
-        notes.append("Planned full-table optimize: table is unpartitioned.")
-        return [_optimize_operation(params)]
+        if total_size_gb is not None and total_size_gb <= chunk_size_gb:
+            notes.append(
+                "Planned full-table optimize: table is unpartitioned within chunk size budget."
+            )
+            return [_optimize_operation(params)]
+        if total_size_gb is None:
+            notes.append("Skipped optimize: table is unpartitioned and total size is unknown.")
+        else:
+            notes.append(
+                "Skipped optimize: unpartitioned table size "
+                f"{total_size_gb:g} GB exceeds chunk size budget {chunk_size_gb:g} GB."
+            )
+        return []
 
-    if total_size_gb <= chunk_size_gb:
+    if total_size_gb is not None and total_size_gb <= chunk_size_gb:
         notes.append("Planned full-table optimize: table is within chunk size budget.")
         return [_optimize_operation(params)]
 
@@ -289,6 +294,51 @@ def _optimize_operations(
         _optimize_operation(params, tuple(candidate.predicate for candidate in chunk))
         for chunk in chunks
     ]
+
+
+def full_table_optimize_allowed(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+) -> bool:
+    total_size_gb = _total_size_gb(stats)
+    return total_size_gb is not None and total_size_gb <= effective_optimize_chunk_size_gb(
+        stats, params
+    )
+
+
+def effective_optimize_chunk_size_gb(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+) -> float:
+    configured_chunk_size_gb = float(params.get("chunk_size_gb", 100))
+    return _effective_chunk_size_gb(
+        configured_chunk_size_gb,
+        _is_write_aware(stats, params),
+    )
+
+
+def _effective_chunk_size_gb(chunk_size_gb: float, write_aware: bool) -> float:
+    return max(1.0, chunk_size_gb / 2.0) if write_aware else chunk_size_gb
+
+
+def _is_write_aware(stats: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+    is_streaming = bool(stats.get("is_streaming"))
+    commits_per_day = float(stats.get("commits_per_day") or 0.0)
+    streaming_aware = params.get("streaming_aware_cadence", True)
+    extra_care = (
+        streaming_aware and not is_streaming and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
+    )
+    return bool(streaming_aware and (is_streaming or extra_care))
+
+
+def _total_size_gb(stats: Mapping[str, Any]) -> float | None:
+    value = stats.get("total_size_gb")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidate_partitions(
@@ -365,9 +415,9 @@ def _delete_compaction_policy(
         # DV-aware maintenance is a different lever this policy doesn't implement; do not
         # misapply V2-shaped file-count heuristics to it.
         return None
-    if _has_pathological_delete_skew(
+    if _has_pathological_delete_skew(partitions, params) or _has_unreachable_delete_skew(
         partitions, params
-    ) or _has_unreachable_delete_skew(partitions, params):
+    ):
         # convert_deletes (rewrite_data_files/BIN-PACK) selects candidates by *file size* --
         # even with delete-file-threshold set, it does not reliably form a rewrite group for a
         # partition whose data files are already well-sized but carry an extreme delete-to-data
@@ -440,7 +490,8 @@ def _has_unreachable_delete_skew(
     Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (delete_file_pct=100%,
     a genuinely hot table at 483 queries/30d) has 8 partitions each carrying 150-315
     position-delete files against 20-44 well-sized data files -- ratios of ~2.6 to ~8.0,
-    well under _has_pathological_delete_skew's default 20.0 "provably unreachable" bar, but still far
+    well under _has_pathological_delete_skew's default 20.0 "provably unreachable" bar, but
+    still far
     past the point where convert_deletes/optimize's size-driven selection reliably picks up
     these files. That table's own "succeeded" job plan explicitly deferred to optimize
     ("planned optimize already rewrites data files for this table") and never touched the
@@ -664,9 +715,7 @@ def _expire_params(
     commits_per_day = float(stats.get("commits_per_day") or 0.0)
     streaming_aware = params.get("streaming_aware_cadence", True)
     extra_care = (
-        streaming_aware
-        and not is_streaming
-        and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
+        streaming_aware and not is_streaming and commits_per_day >= _EXTRA_CARE_COMMITS_PER_DAY
     )
     if streaming_aware and commits_per_day > 0 and (is_streaming or extra_care):
         original_retention = retention_days
@@ -755,12 +804,11 @@ def _predicate_capabilities(params: Mapping[str, Any]) -> set[PredicateCapabilit
 
 
 def _small_files(row: Mapping[str, Any]) -> int:
-    return int(
-        row.get("small_files_in_partition_count")
-        or row.get("small_files")
-        or row.get("files_per_partition")
-        or 0
-    )
+    canonical = row.get("small_files_in_partition_count")
+    if canonical is not None:
+        return int(canonical)
+    legacy = row.get("small_files")
+    return int(legacy) if legacy is not None else 0
 
 
 def _partition_size_gb(row: Mapping[str, Any]) -> float:

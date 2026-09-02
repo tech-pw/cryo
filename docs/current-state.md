@@ -78,6 +78,15 @@ published SLO attainment, or an independently reproduced benchmark.
 - GB-budgeted chunks, max partitions per chunk, oversize-partition isolation,
   small-table bypass, small-file gating, cooldown, deadlines, and hot-partition
   checks.
+- Per-partition compaction eligibility uses only scanner-produced small-file
+  metrics (`small_files_in_partition_count`, then legacy `small_files`): absent
+  values are zero and never fall back to total `files_per_partition`.
+- Spark outlier telemetry observes plan footprint without dropping predicates.
+  The guard rejects duplicate unscoped `OPTIMIZE` calls, including empty
+  predicate tuples, and direct engine execution fails closed without scan size
+  evidence. The planner, worker, and manual layout endpoint permit a single
+  full-table optimize only when scan size is known and within the effective
+  chunk budget.
 - Canonical operation ordering (`CORRECT_ORDER`: convert_deletes →
   rewrite_position_deletes → compact → compute_statistics → manifests → expire
   → orphan) via `sort_operations_canonically()`, plus engine-specific SQL

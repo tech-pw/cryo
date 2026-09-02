@@ -112,7 +112,13 @@ def test_manifest_only_mode() -> None:
 
 def test_delete_ratio_trigger_plans_optimize() -> None:
     plan = build_plan(
-        {"schema_name": "s", "table_name": "t", "small_files_count": 10, "delete_file_pct": 25},
+        {
+            "schema_name": "s",
+            "table_name": "t",
+            "small_files_count": 10,
+            "delete_file_pct": 25,
+            "total_size_gb": 10,
+        },
         [],
         Mode.STANDARD,
         {"min_small_files": 128, "delete_ratio_trigger": 20},

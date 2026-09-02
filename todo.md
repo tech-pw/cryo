@@ -64,7 +64,8 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
       `PartitionPredicate` building (epoch-day/month/year/identity math). (parity).
 - [x] `planner/chunking.py` — greedy GB-budget packer, max parts/chunk, oversize-alone, max_chunks. (parity).
 - [x] `planner/planner.py` — mode→operations, unpartitioned/small-table/large paths, min_small_files,
-      hot-partition skip, delete-ratio trigger, `COMPUTE_STATISTICS` when enabled. (parity).
+      hot-partition skip, delete-ratio trigger, `COMPUTE_STATISTICS` when enabled; absent partition small-file
+      metrics are zero, and full-table optimize requires known in-budget table size. (parity).
 - [x] `planner/guardrails.py` — operation-order validation (expire → orphan → compact → manifests).
 - [x] `engines/base.py` — `MaintenanceEngine` interface (probe/render/execute/session_setup).
 - [x] `engines/trino/client.py` — per-coordinator connection (HTTPS + BasicAuth).
@@ -161,6 +162,8 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
 - [x] Governor EMR slot governance; preset rule `size_gb > 100 → spark-large`
       (`cryo/scheduler/routing.py`, `scripts/seed_local_config.py`).
 - [x] Tests: Spark renderer golden tests; routing test (large table → Spark, small → Trino).
+- [x] Spark scope guard preserves partition predicates, rejects duplicate unscoped rewrites,
+      and requires scan-size evidence for direct full-table Spark execution.
 - [~] Contract test against local Spark on seeded tables in pytest — covered by `make smoke-compact`,
       not yet in CI unit suite.
 

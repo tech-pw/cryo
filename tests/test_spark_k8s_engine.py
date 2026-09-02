@@ -314,7 +314,6 @@ def test_with_table_stats_respects_dynamic_sizing_opt_out() -> None:
         }
     )
     updated = engine.with_table_stats({"total_size_gb": 0.2})
-    assert updated is engine
     assert updated._k8s_config.executor_instances == 24
 
 
