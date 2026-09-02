@@ -29,8 +29,8 @@ from cryo.engines.spark.worker_guard import (
 )
 from cryo.engines.spark.worker_guard import (
     log_spark_payload,
-    maybe_compact_spark_plan,
     process_rss_mib,
+    validate_spark_plan_scope,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class SparkK8sEngine:
         self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
         destination_id = self.config.get("destination_id")
         self._destination_id = str(destination_id) if destination_id else None
+        self._table_stats: Mapping[str, Any] | None = None
 
     @property
     def k8s_client(self) -> SparkK8sClient:
@@ -126,6 +127,7 @@ class SparkK8sEngine:
         new_engine._k8s_config = replace(
             new_engine._k8s_config, s3_access_key=access_key, s3_secret_key=secret_key
         )
+        new_engine._table_stats = self._table_stats
         return new_engine
 
     def with_table_stats(self, table_stats: Mapping[str, Any] | None) -> SparkK8sEngine:
@@ -139,8 +141,13 @@ class SparkK8sEngine:
         Opt out per-destination with spark_k8s.dynamic_sizing=false if a workload needs the
         full configured profile regardless of table size.
         """
-        if table_stats is None or self.config.get("spark_k8s", {}).get("dynamic_sizing") is False:
+        if table_stats is None:
             return self
+        new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
+        new_engine._table_stats = dict(table_stats)
+        if self.config.get("spark_k8s", {}).get("dynamic_sizing") is False:
+            new_engine._k8s_config = self._k8s_config
+            return new_engine
         total_size_gb = table_stats.get("total_size_gb")
         profile = scale_executor_profile(
             total_size_gb=float(total_size_gb) if total_size_gb is not None else None,
@@ -150,7 +157,6 @@ class SparkK8sEngine:
             max_driver_cpu_milli=self._k8s_config.driver_cpu_milli,
             max_driver_mem_mib=self._k8s_config.driver_mem_mib,
         )
-        new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
         new_engine._k8s_config = replace(
             self._k8s_config,
             executor_instances=profile.executor_instances,
@@ -172,14 +178,13 @@ class SparkK8sEngine:
         return []
 
     def execute_plan(self, plan: MaintenancePlan, ctx: ExecCtx | None = None) -> list[ExecResult]:
-        # PDAE-8348: huge partition-filtered plans blow the worker before Spark even starts.
-        # Compact outliers to full-table CALLs; Spark compute stays in the dispatched Job.
-        plan, snap = maybe_compact_spark_plan(plan, stats=None, partitions=None)
+        snap = spark_payload_footprint(plan=plan, stats=self._table_stats)
+        validate_spark_plan_scope(plan, stats=self._table_stats)
         log_spark_payload(
             stage="execute_plan:before",
             table_ref=plan.table_ref,
             footprint_snap=snap,
-            extra="compacted" if snap.outlier_reason else "",
+            extra="scope-preserved" if snap.outlier_reason else "",
         )
         results: list[ExecResult] = []
         for stmt in self.render(plan):
@@ -190,7 +195,7 @@ class SparkK8sEngine:
         log_spark_payload(
             stage="execute_plan:after",
             table_ref=plan.table_ref,
-            footprint_snap=spark_payload_footprint(plan=plan),
+            footprint_snap=spark_payload_footprint(plan=plan, stats=self._table_stats),
             extra=f"ok={sum(1 for r in results if r.ok)}/{len(results)} rss={process_rss_mib()}",
         )
         return results
