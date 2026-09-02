@@ -199,13 +199,32 @@ class SQLJobStore:
             )
             return [_job_record(session, job) for job in jobs]
 
-    def list_queued_jobs(self) -> list[MaintenanceJobRecord]:
+    def list_queued_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        """Live-verified 2026-09-02, same incident as list_deferred_jobs's own docstring:
+        reconcile_queued_jobs (queue/reconcile.py) called this unbounded on every governor
+        wave -- with 28,445 queued jobs at the time (far exceeding the 4,227 deferred that
+        first surfaced the bug), this was the dominant cost once list_deferred_jobs's own
+        unbounded scan was fixed: a governor pod restarted onto the fixed reconcile_deferred_
+        jobs code still failed to complete a single wave for 2.5+ minutes, because this
+        sibling function has the identical unbounded pattern and, at this volume, was now the
+        larger bottleneck. Same fix: an optional limit, oldest-queued-first (ordered by
+        created_at via the joined run, since MaintenanceJob has no created_at of its own --
+        a job is created at the same time as its parent run) so a wave's own runtime stays
+        bounded regardless of how deep the queued backlog grows.
+        """
         with self._session_factory() as session:
-            jobs = session.scalars(
+            query = (
                 select(MaintenanceJob)
                 .where(MaintenanceJob.status == JobStatus.QUEUED.value)
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
+            if limit is not None:
+                query = (
+                    query.join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                    .order_by(MaintenanceRun.created_at.asc())
+                    .limit(limit)
+                )
+            jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
     def list_deferred_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
