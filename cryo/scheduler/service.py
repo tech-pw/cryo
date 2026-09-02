@@ -14,7 +14,12 @@ from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_dest
 from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
-from cryo.scheduler.scheduler import ScheduledRunDraft, build_scheduled_run, enqueue_run
+from cryo.scheduler.scheduler import (
+    ScheduledRunDraft,
+    build_scheduled_run,
+    enqueue_run,
+    fifo_priority,
+)
 
 # _maybe_check_ml_drift's own body (detect_all_anomalies) is bounded by this -- see that
 # method's own comment for the incident. A dedicated single-worker pool, isolated from
@@ -228,7 +233,11 @@ class SchedulerService:
                 run, preset, tables, destinations, failure_history=failure_history
             )
             self._store.persist_run(routed_jobs)
-            enqueue_run(routed_jobs, self._queue)
+            # created_at=current (the tick's own now, not a fresh datetime.now() call) so
+            # this run's fifo_priority reflects its real logical creation time -- see
+            # fifo_priority's own docstring for why every enqueue call site defaulting to
+            # priority=0 left cross-run admission order effectively random by job UUID.
+            enqueue_run(routed_jobs, self._queue, created_at=current)
             self._store.mark_preset_run(preset.id, current)
 
             runs_created += 1
@@ -1175,8 +1184,13 @@ class SchedulerService:
                     ).all()
                     run.status = "queued"
                     session.flush()
+                    # fifo_priority (scheduler.py) keyed on the run's real created_at, not
+                    # enqueue time -- see its own docstring for why every enqueue call site
+                    # leaving priority at its 0 default made cross-run admission order
+                    # effectively random by job UUID rather than fair or age-based.
+                    priority = fifo_priority(run.created_at)
                     for job in jobs:
-                        self._queue.enqueue(str(job.id), str(job.destination_id))
+                        self._queue.enqueue(str(job.id), str(job.destination_id), priority)
                 session.commit()
 
             import logging
