@@ -5,7 +5,7 @@
 .cursor/rules/subagents.mdc
 
 # Local Claude agent state
-.clause/
+.claude/
 
 __pycache__/
 *.pyc
