@@ -75,9 +75,37 @@ def build_scheduled_run(
     )
 
 
-def enqueue_run(run: ScheduledRunDraft, queue: MaintenanceQueue, *, priority: int = 0) -> None:
+def fifo_priority(created_at: datetime | None = None) -> int:
+    """Priority score giving older runs first admission at a shared destination.
+
+    Live-verified 2026-09-01: every enqueue call site in the codebase left priority at its
+    default (0), so with every job in a destination's Redis sorted set tied at the same
+    score, ZREVRANGE (cryo/queue/redis_queue.py) falls back to reverse-lexicographic UUID
+    ordering -- admission across different runs/presets sharing one destination was
+    effectively random by job UUID, not fair or age-based. Confirmed live: two runs open
+    28h with 621 combined jobs on spark-k8s-fallback got zero admissions for hours while a
+    run created same-day kept getting slots, purely because its jobs' UUIDs happened to sort
+    higher in the tie-broken order.
+
+    Negated epoch seconds: an older run (smaller epoch) yields a larger (less negative)
+    score, so ZREVRANGE's descending order puts it first -- the oldest run at a destination
+    is always admitted ahead of anything newer, and no run can be starved indefinitely by an
+    unlucky UUID once every other run ahead of it has drained.
+    """
+    at = created_at or datetime.now(UTC)
+    return -int(at.timestamp())
+
+
+def enqueue_run(
+    run: ScheduledRunDraft,
+    queue: MaintenanceQueue,
+    *,
+    priority: int | None = None,
+    created_at: datetime | None = None,
+) -> None:
+    resolved_priority = priority if priority is not None else fifo_priority(created_at)
     for job in run.jobs:
-        queue.enqueue(job.id, job.destination_id, priority)
+        queue.enqueue(job.id, job.destination_id, resolved_priority)
 
 
 def drop_recently_maintained(
