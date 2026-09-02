@@ -29,6 +29,15 @@ _ACTIVE_QUEUE_STATUSES = {
 # picked up on the next wave 30s later, oldest-first (see list_deferred_jobs's limit param).
 _MAX_DEFERRED_RECONCILE_PER_WAVE = 500
 
+# Same incident, same day: fixing reconcile_deferred_jobs alone was not enough -- a governor
+# pod restarted onto that fix still failed to complete a single wave for 2.5+ minutes, because
+# reconcile_queued_jobs (below) has the identical unbounded-scan pattern and, at 28,445 queued
+# jobs (far exceeding the 4,227 deferred that first surfaced this bug class), was the larger
+# bottleneck once the deferred side was bounded. Larger cap than the deferred one -- re-
+# enqueuing a queued-but-Redis-missing job is cheap (no admission decision, just a queue
+# write), so more can be processed per wave within the same time budget.
+_MAX_QUEUED_RECONCILE_PER_WAVE = 2000
+
 
 def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
     """Re-enqueue DB jobs stuck in queued state that are missing from Redis."""
@@ -38,7 +47,7 @@ def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
         return 0
 
     re_enqueued = 0
-    for job in list_queued():
+    for job in list_queued(limit=_MAX_QUEUED_RECONCILE_PER_WAVE):
         queue_status = queue.status(job.id)
         if callable(destination_exists) and not destination_exists(job.destination_id):
             if queue_status in _ACTIVE_QUEUE_STATUSES:

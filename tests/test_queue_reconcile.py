@@ -9,6 +9,7 @@ from cryo.governor.governor import Governor
 from cryo.queue.locks import InMemoryLockStore
 from cryo.queue.reconcile import (
     _MAX_DEFERRED_RECONCILE_PER_WAVE,
+    _MAX_QUEUED_RECONCILE_PER_WAVE,
     purge_stale_queue_entries,
     reconcile_deferred_jobs,
     reconcile_queued_jobs,
@@ -215,6 +216,62 @@ def test_reconcile_skips_stale_job_with_started_step() -> None:
 
     assert reaped == 0
     assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
+class TestReconcileQueuedJobsBounding:
+    """2026-09-02, same incident as TestReconcileDeferredJobsBounding: fixing
+    reconcile_deferred_jobs alone was not enough -- a governor pod restarted onto that fix
+    still failed to complete a single wave for 2.5+ minutes, because reconcile_queued_jobs
+    has the identical unbounded-scan pattern and, at 28,445 queued jobs (far exceeding the
+    4,227 deferred that surfaced the first bug), was the larger bottleneck once the deferred
+    side was bounded."""
+
+    def test_re_enqueues_all_queued_jobs_when_under_the_limit(self) -> None:
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(DestinationConfig("dest", config={"replicas": ["r1"]}))
+        for i in range(5):
+            store.add_job(
+                MaintenanceJobRecord(
+                    id=f"job-{i}",
+                    run_id="run-1",
+                    table_id=f"table-{i}",
+                    destination_id="dest",
+                    mode=Mode.STANDARD,
+                    status=JobStatus.QUEUED,
+                )
+            )
+
+        assert reconcile_queued_jobs(store, queue) == 5
+        for i in range(5):
+            assert queue.pending("dest").count(f"job-{i}") == 1
+
+    def test_bounds_reconcile_to_max_per_wave_when_backlog_exceeds_it(self, monkeypatch) -> None:
+        monkeypatch.setattr("cryo.queue.reconcile._MAX_QUEUED_RECONCILE_PER_WAVE", 3)
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(DestinationConfig("dest", config={"replicas": ["r1"]}))
+        for i in range(10):
+            store.add_job(
+                MaintenanceJobRecord(
+                    id=f"job-{i}",
+                    run_id="run-1",
+                    table_id=f"table-{i}",
+                    destination_id="dest",
+                    mode=Mode.STANDARD,
+                    status=JobStatus.QUEUED,
+                )
+            )
+
+        re_enqueued = reconcile_queued_jobs(store, queue)
+
+        assert re_enqueued == 3
+
+    def test_real_bound_constant_is_reasonable(self) -> None:
+        """Larger than the deferred bound -- re-enqueuing a queued-but-Redis-missing job is
+        cheap (no admission decision, just a queue write), so more fits in the same time
+        budget per wave."""
+        assert _MAX_QUEUED_RECONCILE_PER_WAVE > _MAX_DEFERRED_RECONCILE_PER_WAVE
 
 
 class TestReconcileDeferredJobsBounding:
