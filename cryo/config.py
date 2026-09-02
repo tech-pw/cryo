@@ -984,6 +984,24 @@ class Settings(BaseSettings):
         ge=10,
         description="Minimum shadow decisions before suggesting ROI enforcement.",
     )
+    governor_shadow_sample_rate: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Evaluate the ROI-gate and resource-predictor shadow paths for 1 in N candidates "
+            "per wave, not every one. Live-verified 2026-09-02: both paths do 2-3 real DB "
+            "queries per candidate purely to log a shadow recommendation neither currently "
+            "enforces (roi_gate_shadow_mode's own log-then-fall-through branch, and the "
+            "resource predictor has no enforcement path at all yet) -- at ~800 candidates in "
+            "a large wave that's 3000+ synchronous round-trips per wave for data nobody acts "
+            "on, found to be the dominant remaining cost after the two unbounded-reconcile-"
+            "scan bugs fixed the same day were resolved. Sampling keeps shadow-mode data "
+            "collection alive (roi_shadow_min_samples's 200-sample target is still reached "
+            "well within a single large wave at this rate) without paying the full per-"
+            "candidate cost on every wave. 1 disables sampling (evaluates every candidate,"
+            " the pre-fix behavior)."
+        ),
+    )
     forecast_window_days: int = Field(
         default=14,
         ge=3,

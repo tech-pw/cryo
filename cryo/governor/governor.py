@@ -99,6 +99,17 @@ class _PendingFallbackDispatch:
         self.destination_config = destination_config
 
 
+def _shadow_sampled(job_id: str, sample_rate: int) -> bool:
+    """True for roughly 1-in-sample_rate job_ids, deterministically -- same job_id always
+    samples the same way within a run, no per-wave counter to maintain across calls. See
+    Settings.governor_shadow_sample_rate's own docstring for why this exists: the ROI-gate
+    and resource-predictor shadow paths were evaluating every single candidate every wave,
+    purely to log data neither currently enforces."""
+    if sample_rate <= 1:
+        return True
+    return hash(job_id) % sample_rate == 0
+
+
 def _tenant_round_robin(
     jobs: list[MaintenanceJobRecord],
 ) -> list[MaintenanceJobRecord]:
@@ -155,7 +166,9 @@ class Governor:
         settings = get_settings()
         self._qpp_enabled = settings.qpp_enabled
         self._roi_gate_enabled = settings.roi_gate_enabled
+        self._roi_gate_shadow_mode = settings.roi_gate_shadow_mode
         self._roi_gate = ROIGate()
+        self._shadow_sample_rate = settings.governor_shadow_sample_rate
         # Fallbacks not yet dispatched because the current wave already spent its
         # one slot_cap-sized concurrent batch (PDAE-8352). Drained at the end of
         # subsequent run_wave ticks so regular queue admission is never blocked
@@ -509,27 +522,40 @@ class Governor:
                                     destination_outcomes[destination_id]["blocked"] += 1
                                 continue
 
+                        # In shadow mode (roi_gate_shadow_mode), decide() only ever logs -- the
+                        # SKIP/DEFER branches below never fire (a shadow decision always takes
+                        # the `roi.shadow: log` branch and falls through). Sampling here is
+                        # therefore safe: it skips real enforcement work zero times, only
+                        # redundant logging-only evaluations. Once real enforcement is live
+                        # (roi_gate_shadow_mode=False), every candidate is evaluated regardless
+                        # of sample_rate -- the gate must never silently skip a real SKIP/DEFER
+                        # decision.
+                        roi = None
                         if self._roi_gate_enabled and session is not None:
-                            roi = self._roi_gate.decide(session, _admission_job(job))
-                            if roi.shadow:
-                                logger.info(
-                                    "ROI gate shadow: job %s action=%s bcr=%.4f threshold=%.4f",
-                                    job_id,
-                                    roi.action.value,
-                                    roi.bcr,
-                                    roi.threshold,
-                                )
-                            elif roi.action == GateAction.SKIP:
-                                self._queue.cancel_pending(job.id, destination_id)
-                                self._store.mark_status(job.id, JobStatus.SKIPPED, error=roi.reason)
-                                blocked += 1
-                                destination_outcomes[destination_id]["blocked"] += 1
-                                continue
-                            elif roi.action == GateAction.DEFER:
-                                self._defer(job, roi.reason)
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                                continue
+                            skip_for_sampling = self._roi_gate_shadow_mode and not _shadow_sampled(
+                                job_id, self._shadow_sample_rate
+                            )
+                            if not skip_for_sampling:
+                                roi = self._roi_gate.decide(session, _admission_job(job))
+                        if roi is not None and roi.shadow:
+                            logger.info(
+                                "ROI gate shadow: job %s action=%s bcr=%.4f threshold=%.4f",
+                                job_id,
+                                roi.action.value,
+                                roi.bcr,
+                                roi.threshold,
+                            )
+                        elif roi is not None and roi.action == GateAction.SKIP:
+                            self._queue.cancel_pending(job.id, destination_id)
+                            self._store.mark_status(job.id, JobStatus.SKIPPED, error=roi.reason)
+                            blocked += 1
+                            destination_outcomes[destination_id]["blocked"] += 1
+                            continue
+                        elif roi is not None and roi.action == GateAction.DEFER:
+                            self._defer(job, roi.reason)
+                            deferred += 1
+                            destination_outcomes[destination_id]["deferred"] += 1
+                            continue
 
                         if not self._lock_store.acquire_table_lock(
                             job.table_id,
@@ -581,33 +607,39 @@ class Governor:
                                 ).inc()
 
                         # Resource predictor runs in shadow mode first: log recommendations and
-                        # compare against static sizing before any enforcement.
-                        try:
-                            from cryo.ai.resource_predictor import predict_resources_for_table
+                        # compare against static sizing before any enforcement. No enforcement
+                        # path exists yet at all -- this block only ever logs -- so sampling
+                        # (see _shadow_sampled's own docstring) is unconditionally safe here,
+                        # unlike the ROI gate above which still evaluates every candidate once
+                        # real enforcement is live.
+                        if _shadow_sampled(job_id, self._shadow_sample_rate):
+                            try:
+                                from cryo.ai.resource_predictor import predict_resources_for_table
 
-                            if session is None:
-                                raise ValueError("resource predictor has no database session")
-                            if table_uuid is None:
-                                raise ValueError("job has no valid table UUID")
-                            sizing = predict_resources_for_table(session, table_uuid)
-                            logger.info(
-                                "Resource predictor (shadow) for table %s: cpu=%.1f mem=%.1fGiB "
-                                "p50=%.1fs p90=%.1fs conf=%.2f samples=%d static_cap=%d",
-                                table_uuid,
-                                sizing.recommended_cpu_cores,
-                                sizing.recommended_memory_gb,
-                                sizing.predicted_p50_seconds,
-                                sizing.predicted_p90_seconds,
-                                sizing.confidence,
-                                sizing.samples,
-                                config.per_replica_cap,
-                            )
-                        except Exception as exc:
-                            logger.debug(
-                                "Resource predictor shadow failed for %s: %s",
-                                table_uuid,
-                                exc,
-                            )
+                                if session is None:
+                                    raise ValueError("resource predictor has no database session")
+                                if table_uuid is None:
+                                    raise ValueError("job has no valid table UUID")
+                                sizing = predict_resources_for_table(session, table_uuid)
+                                logger.info(
+                                    "Resource predictor (shadow) for table %s: cpu=%.1f "
+                                    "mem=%.1fGiB p50=%.1fs p90=%.1fs conf=%.2f samples=%d "
+                                    "static_cap=%d",
+                                    table_uuid,
+                                    sizing.recommended_cpu_cores,
+                                    sizing.recommended_memory_gb,
+                                    sizing.predicted_p50_seconds,
+                                    sizing.predicted_p90_seconds,
+                                    sizing.confidence,
+                                    sizing.samples,
+                                    config.per_replica_cap,
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "Resource predictor shadow failed for %s: %s",
+                                    table_uuid,
+                                    exc,
+                                )
 
                         if use_native_k8s:
                             # Buffer for pack-on-admit; do not push to Worker admitted queue.
