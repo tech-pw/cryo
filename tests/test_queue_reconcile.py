@@ -8,7 +8,9 @@ from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
 from cryo.queue.locks import InMemoryLockStore
 from cryo.queue.reconcile import (
+    _MAX_DEFERRED_RECONCILE_PER_WAVE,
     purge_stale_queue_entries,
+    reconcile_deferred_jobs,
     reconcile_queued_jobs,
     reconcile_stale_running_jobs,
 )
@@ -213,6 +215,80 @@ def test_reconcile_skips_stale_job_with_started_step() -> None:
 
     assert reaped == 0
     assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
+class TestReconcileDeferredJobsBounding:
+    """2026-09-02 fix: reconcile_deferred_jobs previously called list_deferred_jobs()
+    unbounded on every governor wave -- live-verified, 4,227 deferred jobs made each wave's
+    reconcile step slow enough to stall the governor entirely (admitted-per-wave declined
+    toward zero across consecutive waves; a pod restart didn't help, confirming the backlog
+    size itself, not pod state, was the bottleneck). Now bounded to
+    _MAX_DEFERRED_RECONCILE_PER_WAVE per call, oldest-deferred-first in the real DB-backed
+    store (job_store.py's list_deferred_jobs orders by finished_at when limit is given)."""
+
+    def test_requeues_all_deferred_jobs_when_under_the_limit(self) -> None:
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        for i in range(5):
+            store.add_job(
+                MaintenanceJobRecord(
+                    id=f"job-{i}",
+                    run_id="run-1",
+                    table_id=f"table-{i}",
+                    destination_id="dest",
+                    mode=Mode.STANDARD,
+                    status=JobStatus.DEFERRED,
+                )
+            )
+
+        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+
+        assert requeued == 5
+        for i in range(5):
+            assert store.get_job(f"job-{i}").status is JobStatus.QUEUED
+
+    def test_bounds_reconcile_to_max_per_wave_when_backlog_exceeds_it(self, monkeypatch) -> None:
+        """Direct regression: a backlog larger than the bound must not all be processed in
+        one call -- confirms the fix actually caps per-wave work instead of just being wired
+        up with no effect. Uses a small monkeypatched bound so the test doesn't need to seed
+        thousands of jobs to exercise the cap."""
+        monkeypatch.setattr(
+            "cryo.queue.reconcile._MAX_DEFERRED_RECONCILE_PER_WAVE", 3
+        )
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        for i in range(10):
+            store.add_job(
+                MaintenanceJobRecord(
+                    id=f"job-{i}",
+                    run_id="run-1",
+                    table_id=f"table-{i}",
+                    destination_id="dest",
+                    mode=Mode.STANDARD,
+                    status=JobStatus.DEFERRED,
+                )
+            )
+
+        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+
+        assert requeued == 3
+        still_deferred = sum(
+            1 for i in range(10) if store.get_job(f"job-{i}").status is JobStatus.DEFERRED
+        )
+        assert still_deferred == 7
+
+    def test_real_bound_constant_is_reasonable(self) -> None:
+        """Sanity check on the constant itself -- large enough to make real progress each
+        wave, small enough that a single wave's reconcile step can't grow unbounded with the
+        backlog. Matches the same order of magnitude as _MAX_DISPATCHES_PER_TICK
+        (native/watcher.py)."""
+        assert 0 < _MAX_DEFERRED_RECONCILE_PER_WAVE <= 1000
 
 
 def test_governor_re_enqueues_and_admits_db_queued_jobs() -> None:
