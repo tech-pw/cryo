@@ -509,12 +509,10 @@ class Worker:
                 engine = engine.with_table_stats(table_data.stats)
 
             if engine.type is EngineType.SPARK_EMR:
-                plan = _maybe_compact_spark_worker_plan(
+                _validate_spark_worker_plan(
                     plan,
-                    job=job,
                     table_data=table_data,
                     table_ref=table_ref,
-                    store=self._store,
                 )
 
             native_routing = None
@@ -1923,12 +1921,10 @@ class Worker:
         if hasattr(fallback_engine, "with_table_stats"):
             fallback_engine = fallback_engine.with_table_stats(table_data.stats)
         if fallback_engine.type is EngineType.SPARK_EMR:
-            plan = _maybe_compact_spark_worker_plan(
+            _validate_spark_worker_plan(
                 plan,
-                job=job,
                 table_data=table_data,
                 table_ref=table_ref,
-                store=self._store,
             )
         final_status = JobStatus.SUCCEEDED
         error: str | None = None
@@ -2279,36 +2275,29 @@ class Worker:
         return final_status, error, engine_ref, had_success, had_skip, False
 
 
-def _maybe_compact_spark_worker_plan(
+def _validate_spark_worker_plan(
     plan: MaintenancePlan,
     *,
-    job: MaintenanceJobRecord,
     table_data: TableMaintenanceData,
     table_ref: str | None,
-    store: JobStore,
-) -> MaintenancePlan:
-    from cryo.engines.spark.worker_guard import log_spark_payload, maybe_compact_spark_plan
+) -> None:
+    from cryo.engines.spark.worker_guard import (
+        footprint,
+        log_spark_payload,
+        validate_spark_plan_scope,
+    )
 
-    compacted, snap = maybe_compact_spark_plan(
-        plan,
+    snap = footprint(
+        plan=plan,
         stats=table_data.stats,
         partitions=table_data.partitions,
     )
     log_spark_payload(
         stage="worker:pre_execute",
-        table_ref=table_ref or job.table_id,
+        table_ref=table_ref or plan.table_ref,
         footprint_snap=snap,
     )
-    if snap.outlier_reason is None:
-        return plan
-    try:
-        store.save_plan(job.id, plan_to_dict(compacted))
-    except RuntimeError:
-        logger.info(
-            "spark-k8s compacted plan not persisted for job %s (durable intent bound)",
-            job.id,
-        )
-    return compacted
+    validate_spark_plan_scope(plan, stats=table_data.stats)
 
 
 def _execute_statement(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
 from cryo.engines.trino.sql import UnsupportedPredicateError, render_predicate
 from cryo.planner.partitions import PartitionFieldSpec, build_predicate, partition_fields_from_stats
-from cryo.planner.planner import build_plan
+from cryo.planner.planner import _small_files, build_plan
 
 
 def test_unpartitioned_table_produces_no_partition_fields() -> None:
@@ -166,6 +166,98 @@ def test_build_plan_chunks_large_partitioned_tables_and_preserves_deep_order() -
         for operation in plan.operations
         if operation.type is OperationType.OPTIMIZE
     ] == [1, 2]
+    assert all(
+        operation.predicates
+        for operation in plan.operations
+        if operation.type is OperationType.OPTIMIZE
+    )
+
+
+def test_small_file_metrics_never_fall_back_to_total_file_count() -> None:
+    assert _small_files({"files_per_partition": 25}) == 0
+    assert _small_files({"small_files_in_partition_count": 0, "files_per_partition": 25}) == 0
+    assert _small_files({"small_files": 0, "files_per_partition": 25}) == 0
+    assert (
+        _small_files(
+            {"small_files_in_partition_count": 0, "small_files": 7, "files_per_partition": 25}
+        )
+        == 0
+    )
+    assert _small_files({"small_files": 7, "files_per_partition": 25}) == 7
+
+
+def test_build_plan_skips_partitions_without_small_file_metrics() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 2,
+            "total_size_gb": 200,
+            "partition_fields": [
+                {
+                    "base_column": "region",
+                    "partition_field": "region",
+                    "transform": "identity",
+                    "col_type": "string",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": "us",
+                "files_per_partition": 25,
+                "partition_size_gb": 10,
+            },
+            {
+                "partition_value": "in",
+                "small_files_in_partition_count": 0,
+                "files_per_partition": 25,
+                "partition_size_gb": 10,
+            },
+        ],
+        Mode.STANDARD,
+        {"min_small_files": 1, "chunk_size_gb": 50},
+    )
+
+    assert OperationType.OPTIMIZE not in [operation.type for operation in plan.operations]
+    assert any("no renderable partition candidates" in note for note in plan.notes)
+
+
+def test_build_plan_allows_in_budget_unpartitioned_full_table_optimize() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 2,
+            "total_size_gb": 50,
+        },
+        [],
+        Mode.STANDARD,
+        {"min_small_files": 1, "chunk_size_gb": 50},
+    )
+
+    optimize = next(
+        operation for operation in plan.operations if operation.type is OperationType.OPTIMIZE
+    )
+    assert optimize.predicates is None
+
+
+def test_build_plan_skips_large_unpartitioned_full_table_optimize() -> None:
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 2,
+            "total_size_gb": 50.1,
+        },
+        [],
+        Mode.DEEP,
+        {"min_small_files": 1, "chunk_size_gb": 50},
+    )
+
+    assert OperationType.OPTIMIZE not in [operation.type for operation in plan.operations]
+    assert OperationType.OPTIMIZE_MANIFESTS in [operation.type for operation in plan.operations]
+    assert any("unpartitioned table size" in note for note in plan.notes)
 
 
 def test_orphan_params_emit_min_age_hours() -> None:

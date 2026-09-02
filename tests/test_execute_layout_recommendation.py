@@ -47,6 +47,8 @@ def _seed(
     status: str = "approved",
     total_files: int | None = None,
     column_quality: list[str] | None = None,
+    total_size_gb: float = 1.0,
+    include_stats: bool = True,
 ):
     source = Source(
         id=uuid4(),
@@ -99,7 +101,7 @@ def _seed(
         status=status,
     )
     session.add(recommendation)
-    if total_files is not None or column_quality is not None:
+    if include_stats:
         raw = {}
         if column_quality is not None:
             raw["column_quality"] = [{"column_name": c} for c in column_quality]
@@ -114,7 +116,7 @@ def _seed(
                 total_files=total_files or 0,
                 small_files_count=total_files or 0,
                 total_partitions=1,
-                total_size_gb=1.0,
+                total_size_gb=total_size_gb,
                 raw=raw,
             )
         )
@@ -186,6 +188,21 @@ def _seed_with_spark_primary_destination(
         status=status,
     )
     session.add(recommendation)
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=True,
+            compaction_priority="HIGH",
+            grade="C",
+            overall_score=60,
+            total_files=0,
+            small_files_count=0,
+            total_partitions=1,
+            total_size_gb=1.0,
+            raw={},
+        )
+    )
     session.commit()
     return recommendation.id
 
@@ -329,8 +346,7 @@ def test_execute_resolves_case_mismatched_columns_to_real_schema_casing(
 def test_execute_skips_schema_validation_when_no_column_quality_available(
     session, monkeypatch
 ) -> None:
-    """A table with no TableStats.column_quality yet (e.g. never scanned) must not be blocked
-    outright -- fall back to trusting the recommendation rather than rejecting everything."""
+    """A table whose current scan has no column_quality data still permits a valid rewrite."""
     rec_id = _seed(
         session,
         recommended_strategy="sort",
@@ -345,6 +361,42 @@ def test_execute_skips_schema_validation_when_no_column_quality_available(
 
     assert response.status == "succeeded"
     mock_client.submit_spark_sql.assert_called()
+
+
+def test_execute_rejects_layout_rewrite_without_scan_size_evidence(session, monkeypatch) -> None:
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+        include_stats=False,
+    )
+    mock_client = _mock_spark_client(monkeypatch, [])
+
+    with pytest.raises(HTTPException, match="scan size evidence") as exc_info:
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
+
+    assert exc_info.value.status_code == 422
+    mock_client.submit_spark_sql.assert_not_called()
+
+
+def test_execute_rejects_layout_rewrite_outside_chunk_budget(session, monkeypatch) -> None:
+    rec_id = _seed(
+        session,
+        recommended_strategy="sort",
+        recommended_columns=["event_date"],
+        total_size_gb=100.1,
+    )
+    mock_client = _mock_spark_client(monkeypatch, [])
+
+    with pytest.raises(HTTPException, match="chunk size budget") as exc_info:
+        execute_layout_recommendation(
+            rec_id, ExecuteLayoutRecommendationRequest(), session, PRINCIPAL
+        )
+
+    assert exc_info.value.status_code == 422
+    mock_client.submit_spark_sql.assert_not_called()
 
 
 def test_execute_rejects_when_not_approved(session, monkeypatch) -> None:
@@ -520,6 +572,9 @@ def test_durable_layout_stops_after_post_effect_budget_breach(
 
     class BudgetBreachEngine:
         type = EngineType.SPARK_EMR
+
+        def with_table_stats(self, stats):
+            return self
 
         def execute_plan(self, plan, ctx=None):
             statement = RenderedStatement(

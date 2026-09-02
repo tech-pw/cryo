@@ -36,6 +36,7 @@ from cryo.governor.roi_gate import ROIGate
 from cryo.intents.binding import bind_explicit_job_intent
 from cryo.intents.validation import IntentValidationError, validate_effect_budget
 from cryo.observability.correlation import correlation_summary
+from cryo.planner.planner import full_table_optimize_allowed
 from cryo.scheduler.forecaster import WorkloadForecaster
 
 logger = logging.getLogger(__name__)
@@ -516,9 +517,7 @@ def execute_layout_recommendation(
     # NamedReference.bind is case-sensitive but query telemetry routinely lowercases columns.
     stats = session.scalar(select(TableStats).where(TableStats.table_id == table.id))
     column_quality = (stats.raw or {}).get("column_quality") or [] if stats is not None else []
-    schema_columns = [
-        str(c.get("column_name")) for c in column_quality if c.get("column_name")
-    ]
+    schema_columns = [str(c.get("column_name")) for c in column_quality if c.get("column_name")]
     if schema_columns:
         schema_by_lower = {c.lower(): c for c in schema_columns}
         resolved_columns: list[str] = []
@@ -584,6 +583,32 @@ def execute_layout_recommendation(
     if not isinstance(catalog_name, str) or not catalog_name:
         raise HTTPException(status_code=422, detail="Table's source has no catalog_name configured")
     table_ref = f"{catalog_name}.{table.schema_name}.{table.table_name}"
+    if stats is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Layout rewrite requires current scan size evidence before it can be dispatched."
+            ),
+        )
+    scan_stats = {**dict(stats.raw or {}), "total_size_gb": stats.total_size_gb}
+    op_params: dict[str, Any] = {
+        "strategy": recommendation.recommended_strategy,
+        "rewrite_all": True,
+        "persist_sort_order": recommendation.recommended_strategy == "sort",
+    }
+    for key in ("chunk_size_gb", "streaming_aware_cadence"):
+        value = effective.preset.params.get(key)
+        if value is not None:
+            op_params[key] = value
+    if recommendation.recommended_strategy == "zorder":
+        op_params["zorder_columns"] = columns
+    else:
+        op_params["sort_columns"] = columns
+    if not full_table_optimize_allowed(scan_stats, op_params):
+        raise HTTPException(
+            status_code=422,
+            detail="Layout rewrite is outside the effective chunk size budget for this table.",
+        )
 
     run = MaintenanceRun(
         kind="adhoc",
@@ -610,15 +635,6 @@ def execute_layout_recommendation(
     session.add(job)
     session.flush()
 
-    op_params: dict[str, Any] = {
-        "strategy": recommendation.recommended_strategy,
-        "rewrite_all": True,
-        "persist_sort_order": recommendation.recommended_strategy == "sort",
-    }
-    if recommendation.recommended_strategy == "zorder":
-        op_params["zorder_columns"] = columns
-    else:
-        op_params["sort_columns"] = columns
     plan = MaintenancePlan(
         table_ref=table_ref,
         mode=Mode(payload.mode),
@@ -640,7 +656,7 @@ def execute_layout_recommendation(
         session.commit()
 
     merged_config = _fallback_engine_config(fallback_destination.config, source.config)
-    engine = SparkK8sEngine(config=merged_config)
+    engine = SparkK8sEngine(config=merged_config).with_table_stats(scan_stats)
     intent_store = (
         IntentStore(
             sessionmaker(

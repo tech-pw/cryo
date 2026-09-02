@@ -1,12 +1,11 @@
-"""Keep Spark-on-K8s work off the in-process worker memory budget.
+"""Observe Spark-on-K8s plan footprints without widening rewrite scope.
 
 PDAE-8348: all cryo-worker pods OOMKilled in one ~90min window (limit 4Gi, steady-state
 ~150-220Mi). The Helm bump in 1253fe3 (4Gi→6Gi) is a safety margin only. The lead table
 was ~2TB / ~30k files — partition-aware plans plus `table_data.partitions` on the worker
 are the in-process blow-up, not Spark itself (compute already runs in a Job).
 
-Spark rewrite procedures do not need Trino-style partition filters to stay safe, so an
-outlier plan is compacted to full-table CALLs before render/execute.
+Outlier telemetry must not turn partition-scoped rewrites into repeated full-table calls.
 """
 
 from __future__ import annotations
@@ -15,10 +14,12 @@ import json
 import logging
 import platform
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
-from cryo.domain.models import MaintenancePlan, Operation
+from cryo.domain.enums import OperationType
+from cryo.domain.models import MaintenancePlan
+from cryo.planner.planner import full_table_optimize_allowed
 from cryo.planner.serialization import plan_to_dict
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,10 @@ class SparkPayloadFootprint:
     total_size_gb: float | None
     file_count: int | None
     outlier_reason: str | None
+
+
+class SparkPlanScopeError(ValueError):
+    pass
 
 
 def process_rss_mib() -> float | None:
@@ -136,26 +141,37 @@ def outlier_reason(
     return None
 
 
-def compact_spark_plan(plan: MaintenancePlan, reason: str) -> MaintenancePlan:
-    """Drop partition predicates so Spark runs a full-table CALL in its own Job."""
-    compacted = tuple(
-        Operation(type=op.type, params=op.params, predicates=None) if op.predicates else op
-        for op in plan.operations
-    )
-    note = f"spark-k8s worker compacted partition filters ({reason})"
-    return replace(plan, operations=compacted, notes=(*plan.notes, note))
-
-
-def maybe_compact_spark_plan(
+def validate_spark_plan_scope(
     plan: MaintenancePlan,
     *,
     stats: Mapping[str, Any] | None = None,
-    partitions: Sequence[Mapping[str, Any]] | None = None,
-) -> tuple[MaintenancePlan, SparkPayloadFootprint]:
-    snap = footprint(plan=plan, stats=stats, partitions=partitions)
-    if snap.outlier_reason is None:
-        return plan, snap
-    return compact_spark_plan(plan, snap.outlier_reason), snap
+) -> None:
+    unscoped_optimizes = [
+        operation
+        for operation in plan.operations
+        if operation.type is OperationType.OPTIMIZE and not operation.predicates
+    ]
+    if len(unscoped_optimizes) > 1:
+        raise SparkPlanScopeError(
+            "Spark plan contains multiple unscoped optimize operations; "
+            "refusing duplicate whole-table rewrites."
+        )
+    if not unscoped_optimizes:
+        return
+    if stats is None:
+        raise SparkPlanScopeError(
+            "Spark plan contains an unscoped optimize operation without scan size evidence."
+        )
+    operation = unscoped_optimizes[0]
+    if full_table_optimize_allowed(stats, operation.params):
+        return
+    total_size_gb = _size_gb(stats)
+    size_detail = "unknown" if total_size_gb is None else f"{total_size_gb:g} GB"
+    chunk_size_gb = operation.params.get("chunk_size_gb", 100)
+    raise SparkPlanScopeError(
+        "Spark plan contains an unscoped optimize operation for a table with size "
+        f"{size_detail}, outside chunk size budget {chunk_size_gb} GB."
+    )
 
 
 def log_spark_payload(
