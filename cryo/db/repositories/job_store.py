@@ -208,13 +208,30 @@ class SQLJobStore:
             )
             return [_job_record(session, job) for job in jobs]
 
-    def list_deferred_jobs(self) -> list[MaintenanceJobRecord]:
+    def list_deferred_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        """Live-verified 2026-09-02: reconcile_deferred_jobs (queue/reconcile.py) calls this
+        unbounded on every governor wave (every 30s) -- with 4,227 deferred jobs and growing,
+        each wave's reconcile step took long enough to stall the governor entirely (admitted-
+        per-wave declined 15->8->7->5->5->5->2->2 across consecutive waves, then no wave
+        completed at all for 3+ minutes against a 30s interval). A pod restart didn't help --
+        the backlog itself, not pod state, was the bottleneck, confirming this as the root
+        cause rather than a one-off hang.
+
+        limit, when given, returns the oldest-deferred-first slice (ordered by finished_at,
+        the timestamp mark_status sets when a job transitions to DEFERRED) instead of the
+        whole table -- same fairness principle as fifo_priority (scheduler.py): the jobs
+        that have been waiting longest get evaluated first, and a wave's own runtime stays
+        bounded by limit regardless of how large the deferred backlog grows.
+        """
         with self._session_factory() as session:
-            jobs = session.scalars(
+            query = (
                 select(MaintenanceJob)
                 .where(MaintenanceJob.status == JobStatus.DEFERRED.value)
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
+            if limit is not None:
+                query = query.order_by(MaintenanceJob.finished_at.asc()).limit(limit)
+            jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
     def list_running_jobs(self) -> list[MaintenanceJobRecord]:

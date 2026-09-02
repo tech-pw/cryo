@@ -18,6 +18,17 @@ _ACTIVE_QUEUE_STATUSES = {
     JobStatus.RUNNING,
 }
 
+# Live-verified 2026-09-02: reconcile_deferred_jobs previously called list_deferred_jobs()
+# unbounded on every governor wave (every 30s) -- with 4,227 deferred jobs and growing, each
+# wave's reconcile step took long enough to stall the governor entirely (admitted-per-wave
+# declined 15->8->7->5->5->5->2->2 across consecutive waves, then no wave completed at all
+# for 3+ minutes against the 30s interval; a pod restart did not help, confirming the
+# backlog's own size -- not pod state -- was the bottleneck). Matches
+# _MAX_DISPATCHES_PER_TICK's own bounding pattern (native/watcher.py) -- a wave's own runtime
+# must stay bounded regardless of how large the deferred backlog grows; the remainder is
+# picked up on the next wave 30s later, oldest-first (see list_deferred_jobs's limit param).
+_MAX_DEFERRED_RECONCILE_PER_WAVE = 500
+
 
 def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
     """Re-enqueue DB jobs stuck in queued state that are missing from Redis."""
@@ -65,7 +76,7 @@ def reconcile_deferred_jobs(
 
     current = now or datetime.now(UTC)
     requeued = 0
-    for job in list_deferred():
+    for job in list_deferred(limit=_MAX_DEFERRED_RECONCILE_PER_WAVE):
         destination = _try_get_destination(store, job.destination_id)
         if destination is None:
             store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
