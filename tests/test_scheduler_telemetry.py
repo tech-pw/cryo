@@ -109,6 +109,68 @@ def _make_service() -> SchedulerService:
     return SchedulerService(_NullStore(), InMemoryMaintenanceQueue())
 
 
+def test_ingest_telemetry_opens_a_fresh_session_per_source(session, monkeypatch) -> None:
+    """2026-09-03 fix: _maybe_ingest_telemetry used to hold a single Postgres session open
+    across the entire loop over every enabled Source, with a real (bounded but potentially
+    slow) network call awaited per source inside that same open transaction -- confirmed live
+    as the cause of a 15+ minute idle-in-transaction session on the scheduler pod (and an
+    earlier 5+ hour occurrence the same day). This asserts the concrete fix: SessionLocal() is
+    now called once per source (plus once up front for the id list), not once for the whole
+    tick -- so a slow network call for one source can only ever hold open that source's own
+    short-lived session, never a shared one spanning every source.
+    """
+    session_open_count = 0
+    real_bound_factory = _bound_session_factory(session)
+
+    def _counting_factory():
+        nonlocal session_open_count
+        session_open_count += 1
+        return real_bound_factory()
+
+    monkeypatch.setattr("cryo.scheduler.service.SessionLocal", _counting_factory)
+
+    monkeypatch.setattr(
+        "cryo.telemetry.query_buffer.buffer_trino_queries", lambda queries, *, source_id, maxlen=250_000: len(queries)
+    )
+    monkeypatch.setattr(
+        "cryo.scheduler.service._source_for_destination", lambda session, destination: None
+    )
+
+    source_a = _seed_source(session)
+    source_b = _seed_source(session)
+    source_c = _seed_source(session)
+    session.commit()
+
+    fake_settings = type(
+        "FakeSettings",
+        (),
+        {
+            "telemetry_trino_url": "http://trino:8080",
+            "telemetry_trino_user": None,
+            "telemetry_trino_password": None,
+            "telemetry_trino_ssl_verify": True,
+            "telemetry_ingest_on_startup": True,
+        },
+    )()
+    monkeypatch.setattr("cryo.config.get_settings", lambda: fake_settings)
+
+    async def _fake_fetch(since=None, limit=1000):
+        return []
+
+    with patch(
+        "cryo.telemetry.ingestion.TrinoQueryIngester.fetch_recent_queries",
+        new=AsyncMock(side_effect=_fake_fetch),
+    ):
+        service = _make_service()
+        service._maybe_ingest_telemetry(datetime.now(UTC))
+
+    # 1 session for the id-list read + 1 per source (source_a, source_b, source_c) + 0 for
+    # destinations (none enabled in this fixture) -- never a single session shared across
+    # all three sources' network calls.
+    assert session_open_count >= 4
+    assert {source_a.id, source_b.id, source_c.id}  # sanity: all three were actually seeded
+
+
 def test_ingest_telemetry_covers_every_enabled_source(session, monkeypatch) -> None:
     """Every enabled Source gets fetched each tick; the curator drains the buffer and
     writes a curated subset to Postgres. Aggregate is called once per source.
@@ -184,6 +246,12 @@ def test_ingest_telemetry_covers_every_enabled_source(session, monkeypatch) -> N
     source_b = _seed_source(session)
     _seed_table(session, source_a, table_name="orders")
     _seed_table(session, source_b, table_name="shipments")
+    # 2026-09-03: _maybe_ingest_telemetry now opens a fresh SessionLocal() per source/
+    # destination (see that method's own docstring) instead of one session for the whole
+    # tick, so the seed data needs to be genuinely committed -- a flush-only write is only
+    # visible within this same session/transaction, not to the sibling sessions the code
+    # under test now opens.
+    session.commit()
 
     session_factory = _bound_session_factory(session)
     monkeypatch.setattr("cryo.scheduler.service.SessionLocal", session_factory)

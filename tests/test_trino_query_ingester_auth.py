@@ -84,6 +84,10 @@ def test_scheduler_wires_telemetry_credentials_into_ingester(session, monkeypatc
     ssl_verify through, not just leave TrinoQueryIngester on its no-auth defaults -- this is
     the exact gap that caused every real telemetry tick to 401."""
     _seed_source(session)  # no query_log config -> takes the legacy TrinoQueryIngester path
+    # 2026-09-03: _maybe_ingest_telemetry now opens a fresh SessionLocal() per source (see
+    # that method's own docstring) -- flush-only seed data is invisible to that sibling
+    # session until committed.
+    session.commit()
 
     session_factory = _bound_session_factory(session)
     monkeypatch.setattr("cryo.scheduler.service.SessionLocal", session_factory)
