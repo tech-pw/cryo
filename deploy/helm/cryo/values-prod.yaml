@@ -200,11 +200,27 @@ api:
       memory: 6Gi
 
 worker:
+  # This is only the baseline Helm sets on each deploy -- keda-hpa-cryo-worker (KEDA
+  # ScaledObject cryo-worker, deploy/helm/cryo/templates/keda-worker-scaledobject.yaml)
+  # immediately takes over live scaling 1-10 on admitted+running job count, same as any
+  # Deployment behind an HPA. Live replica count was 10/10 (at the max) when this comment
+  # was added 2026-09-03 -- don't read this "2" as the real fleet size; check `kubectl get
+  # hpa -n cryo` for that.
   replicas: 2
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
+      # Lowered 500m -> 100m 2026-09-03: confirmed live across all 10 KEDA-scaled replicas
+      # (keda-hpa-cryo-worker, deploy/helm/cryo/templates/keda-worker-scaledobject.yaml,
+      # scales 1-10 on admitted+running job count), steady at ~23m actual usage average --
+      # 500m was reserving ~95% unused CPU per the cryo-namespace cost dashboard
+      # (namespace_unused_cost vitals check: $111 unused vs $44 used, 2.6x, 2026-09-02).
+      # 100m keeps ~4x headroom over observed usage.
+      cpu: 100m
+      # Lowered 1Gi -> 256Mi 2026-09-03: same investigation, memory steady at ~137Mi actual
+      # usage across all 10 replicas (0 restarts) -- 1Gi was reserving ~86% unused memory.
+      # 256Mi keeps ~2x headroom over observed usage; limit below is untouched so a real
+      # spike still has room before OOM (see the 2026-08-16 OOM note this raise predates).
+      memory: 256Mi
     limits:
       cpu: "2"
       # Raised 4Gi -> 6Gi 2026-08-16: confirmed live, several cryo-worker pods OOMKilled

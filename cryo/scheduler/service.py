@@ -328,6 +328,19 @@ class SchedulerService:
         2. **Curate**: for every destination with ``query_log_config`` enabled, drain its
            Redis buffer -> Iceberg archive -> curated Postgres -> query_patterns. Failures
            on one destination never block another.
+
+        2026-09-03 fix: this used to hold one Postgres session/transaction open across the
+        *entire* loop over every source and destination, with a real network call (Trino HTTP
+        via TrinoQueryIngester, and the curator's own Iceberg archive I/O) awaited per item
+        inside that same open transaction. Each of those calls is individually bounded (30-60s
+        httpx timeouts), but they run sequentially against one held-open session -- with enough
+        sources/destinations, or a couple of calls near their own timeout ceiling, the session
+        sits idle-in-transaction (wait_event=ClientRead, since Postgres is just waiting for the
+        next statement) for minutes at a stretch. Confirmed live on the scheduler pod: a
+        cryo.sources query held idle-in-transaction for 15+ minutes, same symptom as an earlier
+        5+ hour occurrence the same day. Fix: read the id lists up front on a short-lived
+        session, then open a fresh session per source and per destination so a slow network
+        call only ever blocks that one item's own transaction, never a shared one.
         """
         from datetime import timedelta
 
@@ -356,16 +369,32 @@ class SchedulerService:
                 total_curated = 0
                 total_patterns_updated = 0
                 curators_run = 0
+
+                # Read just the ids up front, on a short-lived session -- the per-item loops
+                # below each re-fetch their own row on their own session, so this list going
+                # slightly stale (a source disabled mid-tick) just means it's skipped next tick.
                 with SessionLocal() as session:
-                    # 1. Legacy fetch path: poll the global Trino URL for any Source that
-                    #    hasn't migrated to the per-destination curator yet. Buffers to Redis;
-                    #    the curator (or the next curator tick) will handle the rest.
-                    sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
-                    for source in sources:
+                    source_ids = session.scalars(
+                        select(Source.id).where(Source.enabled.is_(True))
+                    ).all()
+                    destination_ids = session.scalars(
+                        select(Destination.id).where(Destination.enabled.is_(True))
+                    ).all()
+
+                # 1. Legacy fetch path: poll the global Trino URL for any Source that hasn't
+                #    migrated to the per-destination curator yet. Buffers to Redis; the curator
+                #    (or the next curator tick) will handle the rest. One session per source so
+                #    a slow Trino call only ever holds open that source's own transaction.
+                for source_id in source_ids:
+                    with SessionLocal() as session:
+                        source = session.get(Source, source_id)
+                        if source is None:
+                            continue
                         if parse_iceberg_query_log_config(source.config or {}) is not None:
                             total_patterns_updated += aggregate_from_iceberg_query_log(
                                 session, source, now=current
                             )
+                            session.commit()
                             continue
                         if not settings.telemetry_trino_url:
                             continue
@@ -386,15 +415,17 @@ class SchedulerService:
                             ingester,
                             limit=500,
                         )
+                        session.commit()
 
-                    # 2. Curator path: for every destination with a query_log_config block,
-                    #    drain the Redis buffer, archive to Iceberg, spill curated to Postgres,
-                    #    and aggregate query_patterns. read_through destinations skip the
-                    #    archive but still aggregate.
-                    destinations = session.scalars(
-                        select(Destination).where(Destination.enabled.is_(True))
-                    ).all()
-                    for destination in destinations:
+                # 2. Curator path: for every destination with a query_log_config block, drain
+                #    the Redis buffer, archive to Iceberg, spill curated to Postgres, and
+                #    aggregate query_patterns. read_through destinations skip the archive but
+                #    still aggregate. One session per destination, same reasoning as above.
+                for destination_id in destination_ids:
+                    with SessionLocal() as session:
+                        destination = session.get(Destination, destination_id)
+                        if destination is None:
+                            continue
                         # Bind the destination to a Source. A destination without a Source
                         # link can't spill curated rows (Postgres FK is to sources.id) but
                         # can still archive to Iceberg via the destination's own config.
@@ -409,6 +440,7 @@ class SchedulerService:
                             curators_run += 1
                             total_curated += result.curated_inserted
                             total_patterns_updated += result.patterns_updated
+                            session.commit()
                             if result.error:
                                 import logging
 
@@ -418,6 +450,7 @@ class SchedulerService:
                                     result.error,
                                 )
                         except Exception as exc:  # noqa: BLE001
+                            session.rollback()
                             import logging
 
                             logging.getLogger(__name__).warning(
@@ -425,7 +458,6 @@ class SchedulerService:
                                 destination.id,
                                 exc,
                             )
-                    session.commit()
                 return total_buffered, total_curated, total_patterns_updated, curators_run
 
             buffered, curated, patterns_updated, curators_run = asyncio.run(_run())
