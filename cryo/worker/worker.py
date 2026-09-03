@@ -82,6 +82,19 @@ class MaintenanceJobRecord:
     tenant_id: str | None = None
     intent_effect_destination_ids: tuple[str, ...] = ()
     correlation_id: str | None = None
+    # Live-verified 2026-09-03: reconcile_deferred_jobs (queue/reconcile.py) has no way to
+    # tell a job's parent MaintenanceRun already reached a terminal status (finalize_open_runs
+    # already decided the run is done) from one still genuinely in flight -- a job that's
+    # permanently unadmittable (its run's deadline_at long passed, the run itself already
+    # 'partial'/'failed'/'succeeded') gets re-deferred forever instead of ever failing. Because
+    # a re-defer doesn't refresh finished_at (reconcile_deferred_jobs's own "continue" on a
+    # still-deferred decision), these permanently-stuck jobs stay the *oldest* deferred jobs
+    # and, combined with list_deferred_jobs's oldest-first bounded ordering, monopolized the
+    # entire per-wave budget: confirmed live, 31,902 of 40,785 deferred jobs belonged to
+    # already-terminal runs, and 5+ consecutive waves admitted/deferred=0 because the same
+    # dead jobs were re-picked every time. None by default -- optional so callers that don't
+    # need it (most) don't pay for the extra query.
+    run_status: str | None = None
 
 
 @dataclass(frozen=True)

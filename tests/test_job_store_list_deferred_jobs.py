@@ -23,7 +23,9 @@ from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, 
 from cryo.db.repositories.job_store import SQLJobStore
 
 
-def _seed_deferred_job(session, *, finished_at: datetime, name: str) -> MaintenanceJob:
+def _seed_deferred_job(
+    session, *, finished_at: datetime, name: str, run_status: str = "running"
+) -> MaintenanceJob:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
     destination = Destination(
         id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={"slot_cap": 5}
@@ -34,7 +36,9 @@ def _seed_deferred_job(session, *, finished_at: datetime, name: str) -> Maintena
     session.add_all([source, destination, table])
     session.flush()
 
-    run = MaintenanceRun(id=uuid4(), kind="adhoc", trigger="api", status="running", summary={})
+    run = MaintenanceRun(
+        id=uuid4(), kind="adhoc", trigger="api", status=run_status, summary={}
+    )
     session.add(run)
     session.flush()
 
@@ -100,3 +104,25 @@ def test_limit_zero_returns_nothing(session):
     records = store.list_deferred_jobs(limit=0)
 
     assert records == []
+
+
+def test_run_status_is_surfaced_from_the_parent_run(session):
+    """2026-09-03 fix: reconcile_deferred_jobs (cryo/queue/reconcile.py) needs each deferred
+    job's parent run status to tell a genuinely-still-in-flight deferral apart from one whose
+    run already reached a terminal status and can never legitimately un-defer (live incident:
+    31,902 of 40,785 deferred jobs were stuck on finalized runs, permanently monopolizing the
+    oldest-first reconcile budget). MaintenanceJobRecord.run_status must reflect the real DB
+    value, not just the in-memory fake store already covered in test_queue_reconcile.py."""
+    now = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+    still_running = _seed_deferred_job(
+        session, finished_at=now, name="still-running", run_status="running"
+    )
+    orphaned = _seed_deferred_job(
+        session, finished_at=now, name="orphaned", run_status="partial"
+    )
+
+    store = SQLJobStore(lambda: session)
+    records = {r.id: r for r in store.list_deferred_jobs()}
+
+    assert records[str(still_running.id)].run_status == "running"
+    assert records[str(orphaned.id)].run_status == "partial"

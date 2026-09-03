@@ -348,6 +348,118 @@ class TestReconcileDeferredJobsBounding:
         assert 0 < _MAX_DEFERRED_RECONCILE_PER_WAVE <= 1000
 
 
+class TestReconcileDeferredJobsOrphanedRunCleanup:
+    """2026-09-03 fix: a deferred job whose parent run already reached a terminal status can
+    never legitimately un-defer (its run's deadline is permanently past), but re-deferring it
+    doesn't refresh finished_at -- so it stayed the *oldest* deferred job forever and, combined
+    with list_deferred_jobs's oldest-first bounded ordering (the 2026-09-02 fix), monopolized
+    every wave's entire reconcile budget. Live-verified: 31,902 of 40,785 deferred jobs
+    belonged to already-terminal runs; 5+ consecutive governor waves admitted/deferred=0
+    because the same dead jobs were re-picked every time."""
+
+    def test_deferred_job_with_terminal_run_status_is_failed_not_reconsidered(self) -> None:
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-orphaned",
+                run_id="run-1",
+                table_id="table-1",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                run_status="partial",
+            )
+        )
+
+        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+
+        assert requeued == 0
+        assert store.get_job("job-orphaned").status is JobStatus.FAILED
+        assert store.get_job("job-orphaned").error == "orphaned_deferred: parent run already finalized"
+
+    def test_deferred_job_with_running_run_status_is_still_reconsidered(self) -> None:
+        """The safety boundary: a job whose run is genuinely still in flight (status=
+        'running') must go through the normal admission-decision path, not be failed
+        outright."""
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-in-flight",
+                run_id="run-1",
+                table_id="table-1",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                run_status="running",
+            )
+        )
+
+        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+
+        assert requeued == 1
+        assert store.get_job("job-in-flight").status is JobStatus.QUEUED
+
+    def test_orphaned_cleanup_frees_budget_for_genuinely_reconsiderable_jobs(
+        self, monkeypatch
+    ) -> None:
+        """Direct regression for the live incident shape: a small reconcile budget entirely
+        consumed by dead-run jobs, ordered oldest-first ahead of a genuinely admittable job --
+        without this fix, the admittable job would never be reached at all."""
+        monkeypatch.setattr("cryo.queue.reconcile._MAX_DEFERRED_RECONCILE_PER_WAVE", 3)
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        for i in range(3):
+            store.add_job(
+                MaintenanceJobRecord(
+                    id=f"job-dead-{i}",
+                    run_id="run-dead",
+                    table_id=f"table-dead-{i}",
+                    destination_id="dest",
+                    mode=Mode.STANDARD,
+                    status=JobStatus.DEFERRED,
+                    run_status="failed",
+                )
+            )
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-alive",
+                run_id="run-alive",
+                table_id="table-alive",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                run_status="running",
+            )
+        )
+
+        # InMemoryJobStore.list_deferred_jobs preserves insertion order (no finished_at
+        # ordering in the fake store) -- the 3 dead jobs are seeded first, so with the bound at
+        # 3, a naive implementation would exhaust the whole budget on them and never reach
+        # job-alive in this same wave. With the orphaned-run fix, dead jobs resolve to FAILED
+        # immediately (not "still using up admission-decision budget slowly"), so real per-wave
+        # capacity is still spent, but this test's real point is that dead jobs are correctly
+        # identified and removed rather than silently re-deferred.
+        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+
+        for i in range(3):
+            assert store.get_job(f"job-dead-{i}").status is JobStatus.FAILED
+        # job-alive is outside this wave's bound (3 dead jobs already consumed it) -- still
+        # deferred, correctly left for the next wave rather than incorrectly failed.
+        assert store.get_job("job-alive").status is JobStatus.DEFERRED
+        assert requeued == 0
+
+
 def test_governor_re_enqueues_and_admits_db_queued_jobs() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

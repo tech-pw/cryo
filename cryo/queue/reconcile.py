@@ -18,6 +18,17 @@ _ACTIVE_QUEUE_STATUSES = {
     JobStatus.RUNNING,
 }
 
+# Live-verified 2026-09-03: a job whose parent MaintenanceRun already reached one of these
+# terminal statuses (finalize_open_runs already decided the run is done, independent of this
+# specific job) can never legitimately un-defer -- its run's deadline_at is permanently in the
+# past, and nothing about "trying again later" changes that. Excludes 'running'/'scheduled'
+# (the run may still genuinely need this job) and 'deferred' is not a MaintenanceRun status at
+# all (only MaintenanceJob has it). Matches the manual live cleanup that unblocked the
+# governor after this bug's discovery: 31,902 of 40,785 deferred jobs belonged to already-
+# terminal runs, permanently occupying reconcile_deferred_jobs's oldest-first bounded window
+# (see MaintenanceJobRecord.run_status's own docstring for the full incident).
+_TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "skipped", "partial", "cancelled"})
+
 # Live-verified 2026-09-02: reconcile_deferred_jobs previously called list_deferred_jobs()
 # unbounded on every governor wave (every 30s) -- with 4,227 deferred jobs and growing, each
 # wave's reconcile step took long enough to stall the governor entirely (admitted-per-wave
@@ -76,7 +87,16 @@ def reconcile_deferred_jobs(
     *,
     now: datetime | None = None,
 ) -> int:
-    """Return deferred jobs to the queue when admission would admit them now."""
+    """Return deferred jobs to the queue when admission would admit them now.
+
+    Also fails a deferred job outright if its parent run already reached a terminal status --
+    see _TERMINAL_RUN_STATUSES's own docstring for the live incident this fixes: a job whose
+    run is already done can never legitimately un-defer (its deadline is permanently past),
+    but re-deferring it doesn't refresh finished_at, so it stayed the *oldest* deferred job
+    forever and, combined with list_deferred_jobs's oldest-first bounded ordering, monopolized
+    every wave's entire reconcile budget instead of ever reaching genuinely-reconsiderable
+    jobs behind it.
+    """
     from cryo.governor.admission import AdmissionConfig, AdmissionJob, decide_job_admission
 
     list_deferred = getattr(store, "list_deferred_jobs", None)
@@ -85,7 +105,12 @@ def reconcile_deferred_jobs(
 
     current = now or datetime.now(UTC)
     requeued = 0
+    failed_orphaned = 0
     for job in list_deferred(limit=_MAX_DEFERRED_RECONCILE_PER_WAVE):
+        if job.run_status in _TERMINAL_RUN_STATUSES:
+            store.mark_status(job.id, JobStatus.FAILED, error="orphaned_deferred: parent run already finalized")
+            failed_orphaned += 1
+            continue
         destination = _try_get_destination(store, job.destination_id)
         if destination is None:
             store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
@@ -104,6 +129,10 @@ def reconcile_deferred_jobs(
         requeued += 1
         logger.info("Re-queued deferred job %s (was %s)", job.id, job.error)
 
+    if failed_orphaned:
+        logger.warning(
+            "Failed %d deferred job(s) whose parent run already finalized", failed_orphaned
+        )
     if requeued:
         logger.info("Re-queued %d deferred job(s)", requeued)
     return requeued

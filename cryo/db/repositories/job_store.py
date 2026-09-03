@@ -401,6 +401,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         ),
         intent_effect_destination_ids=_intent_effect_destination_ids(intent),
         correlation_id=correlation_id_from_summary(summary),
+        run_status=job.run.status if job.run else None,
     )
 
 
