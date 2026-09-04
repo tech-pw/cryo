@@ -170,6 +170,14 @@ def pack_fleet_budget(
     ``config.fleet_budget_gb`` is None the gate is disabled and every job is admissible --
     same convention as the per-replica slot cap being a separate, always-on mechanism this
     doesn't replace.
+
+    2026-09-04 fix (docs/admission-ordering-and-scheduling.md, "Consequences" -- the fleet-pack
+    architecture review): a job with ``size_gb=None`` (cost genuinely unknown, not "zero") was
+    silently treated as ``size_gb or 0.0`` -- a free pass that always fits regardless of real
+    remaining budget, and can starve correctly-sized jobs behind it in sort order. Unknown cost
+    is not a safe default; it's missing information. Such jobs are now deferred with a distinct
+    reason (not admitted, not charged against the budget) so a caller can route them through a
+    separate bounded exploration allowance instead of trusting an absent estimate.
     """
     if config.fleet_budget_gb is None:
         return {job.job_id: AdmissionDecision(True) for job in jobs}
@@ -184,7 +192,10 @@ def pack_fleet_budget(
     decisions: dict[str, AdmissionDecision] = {}
     remaining = config.fleet_budget_gb
     for job in sorted(jobs, key=sort_key, reverse=True):
-        size = job.size_gb or 0.0
+        if job.size_gb is None:
+            decisions[job.job_id] = AdmissionDecision(False, "unknown_cost", defer=True)
+            continue
+        size = job.size_gb
         if size <= remaining:
             decisions[job.job_id] = AdmissionDecision(True)
             remaining -= size
