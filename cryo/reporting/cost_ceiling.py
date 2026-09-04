@@ -86,6 +86,10 @@ class NamespaceCostCheck:
     used_cost_usd: float
     unused_cost_usd: float
     ceiling_usd: float
+    # 2026-09-04: graduated response, see enforce_cost_ceiling's own docstring for the
+    # incident this fixes. A day within [ceiling, ceiling * (1 + tolerance_pct)] is over
+    # the strict ceiling but not a real breach worth halting the whole fleet for.
+    tolerance_pct: float = 0.0
 
     @property
     def total_cost_usd(self) -> float:
@@ -94,6 +98,13 @@ class NamespaceCostCheck:
     @property
     def over_ceiling(self) -> bool:
         return self.total_cost_usd > self.ceiling_usd
+
+    @property
+    def severely_over_ceiling(self) -> bool:
+        """True only once spend clears the tolerance band above the ceiling -- this, not
+        over_ceiling, is what should ever trigger a fleet-wide pause. See
+        enforce_cost_ceiling's docstring."""
+        return self.total_cost_usd > self.ceiling_usd * (1 + self.tolerance_pct)
 
 
 def fetch_todays_namespace_cost(
@@ -263,6 +274,7 @@ def fetch_latest_billed_namespace_cost(
     ceiling_usd: float,
     lookback_days: int = 4,
     timeout_seconds: float = 15.0,
+    tolerance_pct: float = 0.0,
 ) -> NamespaceCostCheck | None:
     """The real fix for PDAE-8541: return the most recent day with committed CUR rows,
     not literally "today".
@@ -300,6 +312,7 @@ def fetch_latest_billed_namespace_cost(
         used_cost_usd=latest.used_cost_usd,
         unused_cost_usd=latest.unused_cost_usd,
         ceiling_usd=ceiling_usd,
+        tolerance_pct=tolerance_pct,
     )
 
 
@@ -324,6 +337,22 @@ def enforce_cost_ceiling(
     with real data), not fetch_todays_namespace_cost -- the latter compares against
     `current_date`, which structurally has zero committed CUR rows for essentially its
     entire duration (AWS bills 24-48h late), so the ceiling could never actually breach.
+
+    2026-09-04 fix: previously paused on *any* overage, however small -- confirmed live,
+    a $1.06 overage on a $100 ceiling ($101.06, 1.06% over) triggered a full fleet-wide
+    admission halt that sat for 4+ hours until a human noticed and manually resumed it,
+    during which the queue backed up to 13k+ jobs and vitals read 0/100 CRITICAL. The
+    ceiling itself was also stale: calibrated 2026-08-12 against a namespace that was
+    mostly idle due to since-fixed governor/scheduler bugs -- real spend at healthy
+    throughput (2026-08-31 onward, once those fixes shipped and the fleet actually started
+    processing its real backlog) runs ~$150-195/day, not the ~$0-50/day baseline the
+    original $100 ceiling assumed.
+
+    Now graduated: only a breach beyond cost_ceiling_tolerance_pct above the ceiling (see
+    that field's own docstring) triggers the fleet-wide pause -- a purely cosmetic overage
+    logs a warning and lets admission continue. This is still a real circuit breaker for
+    genuine runaway spend, not a removal of the safety net; it just stops treating a
+    rounding-error overage as an emergency requiring the same response as a 5x spike.
     """
     settings = get_settings()
     if not settings.cost_ceiling_enabled:
@@ -336,6 +365,7 @@ def enforce_cost_ceiling(
             cluster_name=settings.cost_ceiling_cluster_name,
             namespace=settings.cost_ceiling_namespace,
             ceiling_usd=settings.cost_ceiling_daily_usd,
+            tolerance_pct=settings.cost_ceiling_tolerance_pct,
         )
     except Exception:
         logger.warning("Cost ceiling check failed to fetch Grafana data", exc_info=True)
@@ -362,15 +392,48 @@ def enforce_cost_ceiling(
         and (existing.reason or "").startswith(_CEILING_PAUSE_REASON_PREFIX)
     )
 
-    if check.over_ceiling:
+    if check.over_ceiling and not check.severely_over_ceiling:
+        # Cosmetic overage: within tolerance of the ceiling. Log it (visible in the
+        # namespace_unused_cost vitals check regardless) but never pause for this alone,
+        # and if a prior severe breach has cooled down into just this tolerance band,
+        # resume -- staying paused for a day that's no longer a real breach has the same
+        # cost as never having graduated the response at all.
+        logger.info(
+            "Cost ceiling: cryo namespace $%.2f today is over the $%.2f ceiling but within "
+            "the %.0f%% tolerance band -- not pausing",
+            check.total_cost_usd,
+            check.ceiling_usd,
+            settings.cost_ceiling_tolerance_pct * 100,
+        )
+        if owned_by_us:
+            logger.info(
+                "Cost ceiling: prior breach has cooled into the tolerance band -- resuming "
+                "fleet-wide admission"
+            )
+            set_pause_state(
+                session,
+                scope_type="global",
+                scope_id="global",
+                paused=False,
+                changed_by="cost_ceiling_checker",
+                reason=(
+                    f"cost_ceiling_cleared: {check.day.isoformat()} spend "
+                    f"${check.total_cost_usd:.2f} back within tolerance of "
+                    f"${check.ceiling_usd:.2f} ceiling"
+                ),
+            )
+            session.commit()
+    elif check.severely_over_ceiling:
         if not (existing is not None and existing.paused):
             logger.warning(
                 "Cost ceiling breached: cryo namespace $%.2f today (used $%.2f + unused $%.2f) "
-                "over $%.2f ceiling -- pausing fleet-wide admission",
+                "exceeds $%.2f ceiling by more than the %.0f%% tolerance band -- pausing "
+                "fleet-wide admission",
                 check.total_cost_usd,
                 check.used_cost_usd,
                 check.unused_cost_usd,
                 check.ceiling_usd,
+                settings.cost_ceiling_tolerance_pct * 100,
             )
             set_pause_state(
                 session,
