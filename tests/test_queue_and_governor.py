@@ -105,6 +105,63 @@ def test_governor_admits_wave_round_robin_across_replicas() -> None:
     assert locks.is_table_locked("table-2")
 
 
+def test_governor_logs_fleet_pack_dispatch_order_mismatch(caplog) -> None:
+    """2026-09-04 (docs/admission-ordering-and-scheduling.md, 'Consequences'): dispatch order
+    follows enqueue/round-robin order, not fleet_decisions' own moop_score rank -- a job the
+    fleet-packer would rank highest can still lose the only available replica slot to a
+    lower-ranked job that happened to be admitted first. This is a pure read-only
+    counterfactual telemetry check (see governor.py's own comment at the log call site): it
+    must fire when the mismatch is real, and must never change what actually got dispatched.
+    """
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            config={"replicas": ["r1"], "per_replica_cap": 1, "adaptive_budget": False},
+        )
+    )
+    # cold-job (low moop_score) enqueued first -- it will consume the single replica slot in
+    # dispatch order, even though hot-job (high moop_score) is the fleet-pack-preferred choice.
+    store.add_job(
+        MaintenanceJobRecord(
+            id="cold-job",
+            run_id="run-1",
+            table_id="cold-table",
+            destination_id="dest",
+            mode=Mode.LIGHT,
+            params={"moop_score": 0.1},
+        )
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="hot-job",
+            run_id="run-1",
+            table_id="hot-table",
+            destination_id="dest",
+            mode=Mode.LIGHT,
+            params={"moop_score": 0.9},
+        )
+    )
+    queue.enqueue("cold-job", "dest")
+    queue.enqueue("hot-job", "dest")
+
+    governor = Governor(queue, locks, store, default_config=AdmissionConfig(adaptive_budget=False))
+    with caplog.at_level("INFO", logger="cryo.governor.governor"):
+        result = governor.run_wave(now=datetime(2026, 6, 29, 20, 0, tzinfo=UTC))
+
+    # The counterfactual telemetry must never change real dispatch behavior -- cold-job (first
+    # in enqueue/round-robin order) still wins the only slot, exactly as before this change.
+    assert result.admitted == 1
+    assert store.get_job("cold-job").status is JobStatus.ADMITTED
+    assert store.get_job("hot-job").status is not JobStatus.ADMITTED
+
+    mismatch_logs = [r for r in caplog.records if "Fleet-pack/dispatch-order mismatch" in r.message]
+    assert len(mismatch_logs) == 1
+    assert "1 of the top 1 fleet-ranked job(s)" in mismatch_logs[0].message
+
+
 def test_governor_round_robins_bounded_candidate_window_by_tenant() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

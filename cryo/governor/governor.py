@@ -268,6 +268,13 @@ class Governor:
                     session_factory() if session_factory is not None else nullcontext(None)
                 )
 
+                wave_start_replica_count = len(replicas)
+                # Populated at the two direct-dispatch points below (worker-queue admit, and
+                # the native-k8s-fallback-to-worker path) for the fleet-pack/dispatch-order
+                # counterfactual telemetry after this destination's dispatch work is done. Not
+                # populated for admit_native_k8s_jobs' own aggregate path (result.admitted is a
+                # count, not individual job_ids there) -- a partial signal, not a full one.
+                dispatched_job_ids: set[str] = set()
                 with session_context as session:
                     wave_jobs: list[MaintenanceJobRecord] = []
                     table_uuids: set[uuid.UUID] = set()
@@ -281,6 +288,15 @@ class Governor:
                     candidate_limit = (
                         len(replicas) if use_native_k8s else max(len(replicas), len(replicas) * 4)
                     )
+                    # 2026-09-04 (docs/admission-ordering-and-scheduling.md): candidate_limit
+                    # truncates the queue to a bounded prefix before any priority ranking runs
+                    # (pack_fleet_budget, below, only ever sees this prefix) -- a genuinely
+                    # high-priority job past this cutoff is structurally invisible to admission
+                    # this wave, not merely deprioritized. truncated_this_wave records how many
+                    # jobs never got a look (still `break`s at the same point as before -- this
+                    # is a count for the telemetry emitted after the dispatch loop below, not a
+                    # behavior change; still bounded, same OOM-safety this cap exists for).
+                    truncated_this_wave = max(0, len(job_ids) - candidate_limit)
                     for job_id in job_ids:
                         if not replicas:
                             blocked += 1
@@ -654,6 +670,7 @@ class Governor:
                         register_admission(job.id, config)
                         admitted += 1
                         destination_outcomes[destination_id]["admitted"] += 1
+                        dispatched_job_ids.add(job.id)
 
                     if native_k8s_buffer:
                         assert session_factory is not None
@@ -689,6 +706,7 @@ class Governor:
                                 register_admission(job.id, config)
                                 admitted += 1
                                 destination_outcomes[destination_id]["admitted"] += 1
+                                dispatched_job_ids.add(job.id)
                         else:
                             admitted += result.admitted
                             deferred += result.deferred
@@ -702,6 +720,50 @@ class Governor:
                                 result.pending_fallback_dispatches,
                                 destination.config,
                             )
+
+                    # 2026-09-04 (docs/admission-ordering-and-scheduling.md, "Consequences"):
+                    # fleet_decisions ranks candidates by moop_score but dispatch order above
+                    # actually follows _tenant_round_robin's fairness interleaving, not that
+                    # rank -- so a job the fleet-packer ranked highly can still lose its replica
+                    # slot to a lower-ranked job that happened to come first in round-robin
+                    # order. Pure read-only counterfactual, computed after dispatch so it can
+                    # never affect what was actually admitted: how many of fleet_decisions' own
+                    # top-N admissible jobs (N = replicas available at the start of this
+                    # destination's wave) were NOT among the jobs this wave actually dispatched.
+                    # Exists to measure how often this mismatch happens before deciding whether
+                    # dispatch order is worth changing -- see the doc's Phase S0.
+                    try:
+                        if fleet_decisions and wave_start_replica_count > 0:
+                            fleet_admissible = {
+                                jid for jid, dec in fleet_decisions.items() if dec.admissible
+                            }
+
+                            def _rank_key(j: MaintenanceJobRecord) -> float:
+                                aj = _admission_job(j)
+                                if aj.moop_score is not None:
+                                    return aj.moop_score
+                                if aj.estimated_benefit_score is not None:
+                                    return aj.estimated_benefit_score
+                                return float("-inf")
+
+                            fleet_ranked = sorted(
+                                (j for j in wave_jobs if j.id in fleet_admissible),
+                                key=_rank_key,
+                                reverse=True,
+                            )
+                            top_n_ids = {j.id for j in fleet_ranked[:wave_start_replica_count]}
+                            missed = top_n_ids - dispatched_job_ids
+                            if missed:
+                                logger.info(
+                                    "Fleet-pack/dispatch-order mismatch for %s: %d of the top "
+                                    "%d fleet-ranked job(s) were not dispatched this wave "
+                                    "(round-robin order took priority over fleet rank)",
+                                    destination_id,
+                                    len(missed),
+                                    wave_start_replica_count,
+                                )
+                    except Exception as exc:  # noqa: BLE001 - telemetry only, must never affect dispatch
+                        logger.debug("Fleet-pack counterfactual telemetry failed: %s", exc)
 
             self._run_one_fallback_dispatch_wave()
 

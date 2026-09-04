@@ -206,3 +206,25 @@ def test_pack_fleet_budget_disabled_admits_everyone_when_budget_is_none() -> Non
     jobs = [AdmissionJob("job-1", "t1", "dest", Mode.STANDARD, size_gb=999.0)]
     decisions = pack_fleet_budget(jobs, AdmissionConfig())
     assert decisions["job-1"] == AdmissionDecision(True)
+
+
+def test_pack_fleet_budget_defers_unknown_cost_instead_of_treating_it_as_free() -> None:
+    """2026-09-04 fix (docs/admission-ordering-and-scheduling.md): size_gb=None previously
+    fell through `job.size_gb or 0.0`, so a job with genuinely unknown cost was treated as
+    zero cost -- it always fit the budget regardless of real remaining capacity, and could
+    consume a slot ahead of a correctly-sized job later in sort order. Unknown cost must
+    defer, not silently pass for free."""
+    config = AdmissionConfig(fleet_budget_gb=5.0)
+    jobs = [
+        AdmissionJob("unknown-cost", "t1", "dest", Mode.STANDARD, moop_score=0.9, size_gb=None),
+        AdmissionJob("known-cost", "t2", "dest", Mode.STANDARD, moop_score=0.1, size_gb=5.0),
+    ]
+
+    decisions = pack_fleet_budget(jobs, config)
+
+    assert not decisions["unknown-cost"].admissible
+    assert decisions["unknown-cost"].reason == "unknown_cost"
+    assert decisions["unknown-cost"].defer
+    # The unknown-cost job (sorted first by moop_score) must not have consumed any budget --
+    # the known-cost job right behind it still gets the full 5GB.
+    assert decisions["known-cost"].admissible
