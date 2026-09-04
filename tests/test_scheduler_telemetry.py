@@ -171,6 +171,64 @@ def test_ingest_telemetry_opens_a_fresh_session_per_source(session, monkeypatch)
     assert {source_a.id, source_b.id, source_c.id}  # sanity: all three were actually seeded
 
 
+def test_aggregate_cost_attribution_opens_a_fresh_session_per_source(session, monkeypatch) -> None:
+    """2026-09-04 fix: _maybe_aggregate_cost_attribution had the exact same bug as
+    _maybe_ingest_telemetry's own 2026-09-03 fix (see that test's docstring) -- one Postgres
+    session held open across the whole loop over every enabled Source, with
+    aggregate_query_cost_attribution's real Iceberg catalog I/O (source_catalog_for, a network
+    call) awaited per source inside that same open transaction. Missed in the first pass
+    because it's a separate daily-cadence tick method. Confirmed live: a cryo.sources query
+    held idle-in-transaction for 3+ hours the day after the telemetry fix shipped, same
+    wait_event=ClientRead signature, different tick method. Same assertion as the telemetry
+    test: SessionLocal() is called once per source, not once for the whole tick.
+    """
+    from cryo.telemetry.iceberg_source import IcebergQueryLogConfig
+
+    session_open_count = 0
+    real_bound_factory = _bound_session_factory(session)
+
+    def _counting_factory():
+        nonlocal session_open_count
+        session_open_count += 1
+        return real_bound_factory()
+
+    monkeypatch.setattr("cryo.scheduler.service.SessionLocal", _counting_factory)
+
+    fake_config = IcebergQueryLogConfig(table_identifier="cryo_internal.queries")
+    # _maybe_aggregate_cost_attribution imports parse_iceberg_query_log_config locally from
+    # cryo.telemetry.iceberg_source at call time, so patching the source module (not a
+    # cryo.scheduler.service attribute) is what actually takes effect here.
+    monkeypatch.setattr(
+        "cryo.telemetry.iceberg_source.parse_iceberg_query_log_config",
+        lambda config: fake_config,
+    )
+
+    from cryo.telemetry.cost_attribution import CostAttributionResult
+
+    aggregate_calls: list[object] = []
+
+    def _fake_aggregate(session, source, *, now=None):
+        aggregate_calls.append(source.id)
+        return CostAttributionResult(0, 0, 0)
+
+    # Same local-import reasoning as above -- patch the source module.
+    monkeypatch.setattr(
+        "cryo.telemetry.cost_attribution.aggregate_query_cost_attribution", _fake_aggregate
+    )
+
+    source_a = _seed_source(session)
+    source_b = _seed_source(session)
+    session.commit()
+
+    service = _make_service()
+    service._maybe_aggregate_cost_attribution(datetime.now(UTC))
+
+    assert {source_a.id, source_b.id} == set(aggregate_calls)
+    # 1 session for the id-list read + 1 per source -- never a single session shared across
+    # both sources' network calls.
+    assert session_open_count >= 3
+
+
 def test_ingest_telemetry_covers_every_enabled_source(session, monkeypatch) -> None:
     """Every enabled Source gets fetched each tick; the curator drains the buffer and
     writes a curated subset to Postgres. Aggregate is called once per source.
