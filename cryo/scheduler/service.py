@@ -833,6 +833,16 @@ class SchedulerService:
         cryo.query_cost_attribution_daily for every source with an Iceberg-native query-log
         configured. Daily (not the hourly telemetry tick) -- this is a cost *report*, not a
         latency-sensitive signal, and each run does real Iceberg catalog scans per source.
+
+        2026-09-04 fix: same shape and same fix as _maybe_ingest_telemetry's own 2026-09-03
+        fix (see that method's docstring) -- this held one Postgres session open across the
+        whole loop over every enabled Source, with aggregate_query_cost_attribution's real
+        Iceberg catalog I/O (source_catalog_for, a network call) awaited per source inside
+        that same open transaction. Missed in the first pass because it's a separate, daily-
+        cadence tick method rather than the hourly telemetry one that was actually being
+        investigated at the time. Confirmed live: a cryo.sources query on the scheduler pod
+        held idle-in-transaction for 3+ hours the day after the telemetry fix shipped, same
+        wait_event=ClientRead signature. Same fix: one session per source.
         """
         from datetime import timedelta
 
@@ -852,16 +862,26 @@ class SchedulerService:
             logger = logging.getLogger(__name__)
             total_windows = 0
             total_rows = 0
+
             with SessionLocal() as session:
-                sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
-                for source in sources:
+                source_ids = session.scalars(
+                    select(Source.id).where(Source.enabled.is_(True))
+                ).all()
+
+            for source_id in source_ids:
+                with SessionLocal() as session:
+                    source = session.get(Source, source_id)
+                    if source is None:
+                        continue
                     if parse_iceberg_query_log_config(source.config or {}) is None:
                         continue
                     try:
                         result = aggregate_query_cost_attribution(session, source, now=current)
                         total_windows += result.windows_processed
                         total_rows += result.rows_upserted
+                        session.commit()
                     except Exception as exc:  # noqa: BLE001
+                        session.rollback()
                         logger.warning(
                             "Cost attribution tick failed for source %s: %s", source.id, exc
                         )
