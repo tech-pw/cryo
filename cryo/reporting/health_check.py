@@ -44,6 +44,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
+    MaintenanceControlState,
     MaintenanceJob,
     MaintenanceRun,
     Table,
@@ -366,7 +367,37 @@ def _check_admission_stalls(session: Session, *, now: datetime) -> CheckResult:
     pending queue where recent job completions show essentially nothing landing. This doesn't
     reach into the governor's in-memory wave counters (out of process from a report job) --
     it infers the same "admitted=0 despite backlog" condition from what actually landed in the
-    DB, which is what matters for whether reclaiming is happening at all."""
+    DB, which is what matters for whether reclaiming is happening at all.
+
+    2026-09-04 fix: previously couldn't tell a genuine stall (the approval-gate bug this was
+    built for) apart from a correctly-functioning intentional pause (operator button, or the
+    cost-ceiling circuit breaker) -- both look identical from admitted/succeeded counts alone.
+    Confirmed live: the cost-ceiling breaker paused admission exactly as designed, and this
+    check reported it as the *same* critical severity as a real bug, indistinguishable in the
+    vitals score from an actual incident. Now checks MaintenanceControlState first: a known,
+    intentional pause is reported as an info-level "why", not a critical unknown stall.
+    """
+    control = session.scalar(
+        select(MaintenanceControlState).where(
+            MaintenanceControlState.scope_type == "global",
+            MaintenanceControlState.scope_id == "global",
+        )
+    )
+    if control is not None and control.paused:
+        backlog = int(
+            session.execute(
+                select(func.count()).where(MaintenanceJob.status.in_(["queued", "admitted"]))
+            ).scalar_one()
+        )
+        return CheckResult(
+            name="admission_stall",
+            passed=True,
+            severity="info",
+            summary=f"Admission intentionally paused ({control.reason or 'no reason recorded'}) "
+            f"-- {backlog}-deep queue is expected to be static, not stalled",
+            evidence={"backlog": backlog, "paused_reason": control.reason, "changed_by": control.changed_by},
+        )
+
     recent_completions = int(
         session.execute(
             select(func.count()).where(

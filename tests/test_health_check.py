@@ -16,6 +16,7 @@ import pytest
 
 from cryo.db.models import (
     Destination,
+    MaintenanceControlState,
     MaintenanceJob,
     MaintenanceRun,
     Source,
@@ -24,6 +25,7 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.db.repositories.intents import set_pause_state
 from cryo.domain.enums import OperationType
 from cryo.reporting.health_check import (
     FleetFileTrend,
@@ -268,6 +270,60 @@ class TestAdmissionStall:
         report = run_production_health_checks(session, now=NOW)
         check = next(c for c in report.checks if c.name == "admission_stall")
         assert check.passed is True
+
+    def test_passes_with_info_severity_when_intentionally_paused(self, session) -> None:
+        """2026-09-04 fix: the exact live incident this closes -- the cost-ceiling breaker
+        paused admission exactly as designed, and this check reported the resulting static
+        backlog as the *same* critical severity as a genuine unexplained stall (indistinguishable
+        in the vitals score from a real incident). A large backlog + zero completions while
+        MaintenanceControlState is intentionally paused must report info, not critical, and
+        must surface the pause reason so it's clear this is expected, not a mystery."""
+        source, table = _seed_source_table(session)
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(150):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run, table=t, destination=destination, status="queued")
+        set_pause_state(
+            session,
+            scope_type="global",
+            scope_id="global",
+            paused=True,
+            changed_by="cost_ceiling_checker",
+            reason="cost_ceiling_breach: 2026-09-03 spend $101.06 exceeded $100.00 ceiling",
+        )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "admission_stall")
+        assert check.passed is True
+        assert check.severity == "info"
+        assert "cost_ceiling_breach" in check.summary
+
+    def test_still_fails_critical_when_stalled_and_not_paused(self, session) -> None:
+        """Safety boundary: an explicit non-paused control row (or none at all, covered by
+        the other tests in this class) must not suppress the real critical stall detection
+        -- only paused=True changes the response."""
+        source, table = _seed_source_table(session)
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(150):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run, table=t, destination=destination, status="queued")
+        set_pause_state(
+            session,
+            scope_type="global",
+            scope_id="global",
+            paused=False,
+            changed_by="alice@example.com",
+            reason="resumed",
+        )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "admission_stall")
+        assert check.passed is False
+        assert check.severity == "critical"
 
 
 class TestQueueGrowth:

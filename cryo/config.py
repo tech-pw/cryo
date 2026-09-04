@@ -718,9 +718,34 @@ class Settings(BaseSettings):
         ),
     )
     cost_ceiling_daily_usd: float = Field(
-        default=100.0,
+        default=250.0,
         gt=0,
-        description="Daily used+unused USD ceiling for cost_ceiling_enabled's circuit breaker.",
+        description=(
+            "Daily used+unused USD ceiling for cost_ceiling_enabled's circuit breaker. "
+            "Raised 100.0 -> 250.0 2026-09-04: the original $100 (2026-08-12) was "
+            "calibrated against a namespace that was mostly idle due to since-fixed "
+            "governor/scheduler bugs -- real spend at healthy throughput (once those "
+            "fixes shipped and the fleet actually started processing its real backlog) "
+            "runs ~$150-195/day. $100 left essentially no headroom above normal healthy "
+            "variance, so trivial day-to-day noise repeatedly tripped a fleet-wide pause. "
+            "See cost_ceiling_tolerance_pct for the second layer of protection against "
+            "over-tightening this again."
+        ),
+    )
+    cost_ceiling_tolerance_pct: float = Field(
+        default=0.15,
+        ge=0,
+        description=(
+            "Fraction above cost_ceiling_daily_usd that's treated as normal variance, not "
+            "a breach worth halting the fleet for -- e.g. 0.15 means spend up to 15% over "
+            "the ceiling only logs a warning; only spend beyond that pauses admission. "
+            "Added 2026-09-04 after a $1.06 overage on a $100 ceiling (1.06% over) "
+            "triggered a full fleet-wide pause that sat for 4+ hours before a human "
+            "noticed -- the ceiling had no graduated response, so a rounding-error "
+            "overage got the identical response as a genuine 5x spend spike. See "
+            "cryo.reporting.cost_ceiling.enforce_cost_ceiling's own docstring for the "
+            "full incident."
+        ),
     )
     cost_ceiling_cluster_name: str = Field(
         default="data-platform-eks",

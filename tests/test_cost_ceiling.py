@@ -239,6 +239,7 @@ class _FakeSettings:
     cost_ceiling_daily_usd = 100.0
     cost_ceiling_cluster_name = "data-platform-eks"
     cost_ceiling_namespace = "cryo"
+    cost_ceiling_tolerance_pct = 0.15
 
 
 class _DisabledSettings(_FakeSettings):
@@ -294,6 +295,67 @@ def test_enforce_ceiling_does_not_double_pause_or_bump_generation(session, monke
     state_after_second = session.scalar(select(MaintenanceControlState))
 
     assert state_after_second.generation == generation_after_first
+
+
+def test_enforce_ceiling_does_not_pause_within_tolerance_band(session, monkeypatch) -> None:
+    """2026-09-04 fix: the real live incident this closes -- a $1.06 overage on a $100
+    ceiling ($101.06, 1.06% over, well within the default 15% tolerance) must not trigger
+    a fleet-wide pause. Previously any overage at all paused, regardless of size."""
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
+    payload = _grafana_range_response([("2026-09-03", 16.85, 84.21)])  # $101.06 total
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
+        result = enforce_cost_ceiling(
+            session, grafana_url="https://g.example.com", grafana_token="tok"
+        )
+
+    assert result is not None
+    assert result.over_ceiling is True
+    assert result.severely_over_ceiling is False
+
+    state = session.scalar(select(MaintenanceControlState))
+    assert state is None  # never paused -- no row written at all
+
+
+def test_enforce_ceiling_pauses_beyond_tolerance_band(session, monkeypatch) -> None:
+    """The other side of the same boundary: spend beyond the tolerance band still pauses,
+    same as before -- this is a graduated response, not a removed safety net."""
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
+    payload = _grafana_range_response([("2026-08-17", 60.0, 60.0)])  # $120, 20% over > 15%
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload)):
+        result = enforce_cost_ceiling(
+            session, grafana_url="https://g.example.com", grafana_token="tok"
+        )
+
+    assert result.severely_over_ceiling is True
+    state = session.scalar(select(MaintenanceControlState))
+    assert state is not None
+    assert state.paused is True
+
+
+def test_enforce_ceiling_resumes_a_severe_breach_that_cooled_into_tolerance(
+    session, monkeypatch
+) -> None:
+    """A prior severe breach that's since cooled down into just the tolerance band (still
+    technically over_ceiling, but no longer severely_over_ceiling) must resume -- staying
+    paused for a day that's no longer a real breach defeats the point of graduating the
+    response at all."""
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
+    payload_severe = _grafana_range_response([("2026-08-17", 60.0, 60.0)])  # $120, severe
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_severe)):
+        enforce_cost_ceiling(session, grafana_url="https://g.example.com", grafana_token="tok")
+    assert session.scalar(select(MaintenanceControlState)).paused is True
+
+    payload_cooled = _grafana_range_response([("2026-08-18", 5.0, 100.0)])  # $105, tolerance
+    with patch("httpx.post", side_effect=_mock_httpx_post(payload_cooled)):
+        result = enforce_cost_ceiling(
+            session, grafana_url="https://g.example.com", grafana_token="tok"
+        )
+
+    assert result.over_ceiling is True
+    assert result.severely_over_ceiling is False
+    state = session.scalar(select(MaintenanceControlState))
+    assert state.paused is False
+    assert state.reason.startswith("cost_ceiling_cleared")
 
 
 def test_enforce_ceiling_resumes_when_back_under_budget(session, monkeypatch) -> None:
