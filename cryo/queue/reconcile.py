@@ -51,7 +51,24 @@ _MAX_QUEUED_RECONCILE_PER_WAVE = 2000
 
 
 def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
-    """Re-enqueue DB jobs stuck in queued state that are missing from Redis."""
+    """Re-enqueue DB jobs stuck in queued state that are missing from Redis.
+
+    2026-09-07 fix: previously used queue.status(job.id) (the job hash's own `status`
+    field) to decide whether a QUEUED-in-DB job was "already active" in Redis and could be
+    skipped. That field can desync from the pending zset it's meant to describe -- nothing
+    in cancel_pending()/purge_stale_queue_entries() updates the hash back off "queued" when
+    an entry is removed from the zset, so a job can carry status()=='queued' forever while
+    genuinely absent from the only structure the governor actually reads
+    (pending_by_destination(), which iterates the zset, not the hash). Confirmed live:
+    3,046 jobs across 2 runs sat in exactly this state for 21+ hours -- this reconcile
+    function ran every wave, saw status()=='queued', and skipped them every single time,
+    while the destination itself kept dispatching other runs' work the whole time (so
+    nothing about the destination, admission budget, or fairness ordering was actually
+    stuck -- only these specific jobs were invisible). Now checks queue.is_pending(), which
+    asks the zset directly, for the QUEUED case specifically; ADMITTED/RUNNING are still
+    trusted from the hash since those statuses correctly mean "not in the pending zset by
+    design", not desync.
+    """
     list_queued = getattr(store, "list_queued_jobs", None)
     destination_exists = getattr(store, "destination_exists", None)
     if not callable(list_queued):
@@ -70,7 +87,9 @@ def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
                 job.destination_id,
             )
             continue
-        if queue_status in _ACTIVE_QUEUE_STATUSES:
+        if queue_status in (JobStatus.ADMITTED, JobStatus.RUNNING):
+            continue
+        if queue_status is JobStatus.QUEUED and queue.is_pending(job.id, job.destination_id):
             continue
         queue.enqueue(job.id, job.destination_id)
         re_enqueued += 1
