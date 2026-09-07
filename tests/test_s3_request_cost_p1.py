@@ -318,10 +318,18 @@ def test_operation_tier_maps_head() -> None:
     assert ingest_mod._operation_tier("REST.HEAD.OBJECT") == "head"
 
 
-def test_operation_tier_maps_list_and_delete() -> None:
+def test_operation_tier_maps_list() -> None:
     assert ingest_mod._operation_tier("REST.LIST.OBJECTS") == "list"
-    assert ingest_mod._operation_tier("REST.DELETE.OBJECT") == "list"
-    assert ingest_mod._operation_tier("BATCH.DELETE.OBJECT") == "list"
+
+
+def test_operation_tier_maps_delete_to_its_own_tier_not_list() -> None:
+    """2026-09-08 fix (docs/s3-total-cost-optimization.md P0#1): DELETE and abort-multipart
+    are free S3 operations -- they were previously folded into "list" and mispriced at the
+    Tier-1 LIST rate, silently combining paid LIST work with free cleanup work into one
+    number. DELETE now gets its own tier, priced at $0 (see _PRICING_TIER)."""
+    assert ingest_mod._operation_tier("REST.DELETE.OBJECT") == "delete"
+    assert ingest_mod._operation_tier("BATCH.DELETE.OBJECT") == "delete"
+    assert ingest_mod._operation_tier("REST.DELETE.OBJECT") != "list"
 
 
 def test_operation_tier_maps_put_post_copy() -> None:
@@ -818,6 +826,96 @@ def test_recompute_table_cost_rollup_labels_fallback_pricing(session) -> None:
     cost = session.get(TableCost, table.id)
     assert cost.put_requests_30d == 10
     assert cost.request_cost_pricing_source == "fallback_default"
+
+
+def test_recompute_table_cost_rollup_separates_head_from_get(session) -> None:
+    """2026-09-08 fix (docs/s3-total-cost-optimization.md P0#2/#3): HEAD used to be folded
+    into get_requests_30d -- a real HEAD regression (found live: 57.7% of tables got MORE
+    HEAD requests after maintenance) had no dedicated field to surface. HEAD and GET must
+    roll up independently."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    session.add(
+        TableCost(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=0,
+            dead_bytes=0,
+            metadata_bytes=0,
+            current_monthly_cost_usd=0,
+            projected_monthly_cost_usd=0,
+            projected_savings_usd_month=0,
+        )
+    )
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add_all(
+        [
+            S3RequestCostDaily(
+                source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
+                operation_tier="get", request_count=100, cost_usd=0.04,
+                pricing_source="aws_price_list_api",
+            ),
+            S3RequestCostDaily(
+                source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
+                operation_tier="head", request_count=25, cost_usd=0.01,
+                pricing_source="aws_price_list_api",
+            ),
+        ]
+    )
+    session.commit()
+
+    ingest_mod.recompute_table_cost_rollup(session, table.id, now=now)
+
+    cost = session.get(TableCost, table.id)
+    assert cost.get_requests_30d == 100
+    assert cost.head_requests_30d == 25
+
+
+def test_recompute_table_cost_rollup_tracks_delete_requests_separately(session) -> None:
+    """DELETE is free but still tracked for operational-load visibility (throttling risk,
+    cleanup volume) -- it must never be counted toward get/put/list_requests_30d."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    session.add(
+        TableCost(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=0,
+            dead_bytes=0,
+            metadata_bytes=0,
+            current_monthly_cost_usd=0,
+            projected_monthly_cost_usd=0,
+            projected_savings_usd_month=0,
+        )
+    )
+    now = datetime(2026, 7, 7, tzinfo=UTC)
+    session.add(
+        S3RequestCostDaily(
+            source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
+            operation_tier="delete", request_count=500, cost_usd=0.0,
+            pricing_source="aws_price_list_api",
+        )
+    )
+    session.commit()
+
+    ingest_mod.recompute_table_cost_rollup(session, table.id, now=now)
+
+    cost = session.get(TableCost, table.id)
+    assert cost.delete_requests_30d == 500
+    assert cost.list_requests_30d == 0
+    assert cost.get_requests_30d == 0
+    assert cost.put_requests_30d == 0
+    assert cost.request_cost_usd_month == 0.0
+
+
+def test_delete_operation_tier_is_priced_at_zero() -> None:
+    """The pricing-tier lookup itself, not just the rollup: 'delete' must map to the 'free'
+    pricing tier, not fall through to a Tier-1 default."""
+    assert ingest_mod._PRICING_TIER["delete"] == "free"
 
 
 # ---------------------------------------------------------------------------

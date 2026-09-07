@@ -366,6 +366,16 @@ class TableCost(Base):
     get_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
     put_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
     list_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
+    # Added 2026-09-08 (docs/s3-total-cost-optimization.md §1.1, P0#2/#3): HEAD was previously
+    # silently folded into get_requests_30d in recompute_table_cost_rollup, so a real HEAD
+    # regression (found live: 57.7% of tables got MORE HEAD requests after maintenance,
+    # statistically significant the wrong way) had no dedicated field the UI could ever surface
+    # -- it just inflated the GET number without anyone being able to tell why. delete_requests_30d
+    # is tracked for visibility/operational-load reasons (throttling risk, cleanup volume) even
+    # though DELETE itself is free -- see _operation_tier's own docstring in
+    # cryo/scanner/s3_request_cost_ingest.py for the pricing fix this pairs with.
+    head_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
+    delete_requests_30d: Mapped[int | None] = mapped_column(BigInteger)
     request_cost_usd_month: Mapped[float | None] = mapped_column(Float)
     # "live" (fetch_s3_request_prices succeeded for every day in the window) or
     # "fallback_default" (at least one day's rollup used the fallback price) -- the UI uses
