@@ -78,6 +78,7 @@ def _run_catalog_call_bounded[R](fn: Callable[[], R], *, description: str) -> R:
             f"{description} exceeded {_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS:.0f}s and was abandoned"
         ) from exc
 
+
 # Real-data cap for fetch_file_stats: a busy table can have 90K+ data files (confirmed live,
 # 2026-08-14: pw_experimentation.gold_unleash_experiments_v1 alone has 93,699), and this whole
 # analysis only needs enough files to estimate whether column ranges overlap across files, not
@@ -242,7 +243,16 @@ def fetch_file_stats(
             lower_bounds = _decode_bounds(getattr(data_file, "lower_bounds", None))
             upper_bounds = _decode_bounds(getattr(data_file, "upper_bounds", None))
             if lower_bounds and upper_bounds:
-                file_stats.append({"lower_bounds": lower_bounds, "upper_bounds": upper_bounds})
+                # file_size_bytes added 2026-09-04: baseline_replay weights a query's cost by
+                # the bytes its touched files hold, not just their count, and without this it
+                # summed zeros. Manifest entries expose it as file_size_in_bytes.
+                file_stats.append(
+                    {
+                        "lower_bounds": lower_bounds,
+                        "upper_bounds": upper_bounds,
+                        "file_size_bytes": int(getattr(data_file, "file_size_in_bytes", 0) or 0),
+                    }
+                )
             if len(file_stats) >= sample_size:
                 break
     except Exception:
@@ -431,25 +441,64 @@ def _calculate_current_efficiency(column_stats: list[ColumnStats]) -> float:
     return best_prune
 
 
+# Ceiling on the pruning any layout can reach, used only when the workload's own selectivity
+# is unknown. A perfectly clustered table still cannot skip the files holding matching rows,
+# and real deployments do not reach 100%: Snowflake and Databricks both document diminishing
+# returns past a few clustering keys. This is a cap, not a target -- when selectivity *is*
+# known, the selectivity bound below is tighter and wins.
+_MAX_ACHIEVABLE_PRUNE_EFFICIENCY = 0.95
+
+# Curve clustering spreads pruning power across dimensions instead of concentrating it in a
+# sort prefix, so a multi-column layout reaches less of the ceiling per column than a linear
+# sort does. Iceberg PR #16827 (uniform TPC-H) and Hudi's Amazon Reviews benchmark (skewed
+# real data) bracket the achievable file reduction at ~31% and ~2% respectively, which is why
+# this stays a coarse discount and not a precise coefficient.
+_CURVE_EFFICIENCY_DISCOUNT = 0.9
+
+
 def _estimate_improvement(
     current_efficiency: float,
     patterns: Any,  # TablePatternSummary
     recommended_columns: list[str],
 ) -> float:
-    """Estimate pruning efficiency improvement from applying recommended layout."""
+    """Estimate the pruning efficiency gain from applying the recommended layout.
+
+    Changed 2026-09-04: this used to start from a flat ``target_efficiency = 0.8`` for every
+    table, so -- as ``fetch_file_stats``' docstring notes -- every table's estimate was the
+    same constant discounted by confidence, regardless of its data or its workload. There is
+    no evidence for 80%; the research review
+    (``docs/automatic-clustering-column-selection.md`` §7.2.7) calls it out specifically.
+
+    The target now comes from the workload's own observed selectivity. A query matching a
+    fraction ``s`` of rows must read at least ``s`` of the files no matter how they are laid
+    out (§5.2's selectivity lower bound, the same yardstick Qd-tree uses), so the best
+    reachable pruning is ``1 - s``. With ``avg_selectivity`` unavailable the estimate falls
+    back to the conservative ceiling above, and the result is still explicitly an upper bound:
+    it ignores rewrite cost, and it is not a promise of realized savings. Only a simulation
+    (Phase 2) and a canary (Phase 3) can make that claim.
+    """
     if not recommended_columns:
         return 0.0
 
-    # Base improvement: assume well-clustered data can achieve 80%+ pruning
-    target_efficiency = 0.8
+    selectivities = [
+        c.avg_selectivity
+        for c in getattr(patterns, "columns", [])
+        if getattr(c, "column_name", None) in recommended_columns
+        and getattr(c, "avg_selectivity", None) is not None
+    ]
+    if selectivities:
+        # Best case is driven by the most selective predicate available: it bounds how few
+        # files any layout could get away with reading.
+        target_efficiency = min(_MAX_ACHIEVABLE_PRUNE_EFFICIENCY, 1.0 - min(selectivities))
+    else:
+        target_efficiency = _MAX_ACHIEVABLE_PRUNE_EFFICIENCY
 
     # Adjust based on query pattern confidence
     if patterns.total_queries < 10:
         target_efficiency *= 0.7  # Less confident with few queries
 
     if patterns.multi_column_filter_ratio > 0.5:
-        # Z-order is less efficient than linear sort, but better for multi-column
-        target_efficiency *= 0.9
+        target_efficiency *= _CURVE_EFFICIENCY_DISCOUNT
 
     improvement = max(0, target_efficiency - current_efficiency)
     return round(improvement, 3)

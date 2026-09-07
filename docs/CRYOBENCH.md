@@ -3,6 +3,11 @@
 CryoBench is Cryo's reproducible input and evidence format. It does not turn synthetic runs into
 production claims.
 
+A rendered summary of the current fixture -- fleet percentiles, size classes, the fault matrix,
+and the seed/digest needed to regenerate it -- is published at
+<https://claude.ai/code/artifact/4c62713f-e2ef-4b83-9659-425f6679614f>. Regenerate the fixture
+locally and compare digests rather than trusting that page's numbers.
+
 Generate the default customer-shaped fleet and control-plane fault matrix:
 
 ```bash
