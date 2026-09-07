@@ -179,25 +179,52 @@ class ClusteringPlan:
         return "\n".join(code_lines)
 
     def to_trino_optimize(self) -> str | None:
-        """Generate Trino EXECUTE optimize statement.
+        """Generate Trino SQL for this plan, or None when Trino cannot express it.
 
-        Note: Trino's OPTIMIZE doesn't support custom sort order directly.
-        It uses the table's sort_order property which must be set separately.
+        Binpack and linear sort are both reachable. Sort returns two statements joined by
+        ";\n" (the same convention ``engines/spark/sql.py`` uses for multi-statement renders):
+        Trino's ``OPTIMIZE`` takes no sort argument, but its Iceberg connector honours the
+        table's ``sorted_by`` property, so the property is set first and the rewrite follows.
+
+        Curves still return None. Trino has no ``zorder()``/``hilbert()`` sort-order function,
+        and quietly substituting a lexicographic sort would change what the layout optimizes
+        for without telling the caller -- see ``engines/trino/clustering.py``.
         """
-        if self.strategy != "binpack":
-            # Trino OPTIMIZE only does binpack, not sort rewrite
+        from cryo.engines.trino.clustering import (
+            TrinoClusteringSupport,
+            clustering_support,
+            render_sort_clustering,
+            sort_columns_from_names,
+        )
+
+        if self.strategy == "binpack":
+            sql = f"ALTER TABLE {self.table_ref} EXECUTE optimize"
+            if self.partition_filter:
+                sql += f" WHERE {self.partition_filter}"
+            return sql
+
+        if clustering_support(self.strategy) is not TrinoClusteringSupport.SUPPORTED:
             logger.warning(
-                f"Trino OPTIMIZE doesn't support {self.strategy} strategy. "
-                "Use Spark for sort/z-order operations."
+                "Trino cannot express %s clustering; route this table to Spark.",
+                self.strategy,
             )
             return None
 
-        sql = f"ALTER TABLE {self.table_ref} EXECUTE optimize"
+        if not self.sort_order:
+            logger.warning("Trino sort clustering requested without any sort columns.")
+            return None
 
-        if self.partition_filter:
-            sql += f" WHERE {self.partition_filter}"
-
-        return sql
+        columns = sort_columns_from_names(
+            [entry.column for entry in self.sort_order],
+            ["desc" if "desc" in entry.direction.value else "asc" for entry in self.sort_order],
+        )
+        statements = render_sort_clustering(
+            self.table_ref,
+            columns,
+            file_size_mb=self.target_file_size_bytes // (1024 * 1024),
+            partition_filter=self.partition_filter,
+        )
+        return ";\n".join(statements)
 
 
 def build_clustering_plan(
