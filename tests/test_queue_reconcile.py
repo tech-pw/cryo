@@ -41,6 +41,77 @@ def test_reconcile_re_enqueues_db_queued_jobs_missing_from_redis() -> None:
     assert queue.pending("dest") == ["job-1"]
 
 
+def test_reconcile_re_enqueues_a_job_whose_hash_says_queued_but_is_missing_from_pending() -> None:
+    """2026-09-07 fix: queue.status() (the job hash's own status field) can desync from
+    actual pending-zset membership -- nothing updates the hash back off "queued" when an
+    entry is removed from the zset (e.g. cancel_pending, or purge_stale_queue_entries).
+    Confirmed live: 3,046 jobs across 2 runs sat with status()=='queued' but genuinely
+    absent from their destination's pending queue for 21+ hours -- reconcile_queued_jobs
+    trusted status() alone and skipped them on every single wave. This directly reproduces
+    that desync (status says QUEUED, but the job was never actually enqueued) and asserts
+    the fix: reconcile now checks real pending-zset membership via is_pending(), not just
+    the hash, for the QUEUED case.
+    """
+    queue = InMemoryMaintenanceQueue()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig("dest", config={"replicas": ["r1"], "per_replica_cap": 1})
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="desynced-job",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.QUEUED,
+        )
+    )
+    # Simulate the exact desync: the queue's own hash says QUEUED (as if it had once been
+    # enqueued and then cancel_pending'd, which never resets this field), but it was never
+    # actually added to the pending zset -- or was removed from it without the hash
+    # following along.
+    queue._statuses["desynced-job"] = JobStatus.QUEUED
+    assert queue.status("desynced-job") is JobStatus.QUEUED
+    assert not queue.is_pending("desynced-job", "dest")
+    assert queue.pending("dest") == []
+
+    re_enqueued = reconcile_queued_jobs(store, queue)
+
+    assert re_enqueued == 1
+    assert queue.pending("dest") == ["desynced-job"]
+
+
+def test_reconcile_does_not_re_enqueue_a_genuinely_admitted_job() -> None:
+    """Safety boundary for the same fix: ADMITTED/RUNNING correctly means "not in the
+    pending zset by design" (it moved to the admitted list/in-flight counter), not desync
+    -- reconcile must still trust status() for those, never re-enqueuing a job that's
+    legitimately already past the pending stage."""
+    queue = InMemoryMaintenanceQueue()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig("dest", config={"replicas": ["r1"], "per_replica_cap": 1})
+    )
+    store.add_job(
+        MaintenanceJobRecord(
+            id="admitted-job",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.QUEUED,
+        )
+    )
+    queue.enqueue("admitted-job", "dest")
+    queue.admit("admitted-job", "dest", "r1")
+    assert queue.status("admitted-job") is JobStatus.ADMITTED
+
+    re_enqueued = reconcile_queued_jobs(store, queue)
+
+    assert re_enqueued == 0
+    assert queue.pending("dest") == []
+
+
 def test_purge_removes_pending_entries_for_jobs_gone_terminal_in_db() -> None:
     # Mirrors a job whose DB status was updated directly (e.g. a bulk-cancel script) without
     # going through queue.cancel_pending() -- the Redis pending entry outlives the DB row's

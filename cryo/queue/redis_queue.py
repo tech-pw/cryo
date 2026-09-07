@@ -43,6 +43,8 @@ class MaintenanceQueue(Protocol):
 
     def status(self, job_id: str) -> JobStatus | None: ...
 
+    def is_pending(self, job_id: str, destination_id: str) -> bool: ...
+
 
 class InMemoryMaintenanceQueue:
     """Deterministic queue used by unit tests and local orchestration wiring."""
@@ -136,6 +138,9 @@ class InMemoryMaintenanceQueue:
 
     def status(self, job_id: str) -> JobStatus | None:
         return self._statuses.get(job_id)
+
+    def is_pending(self, job_id: str, destination_id: str) -> bool:
+        return any(entry[2] == job_id for entry in self._pending.get(destination_id, []))
 
     def entry(self, job_id: str) -> QueueEntry | None:
         return self._entries.get(job_id)
@@ -268,6 +273,21 @@ class RedisMaintenanceQueue:
     def status(self, job_id: str) -> JobStatus | None:
         value = self._redis.hget(self._job_key(job_id), "status")
         return JobStatus(_decode(value)) if value else None
+
+    def is_pending(self, job_id: str, destination_id: str) -> bool:
+        """True only if job_id is actually present in destination_id's pending zset --
+        the thing pending_by_destination() (and therefore the governor) actually reads.
+
+        2026-09-07 fix: status() alone answers a different question ("what does the job
+        hash's status field say") that can desync from this one. Confirmed live: 3,046
+        jobs across 2 runs had status()=='queued' (the hash field was never touched) while
+        genuinely absent from their destination's pending zset -- reconcile_queued_jobs
+        trusted status() and treated them as "already active", so it never re-enqueued
+        them; they sat invisible to every wave for 21+ hours despite the destination
+        itself actively dispatching other runs' work the whole time. See
+        reconcile_queued_jobs's own docstring for the incident this closes.
+        """
+        return self._redis.zscore(self._pending_key(destination_id), job_id) is not None
 
     def _job_key(self, job_id: str) -> str:
         return f"{self._namespace}:job:{job_id}"
