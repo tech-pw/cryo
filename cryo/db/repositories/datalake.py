@@ -724,6 +724,8 @@ def _table_cost_payload(table_id: uuid.UUID, cost: TableCost) -> dict[str, objec
         "get_requests_30d": cost.get_requests_30d,
         "put_requests_30d": cost.put_requests_30d,
         "list_requests_30d": cost.list_requests_30d,
+        "head_requests_30d": cost.head_requests_30d,
+        "delete_requests_30d": cost.delete_requests_30d,
         "request_cost_usd_month": cost.request_cost_usd_month,
         "request_cost_pricing_source": cost.request_cost_pricing_source,
     }

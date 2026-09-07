@@ -86,12 +86,17 @@ S3_LOG_LINE_PATTERN = r"^([^ ]*) ([^ ]*) \[(.*?)\] ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]
 _S3_LOG_LINE_RE = re.compile(S3_LOG_LINE_PATTERN)
 
 # Which AWS Price List tier prices a given operation_tier value (see fetch_s3_request_prices):
-# Tier1 = PUT/COPY/POST/LIST/DELETE, Tier2 = GET/SELECT/HEAD.
+# Tier1 = PUT/COPY/POST/LIST, Tier2 = GET/SELECT/HEAD. DELETE and abort-multipart are free --
+# see _operation_tier's own docstring for the 2026-09-08 fix this corrects (previously DELETE
+# was mapped into "list" and mispriced at the Tier-1 rate). "free" is a real, distinct code
+# path (not just a $0 tier1/tier2 special case) so a future pricing-source bug can't silently
+# start charging for it -- see the cost_usd computation in ingest_s3_request_costs below.
 _PRICING_TIER: dict[str, str] = {
     "get": "tier2",
     "head": "tier2",
     "put": "tier1",
     "list": "tier1",
+    "delete": "free",
     "other": "tier1",
 }
 
@@ -159,17 +164,25 @@ def _operation_tier(operation: str) -> str:
     """Python equivalent of the SQL ``CASE`` this pipeline used to run in Trino -- maps a log
     ``operation`` string to this pipeline's finer-than-AWS operation_tier (see the
     S3RequestCostDaily docstring). Matched by prefix since AWS's operation names are consistent
-    (REST.GET.OBJECT, REST.GET.OBJECT_TAGGING, etc. all start with REST.GET)."""
+    (REST.GET.OBJECT, REST.GET.OBJECT_TAGGING, etc. all start with REST.GET).
+
+    2026-09-08 fix (docs/s3-total-cost-optimization.md §1.1, P0#1): DELETE and abort-multipart
+    were previously mapped into "list" and priced at the Tier-1 LIST/PUT rate -- but S3 DELETE
+    and AbortMultipartUpload requests are free. That silently combined paid LIST work with free
+    cleanup work into one number, both mispricing it and making the LIST signal impossible to
+    read cleanly (a table doing heavy orphan cleanup looked like it was generating expensive
+    LIST traffic when it wasn't paying anything for the delete side). DELETE now gets its own
+    tier, priced at $0 in _PRICING_TIER below -- visible and trackable (operational load still
+    matters, e.g. request-rate throttling risk), just not charged.
+    """
     if operation.startswith("REST.GET") or operation.startswith("REST.SELECT"):
         return "get"
     if operation.startswith("REST.HEAD"):
         return "head"
-    if (
-        operation.startswith("REST.LIST")
-        or operation.startswith("BATCH.DELETE")
-        or operation.startswith("REST.DELETE")
-    ):
+    if operation.startswith("REST.LIST"):
         return "list"
+    if operation.startswith("BATCH.DELETE") or operation.startswith("REST.DELETE"):
+        return "delete"
     if (
         operation.startswith("REST.PUT")
         or operation.startswith("REST.POST")
@@ -597,10 +610,13 @@ def ingest_bucket(
 
     for (table_id_raw, log_date, operation_tier), request_count in outcome.counts.items():
         tier = _PRICING_TIER.get(operation_tier, "tier1")
-        price_per_1k = (
-            price_info.price_per_1k_get if tier == "tier2" else price_info.price_per_1k_put
-        )
-        cost_usd = (request_count / 1000.0) * price_per_1k
+        if tier == "free":
+            cost_usd = 0.0
+        else:
+            price_per_1k = (
+                price_info.price_per_1k_get if tier == "tier2" else price_info.price_per_1k_put
+            )
+            cost_usd = (request_count / 1000.0) * price_per_1k
 
         table_id = uuid.UUID(table_id_raw) if table_id_raw is not None else None
         if table_id is None:
@@ -667,9 +683,18 @@ def ingest_bucket(
 def recompute_table_cost_rollup(
     session: Session, table_id: uuid.UUID, *, now: datetime | None = None
 ) -> None:
-    """§6.3 -- recompute ``TableCost``'s 4 rollup fields from the trailing 30 days of
+    """§6.3 -- recompute ``TableCost``'s rollup fields from the trailing 30 days of
     ``S3RequestCostDaily``. A read-optimized summary, not the ingestion target -- this is what
-    the Table Detail UI actually reads (§9.2)."""
+    the Table Detail UI actually reads (§9.2).
+
+    2026-09-08 fix (docs/s3-total-cost-optimization.md §1.1, P0#2/#3): HEAD used to be folded
+    into get_requests_30d here, and DELETE was priced (and therefore counted toward
+    request_cost_usd_month) at the Tier-1 LIST rate. Both are now tracked on their own fields --
+    see head_requests_30d/delete_requests_30d's own docstrings on TableCost. cost_total still
+    sums every row's cost_usd, which is correctly $0 for delete rows post-ingestion-fix (see
+    _PRICING_TIER), so request_cost_usd_month itself needed no change -- only the per-operation
+    breakdown did.
+    """
     now = now or datetime.now(UTC)
     window_start = now.date() - timedelta(days=30)
     rows = session.execute(
@@ -684,16 +709,20 @@ def recompute_table_cost_rollup(
         )
     ).all()
 
-    get_requests = put_requests = list_requests = 0
+    get_requests = put_requests = list_requests = head_requests = delete_requests = 0
     cost_total = 0.0
     any_fallback = False
     for operation_tier, pricing_source, request_count, cost_usd in rows:
-        if operation_tier in ("get", "head"):
+        if operation_tier == "get":
             get_requests += request_count
+        elif operation_tier == "head":
+            head_requests += request_count
         elif operation_tier == "put":
             put_requests += request_count
         elif operation_tier == "list":
             list_requests += request_count
+        elif operation_tier == "delete":
+            delete_requests += request_count
         cost_total += cost_usd
         if pricing_source != "aws_price_list_api":
             any_fallback = True
@@ -704,6 +733,8 @@ def recompute_table_cost_rollup(
     cost.get_requests_30d = get_requests
     cost.put_requests_30d = put_requests
     cost.list_requests_30d = list_requests
+    cost.head_requests_30d = head_requests
+    cost.delete_requests_30d = delete_requests
     cost.request_cost_usd_month = round(cost_total, 4)
     cost.request_cost_pricing_source = "fallback_default" if any_fallback else "live"
 
