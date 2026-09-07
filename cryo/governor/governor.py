@@ -475,6 +475,25 @@ class Governor:
                                 "Job %s deferred: destructive operation requires approval",
                                 job_id,
                             )
+                            # Surface the block, not just log it -- see
+                            # ensure_pending_approval_requests's own docstring for the
+                            # incident this fixes. Best-effort: a failure creating the
+                            # request must never block the defer itself.
+                            try:
+                                from cryo.workflows.approvals import (
+                                    ensure_pending_approval_requests,
+                                )
+
+                                ensure_pending_approval_requests(
+                                    session, table_uuid, plan_operations
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to surface approval request for job %s table %s: %s",
+                                    job_id,
+                                    table_uuid,
+                                    exc,
+                                )
                             self._defer(job, "Destructive operation requires approval")
                             deferred += 1
                             destination_outcomes[destination_id]["deferred"] += 1

@@ -215,6 +215,91 @@ def test_job_requires_approval_without_approved_request(session):
     assert job_requires_approval(session, table.id, plan_operations) is False
 
 
+class TestEnsurePendingApprovalRequests:
+    """2026-09-07 fix: the governor deferred jobs needing approval but never created the
+    ApprovalRequest an operator would actually see -- confirmed live, 931 tables sat
+    deferred for hours with zero ApprovalRequest rows and no way for anyone to notice short
+    of reading governor logs. ensure_pending_approval_requests is the fix: called at the
+    exact point the governor defers for this reason, it surfaces the block into the
+    existing manual approval workflow (get_pending_approvals / approve_request) instead of
+    only logging it."""
+
+    def test_creates_a_pending_request_for_a_destructive_op_with_none_existing(
+        self, session
+    ) -> None:
+        from cryo.workflows.approvals import ensure_pending_approval_requests
+
+        table = _seed_table(session, schema_name="test", table_name="needs_approval")
+        session.commit()
+        plan_operations = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {"retention_days": 3}}]
+
+        created = ensure_pending_approval_requests(session, table.id, plan_operations)
+
+        assert len(created) == 1
+        assert created[0].operation_type == OperationType.EXPIRE_SNAPSHOTS.value
+        assert created[0].status == ApprovalStatus.PENDING
+        pending = get_pending_approvals(session, table_id=table.id)
+        assert len(pending) == 1
+
+    def test_does_not_duplicate_an_already_pending_request(self, session) -> None:
+        """The idempotency this needs to be safe called every wave a job stays deferred --
+        must not spam a new request each time the governor re-evaluates the same table."""
+        from cryo.workflows.approvals import ensure_pending_approval_requests
+
+        table = _seed_table(session, schema_name="test", table_name="already_pending")
+        session.commit()
+        plan_operations = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {}}]
+
+        first = ensure_pending_approval_requests(session, table.id, plan_operations)
+        second = ensure_pending_approval_requests(session, table.id, plan_operations)
+
+        assert len(first) == 1
+        assert len(second) == 0
+        pending = get_pending_approvals(session, table_id=table.id)
+        assert len(pending) == 1
+
+    def test_ignores_operations_that_do_not_require_approval(self, session) -> None:
+        from cryo.workflows.approvals import ensure_pending_approval_requests
+
+        table = _seed_table(session, schema_name="test", table_name="non_destructive")
+        session.commit()
+        plan_operations = [{"type": OperationType.OPTIMIZE.value, "params": {}}]
+
+        created = ensure_pending_approval_requests(session, table.id, plan_operations)
+
+        assert created == []
+        assert get_pending_approvals(session, table_id=table.id) == []
+
+    def test_creates_one_request_per_distinct_destructive_operation_in_the_plan(
+        self, session
+    ) -> None:
+        from cryo.workflows.approvals import ensure_pending_approval_requests
+
+        table = _seed_table(session, schema_name="test", table_name="multi_op")
+        session.commit()
+        plan_operations = [
+            {"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {}},
+            {"type": OperationType.REMOVE_ORPHAN_FILES.value, "params": {}},
+            {"type": OperationType.OPTIMIZE.value, "params": {}},
+        ]
+
+        created = ensure_pending_approval_requests(session, table.id, plan_operations)
+
+        assert {r.operation_type for r in created} == {
+            OperationType.EXPIRE_SNAPSHOTS.value,
+            OperationType.REMOVE_ORPHAN_FILES.value,
+        }
+
+    def test_returns_empty_for_no_plan_operations(self, session) -> None:
+        from cryo.workflows.approvals import ensure_pending_approval_requests
+
+        table = _seed_table(session, schema_name="test", table_name="no_plan")
+        session.commit()
+
+        assert ensure_pending_approval_requests(session, table.id, None) == []
+        assert ensure_pending_approval_requests(session, table.id, []) == []
+
+
 def test_estimate_impact(session):
     """Test impact estimation for operations."""
     table = _seed_table(session, schema_name="test", table_name="impact_table")

@@ -5,7 +5,7 @@ import time
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -296,6 +296,61 @@ def test_governor_defers_when_fallback_effect_destination_is_paused(
     assert result.deferred == 1
     assert store.get_job(job.id).status is JobStatus.DEFERRED
     assert store.get_job(job.id).error == "Maintenance execution is paused"
+
+
+def test_governor_surfaces_a_pending_approval_request_when_deferring(session: Session) -> None:
+    """2026-09-07 fix: the governor deferred jobs needing approval but never created the
+    ApprovalRequest an operator would actually see -- confirmed live, 931 tables sat
+    deferred for hours with zero ApprovalRequest rows anywhere. This exercises the real,
+    wired-in path (not a unit test of ensure_pending_approval_requests in isolation): a
+    real governor wave, against a real DB session, deferring a plan that includes
+    expire_snapshots with no approved request on file, and asserts the ApprovalRequest row
+    actually gets created -- not just that the job gets deferred (which the pre-existing
+    behavior already did)."""
+    from cryo.workflows.approvals import ApprovalStatus, get_pending_approvals
+
+    session_factory = sessionmaker(
+        bind=session.get_bind(),
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_destination(
+        DestinationConfig(
+            "dest",
+            config={"replicas": ["r1"], "adaptive_budget": False},
+        )
+    )
+    table_id = str(uuid4())
+    job = MaintenanceJobRecord(
+        id="destructive-job",
+        run_id="run-1",
+        table_id=table_id,
+        destination_id="dest",
+        mode=Mode.STANDARD,
+        plan={"operations": [{"type": "expire_snapshots", "params": {"retention_days": 7}}]},
+    )
+    store.add_job(job)
+    queue.enqueue(job.id, "dest")
+
+    result = Governor(
+        queue,
+        locks,
+        store,
+        default_config=AdmissionConfig(adaptive_budget=False),
+        session_factory=session_factory,
+    ).run_wave(now=datetime.now(UTC))
+
+    assert result.deferred == 1
+    assert store.get_job(job.id).status is JobStatus.DEFERRED
+    assert store.get_job(job.id).error == "Destructive operation requires approval"
+
+    pending = get_pending_approvals(session, table_id=UUID(table_id))
+    assert len(pending) == 1
+    assert pending[0].operation_type == "expire_snapshots"
+    assert pending[0].status == ApprovalStatus.PENDING
 
 
 def test_governor_fleet_budget_admits_highest_moop_score_first() -> None:
