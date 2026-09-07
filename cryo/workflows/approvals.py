@@ -108,6 +108,72 @@ def create_approval_request(
     return request
 
 
+def ensure_pending_approval_requests(
+    session: Session,
+    table_id: UUID,
+    plan_operations: list[dict[str, Any]] | None,
+    *,
+    requested_by: str = "governor",
+    auto_expire_hours: int = 72,
+) -> list[ApprovalRequest]:
+    """When the governor defers a job for missing approval, surface *why* -- create the
+    pending ApprovalRequest an operator would actually see (GET /approvals/pending) for
+    every operation in the plan that needs one and doesn't already have a live pending
+    request, instead of only logging and deferring silently.
+
+    2026-09-07 fix: the only real caller of create_approval_request was the manual
+    POST /approvals/request API route -- nothing on the governor side ever created one when
+    it found and deferred a job for exactly this reason. Confirmed live: 931 tables across
+    one run sat deferred with error="Destructive operation requires approval" for hours,
+    zero ApprovalRequest rows existed for any of them, and the governor re-discovered and
+    re-deferred the same jobs every wave without ever making the block actionable. The
+    manual approval workflow (approve_request/reject_request, the UI built on
+    get_pending_approvals) already existed and worked -- it just never got fed.
+
+    Idempotent per (table_id, operation_type): checks get_pending_approvals(table_id) first
+    and skips creating a duplicate for an operation that already has one, so calling this on
+    every wave a job stays deferred doesn't spam duplicate requests. Best-effort -- a failure
+    here must never block the defer itself (see this function's only call site in
+    governor.py), since surfacing a request is strictly additive to the existing safety
+    gate, not a precondition for it.
+    """
+    if not plan_operations:
+        return []
+
+    existing = get_pending_approvals(session, table_id=table_id)
+    existing_op_types = {r.operation_type for r in existing}
+
+    created: list[ApprovalRequest] = []
+    seen_this_call: set[str] = set()
+    for op in plan_operations:
+        if not isinstance(op, dict):
+            continue
+        op_type = _parse_operation_type(str(op.get("type", "")))
+        if op_type is None or not requires_approval(op_type):
+            continue
+        if op_type.value in existing_op_types or op_type.value in seen_this_call:
+            continue
+        seen_this_call.add(op_type.value)
+
+        op_params = op.get("params") or {}
+        impact_preview = estimate_impact(session, table_id, op_type, op_params)
+        request = create_approval_request(
+            session,
+            ApprovalRequestData(
+                table_id=table_id,
+                operation_type=op_type,
+                requested_by=requested_by,
+                request_reason="Auto-surfaced: governor deferred this job pending approval",
+                impact_preview=impact_preview,
+                operation_params=op_params,
+            ),
+            auto_expire_hours=auto_expire_hours,
+        )
+        created.append(request)
+
+    return created
+
+
 def approve_request(
     session: Session,
     request_id: UUID,
