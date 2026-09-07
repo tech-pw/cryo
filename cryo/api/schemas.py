@@ -956,6 +956,11 @@ class TableCostRead(BaseModel):
     get_requests_30d: int | None = None
     put_requests_30d: int | None = None
     list_requests_30d: int | None = None
+    # 2026-09-08 (docs/s3-total-cost-optimization.md P0#2/#3): previously HEAD was silently
+    # folded into get_requests_30d and DELETE wasn't tracked at all -- see TableCost's own
+    # field docstrings in cryo/db/models.py.
+    head_requests_30d: int | None = None
+    delete_requests_30d: int | None = None
     request_cost_usd_month: float | None = None
     request_cost_pricing_source: str | None = None
 
