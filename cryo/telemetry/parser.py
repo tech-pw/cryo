@@ -183,14 +183,81 @@ def _parse_with_sqlglot(sql: str) -> PredicateInfo | None:
 
     where = parsed.find(exp.Where)
     if where is not None:
-        for col in where.find_all(exp.Column):
-            col_name = col.name
-            if not col_name:
-                continue
-            info.filter_columns.append(
-                ColumnReference(column=col_name, table_alias=col.table, is_equality=True)
-            )
+        _extract_sqlglot_filter_columns(where, info)
     return info
+
+
+# sqlglot predicate node -> (operator token, is_equality, is_range). Anything absent from this
+# map is a predicate whose column cannot be turned into a min/max skipping bound, so it is
+# recorded with operator=None and neither flag set (see _extract_sqlglot_filter_columns).
+_SQLGLOT_PREDICATE_OPERATORS: list[tuple[str, str, bool, bool]] = [
+    ("EQ", "=", True, False),
+    ("NEQ", "<>", True, False),
+    ("NullSafeEQ", "<=>", True, False),
+    ("NullSafeNEQ", "<>", True, False),
+    ("In", "IN", True, False),
+    ("GT", ">", False, True),
+    ("GTE", ">=", False, True),
+    ("LT", "<", False, True),
+    ("LTE", "<=", False, True),
+    ("Between", "BETWEEN", False, True),
+    ("Like", "LIKE", False, False),
+    ("ILike", "ILIKE", False, False),
+    ("Is", "IS", False, False),
+]
+
+
+def _extract_sqlglot_filter_columns(where: object, info: PredicateInfo) -> None:
+    """Record each WHERE column with the operator it was actually compared under.
+
+    Regression, 2026-09-04: this path previously stamped ``is_equality=True`` on every column
+    it found under the WHERE clause and never set ``operator``/``is_range``, so a range scan
+    (``ts > x``) was indistinguishable from a point lookup, and the regex fallback in
+    ``_parse_with_regex`` -- which does classify operators -- was strictly more informative
+    than the "better" parser that shadows it. Clustering candidate quality depends on the
+    distinction: an unselective range predicate and a selective equality predicate imply very
+    different layouts.
+
+    A column under a predicate this function cannot classify (a UDF call, a subquery, an
+    arithmetic expression) is still recorded, but with ``operator=None`` and both flags false,
+    so downstream consumers can measure parser coverage rather than silently treating it as an
+    equality filter.
+    """
+    from sqlglot import exp
+
+    seen: set[int] = set()
+
+    def record(column: object, operator: str | None, is_equality: bool, is_range: bool) -> None:
+        if not isinstance(column, exp.Column) or not column.name:
+            return
+        # A column can appear under nested predicates (``a > 1 AND a < 9``); each occurrence is
+        # its own observation, but the same node must not be counted twice.
+        if id(column) in seen:
+            return
+        seen.add(id(column))
+        info.filter_columns.append(
+            ColumnReference(
+                column=column.name,
+                table_alias=column.table,
+                operator=operator,
+                is_equality=is_equality,
+                is_range=is_range,
+            )
+        )
+
+    for node_name, operator, is_equality, is_range in _SQLGLOT_PREDICATE_OPERATORS:
+        node_type = getattr(exp, node_name, None)
+        if node_type is None:  # sqlglot version without this node
+            continue
+        for predicate in where.find_all(node_type):
+            # Only the compared column earns the operator. ``a = b`` records both sides; a
+            # literal or function operand simply is not a Column and is skipped by record().
+            record(predicate.this, operator, is_equality, is_range)
+            record(predicate.args.get("expression"), operator, is_equality, is_range)
+
+    # Columns under predicates none of the above matched (UDFs, subqueries, arithmetic).
+    for column in where.find_all(exp.Column):
+        record(column, None, False, False)
 
 
 def _parse_with_regex(sql: str) -> PredicateInfo:

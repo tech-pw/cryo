@@ -118,10 +118,17 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     write_ordered_by_stmt: str | None = None
 
     if zorder_columns:
-        # Z-order clustering -- Iceberg's rewrite_data_files procedure takes this inline via
-        # the options map, no table-level sort-order metadata needed first.
+        # Z-order/Hilbert clustering -- Iceberg's rewrite_data_files procedure takes this
+        # inline via the options map, no table-level sort-order metadata needed first.
+        # ``curve`` is resolved upstream by cryo.optimizer.curve_capability, which downgrades
+        # an unsupported Hilbert request to zorder rather than letting the procedure fail at
+        # parse time on an older Iceberg/Spark; anything unrecognised here falls back to
+        # zorder for the same reason.
+        curve = str(operation.params.get("curve", "zorder")).lower()
+        if curve not in ("zorder", "hilbert"):
+            curve = "zorder"
         zorder_expr = ", ".join(f"`{col}`" for col in zorder_columns)
-        options.append(f"'sort-order', 'zorder({zorder_expr})'")
+        options.append(f"'sort-order', '{curve}({zorder_expr})'")
     elif sort_columns:
         # Linear sort. Regression, 2026-08-11: rewrite_data_files(strategy => 'sort') does
         # NOT read a linear sort order from the options map the way it does for zorder --
@@ -266,7 +273,12 @@ def render_clustering_operation(
 
     This is used by the layout optimizer to generate SQL for data re-organization.
     """
-    args = [f"table => '{catalog}.{table_name}'", f"strategy => '{strategy}'"]
+    # Iceberg's rewrite_data_files accepts only 'binpack' and 'sort' as strategy values.
+    # 'zorder' is accepted historically as a strategy alias, but 'hilbert' is not: Iceberg
+    # 1.12.0 expresses Hilbert purely through the sort-order option under strategy => 'sort'.
+    # Sending strategy => 'hilbert' fails at procedure-parse time.
+    procedure_strategy = "sort" if strategy == "hilbert" else strategy
+    args = [f"table => '{catalog}.{table_name}'", f"strategy => '{procedure_strategy}'"]
 
     if partition_filter:
         args.append(f"where => '{_escape_sql_string(partition_filter)}'")
@@ -280,9 +292,12 @@ def render_clustering_operation(
     if rewrite_all:
         options.append("'rewrite-all', 'true'")
 
-    if strategy == "zorder" and columns:
-        zorder_expr = ", ".join(f"`{col}`" for col in columns)
-        options.append(f"'sort-order', 'zorder({zorder_expr})'")
+    if strategy in ("zorder", "hilbert") and columns:
+        # Both curves share rewrite_data_files' 'sort-order' option; only the function name
+        # differs. Callers must resolve Hilbert support first (curve_capability) -- Iceberg
+        # only gained hilbert() in 1.12.0 on Spark 4.1.
+        curve_expr = ", ".join(f"`{col}`" for col in columns)
+        options.append(f"'sort-order', '{strategy}({curve_expr})'")
     elif strategy == "sort" and columns:
         sort_expr = ", ".join(f"`{col}` ASC" for col in columns)
         options.append(f"'sort-order', '{sort_expr}'")

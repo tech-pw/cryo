@@ -257,6 +257,29 @@ class Settings(BaseSettings):
         default=False,
         description="Enable Flink config-generation engine (does not submit jobs).",
     )
+    hilbert_clustering_enabled: bool = Field(
+        default=False,
+        description=(
+            "Allow Hilbert-curve clustering. Off by default: Iceberg only gained hilbert() "
+            "in 1.12.0 on the Spark 4.1 path (PR #16827, merged 2026-08-25), and an "
+            "unsupported runtime fails at procedure-parse time after the job is submitted. "
+            "Requests downgrade to Z-order unless the versions below confirm support."
+        ),
+    )
+    spark_iceberg_version: str | None = Field(
+        default=None,
+        description=(
+            "Iceberg runtime version on the Spark destination, e.g. '1.12.0'. Used to gate "
+            "Hilbert clustering; unknown is treated as unsupported, never as new enough."
+        ),
+    )
+    spark_runtime_version: str | None = Field(
+        default=None,
+        description=(
+            "Spark version on the destination, e.g. '4.1.0'. Used to gate Hilbert clustering; "
+            "unknown is treated as unsupported."
+        ),
+    )
     health_port: int = Field(
         default=8081,
         ge=1024,

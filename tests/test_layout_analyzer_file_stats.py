@@ -138,15 +138,14 @@ class TestFetchFileStats:
 
         result = fetch_file_stats(session, table)
 
-        assert result == [
-            {
-                "lower_bounds": {"event_date": "2026-01-01"},
-                "upper_bounds": {"event_date": "2026-01-01"},
-            },
-            {
-                "lower_bounds": {"event_date": "2026-01-02"},
-                "upper_bounds": {"event_date": "2026-01-02"},
-            },
+        assert result is not None
+        assert [r["lower_bounds"] for r in result] == [
+            {"event_date": "2026-01-01"},
+            {"event_date": "2026-01-02"},
+        ]
+        assert [r["upper_bounds"] for r in result] == [
+            {"event_date": "2026-01-01"},
+            {"event_date": "2026-01-02"},
         ]
 
     def test_multiple_columns_decoded_independently(self, session, monkeypatch) -> None:
@@ -161,12 +160,10 @@ class TestFetchFileStats:
 
         result = fetch_file_stats(session, table)
 
-        assert result == [
-            {
-                "lower_bounds": {"event_date": "2026-01-01", "amount": 10},
-                "upper_bounds": {"event_date": "2026-01-02", "amount": 99},
-            }
-        ]
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["lower_bounds"] == {"event_date": "2026-01-01", "amount": 10}
+        assert result[0]["upper_bounds"] == {"event_date": "2026-01-02", "amount": 99}
 
     def test_deleted_entries_are_excluded(self, session, monkeypatch) -> None:
         table = _seed_table(session)
@@ -296,12 +293,10 @@ class TestFetchFileStats:
 
         result = fetch_file_stats(session, table)
 
-        assert result == [
-            {
-                "lower_bounds": {"event_date": "2026-01-01"},
-                "upper_bounds": {"event_date": "2026-01-01"},
-            }
-        ]
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["lower_bounds"] == {"event_date": "2026-01-01"}
+        assert result[0]["upper_bounds"] == {"event_date": "2026-01-01"}
 
 
 class TestAnalyzeTableLayoutSelfFetch:

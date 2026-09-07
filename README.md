@@ -52,15 +52,19 @@ against.
 
 ## How it compares
 
-| | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Managed cloud (Databricks / S3 Tables / Snowflake) |
-|---|---|---|---|---|---|
-| Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | Fully managed |
-| Engines | Trino **and** Spark/EMR | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Locked to the platform |
-| Load-aware admission control | Yes — reads live engine load before admitting work | Only if you built it | Limited | Yes | N/A (fully managed) |
-| Table health grading (A–F) + cost projection | Yes, built in | No — usually a one-off script | No | Partial | Varies by platform |
-| Data leaves your infra | No | No | No | Yes — telemetry goes to LakeOps | Yes — data lives on the platform |
-| UI for fleet-wide assignment | Yes | No | Limited | Yes | Yes |
-| Cost | Free, self-hosted | Free, but you build and own everything | Free, self-hosted | Paid SaaS | Usage-based, platform lock-in |
+| | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Granica Crunch | Managed cloud (Databricks / S3 Tables / Snowflake) |
+|---|---|---|---|---|---|---|
+| Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | SaaS, hybrid, or on-prem/air-gapped | Fully managed |
+| Engines | Trino **and** Spark/EMR | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
+| Table formats | Iceberg | Whatever you wired up | Iceberg, Mixed-Iceberg | Iceberg, Delta | Iceberg, Delta, Hive | Varies by platform |
+| Maintenance ops (compaction, snapshot expiry, orphan cleanup) | Yes | Only if you built it | Yes | Yes | Yes | Yes |
+| Sorting / curve clustering | Sort + Z-order (Spark only; Hilbert capability-gated) | Only if you built it | Sort + Z-order | Yes | Sort, Z-order, Hilbert | Varies by platform |
+| Parquet re-compression below ZSTD | No — reports measured codec/level gains instead | No | No | No | Yes — its core differentiator | No |
+| Load-aware admission control | Yes — reads live engine load before admitting work | Only if you built it | Limited | Yes | Not documented | N/A (fully managed) |
+| Table health grading (A–F) + cost projection | Yes, built in | No — usually a one-off script | No | Partial | Savings-focused, not a fleet health grade | Varies by platform |
+| Data leaves your infra | No | No | No | Yes — telemetry goes to LakeOps | Depends on tier — hybrid sends metadata; on-prem sends nothing | Yes — data lives on the platform |
+| UI for fleet-wide assignment | Yes | No | Limited | Yes | Yes | Yes |
+| Cost | Free, self-hosted | Free, but you build and own everything | Free, self-hosted | Paid SaaS | Commercial, outcome-based pricing | Usage-based, platform lock-in |
 
 Cryo sits where **LakeOps** does — a dedicated, self-hosted control plane rather than a managed
 platform — but keeps your telemetry on your own infrastructure, and treats Trino as a first-class
@@ -68,6 +72,27 @@ engine rather than an afterthought. Against **Apache Amoro**, Cryo is lighter to
 Mixed-Iceberg coupling) and Trino-first rather than Flink-first. Against the managed clouds
 (Databricks Predictive Optimization, AWS S3 Tables, Snowflake), Cryo is the answer for teams who
 aren't consolidating onto a single vendor's compute.
+
+**Granica Crunch** is the closest commercial product on operations — it covers the same
+compaction, snapshot expiry, orphan cleanup, and sorting/Z-ordering surface under user-defined
+policies, across a wider set of formats (Delta, Hive) and catalogs (Unity, Polaris, BigLake).
+The real difference is what each one optimizes. Crunch's differentiator is compression — it
+rewrites Parquet to be smaller than ZSTD alone, which Cryo does not attempt. Cryo optimizes file
+*layout* and runs that work on compute you already own, submitting SQL to your Trino or Spark
+rather than bringing an engine of its own. Choose Crunch if paying for storage-byte reduction is
+the goal; choose Cryo if you want a free, self-hosted control plane over your existing engines,
+with fleet-wide health grading and load-aware admission control.
+
+Two qualifications worth stating plainly. Cryo's curve clustering runs on **Spark only** — Trino's
+`OPTIMIZE` does binpacking and has no sort-rewrite equivalent — and Hilbert needs Iceberg 1.12.0
+on Spark 4.1, so it is capability-gated and falls back to Z-order elsewhere. On compression, Cryo
+reports what a measured codec or level change is worth on *your* table instead of quoting a
+headline: for a table already on ZSTD-3 with sensible row groups, the cheap residual is roughly
+3–12%. Granica's published 20–50% rests on a single public datapoint (TPC-DS `store_sales`,
+418 GiB across 301,949 files averaging ~1.45 MB) that jointly changes file size, row-group size,
+sort order, and encoding — so it is not attributable to a codec alone. Neither vendor's figures
+come with a reproducible public benchmark; Cryo's inputs are published as
+[CryoBench](./docs/CRYOBENCH.md).
 
 ### Who this isn't for (yet)
 
