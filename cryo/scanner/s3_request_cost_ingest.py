@@ -102,6 +102,17 @@ _PRICING_TIER: dict[str, str] = {
 
 _DATE_SEGMENT_RE = re.compile(r"^\d{1,4}$")
 _RECONCILE_WINDOW_DAYS = 3
+# Live-confirmed 2026-09-08: window_start = min(last_ingested_date, ...) has no lower bound, so
+# once a watermark falls behind by more than _RECONCILE_WINDOW_DAYS the window grows to cover
+# the *entire* gap, not just the normal reconciliation tolerance -- a bucket stuck 20 days
+# (Deep Archive-related or otherwise) tried to list+read every log object across all 20 days in
+# one run and timed out, even with the InvalidObjectState fix (each archived object still costs
+# a full GetObject round-trip before being skipped, and there can be many per day). Bounding how
+# far back a single pass reaches, separate from the normal reconcile window, lets a badly-stuck
+# watermark catch up incrementally: run_s3_ingest_tick is a daily scheduled tick, so whatever
+# last_ingested_date advances to this run is picked up again the next day, chipping away at the
+# backlog with a bounded, predictable runtime every time rather than one unbounded catch-up.
+_MAX_CATCHUP_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -568,9 +579,15 @@ def ingest_bucket(
 
     start_date = config.last_ingested_date or (today - timedelta(days=_RECONCILE_WINDOW_DAYS))
     window_start = min(start_date, today - timedelta(days=_RECONCILE_WINDOW_DAYS - 1))
+    # window_end caps how far back a single pass reaches -- see _MAX_CATCHUP_DAYS's docstring.
+    # A watermark within the cap covers the full gap up through today, same as before; a
+    # watermark stuck further behind only advances partway this run, and the next scheduled
+    # tick (run_s3_ingest_tick runs daily) picks up where this one left off.
+    window_end = min(today, window_start + timedelta(days=_MAX_CATCHUP_DAYS))
     candidate_dates = [
-        window_start + timedelta(days=offset) for offset in range((today - window_start).days + 1)
+        window_start + timedelta(days=offset) for offset in range((window_end - window_start).days + 1)
     ]
+    through_date = window_end
 
     s3_client = s3_bucket_logging.s3_client_for_config(config)
     if s3_client is None:
@@ -630,6 +647,18 @@ def ingest_bucket(
     except Exception as exc:
         logger.exception("S3 request-cost ingestion failed for bucket %s", config.bucket)
         return IngestResult(0, 0, 0, error=str(exc))
+
+    if window_end < today:
+        logger.warning(
+            "S3 request-cost ingestion for bucket %s is catching up from a %d-day-stale "
+            "watermark (last_ingested_date was %s) -- this run only reached %s "
+            "(_MAX_CATCHUP_DAYS=%d); the next scheduled tick will continue closing the gap.",
+            config.bucket,
+            (today - window_start).days,
+            window_start.isoformat(),
+            window_end.isoformat(),
+            _MAX_CATCHUP_DAYS,
+        )
 
     if outcome.truncated_dates:
         logger.warning(
@@ -711,7 +740,12 @@ def ingest_bucket(
     _upsert_partition_access(session, outcome.partition_counts, now=now)
 
     config.last_ingested_at = now
-    config.last_ingested_date = today
+    # Only advance to through_date (window_end), not unconditionally to today -- see
+    # _MAX_CATCHUP_DAYS's docstring. A watermark within the catch-up cap still reaches today,
+    # same as before; a badly-stuck watermark advances partway and the next scheduled tick
+    # continues from there instead of jumping straight to today and silently skipping
+    # everything in between.
+    config.last_ingested_date = through_date
     config.last_error = None
     config.last_error_at = None
 
@@ -725,7 +759,7 @@ def ingest_bucket(
         rows_ingested=upserted,
         tables_matched=len(matched_table_ids),
         unmatched_requests=unmatched,
-        through_date=today,
+        through_date=through_date,
         archived_object_count=outcome.archived_object_count,
     )
 
