@@ -390,6 +390,61 @@ class TestQueueGrowth:
         assert check.evidence["today"] == 300
         assert check.evidence["growth_pct"] == 200.0
 
+    def test_passes_when_growth_is_a_large_batch_still_converging(self, session) -> None:
+        """Live-verified 2026-09-08: native-datafusion showed +194% queue-depth growth from
+        one morning's cron batch (4,589 newly-queued jobs) while the destination had 206 jobs
+        RUNNING and had finished 10,357 in the prior 24h -- real, fast-moving throughput, not
+        a stall. Same false-positive shape _check_stuck_runs already learned to rule out via
+        recent-finish activity; this is the queue_growth-side mirror of that fix."""
+        destination = _seed_destination(session)
+        run_yesterday = _seed_run(session, status="running", created_at=NOW - timedelta(days=2))
+        for _ in range(100):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_yesterday, table=t, destination=destination, status="queued")
+        run_today = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(200):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_today, table=t, destination=destination, status="queued")
+        # Real, recent throughput: 40+ jobs finished in the last 6h (>=10% of today's 300-deep
+        # queue) -- this is what distinguishes "big batch draining fine" from "genuinely stuck".
+        for _ in range(40):
+            _, t = _seed_source_table(session)
+            _seed_job(
+                session,
+                run=run_today,
+                table=t,
+                destination=destination,
+                status="succeeded",
+                finished_at=NOW - timedelta(hours=1),
+            )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "queue_growth")
+        assert check.passed is True
+        assert "draining" in check.summary
+
+    def test_still_fails_when_growth_is_large_and_nothing_is_finishing(self, session) -> None:
+        """Regression guard the other direction: a queue that's actually wedged (no recent
+        finishes, nothing in flight) must still fail even though it superficially resembles
+        the 'big batch' shape (a large today_depth)."""
+        destination = _seed_destination(session)
+        run_yesterday = _seed_run(session, status="running", created_at=NOW - timedelta(days=2))
+        for _ in range(100):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_yesterday, table=t, destination=destination, status="queued")
+        run_today = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(200):
+            _, t = _seed_source_table(session)
+            _seed_job(session, run=run_today, table=t, destination=destination, status="queued")
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "queue_growth")
+        assert check.passed is False
+        assert check.evidence["recently_finished"] == 0
+        assert check.evidence["recently_running_or_admitted"] == 0
+
 
 class TestApprovalMatchRate:
     def test_passes_when_no_approved_rows(self, session) -> None:

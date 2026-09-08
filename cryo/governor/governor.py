@@ -53,6 +53,7 @@ from cryo.queue.reconcile import (
     reconcile_deferred_jobs,
     reconcile_queued_jobs,
     reconcile_stale_running_jobs,
+    reconcile_stuck_admitted_jobs,
 )
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.triggers.evaluator import TriggerEvaluator
@@ -220,9 +221,9 @@ class Governor:
         wave_start = perf_counter()
         destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         try:
-            if self._session_factory is not None:
-                finalize_open_runs(self._session_factory)
             current = now or datetime.now(UTC)
+            if self._session_factory is not None:
+                finalize_open_runs(self._session_factory, now=current)
             re_enqueued = reconcile_queued_jobs(self._store, self._queue)
             re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
             orphaned = purge_stale_queue_entries(self._store, self._queue)
@@ -242,6 +243,12 @@ class Governor:
                 stale_after_seconds=self._lock_ttl_seconds,
                 step_ledger=step_ledger,
                 engine_activity_checker=self._spark_engine_still_active,
+            )
+            reaped += reconcile_stuck_admitted_jobs(
+                self._store,
+                self._queue,
+                self._lock_store,
+                now=current,
             )
             admitted = 0
             deferred = 0

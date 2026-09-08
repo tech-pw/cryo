@@ -42,7 +42,21 @@ def _seed_run(session, *, status: str = "running", created_at: datetime = NOW) -
     return run
 
 
-def _seed_job(session, *, run: MaintenanceRun, table: Table, destination: Destination, status: str) -> MaintenanceJob:
+def _seed_job(
+    session,
+    *,
+    run: MaintenanceRun,
+    table: Table,
+    destination: Destination,
+    status: str,
+    finished_at: datetime | None = None,
+) -> MaintenanceJob:
+    if finished_at is None and status in {"succeeded", "failed", "skipped", "deferred", "partial"}:
+        # Real-world default: mark_status() stamps finished_at the instant a job reaches one of
+        # these statuses (job_store.py). Age it well past the finalize grace window by default so
+        # existing tests (written before the grace window existed) keep exercising "long since
+        # deferred, safe to finalize" rather than accidentally landing inside the grace window.
+        finished_at = NOW - timedelta(hours=1)
     job = MaintenanceJob(
         id=uuid4(),
         run_id=run.id,
@@ -50,6 +64,7 @@ def _seed_job(session, *, run: MaintenanceRun, table: Table, destination: Destin
         destination_id=destination.id,
         mode="standard",
         status=status,
+        finished_at=finished_at,
     )
     session.add(job)
     session.flush()
@@ -67,7 +82,7 @@ def test_run_with_only_deferred_jobs_finalizes_instead_of_staying_open_forever(s
         _seed_job(session, run=run, table=table, destination=destination, status="deferred")
     session.commit()
 
-    finalized = finalize_open_runs(session_factory)
+    finalized = finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert finalized == 1
@@ -85,7 +100,7 @@ def test_deferred_only_run_is_not_mislabeled_failed(session, session_factory) ->
         _seed_job(session, run=run, table=table, destination=destination, status="deferred")
     session.commit()
 
-    finalize_open_runs(session_factory)
+    finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert run.status == "partial"
@@ -99,7 +114,7 @@ def test_mix_of_succeeded_and_deferred_finalizes_as_partial(session, session_fac
     _seed_job(session, run=run, table=table, destination=destination, status="deferred")
     session.commit()
 
-    finalize_open_runs(session_factory)
+    finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert run.status == "partial"
@@ -117,7 +132,7 @@ def test_run_still_stays_open_while_a_job_is_genuinely_in_flight(session, sessio
     _seed_job(session, run=run, table=table, destination=destination, status="queued")
     session.commit()
 
-    finalize_open_runs(session_factory)
+    finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert run.status == "running"
@@ -133,7 +148,7 @@ def test_all_succeeded_still_finalizes_as_succeeded(session, session_factory) ->
         _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
     session.commit()
 
-    finalize_open_runs(session_factory)
+    finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert run.status == "succeeded"
@@ -146,7 +161,91 @@ def test_cancelled_run_is_never_touched(session, session_factory) -> None:
     _seed_job(session, run=run, table=table, destination=destination, status="deferred")
     session.commit()
 
-    finalize_open_runs(session_factory)
+    finalize_open_runs(session_factory, now=NOW)
 
     session.refresh(run)
     assert run.status == "cancelled"
+
+
+def test_freshly_deferred_job_does_not_finalize_the_run_yet(session, session_factory) -> None:
+    """Direct regression test for the 2026-09-08 incident: 309 jobs/48h failed with
+    'orphaned_deferred: parent run already finalized' because a run finalized the wave right
+    after its last job went DEFERRED for a transient reason (approval pending, fleet-budget,
+    table lock, QPP) -- before reconcile_deferred_jobs (which runs every wave, ~30s cadence)
+    ever got a real chance to un-defer it. A job deferred moments ago must not count toward
+    'run is done' yet."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session)
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(minutes=1),
+    )
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "running"
+    assert run.finished_at is None
+
+
+def test_deferred_job_finalizes_the_run_once_past_the_grace_window(session, session_factory) -> None:
+    """The other half of the same fix: this must not regress back into the original 2026-08-24
+    bug (runs stuck open forever) -- a DEFERRED job that has genuinely had multiple wave cycles
+    to un-defer and didn't must still let the run finalize."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session)
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(minutes=11),
+    )
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "partial"
+    assert run.finished_at is not None
+
+
+def test_mix_of_recently_and_long_deferred_jobs_waits_for_the_freshest_one(session, session_factory) -> None:
+    """If even one deferred job under the run is still inside its grace window, the whole run
+    must stay open -- a partially-eager finalize would still orphan that one fresh job the next
+    time it un-defers."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session)
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(hours=2),
+    )
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(seconds=30),
+    )
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "running"

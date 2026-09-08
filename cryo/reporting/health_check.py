@@ -82,6 +82,14 @@ _REPEAT_FAILURE_MIN_COUNT = 5  # a table hitting the identical error 5+ times in
 # clearly not a transient blip
 _QUEUE_GROWTH_ALERT_PCT = 25.0  # pending-queue depth growing >25% day-over-day without a
 # corresponding admission-rate increase is the queue losing ground, not just being busy
+_QUEUE_GROWTH_CONVERGING_HOURS = 6  # live-verified 2026-09-08: a destination landing one big
+# legitimate cron batch (thousands of jobs at once) reads identically to a genuinely stalled
+# queue on day-over-day depth alone -- native-datafusion showed +194% growth from 4,589 jobs
+# a single morning cron batch queued, while the destination had 206 jobs RUNNING and had
+# finished 10,357 (succeeded+failed) in the prior 24h: real, fast-moving throughput, not a
+# stall. Same false-positive shape _check_stuck_runs already learned to rule out on 2026-09-01
+# (age alone can't distinguish "big and still working" from "wedged") -- mirrored here via a
+# recent-finish-rate check before a depth-growth reading is trusted.
 _QUEUE_GROWTH_MIN_BASELINE = 50  # live-verified 2026-08-31: a baseline of 5 turned a real
 # ~20k-deep queue into a nonsensical "+412,240%" reading -- percent-growth off a tiny baseline
 # is statistical noise, not a genuine trend, so below this the check falls back to judging the
@@ -608,16 +616,59 @@ def _check_queue_growth(session: Session, *, now: datetime) -> CheckResult:
             severity="info",
             summary=f"Queue depth {today_depth} ({growth_pct:+.0f}% vs yesterday)",
         )
+
+    # Depth alone can't distinguish "a big batch just landed and is draining fine" from "the
+    # queue is genuinely losing ground" -- check whether jobs are still finishing recently
+    # before trusting the raw growth number (see _QUEUE_GROWTH_CONVERGING_HOURS's docstring).
+    recency_cutoff = now - timedelta(hours=_QUEUE_GROWTH_CONVERGING_HOURS)
+    recently_finished = int(
+        session.execute(
+            select(func.count()).where(
+                MaintenanceJob.status.in_(["succeeded", "failed"]),
+                MaintenanceJob.finished_at >= recency_cutoff,
+            )
+        ).scalar_one()
+    )
+    recently_running_or_admitted = int(
+        session.execute(
+            select(func.count()).where(MaintenanceJob.status.in_(["running", "admitted"]))
+        ).scalar_one()
+    )
+    # "Still converging" = real recent throughput comparable to the backlog itself, not just
+    # any nonzero trickle -- a queue could finish a handful of jobs an hour while still being
+    # completely stuck on the rest. Require finished-in-window to be a meaningful fraction of
+    # today's depth, or a healthy number of jobs actually in flight right now.
+    is_converging = (
+        recently_finished >= today_depth * 0.1 or recently_running_or_admitted >= 50
+    )
+    if is_converging:
+        return CheckResult(
+            name="queue_growth",
+            passed=True,
+            severity="info",
+            summary=f"Queue depth grew {growth_pct:+.0f}% to {today_depth} (was "
+            f"{yesterday_depth}) but {recently_finished} job(s) finished in the last "
+            f"{_QUEUE_GROWTH_CONVERGING_HOURS}h and {recently_running_or_admitted} are "
+            "in flight -- a large batch still draining, not a stall",
+        )
     return CheckResult(
         name="queue_growth",
         passed=False,
         severity="warning",
         summary=f"Queue depth grew {growth_pct:+.0f}% to {today_depth} "
-        f"(was {yesterday_depth}, threshold +{_QUEUE_GROWTH_ALERT_PCT:.0f}%)",
+        f"(was {yesterday_depth}, threshold +{_QUEUE_GROWTH_ALERT_PCT:.0f}%) with only "
+        f"{recently_finished} job(s) finished in the last {_QUEUE_GROWTH_CONVERGING_HOURS}h "
+        f"and {recently_running_or_admitted} in flight",
         detail="Admission isn't keeping pace with new work -- check the other checks above "
         "for a specific stalled mechanism, or this may just be real fleet growth outpacing "
         "current slot_cap/replica sizing.",
-        evidence={"today": today_depth, "yesterday": yesterday_depth, "growth_pct": growth_pct},
+        evidence={
+            "today": today_depth,
+            "yesterday": yesterday_depth,
+            "growth_pct": growth_pct,
+            "recently_finished": recently_finished,
+            "recently_running_or_admitted": recently_running_or_admitted,
+        },
     )
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -25,10 +25,32 @@ TERMINAL = {
     JobStatus.DEFERRED.value,
 }
 
+# Live-confirmed 2026-09-08: most DEFERRED reasons are transient and actively expected to
+# resolve within a wave or two -- approval-pending (once ensure_pending_approval_requests
+# surfaces it and an operator acts), fleet-budget packing losing to a bigger job this wave,
+# table-lock contention, QPP p95 refusal, "no_replica_slots". reconcile_deferred_jobs
+# (cryo/queue/reconcile.py) re-examines every DEFERRED job every wave (~30s) specifically to
+# catch these and re-queue them. But finalize_open_runs runs *first* in the same run_wave tick
+# (governor.py) and, with DEFERRED in TERMINAL above, could close a run out the very next wave
+# after its last job went DEFERRED -- before reconcile_deferred_jobs ever got a real chance to
+# un-defer it. When it later did clear, reconcile_deferred_jobs found the parent run already
+# "partial"/finished and fast-failed the job as "orphaned_deferred: parent run already
+# finalized" (a76f9fc) -- 309 jobs in 48h on one destination alone, all collateral damage from
+# this race, not genuinely-abandoned work. A DEFERRED job only counts toward "run is done" once
+# it has sat deferred for at least this long, giving reconcile_deferred_jobs several real
+# chances to un-defer it first.
+_DEFERRED_FINALIZE_GRACE = timedelta(minutes=10)
 
-def finalize_open_runs(session_factory: Callable[[], Session]) -> int:
-    """Mark runs finished when all child jobs reached a terminal state."""
+
+def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime | None = None) -> int:
+    """Mark runs finished when all child jobs reached a terminal state.
+
+    A run with only DEFERRED jobs left is not finalized until each of those jobs has been
+    deferred for at least _DEFERRED_FINALIZE_GRACE -- see that constant's docstring for the
+    race this avoids.
+    """
     finalized = 0
+    current = now or datetime.now(UTC)
     with session_factory() as session:
         runs = session.scalars(select(MaintenanceRun).where(MaintenanceRun.status != "cancelled"))
         for run in runs:
@@ -44,6 +66,20 @@ def finalize_open_runs(session_factory: Callable[[], Session]) -> int:
                 if run.status != "running":
                     run.status = "running"
                 continue
+            if counts.get(JobStatus.DEFERRED.value, 0) > 0:
+                recently_deferred = session.execute(
+                    select(func.count())
+                    .select_from(MaintenanceJob)
+                    .where(
+                        MaintenanceJob.run_id == run.id,
+                        MaintenanceJob.status == JobStatus.DEFERRED.value,
+                        MaintenanceJob.finished_at > current - _DEFERRED_FINALIZE_GRACE,
+                    )
+                ).scalar_one()
+                if recently_deferred:
+                    if run.status != "running":
+                        run.status = "running"
+                    continue
             succeeded_count = counts.get(JobStatus.SUCCEEDED.value, 0)
             failed_count = counts.get(JobStatus.FAILED.value, 0)
             skipped_count = counts.get(JobStatus.SKIPPED.value, 0)
