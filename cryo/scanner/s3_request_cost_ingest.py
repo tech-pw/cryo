@@ -111,6 +111,10 @@ class IngestResult:
     unmatched_requests: int
     through_date: date | None = None
     error: str | None = None
+    # Log objects skipped because they'd already transitioned to GLACIER/DEEP_ARCHIVE -- see
+    # _read_and_parse's docstring. Nonzero here means this run's counts are a lower bound for
+    # at least one date, not a failure -- the pass still completed and the watermark advanced.
+    archived_object_count: int = 0
 
 
 def _coordinator(settings: Settings, *, catalog: str, schema: str) -> TrinoCoordinator | None:
@@ -228,6 +232,11 @@ class _AggregationOutcome:
     # for tables present in ``table_partition_context`` (i.e. matched AND have at least one
     # scanned TablePartition row) -- GET-only, see the module docstring for why.
     partition_counts: dict[tuple[str, date, str, str | None], int]
+    # Log objects that could not be read because they'd already transitioned to a
+    # GLACIER/DEEP_ARCHIVE storage class (InvalidObjectState) -- see _read_and_parse's
+    # docstring for the incident this exists to recover from. Counts, not object keys, to keep
+    # memory bounded regardless of how large the archived backlog gets.
+    archived_object_count: int
 
 
 @dataclass(frozen=True)
@@ -266,16 +275,40 @@ def _aggregate_log_objects(
     counts: Counter[tuple[str | None, date, str]] = Counter()
     partition_counts: Counter[tuple[str, date, str, str | None]] = Counter()
     truncated_dates: list[date] = []
+    archived_object_count = 0
     location_prefix = f"s3a://{log_target_bucket}/"
 
-    def _read_and_parse(object_key: str) -> list[tuple[str, str, str | None]]:
-        body = s3_client.get_object(Bucket=log_target_bucket, Key=object_key)["Body"].read()
+    def _read_and_parse(object_key: str) -> tuple[list[tuple[str, str, str | None]], bool]:
+        """A single unreadable object must not abort the whole ingestion pass -- live-confirmed
+        2026-09-08: the shared logging bucket transitions objects under s3-access-logs/ to
+        DEEP_ARCHIVE after 7 days (bucket lifecycle rule 'accesss3-access-logs'). Once
+        last_ingested_date fell more than _RECONCILE_WINDOW_DAYS (3) behind -- for whatever
+        reason stalled it that far, e.g. a deploy gap -- every subsequent run's window included
+        at least one already-archived date. GetObject on a Deep Archive object raises
+        InvalidObjectState every time (no automatic restore), which used to propagate all the
+        way up through ingest_bucket's try/except and abort the entire pass -- so
+        last_ingested_date (only ever advanced on full success, see ingest_bucket) could never
+        move again. Confirmed live: 3 buckets (gold/silver/bronze-layer) stuck at
+        last_ingested_date=2026-08-19, 3+ weeks of zero request-cost data, identical error every
+        single retry. Skipping just the unreadable object (that day's counts become a lower
+        bound, same as the existing max_objects_per_day truncation) lets the rest of the window
+        succeed and the watermark advance again.
+
+        Returns (parsed_lines, was_archived) rather than overloading an empty list -- a
+        successfully-read but genuinely empty log flush also returns no parsed lines, and that
+        case must not be counted as an archived-object skip."""
+        try:
+            body = s3_client.get_object(Bucket=log_target_bucket, Key=object_key)["Body"].read()
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "InvalidObjectState":
+                return [], True
+            raise
         results = []
         for line in body.decode("utf-8", errors="replace").splitlines():
             parsed = _parse_log_line(line)
             if parsed:
                 results.append(parsed)
-        return results
+        return results, False
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for log_date, location in located.items():
@@ -299,7 +332,10 @@ def _aggregate_log_objects(
             if truncated:
                 truncated_dates.append(log_date)
 
-            for parsed_lines in executor.map(_read_and_parse, object_keys):
+            for parsed_lines, was_archived in executor.map(_read_and_parse, object_keys):
+                if was_archived:
+                    archived_object_count += 1
+                    continue
                 for operation, request_key, requester in parsed_lines:
                     table_id = _match_table_prefix(request_key, index)
                     tier = _operation_tier(operation)
@@ -323,6 +359,7 @@ def _aggregate_log_objects(
         counts=dict(counts),
         truncated_dates=truncated_dates,
         partition_counts=dict(partition_counts),
+        archived_object_count=archived_object_count,
     )
 
 
@@ -603,6 +640,18 @@ def ingest_bucket(
             ", ".join(d.isoformat() for d in outcome.truncated_dates),
         )
 
+    if outcome.archived_object_count:
+        logger.warning(
+            "S3 request-cost ingestion for bucket %s skipped %d already-archived (GLACIER/"
+            "DEEP_ARCHIVE) log object(s) in this window -- those object's counts are missing "
+            "from this run's totals, but the watermark still advances since the rest of the "
+            "window succeeded. If this bucket's log-target lifecycle rule transitions objects "
+            "sooner than _RECONCILE_WINDOW_DAYS (%d), some days will always be a lower bound.",
+            config.bucket,
+            outcome.archived_object_count,
+            _RECONCILE_WINDOW_DAYS,
+        )
+
     price_info = _resolve_request_prices(config, settings)
     matched_table_ids: set[uuid.UUID] = set()
     unmatched = 0
@@ -677,6 +726,7 @@ def ingest_bucket(
         tables_matched=len(matched_table_ids),
         unmatched_requests=unmatched,
         through_date=today,
+        archived_object_count=outcome.archived_object_count,
     )
 
 

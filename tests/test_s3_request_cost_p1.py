@@ -6,6 +6,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
+from botocore.exceptions import ClientError
+
 from cryo.config import Settings
 from cryo.db.models import (
     AWSIntegration,
@@ -490,7 +492,11 @@ class _FakePaginator:
 class _FakeLogBucketClient:
     """Combines the S3 call shapes ingest_bucket's native path needs: list_objects_v2 with
     Delimiter='/' for locate_date_partition's tree walk, list_objects_v2 without a delimiter
-    (via get_paginator) for listing objects under a partition, and get_object for bodies."""
+    (via get_paginator) for listing objects under a partition, and get_object for bodies.
+
+    ``archived_keys`` simulates objects already transitioned to GLACIER/DEEP_ARCHIVE by a
+    bucket lifecycle rule -- get_object raises the same InvalidObjectState ClientError AWS
+    does, live-confirmed 2026-09-08 as the root cause of a 3-week ingestion stall."""
 
     def __init__(
         self,
@@ -498,10 +504,12 @@ class _FakeLogBucketClient:
         tree: dict[str, list[str]] | None = None,
         objects: dict[str, list[str]] | None = None,
         bodies: dict[str, bytes] | None = None,
+        archived_keys: set[str] | None = None,
     ):
         self._tree = tree or {}
         self._objects = objects or {}
         self._bodies = bodies or {}
+        self._archived_keys = archived_keys or set()
 
     def list_objects_v2(self, *, Bucket, Prefix, Delimiter=None):  # noqa: N803
         if Delimiter:
@@ -515,6 +523,10 @@ class _FakeLogBucketClient:
         return _FakePaginator(self)
 
     def get_object(self, *, Bucket, Key):  # noqa: N803
+        if Key in self._archived_keys:
+            raise ClientError(
+                {"Error": {"Code": "InvalidObjectState", "Message": "archived"}}, "GetObject"
+            )
         return {"Body": _FakeBody(self._bodies.get(Key, b""))}
 
 
@@ -588,6 +600,58 @@ def test_aggregate_log_objects_truncates_at_max_objects_per_day() -> None:
 
     assert outcome.truncated_dates == [log_date]
     assert sum(outcome.counts.values()) == 2
+
+
+def test_aggregate_log_objects_skips_archived_objects_instead_of_raising() -> None:
+    """Direct regression test for the 2026-09-08 incident: gold/silver/bronze-layer ingestion
+    stuck at last_ingested_date=2026-08-19 for 3+ weeks because a single DEEP_ARCHIVE object
+    (the shared logging bucket transitions objects after 7 days) raised InvalidObjectState and
+    aborted the whole pass. An archived object must be skipped, not fatal -- the rest of the
+    window's readable objects still get counted."""
+    log_date = date(2026, 7, 7)
+    readable_body = _log_line("REST.GET.OBJECT", "warehouse/db1/table_a/f.parquet").encode()
+    client = _FakeLogBucketClient(
+        objects={"logs/2026/07/07/": ["logs/2026/07/07/archived.txt", "logs/2026/07/07/ok.txt"]},
+        bodies={"logs/2026/07/07/ok.txt": readable_body},
+        archived_keys={"logs/2026/07/07/archived.txt"},
+    )
+
+    outcome = ingest_mod._aggregate_log_objects(
+        client,
+        log_target_bucket="log-bucket",
+        located={log_date: "s3a://log-bucket/logs/2026/07/07/"},
+        table_prefixes=[("table-a-id", "warehouse/db1/table_a/")],
+        max_objects_per_day=100,
+        max_workers=4,
+    )
+
+    assert outcome.archived_object_count == 1
+    assert outcome.counts[("table-a-id", log_date, "get")] == 1
+
+
+def test_aggregate_log_objects_reraises_non_archived_client_errors() -> None:
+    """Safety boundary: only InvalidObjectState is treated as skippable -- a genuine access
+    error (permissions, throttling, etc.) must still surface as a real failure, not be
+    silently swallowed alongside archived objects."""
+    log_date = date(2026, 7, 7)
+
+    class _DenyingClient(_FakeLogBucketClient):
+        def get_object(self, *, Bucket, Key):  # noqa: N803
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "nope"}}, "GetObject")
+
+    client = _DenyingClient(objects={"logs/2026/07/07/": ["logs/2026/07/07/log1.txt"]})
+
+    import pytest
+
+    with pytest.raises(ClientError):
+        ingest_mod._aggregate_log_objects(
+            client,
+            log_target_bucket="log-bucket",
+            located={log_date: "s3a://log-bucket/logs/2026/07/07/"},
+            table_prefixes=[],
+            max_objects_per_day=100,
+            max_workers=4,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +766,76 @@ def test_ingest_bucket_upserts_daily_rows_and_rolls_up_table_cost(session, monke
     assert cost.request_cost_usd_month is not None
     assert cost.request_cost_usd_month > 0
 
+    assert config.last_ingested_date == date(2026, 7, 7)
+    assert config.last_error is None
+
+
+def test_ingest_bucket_advances_watermark_despite_an_archived_log_object(
+    session, monkeypatch
+) -> None:
+    """End-to-end regression test for the 2026-09-08 incident: with even one already-archived
+    (DEEP_ARCHIVE) object in the window, ingest_bucket must still complete and advance
+    last_ingested_date -- not abort with an unhandled InvalidObjectState and leave the
+    watermark stuck retrying the same unreadable window forever. Live-confirmed: 3 buckets
+    stuck at last_ingested_date=2026-08-19 for 3+ weeks from exactly this failure mode."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    session.add(
+        TableCost(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=0,
+            dead_bytes=0,
+            metadata_bytes=0,
+            current_monthly_cost_usd=0,
+            projected_monthly_cost_usd=0,
+            projected_savings_usd_month=0,
+        )
+    )
+    config = _config_with_creds(session, source)
+    config.log_target_bucket = "log-bucket"
+    config.log_target_prefix = "logs/"
+    config.enabled = True
+    config.last_ingested_date = date(2026, 8, 19)  # matches the live incident's stuck watermark
+    session.commit()
+
+    today = date(2026, 7, 7)
+    prefix = f"logs/{today.year}/{today.month:02d}/{today.day:02d}/"
+    readable_body = "\n".join(
+        [_log_line("REST.GET.OBJECT", "warehouse/db/a/data/f1.parquet")]
+    ).encode()
+    fake_client = _FakeLogBucketClient(
+        tree={
+            "logs/": [f"logs/{today.year}/"],
+            f"logs/{today.year}/": [f"logs/{today.year}/{today.month:02d}/"],
+            f"logs/{today.year}/{today.month:02d}/": [prefix],
+        },
+        objects={prefix: [f"{prefix}archived.txt", f"{prefix}log1.txt"]},
+        bodies={f"{prefix}log1.txt": readable_body},
+        archived_keys={f"{prefix}archived.txt"},
+    )
+    monkeypatch.setattr(s3_bucket_logging, "s3_client_for_config", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        ingest_mod,
+        "fetch_s3_request_prices",
+        lambda region, creds, **kwargs: ingest_mod.S3RequestPriceInfo(
+            region=region,
+            storage_class="General Purpose",
+            price_per_1k_put=0.005,
+            price_per_1k_get=0.0004,
+            source="aws_price_list_api",
+        ),
+    )
+
+    result = ingest_mod.ingest_bucket(session, config, now=datetime(2026, 7, 7, 12, 0, tzinfo=UTC))
+
+    assert result.error is None
+    assert result.archived_object_count == 1
+    # The one readable object's GET still gets counted -- an archived sibling doesn't zero out
+    # the whole day.
+    assert result.rows_ingested >= 1
     assert config.last_ingested_date == date(2026, 7, 7)
     assert config.last_error is None
 
