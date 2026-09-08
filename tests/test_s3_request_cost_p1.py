@@ -840,6 +840,84 @@ def test_ingest_bucket_advances_watermark_despite_an_archived_log_object(
     assert config.last_error is None
 
 
+def test_ingest_bucket_caps_catchup_window_when_watermark_is_badly_stuck(
+    session, monkeypatch
+) -> None:
+    """Second half of the 2026-09-08 incident: the archived-object fix alone wasn't enough --
+    a watermark stuck 20 days behind (window_start = min(last_ingested_date, ...) has no lower
+    bound) tried to list+read every log object across all 20 days in a single pass and timed
+    out live, even with archived objects being skipped rather than fatal (each one still costs
+    a GetObject round-trip). This asserts the fix: window_end caps how far back one pass
+    reaches (_MAX_CATCHUP_DAYS), and the watermark only advances to what was actually
+    processed -- not all the way to today -- so a badly-stuck bucket catches up incrementally
+    over several daily ticks instead of needing one unbounded run to succeed."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a", location="s3://lake-bucket/warehouse/db/a")
+    session.add(
+        TableCost(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=0,
+            dead_bytes=0,
+            metadata_bytes=0,
+            current_monthly_cost_usd=0,
+            projected_monthly_cost_usd=0,
+            projected_savings_usd_month=0,
+        )
+    )
+    config = _config_with_creds(session, source)
+    config.log_target_bucket = "log-bucket"
+    config.log_target_prefix = "logs/"
+    config.enabled = True
+    stuck_since = date(2026, 8, 19)
+    config.last_ingested_date = stuck_since
+    session.commit()
+
+    today = date(2026, 9, 8)  # 20 days after stuck_since -- matches the live incident's gap
+    # A readable log object exists on the first candidate date only; the fake client has no
+    # tree/objects entries for any later date, so locate_date_partition simply finds nothing
+    # for dates beyond the cap -- proving those dates were never even attempted this run.
+    prefix = f"logs/{stuck_since.year}/{stuck_since.month:02d}/{stuck_since.day:02d}/"
+    readable_body = "\n".join(
+        [_log_line("REST.GET.OBJECT", "warehouse/db/a/data/f1.parquet")]
+    ).encode()
+    fake_client = _FakeLogBucketClient(
+        tree={
+            "logs/": [f"logs/{stuck_since.year}/"],
+            f"logs/{stuck_since.year}/": [f"logs/{stuck_since.year}/{stuck_since.month:02d}/"],
+            f"logs/{stuck_since.year}/{stuck_since.month:02d}/": [prefix],
+        },
+        objects={prefix: [f"{prefix}log1.txt"]},
+        bodies={f"{prefix}log1.txt": readable_body},
+    )
+    monkeypatch.setattr(s3_bucket_logging, "s3_client_for_config", lambda cfg: fake_client)
+    monkeypatch.setattr(
+        ingest_mod,
+        "fetch_s3_request_prices",
+        lambda region, creds, **kwargs: ingest_mod.S3RequestPriceInfo(
+            region=region,
+            storage_class="General Purpose",
+            price_per_1k_put=0.005,
+            price_per_1k_get=0.0004,
+            source="aws_price_list_api",
+        ),
+    )
+
+    result = ingest_mod.ingest_bucket(
+        session, config, now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+    )
+
+    assert result.error is None
+    expected_through = stuck_since + timedelta(days=ingest_mod._MAX_CATCHUP_DAYS)
+    assert expected_through < today  # sanity: the cap genuinely falls short of today
+    assert result.through_date == expected_through
+    assert config.last_ingested_date == expected_through
+    # Not "today" -- a full 20-day catch-up must not be silently claimed as done in one pass.
+    assert config.last_ingested_date != today
+
+
 def test_ingest_bucket_without_credentials_returns_error(session) -> None:
     source = _seed_source(session)
     config = S3BucketLogConfig(source_id=source.id, bucket="lake-bucket")
