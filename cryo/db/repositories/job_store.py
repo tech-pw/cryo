@@ -98,8 +98,11 @@ class SQLJobStore:
             if status is JobStatus.QUEUED:
                 job.started_at = None
                 job.finished_at = None
+                job.admitted_at = None
             if status in {JobStatus.QUEUED, JobStatus.ADMITTED, JobStatus.RUNNING}:
                 job.finished_at = None
+            if status is JobStatus.ADMITTED:
+                job.admitted_at = now
             if status is JobStatus.RUNNING and job.started_at is None:
                 job.started_at = now
             if status in {
@@ -262,6 +265,17 @@ class SQLJobStore:
             )
             return [_job_record(session, job) for job in jobs]
 
+    def list_admitted_jobs(self) -> list[MaintenanceJobRecord]:
+        """For reconcile_stuck_admitted_jobs -- see MaintenanceJob.admitted_at's docstring for
+        the at-most-once admit-handoff bug this exists to detect and recover from."""
+        with self._session_factory() as session:
+            jobs = session.scalars(
+                select(MaintenanceJob)
+                .where(MaintenanceJob.status == JobStatus.ADMITTED.value)
+                .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
+            )
+            return [_job_record(session, job) for job in jobs]
+
     def count_running_jobs_by_metastore_uri(self) -> dict[str, int]:
         """Count RUNNING jobs grouped by their table's source metastore URI.
 
@@ -376,6 +390,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         plan=job.plan,
         engine_ref=job.engine_ref,
         replica=job.replica,
+        admitted_at=job.admitted_at,
         started_at=job.started_at,
         finished_at=job.finished_at,
         error=job.error,

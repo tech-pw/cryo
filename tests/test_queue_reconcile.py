@@ -14,6 +14,7 @@ from cryo.queue.reconcile import (
     reconcile_deferred_jobs,
     reconcile_queued_jobs,
     reconcile_stale_running_jobs,
+    reconcile_stuck_admitted_jobs,
 )
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore, MaintenanceJobRecord
@@ -253,6 +254,142 @@ def test_reconcile_skips_stale_job_with_adopt_lease() -> None:
 
     assert reaped == 0
     assert store.get_job("job-1").status is JobStatus.RUNNING
+
+
+def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
+    """Direct regression test for the 2026-09-08 incident: the Worker's admit handoff
+    (RedisMaintenanceQueue.admit -> rpush cryo:admitted, claim_admitted -> lpop) is
+    at-most-once -- a worker that claims a job_id and dies before mark_running() drops it
+    from the Redis list forever, leaving the DB row ADMITTED with no engine_ref and no owner.
+    Confirmed live: 165 jobs stuck exactly this way. Mirrors reconcile_stale_running_jobs's own
+    RUNNING-side version of the same bug shape."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
+            engine_ref=None,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", replica="r1")
+    assert locks.acquire_table_lock("table-1", "job-1", ttl_seconds=6 * 60 * 60)
+    assert queue.local_in_flight_by_replica("dest") == {"r1": 1}
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 1
+    assert store.get_job("job-1").status is JobStatus.FAILED
+    assert store.get_job("job-1").error == "stuck_admitted_no_dispatch"
+    assert queue.local_in_flight_by_replica("dest") == {}
+    assert not locks.is_table_locked("table-1")
+
+
+def test_reconcile_keeps_freshly_admitted_job_within_the_grace_window() -> None:
+    """Must not regress into failing a job admitted moments ago -- e.g. native-k8s admit that
+    marks ADMITTED before mark_status(RUNNING, engine_ref=...) lands a beat later."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 8, 4, 58, tzinfo=UTC),
+            engine_ref=None,
+        )
+    )
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
+
+
+def test_reconcile_never_touches_an_admitted_job_with_a_real_engine_ref() -> None:
+    """A job legitimately mid-dispatch (e.g. native k8s admit already created its Job, about
+    to transition to RUNNING) can read ADMITTED with a real engine_ref already set -- must not
+    be treated as stuck just because it's past the age threshold."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
+            engine_ref="cryo-native-abc123",
+        )
+    )
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
+
+
+def test_reconcile_skips_admitted_job_with_no_admitted_at_timestamp() -> None:
+    """Pre-migration/legacy rows (or a store that doesn't stamp admitted_at) can't be safely
+    aged -- skip rather than risk failing a job that might be perfectly fine."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=None,
+            engine_ref=None,
+        )
+    )
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
 
 
 def test_reconcile_skips_stale_job_with_started_step() -> None:

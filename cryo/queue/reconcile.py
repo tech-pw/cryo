@@ -233,6 +233,77 @@ def reconcile_stale_running_jobs(
     return reaped
 
 
+_STUCK_ADMITTED_AFTER_SECONDS = 15 * 60
+
+
+def reconcile_stuck_admitted_jobs(
+    store: JobStore,
+    queue: MaintenanceQueue,
+    lock_store: LockStore,
+    *,
+    now: datetime | None = None,
+    stuck_after_seconds: int = _STUCK_ADMITTED_AFTER_SECONDS,
+) -> int:
+    """Fail jobs stuck in ADMITTED past `stuck_after_seconds` with no engine_ref and free
+    their in-flight slot and table lock.
+
+    Root cause, live-confirmed 2026-09-08: the Worker's admit handoff
+    (RedisMaintenanceQueue.admit -> rpush cryo:admitted, claim_admitted -> lpop) is
+    at-most-once, with no ack or visibility timeout. A worker that pops a job_id off
+    cryo:admitted and dies (OOM, node eviction, rollout) before reaching mark_running() drops
+    it from the Redis list forever: the DB row stays ADMITTED, its Redis hash entry
+    independently expires/gets evicted, and no engine_ref or dispatch_id is ever set. None of
+    the existing reconciliation passes catch this -- reconcile_queued_jobs/
+    reconcile_deferred_jobs/reconcile_stale_running_jobs key off QUEUED/DEFERRED/RUNNING, never
+    ADMITTED. Confirmed live: 165 jobs fleet-wide stuck exactly this way, all on one
+    destination, ages spanning 26.6h down to 1.4h, correlated with governor/worker pod
+    restarts. Same failure shape (and same fix pattern) as reconcile_stale_running_jobs's own
+    RUNNING-side version of this bug.
+
+    engine_ref is the discriminator, not just age: a job legitimately mid-dispatch (native k8s
+    admit already created its Job, about to mark_status(RUNNING, engine_ref=...)) still reads
+    ADMITTED for a brief window but will have -- or is about to have -- a real engine_ref. Only
+    a job with no engine_ref at all past the grace window has no live signal anything is
+    happening for it.
+    """
+    list_admitted = getattr(store, "list_admitted_jobs", None)
+    if not callable(list_admitted):
+        return 0
+
+    current = now or datetime.now(UTC)
+    reaped = 0
+    for job in list_admitted():
+        if job.engine_ref:
+            continue
+        admitted_at = job.admitted_at
+        if admitted_at is None:
+            # Pre-migration row (admitted before admitted_at existed) or a store that doesn't
+            # stamp it -- can't tell "just admitted" from "stuck for days" without it, so skip
+            # rather than risk failing a job that's actually fine. Age out naturally once every
+            # currently-admitted job has gone through mark_status(ADMITTED) again.
+            continue
+        admitted_at = admitted_at if admitted_at.tzinfo else admitted_at.replace(tzinfo=UTC)
+        if (current - admitted_at).total_seconds() <= stuck_after_seconds:
+            continue
+        store.mark_status(job.id, JobStatus.FAILED, error="stuck_admitted_no_dispatch")
+        queue.complete(job.id, JobStatus.FAILED)
+        queue.cancel_pending(job.id, job.destination_id)
+        lock_store.release_table_lock(job.table_id, job.id)
+        reaped += 1
+        logger.warning(
+            "Reaped stuck ADMITTED job %s (table %s, destination %s): admitted since %s with "
+            "no engine_ref and no owning worker",
+            job.id,
+            job.table_id,
+            job.destination_id,
+            admitted_at.isoformat(),
+        )
+
+    if reaped:
+        logger.warning("Reaped %d stuck ADMITTED job(s)", reaped)
+    return reaped
+
+
 def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:
     """Remove Redis pending entries that reference missing jobs, missing destinations,
     or jobs whose DB status has already gone terminal.

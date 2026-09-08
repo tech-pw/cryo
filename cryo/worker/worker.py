@@ -65,6 +65,10 @@ class MaintenanceJobRecord:
     plan: dict[str, Any] | None = None
     engine_ref: str | None = None
     replica: str | None = None
+    # Stamped when the job transitions to ADMITTED -- see MaintenanceJob.admitted_at's own
+    # docstring. Used by reconcile_stuck_admitted_jobs to age out jobs the Worker's at-most-
+    # once admit handoff (Redis rpush/lpop, no ack) silently dropped.
+    admitted_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
@@ -243,8 +247,11 @@ class InMemoryJobStore:
         if status is JobStatus.QUEUED:
             job.started_at = None
             job.finished_at = None
+            job.admitted_at = None
         if status in {JobStatus.QUEUED, JobStatus.ADMITTED, JobStatus.RUNNING}:
             job.finished_at = None
+        if status is JobStatus.ADMITTED:
+            job.admitted_at = datetime.now(UTC)
         if status is JobStatus.RUNNING:
             job.started_at = datetime.now(UTC)
         if status in {
@@ -293,6 +300,9 @@ class InMemoryJobStore:
 
     def list_running_jobs(self) -> list[MaintenanceJobRecord]:
         return [job for job in self.jobs.values() if job.status is JobStatus.RUNNING]
+
+    def list_admitted_jobs(self) -> list[MaintenanceJobRecord]:
+        return [job for job in self.jobs.values() if job.status is JobStatus.ADMITTED]
 
     def destination_exists(self, destination_id: str) -> bool:
         destination = self.destinations.get(destination_id)
