@@ -740,6 +740,20 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     s3_log_ingest_thread = Thread(target=s3_log_ingest.run, name="s3-log-ingest", daemon=True)
     s3_log_ingest_thread.start()
 
+    # Regression, confirmed live 2026-09-09: deactivate_orphaned_evolving_catalog_entries
+    # (ace7f4b, 2026-08-26) was written, tested, and dry-run verified against production, but
+    # was only ever wired into run_serve's other_runners list -- a CLI subcommand ("cryo
+    # serve") that no Helm template actually starts (cryo-scheduler runs "cryo scheduler",
+    # i.e. this function, via its own manual Thread-per-daemon pattern below; cryo-api runs
+    # plain uvicorn). The fix therefore never ran in production at all, and the fleet's single
+    # worst repeat_failures pattern (2,979 failures/1,323 tables in the trailing 3 days) kept
+    # recurring indefinitely. Wired here, matching every sibling daemon in this function.
+    evolving_cleanup = EvolvingCatalogCleanupRunner()
+    evolving_cleanup_thread = Thread(
+        target=evolving_cleanup.run, name="evolving-catalog-cleanup", daemon=True
+    )
+    evolving_cleanup_thread.start()
+
     # Fires SlackConfig rows' daily_report_cron (per-config, DB-driven -- distinct from the
     # AlertDispatcherRunner above, which is real-time per-table breach alerts). Previously only
     # reachable via a standalone `python -m cryo.reporting.scheduler` process that no deployment
@@ -757,6 +771,8 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         alert_thread.join(timeout=5)
         s3_log_ingest.stop()
         s3_log_ingest_thread.join(timeout=5)
+        evolving_cleanup.stop()
+        evolving_cleanup_thread.join(timeout=5)
         report_scheduler.stop()
         report_thread.join(timeout=5)
 

@@ -64,13 +64,20 @@ def test_tick_commits_silently_when_nothing_to_deactivate(monkeypatch) -> None:
     runner._logger.info.assert_not_called()
 
 
-def test_runner_is_registered_among_other_runners() -> None:
-    """Direct regression guard for the actual bug: the function existed but nothing in
-    cryo/cli.py's runner list ever called it. Assert it's wired into the same list the other
-    scheduled daemons (benefit-score updater, alert dispatcher, S3 log ingest) live in."""
+def test_runner_is_wired_into_run_scheduler() -> None:
+    """Direct regression guard for the actual bug: deactivate_orphaned_evolving_catalog_entries
+    (ace7f4b, 2026-08-26) existed and was tested but never actually ran in production. It was
+    first wired into run_serve's other_runners list -- but no Helm template starts "cryo serve"
+    (deploy/helm/cryo/templates/scheduler-deployment.yaml runs "cryo scheduler" ->
+    run_scheduler(), and api-deployment.yaml runs plain uvicorn with no CLI daemons at all), so
+    that wiring never actually ran either. Assert it specifically inside run_scheduler's own
+    source, alongside its sibling daemons (benefit-score updater, alert dispatcher, S3 log
+    ingest) that this same function already starts as threads -- not just "referenced
+    somewhere in the module", which would have passed even with the original wrong wiring."""
     import inspect
 
-    import cryo.cli as cli_module
+    from cryo.cli import run_scheduler
 
-    source = inspect.getsource(cli_module)
+    source = inspect.getsource(run_scheduler)
     assert "EvolvingCatalogCleanupRunner()" in source
+    assert "evolving_cleanup.stop()" in source
