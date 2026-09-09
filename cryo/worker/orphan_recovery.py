@@ -353,13 +353,31 @@ def _spark_job_state(destination: DestinationConfig, engine_ref: str) -> EngineO
             # RUNNING. Confirmed live: an orphaned job whose Spark K8s Job had already reached
             # completionTime/succeeded=1 was still logged "still running; waiting" 40+ minutes
             # after the underlying rewrite committed, permanently stalling the job.
-            from cryo.engines.spark.k8s import JobRunState, SparkK8sClient, SparkK8sConfig
+            from cryo.engines.spark.k8s import (
+                TERMINAL_STATES,
+                JobRunState,
+                SparkK8sClient,
+                SparkK8sConfig,
+            )
 
             k8s_client = SparkK8sClient(SparkK8sConfig.from_config(destination.config))
             result = k8s_client.get_job_run(engine_ref)
             if result.state is JobRunState.SUCCESS:
                 return EngineOpState.SUCCEEDED
-            if result.state is JobRunState.FAILED:
+            # Regression, confirmed live 2026-09-09: only SUCCESS/FAILED were checked here,
+            # so JobRunState.UNKNOWN (get_job_run's own signal that the driver pod AND the
+            # wrapper Job are both gone -- TTL-expired before this job's outcome was ever
+            # resolved, see _get_wrapper_job_run's docstring) silently fell through to
+            # RUNNING. An adopted job whose real Spark Job had been garbage-collected days
+            # earlier stayed in the "still running; waiting" loop forever: every worker
+            # restart re-adopted it, renewed the lease, and waited on an outcome that can
+            # never arrive -- one repeatedly OOM-killed worker held the lease for 4+ days
+            # across 16+ crash-restart cycles without ever releasing it or letting the
+            # reaper (reconcile_stale_running_jobs) take over, because an active adopt lease
+            # makes that reaper defer to orphan recovery. UNKNOWN is genuinely unrecoverable,
+            # not merely uncertain -- match the EMR branch below's TERMINAL_STATES pattern:
+            # anything terminal that isn't SUCCESS resolves as FAILED instead of waiting.
+            if result.state in TERMINAL_STATES:
                 return EngineOpState.FAILED
             return EngineOpState.RUNNING
 

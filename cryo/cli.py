@@ -145,6 +145,35 @@ class BenefitScoreUpdaterRunner(DaemonRunner):
             )
 
 
+class EvolvingCatalogCleanupRunner(DaemonRunner):
+    """Periodically deactivates orphaned '*_evolving' catalog entries.
+
+    See deactivate_orphaned_evolving_catalog_entries's own docstring for the historical
+    rename-artifact this cleans up. The fix existed since 2026-08-26 (ace7f4b) but was never
+    wired to a scheduled runner -- confirmed live 2026-09-09 as the fleet's single worst
+    repeat_failures pattern, still recurring daily (2,979 failures/1,323 tables in the trailing
+    3 days) purely because nothing was ever calling the function in production.
+    """
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().evolving_catalog_cleanup_interval_hours * 3600
+        super().__init__("evolving-catalog-cleanup", interval or settings_interval)
+
+    def _tick(self) -> None:
+        from cryo.db.repositories.sources import deactivate_orphaned_evolving_catalog_entries
+        from cryo.db.session import SessionLocal
+
+        with SessionLocal() as session:
+            deactivated = deactivate_orphaned_evolving_catalog_entries(session)
+            session.commit()
+            if deactivated:
+                self._logger.info(
+                    "Deactivated %s orphaned '*_evolving' catalog entr%s",
+                    deactivated,
+                    "y" if deactivated == 1 else "ies",
+                )
+
+
 class AlertDispatcherRunner(DaemonRunner):
     """Checks owned/subscribed tables for SLA/data-quality breaches and notifies them."""
 
@@ -771,6 +800,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         BenefitScoreUpdaterRunner(),
         AlertDispatcherRunner(),
         S3LogIngestRunner(),
+        EvolvingCatalogCleanupRunner(),
         ReportScheduler(),
     ]
     runners: list[DaemonRunner | ReportScheduler] = [*core_runners, *other_runners]
