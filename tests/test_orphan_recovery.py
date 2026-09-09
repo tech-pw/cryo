@@ -161,6 +161,37 @@ def test_spark_k8s_job_state_detects_success_not_just_failure(monkeypatch) -> No
     )
 
 
+def test_spark_k8s_job_state_resolves_unknown_as_failed_not_running(monkeypatch) -> None:
+    """Regression, confirmed live 2026-09-09: _spark_job_state only checked SUCCESS/FAILED,
+    so JobRunState.UNKNOWN (get_job_run's signal that the driver pod AND the wrapper Job are
+    both gone -- TTL-expired before this job's outcome was ever resolved) silently fell
+    through to RUNNING, same identity-comparison-shaped gap as the SUCCESS bug above. An
+    adopted job whose real Spark Job had been garbage-collected days earlier stayed in the
+    "still running; waiting" loop forever: every worker restart re-adopted it, renewed the
+    lease, and waited on an outcome that can never arrive -- live-confirmed as the direct
+    cause of a run stuck open 94+ hours, with one repeatedly OOM-killed worker holding the
+    adopt lease across 16+ crash-restart cycles without ever releasing it (an active lease
+    makes reconcile_stale_running_jobs's reaper defer to orphan recovery instead of reaping).
+    UNKNOWN is genuinely unrecoverable, not merely uncertain -- it must resolve as FAILED,
+    same as the EMR branch already does via TERMINAL_STATES."""
+    from cryo.engines.spark import k8s as spark_k8s
+
+    class _FakeResult:
+        def __init__(self, state: spark_k8s.JobRunState) -> None:
+            self.state = state
+
+    monkeypatch.setattr(
+        spark_k8s.SparkK8sClient,
+        "get_job_run",
+        lambda self, job_id: _FakeResult(spark_k8s.JobRunState.UNKNOWN),
+    )
+    dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
+    assert (
+        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        is EngineOpState.FAILED
+    )
+
+
 def test_native_live_dispatch_skipped() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
