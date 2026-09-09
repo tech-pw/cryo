@@ -513,6 +513,16 @@ def _check_repeat_failures(session: Session, *, now: datetime) -> CheckResult:
     failure, and distinct from the batch-deadline salvage case (which produces a bare
     'native_job_failed' with no distinguishing detail). Groups by a normalized error prefix
     so distinct S3 keys in an otherwise-identical NoSuchKey message still count as one pattern.
+
+    Excludes '*_evolving' tables (join to Table, same _EVOLVING_SUFFIX filter scan_freshness/
+    scan_failures/cost_ingestion_freshness already apply below) -- acknowledged, 2026-09-09:
+    this was still scoring the exact known, permanently-unfixable orphaned-catalog-entry class
+    from ace7f4b as a fresh CRITICAL deduction every day (2,946 failures/1,259 tables, all
+    '*_evolving', metadata.json permanently gone by design of that class of problem, not a
+    live failure retrying could ever resolve) despite the deliberate decision, already applied
+    to the other three checks, to leave '*_evolving' cleanup alone and stop scoring it as if it
+    were an actionable incident. A genuinely new repeat-failure pattern on a real table still
+    counts normally.
     """
     window_start = now - timedelta(days=3)
     pattern_expr = case(
@@ -523,7 +533,13 @@ def _check_repeat_failures(session: Session, *, now: datetime) -> CheckResult:
     ).label("pattern")
     rows = session.execute(
         select(pattern_expr, func.count(), func.count(func.distinct(MaintenanceJob.table_id)))
-        .where(MaintenanceJob.status == "failed", MaintenanceJob.finished_at >= window_start)
+        .select_from(MaintenanceJob)
+        .join(Table, Table.id == MaintenanceJob.table_id)
+        .where(
+            MaintenanceJob.status == "failed",
+            MaintenanceJob.finished_at >= window_start,
+            Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+        )
         .group_by(pattern_expr)
         .having(func.count() >= _REPEAT_FAILURE_MIN_COUNT)
     ).all()
