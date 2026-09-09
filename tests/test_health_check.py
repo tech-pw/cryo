@@ -591,6 +591,65 @@ class TestRepeatFailures:
         check = next(c for c in report.checks if c.name == "repeat_failures")
         assert check.passed is True
 
+    def test_ignores_evolving_table_orphaned_catalog_failures(self, session) -> None:
+        """Acknowledged, 2026-09-09: '*_evolving' tables hit orphaned_catalog_entry
+        (NoSuchKey) permanently by design of that class of problem (ace7f4b) -- the same
+        deliberate exclusion scan_freshness/scan_failures/cost_ingestion_freshness already
+        apply, so this stops scoring a known, unfixable class as a fresh daily CRITICAL."""
+        source, table = _seed_source_table(session, name="gold_notifications_evolving")
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(8):
+            _seed_job(
+                session,
+                run=run,
+                table=table,
+                destination=destination,
+                status="failed",
+                finished_at=NOW,
+                error="failed to load table: blob NoSuchKey: The specified key does not exist.",
+            )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "repeat_failures")
+        assert check.passed is True
+
+    def test_still_counts_a_real_tables_orphaned_catalog_failures(self, session) -> None:
+        """The exclusion is scoped to '*_evolving' tables only -- a non-evolving table
+        hitting the same NoSuchKey pattern repeatedly is a genuine, actionable incident and
+        must still fail the check."""
+        source, evolving_table = _seed_source_table(session, name="stale_evolving")
+        _, real_table = _seed_source_table(session, name="real_table")
+        destination = _seed_destination(session)
+        run = _seed_run(session, status="running", created_at=NOW)
+        for _ in range(8):
+            _seed_job(
+                session,
+                run=run,
+                table=evolving_table,
+                destination=destination,
+                status="failed",
+                finished_at=NOW,
+                error="failed to load table: blob NoSuchKey: The specified key does not exist.",
+            )
+        for _ in range(8):
+            _seed_job(
+                session,
+                run=run,
+                table=real_table,
+                destination=destination,
+                status="failed",
+                finished_at=NOW,
+                error="failed to load table: blob NoSuchKey: The specified key does not exist.",
+            )
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "repeat_failures")
+        assert check.passed is False
+        assert check.evidence["orphaned_catalog_entry (NoSuchKey)"]["failures"] == 8
+
 
 def _seed_table_stats(
     session, *, table_id, scan_at, total_files, small_files_count, total_size_gb
