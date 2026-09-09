@@ -151,3 +151,25 @@ def deactivate_orphaned_evolving_catalog_entries(session: Session) -> int:
         update(Table).where(Table.id.in_(stale_ids)).values(is_active=False)
     )
     return int(result.rowcount or 0)
+
+
+def deactivate_tables_by_id(session: Session, table_ids: Sequence[uuid.UUID]) -> int:
+    """Deactivate an explicit, caller-verified list of tables (is_active=False) -- not a
+    heuristic sweep. For '*_evolving' rows that don't fit deactivate_orphaned_evolving_
+    catalog_entries' automated safety condition (location IS NULL): some historical-rename
+    orphans kept a non-null `location` pointing at a path whose metadata/manifest files are
+    now 404 in S3, so the null-location heuristic above misses them.
+
+    User-requested, 2026-09-09, top 10 by consecutive_scan_failures among active '*_evolving'
+    tables: each individually confirmed query_count_30d=0, last_snapshot_committed_at 4-7
+    months stale (Feb-Apr), and a live S3 404 on the table's own registered location's
+    metadata/manifest -- i.e. verified dead and verified unused per-table, not matched by a
+    broadened heuristic. Same reversible mechanism (is_active=False, row/history untouched,
+    no S3/file deletion) as the bulk cleanup -- no prod outage risk, nothing currently reads
+    these. Caller is responsible for the verification; this function only applies it."""
+    if not table_ids:
+        return 0
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
+        update(Table).where(Table.id.in_(table_ids)).values(is_active=False)
+    )
+    return int(result.rowcount or 0)
