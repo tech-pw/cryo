@@ -512,6 +512,18 @@ class Settings(BaseSettings):
         ge=1,
         description="Hours between AutoComp benefit score recalculations.",
     )
+    evolving_catalog_cleanup_interval_hours: int = Field(
+        default=6,
+        ge=1,
+        description=(
+            "Hours between sweeps deactivating orphaned '*_evolving' catalog entries "
+            "(cryo.db.repositories.sources.deactivate_orphaned_evolving_catalog_entries) -- "
+            "the fix existed since 2026-08-26 (ace7f4b) but was never wired to a scheduled "
+            "runner, so the same historical rename artifact (1,200+ tables, location IS NULL, "
+            "a verified-good sibling with a real location) kept re-accumulating as the fleet's "
+            "single worst repeat_failures pattern every day the cleanup wasn't run manually."
+        ),
+    )
 
     # API protection
     api_rate_limit_rps: float = Field(
