@@ -639,6 +639,20 @@ class TablePatch(BaseModel):
     owner_email: str | None = None
 
 
+class TableDeactivateBatchRequest(BaseModel):
+    """Explicit, caller-verified table_ids to deactivate -- not a filter or heuristic, so a
+    typo or over-broad selection can't silently expand scope. See
+    deactivate_tables_by_id's docstring (cryo/db/repositories/sources.py)."""
+
+    table_ids: list[uuid.UUID]
+
+
+class TableDeactivateBatchResponse(BaseModel):
+    requested: int
+    deactivated: int
+    deactivated_ids: list[uuid.UUID]
+
+
 class PaginatedTables(BaseModel):
     items: list[TableRead]
     total: int

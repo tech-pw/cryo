@@ -59,6 +59,69 @@ def test_patch_table_rejects_viewer_role(api_db: ApiDb) -> None:
     assert response.status_code == 403
 
 
+def test_deactivate_tables_batch_deactivates_exactly_the_requested_ids(api_db: ApiDb) -> None:
+    """User-requested, 2026-09-09: an explicit, admin-reviewed batch deactivate for
+    '*_evolving' tables that don't fit the automated sweep's location IS NULL safety
+    condition. Must touch exactly the requested ids -- no filter, no heuristic expansion."""
+    table_id_1 = _seed_table(api_db.session_factory)
+    table_id_2 = _seed_table(api_db.session_factory)
+    untouched_id = _seed_table(api_db.session_factory)
+    client = api_db.client
+
+    response = client.post(
+        "/api/v1/tables/deactivate-batch",
+        headers=ADMIN_HEADERS,
+        json={"table_ids": [str(table_id_1), str(table_id_2)]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requested"] == 2
+    assert body["deactivated"] == 2
+    assert set(body["deactivated_ids"]) == {str(table_id_1), str(table_id_2)}
+
+    with api_db.session_factory() as session:
+        from cryo.db.models import Table
+
+        assert session.get(Table, table_id_1).is_active is False
+        assert session.get(Table, table_id_2).is_active is False
+        assert session.get(Table, untouched_id).is_active is True
+
+
+def test_deactivate_tables_batch_rejects_operator_role(api_db: ApiDb) -> None:
+    """Requires admin, not just operator -- stricter than cancel_run, since this is a
+    caller-trusted (not automatically-verified) deactivation."""
+    table_id = _seed_table(api_db.session_factory)
+
+    response = api_db.client.post(
+        "/api/v1/tables/deactivate-batch",
+        headers=OPERATOR_HEADERS,
+        json={"table_ids": [str(table_id)]},
+    )
+
+    assert response.status_code == 403
+
+
+def test_deactivate_tables_batch_404s_on_unknown_id_and_applies_nothing(api_db: ApiDb) -> None:
+    """A bad id must fail the whole batch, not silently skip it -- get_scoped_resource raises
+    404 for any unmatched id before deactivate_tables_by_id ever runs, so a typo can't
+    partially apply."""
+    table_id = _seed_table(api_db.session_factory)
+    bogus_id = uuid.uuid4()
+
+    response = api_db.client.post(
+        "/api/v1/tables/deactivate-batch",
+        headers=ADMIN_HEADERS,
+        json={"table_ids": [str(table_id), str(bogus_id)]},
+    )
+
+    assert response.status_code == 404
+    with api_db.session_factory() as session:
+        from cryo.db.models import Table
+
+        assert session.get(Table, table_id).is_active is True
+
+
 def test_subscribe_list_and_unsubscribe_round_trip(api_db: ApiDb) -> None:
     table_id = _seed_table(api_db.session_factory)
     client = api_db.client
