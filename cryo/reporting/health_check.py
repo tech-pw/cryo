@@ -943,6 +943,13 @@ def _check_namespace_unused_cost(session: Session, *, now: datetime) -> CheckRes
 
 
 def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -> FleetFileTrend:
+    """Both today_row and yesterday_row are joined against Table.is_active -- confirmed live,
+    2026-09-09: deactivate_orphaned_evolving_catalog_entries deactivating 1,227 stale
+    '*_evolving' rows the same night dropped their TableStats/TableStatsHistory rows out of
+    "today"'s totals (nothing cascade-deletes stats on a soft-delete) while "yesterday"'s
+    pre-cleanup baseline still included them, producing a same-day swing in small-file ratio
+    and avg file size that had nothing to do with actual compaction throughput. Any bulk
+    deactivation will keep reproducing this without the filter."""
     now = now or datetime.now(UTC)
     today_row = session.execute(
         select(
@@ -951,6 +958,9 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
             func.sum(TableStats.total_size_gb),
             func.count(),
         )
+        .select_from(TableStats)
+        .join(Table, Table.id == TableStats.table_id)
+        .where(Table.is_active.is_(True))
     ).one()
     today_total_files = int(today_row[0] or 0)
     today_small_files = int(today_row[1] or 0)
@@ -961,6 +971,8 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
     # "Yesterday" fleet totals from each table's latest TableStatsHistory row scanned before
     # the cutoff -- a row_number() window function (portable across sqlite/Postgres) rather
     # than Postgres-only DISTINCT ON, picking the most recent scan per table_id as of then.
+    # Filtered to currently-active tables for the same reason as today_row above: a table
+    # deactivated since its last history row would otherwise still count toward "yesterday".
     yesterday_cutoff = now - timedelta(days=1)
     row_num = (
         func.row_number()
@@ -978,7 +990,9 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
             TableStatsHistory.total_size_gb,
             row_num,
         )
-        .where(TableStatsHistory.scan_at < yesterday_cutoff)
+        .select_from(TableStatsHistory)
+        .join(Table, Table.id == TableStatsHistory.table_id)
+        .where(TableStatsHistory.scan_at < yesterday_cutoff, Table.is_active.is_(True))
         .subquery()
     )
     yesterday_row = session.execute(

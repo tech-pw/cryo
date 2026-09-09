@@ -695,6 +695,71 @@ class TestFleetFileTrend:
         trend = compute_fleet_file_trend(session, now=NOW)
         assert trend.yesterday_total_files == 80
 
+    def test_excludes_deactivated_tables_from_today_totals(self, session) -> None:
+        """Regression test, 2026-09-09: a table deactivated (is_active=False) keeps its
+        TableStats row (nothing cascade-deletes stats on a soft-delete), so summing without
+        a Table.is_active filter would still count it toward "today" -- confirmed live the
+        same night deactivate_orphaned_evolving_catalog_entries deactivated 1,227 stale rows,
+        which would otherwise show up as a same-day small-file-ratio swing unrelated to real
+        compaction throughput."""
+        source, active_table = _seed_source_table(session, name="active")
+        _, inactive_table = _seed_source_table(session, name="evolving")
+        inactive_table.is_active = False
+        _seed_table_stats(
+            session,
+            table_id=active_table.id,
+            scan_at=NOW,
+            total_files=100,
+            small_files_count=10,
+            total_size_gb=5.0,
+        )
+        _seed_table_stats(
+            session,
+            table_id=inactive_table.id,
+            scan_at=NOW,
+            total_files=900,
+            small_files_count=900,
+            total_size_gb=1.0,
+        )
+        session.commit()
+
+        trend = compute_fleet_file_trend(session, now=NOW)
+        assert trend.today_total_files == 100
+        assert trend.today_small_files == 10
+        assert trend.tables_counted == 1
+
+    def test_excludes_deactivated_tables_from_yesterday_totals(self, session) -> None:
+        """Same exclusion, for the TableStatsHistory-derived "yesterday" side -- a table
+        that was active when scanned but has since been deactivated must not inflate the
+        prior-day baseline either, or the delta compares an apples (today, active-only) to
+        an oranges (yesterday, includes stale) total."""
+        source, active_table = _seed_source_table(session, name="active")
+        _, inactive_table = _seed_source_table(session, name="evolving")
+        inactive_table.is_active = False
+        session.add(
+            TableStatsHistory(
+                table_id=active_table.id,
+                scan_at=NOW - timedelta(days=2),
+                total_files=100,
+                small_files_count=10,
+                total_size_gb=5.0,
+            )
+        )
+        session.add(
+            TableStatsHistory(
+                table_id=inactive_table.id,
+                scan_at=NOW - timedelta(days=2),
+                total_files=900,
+                small_files_count=900,
+                total_size_gb=1.0,
+            )
+        )
+        session.commit()
+
+        trend = compute_fleet_file_trend(session, now=NOW)
+        assert trend.yesterday_total_files == 100
+        assert trend.yesterday_small_files == 10
+
     def test_is_worsening_requires_both_signals(self, session) -> None:
         trend_both = FleetFileTrend(
             today_total_files=1200,
