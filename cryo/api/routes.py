@@ -98,6 +98,8 @@ from cryo.api.schemas import (
     TableAlertSubscriptionRead,
     TableAuditResponse,
     TableCostRead,
+    TableDeactivateBatchRequest,
+    TableDeactivateBatchResponse,
     TableGroupByResponse,
     TableGroupByRow,
     TableParamOverridePatch,
@@ -133,6 +135,7 @@ from cryo.db.repositories import scanner as scanner_repo
 from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.repositories.sources import (
     deactivate_out_of_scope_tables,
+    deactivate_tables_by_id,
     normalize_maintenance_schema_names,
 )
 from cryo.db.session import SessionLocal
@@ -1162,6 +1165,34 @@ def patch_table(table_id: uuid.UUID, payload: TablePatch, session: SessionDep) -
     session.commit()
     session.refresh(table)
     return table_to_read(table)
+
+
+@router.post(
+    "/tables/deactivate-batch",
+    response_model=TableDeactivateBatchResponse,
+    dependencies=[Depends(require_admin)],
+    tags=["tables"],
+)
+def deactivate_tables_batch(
+    payload: TableDeactivateBatchRequest, session: SessionDep
+) -> TableDeactivateBatchResponse:
+    """Deactivate an explicit, caller-supplied list of table_ids (is_active=False only --
+    never touches S3/underlying files, fully reversible via a direct DB update). Requires
+    admin: unlike the automated deactivate_orphaned_evolving_catalog_entries sweep (which
+    only matches a verified-safe location IS NULL shape), this trusts the caller's own
+    per-table verification, so it's scoped to explicit IDs with no filter/heuristic that
+    could silently expand scope. See deactivate_tables_by_id's docstring."""
+    each_scoped = [
+        get_scoped_resource(session, Table, table_id, resource_type="Table")
+        for table_id in payload.table_ids
+    ]
+    deactivated = deactivate_tables_by_id(session, [table.id for table in each_scoped])
+    session.commit()
+    return TableDeactivateBatchResponse(
+        requested=len(payload.table_ids),
+        deactivated=deactivated,
+        deactivated_ids=[table.id for table in each_scoped],
+    )
 
 
 @router.get(
