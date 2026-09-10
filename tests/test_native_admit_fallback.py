@@ -28,6 +28,37 @@ def _plan() -> MaintenancePlan:
     )
 
 
+def test_spark_fallback_uses_table_sizing_before_submit(monkeypatch) -> None:
+    store = InMemoryJobStore()
+    store.add_destination(DestinationConfig(id="spark-1", engine=EngineType.SPARK_EMR, config={}))
+    engine, client = _spark_engine_with_mock_client(monkeypatch)
+    client.submit_spark_sql.return_value = "cryo-spark-small"
+    sized_configs = []
+
+    def sized_client(config):
+        sized_configs.append(config)
+        return client
+
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", sized_client)
+    with patch("cryo.engines.factory.create_engine", return_value=engine):
+        _dispatch_fallback_operations(
+            store=store,
+            fallback_operations=((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "unsupported"),),
+            plan=_plan(),
+            destination_config={"sql_fallback_destination_id": "spark-1"},
+            source_config={},
+            table_ref=_plan().table_ref,
+            job_id="job-1",
+            table_id="table-1",
+            table_stats={"total_size_gb": 0.1, "total_files": 12},
+        )
+    client.submit_spark_sql.assert_called_once()
+    # submit() constructs its client from the cloned engine's scaled configuration.
+    assert sized_configs[-1].executor_instances == 1
+    assert sized_configs[-1].executor_mem_mib == 1024
+    client.wait_for_completion.assert_not_called()
+
+
 def test_no_fallback_operations_is_a_noop() -> None:
     store = InMemoryJobStore()
     with patch("cryo.engines.factory.create_engine") as create_engine:

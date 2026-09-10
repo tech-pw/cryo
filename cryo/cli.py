@@ -924,7 +924,10 @@ def _worker_scale_metric() -> int:
         from sqlalchemy import text
 
         result = session.execute(
-            text("SELECT count(*) FROM cryo.jobs WHERE status IN ('admitted', 'running')")
+            text(
+                "SELECT count(*) FROM cryo.jobs "
+                "WHERE status IN ('admitted', 'running') AND dispatch_id IS NULL"
+            )
         )
         return int(result.scalar() or 0)
 

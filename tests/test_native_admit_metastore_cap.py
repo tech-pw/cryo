@@ -12,12 +12,13 @@ cap on RUNNING jobs sharing a metastore URI, enforced at native-engine admission
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import patch
 from uuid import uuid4
 
 from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table
-from cryo.domain.enums import Mode
+from cryo.domain.enums import Mode, OperationType
 from cryo.engines.native.packing import DispatchSpec, PackableJob
 from cryo.engines.native.resources import TableResourceEstimate
 from cryo.governor.native_admit import (
@@ -72,9 +73,7 @@ class _FakeSettings:
 def test_metastore_headroom_treats_unseen_uri_as_fully_open(monkeypatch) -> None:
     """A metastore URI with zero currently-running jobs is absent from the underlying
     GROUP BY count query -- must be treated as fully open (cap slots), not zero."""
-    monkeypatch.setattr(
-        "cryo.governor.native_admit.get_settings", lambda: _FakeSettings()
-    )
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     store = InMemoryJobStore()
     store.count_running_jobs_by_metastore_uri = lambda: {}  # type: ignore[attr-defined]
 
@@ -84,9 +83,7 @@ def test_metastore_headroom_treats_unseen_uri_as_fully_open(monkeypatch) -> None
 
 
 def test_metastore_headroom_blocks_uri_at_cap(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "cryo.governor.native_admit.get_settings", lambda: _FakeSettings()
-    )
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     store = InMemoryJobStore()
     store.count_running_jobs_by_metastore_uri = (  # type: ignore[attr-defined]
         lambda: {"thrift://metastore:9083": 3}
@@ -98,9 +95,7 @@ def test_metastore_headroom_blocks_uri_at_cap(monkeypatch) -> None:
 
 
 def test_metastore_headroom_reserve_decrements_and_can_exhaust(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "cryo.governor.native_admit.get_settings", lambda: _FakeSettings()
-    )
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     store = InMemoryJobStore()
     store.count_running_jobs_by_metastore_uri = (  # type: ignore[attr-defined]
         lambda: {"thrift://metastore:9083": 1}
@@ -167,9 +162,7 @@ def test_admit_defers_when_metastore_at_capacity(monkeypatch) -> None:
     """Full integration through admit_native_k8s_jobs: a job whose table's metastore is
     already at the configured cap gets deferred with a metastore_capacity reason and its
     table lock released -- same safety contract as native_cluster_capacity deferrals."""
-    monkeypatch.setattr(
-        "cryo.governor.native_admit.get_settings", lambda: _FakeSettings()
-    )
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     job = _job("job-1", "table-1")
     store = _store_with_job(job, uri="thrift://saturated:9083")
     store.count_running_jobs_by_metastore_uri = (  # type: ignore[attr-defined]
@@ -208,9 +201,7 @@ def test_admit_defers_when_metastore_at_capacity(monkeypatch) -> None:
 def test_admit_proceeds_when_metastore_has_headroom(monkeypatch) -> None:
     """The other direction: plenty of metastore headroom must not block an otherwise-
     admissible job. Confirms this isn't a blanket new blocker."""
-    monkeypatch.setattr(
-        "cryo.governor.native_admit.get_settings", lambda: _FakeSettings()
-    )
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     job = _job("job-1", "table-1")
     store = _store_with_job(job, uri="thrift://roomy:9083")
     store.count_running_jobs_by_metastore_uri = lambda: {}  # type: ignore[attr-defined]
@@ -241,6 +232,37 @@ def test_admit_proceeds_when_metastore_has_headroom(monkeypatch) -> None:
     # build, K8s job creation) needs more infra mocking than this test cares about.
     # What matters: it must NOT have been deferred for metastore_capacity.
     assert not any(reason.startswith("metastore_capacity") for _, reason in deferred_calls)
+
+
+def test_packed_native_plan_preserves_preset_operation_exclusions(monkeypatch) -> None:
+    monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
+    job = replace(
+        _job("job-1", "table-1"),
+        mode=Mode.DEEP,
+        operations=(OperationType.EXPIRE_SNAPSHOTS,),
+        params={"table_ref": "cdp.demo.events"},
+    )
+    store = _store_with_job(job)
+    destination = DestinationConfig(id="dest-1", engine="native", config={"k8s_dispatch": True})
+    with (
+        patch("cryo.governor.native_admit.k8s_dispatch_available", return_value=True),
+        patch("cryo.governor.native_admit.cluster_headroom", return_value=(10, 100_000, 100_000)),
+    ):
+        admit_native_k8s_jobs(
+            jobs=[job],
+            destination=destination,
+            store=store,
+            session_factory=lambda: None,
+            live_capacity={},
+            mark_status=store.mark_status,
+            cancel_pending=lambda *_: None,
+            defer_job=lambda *_: None,
+            release_lock=lambda *_: None,
+        )
+    # Planning is persisted before the mocked infrastructure boundary is reached.
+    plan = store.get_job(job.id).plan
+    assert plan is not None
+    assert [op["type"] for op in plan["operations"]] == ["expire_snapshots"]
 
 
 def _seed_source(session, *, uri: str) -> Source:

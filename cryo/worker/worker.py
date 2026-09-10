@@ -449,7 +449,10 @@ class Worker:
             if self._on_job_finished is not None:
                 self._on_job_finished()
             return self._store.get_job(job.id)
-        self._ensure_table_lock(job)
+        if not self._ensure_table_lock(job):
+            self._store.mark_status(job.id, JobStatus.DEFERRED, error="table_locked")
+            self._queue.defer(job.id)
+            return self._store.get_job(job.id)
         self._queue.mark_running(job.id)
         self._store.mark_status(job.id, JobStatus.RUNNING)
         table_ref: str | None = None
@@ -1190,10 +1193,14 @@ class Worker:
             should_stop=self._should_stop,
         )
 
-    def _ensure_table_lock(self, job: MaintenanceJobRecord) -> None:
-        if self._lock_store is None or self._lock_store.is_table_locked(job.table_id):
-            return
-        self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+    def _ensure_table_lock(self, job: MaintenanceJobRecord) -> bool:
+        if self._lock_store is None:
+            return True
+        # The governor normally acquired this lock for this job. An existing lock
+        # is sufficient only when the owner matches; another job must block execution.
+        return self._lock_store.renew_table_lock(
+            job.table_id, job.id, self._lock_ttl_seconds
+        ) or self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
     def _renew_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is None:

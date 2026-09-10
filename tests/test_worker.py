@@ -35,6 +35,23 @@ def test_worker_builds_plan_executes_statements_and_marks_success() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+def test_worker_defers_without_executing_when_another_job_owns_table() -> None:
+    queue, locks, store = _worker_fixture()
+    locks.release_table_lock("table-1", "job-1")
+    assert locks.acquire_table_lock("table-1", "other-job", 300)
+
+    def unexpected_engine(destination):
+        raise AssertionError("must not construct an engine for a locked table")
+
+    result = Worker(queue, store, unexpected_engine, locks).process_next()
+    assert result is not None
+    assert result.status is JobStatus.DEFERRED
+    assert result.error == "table_locked"
+    assert queue.status("job-1") is JobStatus.DEFERRED
+    assert locks.list_table_locks() == [("table-1", "other-job")]
+    assert not store.audit
+
+
 def test_worker_records_actual_bytes_freed_when_engine_returns_them() -> None:
     queue, locks, store = _worker_fixture()
     engine = FakeMaintenanceEngine(
