@@ -37,6 +37,22 @@ _ACTIVE_JOB_STATUSES = {
     JobStatus.DEFERRED,
 }
 
+# Confirmed live, 2026-09-10: recover_orphaned_jobs's fallback loop called
+# store.list_queued_jobs() with no limit -- JobStore.list_queued_jobs's own docstring
+# already documents this exact unbounded-scan pattern (28,445 queued jobs, 2026-09-02,
+# fixed in queue/reconcile.py's reconcile_queued_jobs via this same _MAX_QUEUED_RECONCILE_
+# PER_WAVE-shaped cap) but this call site was missed. WorkerRunner._tick() runs
+# recover_orphaned_jobs on the base 5s worker poll interval, on every worker pod
+# independently -- so an unbounded fetch here means every pod re-materializes the entire
+# fleet-wide queued backlog (full MaintenanceJobRecord + eager-loaded run/preset) every 5
+# seconds. Under today's cron burst (queue_growth vitals check: 3,134+ deep) this compounded
+# across ~15 pods far faster than the 2026-09-02 incident's single-governor-pod case,
+# OOMKilling 9 of 9 worker pods within roughly 90 minutes. QUEUED jobs were never actually
+# adoptable orphans anyway (this module's own docstring: "already in RUNNING (or stuck
+# ADMITTED)") -- capped instead of removed, since the loop below still needs to see *some*
+# queued jobs to re-enqueue ones missing from Redis (see the ADMITTED/QUEUED loop below).
+_MAX_QUEUED_SCAN_PER_TICK = 2000
+
 
 class StepLedger(Protocol):
     def get_started_step(self, job_id: str) -> JobStepRecord | None: ...
@@ -178,14 +194,20 @@ def recover_orphaned_jobs(
     if callable(list_all_active):
         jobs = list_all_active()
     else:
-        for status_name, lister_name in (
-            (JobStatus.ADMITTED, "list_admitted_jobs"),
-            (JobStatus.QUEUED, "list_queued_jobs"),
+        for status_name, lister_name, lister_kwargs in (
+            (JobStatus.ADMITTED, "list_admitted_jobs", {}),
+            (JobStatus.QUEUED, "list_queued_jobs", {"limit": _MAX_QUEUED_SCAN_PER_TICK}),
         ):
             lister = getattr(store, lister_name, None)
             if not callable(lister):
                 continue
-            for job in lister():
+            try:
+                results = lister(**lister_kwargs)
+            except TypeError:
+                # Older/test JobStore stand-ins may not accept limit= -- fall back to the
+                # unbounded call rather than crash the whole tick over a kwarg mismatch.
+                results = lister()
+            for job in results:
                 if job.status is status_name:
                     jobs.append(job)
 
