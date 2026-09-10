@@ -287,26 +287,116 @@ curl -sS -G http://127.0.0.1:18000/api/v1/tables \
 
 ---
 
-## State as of last update (2026-09-10)
+## State as of last update (2026-09-10, mid-active-outage)
 
-- Fixed and deployed: `deactivate_orphaned_evolving_catalog_entries` wiring (was dead
-  code, never scheduled), Spark orphan-recovery `UNKNOWN`-state handling, `repeat_failures`
-  vitals check `*_evolving` exclusion, `fleet_small_file_trend` active-table filtering,
-  a batch table-deactivate admin API endpoint, and an unbounded `list_queued_jobs()`
-  scan in `recover_orphaned_jobs` that was the dominant driver of a fleet-wide
-  worker-pod OOM cascade during a large cron burst.
-- Known follow-up, not yet fixed: `cryo/engines/trino/engine.py`'s `TrinoEngine.execute()`
-  blocks synchronously inside `cursor.execute()` and only captures the Trino query ID
-  (`engine_ref`) after it returns/raises — if the worker process dies mid-call, the job
-  is stuck at `status='running'`, `engine_ref=null` forever, with nothing to probe or
-  auto-recover (unlike the Spark path, which has a real K8s Job to check). Recurred on
+### ⚠️ ACTIVE, UNRESOLVED: cryo-worker OOM cascade
+
+**This is the most important thing in this file right now.** `cryo-worker` pods have
+been OOMKilling repeatedly since ~08:33 UTC on 2026-09-10, during/after a large
+scheduled cron burst (multiple concurrent `MaintenanceRun`s of 5,000–11,000+ jobs each).
+Three things were tried, in order, each ruled out or only partially effective:
+
+1. **Bounded `recover_orphaned_jobs`'s unbounded `list_queued_jobs()` scan**
+   (`cryo/worker/orphan_recovery.py`, commit `68bc82eb`) — real bug, real fix (queue depth
+   dropped 3,134→584 after deploying it), but did **not** stop the OOM cascade on its own.
+2. **Raised `worker.resources.limits.memory` 6Gi→8Gi** (`values-prod.yaml`, commit
+   `108ee7a9`) — did **not** help either: 3 of 10 pods OOMKilled within ~3.5 min of the
+   fresh rollout, **two of them at the identical second**. That simultaneity is the key
+   clue — it rules out "one big table's payload is just bigger than the ceiling" and
+   points at something that spikes hard and fast under concurrent load, likely triggered
+   by the same event (an admission wave? a scheduled batch?) hitting multiple pods at once.
+3. **Capped KEDA `maxReplicas` 10→3** (`values-prod.yaml`, commit `d3b4c956`) — a
+   concurrency-reduction stopgap, not a fix. Rationale: fewer simultaneous pods means
+   fewer pods that can hit whatever this is at the same time. **Revert this
+   (`native.keda.maxReplicas: 3` → delete the override, back to the template default of
+   10) once the real root cause is found and fixed** — it throttles fleet-wide admission
+   throughput in the meantime, which is its own cost (slower queue drain, extended
+   `queue_growth`/`success_rate` vitals deductions).
+
+**Leading (still unconfirmed) theory**: the crash signature is always the same —
+`spark-k8s payload worker:pre_execute ... rss=1xx MiB` (self-reported process RSS stays
+low, 120–180Mi) immediately followed by `Created Spark-on-K8s dispatch Job ...` with
+**no further log line** before the kill. The Python process's own RSS is never the
+smoking gun (confirmed via `kubectl exec ... cat /proc/1/status` — matches the log).
+`kubectl top` readings during an active spike (once saw 5.8Gi/1.7Gi on two pods) did
+**not** match `cgroup memory.current` read moments later (~147Mi) — `kubectl top` /
+metrics-server appears unreliable for catching this in the moment; trust
+`lastState.terminated.reason`/`exitCode` (kernel-verified) over `kubectl top`.
+
+One specific huge table was caught in an actively-crashing pod's logs:
+`cdp.user360.silver_user360` — 549.5GB, 5,751 files, crosses
+`cryo/engines/spark/worker_guard.py`'s `OUTLIER_SIZE_GB=500` threshold — appearing in
+**both** an "Adopted job ... still running; waiting" line (orphan-recovery re-probing an
+already-dispatched job) and a fresh `worker:pre_execute` dispatch attempt around the same
+time, suggesting the same table may be getting dispatched concurrently by more than one
+worker/path. This matches a theory already written into `values-prod.yaml`'s own history
+(`worker.resources.limits.memory` comment, 2026-08-16 note referencing
+`_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6` concurrent Spark-K8s submissions per table
+admission wave) — but that theory was **never actually confirmed with real data** either
+time it was written down. This is the single highest-value thing to chase next:
+
+- Check `cryo/governor/native_admit.py`'s `_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY` and
+  the per-dispatch memory logging mentioned in that same 2026-08-16 comment — that
+  logging was added specifically so *next time this recurs* there'd be real data. Check
+  whether it actually fired and what it shows.
+- Check whether `cdp.user360.silver_user360` (or any other `OUTLIER_SIZE_GB`-crossing
+  table) is being dispatched by multiple workers concurrently — cross-reference
+  `MaintenanceJob` rows for that `table_id` across all currently-running/recently-failed
+  jobs, not just the one log line caught live.
+- Check whether `validate_spark_plan_scope` (`cryo/engines/spark/worker_guard.py`) is
+  actually being reached/raising for this table, or whether something about the outlier
+  path bypasses the scope check that's supposed to prevent unscoped whole-table rewrites.
+- Consider: does `TableMaintenanceData.stats["raw"]` (confirmed ~627KB JSON for this one
+  table) get held across the *entire* `wait_for_completion` poll loop (up to 2h,
+  `active_deadline_seconds`) rather than being released after dispatch? If so, and if
+  several outlier tables are in-flight on the same pod concurrently (adoption + fresh
+  dispatch both touching the same or different big tables), that compounds.
+
+**Do not** just raise the memory limit again as the next move — it was tried twice
+(4Gi→6Gi in August, 6Gi→8Gi today) and neither held. Find the actual allocation that
+isn't being freed.
+
+### Other fixes from this session (deployed, working)
+
+- `deactivate_orphaned_evolving_catalog_entries` wiring (was dead code, never scheduled).
+- Spark orphan-recovery `UNKNOWN`-state handling (`_spark_job_state`).
+- `repeat_failures` vitals check `*_evolving` exclusion.
+- `fleet_small_file_trend` active-table filtering.
+- A batch table-deactivate admin API endpoint (`POST /api/v1/tables/deactivate-batch`,
+  `require_admin`) — used to manually deregister 10 verified-dead tables that the
+  automated sweep's naming-pattern heuristic missed.
+
+### Other known follow-ups, not yet fixed
+
+- `cryo/engines/trino/engine.py`'s `TrinoEngine.execute()` blocks synchronously inside
+  `cursor.execute()` and only captures the Trino query ID (`engine_ref`) after it
+  returns/raises — if the worker process dies mid-call, the job is stuck at
+  `status='running'`, `engine_ref=null` forever, with nothing to probe or auto-recover
+  (unlike the Spark path, which has a real K8s Job to check). Recurred on
   `cdp.unified_bq.gold_dbt_pw_bq` multiple times. Fixing this properly means either
   running `execute()` in a background thread and polling `cursor.query_id` concurrently,
   or dropping to the lower-level `TrinoQuery` API directly — a real architectural change
   touching every Trino dispatch path, not a one-line fix.
-- Known follow-up: ~106 active (non-`*_evolving`-named) tables sharing the same
-  orphaned-catalog-entry shape (`location IS NULL` or 404-on-read, `query_count_30d=0`)
-  but not matched by the automated `deactivate_orphaned_evolving_catalog_entries` sweep
-  (different naming pattern, some cross-schema). Top 10 by scan-failure count were
-  manually verified and deregistered via the new batch-deactivate endpoint; the rest are
-  an open cleanup candidate, pending the same per-table verification rigor.
+- ~106 active (non-`*_evolving`-named) tables sharing the same orphaned-catalog-entry
+  shape (`location IS NULL` or 404-on-read, `query_count_30d=0`) but not matched by the
+  automated `deactivate_orphaned_evolving_catalog_entries` sweep (different naming
+  pattern, some cross-schema). Top 10 by scan-failure count were manually verified and
+  deregistered via the new batch-deactivate endpoint; the rest are an open cleanup
+  candidate, pending the same per-table verification rigor.
+
+### Things learned about this environment specifically (this session)
+
+- Docker Desktop was not running at one point mid-session — `deploy/deploy.sh` fails
+  fast with a clear "Cannot connect to the Docker daemon" error in that case. `open -a
+  Docker` then poll `docker info` until it responds (took ~10s here).
+- `infra login` session expiry happened mid-session (~2h into a long session) and blocked
+  *all* `kubectl` access, not just port-forwards, until refreshed externally.
+- For a **values-only change** (resource limits, replica counts — no code change), skip
+  the full `deploy/deploy.sh` (which always rebuilds+pushes an image) and instead:
+  ```bash
+  helm upgrade cryo deploy/helm/cryo -n cryo -f deploy/helm/cryo/values-prod.yaml
+  kubectl rollout restart deployment/<name> -n cryo   # only if the change needs a pod restart
+  ```
+  This is much faster in an active-outage situation where every minute counts. Still
+  commit the values-prod.yaml change to git either way — `deploy/deploy.sh`'s dirty-tree
+  check will block the next real deploy otherwise.
