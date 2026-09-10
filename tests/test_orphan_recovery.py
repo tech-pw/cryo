@@ -205,6 +205,33 @@ def test_native_live_dispatch_skipped() -> None:
     assert result.skipped >= 1
 
 
+def test_recover_orphaned_jobs_bounds_queued_scan(monkeypatch) -> None:
+    """Regression test, 2026-09-10: recover_orphaned_jobs called store.list_queued_jobs()
+    unbounded on every worker pod's 5s tick -- confirmed live as the dominant memory driver
+    behind a fleet-wide OOM cascade (9/9 worker pods OOMKilled/BackOff within ~90min) once
+    the queued backlog grew large during a cron burst. Assert the call actually passes the
+    cap, not just that recovery still works with a small in-memory store."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    steps = InMemoryJobStepStore()
+    store.add_destination(DestinationConfig(id="dest", engine=EngineType.TRINO))
+
+    seen_kwargs: dict[str, object] = {}
+    original_list_queued = store.list_queued_jobs
+
+    def _spy_list_queued(*, limit=None):
+        seen_kwargs["limit"] = limit
+        return original_list_queued(limit=limit)
+
+    monkeypatch.setattr(store, "list_queued_jobs", _spy_list_queued)
+
+    recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
+
+    assert seen_kwargs.get("limit") == orphan_recovery._MAX_QUEUED_SCAN_PER_TICK
+    assert seen_kwargs["limit"] is not None
+
+
 def test_reaper_skips_started_step() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
