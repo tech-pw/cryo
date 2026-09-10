@@ -284,77 +284,99 @@ curl -sS -G http://127.0.0.1:18000/api/v1/tables \
    search for whether a *sibling* function already had the identical bug fixed
    (`grep -rn "unbounded\|OOMKilled\|confirmed live" cryo/`) — several bugs this session
    turned out to be the same known pattern at a missed call site, not a novel bug.
+7. **`kubectl top` / metrics-server is not trustworthy for catching a live memory spike
+   in the moment** — confirmed live this session: it once showed 5.1Gi and separately
+   1.7Gi on two pods that a direct kernel read taken moments later showed were actually
+   at ~150-160Mi. Don't chase a `kubectl top` number as if it were ground truth. For a
+   real, trustworthy, real-time read, poll the cgroup/proc files directly via
+   `kubectl exec` (this is a read-only diagnostic, not a shell session, and doesn't hit
+   the permission-classifier block that a full `kubectl exec -it ... sh` does):
+   ```bash
+   # Total cgroup memory, tightest ground truth:
+   kubectl exec -n cryo <pod> -- cat /sys/fs/cgroup/memory.current
+   # Breakdown by category (Anonymous/heap vs file-backed/mapped):
+   kubectl exec -n cryo <pod> -- cat /sys/fs/cgroup/memory.stat
+   # Or the same breakdown from the process's own perspective:
+   kubectl exec -n cryo <pod> -- cat /proc/1/smaps_rollup
+   ```
+   Loop this at 2-3s intervals in the background (`nohup bash -c 'for i in $(seq 1 100); do
+   kubectl exec ... ; sleep 2; done' > trend.log &`) against a pod you expect to crash
+   soon, then cross-reference the exact timestamp the climb starts against
+   `kubectl logs <pod> --previous --timestamps` to pinpoint which log line (i.e. which
+   code path) was executing right before the climb began. This is what actually found
+   the root cause in the 2026-09-10 OOM cascade above — `kubectl top` and log-reading
+   alone were not enough and pointed at two wrong theories first.
+8. **A worker-side leak theory is unconfirmed until you've tried to reproduce it from a
+   different pod/process entirely.** If the suspect code path (a shared function, a
+   query, a cache) is also reachable from another deployment (an API route, a CLI
+   command), hitting that path directly and watching whether *that* pod OOMs too is a
+   much faster and more certain confirmation than continuing to stare at worker logs —
+   this is how the 2026-09-10 cost-model-retrain root cause was confirmed for certain
+   (one `GET /api/v1/ai/cost-model/evaluate` OOMKilled a `cryo-api` pod in 42s).
 
 ---
 
-## State as of last update (2026-09-10, mid-active-outage)
+## State as of last update (2026-09-10)
 
-### ⚠️ ACTIVE, UNRESOLVED: cryo-worker OOM cascade
+### ✅ RESOLVED: cryo-worker OOM cascade (2026-09-10, ~08:33–18:30 UTC)
 
-**This is the most important thing in this file right now.** `cryo-worker` pods have
-been OOMKilling repeatedly since ~08:33 UTC on 2026-09-10, during/after a large
-scheduled cron burst (multiple concurrent `MaintenanceRun`s of 5,000–11,000+ jobs each).
-Three things were tried, in order, each ruled out or only partially effective:
+`cryo-worker` pods OOMKilled repeatedly for ~10 hours, during/after a large scheduled
+cron burst (multiple concurrent `MaintenanceRun`s of 5,000–11,000+ jobs each). Took four
+fixes to actually stop — the first three each genuinely helped but were not the root
+cause, and it's worth reading in order because that's the reasoning trail, not just the
+answer:
 
 1. **Bounded `recover_orphaned_jobs`'s unbounded `list_queued_jobs()` scan**
-   (`cryo/worker/orphan_recovery.py`, commit `68bc82eb`) — real bug, real fix (queue depth
-   dropped 3,134→584 after deploying it), but did **not** stop the OOM cascade on its own.
-2. **Raised `worker.resources.limits.memory` 6Gi→8Gi** (`values-prod.yaml`, commit
-   `108ee7a9`) — did **not** help either: 3 of 10 pods OOMKilled within ~3.5 min of the
-   fresh rollout, **two of them at the identical second**. That simultaneity is the key
-   clue — it rules out "one big table's payload is just bigger than the ceiling" and
-   points at something that spikes hard and fast under concurrent load, likely triggered
-   by the same event (an admission wave? a scheduled batch?) hitting multiple pods at once.
-3. **Capped KEDA `maxReplicas` 10→3** (`values-prod.yaml`, commit `d3b4c956`) — a
-   concurrency-reduction stopgap, not a fix. Rationale: fewer simultaneous pods means
-   fewer pods that can hit whatever this is at the same time. **Revert this
-   (`native.keda.maxReplicas: 3` → delete the override, back to the template default of
-   10) once the real root cause is found and fixed** — it throttles fleet-wide admission
-   throughput in the meantime, which is its own cost (slower queue drain, extended
-   `queue_growth`/`success_rate` vitals deductions).
+   (`cryo/worker/orphan_recovery.py`, commit `68bc82eb`) — queue depth dropped
+   3,134→584. Did not stop the cascade.
+2. **Bounded `list_running_jobs()`/`list_admitted_jobs()`**, also unbounded, also called
+   every 5s on every worker pod (`cryo/worker/orphan_recovery.py` +
+   `cryo/db/repositories/job_store.py`, commit `c4567244`) — kernel-verified via
+   `/proc/1/smaps_rollup` as *a* real leak (Anonymous heap climbing ~1GB/5s tick). Slowed
+   time-to-OOM from 40–90s to 11–14min. Still not flat.
+3. **Raised `worker.resources.limits.memory` 6Gi→8Gi** (commit `108ee7a9`) — did not
+   help at all: pods still OOMKilled within ~3.5 min of a fresh rollout, two at the
+   identical second. That simultaneity was the tell that this was never a "ceiling too
+   low for one big payload" problem.
+4. **THE ACTUAL ROOT CAUSE, found and fixed (commit `39f8123f`, digest
+   `sha256:25dcfa32`)**: `refresh_cost_model_cache()` (`cryo/ml/cost_integration.py`) —
+   "Retrain from audit_log realized savings" — was called **inline, unconditionally, on
+   every single job completion, on every worker pod**, with zero rate-limiting (it was
+   the *only* call site in the whole codebase). Internally it queries
+   `QueryLog`/`TableStatsHistory`/`TableCostHistory`/`QueryCostAttributionDaily` over a
+   90-day window. Confirmed two independent ways:
+   - Kernel-verified via `/proc/1/smaps_rollup` on a live worker pod: Anonymous heap
+     climbing linearly ~1GB per 6–10s, **always starting the instant after a job's last
+     operation's "Deleted Spark driver pod" log line** — i.e. exactly where job
+     finalization happens.
+   - **Independently reproduced on a completely different pod type**: a single `GET
+     /api/v1/ai/cost-model/evaluate` (same `build_outcome_dataset` code path) OOMKilled a
+     `cryo-api` pod in 42 seconds.
 
-**Leading (still unconfirmed) theory**: the crash signature is always the same —
-`spark-k8s payload worker:pre_execute ... rss=1xx MiB` (self-reported process RSS stays
-low, 120–180Mi) immediately followed by `Created Spark-on-K8s dispatch Job ...` with
-**no further log line** before the kill. The Python process's own RSS is never the
-smoking gun (confirmed via `kubectl exec ... cat /proc/1/status` — matches the log).
-`kubectl top` readings during an active spike (once saw 5.8Gi/1.7Gi on two pods) did
-**not** match `cgroup memory.current` read moments later (~147Mi) — `kubectl top` /
-metrics-server appears unreliable for catching this in the moment; trust
-`lastState.terminated.reason`/`exitCode` (kernel-verified) over `kubectl top`.
+   Fix: moved the retrain to `CostModelRefreshRunner`, a periodic scheduled daemon
+   (default every 6h, `cost_model_refresh_interval_hours` in `cryo/config.py`) wired into
+   `run_scheduler()` — matching the same fix shape as `EvolvingCatalogCleanupRunner`
+   (batch/background work belongs on a bounded schedule, not the hottest per-job path in
+   the system). `cryo/worker/worker.py`'s `_process_claimed_job` no longer calls it at all.
 
-One specific huge table was caught in an actively-crashing pod's logs:
-`cdp.user360.silver_user360` — 549.5GB, 5,751 files, crosses
-`cryo/engines/spark/worker_guard.py`'s `OUTLIER_SIZE_GB=500` threshold — appearing in
-**both** an "Adopted job ... still running; waiting" line (orphan-recovery re-probing an
-already-dispatched job) and a fresh `worker:pre_execute` dispatch attempt around the same
-time, suggesting the same table may be getting dispatched concurrently by more than one
-worker/path. This matches a theory already written into `values-prod.yaml`'s own history
-(`worker.resources.limits.memory` comment, 2026-08-16 note referencing
-`_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6` concurrent Spark-K8s submissions per table
-admission wave) — but that theory was **never actually confirmed with real data** either
-time it was written down. This is the single highest-value thing to chase next:
+**Post-fix soak, confirmed clean**: 28+ min, 0 restarts, `lastState={}` across a 9–10 pod
+fleet. Both stopgaps from steps 2–3 were then reverted, one at a time with a soak between
+each so a regression would be attributable:
+- KEDA `native.keda.maxReplicas` 3 → back to template default (10) — reverted first
+  (lower risk, values-only, no pod restart needed — KEDA picks up a `ScaledObject` spec
+  change on its own polling cycle). Soaked ~10 min at a real 9-pod fleet, 0 restarts.
+- `worker.resources.limits.memory` 8Gi → 6Gi — reverted second (needs a `kubectl rollout
+  restart`, since a resource-limit change doesn't hot-apply to running pods). Soaked
+  clean at a fresh 10-pod fleet afterward.
 
-- Check `cryo/governor/native_admit.py`'s `_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY` and
-  the per-dispatch memory logging mentioned in that same 2026-08-16 comment — that
-  logging was added specifically so *next time this recurs* there'd be real data. Check
-  whether it actually fired and what it shows.
-- Check whether `cdp.user360.silver_user360` (or any other `OUTLIER_SIZE_GB`-crossing
-  table) is being dispatched by multiple workers concurrently — cross-reference
-  `MaintenanceJob` rows for that `table_id` across all currently-running/recently-failed
-  jobs, not just the one log line caught live.
-- Check whether `validate_spark_plan_scope` (`cryo/engines/spark/worker_guard.py`) is
-  actually being reached/raising for this table, or whether something about the outlier
-  path bypasses the scope check that's supposed to prevent unscoped whole-table rewrites.
-- Consider: does `TableMaintenanceData.stats["raw"]` (confirmed ~627KB JSON for this one
-  table) get held across the *entire* `wait_for_completion` poll loop (up to 2h,
-  `active_deadline_seconds`) rather than being released after dispatch? If so, and if
-  several outlier tables are in-flight on the same pod concurrently (adoption + fresh
-  dispatch both touching the same or different big tables), that compounds.
-
-**Do not** just raise the memory limit again as the next move — it was tried twice
-(4Gi→6Gi in August, 6Gi→8Gi today) and neither held. Find the actual allocation that
-isn't being freed.
+**If this recurs**: don't re-raise the memory limit — it was tried three times total now
+(4Gi→6Gi in August, 6Gi→8Gi in September) and a higher ceiling never once fixed anything;
+every time it turned out to be an unbounded-materialization bug at a specific call site,
+findable via the same kernel-level `/proc/1/smaps_rollup` polling method (see the
+debugging playbook entry below) plus checking whether a request to a *different* pod type
+running the same code path (e.g. the equivalent API endpoint) reproduces the same OOM —
+that cross-pod reproduction is what turned an "11–14 min, still not flat" partial fix
+into the actual answer.
 
 ### Other fixes from this session (deployed, working)
 
@@ -383,6 +405,21 @@ isn't being freed.
   pattern, some cross-schema). Top 10 by scan-failure count were manually verified and
   deregistered via the new batch-deactivate endpoint; the rest are an open cleanup
   candidate, pending the same per-table verification rigor.
+- `cryo/db/repositories/job_store.py`'s `_job_record()` has a real N+1 pattern (a
+  `TableAssignment` lookup, `_table_autocomp_summary()`, and a `MaintenanceIntent` lookup
+  per row, plus the full `job.plan` JSONB) — flagged independently by a parallel
+  investigation (`.cursor/plans/cryo_cost_rescue_b404f5c3.plan.md`) as a possible
+  secondary contributor to the OOM cascade above. It's a genuine inefficiency worth
+  fixing on its own merits, but post-root-cause-fix soak testing showed the fleet is
+  stable without touching it — so it's a real optimization opportunity, not a live bug.
+- The `cryo_cost_rescue` plan doc (`.cursor/plans/cryo_cost_rescue_b404f5c3.plan.md`) has
+  a much broader cost-reduction investigation beyond the OOM fix — native `expire`
+  doesn't delete S3 objects (`WithPostCommit(false)`, metadata-only), `gold_dbt_pw_bq`
+  never actually plans an `OPTIMIZE` because `min_small_files` is evaluated per-partition
+  against a 63k-partition table, and several other real findings about why GB-freed/day
+  and S3 spend aren't actually moving despite jobs reporting SUCCEEDED. Worth reading in
+  full before the next cost-focused work session — it's a genuine parallel diagnosis, not
+  speculative.
 
 ### Things learned about this environment specifically (this session)
 
