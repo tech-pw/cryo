@@ -256,24 +256,53 @@ class SQLJobStore:
             jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
-    def list_running_jobs(self) -> list[MaintenanceJobRecord]:
+    def list_running_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        """Live outage, 2026-09-10: cryo/worker/orphan_recovery.py's recover_orphaned_jobs
+        calls this unconditionally on every worker pod's 5s tick, with no limit -- the exact
+        same unbounded-scan pattern list_queued_jobs' own docstring already documents
+        (28,445 rows, 2026-09-02) and that fix only capped the queued-jobs sibling call, not
+        this one. RUNNING here includes every engine's jobs, not just the Spark/Trino ones
+        orphan-recovery can actually act on -- native-engine jobs go straight to RUNNING via
+        their own dispatch_id and don't need a worker to recover them (see
+        _is_native_watcher_owned), so under a large cron burst this materializes far more
+        full MaintenanceJobRecord objects (each eager-loading run+preset) than orphan-
+        recovery has any use for. Confirmed live: multiple cryo-worker pods OOMKilled
+        (linear ~1GB/6s heap growth, kernel-verified via /proc smaps) during exactly this
+        recovery tick. Same fix as list_queued_jobs: an optional limit, oldest-running-first
+        (ordered by started_at) so a tick's own memory footprint stays bounded regardless of
+        how large the fleet-wide RUNNING set grows.
+        """
         with self._session_factory() as session:
-            jobs = session.scalars(
+            query = (
                 select(MaintenanceJob)
                 .where(MaintenanceJob.status == JobStatus.RUNNING.value)
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
+            if limit is not None:
+                query = query.order_by(MaintenanceJob.started_at.asc()).limit(limit)
+            jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
-    def list_admitted_jobs(self) -> list[MaintenanceJobRecord]:
+    def list_admitted_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
         """For reconcile_stuck_admitted_jobs -- see MaintenanceJob.admitted_at's docstring for
-        the at-most-once admit-handoff bug this exists to detect and recover from."""
+        the at-most-once admit-handoff bug this exists to detect and recover from.
+
+        limit, when given, bounds the scan the same way list_running_jobs/list_queued_jobs
+        do -- see list_running_jobs' docstring for the 2026-09-10 incident this closes on
+        recover_orphaned_jobs' call site specifically."""
         with self._session_factory() as session:
-            jobs = session.scalars(
+            query = (
                 select(MaintenanceJob)
                 .where(MaintenanceJob.status == JobStatus.ADMITTED.value)
                 .options(selectinload(MaintenanceJob.run).selectinload(MaintenanceRun.preset))
             )
+            if limit is not None:
+                query = (
+                    query.join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                    .order_by(MaintenanceRun.created_at.asc())
+                    .limit(limit)
+                )
+            jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
     def count_running_jobs_by_metastore_uri(self) -> dict[str, int]:

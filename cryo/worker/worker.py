@@ -298,11 +298,17 @@ class InMemoryJobStore:
             return deferred[:limit]
         return deferred
 
-    def list_running_jobs(self) -> list[MaintenanceJobRecord]:
-        return [job for job in self.jobs.values() if job.status is JobStatus.RUNNING]
+    def list_running_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        running = [job for job in self.jobs.values() if job.status is JobStatus.RUNNING]
+        if limit is not None:
+            return running[:limit]
+        return running
 
-    def list_admitted_jobs(self) -> list[MaintenanceJobRecord]:
-        return [job for job in self.jobs.values() if job.status is JobStatus.ADMITTED]
+    def list_admitted_jobs(self, *, limit: int | None = None) -> list[MaintenanceJobRecord]:
+        admitted = [job for job in self.jobs.values() if job.status is JobStatus.ADMITTED]
+        if limit is not None:
+            return admitted[:limit]
+        return admitted
 
     def destination_exists(self, destination_id: str) -> bool:
         destination = self.destinations.get(destination_id)
