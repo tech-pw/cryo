@@ -73,7 +73,11 @@ def build_plan(
         operations.append(Operation(OperationType.REMOVE_ORPHAN_FILES, _orphan_params(params)))
 
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
-        optimize_ops = _optimize_operations(stats, partitions, params, notes)
+        optimize_ops = list(
+            _apply_skip_operations(
+                _optimize_operations(stats, partitions, params, notes), params, notes
+            )
+        )
         pathological_skew = _has_pathological_delete_skew(partitions, params)
         unreachable_skew = not pathological_skew and _has_unreachable_delete_skew(
             partitions, params
@@ -273,9 +277,23 @@ def _optimize_operations(
         notes.append("Planned full-table optimize: table is within chunk size budget.")
         return [_optimize_operation(params)]
 
+    # min_partition_small_files: opt-in override for _candidate_partitions' per-partition
+    # gate, separate from the table-level min_small_files check above (line ~249).
+    # Live-verified, 2026-09-10: gold_dbt_pw_bq has ~5,954 small files total (comfortably
+    # over the table-level gate) spread across ~63k partitions at a median of 4/partition
+    # -- with the same min_small_files=128 applied per-partition here, only ~63 partitions
+    # (the rare ones that happen to concentrate 128+ small files) ever qualify per sweep,
+    # so optimize "succeeds" repeatedly (30 successful chunked runs seen in one job's
+    # history) while the fleet-wide small_files_count never meaningfully drops -- the
+    # other ~62,900+ partitions each sit just under the bar forever. Defaults to
+    # min_small_files (today's exact behavior, unchanged for every table that doesn't set
+    # this) -- set explicitly low (e.g. 1) on a preset to opt a specific thin-spread table
+    # into packing many small partitions into one chunk via greedy_pack below, instead of
+    # requiring each partition to individually clear the threshold.
+    min_partition_small_files = int(params.get("min_partition_small_files", min_small_files))
     capabilities = _predicate_capabilities(params)
     candidates = _candidate_partitions(
-        fields, partitions, min_small_files, capabilities, notes, params
+        fields, partitions, min_partition_small_files, capabilities, notes, params
     )
     if not candidates:
         notes.append("Skipped optimize: no renderable partition candidates met the threshold.")

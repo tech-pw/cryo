@@ -148,6 +148,11 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
     errors: list[str] = []
     non_negative_keys = (
         "min_small_files",
+        # Opt-in override of min_small_files for _candidate_partitions' per-partition gate
+        # (cryo/planner/planner.py's _optimize_operations) -- see that param's own comment
+        # for the thin-spread-partitions problem this exists to fix. Defaults to
+        # min_small_files when absent, so omitting it is a no-op.
+        "min_partition_small_files",
         "delete_ratio_trigger",
         "partition_write_idle_hours",
         # 0 = unlimited (bytes-only split); positive = optional soft file ceiling.
