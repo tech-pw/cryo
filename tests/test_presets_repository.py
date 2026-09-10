@@ -51,6 +51,39 @@ def test_table_to_candidate_merges_table_and_stats_fields() -> None:
     assert candidate.row["small_files_count"] == 80
 
 
+def test_table_to_candidate_defaults_last_maintained_at_to_none() -> None:
+    """Baseline, 2026-09-10: omitting last_maintained_at keeps today's exact behavior
+    (None) -- table_to_candidate never queries the DB itself, see its own docstring."""
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        schema_name="fixtures",
+        table_name="fixture_day",
+        is_active=True,
+    )
+
+    candidate = presets.table_to_candidate(table)
+
+    assert candidate.last_maintained_at is None
+
+
+def test_table_to_candidate_accepts_caller_supplied_last_maintained_at() -> None:
+    """Real fix, 2026-09-10: SQLSchedulerStore.list_tables now batch-fetches this and
+    passes it in per-table -- table_to_candidate just needs to carry it through."""
+    table = Table(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        schema_name="fixtures",
+        table_name="fixture_day",
+        is_active=True,
+    )
+    when = datetime(2026, 9, 1, tzinfo=UTC)
+
+    candidate = presets.table_to_candidate(table, last_maintained_at=when)
+
+    assert candidate.last_maintained_at == when
+
+
 def test_table_to_candidate_exposes_snapshot_and_manifest_counts_for_rule_matching() -> None:
     """Regression, 2026-08-10: total_snapshots/manifest_count were readable via a table's own
     stats but weren't in _stats_dict, so a PresetRule predicate like `total_snapshots > 100`

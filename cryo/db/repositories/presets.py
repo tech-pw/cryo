@@ -95,7 +95,19 @@ def assignment_to_config(assignment: TableAssignment) -> AssignmentConfig:
     )
 
 
-def table_to_candidate(table: Table) -> TableCandidate:
+def table_to_candidate(
+    table: Table, *, last_maintained_at: Any | None = None
+) -> TableCandidate:
+    """last_maintained_at is caller-supplied, never queried here -- table_to_candidate is a
+    pure Table->TableCandidate transform every existing call site treats as DB-call-free
+    (several loop over it per-table; see e.g. SQLSchedulerStore.list_tables' own
+    STATS_LOAD_ONLY_COLUMNS comment for the OOM this class of per-table-query bug already
+    caused once). Omitting it means TableCandidate.last_maintained_at stays None, same as
+    before this parameter existed -- so scheduler.drop_recently_maintained's cooldown check
+    silently never drops anything for callers that don't pass a real value. Batch-fetch it
+    (one grouped query for the whole fleet, scoped to real reclaim actions -- see
+    cryo.reporting.impact_signals._RECLAIM_ACTIONS) and pass it in per-table, matching the
+    pattern dashboard_routes.py's SLA endpoint already uses for the same field."""
     stats = _stats_dict(table.stats)
     if table.cost is not None:
         stats["cost_precision"] = table.cost.precision
@@ -105,6 +117,7 @@ def table_to_candidate(table: Table) -> TableCandidate:
         table_name=table.table_name,
         stats=stats,
         is_active=table.is_active,
+        last_maintained_at=last_maintained_at,
     )
 
 
