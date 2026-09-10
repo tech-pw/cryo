@@ -489,9 +489,26 @@ def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
 
 
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:
+    """Governor's cooldown_elapsed (admission.py) gates real admission decisions on this
+    value -- it must mean "when did this table last actually have bytes reclaimed", not
+    "when did any OK audit last touch it". Before this fix, ANY status='OK' AuditLog row
+    counted, including expire_snapshots (metadata-only on the native engine --
+    WithPostCommit(false), see cryo/engines/native -- reclaims nothing on its own) and
+    property-autopilot applies. A table that only ever had metadata-only maintenance run
+    against it still started a real cooldown as if actual compaction happened, silently
+    blocking the scheduler from re-attempting real reclaim work for the cooldown window.
+    Scoped to cryo.reporting.impact_signals._RECLAIM_ACTIONS -- the same actions the
+    north-star GB-freed metric already counts, so "maintained" means the same thing here
+    as it does on the dashboard."""
+    from cryo.reporting.impact_signals import _RECLAIM_ACTIONS
+
     row = session.scalar(
         select(AuditLog.ts)
-        .where(AuditLog.table_id == table_id, AuditLog.status == "OK")
+        .where(
+            AuditLog.table_id == table_id,
+            AuditLog.status == "OK",
+            AuditLog.action.in_(_RECLAIM_ACTIONS),
+        )
         .order_by(desc(AuditLog.ts))
         .limit(1)
     )

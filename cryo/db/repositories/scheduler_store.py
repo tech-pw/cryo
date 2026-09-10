@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from cryo.config import get_settings
 from cryo.db.models import (
+    AuditLog,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -82,8 +83,27 @@ class SQLSchedulerStore:
                 )
                 .where(Table.is_active.is_(True))
             )
+            # Real fix, 2026-09-10: TableCandidate.last_maintained_at used to stay None for
+            # every candidate here -- table_to_candidate never populated it, so
+            # scheduler.drop_recently_maintained's `isinstance(last, datetime)` check was
+            # always False, meaning the cooldown filter at schedule-creation time silently
+            # never dropped anything. One grouped query for the whole fleet (same batching
+            # discipline as this function's own STATS_LOAD_ONLY_COLUMNS fix above), scoped
+            # to real reclaim actions only -- see job_store._last_maintained_at's own
+            # docstring for why expire-only/property-autopilot audits must not count.
+            from cryo.reporting.impact_signals import _RECLAIM_ACTIONS
+
+            last_maintained_by_table = dict(
+                session.execute(
+                    select(AuditLog.table_id, func.max(AuditLog.ts))
+                    .where(AuditLog.status == "OK", AuditLog.action.in_(_RECLAIM_ACTIONS))
+                    .group_by(AuditLog.table_id)
+                ).all()
+            )
             return [
-                table_to_candidate(table)
+                table_to_candidate(
+                    table, last_maintained_at=last_maintained_by_table.get(table.id)
+                )
                 for table in tables
                 if table.source is not None and table_in_source_scope(table, table.source)
             ]
