@@ -524,6 +524,22 @@ class Settings(BaseSettings):
             "single worst repeat_failures pattern every day the cleanup wasn't run manually."
         ),
     )
+    cost_model_refresh_interval_hours: int = Field(
+        default=6,
+        ge=1,
+        description=(
+            "Hours between cost-model retrains (cryo.ml.cost_integration.refresh_cost_model_"
+            "cache). Live outage, 2026-09-10: this used to run inline, unconditionally, on "
+            "every single job completion on every worker pod (cryo/worker/worker.py) -- "
+            "confirmed live as the real root cause of a fleet-wide worker OOM cascade "
+            "(kernel-verified via /proc/1/smaps_rollup, and independently reproduced by "
+            "OOMKilling a cryo-api pod via one call to /api/v1/ai/cost-model/evaluate, same "
+            "build_outcome_dataset code path -- QueryLog/TableStatsHistory/TableCostHistory/ "
+            "QueryCostAttributionDaily queries over a 90-day window with no row limit on any "
+            "of the secondary queries). Moved to a periodic CostModelRefreshRunner daemon, "
+            "matching the same fix shape as evolving_catalog_cleanup_interval_hours above."
+        ),
+    )
 
     # API protection
     api_rate_limit_rps: float = Field(

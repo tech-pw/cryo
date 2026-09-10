@@ -174,6 +174,34 @@ class EvolvingCatalogCleanupRunner(DaemonRunner):
                 )
 
 
+class CostModelRefreshRunner(DaemonRunner):
+    """Periodically retrains the learned cost model from audit_log realized savings.
+
+    Live outage, 2026-09-10: refresh_cost_model_cache() used to run inline, unconditionally,
+    on every single job completion on every worker pod (cryo/worker/worker.py) -- confirmed
+    live as the real root cause of a fleet-wide worker OOM cascade (kernel-verified via
+    /proc/1/smaps_rollup: Anonymous heap climbed ~1GB per ~6-10s until OOMKilled, and
+    independently reproduced by OOMKilling a cryo-api pod via one call to
+    /api/v1/ai/cost-model/evaluate, same build_outcome_dataset code path). A retrain is a
+    batch operation, not something that belongs on the hottest per-job path in the system --
+    moved here, matching EvolvingCatalogCleanupRunner's own fix shape immediately above.
+    """
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().cost_model_refresh_interval_hours * 3600
+        super().__init__("cost-model-refresh", interval or settings_interval)
+
+    def _tick(self) -> None:
+        from cryo.config import get_settings as _get_settings
+        from cryo.db.session import SessionLocal
+        from cryo.ml.cost_integration import refresh_cost_model_cache
+
+        with SessionLocal() as session:
+            refreshed = refresh_cost_model_cache(session, _get_settings())
+            if refreshed:
+                self._logger.info("Refreshed learned cost model cache")
+
+
 class AlertDispatcherRunner(DaemonRunner):
     """Checks owned/subscribed tables for SLA/data-quality breaches and notifies them."""
 
@@ -754,6 +782,16 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     )
     evolving_cleanup_thread.start()
 
+    # Live outage, 2026-09-10: refresh_cost_model_cache() used to run inline on every worker
+    # job completion (cryo/worker/worker.py) -- confirmed live as the root cause of a
+    # fleet-wide worker OOM cascade. Moved here, matching evolving_cleanup's own fix shape
+    # immediately above.
+    cost_model_refresh = CostModelRefreshRunner()
+    cost_model_refresh_thread = Thread(
+        target=cost_model_refresh.run, name="cost-model-refresh", daemon=True
+    )
+    cost_model_refresh_thread.start()
+
     # Fires SlackConfig rows' daily_report_cron (per-config, DB-driven -- distinct from the
     # AlertDispatcherRunner above, which is real-time per-table breach alerts). Previously only
     # reachable via a standalone `python -m cryo.reporting.scheduler` process that no deployment
@@ -773,6 +811,8 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         s3_log_ingest_thread.join(timeout=5)
         evolving_cleanup.stop()
         evolving_cleanup_thread.join(timeout=5)
+        cost_model_refresh.stop()
+        cost_model_refresh_thread.join(timeout=5)
         report_scheduler.stop()
         report_thread.join(timeout=5)
 
