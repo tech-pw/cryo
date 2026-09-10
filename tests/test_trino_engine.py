@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from cryo.domain.enums import EngineType, OperationType
 from cryo.engines.base import ExecCtx, RenderedStatement
 from cryo.engines.trino.client import coordinators_from_config
@@ -200,3 +203,127 @@ def test_trino_engine_logs_failure(caplog) -> None:
 
     messages = [record.message for record in caplog.records]
     assert any("Trino optimize failed" in m and "boom" in m for m in messages)
+
+
+class SlowStartCursor(FakeCursor):
+    """Simulates the real trino-python-client: cursor.query_id/stats stays empty until
+    the query is actually submitted, then becomes available well before the statement
+    finishes executing (execute() itself remains blocking). Used to prove the engine
+    captures engine_ref *during* execution, not only after it returns."""
+
+    def __init__(
+        self,
+        rows: list[tuple[object, ...]] | None = None,
+        *,
+        query_id: str = "query_slow_1",
+        submit_delay: float = 0.05,
+        run_time: float = 0.3,
+        fail: bool = False,
+    ) -> None:
+        super().__init__(rows)
+        self.stats = {}
+        self._query_id = query_id
+        self._submit_delay = submit_delay
+        self._run_time = run_time
+        self._fail = fail
+        self.query_id_observed_before_finish = False
+
+    def execute(self, sql: str) -> None:
+        self.executed.append(sql)
+        if "SET SESSION" in sql:
+            return
+        time.sleep(self._submit_delay)
+        self.stats = {"queryId": self._query_id}
+        remaining = max(self._run_time - self._submit_delay, 0)
+        time.sleep(remaining)
+        if self._fail:
+            raise RuntimeError("boom")
+
+
+def test_trino_engine_reports_engine_ref_before_query_completes() -> None:
+    """Regression, 2026-09-10: a worker crash while blocked inside the old synchronous
+    cursor.execute() left the job stuck at status='running', engine_ref=null forever --
+    recurred twice this session on cdp.unified_bq.gold_dbt_pw_bq, each requiring a manual
+    cancel since nothing could recover it. The fix must call ctx.on_engine_ref as soon as
+    the query_id is known, well before the statement finishes -- this test fails against
+    the old implementation (on_engine_ref would only ever fire after execute() returned,
+    i.e. never mid-flight, since the whole call was synchronous)."""
+    cursor = SlowStartCursor(rows=[(1,)], query_id="query_early", submit_delay=0.05, run_time=0.3)
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+
+    observed: list[tuple[str, float]] = []
+    lock = threading.Lock()
+    start = time.monotonic()
+
+    def on_engine_ref(ref: str) -> None:
+        with lock:
+            observed.append((ref, time.monotonic() - start))
+
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+        ),
+        ExecCtx(replica="localhost", on_engine_ref=on_engine_ref),
+    )
+
+    assert result.ok is True
+    assert result.engine_ref == "query_early"
+    assert len(observed) == 1
+    ref, observed_at = observed[0]
+    assert ref == "query_early"
+    # Must be reported while the statement is still running, not after the ~0.3s total.
+    assert observed_at < 0.25
+
+
+def test_trino_engine_reports_engine_ref_even_on_failure() -> None:
+    """A query that fails after its queryId is known must still have reported that
+    queryId via on_engine_ref -- a crash between capture and failure shouldn't lose it."""
+    cursor = SlowStartCursor(
+        rows=[], query_id="query_will_fail", submit_delay=0.02, run_time=0.1, fail=True
+    )
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost"}, connector=connector)
+    observed: list[str] = []
+
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+        ),
+        ExecCtx(on_engine_ref=observed.append),
+    )
+
+    assert result.ok is False
+    assert result.engine_ref == "query_will_fail"
+    assert observed == ["query_will_fail"]
+
+
+def test_trino_engine_works_without_on_engine_ref_callback() -> None:
+    """ExecCtx with no on_engine_ref (or ctx=None entirely) must not break -- most callers
+    historically don't pass one."""
+    cursor = FakeCursor([(1,)])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+        )
+    )
+
+    assert result.ok is True
+    assert result.engine_ref == "query_123"
