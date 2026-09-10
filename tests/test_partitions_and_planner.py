@@ -6,6 +6,28 @@ from cryo.planner.partitions import PartitionFieldSpec, build_predicate, partiti
 from cryo.planner.planner import _small_files, build_plan
 
 
+def test_excluded_optimize_does_not_suppress_delete_maintenance_or_emit_statistics() -> None:
+    plan = build_plan(
+        {
+            "catalog": "cdp",
+            "schema_name": "s",
+            "table_name": "t",
+            "total_size_gb": 1,
+            "small_files_count": 200,
+            "total_delete_files": 20,
+            "delete_file_pct": 10,
+        },
+        [],
+        Mode.STANDARD,
+        {"skip_operations": ["optimize"], "compute_statistics": True},
+    )
+    types = {op.type for op in plan.operations}
+    assert OperationType.CONVERT_DELETES in types
+    assert OperationType.OPTIMIZE not in types
+    assert OperationType.COMPUTE_STATISTICS not in types
+    assert not any("planned optimize already" in note for note in plan.notes)
+
+
 def test_unpartitioned_table_produces_no_partition_fields() -> None:
     """Real production panic (2026-07-14): the scanner used to store partition_col as the
     literal string "_unpartitioned" for genuinely unpartitioned tables (a display-label
@@ -171,6 +193,91 @@ def test_build_plan_chunks_large_partitioned_tables_and_preserves_deep_order() -
         for operation in plan.operations
         if operation.type is OperationType.OPTIMIZE
     )
+
+
+def test_thin_spread_partitions_skipped_by_default_min_small_files_gate() -> None:
+    """Baseline, 2026-09-10: confirms today's exact behavior is unchanged when
+    min_partition_small_files is absent -- min_small_files still gates per-partition.
+    1,000 partitions x 4 small files each = 4,000 total (clears the table-level gate),
+    but each individual partition sits far under min_small_files=128, so none qualify."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "thin_spread",
+            "small_files_count": 4_000,
+            "total_size_gb": 25_000,
+            "partition_fields": [
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": f"2025-01-{day:02d}",
+                "small_files_in_partition_count": 4,
+                "partition_size_gb": 1,
+            }
+            for day in range(1, 32)
+        ],
+        Mode.DEEP,
+        {"min_small_files": 128, "chunk_size_gb": 100},
+    )
+
+    optimize_ops = [op for op in plan.operations if op.type is OperationType.OPTIMIZE]
+    assert optimize_ops == []
+    assert any("no renderable partition candidates" in note for note in plan.notes)
+
+
+def test_min_partition_small_files_override_packs_thin_spread_partitions() -> None:
+    """Live-verified, 2026-09-10: gold_dbt_pw_bq has ~5,954 small files (clears the
+    table-level gate) spread across ~63k partitions at a median of 4/partition -- with
+    min_small_files=128 applied per-partition, only the rare partition that happens to
+    concentrate 128+ small files ever qualifies, so the table's total file count never
+    meaningfully drops despite optimize 'succeeding' repeatedly. Setting
+    min_partition_small_files low (opt-in, per-preset) lets every thin partition become a
+    candidate, and greedy_pack groups them into real chunks within chunk_size_gb."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "thin_spread",
+            "small_files_count": 4_000,
+            "total_size_gb": 25_000,
+            "partition_fields": [
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+        },
+        [
+            {
+                "partition_value": f"2025-01-{day:02d}",
+                "small_files_in_partition_count": 4,
+                "partition_size_gb": 1,
+            }
+            for day in range(1, 32)
+        ],
+        Mode.DEEP,
+        {
+            "min_small_files": 128,
+            "min_partition_small_files": 1,
+            "chunk_size_gb": 100,
+            "max_partitions_per_chunk": 10,
+        },
+    )
+
+    optimize_ops = [op for op in plan.operations if op.type is OperationType.OPTIMIZE]
+    assert optimize_ops, "expected at least one OPTIMIZE chunk once thin partitions are eligible"
+    total_predicates = sum(len(op.predicates or ()) for op in optimize_ops)
+    assert total_predicates == 31, "every thin partition should become a candidate"
+    # max_partitions_per_chunk=10 over 31 candidates -> 4 chunks (10,10,10,1)
+    assert len(optimize_ops) == 4
 
 
 def test_small_file_metrics_never_fall_back_to_total_file_count() -> None:

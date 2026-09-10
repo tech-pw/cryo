@@ -35,6 +35,15 @@ def test_validate_params_allows_unknown_keys() -> None:
     assert not validate_params({"custom_flag": True, "partition_col": "event_date"})
 
 
+def test_validate_params_accepts_min_partition_small_files() -> None:
+    """min_partition_small_files (2026-09-10, gold_dbt_pw_bq spread-optimize fix) -- the
+    per-partition override of min_small_files, same non-negative-number validation class."""
+    assert not validate_params({"min_partition_small_files": 1})
+    assert not validate_params({"min_partition_small_files": 0})
+    errors = validate_params({"min_partition_small_files": -1})
+    assert "params.min_partition_small_files must be non-negative" in errors
+
+
 def test_validate_guardrails_accepts_routing_and_preferences() -> None:
     assert not validate_guardrails(
         {
