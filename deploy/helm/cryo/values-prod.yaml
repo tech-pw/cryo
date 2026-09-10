@@ -94,7 +94,7 @@ image:
   #    boundary, checked independently. Shipped OFF in this digest; turned ON 2026-08-10 via
   #    global.env.CRYO_PROPERTY_AUTOPILOT_ENABLED below, by request -- see that env var's own
   #    comment for the rollback note.
-  digest: "sha256:fbe2ee0ed89afb19880061fcb94410b625fd93a48858237ecc5c538cabf0d3f3"
+  digest: "sha256:25dcfa328578a3776b2aa242c01e8e75e6f34e671d684258ec330c31779f807b"
 
 imagePullSecrets:
   - cryo-registry
@@ -103,7 +103,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:fbe2ee0ed89afb19880061fcb94410b625fd93a48858237ecc5c538cabf0d3f3"
+    digest: "sha256:25dcfa328578a3776b2aa242c01e8e75e6f34e671d684258ec330c31779f807b"
 
 global:
   envFromSecret: cryo-secrets
@@ -171,7 +171,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:fbe2ee0ed89afb19880061fcb94410b625fd93a48858237ecc5c538cabf0d3f3"
+    digest: "sha256:25dcfa328578a3776b2aa242c01e8e75e6f34e671d684258ec330c31779f807b"
   keda:
     enabled: true
     # Temporary stopgap, 2026-09-10 active outage: cryo-worker pods OOMKilling even at
