@@ -53,6 +53,19 @@ _ACTIVE_JOB_STATUSES = {
 # queued jobs to re-enqueue ones missing from Redis (see the ADMITTED/QUEUED loop below).
 _MAX_QUEUED_SCAN_PER_TICK = 2000
 
+# Confirmed live, 2026-09-10 (same outage as above): list_running_jobs() -- called
+# unconditionally, every tick, with no limit -- was the actual dominant cost, not
+# list_queued_jobs alone. RUNNING includes every engine's jobs, not just the Spark/Trino
+# ones this recovery loop can act on (native-engine jobs go straight to RUNNING via their
+# own dispatch_id and are filtered out later via _is_native_watcher_owned, but only *after*
+# the full unbounded fetch already materialized them). Kernel-verified via /proc/1/smaps_
+# rollup on a live pod: Anonymous (heap) memory climbed linearly ~1GB per 5s tick, ~140MB
+# to 8GB in ~42s, immediately OOMKilled -- matches this function's own 5s poll interval
+# exactly. list_admitted_jobs() capped for the same reason, smaller blast radius (ADMITTED
+# is normally a much smaller, transient set) but same unbounded shape.
+_MAX_RUNNING_SCAN_PER_TICK = 500
+_MAX_ADMITTED_SCAN_PER_TICK = 500
+
 
 class StepLedger(Protocol):
     def get_started_step(self, job_id: str) -> JobStepRecord | None: ...
@@ -189,13 +202,18 @@ def recover_orphaned_jobs(
 
     jobs: list[MaintenanceJobRecord] = []
     if callable(list_running):
-        jobs.extend(list_running())
+        try:
+            jobs.extend(list_running(limit=_MAX_RUNNING_SCAN_PER_TICK))
+        except TypeError:
+            # Older/test JobStore stand-ins may not accept limit= -- fall back to the
+            # unbounded call rather than crash the whole tick over a kwarg mismatch.
+            jobs.extend(list_running())
     list_all_active = getattr(store, "list_active_jobs", None)
     if callable(list_all_active):
         jobs = list_all_active()
     else:
         for status_name, lister_name, lister_kwargs in (
-            (JobStatus.ADMITTED, "list_admitted_jobs", {}),
+            (JobStatus.ADMITTED, "list_admitted_jobs", {"limit": _MAX_ADMITTED_SCAN_PER_TICK}),
             (JobStatus.QUEUED, "list_queued_jobs", {"limit": _MAX_QUEUED_SCAN_PER_TICK}),
         ):
             lister = getattr(store, lister_name, None)

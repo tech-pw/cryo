@@ -232,6 +232,57 @@ def test_recover_orphaned_jobs_bounds_queued_scan(monkeypatch) -> None:
     assert seen_kwargs["limit"] is not None
 
 
+def test_recover_orphaned_jobs_bounds_running_scan(monkeypatch) -> None:
+    """Regression test, 2026-09-10: list_running_jobs() -- called unconditionally, every
+    tick, with no limit -- turned out to be the actual dominant leak, not list_queued_jobs
+    alone. Kernel-verified live via /proc/1/smaps_rollup: Anonymous (heap) memory climbed
+    linearly ~1GB per 5s tick until OOMKilled, matching this function's own poll interval
+    exactly. Assert the call site actually passes the cap."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    steps = InMemoryJobStepStore()
+    store.add_destination(DestinationConfig(id="dest", engine=EngineType.TRINO))
+
+    seen_kwargs: dict[str, object] = {}
+    original_list_running = store.list_running_jobs
+
+    def _spy_list_running(*, limit=None):
+        seen_kwargs["limit"] = limit
+        return original_list_running(limit=limit)
+
+    monkeypatch.setattr(store, "list_running_jobs", _spy_list_running)
+
+    recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
+
+    assert seen_kwargs.get("limit") == orphan_recovery._MAX_RUNNING_SCAN_PER_TICK
+    assert seen_kwargs["limit"] is not None
+
+
+def test_recover_orphaned_jobs_bounds_admitted_scan(monkeypatch) -> None:
+    """Same fix, list_admitted_jobs() -- smaller blast radius than RUNNING/QUEUED (ADMITTED
+    is normally a much smaller, transient set) but the identical unbounded shape."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    steps = InMemoryJobStepStore()
+    store.add_destination(DestinationConfig(id="dest", engine=EngineType.TRINO))
+
+    seen_kwargs: dict[str, object] = {}
+    original_list_admitted = store.list_admitted_jobs
+
+    def _spy_list_admitted(*, limit=None):
+        seen_kwargs["limit"] = limit
+        return original_list_admitted(limit=limit)
+
+    monkeypatch.setattr(store, "list_admitted_jobs", _spy_list_admitted)
+
+    recover_orphaned_jobs(store, queue, locks, steps, holder_id="worker-a")
+
+    assert seen_kwargs.get("limit") == orphan_recovery._MAX_ADMITTED_SCAN_PER_TICK
+    assert seen_kwargs["limit"] is not None
+
+
 def test_reaper_skips_started_step() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
