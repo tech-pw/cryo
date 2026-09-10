@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -62,6 +63,7 @@ class TrinoEngine:
         cursor: Any = connection.cursor()
         engine_ref: str | None = None
         table_id = getattr(ctx, "table_id", None)
+        on_engine_ref = getattr(ctx, "on_engine_ref", None)
         # cursor.execute() below blocks synchronously until Trino finishes the statement --
         # for a large OPTIMIZE that can be many minutes with zero output otherwise, making a
         # genuinely in-progress query indistinguishable from a hung one from Cryo's side.
@@ -75,9 +77,52 @@ class TrinoEngine:
         try:
             for setup_sql in self.session_setup():
                 cursor.execute(setup_sql)
-            cursor.execute(stmt.sql)
+            # Regression, confirmed live 2026-09-09/10: a worker crash (OOM, pod eviction)
+            # while blocked inside the synchronous cursor.execute() below left the job
+            # permanently stuck at status='running', engine_ref=null forever -- the trino
+            # client's own TrinoQuery.execute() (cryo/engines/trino/client.py's underlying
+            # lib) sets cursor.query_id from the *first* HTTP response, well before the
+            # polling loop that blocks for actual completion, but that assignment happens
+            # deep inside the same synchronous call this function makes, so there was no
+            # earlier point to capture it from without changing execution shape. Recurred
+            # twice on cdp.unified_bq.gold_dbt_pw_bq (15h+, then 23h+) before this fix --
+            # each time required a manual /runs/{id}/cancel, and nothing could auto-recover
+            # it (unlike the Spark path, which has a real K8s Job to probe). Run the
+            # blocking call on a background thread and poll cursor.query_id from here; as
+            # soon as it's non-None, persist it via ctx.on_engine_ref immediately -- the
+            # exact same callback worker.py already wires through for every other engine,
+            # so a crash after this point leaves a real engine_ref to recover/probe from.
+            statement_thread_exc: list[BaseException] = []
+
+            def _run_statement() -> None:
+                try:
+                    cursor.execute(stmt.sql)
+                except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread below
+                    statement_thread_exc.append(exc)
+
+            worker_thread = threading.Thread(
+                target=_run_statement, name="trino-execute", daemon=True
+            )
+            worker_thread.start()
+            reported_ref = False
+            while worker_thread.is_alive():
+                if not reported_ref and on_engine_ref is not None:
+                    ref = _query_id(cursor)
+                    if ref:
+                        on_engine_ref(ref)
+                        reported_ref = True
+                worker_thread.join(timeout=0.2)
+            if statement_thread_exc:
+                if not reported_ref and on_engine_ref is not None:
+                    ref = _query_id(cursor)
+                    if ref:
+                        on_engine_ref(ref)
+                        reported_ref = True
+                raise statement_thread_exc[0]
             rows = tuple(tuple(row) for row in (cursor.fetchall() or ()))
             engine_ref = _query_id(cursor)
+            if not reported_ref and on_engine_ref is not None and engine_ref:
+                on_engine_ref(engine_ref)
             logger.info(
                 "Trino %s finished coordinator=%s table_id=%s query_id=%s duration_ms=%d",
                 stmt.action.value,
