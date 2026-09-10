@@ -244,18 +244,26 @@ worker:
       # confirmed root-cause fix -- see the new per-dispatch memory logging in
       # native_admit.py, added the same day, for real data next time this recurs.
       #
-      # Recurred, 2026-09-10: same signature again, this time confirmed live to include
-      # recover_orphaned_jobs' fallback loop calling list_queued_jobs() with no limit (fixed
-      # separately, cryo/worker/orphan_recovery.py) -- that fix reduced but did NOT eliminate
-      # the OOM cascade (9/10 worker pods OOMKilled/CrashLoopBackOff continued after it
-      # deployed). Live evidence points at cdp.user360.silver_user360 (549.5GB, 5,751 files,
-      # crosses OUTLIER_SIZE_GB=500 in cryo/engines/spark/worker_guard.py) being both
-      # adopted as an orphan (recover_orphaned_jobs) AND freshly re-dispatched
-      # (process_next -> _validate_spark_worker_plan) around the same time -- consistent
-      # with this comment's own _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6 theory, still not
-      # confirmed. Stopgap only, while that's investigated without live-outage pressure:
-      # raised again to stop the bleeding, not a root-cause fix.
-      memory: 8Gi
+      # Recurred, 2026-09-10: same signature again -- turned out to be three compounding
+      # bugs, not one. (1) recover_orphaned_jobs' fallback loop called list_queued_jobs()
+      # with no limit (fixed, cryo/worker/orphan_recovery.py) -- reduced but did not
+      # eliminate the cascade. (2) list_running_jobs()/list_admitted_jobs() were also
+      # unbounded, called every 5s on every worker pod (fixed, same file + cryo/db/
+      # repositories/job_store.py) -- reduced further (40-90s -> 11-14min to OOM) but still
+      # not flat. (3) THE ACTUAL ROOT CAUSE: refresh_cost_model_cache() ran inline,
+      # unconditionally, on every single job completion, on every worker pod -- confirmed
+      # via kernel-level /proc/1/smaps_rollup (Anonymous heap climbing ~1GB per ~6-10s,
+      # always starting the instant a job's last operation finished) and independently
+      # reproduced by OOMKilling a cryo-api pod via one call to /api/v1/ai/cost-model/
+      # evaluate (same build_outcome_dataset code path -- QueryLog/TableStatsHistory/
+      # TableCostHistory/QueryCostAttributionDaily over a 90-day window). Moved to a
+      # periodic CostModelRefreshRunner daemon (cryo/cli.py, commit 39f8123f, digest
+      # sha256:25dcfa32). Post-fix soak: 28+ min, 0 restarts, lastState={} across a 9-pod
+      # fleet after also reverting the maxReplicas:3 stopgap. Reverted back to 6Gi --
+      # the 8Gi bump (like the 6Gi bump before it) was a safety margin for a leak that no
+      # longer exists, not a genuine steady-state requirement (worker RSS is ~140-170Mi in
+      # normal operation, confirmed repeatedly live throughout this investigation).
+      memory: 6Gi
 
 governor:
   replicas: 1
