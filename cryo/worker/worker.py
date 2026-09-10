@@ -1081,15 +1081,18 @@ class Worker:
             job.id,
             job_succeeded=final_status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED},
         )
-        try:
-            from cryo.config import get_settings
-            from cryo.db.session import SessionLocal
-            from cryo.ml.cost_integration import refresh_cost_model_cache
-
-            with SessionLocal() as session:
-                refresh_cost_model_cache(session, get_settings())
-        except Exception:
-            pass
+        # Live outage, 2026-09-10: the cost-model retrain used to run inline, here, on
+        # every single job completion, on every worker pod -- confirmed live as the real root
+        # cause of a fleet-wide worker OOM cascade (kernel-verified via /proc/1/smaps_rollup:
+        # Anonymous heap climbed ~1GB per ~6-10s until OOMKilled, always immediately after a
+        # job's last operation finished), and independently reproduced by OOMKilling a
+        # cryo-api pod via a single call to /api/v1/ai/cost-model/evaluate (same
+        # build_outcome_dataset code path). That function's own docstring says "Retrain from
+        # audit_log realized savings" -- a batch/background retrain, wired into the hottest,
+        # highest-frequency path in the system with zero rate-limiting. Moved to
+        # CostModelRefreshRunner (cryo/cli.py), a periodic scheduled daemon matching every
+        # other background-refresh job in this codebase (BenefitScoreUpdaterRunner,
+        # EvolvingCatalogCleanupRunner) -- see cost_model_refresh_interval_hours (cryo/config.py).
         self._record_job_metrics(
             destination_id=job.destination_id,
             operation_type=_job_operation_type(job),
