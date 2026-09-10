@@ -51,6 +51,7 @@ from cryo.engines.native.routing import (
     native_fallback_supports,
     resolve_native_routing,
 )
+from cryo.planner.execution import gate_native_optimize_manifests, skip_operations_from_preset
 from cryo.planner.planner import build_plan
 from cryo.worker.worker import (
     DestinationConfig,
@@ -359,6 +360,7 @@ def _dispatch_fallback_operations(
     table_ref: str,
     job_id: str,
     table_id: str,
+    table_stats: Mapping[str, Any] | None = None,
 ) -> None:
     """Best-effort synchronous dispatch of native-unsupported ops to a SQL fallback.
 
@@ -419,6 +421,8 @@ def _dispatch_fallback_operations(
             fallback_destination.engine,
             _fallback_engine_config(fallback_destination.config, source_config),
         )
+        if isinstance(fallback_engine, SparkK8sEngine):
+            fallback_engine = fallback_engine.with_table_stats(table_stats)
         for operation, reason in fallback_operations:
             if not native_fallback_supports(fallback_engine.type, operation.type):
                 mismatch_detail = native_fallback_mismatch_detail(
@@ -864,11 +868,17 @@ def admit_native_k8s_jobs(
                             if k != "chunk_size_gb"
                         },
                     )
+                    skipped = skip_operations_from_preset(prepared_item.job.operations)
+                    if skipped:
+                        plan_params["skip_operations"] = skipped
                     plan = build_plan(
                         prepared_item.stats,
                         prepared_item.table_data.partitions,
                         prepared_item.mode,
                         plan_params,
+                    )
+                    plan = gate_native_optimize_manifests(
+                        plan, operations=prepared_item.job.operations, destination=destination
                     )
                     store.save_plan(prepared_item.job.id, plan_to_dict(plan))
                     built = build_native_request(
@@ -895,6 +905,16 @@ def admit_native_k8s_jobs(
                                 table_ref=plan.table_ref,
                                 job_id=prepared_item.job.id,
                                 table_id=prepared_item.job.table_id,
+                                table_stats={
+                                    key: prepared_item.stats[key]
+                                    for key in (
+                                        "total_size_gb",
+                                        "total_files",
+                                        "manifest_count",
+                                        "total_snapshots",
+                                    )
+                                    if key in prepared_item.stats
+                                },
                             )
                         )
                 except Exception as exc:
