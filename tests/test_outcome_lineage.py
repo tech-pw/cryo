@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
@@ -18,6 +19,72 @@ from cryo.db.models import (
 )
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.intelligence.outcomes import OUTCOME_SCHEMA_VERSION, build_outcome_dataset
+
+
+def test_dataset_projects_only_nearest_history_fields(session: Session) -> None:
+    event_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    table, job, _ = _lineage_fixture(session)
+    session.add(
+        AuditLog(
+            ts=event_at,
+            table_id=table.id,
+            job_id=job.id,
+            action="optimize",
+            status="OK",
+            actual_bytes_freed=100,
+        )
+    )
+    for hours in range(-100, 101):
+        session.add(
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=event_at + timedelta(hours=hours),
+                small_files_count=100 + hours,
+                total_files=300,
+                total_size_gb=10,
+                raw={"reclaim_optimize_bytes": 200, "unused_file_metadata": "x" * 10000},
+            )
+        )
+    session.commit()
+    session.expunge_all()
+    loaded = []
+    event.listen(session, "loaded_as_persistent", lambda _, obj: loaded.append(type(obj)))
+    dataset = build_outcome_dataset(session)
+    row = dataset.rows[0]
+    assert row.observation_at == event_at.replace(tzinfo=None)
+    assert row.post_scan_at == (event_at + timedelta(hours=1)).replace(tzinfo=None)
+    assert row.predicted_bytes_freed == 200
+    assert row.pre_small_files_count == 100
+    assert row.post_small_files_count == 101
+    # No full history ORM object (and therefore no large raw blob) reaches Python.
+    assert TableStatsHistory not in loaded
+
+
+def test_observation_windows_apply_to_each_audit(session: Session) -> None:
+    event_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    table, job, _ = _lineage_fixture(session)
+    for days in (0, 30):
+        session.add(
+            AuditLog(
+                ts=event_at + timedelta(days=days),
+                table_id=table.id,
+                job_id=job.id,
+                action="optimize",
+                status="OK",
+                actual_bytes_freed=100,
+            )
+        )
+    session.add(
+        TableStatsHistory(
+            table_id=table.id,
+            scan_at=event_at + timedelta(days=20),
+            raw={"reclaim_optimize_bytes": 200},
+        )
+    )
+    session.commit()
+    rows = build_outcome_dataset(session, observation_lookback_days=7).rows
+    assert rows[0].post_scan_at is None
+    assert rows[1].observation_at is None
 
 
 def test_outcome_dataset_joins_frozen_prediction_effect_and_post_scan(session: Session) -> None:

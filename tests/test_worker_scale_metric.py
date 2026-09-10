@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from sqlalchemy import update
 from sqlalchemy.orm import sessionmaker
 
 from cryo.cli import _worker_scale_metric
@@ -55,3 +56,16 @@ def test_zero_when_nothing_active(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.db.session.SessionLocal", test_session_factory)
 
     assert _worker_scale_metric() == 0
+
+
+def test_watcher_owned_dispatches_do_not_request_worker_replicas(session, monkeypatch) -> None:
+    _seed_job(session, status="running")
+    session.execute(update(MaintenanceJob).values(dispatch_id=uuid4()))
+    session.commit()
+    _seed_job(session, status="running")
+    _seed_job(session, status="admitted")
+    monkeypatch.setattr(
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
+    )
+    assert _worker_scale_metric() == 2

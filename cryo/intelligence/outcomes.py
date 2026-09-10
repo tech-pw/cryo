@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from cryo.db.models import (
     AuditLog,
@@ -38,7 +38,18 @@ _RECLAIM_FIELD_BY_ACTION = {
 
 
 class _ScannedRow(Protocol):
+    @property
+    def scan_at(self) -> datetime: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _StatsObservation:
+    table_id: uuid.UUID
     scan_at: datetime
+    small_files_count: int | None
+    total_files: int | None
+    total_size_gb: float | None
+    raw: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +170,25 @@ def build_outcome_dataset(
         raise ValueError("post-scan window must be positive")
     query = (
         select(AuditLog, MaintenanceJob)
+        .options(
+            load_only(
+                AuditLog.id,
+                AuditLog.table_id,
+                AuditLog.ts,
+                AuditLog.action,
+                AuditLog.engine,
+                AuditLog.actual_bytes_freed,
+                AuditLog.duration_ms,
+                AuditLog.input_files_count,
+                raiseload=True,
+            ),
+            load_only(
+                MaintenanceJob.id,
+                MaintenanceJob.current_intent_id,
+                MaintenanceJob.plan_hash,
+                raiseload=True,
+            ),
+        )
         .join(MaintenanceJob, MaintenanceJob.id == AuditLog.job_id)
         .where(
             AuditLog.status == "OK",
@@ -179,18 +209,79 @@ def build_outcome_dataset(
     latest_outcome = max(audit.ts for audit, _ in audit_jobs)
     history_start = earliest_outcome - timedelta(days=observation_lookback_days)
     history_end = latest_outcome + timedelta(days=post_scan_window_days)
-    stats_by_table: dict[uuid.UUID, list[TableStatsHistory]] = {
-        table_id: [] for table_id in table_ids
-    }
-    for stats_history in session.scalars(
-        select(TableStatsHistory)
+    # Pick at most two indexed observations per outcome before loading any history.
+    # A date window alone is not a memory bound: raw histories can contain MBs of
+    # partition/file metadata, even when the audit sample itself is only 500 rows.
+    audit_ids = [audit.id for audit, _ in audit_jobs]
+    pre_stats_id = (
+        select(TableStatsHistory.id)
         .where(
-            TableStatsHistory.table_id.in_(table_ids),
+            TableStatsHistory.table_id == AuditLog.table_id,
+            TableStatsHistory.scan_at <= AuditLog.ts,
             TableStatsHistory.scan_at >= history_start,
+        )
+        .order_by(TableStatsHistory.scan_at.desc(), TableStatsHistory.id.desc())
+        .limit(1)
+        .correlate(AuditLog)
+        .scalar_subquery()
+    )
+    post_stats_id = (
+        select(TableStatsHistory.id)
+        .where(
+            TableStatsHistory.table_id == AuditLog.table_id,
+            TableStatsHistory.scan_at > AuditLog.ts,
             TableStatsHistory.scan_at <= history_end,
         )
+        .order_by(TableStatsHistory.scan_at, TableStatsHistory.id)
+        .limit(1)
+        .correlate(AuditLog)
+        .scalar_subquery()
+    )
+    pre_cost_id = (
+        select(TableCostHistory.id)
+        .where(
+            TableCostHistory.table_id == AuditLog.table_id,
+            TableCostHistory.scan_at <= AuditLog.ts,
+            TableCostHistory.scan_at >= history_start,
+        )
+        .order_by(TableCostHistory.scan_at.desc(), TableCostHistory.id.desc())
+        .limit(1)
+        .correlate(AuditLog)
+        .scalar_subquery()
+    )
+    nearest = list(
+        session.execute(
+            select(pre_stats_id, post_stats_id, pre_cost_id)
+            .select_from(AuditLog)
+            .where(AuditLog.id.in_(audit_ids))
+        )
+    )
+    stats_ids = {value for row in nearest for value in row[:2] if value is not None}
+    cost_ids = {row[2] for row in nearest if row[2] is not None}
+    stats_by_table: dict[uuid.UUID, list[_StatsObservation]] = {
+        table_id: [] for table_id in table_ids
+    }
+    raw_keys = (*_RECLAIM_FIELD_BY_ACTION.values(), "delete_file_pct", "p95_query_latency_ms")
+    for row in session.execute(
+        select(
+            TableStatsHistory.table_id,
+            TableStatsHistory.scan_at,
+            TableStatsHistory.small_files_count,
+            TableStatsHistory.total_files,
+            TableStatsHistory.total_size_gb,
+            *(TableStatsHistory.raw[key] for key in raw_keys),
+        )
+        .where(TableStatsHistory.id.in_(stats_ids))
         .order_by(TableStatsHistory.table_id, TableStatsHistory.scan_at)
     ):
+        stats_history = _StatsObservation(
+            table_id=row[0],
+            scan_at=row[1],
+            small_files_count=row[2],
+            total_files=row[3],
+            total_size_gb=row[4],
+            raw=dict(zip(raw_keys, row[5:], strict=True)),
+        )
         stats_by_table[stats_history.table_id].append(stats_history)
 
     # Real Trino $/GiB per day, backed out from QueryCostAttributionDaily's already-derived
@@ -244,9 +335,7 @@ def build_outcome_dataset(
     for cost_history in session.scalars(
         select(TableCostHistory)
         .where(
-            TableCostHistory.table_id.in_(table_ids),
-            TableCostHistory.scan_at >= history_start,
-            TableCostHistory.scan_at <= latest_outcome,
+            TableCostHistory.id.in_(cost_ids),
         )
         .order_by(TableCostHistory.table_id, TableCostHistory.scan_at)
     ):
@@ -259,7 +348,11 @@ def build_outcome_dataset(
         {
             intent.id: intent
             for intent in session.scalars(
-                select(MaintenanceIntent).where(MaintenanceIntent.id.in_(intent_ids))
+                select(MaintenanceIntent)
+                .options(
+                    load_only(MaintenanceIntent.id, MaintenanceIntent.plan_hash, raiseload=True)
+                )
+                .where(MaintenanceIntent.id.in_(intent_ids))
             )
         }
         if intent_ids
@@ -290,6 +383,18 @@ def build_outcome_dataset(
         pre_stats = _latest_at_or_before(histories, audit.ts)
         post_stats = _first_after(histories, audit.ts)
         pre_cost = _latest_at_or_before(costs_by_table.get(audit.table_id, []), audit.ts)
+        if pre_stats is not None and pre_stats.scan_at < audit.ts - timedelta(
+            days=observation_lookback_days
+        ):
+            pre_stats = None
+        if post_stats is not None and post_stats.scan_at > audit.ts + timedelta(
+            days=post_scan_window_days
+        ):
+            post_stats = None
+        if pre_cost is not None and pre_cost.scan_at < audit.ts - timedelta(
+            days=observation_lookback_days
+        ):
+            pre_cost = None
         intent = intents.get(job.current_intent_id)
         predicted_bytes = _predicted_bytes(audit.action, pre_stats, pre_cost)
         outcomes.append(
@@ -364,7 +469,7 @@ def _first_after[T: _ScannedRow](rows: list[T], cutoff: datetime) -> T | None:
 
 def _predicted_bytes(
     action: str,
-    stats: TableStatsHistory | None,
+    stats: _StatsObservation | None,
     cost: TableCostHistory | None,
 ) -> int | None:
     field = _RECLAIM_FIELD_BY_ACTION.get(action)
@@ -377,7 +482,7 @@ def _predicted_bytes(
     return None
 
 
-def _raw_float(row: TableStatsHistory | None, key: str) -> float | None:
+def _raw_float(row: _StatsObservation | None, key: str) -> float | None:
     if row is None or not isinstance(row.raw, dict):
         return None
     value = row.raw.get(key)
@@ -418,7 +523,7 @@ def _table_scan_cost_usd(
     return round(total_usd, 6) if total_usd > 0 else None
 
 
-def _estimated_rewrite_bytes(row: TableStatsHistory | None) -> int | None:
+def _estimated_rewrite_bytes(row: _StatsObservation | None) -> int | None:
     if row is None or row.total_size_gb is None or row.total_size_gb <= 0:
         return None
     return int(row.total_size_gb * 1024**3)

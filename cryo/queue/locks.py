@@ -129,10 +129,14 @@ class RedisLockStore:
 
     def renew_table_lock(self, table_id: str, job_id: str, ttl_seconds: int) -> bool:
         key = self._table_key(table_id)
-        current = self._redis.get(key)
-        if _decode(current) != job_id:
-            return False
-        return bool(self._redis.expire(key, ttl_seconds))
+        lua = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('expire', KEYS[1], ARGV[2])
+        else
+            return 0
+        end
+        """
+        return bool(self._redis.eval(lua, 1, key, job_id, ttl_seconds))
 
     def release_table_lock(self, table_id: str, job_id: str) -> None:
         key = self._table_key(table_id)
