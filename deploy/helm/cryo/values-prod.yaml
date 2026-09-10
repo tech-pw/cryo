@@ -174,16 +174,15 @@ native:
     digest: "sha256:25dcfa328578a3776b2aa242c01e8e75e6f34e671d684258ec330c31779f807b"
   keda:
     enabled: true
-    # Temporary stopgap, 2026-09-10 active outage: cryo-worker pods OOMKilling even at
-    # 8Gi (raised from 6Gi same day, also insufficient) -- near-simultaneous multi-pod
-    # kills point at genuine unbounded growth under concurrent load, not a fixed
-    # big-table cost a higher ceiling would contain. Capping max replicas lower reduces
-    # how many pods can hit whatever's driving this at the same time, while the real
-    # root cause is still being investigated (see cryo/worker/orphan_recovery.py and
-    # deploy/helm/cryo/values-prod.yaml's worker.resources.limits.memory comments for
-    # what's already been tried/ruled out). Revert to default (10) once root-caused --
-    # this slows admission throughput fleet-wide, it does not fix anything.
-    maxReplicas: 3
+    # Stopgap maxReplicas: 3 removed 2026-09-10 after the real root cause was found and
+    # fixed: refresh_cost_model_cache() was running inline on every job completion, on
+    # every worker pod (see cryo/worker/worker.py and cryo/cli.py's CostModelRefreshRunner,
+    # digest sha256:25dcfa32, commit 39f8123f) -- confirmed live via kernel-level /proc/1/
+    # smaps_rollup and independently reproduced by OOMKilling a cryo-api pod via one call to
+    # /api/v1/ai/cost-model/evaluate (same code path). Post-fix soak: 12+ min, 0 restarts,
+    # lastState={} on every pod (vs. 40-90s pre-fix, 11-14min on the intermediate partial
+    # fix). Back to the template default (10) -- the earlier maxReplicas: 3 cap was a
+    # concurrency-reduction stopgap that slowed admission throughput fleet-wide, not a fix.
 
 # Enabled 2026-07-29 for a controlled prod test (see cost-driven-autoscaling plan): the
 # always-on 8-replica scannerWorker Deployment is temporarily scaled to 0 for the duration
