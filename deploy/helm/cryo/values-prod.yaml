@@ -234,7 +234,19 @@ worker:
       # the actual burst to confirm that precisely. This bump is a safety margin, not a
       # confirmed root-cause fix -- see the new per-dispatch memory logging in
       # native_admit.py, added the same day, for real data next time this recurs.
-      memory: 6Gi
+      #
+      # Recurred, 2026-09-10: same signature again, this time confirmed live to include
+      # recover_orphaned_jobs' fallback loop calling list_queued_jobs() with no limit (fixed
+      # separately, cryo/worker/orphan_recovery.py) -- that fix reduced but did NOT eliminate
+      # the OOM cascade (9/10 worker pods OOMKilled/CrashLoopBackOff continued after it
+      # deployed). Live evidence points at cdp.user360.silver_user360 (549.5GB, 5,751 files,
+      # crosses OUTLIER_SIZE_GB=500 in cryo/engines/spark/worker_guard.py) being both
+      # adopted as an orphan (recover_orphaned_jobs) AND freshly re-dispatched
+      # (process_next -> _validate_spark_worker_plan) around the same time -- consistent
+      # with this comment's own _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY=6 theory, still not
+      # confirmed. Stopgap only, while that's investigated without live-outage pressure:
+      # raised again to stop the bleeding, not a root-cause fix.
+      memory: 8Gi
 
 governor:
   replicas: 1
