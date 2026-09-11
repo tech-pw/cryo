@@ -612,7 +612,7 @@ class Worker:
                         final_status = JobStatus.DEFERRED
                         error = "worker_stopping_before_next_effect"
                         break
-                    self._renew_table_lock(job)
+                    lock_held = self._renew_table_lock(job)
 
                     existing_step = None
                     if self._step_ledger is not None:
@@ -621,6 +621,8 @@ class Worker:
                             JobStepStatus.SUCCEEDED,
                             JobStepStatus.SKIPPED,
                         }:
+                            # Already-reconciled step -- replaying its recorded outcome, not
+                            # submitting new work, so this is safe even without the lock.
                             had_success = had_success or (
                                 existing_step.status is JobStepStatus.SUCCEEDED
                             )
@@ -633,6 +635,13 @@ class Worker:
                             final_status = JobStatus.RUNNING
                             error = "awaiting_started_step_recovery"
                             break
+                    # CR-02: the lock must be held before submitting a *new* statement --
+                    # a lost/stolen lock here means another worker may already be mutating
+                    # this table under a fresher attempt.
+                    if not lock_held:
+                        final_status = JobStatus.DEFERRED
+                        error = "table_locked"
+                        break
 
                     from cryo.db.session import SessionLocal
                     from cryo.security.abac_enforcement import evaluate_maintenance_allowed
@@ -1202,10 +1211,17 @@ class Worker:
             job.table_id, job.id, self._lock_ttl_seconds
         ) or self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
-    def _renew_table_lock(self, job: MaintenanceJobRecord) -> None:
+    def _renew_table_lock(self, job: MaintenanceJobRecord) -> bool:
+        """Return whether this worker still holds the table lock -- CR-02: every call site
+        used to discard this result and kept submitting work after the lock had already
+        expired or been taken by another worker. A crash-recovered worker can renew and
+        continue past the point another attempt owns the table, corrupting concurrent state
+        the lock exists to prevent. Callers MUST stop submitting new work (not just stop
+        renewing) the first time this returns False -- see the three loop call sites in this
+        file, each of which now breaks/returns instead of proceeding."""
         if self._lock_store is None:
-            return
-        self._lock_store.renew_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+            return True
+        return self._lock_store.renew_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
     def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is not None:
@@ -1429,7 +1445,11 @@ class Worker:
                 supported_operations = tuple(pending_operations)
 
         if supported_operations:
-            self._renew_table_lock(job)
+            # CR-02: stop before dispatching a new native plan if the lock is already lost --
+            # already-reconciled operations above (continue'd via receipt.state == SUCCEEDED)
+            # are unaffected since they submit nothing new.
+            if not self._renew_table_lock(job):
+                return JobStatus.DEFERRED, "table_locked", None, had_success, had_skip, False
             try:
                 table_uuid = UUID(job.table_id)
             except ValueError:
@@ -1989,8 +2009,10 @@ class Worker:
             )
 
         for operation, route_reason in operations:
-            self._renew_table_lock(job)
+            lock_held = self._renew_table_lock(job)
             if not native_fallback_supports(fallback_engine.type, operation.type):
+                # Recording a skip mutates nothing on the table itself, so this is safe to
+                # do even without the lock.
                 had_skip = True
                 self._record_native_skipped(
                     job=job,
@@ -2003,6 +2025,13 @@ class Worker:
                     ),
                 )
                 continue
+            # CR-02: stop dispatching further fallback operations once the lock is lost --
+            # remaining operations are left unattempted so the job can be reconciled/retried
+            # under a fresh, verified lock rather than racing another owner.
+            if not lock_held:
+                final_status = JobStatus.DEFERRED
+                error = "table_locked"
+                break
             fallback_plan = MaintenancePlan(
                 table_ref=plan.table_ref,
                 mode=plan.mode,

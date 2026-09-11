@@ -52,6 +52,41 @@ def test_worker_defers_without_executing_when_another_job_owns_table() -> None:
     assert not store.audit
 
 
+def test_worker_stops_submitting_when_lock_lost_mid_execution() -> None:
+    """CR-02 regression: _renew_table_lock's return value used to be discarded at every call
+    site, so a worker that lost its table lock between statements (lease expired, another
+    worker took over after a crash-recovery race) kept submitting new statements anyway --
+    the lock existed specifically to prevent that concurrent mutation. This engine steals the
+    lock (simulating another worker acquiring it after this worker's lease lapsed) right after
+    the first statement executes; the second statement must never be submitted."""
+
+    class _StealsLockAfterFirstStatement(FakeMaintenanceEngine):
+        def __init__(self, locks: InMemoryLockStore) -> None:
+            super().__init__()
+            self._locks = locks
+
+        def execute(self, stmt, ctx=None):
+            result = super().execute(stmt, ctx)
+            if len(self.executed) == 1:
+                # Simulate the lease expiring and another worker winning it.
+                self._locks.release_table_lock("table-1", "job-1")
+                self._locks.acquire_table_lock("table-1", "other-job", 300)
+            return result
+
+    queue, locks, store = _worker_fixture()
+    engine = _StealsLockAfterFirstStatement(locks)
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.DEFERRED
+    assert result.error == "table_locked"
+    # Only the first statement (optimize) ran; expire_snapshots must never have been
+    # submitted once the lock was confirmed lost.
+    assert [stmt.action for stmt in engine.executed] == [OperationType.OPTIMIZE]
+    assert locks.list_table_locks() == [("table-1", "other-job")]
+
+
 def test_worker_records_actual_bytes_freed_when_engine_returns_them() -> None:
     queue, locks, store = _worker_fixture()
     engine = FakeMaintenanceEngine(
