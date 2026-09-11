@@ -611,6 +611,58 @@ def test_planner_adds_convert_deletes_when_optimize_not_planned() -> None:
     ]
 
 
+def test_convert_deletes_forwards_max_commits_and_concurrency_params() -> None:
+    """Regression, confirmed live 2026-09-11: convert_params only ever set
+    delete_file_threshold/partial_progress_enabled -- a preset's convert_deletes_max_commits
+    and convert_deletes_max_concurrent_rewrites were silently dropped before reaching
+    _render_convert_deletes, which has its own hardcoded defaults (max_commits=50). Confirmed
+    on cdp.cdp_revenue.gold_batches_pw: one real run at the 50-commit default cleared only 15
+    of 522 position-delete files (removed-delete-files: 15 in the resulting Iceberg snapshot
+    summary) -- there was no way to ask for a bigger pass via preset params alone."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 500,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "convert_deletes_threshold_pct": 5.0,
+            "convert_deletes_max_commits": 200,
+            "convert_deletes_max_concurrent_rewrites": 10,
+        },
+    )
+    convert_op = next(op for op in plan.operations if op.type is OperationType.CONVERT_DELETES)
+    assert convert_op.params["convert_deletes_max_commits"] == 200
+    assert convert_op.params["convert_deletes_max_concurrent_rewrites"] == 10
+
+
+def test_convert_deletes_defaults_max_commits_and_concurrency_when_unset() -> None:
+    """Companion to the regression above -- a preset that doesn't set these two params must
+    still get the same defaults _render_convert_deletes always used, not None/missing keys."""
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 10,
+            "total_delete_files": 500,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 5,
+        },
+        [],
+        Mode.STANDARD,
+        {"min_small_files": 128, "convert_deletes_threshold_pct": 5.0},
+    )
+    convert_op = next(op for op in plan.operations if op.type is OperationType.CONVERT_DELETES)
+    assert convert_op.params["convert_deletes_max_commits"] == 50
+    assert convert_op.params["convert_deletes_max_concurrent_rewrites"] == 5
+
+
 def test_planner_prefers_minor_delete_compaction_below_major_threshold() -> None:
     """Okolnychyi (VLDB'24) §C2: many position-delete files but delete_file_pct still under
     the major-rewrite threshold -> cheap rewrite_position_deletes, not a full CONVERT_DELETES
