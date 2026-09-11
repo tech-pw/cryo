@@ -575,6 +575,19 @@ def _convert_deletes_operation(
     convert_params = {
         "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
         "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
+        # Regression, confirmed live 2026-09-11: a preset's convert_deletes_max_commits/
+        # convert_deletes_max_concurrent_rewrites were silently dropped here -- only the two
+        # keys above ever reached _render_convert_deletes, so every convert_deletes call was
+        # stuck on that function's own hardcoded defaults (max_commits=50) regardless of what
+        # a preset configured. Confirmed live on cdp.cdp_revenue.gold_batches_pw: one pass at
+        # the 50-commit default cleared only 15 of 522 position-delete files
+        # (removed-delete-files: 15 in the resulting snapshot summary) even with
+        # force_convert_deletes set -- there was no way to ask for a larger pass via preset
+        # params alone.
+        "convert_deletes_max_commits": int(params.get("convert_deletes_max_commits", 50)),
+        "convert_deletes_max_concurrent_rewrites": int(
+            params.get("convert_deletes_max_concurrent_rewrites", 5)
+        ),
     }
     predicates = _skewed_partition_predicates(stats, partitions, params, notes)
     notes.append(
