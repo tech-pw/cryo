@@ -1945,6 +1945,175 @@ async def generate_report(
     return DailyReportResponse(**result)
 
 
+# === Trino/S3/Iceberg Optimization Checklist ===
+
+
+class ChecklistItemResponse(BaseModel):
+    key: str
+    label: str
+    weight_pct: float
+    tier: int
+    status: str
+    reason: str
+    metric_value: float | None = None
+    threshold: float | None = None
+
+
+class TableChecklistResponse(BaseModel):
+    table_id: uuid.UUID
+    checked_at: datetime
+    items: list[ChecklistItemResponse]
+    summary: dict[str, Any]
+
+
+def _latest_preset_idle_hours(session: Any, table_id: uuid.UUID) -> float | None:
+    """Best-effort: pull partition_write_idle_hours from the most recent job's persisted plan
+    for this table, since presets aren't directly bound to a table (they're applied at
+    dispatch time) -- the plan a job actually ran with is the only durable record of what
+    idle-hours gate was in effect. Returns None (checklist renders this as "yellow, verify")
+    when no plan is on record yet, rather than guessing."""
+    from cryo.db.models import MaintenanceJob
+
+    job = session.scalar(
+        select(MaintenanceJob)
+        .where(MaintenanceJob.table_id == table_id, MaintenanceJob.plan.is_not(None))
+        .order_by(MaintenanceJob.started_at.desc())
+        .limit(1)
+    )
+    if job is None or not isinstance(job.plan, dict):
+        return None
+    # Real shape confirmed live: {"mode": ..., "notes": [...], "operations": [{"type": ...,
+    # "params": {...}}, ...]} -- each operation carries its own params dict, not one shared
+    # top-level params key. partition_write_idle_hours is planner-level, not operation-level,
+    # but the planner threads the same params mapping into every operation it builds, so any
+    # operation's params dict has it if it was set at all.
+    for operation in job.plan.get("operations") or []:
+        if not isinstance(operation, dict):
+            continue
+        params = operation.get("params")
+        if not isinstance(params, dict):
+            continue
+        value = params.get("partition_write_idle_hours")
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _sample_file_paths(session: Any, table_id: uuid.UUID, limit: int = 5) -> list[str]:
+    """Sample of recent data-file paths for the storage_class checklist item.
+
+    Confirmed: TablePartition.raw (cryo/scanner/analyze.py) does not currently persist
+    per-partition file paths, only {"partition_values", "delete_files"} -- so there is no
+    cheap pre-existing source to read here yet. Returns [] until the scanner is extended to
+    persist a representative file path per partition; _check_storage_class already degrades
+    to status="unknown" (not a false "green") when given no sample, so this is a known,
+    explicit gap rather than a silent wrong answer. A live $files query would make this
+    correct today but turns every checklist call into a catalog round-trip, which is too
+    expensive for the fleet-wide endpoint below -- worth doing as a follow-up that samples
+    lazily (e.g. only when a caller explicitly asks for storage_class detail on one table)."""
+    return []
+
+
+@router.get(
+    "/tables/{table_id}/checklist",
+    response_model=TableChecklistResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["analytics"],
+)
+def get_table_checklist(table_id: uuid.UUID, session: SessionDep) -> TableChecklistResponse:
+    """The 12-item Trino/S3/Iceberg optimization checklist for one table -- see
+    cryo/scanner/checklist.py's module docstring for the full item inventory, weights, and the
+    live incidents that grounded the three items (partition_match, cadence_match,
+    storage_class) not already covered by health.py's existing deduction score."""
+    from cryo.scanner.checklist import checklist_summary, compute_checklist
+
+    items = compute_checklist(
+        session,
+        table_id,
+        preset_idle_hours=_latest_preset_idle_hours(session, table_id),
+        sample_file_paths=_sample_file_paths(session, table_id),
+    )
+    return TableChecklistResponse(
+        table_id=table_id,
+        checked_at=datetime.now(UTC),
+        items=[
+            ChecklistItemResponse(
+                key=i.key, label=i.label, weight_pct=i.weight_pct, tier=i.tier,
+                status=i.status, reason=i.reason, metric_value=i.metric_value, threshold=i.threshold,
+            )
+            for i in items
+        ],
+        summary=checklist_summary(items),
+    )
+
+
+class FleetChecklistRow(BaseModel):
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    summary: dict[str, Any]
+    red_items: list[str]
+
+
+class FleetChecklistResponse(BaseModel):
+    checked_at: datetime
+    rows: list[FleetChecklistRow]
+
+
+@router.get(
+    "/checklist/fleet",
+    response_model=FleetChecklistResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["analytics"],
+)
+def get_fleet_checklist(
+    session: SessionDep,
+    table_ids: str | None = None,
+    limit: int = 20,
+) -> FleetChecklistResponse:
+    """Fleet-wide checklist rollup, scoped to an explicit table_id list (comma-separated) when
+    given -- e.g. the top-20-by-cost cohort -- since computing all 12 items for the whole fleet
+    on every request would be expensive (partition_match and storage_class each do real work
+    per table). Without table_ids, falls back to the `limit` most recently scanned active
+    tables so the endpoint is still useful standalone."""
+    from cryo.db.models import Table, TableStats
+    from cryo.scanner.checklist import checklist_summary, compute_checklist
+
+    if table_ids:
+        ids = [uuid.UUID(t.strip()) for t in table_ids.split(",") if t.strip()]
+        tables = session.scalars(select(Table).where(Table.id.in_(ids))).all()
+    else:
+        tables = session.scalars(
+            select(Table)
+            .join(TableStats, TableStats.table_id == Table.id)
+            .where(Table.is_active.is_(True))
+            .order_by(TableStats.scan_at.desc())
+            .limit(limit)
+        ).all()
+
+    rows: list[FleetChecklistRow] = []
+    for table in tables:
+        items = compute_checklist(
+            session,
+            table.id,
+            preset_idle_hours=_latest_preset_idle_hours(session, table.id),
+            sample_file_paths=_sample_file_paths(session, table.id),
+        )
+        rows.append(
+            FleetChecklistRow(
+                table_id=table.id,
+                schema_name=table.schema_name,
+                table_name=table.table_name,
+                summary=checklist_summary(items),
+                red_items=[i.key for i in items if i.status == "red"],
+            )
+        )
+    return FleetChecklistResponse(checked_at=datetime.now(UTC), rows=rows)
+
+
 # === Signal-Driven Triggers Endpoints ===
 
 
