@@ -129,6 +129,11 @@ def _check_partition_match(session: Session, table_id: uuid.UUID, stats: Mapping
     try:
         patterns = get_table_query_patterns(session, table_id)
     except Exception as exc:  # noqa: BLE001 - missing/partial query-pattern data must not crash the checklist
+        # A failed statement leaves the session's transaction poisoned in Postgres -- every
+        # later query on this same session (the next checklist item, or the next table in a
+        # fleet-wide loop) would raise InFailedSqlTransaction until this is rolled back.
+        # Confirmed live 2026-09-14: this exact gap took down /checklist/fleet with a 500.
+        session.rollback()
         logger.debug("partition_match check: no query patterns for %s: %s", table_id, exc)
         return _item("partition_match", "unknown", "No query pattern data available yet")
 
