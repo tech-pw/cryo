@@ -1082,10 +1082,58 @@ def test_planner_routes_pathological_delete_skew_to_minor_rewrite() -> None:
     assert any("extreme delete-per-file ratio" in note for note in plan.notes)
 
 
-def test_planner_does_not_misfire_pathological_skew_when_data_still_fragmented() -> None:
-    """A partition with many deletes but ALSO many small files still needs its data rewritten --
-    convert_deletes can (and does) reach it via ordinary size-based selection, so the
-    pathological-skew escape hatch must not steal it away from the major path."""
+def test_planner_does_not_misfire_pathological_skew_below_ratio_when_data_fragmented() -> None:
+    """A partition with many deletes but a genuinely low deletes-per-data-file ratio (well under
+    the pathological/unreachable thresholds) should stay on the ordinary convert_deletes path --
+    the skew escape hatch is for cases where size-driven selection provably can't reach the
+    deletes, not just "there are a lot of deletes"."""
+    partitions = [
+        {
+            "partition_value": "20485",
+            "small_files_in_partition_count": 500,
+            "files_per_partition": 500,
+            "delete_files_in_partition_count": 1000,
+        }
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 500,
+            "total_delete_files": 1000,
+            "position_delete_files": 1000,
+            "delete_file_pct": 95.0,
+            "total_size_gb": 5,
+            "partition_fields": [
+                {
+                    "base_column": "_date",
+                    "partition_field": "_date",
+                    "transform": "identity",
+                    "col_type": "date",
+                }
+            ],
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 10,
+            "convert_deletes_threshold_pct": 5.0,
+            "force_convert_deletes": True,
+        },
+    )
+    assert OperationType.CONVERT_DELETES in [op.type for op in plan.operations]
+    assert OperationType.REWRITE_POSITION_DELETES not in [op.type for op in plan.operations]
+
+
+def test_planner_routes_delete_skew_to_minor_rewrite_even_when_data_also_fragmented() -> None:
+    """Regression, 2026-09-14: a prior version of the skew guard deferred to
+    convert_deletes/optimize whenever the partition's data files were also individually small,
+    on the theory that optimize would incidentally help with deletes too. Confirmed false via
+    Trino's own docs (OPTIMIZE does not remove position-delete files as a designed side effect,
+    github.com/trinodb/trino/discussions/25211) and via this exact ratio on
+    cdp_revenue.gold_batches_pw's real Sep 11 run, where convert_deletes made delete_files
+    WORSE. rewrite_position_deletes now runs whenever the ratio itself is pathological,
+    regardless of small-file fragmentation -- optimize_ops still runs alongside it either way."""
     partitions = [
         {
             "partition_value": "20485",
@@ -1120,22 +1168,21 @@ def test_planner_does_not_misfire_pathological_skew_when_data_still_fragmented()
             "force_convert_deletes": True,
         },
     )
-    assert OperationType.CONVERT_DELETES in [op.type for op in plan.operations]
-    assert OperationType.REWRITE_POSITION_DELETES not in [op.type for op in plan.operations]
+    assert OperationType.REWRITE_POSITION_DELETES in [op.type for op in plan.operations]
+    assert OperationType.OPTIMIZE in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
 
 
 def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_convert() -> None:
     """Live incident, confirmed 2026-09-14: cdp_revenue.gold_batches_pw is a tiny table (40
-    files, 105MB total) with 692 position-delete files (delete_file_pct=100%). Every one of its
-    40 files individually counts as "small" (small_files_in_partition_count=40), so the
-    pre-fix `small_files > 0: continue` guard deferred to convert_deletes/optimize on the
-    assumption they'd help -- but optimize's own min_small_files=128 gate never actually fires
-    for a table this size (its real job history shows "Skipped optimize: table has 0 small
-    files below threshold 128"). And this exact table's Sep 11 convert_deletes run made
-    delete_files WORSE (310 -> 507), proving convert_deletes structurally can't reach these
-    deletes regardless of what it does to the data files. The guard must compare against the
-    table's own min_small_files threshold, not just "any small files at all", so a table this
-    size still routes to the minor rewrite_position_deletes path."""
+    files, 105MB total) with 692 position-delete files (delete_file_pct=100%, ratio 692/40=17.3
+    -- above the unreachable_ratio default of 7.0). Every one of its 40 files individually
+    counts as "small" (small_files_in_partition_count=40), so the pre-fix guard deferred to
+    convert_deletes/optimize on the assumption they'd help clear the deletes too -- but this
+    exact table's Sep 11 convert_deletes run made delete_files WORSE (310 -> 507), and Trino's
+    own docs confirm OPTIMIZE doesn't remove position-delete files as a designed side effect
+    regardless of whether it runs. The skew ratio alone (not small-file fragmentation) now
+    decides whether this table routes to the minor rewrite_position_deletes path."""
     partitions = [
         {
             "partition_value": "",
