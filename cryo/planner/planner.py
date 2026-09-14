@@ -477,18 +477,29 @@ def _delete_compaction_policy(
 def _has_pathological_delete_skew(
     partitions: Sequence[Mapping[str, Any]], params: Mapping[str, Any]
 ) -> bool:
-    """True if any partition has so few (already well-sized) data files relative to its delete
-    count that rewrite_data_files' size-driven selection cannot reach it -- see
-    _delete_compaction_policy for the live incident this codifies."""
+    """True if any partition has so few (already well-sized, by the table's own optimize
+    threshold) data files relative to its delete count that rewrite_data_files' size-driven
+    selection cannot reach it -- see _delete_compaction_policy for the live incident this
+    codifies."""
     min_ratio = float(params.get("delete_per_file_pathological_ratio", 20.0))
     min_deletes = int(params.get("delete_pathological_min_files", 200))
+    min_small_files = int(params.get("min_small_files", 128))
     for row in partitions:
         deletes = _delete_files(row)
         if deletes < min_deletes:
             continue
         small_files = int(row.get("small_files_in_partition_count") or 0)
-        if small_files > 0:
-            continue  # data itself is still fragmented -- convert_deletes can still help here
+        if small_files >= min_small_files:
+            # data itself is still fragmented enough that optimize will actually fire and
+            # rewrite it -- convert_deletes can still help here. Bug found live 2026-09-14 on
+            # cdp_revenue.gold_batches_pw: this used to be `small_files > 0: continue`, which
+            # deferred to convert_deletes/optimize whenever ANY file in the partition was
+            # individually "small" -- but a small *table* (105MB, 40 files) never clears
+            # optimize's own min_small_files gate, so optimize is silently skipped and the
+            # deletes are never touched either. Confirmed on this exact table's real history:
+            # convert_deletes ran on Sep 11 and made delete_files WORSE (310->507), proving the
+            # "convert_deletes can still help" assumption false whenever optimize itself won't run.
+            continue
         data_files = int(row.get("files_per_partition") or 0)
         if data_files <= 0:
             continue
@@ -525,13 +536,18 @@ def _has_unreachable_delete_skew(
     # this threshold must never drift close enough to either to make those tests ambiguous.
     min_ratio = float(params.get("delete_per_file_unreachable_ratio", 7.0))
     min_deletes = int(params.get("delete_unreachable_min_files", 100))
+    min_small_files = int(params.get("min_small_files", 128))
     for row in partitions:
         deletes = _delete_files(row)
         if deletes < min_deletes:
             continue
         small_files = int(row.get("small_files_in_partition_count") or 0)
-        if small_files > 0:
-            continue  # data itself is still fragmented -- convert_deletes can still help here
+        if small_files >= min_small_files:
+            # See _has_pathological_delete_skew's matching comment (2026-09-14 fix): only defer
+            # to convert_deletes/optimize when optimize will actually clear its own min_small_files
+            # gate and fire -- otherwise a small table's "some files are individually small" never
+            # gets optimize's help, yet used to still block the minor delete-rewrite path.
+            continue
         data_files = int(row.get("files_per_partition") or 0)
         if data_files <= 0:
             continue
