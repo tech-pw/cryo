@@ -477,28 +477,26 @@ def _delete_compaction_policy(
 def _has_pathological_delete_skew(
     partitions: Sequence[Mapping[str, Any]], params: Mapping[str, Any]
 ) -> bool:
-    """True if any partition has so few (already well-sized, by the table's own optimize
-    threshold) data files relative to its delete count that rewrite_data_files' size-driven
-    selection cannot reach it -- see _delete_compaction_policy for the live incident this
-    codifies."""
+    """True if any partition carries so many deletes per data file that rewrite_data_files'
+    size-driven selection cannot reach them -- see _delete_compaction_policy for the live
+    incident this codifies.
+
+    Deliberately does NOT defer to optimize/convert_deletes just because the partition's data
+    files are also individually small. Confirmed via Trino's own docs/maintainer discussion
+    (github.com/trinodb/trino/discussions/25211, 2026-09-14 research pass): OPTIMIZE does not
+    remove position-delete files as a designed side effect -- deletes only clear incidentally,
+    gated on a data-sequence-number condition unrelated to whether the rewrite happened. And
+    _delete_compaction_policy's "minor" branch already runs optimize_ops unconditionally
+    alongside rewrite_position_deletes (see build_plan), so there's no data-compaction benefit
+    lost by also planning the delete-specific rewrite here. Confirmed live on
+    cdp_revenue.gold_batches_pw, 2026-09-14: a prior version of this guard skipped the minor
+    rewrite whenever any file was individually small, deferring to convert_deletes/optimize --
+    which on this exact table's Sep 11 run made delete_files WORSE (310 -> 507)."""
     min_ratio = float(params.get("delete_per_file_pathological_ratio", 20.0))
     min_deletes = int(params.get("delete_pathological_min_files", 200))
-    min_small_files = int(params.get("min_small_files", 128))
     for row in partitions:
         deletes = _delete_files(row)
         if deletes < min_deletes:
-            continue
-        small_files = int(row.get("small_files_in_partition_count") or 0)
-        if small_files >= min_small_files:
-            # data itself is still fragmented enough that optimize will actually fire and
-            # rewrite it -- convert_deletes can still help here. Bug found live 2026-09-14 on
-            # cdp_revenue.gold_batches_pw: this used to be `small_files > 0: continue`, which
-            # deferred to convert_deletes/optimize whenever ANY file in the partition was
-            # individually "small" -- but a small *table* (105MB, 40 files) never clears
-            # optimize's own min_small_files gate, so optimize is silently skipped and the
-            # deletes are never touched either. Confirmed on this exact table's real history:
-            # convert_deletes ran on Sep 11 and made delete_files WORSE (310->507), proving the
-            # "convert_deletes can still help" assumption false whenever optimize itself won't run.
             continue
         data_files = int(row.get("files_per_partition") or 0)
         if data_files <= 0:
@@ -511,9 +509,8 @@ def _has_pathological_delete_skew(
 def _has_unreachable_delete_skew(
     partitions: Sequence[Mapping[str, Any]], params: Mapping[str, Any]
 ) -> bool:
-    """True if any partition's data files are already well-sized (no small-file fragmentation)
-    but still carry enough deletes per data file that rewrite_data_files' size-driven candidate
-    selection is unlikely to form a rewrite group -- a milder version of
+    """True if any partition carries enough deletes per data file that rewrite_data_files'
+    size-driven candidate selection is unlikely to form a rewrite group -- a milder version of
     _has_pathological_delete_skew's "provably zero rewrite groups" case.
 
     Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (delete_file_pct=100%,
@@ -528,6 +525,12 @@ def _has_unreachable_delete_skew(
     separately-tunable threshold from the pathological case so a fleet-wide default change
     here can't silently also change the (already-proven, already-tested) pathological
     threshold's behavior.
+
+    Deliberately does NOT defer to optimize/convert_deletes just because the partition's data
+    files are also individually small -- see _has_pathological_delete_skew's matching comment
+    (2026-09-14 fix, cdp_revenue.gold_batches_pw) for why: OPTIMIZE does not remove
+    position-delete files as a designed side effect, and the "minor" policy branch already runs
+    optimize_ops unconditionally alongside rewrite_position_deletes regardless.
     """
     # 7.0 sits with real margin on both sides: the live incident this codifies
     # (mview.gold_dbt_test_results) has its highest per-partition ratio at ~8.0 (295/37), and
@@ -536,17 +539,9 @@ def _has_unreachable_delete_skew(
     # this threshold must never drift close enough to either to make those tests ambiguous.
     min_ratio = float(params.get("delete_per_file_unreachable_ratio", 7.0))
     min_deletes = int(params.get("delete_unreachable_min_files", 100))
-    min_small_files = int(params.get("min_small_files", 128))
     for row in partitions:
         deletes = _delete_files(row)
         if deletes < min_deletes:
-            continue
-        small_files = int(row.get("small_files_in_partition_count") or 0)
-        if small_files >= min_small_files:
-            # See _has_pathological_delete_skew's matching comment (2026-09-14 fix): only defer
-            # to convert_deletes/optimize when optimize will actually clear its own min_small_files
-            # gate and fire -- otherwise a small table's "some files are individually small" never
-            # gets optimize's help, yet used to still block the minor delete-rewrite path.
             continue
         data_files = int(row.get("files_per_partition") or 0)
         if data_files <= 0:
