@@ -1,6 +1,7 @@
 import { AsyncBoundary } from "../AsyncBoundary";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { TableAiInsights } from "../TableAiInsights";
+import { TableChecklistPanel } from "../ChecklistMatrix";
 import { TableCompactionAnalytics } from "../TableCompactionAnalytics";
 import { ChartCard } from "./ChartCard";
 import { PropertyRecommendations } from "./PropertyRecommendations";
@@ -20,13 +21,17 @@ export const HealthQualityTabPanel = () => {
     <div className="td-tab-content">
       <SectionNav
         sections={[
+          { id: "hq-checklist", label: "Optimization Checklist" },
           { id: "hq-quality", label: "Quality Overview" },
           { id: "hq-properties", label: "Properties" },
           { id: "hq-compaction", label: "Compaction" },
           { id: "hq-ai-signals", label: "AI Signals" }
         ]}
       />
-      <div id="hq-quality">
+      <div id="hq-checklist">
+        <AsyncBoundary isLoading={table.isLoading}>{row ? <TableChecklistPanel tableId={tableId} /> : null}</AsyncBoundary>
+      </div>
+      <div id="hq-quality" style={{ marginTop: 16 }}>
         <QualityTab />
       </div>
       <div id="hq-properties" style={{ marginTop: 16 }}>

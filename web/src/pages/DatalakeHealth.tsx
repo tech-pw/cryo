@@ -32,6 +32,7 @@ import {
   FirstRunEmptyState,
   TruncatedResultsBanner
 } from "../components/common";
+import { FleetChecklistMatrix } from "../components/ChecklistMatrix";
 import { GradeDistributionMiniBar } from "../components/GradeDistributionMiniBar";
 import { GradePill, PriorityTag } from "../components/status";
 import { Alert } from "../components/ui/alert";
@@ -233,6 +234,12 @@ export const DatalakeHealth = () => {
 
   const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
   const topOffenders = data.top_offenders ?? [];
+  // top_offenders rows come from two shapes depending on whether the real dashboard API or the
+  // client-side deriveDashboard fallback is active (TableRead.id vs the dashboard payload's
+  // table_id) -- accept either rather than picking one and silently dropping rows on the other path.
+  const topOffenderIds = topOffenders
+    .map((row) => (row as { id?: string; table_id?: string }).id ?? (row as { id?: string; table_id?: string }).table_id)
+    .filter((id): id is string => Boolean(id));
   const tableTotal = tables.data?.total;
   const healthTrend = fleetTrends.data?.health_trend ?? [];
   const costTrend = fleetTrends.data?.cost_trend ?? [];
@@ -704,6 +711,7 @@ export const DatalakeHealth = () => {
               </CardContent>
             </Card>
           </div>
+          {topOffenderIds.length > 0 ? <FleetChecklistMatrix tableIds={topOffenderIds} /> : null}
         </>
       )}
     </div>

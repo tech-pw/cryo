@@ -2010,6 +2010,58 @@ export interface TableSignalsResponse {
 export const getTableSignals = (api: ApiOptions, tableId: UUID) =>
   apiFetch<TableSignalsResponse>(`/tables/${tableId}/signals`, api);
 
+export interface ChecklistItemRead {
+  key: string;
+  label: string;
+  weight_pct: number;
+  tier: number;
+  status: "green" | "yellow" | "red" | "unknown";
+  reason: string;
+  metric_value: number | null;
+  threshold: number | null;
+}
+
+export interface ChecklistSummary {
+  counts: { green: number; yellow: number; red: number; unknown: number };
+  weighted_score: number | null;
+}
+
+export interface TableChecklistResponse {
+  table_id: UUID;
+  checked_at: string;
+  items: ChecklistItemRead[];
+  summary: ChecklistSummary;
+}
+
+/** The 12-item Trino/S3/Iceberg optimization checklist for one table -- see
+ * cryo/scanner/checklist.py's module docstring for the full item inventory and weights. */
+export const getTableChecklist = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<TableChecklistResponse>(`/tables/${tableId}/checklist`, api);
+
+export interface FleetChecklistRow {
+  table_id: UUID;
+  schema_name: string;
+  table_name: string;
+  summary: ChecklistSummary;
+  red_items: string[];
+}
+
+export interface FleetChecklistResponse {
+  checked_at: string;
+  rows: FleetChecklistRow[];
+}
+
+/** Fleet checklist rollup. Pass tableIds to scope to a specific cohort (e.g. the top-20-by-cost
+ * list) -- computing all 12 items for the whole fleet on every request is expensive
+ * (partition_match and storage_class each do real per-table work). Without tableIds, falls
+ * back to the `limit` most-recently-scanned active tables. */
+export const getFleetChecklist = (api: ApiOptions, tableIds?: UUID[], limit = 20) => {
+  const params = new URLSearchParams();
+  if (tableIds && tableIds.length > 0) params.set("table_ids", tableIds.join(","));
+  params.set("limit", String(limit));
+  return apiFetch<FleetChecklistResponse>(`/checklist/fleet?${params.toString()}`, api);
+};
+
 export interface MaintenanceSignalRead {
   table_id: string;
   table_name: string;
