@@ -1355,7 +1355,10 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         return EffectivePresetResponse(table_id=table_id, provenance="none")
-    provenance = cast(Literal["assignment", "rule", "default", "none"], effective.provenance)
+    provenance = cast(
+        Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"],
+        effective.provenance,
+    )
     return EffectivePresetResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id),

@@ -549,7 +549,14 @@ class EffectivePresetResponse(BaseModel):
     table_id: uuid.UUID
     preset_id: uuid.UUID | None = None
     preset_name: str | None = None
-    provenance: Literal["assignment", "rule", "default", "none"]
+    # "rule_after_stale_pin": cryo.scheduler.rules.resolve_effective_preset falls through to
+    # the rule engine when a table's pinned assignment points at a preset that no longer
+    # exists/is disabled (found live in prod: 21 tables pinned to retired presets, including a
+    # 24TB table, silently never rescheduled) -- this response model's literal never included
+    # that provenance value, so any table actually hitting that fallback path (e.g.
+    # user_experience.silver_results) 500'd on every /effective-preset call instead of
+    # reporting the (correct, safer-than-None) rule match it resolved to.
+    provenance: Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
     rule_id: uuid.UUID | None = None
 
 
