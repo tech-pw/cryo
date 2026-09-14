@@ -347,6 +347,59 @@ def test_simulate_effective_preset_assignment_and_sorting(api_db: ApiDb) -> None
     assert cold_table_id != hot_table_id
 
 
+def test_effective_preset_reports_rule_after_stale_pin_without_500(api_db: ApiDb) -> None:
+    """Regression, confirmed live 2026-09-14: user_experience.silver_results 500'd on every
+    GET /tables/{id}/effective-preset call. cryo.scheduler.rules.resolve_effective_preset
+    correctly falls through to the rule engine when a table's pinned assignment points at a
+    disabled preset (documented safety behavior -- a hard stop there would silently blackhole
+    the table forever; found live in prod: 21 tables pinned to retired presets, including a
+    24TB table, never rescheduled) and reports provenance="rule_after_stale_pin" -- but
+    EffectivePresetResponse's Literal type never included that value, so Pydantic validation
+    raised on construction and the endpoint 500'd for every table that had ever hit this
+    fallback path, instead of returning the (correct, safer-than-None) rule match."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _cold_table_id = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    stale_id = _create_preset(client, "stale", destination_id, priority=10)
+    fallback_id = _create_preset(client, "fallback", destination_id, priority=5)
+
+    assign_response = client.post(
+        "/api/v1/assignments",
+        headers=OPERATOR_HEADERS,
+        json={
+            "preset_id": stale_id,
+            "selection": {"mode": "ids", "ids": [str(hot_table_id)]},
+            "assigned_by": "pytest",
+        },
+    )
+    assert assign_response.status_code == 200
+
+    disable_response = client.patch(
+        f"/api/v1/presets/{stale_id}",
+        headers=ADMIN_HEADERS,
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200
+    assert disable_response.json()["enabled"] is False
+
+    rule_response = client.post(
+        f"/api/v1/presets/{fallback_id}/rules",
+        headers=ADMIN_HEADERS,
+        json={"predicate": {"field": "small_files_count", "op": ">=", "value": 50}},
+    )
+    assert rule_response.status_code == 201
+
+    effective_response = client.get(
+        f"/api/v1/tables/{hot_table_id}/effective-preset",
+        headers=VIEWER_HEADERS,
+    )
+    assert effective_response.status_code == 200
+    body = effective_response.json()
+    assert body["provenance"] == "rule_after_stale_pin"
+    assert body["preset_id"] == fallback_id
+
+
 def test_table_param_overrides_layer_on_preset_and_are_admin_gated(api_db: ApiDb) -> None:
     """Per-table param tweaks (e.g. a tighter retention_days on one hot/test table) must
     layer on top of the assigned preset's params without mutating the preset itself --
