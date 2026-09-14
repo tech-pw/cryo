@@ -1124,6 +1124,50 @@ def test_planner_does_not_misfire_pathological_skew_when_data_still_fragmented()
     assert OperationType.REWRITE_POSITION_DELETES not in [op.type for op in plan.operations]
 
 
+def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_convert() -> None:
+    """Live incident, confirmed 2026-09-14: cdp_revenue.gold_batches_pw is a tiny table (40
+    files, 105MB total) with 692 position-delete files (delete_file_pct=100%). Every one of its
+    40 files individually counts as "small" (small_files_in_partition_count=40), so the
+    pre-fix `small_files > 0: continue` guard deferred to convert_deletes/optimize on the
+    assumption they'd help -- but optimize's own min_small_files=128 gate never actually fires
+    for a table this size (its real job history shows "Skipped optimize: table has 0 small
+    files below threshold 128"). And this exact table's Sep 11 convert_deletes run made
+    delete_files WORSE (310 -> 507), proving convert_deletes structurally can't reach these
+    deletes regardless of what it does to the data files. The guard must compare against the
+    table's own min_small_files threshold, not just "any small files at all", so a table this
+    size still routes to the minor rewrite_position_deletes path."""
+    partitions = [
+        {
+            "partition_value": "",
+            "small_files_in_partition_count": 40,
+            "files_per_partition": 40,
+            "delete_files": 692,
+        }
+    ]
+    plan = build_plan(
+        {
+            "schema_name": "cdp_revenue",
+            "table_name": "gold_batches_pw",
+            "small_files_count": 40,
+            "total_files": 40,
+            "total_delete_files": 692,
+            "position_delete_files": 692,
+            "delete_file_pct": 100.0,
+            "total_size_gb": 0.105,
+        },
+        partitions,
+        Mode.STANDARD,
+        {
+            "min_small_files": 128,
+            "convert_deletes_threshold_pct": 5.0,
+            "delete_pathological_min_files": 200,
+        },
+    )
+    assert OperationType.REWRITE_POSITION_DELETES in [op.type for op in plan.operations]
+    assert OperationType.CONVERT_DELETES not in [op.type for op in plan.operations]
+    assert "position-delete files" in " ".join(plan.notes)
+
+
 def test_convert_deletes_stays_table_wide_without_skew() -> None:
     """No predicates when partitions are roughly even -- must not regress the common case."""
     partitions = [
