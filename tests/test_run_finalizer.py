@@ -50,6 +50,7 @@ def _seed_job(
     destination: Destination,
     status: str,
     finished_at: datetime | None = None,
+    error: str | None = None,
 ) -> MaintenanceJob:
     if finished_at is None and status in {"succeeded", "failed", "skipped", "deferred", "partial"}:
         # Real-world default: mark_status() stamps finished_at the instant a job reaches one of
@@ -65,6 +66,7 @@ def _seed_job(
         mode="standard",
         status=status,
         finished_at=finished_at,
+        error=error,
     )
     session.add(job)
     session.flush()
@@ -249,3 +251,85 @@ def test_mix_of_recently_and_long_deferred_jobs_waits_for_the_freshest_one(sessi
 
     session.refresh(run)
     assert run.status == "running"
+
+
+def test_capacity_deferred_job_does_not_orphan_within_ten_minutes(session, session_factory) -> None:
+    """Direct regression test for the 2026-09-15/16 incident: 29,832 jobs (~99% of that day's
+    failures) were fast-failed as 'orphaned_deferred: parent run already finalized' because
+    finalize_open_runs used the same 10-minute grace for a fleet-wide capacity defer
+    (metastore_capacity) as for job-specific reasons -- but max_concurrent_jobs_per_metastore
+    stayed over cap for HOURS, not minutes, during the incident. A job deferred on a capacity
+    reason 20 minutes ago (well past the old 10-minute grace, nowhere near the new capacity
+    grace) must still keep its run open."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session)
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(minutes=20),
+        error="metastore_capacity:thrift://trino-prod-metastore.penpencil.co:9083",
+    )
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "running"
+    assert run.finished_at is None
+
+
+def test_capacity_deferred_job_finalizes_once_past_its_own_longer_grace(session, session_factory) -> None:
+    """The other half: a capacity-deferred job that has genuinely sat deferred for the full
+    capacity grace window (hours, not minutes) must still let the run finalize eventually --
+    this fix must not regress into the original 2026-08-24 bug (runs stuck open forever)."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session)
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    _seed_job(
+        session,
+        run=run,
+        table=table,
+        destination=destination,
+        status="deferred",
+        finished_at=NOW - timedelta(hours=6, minutes=1),
+        error="metastore_capacity:thrift://trino-prod-metastore.penpencil.co:9083",
+    )
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "partial"
+    assert run.finished_at is not None
+
+
+def test_native_cluster_capacity_and_fleet_rate_cap_also_get_the_longer_grace(
+    session, session_factory
+) -> None:
+    """The other two capacity-class defer reasons (native_admit.py) must be recognized the same
+    way as metastore_capacity -- not just the one reason the original incident happened to hit."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    for reason in ("native_cluster_capacity", "fleet_admission_rate_cap"):
+        run = _seed_run(session)
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="deferred",
+            finished_at=NOW - timedelta(minutes=20),
+            error=reason,
+        )
+        session.commit()
+
+        finalize_open_runs(session_factory, now=NOW)
+
+        session.refresh(run)
+        assert run.status == "running", f"reason={reason} should still be in its capacity grace"

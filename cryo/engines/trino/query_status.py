@@ -67,8 +67,18 @@ def get_query_state(
         if row is None:
             return EngineOpState.UNCERTAIN
         return _map_state(str(row[0]))
-    except Exception:
-        logger.debug("Trino get_query_state failed for %s", query_id, exc_info=True)
+    except Exception as exc:
+        # Root-cause sweep, 2026-09-16: was logger.debug -- invisible in prod (configure_logging
+        # sets INFO there). This return value is already safe (UNCERTAIN, not a wrong RUNNING/
+        # SUCCEEDED), but a sustained run of these failures held dangerous-op quiet-window gates
+        # indefinitely with zero operator-visible signal into why. See
+        # cryo_trino_query_status_probe_failures_total's docstring for the fuller incident shape.
+        from cryo.observability.metrics import trino_query_status_probe_failures_total
+
+        trino_query_status_probe_failures_total.labels(probe="get_query_state").inc()
+        logger.warning(
+            "Trino get_query_state failed for %s: %s", query_id, exc, exc_info=True
+        )
         return EngineOpState.UNCERTAIN
     finally:
         cursor.close()
@@ -135,11 +145,14 @@ def _probe_one(
             """
         )
         rows = cursor.fetchall() or ()
-    except Exception:
-        logger.debug(
-            "Trino maintenance probe failed on %s",
-            coordinator.label,
-            exc_info=True,
+    except Exception as exc:
+        # Root-cause sweep, 2026-09-16: see get_query_state's matching comment above -- same
+        # was-debug-now-warning-plus-metric fix, same safe-UNCERTAIN-but-invisible incident shape.
+        from cryo.observability.metrics import trino_query_status_probe_failures_total
+
+        trino_query_status_probe_failures_total.labels(probe="_probe_one").inc()
+        logger.warning(
+            "Trino maintenance probe failed on %s: %s", coordinator.label, exc, exc_info=True
         )
         return EngineOpState.UNCERTAIN
     finally:

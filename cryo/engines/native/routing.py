@@ -267,6 +267,18 @@ def _optimize_requires_sql_fallback(
     return None
 
 
+NATIVE_ENGINE_DISABLED_DETAIL = (
+    "native (iceberg-go) engine is fleet-wide disabled (CRYO_NATIVE_ENGINE_ENABLED=false); "
+    "route to Spark/Trino fallback"
+)
+
+
+def _native_engine_globally_enabled() -> bool:
+    from cryo.config import get_settings
+
+    return get_settings().native_engine_enabled
+
+
 def resolve_native_routing(
     plan: MaintenancePlan,
     stats: Mapping[str, Any] | None,
@@ -278,6 +290,26 @@ def resolve_native_routing(
     native_ops: list[Operation] = []
     fallback_ops: list[tuple[Operation, str]] = []
     skipped_ops: list[tuple[Operation, str]] = []
+
+    # Real incident, 2026-09-16: gold_dbt_poll_dashboard_view's native-engine job reported
+    # success=true with zero actual Iceberg mutation -- the trust boundary between Cryo and the
+    # Go binary has no independent verification (see _reported_zero_work_operations in
+    # cryo/engines/native/watcher.py for the narrower per-operation guard). Until that binary can
+    # be trusted again, native_engine_enabled=False routes every operation through the exact same
+    # tested SQL-fallback path already used for individual unsupported operations (below), rather
+    # than inventing a new bypass -- every table with a configured sql_fallback_destination_id
+    # (Spark-on-K8s) keeps running maintenance uninterrupted, just never against the native binary.
+    if not _native_engine_globally_enabled():
+        for operation in plan.operations:
+            if has_sql_fallback:
+                fallback_ops.append((operation, NATIVE_ENGINE_DISABLED_DETAIL))
+            else:
+                skipped_ops.append((operation, NATIVE_ENGINE_DISABLED_DETAIL))
+        return NativeRoutingResult(
+            native_operations=tuple(native_ops),
+            fallback_operations=tuple(fallback_ops),
+            skipped_operations=tuple(skipped_ops),
+        )
 
     for operation in plan.operations:
         if operation.type in NATIVE_BASE_OPERATIONS:

@@ -818,6 +818,150 @@ def test_update_all_benefit_scores_forces_gc_collect_periodically(session, monke
     assert call_count == 2
 
 
+def test_update_all_benefit_scores_refreshes_realized_value_within_budget(session):
+    """Root-cause fix for CR-04's regression, 2026-09-16: refresh_realized_value=False was
+    applied globally as an emergency OOM stopgap on 2026-09-15/16, which stopped per-table
+    learning forever, not just during the incident. With a budget that comfortably covers this
+    table, the realized-value refresh must actually run (autocomp_realized_value present),
+    proving learning is restored -- not just that the function still runs without OOMing."""
+    table = _seed_table(session, schema_name="test", table_name="realized_value_in_budget")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=500)
+
+    refreshed = session.get(TableStats, table.id)
+    assert "autocomp_realized_value" in refreshed.raw
+
+
+def test_update_all_benefit_scores_respects_zero_refresh_budget(session):
+    """The bounded default must not silently ignore a zero budget -- this is the same effect
+    the old refresh_realized_value=False stopgap had, reachable as an explicit budget instead
+    of a separate code path, so an operator can dial the budget to zero in a real emergency
+    without losing the cheap compaction_effectiveness update that always runs."""
+    table = _seed_table(session, schema_name="test", table_name="realized_value_zero_budget")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=0)
+
+    refreshed = session.get(TableStats, table.id)
+    assert "autocomp_realized_value" not in refreshed.raw
+    # The cheap update must still have run even with zero realized-value budget.
+    assert "compaction_effectiveness" in refreshed.raw
+
+
+def test_update_all_benefit_scores_prefers_the_stalest_tables_when_over_budget(session):
+    """Direct test of the ranking: with a budget smaller than the fleet, the table whose
+    autocomp_realized_value.computed_at is oldest (and the table with no prior value at all,
+    ranked stalest of all) must be the ones that get this sweep's refresh -- a table refreshed
+    moments ago must not compete with a table that has genuinely never been refreshed."""
+    fresh_table = _seed_table(session, schema_name="test", table_name="fresh_realized_value")
+    stale_table = _seed_table(session, schema_name="test", table_name="stale_realized_value")
+    never_table = _seed_table(session, schema_name="test", table_name="never_realized_value")
+
+    for table, raw in (
+        (fresh_table, {"autocomp_realized_value": {"computed_at": datetime.now(UTC).isoformat()}}),
+        (
+            stale_table,
+            {
+                "autocomp_realized_value": {
+                    "computed_at": (datetime.now(UTC) - timedelta(days=30)).isoformat()
+                }
+            },
+        ),
+        (never_table, {}),
+    ):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw=raw,
+            )
+        )
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=datetime.now(UTC),
+            )
+        )
+    session.commit()
+
+    before_fresh_computed_at = session.get(TableStats, fresh_table.id).raw[
+        "autocomp_realized_value"
+    ]["computed_at"]
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=2)
+
+    fresh_after = session.get(TableStats, fresh_table.id)
+    stale_after = session.get(TableStats, stale_table.id)
+    never_after = session.get(TableStats, never_table.id)
+
+    # The budget (2) covered only the never-refreshed and 30-day-stale tables -- the freshly
+    # refreshed table's own computed_at must be untouched (proves it was skipped, not
+    # re-refreshed with an indistinguishable new timestamp).
+    assert fresh_after.raw["autocomp_realized_value"]["computed_at"] == before_fresh_computed_at
+    assert "autocomp_realized_value" in stale_after.raw
+    assert stale_after.raw["autocomp_realized_value"]["computed_at"] != before_fresh_computed_at
+    assert "autocomp_realized_value" in never_after.raw
+
+
 def test_get_top_compaction_candidates(session):
     """Test getting top compaction candidates by benefit score."""
     table = _seed_table(session, schema_name="test", table_name="ranked_table")

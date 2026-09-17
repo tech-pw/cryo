@@ -86,3 +86,39 @@ class JobStepStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+# Real incident, 2026-09-15/16: cryo/governor/native_admit.py (the sole source of these reason
+# strings, via _defer_spec's `reason=` callers) and cryo/db/repositories/run_finalizer.py (the
+# sole consumer, deciding how long a run stays open once one of its jobs is DEFERRED) each kept
+# their own independent idea of which defer reasons mean "a fleet-wide/shared-resource capacity
+# gate, expected to clear on its own given real time" vs. "a job-specific reason, expected to
+# clear within a wave or two." Those two designs disagreed -- the 10-minute grace built for the
+# job-specific case was silently applied to capacity defers too, because nothing forced the two
+# modules to agree on the classification -- and that's what let a metastore-congestion incident
+# fast-fail 29,832 jobs as "orphaned_deferred: parent run already finalized" while the capacity
+# constraint that deferred them was still genuinely active. Both modules now import this single
+# list instead of each declaring/duplicating their own copy of it, so a new capacity-class gate
+# added to native_admit.py (or a renamed one) can't silently drift out of sync with what
+# run_finalizer.py grants a longer grace to -- there is exactly one place this is decided.
+# Matched by prefix since metastore_capacity's reason string appends the specific URI
+# (f"metastore_capacity:{uri}") and can vary per destination.
+METASTORE_CAPACITY_DEFER_REASON_PREFIX = "metastore_capacity:"
+NATIVE_CLUSTER_CAPACITY_DEFER_REASON = "native_cluster_capacity"
+FLEET_ADMISSION_RATE_CAP_DEFER_REASON = "fleet_admission_rate_cap"
+
+CAPACITY_DEFER_REASON_PREFIXES: tuple[str, ...] = (
+    METASTORE_CAPACITY_DEFER_REASON_PREFIX,
+    NATIVE_CLUSTER_CAPACITY_DEFER_REASON,
+    FLEET_ADMISSION_RATE_CAP_DEFER_REASON,
+)
+
+
+def is_capacity_defer_reason(error: str | None) -> bool:
+    """True when a MaintenanceJob.error value names a fleet-wide capacity gate (as opposed to a
+    job- or plan-specific defer reason like native_admit_plan_rebuild_failed or a k8s_job_create
+    failure) -- see CAPACITY_DEFER_REASON_PREFIXES' docstring for why this must be the one
+    shared classification both the admission side and the run-finalization side rely on."""
+    if not error:
+        return False
+    return error.startswith(CAPACITY_DEFER_REASON_PREFIXES)

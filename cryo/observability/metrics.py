@@ -59,6 +59,39 @@ governor_qpp_decisions_total = Counter(
     ["destination", "outcome"],  # outcome: confirmed, refused, error
 )
 
+# Real incident, 2026-09-15/16: NativeJobWatcher.tick() (reconciles K8s Job completion back to
+# MaintenanceJob DB status) was wrapped in a bare `except Exception` at debug level in
+# cli.py's _tick_native_watcher -- invisible in prod (logging is configured at INFO there).
+# A run of transient K8s API failures (matching the same window's metastore/cluster
+# congestion) could silently skip every tick with zero signal, leaving completed pods'
+# MaintenanceJob rows stuck at status=running indefinitely (confirmed live: 164+ Completed
+# native pods vs. 11 actually Running, but the DB still counted 258 as "running", which fed
+# directly into native_admit.py's metastore-capacity headroom check as phantom load). This
+# metric and the exception handling around it exist so a stretch of tick failures is visible
+# (alertable) instead of a silent no-op.
+native_watcher_tick_failures_total = Counter(
+    "cryo_native_watcher_tick_failures_total",
+    "Total NativeJobWatcher.tick() calls that raised instead of completing, by exception type.",
+    ["exception_type"],
+)
+
+# Root-cause sweep, 2026-09-16: the native watcher's silent-debug-logging bug above was one
+# instance of a repeated pattern in this codebase -- exception handlers around a genuine
+# external-dependency probe (K8s API, Trino coordinator) written at logger.debug, which is
+# invisible in prod (configure_logging sets INFO there; see cryo/observability/logging.py).
+# cryo/engines/trino/query_status.py's get_query_state/_probe_one is the other real instance
+# found in the same sweep: it fails safe (returns EngineOpState.UNCERTAIN, which
+# orphan_recovery.py's quiet-window gates correctly hold on rather than misinterpreting as
+# quiet), so it never caused a wrong finalize/orphan like the watcher bug did -- but a sustained
+# run of Trino-connectivity failures still held safety gates indefinitely with zero operator
+# visibility into why, which is its own real incident shape ("queue stuck, nobody knows").
+trino_query_status_probe_failures_total = Counter(
+    "cryo_trino_query_status_probe_failures_total",
+    "Total Trino query-status probe calls (get_query_state/_probe_one) that raised instead of "
+    "returning a real state, by probe name.",
+    ["probe"],
+)
+
 # ==================== Worker Metrics ====================
 
 worker_job_duration_seconds = Histogram(

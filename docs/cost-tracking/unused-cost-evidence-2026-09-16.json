@@ -1,0 +1,595 @@
+{
+  "collected_on": "2026-09-16",
+  "billing_window": [
+    "2026-09-09",
+    "2026-09-15"
+  ],
+  "source": "Grafana Athena CUR fe0bimj2kv9xca; EKS data-platform-eks/cryo",
+  "workloads": {
+    "<untagged>": {
+      "split_cost_usd": 49.719185340262804,
+      "unused_cost_usd": 367.69993110453925
+    },
+    "cryo-api": {
+      "split_cost_usd": 0.873530559328823,
+      "unused_cost_usd": 1.8173532341861072
+    },
+    "cryo-governor": {
+      "split_cost_usd": 0.5101106070643889,
+      "unused_cost_usd": 0.7037007307069918
+    },
+    "cryo-native": {
+      "split_cost_usd": 14.325509196345276,
+      "unused_cost_usd": 29.63103725667062
+    },
+    "cryo-redis": {
+      "split_cost_usd": 0.17623209708507,
+      "unused_cost_usd": 0.566830913357408
+    },
+    "cryo-scanner": {
+      "split_cost_usd": 0.3127263005438441,
+      "unused_cost_usd": 0.8006814344455929
+    },
+    "cryo-scanner-worker": {
+      "split_cost_usd": 2.644542544466168,
+      "unused_cost_usd": 4.125285541589802
+    },
+    "cryo-scheduler": {
+      "split_cost_usd": 0.37874938357759,
+      "unused_cost_usd": 1.031569764278663
+    },
+    "cryo-spark": {
+      "split_cost_usd": 1.5372840660981797,
+      "unused_cost_usd": 13.685371084573406
+    },
+    "cryo-web": {
+      "split_cost_usd": 0.31339893276147907,
+      "unused_cost_usd": 0.31537301406294393
+    },
+    "cryo-worker": {
+      "split_cost_usd": 0.8290582492543912,
+      "unused_cost_usd": 3.0532765668251
+    },
+    "other": {
+      "split_cost_usd": 0.0,
+      "unused_cost_usd": 0.0
+    }
+  },
+  "running_pods": [
+    {
+      "name": "cryo-api-58bff484bf-8nc8x",
+      "phase": "Running",
+      "created": "2026-09-14T15:15:04Z",
+      "containers": [
+        {
+          "name": "api",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "6Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-14T15:15:32Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-api-58bff484bf-zb8xf",
+      "phase": "Running",
+      "created": "2026-09-16T08:05:47Z",
+      "containers": [
+        {
+          "name": "api",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "6Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T08:05:50Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-governor-7cc78d5685-dwqzr",
+      "phase": "Running",
+      "created": "2026-09-14T15:15:04Z",
+      "containers": [
+        {
+          "name": "governor",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "3Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "384Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-14T15:15:32Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-1d39a8c584d8-gc558",
+      "phase": "Running",
+      "created": "2026-09-16T10:00:21Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "1206m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "603m",
+              "memory": "8931Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:00:24Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-26712e197c86-8kcvr",
+      "phase": "Running",
+      "created": "2026-09-16T10:00:22Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "800m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "400m",
+              "memory": "8931Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:00:24Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-5707fd3c611c-p752g",
+      "phase": "Running",
+      "created": "2026-09-16T09:57:41Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "1406m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "703m",
+              "memory": "11662Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T09:57:43Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-8228624d6d79-bfcws",
+      "phase": "Running",
+      "created": "2026-09-16T09:57:41Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "800m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "400m",
+              "memory": "8931Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T09:57:44Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-de417add7a99-mvn2g",
+      "phase": "Running",
+      "created": "2026-09-16T10:01:42Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "800m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "400m",
+              "memory": "8931Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:01:45Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-native-f3688af6eb08-94xjv",
+      "phase": "Running",
+      "created": "2026-09-16T10:01:42Z",
+      "containers": [
+        {
+          "name": "cryo-engine",
+          "resources": {
+            "limits": {
+              "cpu": "800m",
+              "memory": "16Gi"
+            },
+            "requests": {
+              "cpu": "400m",
+              "memory": "8931Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:01:44Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-redis-64fc576645-s22vr",
+      "phase": "Running",
+      "created": "2026-09-10T06:19:39Z",
+      "containers": [
+        {
+          "name": "redis",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-10T06:20:49Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-scanner-worker-775d7c4c8b-8xkv9",
+      "phase": "Running",
+      "created": "2026-09-15T21:01:27Z",
+      "containers": [
+        {
+          "name": "scanner-worker",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "3Gi"
+            },
+            "requests": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-15T21:01:30Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-scanner-worker-775d7c4c8b-rr48n",
+      "phase": "Running",
+      "created": "2026-09-14T19:39:48Z",
+      "containers": [
+        {
+          "name": "scanner-worker",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "3Gi"
+            },
+            "requests": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-14T19:39:51Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-scanner-worker-775d7c4c8b-tqcrf",
+      "phase": "Running",
+      "created": "2026-09-14T15:15:01Z",
+      "containers": [
+        {
+          "name": "scanner-worker",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "3Gi"
+            },
+            "requests": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-14T15:15:32Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-scheduler-566487f5d7-x8hfl",
+      "phase": "Running",
+      "created": "2026-09-15T13:17:40Z",
+      "containers": [
+        {
+          "name": "scheduler",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "10Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "512Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 26,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:23:13Z"
+            }
+          },
+          "lastState": {
+            "terminated": {
+              "containerID": "containerd://99195f9c70e9b578a39b29433183e5255f7836fd282c636539ee625ee270ca6e",
+              "exitCode": 137,
+              "finishedAt": "2026-09-16T10:23:11Z",
+              "reason": "OOMKilled",
+              "startedAt": "2026-09-16T09:38:12Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cryo-web-79d4bf59d-hdr54",
+      "phase": "Running",
+      "created": "2026-09-16T00:32:08Z",
+      "containers": [
+        {
+          "name": "web",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "64Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T00:32:19Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-web-79d4bf59d-rtgjc",
+      "phase": "Running",
+      "created": "2026-09-15T23:16:32Z",
+      "containers": [
+        {
+          "name": "web",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "64Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-15T23:16:47Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    },
+    {
+      "name": "cryo-worker-789cc57d8-w7n5t",
+      "phase": "Running",
+      "created": "2026-09-14T21:57:32Z",
+      "containers": [
+        {
+          "name": "worker",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "6Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          }
+        }
+      ],
+      "status": [
+        {
+          "restarts": 0,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-14T21:57:35Z"
+            }
+          },
+          "lastState": {}
+        }
+      ]
+    }
+  ]
+}

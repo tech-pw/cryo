@@ -598,11 +598,30 @@ def update_partition_benefit_scores(
     return updated
 
 
-def update_all_benefit_scores(session: Session) -> int:
+def update_all_benefit_scores(
+    session: Session,
+    *,
+    refresh_realized_value: bool = True,
+    max_realized_value_refreshes: int | None = None,
+) -> int:
     """Update benefit scores for all active tables.
 
     Called by the governor/scheduler on a regular cadence
     (e.g., every 4 hours) after query log ingestion.
+
+    CR-04 (docs/CRYO_COST_REDUCTION_PLAN.md): the realized-value refresh (an expensive 90-day
+    audit/stats/cost/query-history join, via build_outcome_dataset) was globally disabled with
+    refresh_realized_value=False as an emergency OOM stopgap on 2026-09-15/16 -- but that stops
+    per-table learning entirely, forever, not just during the incident window: the optimizer can
+    only ever see successful/easy jobs it already scored well, and permanently underprices
+    failures it never re-learns from. refresh_realized_value=True (the caller-visible default)
+    restores learning without reintroducing the OOM by capping how many tables get the expensive
+    refresh *per sweep* (max_realized_value_refreshes, default _DEFAULT_MAX_REALIZED_VALUE_
+    REFRESHES_PER_SWEEP) and always spending that budget on the stalest tables first (oldest
+    raw.autocomp_realized_value.computed_at, tables with no prior value ranked stalest of all) --
+    every table's cheap compaction_effectiveness update still runs every sweep as before. This is
+    the bounded-batch, cursor-like behavior CR-04 calls for, without the full event-driven
+    reconciliation-queue architecture CR-04 also describes as the further-out ideal.
     """
     tables = session.scalars(select(Table).where(Table.is_active.is_(True))).all()
     # Extract just the ids and expunge immediately -- looping over Table ORM objects held in
@@ -615,10 +634,23 @@ def update_all_benefit_scores(session: Session) -> int:
     table_ids = [table.id for table in tables]
     session.expunge_all()
 
+    refresh_budget = (
+        max_realized_value_refreshes
+        if max_realized_value_refreshes is not None
+        else _DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP
+    )
+    stale_table_ids = (
+        _stalest_realized_value_table_ids(session, table_ids, limit=refresh_budget)
+        if refresh_realized_value
+        else frozenset()
+    )
+
     total = 0
     for index, table_id in enumerate(table_ids):
         total += update_partition_benefit_scores(session, table_id)
-        update_table_effectiveness(session, table_id)
+        update_table_effectiveness(
+            session, table_id, refresh_realized_value=table_id in stale_table_ids
+        )
         # update_partition_benefit_scores already commits its own partitions before returning;
         # expunge right after so this table's (and its partitions') objects don't linger either.
         session.expunge_all()
@@ -639,7 +671,55 @@ def update_all_benefit_scores(session: Session) -> int:
     return total
 
 
-def update_table_effectiveness(session: Session, table_id: uuid.UUID) -> bool:
+# Bounds how many tables per sweep pay the expensive 90-day realized-value join (see
+# update_all_benefit_scores' CR-04 docstring) -- deliberately small relative to a 13k-table
+# fleet: at this rate every table gets refreshed roughly every ~26 sweeps (with the default
+# 6h cadence, about a week), which is a large improvement over "never" while still keeping the
+# per-sweep IO/memory cost bounded and predictable regardless of fleet size.
+_DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP = 500
+
+
+def _stalest_realized_value_table_ids(
+    session: Session, table_ids: Sequence[uuid.UUID], *, limit: int
+) -> frozenset[uuid.UUID]:
+    """Pick the `limit` tables whose autocomp_realized_value is oldest (or missing entirely --
+    ranked stalest of all, ahead of any table that has ever been refreshed) to spend this
+    sweep's refresh budget on.
+
+    Deliberately queries only TableStats.raw (one column) for every table_id rather than full
+    Table/TableStats ORM objects, and returns a plain frozenset of ids -- nothing here holds a
+    ORM-mapped object alive past this function, so it can't reintroduce the identity-map growth
+    update_all_benefit_scores' own docstring describes. Querying inside the JSON raw column
+    itself (e.g. an ORDER BY on raw->>'autocomp_realized_value'->>'computed_at') was avoided
+    deliberately -- this repo has no existing precedent for that and the JSON operator syntax
+    differs between the Postgres production backend and the SQLite test backend, whereas a
+    single bounded raw-column-only query plus a Python sort is dialect-portable and just as
+    bounded in memory (one small string per table, never an ORM object).
+    """
+    if limit <= 0 or not table_ids:
+        return frozenset()
+    rows = session.execute(
+        select(TableStats.table_id, TableStats.raw).where(TableStats.table_id.in_(table_ids))
+    ).all()
+    session.expunge_all()
+
+    def _computed_at(raw: Any) -> str:
+        if not isinstance(raw, dict):
+            return ""
+        realized = raw.get("autocomp_realized_value")
+        if not isinstance(realized, dict):
+            return ""
+        return str(realized.get("computed_at") or "")
+
+    # ISO-8601 timestamps sort correctly as plain strings; "" (missing/never-refreshed) sorts
+    # before any real timestamp, so tables with no prior value are stalest by construction.
+    ranked = sorted(rows, key=lambda row: _computed_at(row.raw))
+    return frozenset(row.table_id for row in ranked[:limit])
+
+
+def update_table_effectiveness(
+    session: Session, table_id: uuid.UUID, *, refresh_realized_value: bool = True
+) -> bool:
     """Persist the current compaction-effectiveness ratio onto table_stats.raw (AutoComp §A3).
 
     Cheap by construction: get_compaction_effectiveness_stats is a single aggregate query (no
@@ -656,18 +736,19 @@ def update_table_effectiveness(session: Session, table_id: uuid.UUID) -> bool:
     from cryo.intelligence.autocomp_feedback import build_autocomp_realized_value
     from cryo.intelligence.outcomes import build_outcome_dataset
 
-    realized_value = build_autocomp_realized_value(
-        build_outcome_dataset(session, table_id=table_id, limit=200)
-    )
     raw = dict(stats.raw or {})
     raw["compaction_effectiveness"] = {
         **effectiveness,
         "computed_at": datetime.now(UTC).isoformat(),
     }
-    raw["autocomp_realized_value"] = {
-        **realized_value.to_dict(),
-        "computed_at": datetime.now(UTC).isoformat(),
-    }
+    if refresh_realized_value:
+        realized_value = build_autocomp_realized_value(
+            build_outcome_dataset(session, table_id=table_id, limit=200)
+        )
+        raw["autocomp_realized_value"] = {
+            **realized_value.to_dict(),
+            "computed_at": datetime.now(UTC).isoformat(),
+        }
     stats.raw = raw
     session.commit()
     return True

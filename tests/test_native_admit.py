@@ -181,3 +181,58 @@ def test_build_native_request_keeps_supported_operations_for_cow_table() -> None
     op_types = {op["type"] for op in built.request["operations"]}
     assert op_types == {"expire_snapshots", "rewrite_data_files"}
     assert built.fallback_operations == ()
+
+
+def test_native_admit_sizing_filters_ops_hint_to_native_capable_before_estimating() -> None:
+    """Cost remediation plan §2, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md):
+    admit_native_k8s_jobs' sizing step (the `ops_hint = ...` block right before
+    build_packable_job) now filters job.operations down to native_supported_operation_types(
+    stats, destination.config) before estimating resources, instead of passing the raw planned
+    operations straight through -- otherwise a table whose OPTIMIZE will route entirely to the
+    SQL fallback (delete files present) still gets sized as if native were about to rewrite it.
+    This test exercises exactly that filtering logic in isolation (the same expression used in
+    native_admit.py), since admit_native_k8s_jobs itself needs a full JobStore/session_factory/
+    K8s-client integration harness that test_native_resources.py and this file's other tests
+    already cover piece by piece."""
+    from cryo.engines.native.resources import estimate_table_resources
+    from cryo.engines.native.routing import native_supported_operation_types
+
+    stats = {"total_delete_files": 500, "total_size_gb": 50_000}
+    destination_config = {"engine_impl": "go"}
+    planned_ops = (OperationType.OPTIMIZE,)  # the only planned op, but delete files block native
+
+    native_capable_ops = native_supported_operation_types(stats, destination_config)
+    ops_hint = tuple(op for op in planned_ops if op in native_capable_ops)
+    assert ops_hint == ()
+
+    sizing_params: dict = {}
+    if not ops_hint:
+        sizing_params["metadata_only_sizing_hint"] = True
+
+    est_with_hint = estimate_table_resources(stats, operations=ops_hint, params=sizing_params)
+    assert not est_with_hint.has_rewrite
+
+    # Baseline: without the fix (raw planned ops passed straight through), this same table
+    # would have been sized for a full rewrite despite native never running one.
+    est_without_fix = estimate_table_resources(stats, operations=planned_ops)
+    assert est_without_fix.has_rewrite
+    assert est_without_fix.mem_mib > est_with_hint.mem_mib
+
+
+def test_native_admit_sizing_keeps_native_capable_ops_and_no_hint_when_mixed() -> None:
+    """A job with both native-capable ops (expire_snapshots) and a fallback-routed one
+    (optimize on a delete-heavy table) must keep the native-capable one for sizing and must
+    NOT set metadata_only_sizing_hint -- there IS real native work here, just not all of it."""
+    from cryo.engines.native.resources import estimate_table_resources
+    from cryo.engines.native.routing import native_supported_operation_types
+
+    stats = {"total_delete_files": 500, "total_size_gb": 50_000}
+    destination_config = {"engine_impl": "go"}
+    planned_ops = (OperationType.EXPIRE_SNAPSHOTS, OperationType.OPTIMIZE)
+
+    native_capable_ops = native_supported_operation_types(stats, destination_config)
+    ops_hint = tuple(op for op in planned_ops if op in native_capable_ops)
+    assert ops_hint == (OperationType.EXPIRE_SNAPSHOTS,)
+
+    est = estimate_table_resources(stats, operations=ops_hint)
+    assert not est.has_rewrite
