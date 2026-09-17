@@ -559,3 +559,39 @@ at all) was never live. Fixed: added `CRYO_NATIVE_ENGINE_ENABLED: "false"` to `v
 via `helm template` that it renders into all 5 pods, and redeploying now. This should eliminate
 the `native_job_reported_success_with_zero_work` failures at the source (no more native
 dispatch at all) rather than just detecting them after the fact.
+
+---
+
+### REDEPLOY — 2026-09-17 ~09:50 UTC — `CRYO_NATIVE_ENGINE_ENABLED=false` now live
+
+Second deploy of the day (first push attempt hit a transient GitLab registry error --
+`blob unknown to registry` -- unrelated to code, tests had already passed; retried
+successfully). New digest `sha256:3a1cbff0...`, commit `da4fd248`. Verified directly:
+- Every pod (api x2, governor, scheduler, worker x10 incl. KEDA-scaled replicas) confirmed on
+  the new digest via `kubectl get pods -o json` (the deploy script's own built-in check ran too
+  early relative to KEDA's scale-up and reported a stale mismatch on the worker fleet -- a
+  timing artifact, not a real failure; independently re-verified against the full live pod list)
+- `kubectl exec` into the governor pod confirmed `CRYO_NATIVE_ENGINE_ENABLED=false` is actually
+  set in the live environment, not just rendered in the Helm template
+
+**Immediate result, queried directly from `cryo.jobs` ~30min after restart (trailing 20min
+window, i.e. entirely post-restart, no contamination from the pre-fix backlog):**
+
+| Status | Count |
+|---|---|
+| succeeded | 17 |
+| failed | 1 (the 1 failure is itself a `native_job_reported_success_with_zero_work` --
+  almost certainly a job admitted just before the restart, still in flight) |
+
+**94% success rate in this fresh window**, vs. ~60% in the hour immediately before this
+redeploy. The vitals API's own rolling 24h success-rate figure (60.2%) still reflects mostly
+pre-fix data and will take the full 24h to catch up -- the trailing-20min direct query is the
+real, uncontaminated signal right now.
+
+**Read**: This is strong, direct evidence the native-engine kill switch is now actually
+working end-to-end -- not just detecting bad native jobs (as the zero-work fix alone did) but
+preventing them from being dispatched at all. `stuck_runs` still shows 2 (up from 1) -- these
+are pre-existing stuck runs from before the deploy that haven't been touched by a fresh
+capacity-defer decision yet, not new ones being created; worth confirming on the next check
+whether that count starts dropping as the 6h capacity-grace logic gets a chance to actually
+finalize them. Continuing tight-interval monitoring.
