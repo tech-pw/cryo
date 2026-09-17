@@ -673,10 +673,16 @@ def update_all_benefit_scores(
 
 # Bounds how many tables per sweep pay the expensive 90-day realized-value join (see
 # update_all_benefit_scores' CR-04 docstring) -- deliberately small relative to a 13k-table
-# fleet: at this rate every table gets refreshed roughly every ~26 sweeps (with the default
-# 6h cadence, about a week), which is a large improvement over "never" while still keeping the
-# per-sweep IO/memory cost bounded and predictable regardless of fleet size.
-_DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP = 500
+# fleet. Lowered from 500 to 100 on 2026-09-17 as part of the same OOM-incident fix that
+# introduced _STALENESS_SCAN_BATCH_SIZE: 500 was chosen before this code had ever run against
+# the live fleet's real data volume, and the actual OOM (scheduler CrashLoopBackOff, 45
+# restarts/5h) proved that assumption wrong. 100/sweep still refreshes every table roughly
+# every ~130 sweeps (with the default 6h cadence, about a month) -- a real, meaningful
+# improvement over "never" (the emergency refresh_realized_value=False stopgap this whole fix
+# replaces), while giving a much wider safety margin until build_outcome_dataset's own memory
+# profile is actually measured against this fleet's real 90-day audit/stats/cost/query-log
+# join volume. Revisit upward only with real post-fix RSS measurements in hand.
+_DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP = 100
 
 
 def _stalest_realized_value_table_ids(
@@ -686,22 +692,27 @@ def _stalest_realized_value_table_ids(
     ranked stalest of all, ahead of any table that has ever been refreshed) to spend this
     sweep's refresh budget on.
 
-    Deliberately queries only TableStats.raw (one column) for every table_id rather than full
-    Table/TableStats ORM objects, and returns a plain frozenset of ids -- nothing here holds a
-    ORM-mapped object alive past this function, so it can't reintroduce the identity-map growth
-    update_all_benefit_scores' own docstring describes. Querying inside the JSON raw column
-    itself (e.g. an ORDER BY on raw->>'autocomp_realized_value'->>'computed_at') was avoided
-    deliberately -- this repo has no existing precedent for that and the JSON operator syntax
-    differs between the Postgres production backend and the SQLite test backend, whereas a
-    single bounded raw-column-only query plus a Python sort is dialect-portable and just as
-    bounded in memory (one small string per table, never an ORM object).
+    Real incident, 2026-09-17: the original version of this function queried
+    TableStats.raw (one column, but the FULL JSONB blob) for every table_id in one shot --
+    looked memory-safe on paper ("one column, never a full ORM object"), but on the live
+    fleet TableStats.raw averages 522KB per row and totals ~6.8GB across 13,043 tables
+    (confirmed via `SELECT sum(octet_length(raw::text))`). Loading that in a single Python
+    list OOMKilled the scheduler pod (10Gi limit) 45 times in under 5 hours, which in turn
+    meant expire_stale_approval_requests() (also on the scheduler's tick) never ran and let
+    1,664 destructive-operation approval requests pile up past their 72h expiry -- a second,
+    unrelated-looking incident that was actually just this same OOM's downstream effect.
+    Fixed by processing table_ids in small batches (_STALENESS_SCAN_BATCH_SIZE), keeping only
+    the running top-`limit` candidates and their computed_at strings in memory across
+    batches -- at any point this holds at most one batch's raw blobs plus `limit` small
+    strings, never the whole fleet's JSON at once.
+
+    Querying inside the JSON raw column itself (e.g. an ORDER BY on
+    raw->>'autocomp_realized_value'->>'computed_at') was avoided deliberately -- this repo has
+    no existing precedent for that and the JSON operator syntax differs between the Postgres
+    production backend and the SQLite test backend.
     """
     if limit <= 0 or not table_ids:
         return frozenset()
-    rows = session.execute(
-        select(TableStats.table_id, TableStats.raw).where(TableStats.table_id.in_(table_ids))
-    ).all()
-    session.expunge_all()
 
     def _computed_at(raw: Any) -> str:
         if not isinstance(raw, dict):
@@ -711,10 +722,33 @@ def _stalest_realized_value_table_ids(
             return ""
         return str(realized.get("computed_at") or "")
 
-    # ISO-8601 timestamps sort correctly as plain strings; "" (missing/never-refreshed) sorts
-    # before any real timestamp, so tables with no prior value are stalest by construction.
-    ranked = sorted(rows, key=lambda row: _computed_at(row.raw))
-    return frozenset(row.table_id for row in ranked[:limit])
+    # Running candidates, kept sorted stalest-first and trimmed to `limit` after every batch --
+    # never holds more than `limit` (computed_at, table_id) pairs plus one batch's raw blobs.
+    candidates: list[tuple[str, uuid.UUID]] = []
+    for start in range(0, len(table_ids), _STALENESS_SCAN_BATCH_SIZE):
+        batch_ids = table_ids[start : start + _STALENESS_SCAN_BATCH_SIZE]
+        rows = session.execute(
+            select(TableStats.table_id, TableStats.raw).where(TableStats.table_id.in_(batch_ids))
+        ).all()
+        candidates.extend((_computed_at(row.raw), row.table_id) for row in rows)
+        session.expunge_all()
+        candidates.sort(key=lambda item: item[0])
+        del candidates[limit:]
+
+    return frozenset(table_id for _, table_id in candidates)
+
+
+# Real incident, 2026-09-17: the batch size for _stalest_realized_value_table_ids' raw-JSON
+# scan above -- see that function's docstring for the 522KB-average/6.8GB-total blob size that
+# made scanning all 13,043 tables in one query OOM the scheduler pod. Deliberately conservative
+# (50, not the ~380 that 522KB-avg x N <= 10Gi would arithmetically allow) because the average
+# undersells the real worst case: raw's size is highly skewed (max observed 10.3MB, ~20x the
+# average), and this batch's memory stacks on top of everything else already live in the
+# scheduler process (the base per-table sweep loop, its own held objects, other daemon
+# threads) -- correcting a production OOM incident is exactly the situation where "clearly
+# safe by a wide margin" beats "safe by my own arithmetic, unverified against the live
+# incident." Revisit upward only with real post-fix RSS measurements in hand.
+_STALENESS_SCAN_BATCH_SIZE = 50
 
 
 def update_table_effectiveness(
