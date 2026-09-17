@@ -595,3 +595,38 @@ are pre-existing stuck runs from before the deploy that haven't been touched by 
 capacity-defer decision yet, not new ones being created; worth confirming on the next check
 whether that count starts dropping as the 6h capacity-grace logic gets a chance to actually
 finalize them. Continuing tight-interval monitoring.
+
+---
+
+### Check-in — 2026-09-17 14:30 UTC (~4h40min post-redeploy) — NEW bottleneck found, unrelated to today's fixes
+
+**Reliability gate**
+1. Success rate (24h): **63.4%** (800 succeeded / 462 failed) — still below target, but this
+   24h window is now mostly pre-redeploy data
+2. Vitals score: **32/100 — CRITICAL**, roughly flat
+3. `stuck_runs`: **3** (up from 2), oldest now **42h**. `dispatch_heartbeat`: **43 minutes**
+   since last activity -- a real staleness, not the "0min ago" seen right after the redeploy
+
+**Direct investigation** (governor logs + `cryo.jobs`/`cryo.approval_requests` queried live):
+- Only **1 job total finished in the trailing 60 minutes** -- dispatch has gone nearly idle
+- **90,735 jobs currently `queued`**, 197 `running`, 57 `deferred` -- a queue an order of
+  magnitude larger than anything seen earlier today (prior max ~9,734)
+- Governor logs show entire waves landing at **`admitted=0`**, with every candidate job
+  deferred for the same reason: `"destructive operation requires approval"`
+- `cryo.approval_requests`: **1,664 rows currently `pending`** (10,460 approved, 3,038 expired
+  historically)
+
+**Read**: This is a genuinely new and different bottleneck from anything today's fixes
+target. The native-engine kill switch redeploy is holding (only 1
+`native_job_reported_success_with_zero_work` failure total, matching the earlier clean
+window), and the capacity-grace/admission-lifecycle fixes have no bearing on an
+approval-gate backlog -- destructive-operation approval is a separate, pre-existing
+operational mechanism (a human-in-the-loop gate for risky operations) that this session never
+touched. The queue growing to 90,735 with `admitted=0` waves strongly suggests the approval
+backlog (1,664 pending) is now the dominant blocker: with native no longer silently absorbing
+capacity and admission stall fixed, the fleet is dispatching efficiently *up to* the approval
+gate, then stalling en masse behind it. This is worth surfacing directly: it's a real,
+large-scale operational issue, but it is NOT a regression from today's deploy -- it's a
+pre-existing approval-workflow bottleneck that today's fixes didn't create and can't resolve
+on their own. Someone needs to either work through the 1,664 pending approvals or investigate
+why they're not being processed/expiring appropriately.
