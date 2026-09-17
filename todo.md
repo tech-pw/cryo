@@ -1,10 +1,31 @@
 # Cryo — TODO
 
+## Unused-cost incident — 2026-09-16
+
+- [x] Refresh/log CUR, inspect live resources and metastore timeouts; document [the fix plan](docs/CRYO_UNUSED_COST_FIX_2026-09-16.md).
+- [x] Fix native metadata-only jobs inheriting rewrite CPU; 50 sizing/packing tests pass locally.
+- [ ] Restore metastore reachability; implement source-scoped breaker and bounded batch deferral.
+- [ ] Route before sizing, calibrate metadata batch overhead, and verify resource-hour reduction.
+- [ ] Resolve scheduler OOMs; add safe scanner pending-plus-active scaling.
+- [ ] Deploy and verify cost per useful effect, unused share, and actual node-hour savings.
+
 Phased, actionable checklist. Mirrors the roadmap in `plan.md` §6 and the sequenced work in
 `docs/EXECUTION_PLAN.md`. Check items off as you go and keep this file honest. `P0`…`P7` = original
 phase plan; `P8+` = post-MVP extensions from `research-and-roadmap.md` Part 1 and the 2026 feature roadmap.
 
 Legend: `[ ]` todo · `[~]` in progress / partial · `[x]` done · `(parity)` must match the reference impl.
+
+## Immediate cost rescue — 2026-09-11
+
+Implementation details and acceptance gates: [consolidated cost reduction plan](docs/CRYO_COST_REDUCTION_PLAN.md).
+
+- [x] Consolidate observed costs, confirmed defects, fix status, and the ordered solution.
+- [x] Expand the plan with CR-01–CR-12 code evidence, specific fixes, regression scenarios, and release gates.
+- [ ] Finish bounded per-table feedback updates and shared model distribution; isolate scheduler memory failures.
+- [ ] Prove durable cross-engine continuation and recovery, with operation-specific completion accounting.
+- [ ] Close physical S3 reclamation gaps and verify protected references and retained object versions.
+- [ ] Right-size dispatch by operation; tune eligible compaction cohorts and ingestion/layout fixes.
+- [ ] Reconcile billing coverage and demonstrate net savings with matched workloads and Trino capacity changes.
 
 Last reconciled: 2026-08-04 (against `docs/current-state.md`,
 `docs/cryo-10-of-10-plan.md`, `docs/EXECUTION_PLAN.md`, and the codebase).

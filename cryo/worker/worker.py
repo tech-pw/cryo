@@ -530,7 +530,38 @@ class Worker:
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
 
-            engine = self._engine_factory(destination)
+            engine_destination = destination
+            if destination.engine is EngineType.NATIVE or str(destination.engine).lower() in (
+                "native",
+                "enginetype.native",
+            ):
+                from cryo.config import get_settings
+
+                # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
+                # with Cryo has no independent verification of its own self-reported success
+                # (gold_dbt_poll_dashboard_view ran 25min, reported success, committed zero
+                # snapshots). cryo.engines.native.routing.resolve_native_routing already
+                # reroutes every operation to the destination's sql_fallback_destination_id
+                # when native_engine_enabled=False (see that function's docstring), but it can
+                # only run once an engine object already exists -- self._engine_factory(
+                # destination) below would construct a NativeEngine (or raise, via
+                # create_engine's own disabled-engine check) before routing ever gets a
+                # chance to redirect anything. Redirect the engine construction itself to the
+                # configured SQL fallback destination so a globally-disabled native engine
+                # degrades to "this table's maintenance now runs on Spark/Trino" instead of
+                # "every job against a native destination hard-fails."
+                if not get_settings().native_engine_enabled:
+                    fallback_id = destination.config.get("sql_fallback_destination_id")
+                    if not isinstance(fallback_id, str) or not fallback_id.strip():
+                        fallback_id = destination.config.get("fallback_destination_id")
+                    if isinstance(fallback_id, str) and fallback_id.strip():
+                        fallback_destination = _try_get_destination(
+                            self._store, fallback_id.strip()
+                        )
+                        if fallback_destination is not None:
+                            engine_destination = fallback_destination
+
+            engine = self._engine_factory(engine_destination)
             if hasattr(engine, "with_source_config") and table_data.source_config:
                 engine = engine.with_source_config(table_data.source_config)
             if hasattr(engine, "with_table_stats"):

@@ -286,8 +286,22 @@ class Governor:
                     wave_jobs: list[MaintenanceJobRecord] = []
                     table_uuids: set[uuid.UUID] = set()
                     native_k8s_buffer: list[MaintenanceJobRecord] = []
+                    # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
+                    # with Cryo has no independent verification that a self-reported success
+                    # actually mutated the table (gold_dbt_poll_dashboard_view ran 25 minutes,
+                    # reported success, committed zero snapshots). Until that's fixed, disabling
+                    # native_engine_enabled must stop new native K8s pod dispatch fleet-wide, not
+                    # just block cryo.engines.factory.create_engine's legacy path -- otherwise a
+                    # native destination with k8s_dispatch=true keeps spinning up Go-engine pods
+                    # that resolve_native_routing (cryo/engines/native/routing.py) would then
+                    # reroute to SQL fallback per-operation anyway, wasting a pod launch to learn
+                    # that. Checking the flag here means those jobs go straight to the regular
+                    # worker-queue path instead, which dispatches through create_engine to
+                    # whatever SQL fallback the destination is configured for.
                     use_native_k8s = (
-                        destination_uses_k8s_dispatch(destination) and session_factory is not None
+                        destination_uses_k8s_dispatch(destination)
+                        and session_factory is not None
+                        and get_settings().native_engine_enabled
                     )
                     # Inspect a bounded multiple of available slots, then round-robin that window
                     # by tenant. This preserves the 11k-fleet OOM fix while giving later tenants a

@@ -1,5 +1,10 @@
 # Cryo — Master Execution Plan
 
+> **Cost rescue priority (2026-09-11):** Follow
+> [CRYO_COST_REDUCTION_PLAN.md](CRYO_COST_REDUCTION_PLAN.md) for immediate reliability,
+> physical reclamation, and net-cost proof work before expanding features. It supersedes older
+> sequencing/status claims for that scope; architecture and safety contracts remain authoritative.
+
 > **Strategic status (2026-08-04):** Start with the
 > [`Cryo 10/10 Master Plan`](./cryo-10-of-10-plan.md) for current prioritization, evidence gates,
 > non-goals, and release criteria. This file remains the detailed handoff for its original scope.

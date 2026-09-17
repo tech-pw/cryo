@@ -19,7 +19,7 @@
 # faster to a burst of ad-hoc scan requests, but that's a genuine follow-up, not a
 # blocker: gate it behind scannerWorker.autoscaling.keda.enabled once KEDA's presence on
 # this cluster is confirmed, rather than assume it here.
-{{- if .Values.scannerWorker.autoscaling.enabled }}
+{{- if and .Values.scannerWorker.autoscaling.enabled (not .Values.scannerWorker.autoscaling.keda.enabled) }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

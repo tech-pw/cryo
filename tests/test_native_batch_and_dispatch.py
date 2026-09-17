@@ -148,6 +148,257 @@ def test_execute_batch_serial_isolation() -> None:
     assert result["results"][2]["ok"] is True
 
 
+def test_execute_batch_reports_member_count_and_peak_cgroup_memory() -> None:
+    """Cost remediation plan §3, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the
+    aggregate result must carry member_count and peak_cgroup_memory_mib so real batch memory
+    telemetry can accumulate (see _log_batch_memory_telemetry's docstring in watcher.py) --
+    the exact measurement packing.py's own _SERIAL_MEMBER_OVERHEAD_MIB comment says is missing
+    before that heuristic can be safely revisited."""
+    from cryo.engines.native.runner import NativeExecuteResult
+
+    def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
+        return NativeExecuteResult(ok=True, table_ref=str(request.get("table_ref")), results=())
+
+    payload = build_batch_payload(
+        [{"table_ref": "a.b", "job_id": "j1", "operations": []}]
+    )
+    with (
+        patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute),
+        patch("cryo.engines.native.batch.read_peak_cgroup_memory_mib", return_value=512),
+    ):
+        result = execute_batch(payload, config={})
+
+    assert result["member_count"] == 1
+    assert result["peak_cgroup_memory_mib"] == 512
+
+
+def test_read_peak_cgroup_memory_mib_reads_cgroup_v2_file(tmp_path, monkeypatch) -> None:
+    import builtins
+
+    from cryo.engines.native.batch import read_peak_cgroup_memory_mib
+
+    real_open = builtins.open
+    v2_path = tmp_path / "memory.peak"
+    v2_path.write_text(str(512 * 1024 * 1024))
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/sys/fs/cgroup/memory.peak":
+            return real_open(v2_path, *args, **kwargs)
+        raise OSError("not found")
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert read_peak_cgroup_memory_mib() == 512
+
+
+def test_read_peak_cgroup_memory_mib_falls_back_to_cgroup_v1(tmp_path, monkeypatch) -> None:
+    import builtins
+
+    from cryo.engines.native.batch import read_peak_cgroup_memory_mib
+
+    real_open = builtins.open
+    v1_path = tmp_path / "memory.max_usage_in_bytes"
+    v1_path.write_text(str(1024 * 1024 * 1024))
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/sys/fs/cgroup/memory/memory.max_usage_in_bytes":
+            return real_open(v1_path, *args, **kwargs)
+        raise OSError("not found")
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert read_peak_cgroup_memory_mib() == 1024
+
+
+def test_read_peak_cgroup_memory_mib_returns_none_not_zero_when_unreadable(monkeypatch) -> None:
+    """Neither cgroup file exists (e.g. local dev, not inside a real cgroup) -- must return
+    None, not 0, since 0 would misleadingly look like a real measurement of zero usage."""
+    from cryo.engines.native.batch import read_peak_cgroup_memory_mib
+
+    def fake_open(path, *args, **kwargs):
+        raise OSError("not found")
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert read_peak_cgroup_memory_mib() is None
+
+
+def test_log_batch_memory_telemetry_logs_at_info_with_the_measured_values() -> None:
+    from cryo.engines.native.watcher import _log_batch_memory_telemetry
+
+    dispatch_id = uuid.uuid4()
+    stdout = json.dumps(
+        {"batch": True, "ok": True, "member_count": 7, "peak_cgroup_memory_mib": 3200}
+    )
+    with patch("cryo.engines.native.watcher.logger.info") as mock_info:
+        _log_batch_memory_telemetry(dispatch_id, stdout)
+
+    assert mock_info.called
+    args = mock_info.call_args.args
+    assert 7 in args
+    assert 3200 in args
+
+
+def test_log_batch_memory_telemetry_is_a_noop_when_measurement_missing() -> None:
+    """A batch that ran without the cgroup file available (peak_cgroup_memory_mib is None,
+    e.g. local dev) must not log a misleading line implying a real measurement exists."""
+    from cryo.engines.native.watcher import _log_batch_memory_telemetry
+
+    stdout = json.dumps({"batch": True, "ok": True, "member_count": 1, "peak_cgroup_memory_mib": None})
+    with patch("cryo.engines.native.watcher.logger.info") as mock_info:
+        _log_batch_memory_telemetry(uuid.uuid4(), stdout)
+
+    assert not mock_info.called
+
+
+def test_execute_batch_circuit_breaker_opens_after_repeated_same_catalog_timeout() -> None:
+    """Cost remediation plan §1, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): a real
+    incident found a native pod spending ~48+ minutes re-discovering the same unreachable
+    metastore across 32 serial tables, each paying its own bounded connect-timeout before
+    moving on. After _CIRCUIT_BREAKER_CONSECUTIVE_FAILURES (2) consecutive transient-
+    metastore-timeout failures against the same catalog_uri, the breaker must open and every
+    remaining member sharing that URI must be short-circuited without calling execute_request
+    at all -- proving the pod stops burning reserved capacity on a known-dead catalog."""
+    from cryo.engines.native.batch import TRANSIENT_METASTORE_ERROR_SUBSTRING
+
+    calls: list[str] = []
+    timeout_error = (
+        "failed to connect to catalog: after 1 attempts: failed to create Hive client: "
+        "failed to connect to metastore: connect timed out after 45s"
+    )
+
+    def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
+        from cryo.engines.native.runner import NativeExecuteResult
+
+        ref = str(request.get("table_ref"))
+        calls.append(ref)
+        return NativeExecuteResult(ok=False, table_ref=ref, results=(), error=timeout_error)
+
+    payload = build_batch_payload(
+        [
+            {
+                "table_ref": f"t{i}",
+                "job_id": f"j{i}",
+                "operations": [],
+                "catalog_uri": "thrift://dead-metastore:9083",
+            }
+            for i in range(5)
+        ]
+    )
+    with patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute):
+        result = execute_batch(payload, config={})
+
+    # Only the first 2 members actually spawned the subprocess -- the breaker opened after
+    # that and the remaining 3 were short-circuited.
+    assert calls == ["t0", "t1"]
+    assert len(result["results"]) == 5
+    for entry in result["results"][2:]:
+        assert entry["ok"] is False
+        assert TRANSIENT_METASTORE_ERROR_SUBSTRING in entry["error"]
+        assert "catalog_circuit_breaker_open" in entry["error"]
+
+
+def test_execute_batch_circuit_breaker_does_not_open_for_unrelated_failures() -> None:
+    """The breaker must only key on the specific transient-metastore-timeout signature -- a
+    run of ordinary per-table failures (bad credentials, missing table, etc.) against the same
+    catalog_uri must not trip it and start skipping real, distinguishable failures."""
+    calls: list[str] = []
+
+    def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
+        from cryo.engines.native.runner import NativeExecuteResult
+
+        ref = str(request.get("table_ref"))
+        calls.append(ref)
+        return NativeExecuteResult(ok=False, table_ref=ref, results=(), error="table not found")
+
+    payload = build_batch_payload(
+        [
+            {
+                "table_ref": f"t{i}",
+                "job_id": f"j{i}",
+                "operations": [],
+                "catalog_uri": "thrift://healthy-metastore:9083",
+            }
+            for i in range(5)
+        ]
+    )
+    with patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute):
+        execute_batch(payload, config={})
+
+    # Every member actually ran -- the breaker never opened for a non-timeout error.
+    assert calls == ["t0", "t1", "t2", "t3", "t4"]
+
+
+def test_execute_batch_circuit_breaker_is_scoped_per_catalog_uri() -> None:
+    """A dead catalog A must not affect dispatch to a healthy, unrelated catalog B in the same
+    batch -- confirmed live requirement (cost doc §1: 'stop new work for the failing catalog...
+    while keeping unrelated catalogs available')."""
+    calls: list[str] = []
+    timeout_error = (
+        "failed to connect to catalog: after 1 attempts: failed to create Hive client: "
+        "failed to connect to metastore: connect timed out after 45s"
+    )
+
+    def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
+        from cryo.engines.native.runner import NativeExecuteResult
+
+        ref = str(request.get("table_ref"))
+        calls.append(ref)
+        if request.get("catalog_uri") == "thrift://dead-metastore:9083":
+            return NativeExecuteResult(ok=False, table_ref=ref, results=(), error=timeout_error)
+        return NativeExecuteResult(ok=True, table_ref=ref, results=())
+
+    payload = build_batch_payload(
+        [
+            {"table_ref": "dead1", "job_id": "j1", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
+            {"table_ref": "dead2", "job_id": "j2", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
+            {"table_ref": "healthy1", "job_id": "j3", "operations": [], "catalog_uri": "thrift://healthy-metastore:9083"},
+            {"table_ref": "dead3", "job_id": "j4", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
+        ]
+    )
+    with patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute):
+        result = execute_batch(payload, config={})
+
+    # dead1, dead2 spawned (opening the breaker for that URI); healthy1 spawned regardless
+    # (different URI); dead3 was short-circuited (breaker already open for its URI).
+    assert calls == ["dead1", "dead2", "healthy1"]
+    assert result["results"][2]["ok"] is True  # healthy1 unaffected
+    assert result["results"][3]["ok"] is False
+    assert "catalog_circuit_breaker_open" in result["results"][3]["error"]
+
+
+def test_execute_batch_circuit_breaker_resets_on_intervening_success() -> None:
+    """A single transient timeout followed by a real success against the same catalog must
+    not count toward the breaker -- only a genuine consecutive run of the same failure opens
+    it, per _CIRCUIT_BREAKER_CONSECUTIVE_FAILURES' docstring."""
+    calls: list[str] = []
+    timeout_error = (
+        "failed to connect to catalog: after 1 attempts: failed to create Hive client: "
+        "failed to connect to metastore: connect timed out after 45s"
+    )
+    outcomes = [False, True, False, False]
+
+    def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
+        from cryo.engines.native.runner import NativeExecuteResult
+
+        ref = str(request.get("table_ref"))
+        calls.append(ref)
+        ok = outcomes[len(calls) - 1]
+        return NativeExecuteResult(
+            ok=ok, table_ref=ref, results=(), error=None if ok else timeout_error
+        )
+
+    payload = build_batch_payload(
+        [
+            {"table_ref": f"t{i}", "job_id": f"j{i}", "operations": [], "catalog_uri": "thrift://flaky:9083"}
+            for i in range(5)
+        ]
+    )
+    with patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute):
+        execute_batch(payload, config={})
+
+    # t0 fails (count=1), t1 succeeds (resets to 0), t2 fails (count=1), t3 fails (count=2,
+    # breaker opens) -- t4 must be short-circuited, but all of t0-t3 actually ran.
+    assert calls == ["t0", "t1", "t2", "t3"]
+
+
 def test_create_native_job_clamps_above_16gi() -> None:
     with (
         patch("cryo.engines.native.job_dispatch._safe_load_k8s", return_value=(None, None)),

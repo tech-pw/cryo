@@ -1,8 +1,23 @@
 # Cryo — Agent Handoff Notes
 
+**2026-09-16 unused-cost investigation:** See [the diagnosis and fix plan](CRYO_UNUSED_COST_FIX_2026-09-16.md).
+Live native batches hold ~55GiB of requests across six pods while catalog connections time out;
+32-member packing adds 6,200MiB before the largest member estimate. Scheduler's latest
+termination was OOMKilled (26 restarts). Metadata-only rewrite CPU allocation is fixed/tested
+locally, not deployed. Prioritize catalog-scoped failure containment and routing before sizing;
+do not shrink all memory based on outage-idle usage. Refreshed CUR rows are in the daily log.
+
 This file exists so another AI session (or a human) picking up this repo cold can get
 oriented fast, without re-deriving everything from git history. It is a living doc —
 update it as you learn things, don't just append forever.
+
+**Cost rescue priority (2026-09-11):** Start with
+[CRYO_COST_REDUCTION_PLAN.md](CRYO_COST_REDUCTION_PLAN.md) for the consolidated diagnosis,
+implementation order, current fix status, and gates for proving net S3/Trino savings.
+Sections 9–11 now contain CR-01 through CR-12: code-specific defects/design gaps, preferred
+fixes, regression scenarios, and reviewable release slices. Newly confirmed details include
+ignored lock-renewal failure, Spark resource floors exceeding configured ceilings, and the
+writer-activity signal treating maintenance-contaminated observations as zero activity.
 
 **No secrets live here.** Tokens, passwords, and access keys are never written to this
 file or committed anywhere in the repo. See "Credentials" below for how auth actually
@@ -29,7 +44,9 @@ spend (worker/api/governor/scheduler pod compute) is tracked against a real doll
 ceiling (`cryo/reporting/cost_ceiling.py`), because over-provisioned idle capacity
 defeats the purpose of a cost-saving tool.
 
-**North Star metric**: GB freed per day, fleet-wide (`cryo/reporting/impact_signals.py`).
+**Business success metric**: net realized savings after Cryo and maintenance overhead.
+**Existing operational metric**: GB freed per day, fleet-wide (`cryo/reporting/impact_signals.py`);
+its measurement basis must be distinguished from physical S3 deletion and billed savings.
 **Vitals**: a composite 0-100 operational health score (`cryo/reporting/vitals.py`) —
 covers stuck runs, stale jobs, repeat failures, queue growth, scan freshness/failures,
 namespace cost ratio, and fleet small-file trend. Both are exposed via the API
@@ -390,15 +407,38 @@ into the actual answer.
 
 ### Other known follow-ups, not yet fixed
 
-- `cryo/engines/trino/engine.py`'s `TrinoEngine.execute()` blocks synchronously inside
-  `cursor.execute()` and only captures the Trino query ID (`engine_ref`) after it
-  returns/raises — if the worker process dies mid-call, the job is stuck at
-  `status='running'`, `engine_ref=null` forever, with nothing to probe or auto-recover
-  (unlike the Spark path, which has a real K8s Job to check). Recurred on
-  `cdp.unified_bq.gold_dbt_pw_bq` multiple times. Fixing this properly means either
-  running `execute()` in a background thread and polling `cursor.query_id` concurrently,
-  or dropping to the lower-level `TrinoQuery` API directly — a real architectural change
-  touching every Trino dispatch path, not a one-line fix.
+### 2026-09-11 rescue pass — new findings and fixes
+
+- **Scheduler memory remains an investigation, with a confirmed expensive code path.**
+  `update_table_effectiveness()` builds an outcome dataset per active table in the fleet sweep.
+  Scheduler OOM was observed September 10, but this path has not been isolated as its sole cause.
+  The working-tree score-only shortcut is incomplete: `CostModelRefreshRunner` trains the global
+  model; it does not refresh per-table `autocomp_realized_value`. Add a bounded independent
+  per-table updater and test freshness before treating this separation as complete.
+- **Outcome history reads are now bounded.** `build_outcome_dataset()` selects only the nearest
+  pre/post stats and cost rows for each audit and projects only the fields used by the model,
+  instead of loading every raw JSON history row in the lookback window.
+- **Native create-on-admit now preserves preset exclusions.** Its plan rebuild previously could
+  reintroduce operations omitted from `Preset.operations`; the rebuilt plan now applies the same
+  skip/gating rules as the worker path. Spark SQL fallback dispatch also receives per-table
+  sizing before submission, so a small manifest job does not reserve the large-table profile.
+- **Table locks are fail-closed in workers.** A worker no longer executes when another job owns
+  the table lock; it defers the job. Redis lock renewal is now compare-and-expire atomic.
+- **KEDA excludes native watcher jobs.** Native jobs with `dispatch_id` do not need long-lived
+  workers and are excluded from the worker scale metric.
+- **Cost evidence (2026-09-10 CUR pull):** Sep 1–9 mean daily cost was $132.45 for `cryo`,
+  with 83.15% unused, and $544.23 for `trino-db`; both month-over-month changes are currently
+  not statistically significant. The daily rows are in `docs/cost-tracking/daily-cost-log.csv`.
+  Treat the API's projected savings as a model until bucket-scoped S3 CUR rows are available.
+
+The September 11 scheduler observation showed nine restarts without a captured termination
+reason. Do not infer those were all OOMs. Profile each heavy runner and observe memory through
+full scheduled cycles; the score-sweep shortcut alone is not a complete deployable solution.
+
+- **Trino recovery status correction:** query-reference capture timing was changed in
+  `a497bd22`. The previous synchronous capture problem is no longer an unimplemented fix.
+  Verify kill/restart recovery and reconciliation against real engine references before
+  calling the production recovery issue resolved.
 - ~106 active (non-`*_evolving`-named) tables sharing the same orphaned-catalog-entry
   shape (`location IS NULL` or 404-on-read, `query_count_30d=0`) but not matched by the
   automated `deactivate_orphaned_evolving_catalog_entries` sweep (different naming
