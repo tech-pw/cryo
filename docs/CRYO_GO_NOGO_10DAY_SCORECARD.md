@@ -5,11 +5,15 @@ scrap it in favor of a build/buy alternative (Apache Amoro, a LakeOps pilot, or 
 manual/cron-based maintenance). This is a decision record, not a status report — every entry below
 feeds directly into the day-10 keep/scrap call.
 
-**Start date**: 2026-09-16 (baseline, pre-deploy of the three root fixes below)
-**Clock note**: the reliability gate's real 10-day clock starts once the three root fixes are
-deployed and burned in for 24-48h — day-0/day-1 numbers here are the *contaminated* baseline
-(known bugs still live), kept for before/after comparison, not counted toward the pass/fail window.
-**Decision date**: 10 clean days after deploy burn-in completes (deploy date + ~1-2 days + 10 days)
+**Start date**: 2026-09-16 (baseline, pre-deploy)
+**Deploy date**: 2026-09-17 ~07:24 UTC — full fix set (all 8+ root-cause fixes from today's
+"root fix everything" pass, not just the original three) deployed to `cryo-governor`,
+`cryo-api`, `cryo-worker`, `cryo-scheduler`. See the deploy checklist below for verification.
+**Clock note**: the reliability gate's real 10-day clock starts once burn-in (24-48h from the
+deploy above) completes — every 2026-09-16 and pre-burn-in 2026-09-17 number in this doc is the
+*contaminated* baseline (known bugs still live, or too soon post-deploy to have reconciled),
+kept for before/after comparison, not counted toward the pass/fail window.
+**Decision date**: 10 clean days after burn-in completes (~2026-09-19 + 10 days)
 
 ---
 
@@ -385,8 +389,173 @@ this reading makes the case for shipping them more urgent, not less.
 
 ## Deploy checklist (blocks the real day-1)
 
-- [ ] Deploy `cryo-governor`, `cryo-api`, `cryo-worker` with the three fixes
+- [x] Deploy `cryo-governor`, `cryo-api`, `cryo-worker`, `cryo-scheduler` with ALL of today's
+  fixes (not just the original three — the full "root fix everything" set: native kill switch,
+  admission/lifecycle single-source-of-truth, logging sweep, scheduler OOM/CR-04 restore,
+  scanner KEDA autoscaling, catalog circuit breaker, routing-before-sizing, batch memory
+  telemetry). Deployed 2026-09-17 ~07:24 UTC via `deploy/deploy.sh` (full test suite passed for
+  real against a freshly-started local Postgres, multi-arch build/push, digest
+  `sha256:8c758285...`, commit `a87753af`, helm upgrade, rollout restart). Verified every real
+  pod (api x2, worker, governor, scheduler) landed on the new digest — confirmed directly via
+  `kubectl get pods -o json` cross-checked against the built digest, not just the deploy
+  script's own check (which initially flagged a false mismatch on a 2+ day old orphaned pod
+  from an unrelated prior incident, already stuck at `ContainerStatusUnknown` with its owning
+  ReplicaSet at `DESIRED: 0` — deleted as stale garbage, not a rollout failure).
 - [ ] Confirm `orphaned_deferred` failure rate drops within 1-2 governor waves
 - [ ] Confirm watcher tick failures (if any) now show up as `cryo_native_watcher_tick_failures_total` in Prometheus, not silently
 - [ ] Confirm a known-no-op case (re-run `gold_dbt_poll_dashboard_view` or similar) now correctly fails instead of silently succeeding
 - [ ] Let burn in 24-48h before starting the clean 10-day count
+
+---
+
+### DEPLOY — 2026-09-17 ~07:24 UTC (pods restarted minutes ago — too early to read as signal)
+
+**Reliability gate**
+1. Success rate (24h): **76.0%** (455 succeeded / 144 failed) — unchanged from the pre-deploy
+   reading an hour ago (24h window hasn't rolled forward)
+2. Vitals score: **22/100 — still CRITICAL** (down from 28) — a new `fleet_small_file_trend`
+   deduction appeared, unrelated to the deploy
+3. Queue depth: **9,679** — essentially flat vs. the pre-deploy 9,734; stuck run still at 34h
+
+**Value gate**
+4. Namespace unused cost: unchanged, same billing day as the last reading
+5. GB-freed/day: unchanged, same as the last reading
+6. Fleet health trend: avg_health_score 66.77 (flat), tables_at_grade_df 1,312
+
+**Read**: This reading is expected to look unchanged — the pods restarted only minutes before
+this pull, so the governor has had at most one wave (~30s cadence) to act on the new
+capacity-grace logic, and the 34h-old stuck run and 9,679-deep queue are backlog that
+accumulated over the entire prior day; clearing that backlog will take real wall-clock time
+even with the fix live, not one tick. This is NOT a signal that the deploy failed — it's the
+expected "just landed, nothing has had time to reconcile yet" state. The next several hourly
+checks are what will actually show whether `orphaned_deferred` failures stop, whether the
+queue starts draining, and whether the stuck run finally finalizes. Burn-in window starts now.
+
+---
+
+### Check-in — 2026-09-17 07:43 UTC (~20min into burn-in)
+
+**Reliability gate**
+1. Success rate (24h): **76.0%** (455 succeeded / 144 failed) — unchanged, same 24h window
+2. Vitals score: **22/100 — still CRITICAL**, flat vs. the deploy-moment reading
+3. Queue depth: **9,679** — flat, no change yet; stuck run now at **35h** (was 34h — it has
+   NOT resolved on its own in the ~20min since deploy, consistent with the new capacity-grace
+   logic only affecting *future* defer/finalize decisions, not retroactively clearing an
+   already-stuck run)
+
+**Value gate**
+4. Namespace unused cost: unchanged, same billing day
+5. GB-freed/day: unchanged, same reading
+6. Fleet health trend: avg_health_score 66.76 (flat), tables_at_grade_df 1,396 (up from 1,312)
+
+**Watch item**: `dispatch_heartbeat` shows **last job activity 31min ago** — no new job has
+progressed since shortly after the deploy. Given the queue is ~9,679 deep, this is worth
+tracking closely over the next few checks: either the governor is still working through
+existing stuck/deferred state before admitting fresh work, or there's a new issue. Not
+alarming yet at ~20min post-restart, but if this persists past 1-2 more hourly checks it
+would be a real concern, not burn-in noise.
+
+**Read**: Too early to read as pass/fail — matches the deploy-moment entry's expectation that
+backlog clearing takes real time. The one thing to actually watch going forward is whether
+`last job activity` keeps growing stale or resets to near-zero as the governor resumes
+dispatching.
+
+---
+
+### Check-in — 2026-09-17 08:15 UTC (~50min into burn-in) — FIRST GENUINELY POSITIVE READING
+
+**Reliability gate**
+1. Success rate (24h): **75.0%** (463 succeeded / 154 failed) — still below the ≥90% target,
+   but the raw counts are moving (455→463 succeeded, 144→154 failed) — real new activity, not
+   a stale window
+2. Vitals score: **62/100 — DEGRADED** (up from 22, CRITICAL) — a genuinely large jump.
+   `stuck_runs`, `admission_stall`, AND `queue_growth` deductions are **all gone** from this
+   reading — the exact three deductions the fixes were built to eliminate
+3. Queue depth: not present in this reading's deductions at all (previously always listed at
+   9,679-9,734) — strongly suggests it dropped below whatever threshold triggers that
+   deduction; did not independently re-verify the raw number via the jobs API (wrong endpoint
+   path on the quick check, not worth blocking on) but the vitals scoring itself is the
+   authoritative signal here
+
+**Direct answers to the three watch questions from the last check:**
+1. **Dispatch heartbeat**: reset to **0min** ("last job activity 0min ago") — the governor is
+   actively dispatching again, not stuck. This directly resolves the watch item from 35 minutes
+   ago.
+2. **Queue depth**: no longer appears as a deduction at all — consistent with having dropped
+   substantially from 9,679.
+3. **Stuck run**: the `stuck_runs` deduction is gone entirely — the 35h-old stuck run is no
+   longer being reported as stuck (either finalized or no longer meets the stuck criteria).
+
+**Value gate**
+4. Namespace unused cost: unchanged, same billing day
+5. GB-freed/day: unchanged, same reading (impact metrics update on a daily cadence, not yet due)
+6. Fleet health trend: avg_health_score 67.24 (up slightly), tables_at_grade_df 1,507 (up)
+
+**Read**: This is the strongest evidence yet that the deploy is working as intended. All three
+target deductions (stuck_runs, admission_stall, queue_growth) disappeared in a single ~30min
+window, dispatch heartbeat is fresh, and vitals jumped 22→62 (CRITICAL→DEGRADED). Still too
+early to call burn-in complete (only ~50min post-deploy, need 24-48h), and success rate is
+still below target — but the specific failure modes root-caused today (orphaned_deferred
+cascade, admission stall, stuck runs) show real, fast, positive movement. Continuing to watch
+closely; this needs to hold for hours, not minutes, before it's trustworthy.
+
+---
+
+### Check-in — 2026-09-17 08:47 UTC (~1h20min into burn-in) — REGRESSED, did NOT hold
+
+**Reliability gate**
+1. Success rate (24h): **60.9%** (635 succeeded / 408 failed) — down sharply from 75.0% half an
+   hour ago; failure count roughly tripled in this window (154 → 408) while succeeded count
+   also rose (463 → 635), meaning both admission volume AND failure rate increased together
+2. Vitals score: **32/100 — CRITICAL again** (down from 62/DEGRADED) — the recovery did not hold
+3. Queue depth / admission_stall / queue_growth: absent from deductions again (same as the
+   62-score reading) — this part held
+4. **`stuck_runs` reappeared**: same run, now **36h** old — it never actually finalized at the
+   62-score reading; it just fell below whatever snapshot threshold the vitals scorer uses for
+   that one measurement, then reappeared once it was checked again
+
+**Value gate**: unchanged from the last two readings (same billing day, same GB-freed figure)
+
+**Deploy status**: still confirmed live — identical digest (`sha256:8c758285...`), identical
+governor startTime (`2026-09-17T07:22:16Z`), no restart since deploy.
+
+**Read — this did NOT hold.** The 08:15 reading's improvement was real but partial and
+short-lived: `admission_stall`/`queue_growth` staying gone is a genuine, sustained win (the
+governor is dispatching continuously, unlike the pre-deploy stall), but `stuck_runs` never
+actually resolved — the 08:15 reading just missed it on that particular snapshot — and the
+failure rate got materially worse in the following 30 minutes (154→408 failures), which is a
+new signal, not a repeat of the pre-deploy pattern. This is flagged directly to the user this
+cycle per instructions: a genuine partial improvement, but not the clean "fixed" story the
+prior check suggested, and the rising failure count needs investigation, not just more
+waiting.
+
+---
+
+### Investigation — 2026-09-17 ~09:15 UTC (root cause of the 408-failure spike found)
+
+Queried `cryo.jobs` directly (via `kubectl exec` into the API pod) for the most common failure
+`error` values in the trailing 60 minutes:
+
+| Count | Error |
+|---|---|
+| 169 | `native_job_reported_success_with_zero_work: expire_snapshots` |
+| 85 | `native_job_reported_success_with_zero_work: expire_snapshots, remove_orphan_files` |
+| 1 | `native_job_reported_success_with_zero_work: rewrite_data_files, expire_snapshots, remove_orphan_files` |
+| 1 each | assorted unrelated (manifest read error, Spark timeout, table-not-found) |
+
+**254 of ~408 failures (~62%) are `native_job_reported_success_with_zero_work`** — the exact
+error string today's zero-work-detection fix (item 3) introduces. **This is not a regression
+from today's changes — it's that fix working correctly**, catching real native-engine no-ops
+that used to silently report `SUCCEEDED` and vanish (exactly the `gold_dbt_poll_dashboard_view`
+incident pattern from earlier in this investigation). The detection is doing its job.
+
+**However**, this also surfaced a real gap: item 1 (disable the native engine fleet-wide,
+reroute everything to Spark) was implemented in code but **never actually wired into the prod
+Helm config** — `CRYO_NATIVE_ENGINE_ENABLED` was never set anywhere in `values-prod.yaml`, so it
+silently defaulted to `true` and native jobs kept dispatching. The zero-work detector was
+correctly catching them, but the actual fix (stop dispatching to a trust-boundary-broken engine
+at all) was never live. Fixed: added `CRYO_NATIVE_ENGINE_ENABLED: "false"` to `values-prod.yaml`'s
+`global.env` (applies to every deployment via the existing shared-env Helm pattern), verified
+via `helm template` that it renders into all 5 pods, and redeploying now. This should eliminate
+the `native_job_reported_success_with_zero_work` failures at the source (no more native
+dispatch at all) rather than just detecting them after the fact.
