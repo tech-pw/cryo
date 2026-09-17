@@ -235,7 +235,16 @@ def estimate_table_resources(
     has_rewrite = bool(op_types & _REWRITE_OPS)
     has_expire = bool(op_types & _EXPIRE_OPS)
     has_orphan = bool(op_types & _ORPHAN_OPS)
-    if not op_types:
+    if not op_types and not params.get("metadata_only_sizing_hint"):
+        # Cost remediation plan §2, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): an
+        # empty operations sequence defaults to "assume worst-case rewrite" because the
+        # ordinary caller shape for "empty" is genuinely unknown work (no operations were ever
+        # planned) -- but native_admit.py's sizing now also produces an empty sequence when
+        # every *planned* operation was filtered out because none of them are native-
+        # executable for this table (e.g. an OPTIMIZE-only job on a delete-heavy table, routed
+        # entirely to the SQL fallback). That's not "unknown, assume the worst" -- it's "known
+        # to be zero native work" -- so the caller sets metadata_only_sizing_hint to opt out of
+        # this default rather than pay for a rewrite this pod will never execute.
         has_rewrite = True
 
     peaks: list[int] = []
@@ -287,8 +296,9 @@ def estimate_table_resources(
             caps.max_mem_mib,
         )
 
-    raw_cpu = _CPU_BASE_MILLI + int(rewrite_gb / 10 * _REWRITE_CPU_PER_10GB)
+    raw_cpu = _CPU_BASE_MILLI
     if has_rewrite:
+        raw_cpu += int(rewrite_gb / 10 * _REWRITE_CPU_PER_10GB)
         raw_cpu += int(total_files / 5000 * 50) + (group_concurrency - 1) * 100
     if has_orphan:
         raw_cpu += 50

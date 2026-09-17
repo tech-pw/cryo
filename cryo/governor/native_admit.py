@@ -20,7 +20,15 @@ from cryo.db.repositories.native_dispatch import (
     get_dispatch,
     mark_dispatch_running,
 )
-from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
+from cryo.domain.enums import (
+    EngineType,
+    FLEET_ADMISSION_RATE_CAP_DEFER_REASON,
+    JobStatus,
+    METASTORE_CAPACITY_DEFER_REASON_PREFIX,
+    Mode,
+    NATIVE_CLUSTER_CAPACITY_DEFER_REASON,
+    OperationType,
+)
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
 from cryo.engines.native.batch import build_batch_payload
 from cryo.engines.native.job_dispatch import (
@@ -764,8 +772,40 @@ def admit_native_k8s_jobs(
             stats = dict(table_data.stats)
             mode = job.mode if isinstance(job.mode, Mode) else Mode(str(job.mode))
             # Estimate from stats only (no preset chunk) — chunk comes after pack.
-            ops_hint = job.operations
+            #
+            # Cost remediation plan §2, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md):
+            # this used to pass job.operations straight through unfiltered -- sizing (and thus
+            # the pod's requested CPU/mem, which drives the K8s scheduling/reservation cost the
+            # doc is about) was based on the *planned* operation list, not what native will
+            # actually execute. resolve_native_routing (cryo/engines/native/routing.py) doesn't
+            # run until build_native_request, much later in this same loop, well after this
+            # sizing decision already happened -- so an OPTIMIZE that will end up entirely
+            # routed to the Spark SQL fallback (e.g. the table has delete files, which
+            # native_optimize_enabled below also checks) still inflated this native pod's
+            # memory/CPU reservation for a rewrite it will never run. native_supported_
+            # operation_types is the same stats/config-aware capability check
+            # resolve_native_routing itself uses for this exact decision (just without needing
+            # a full built Plan, which doesn't exist yet at this point in admission) -- filtering
+            # with it here means sizing only ever reflects work this pod will actually execute.
+            from cryo.engines.native.routing import native_supported_operation_types
+
+            native_capable_ops = native_supported_operation_types(stats, destination.config)
             sizing_params = {k: v for k, v in dict(job.params).items() if k != "chunk_size_gb"}
+            if job.operations:
+                ops_hint = tuple(op for op in job.operations if op in native_capable_ops)
+                if not ops_hint:
+                    # Every planned operation routes to SQL fallback for this table (e.g. an
+                    # OPTIMIZE-only job against a table with delete files) -- estimate_table_
+                    # resources treats an *empty* operations sequence as "unknown, assume
+                    # worst-case rewrite" (see its own has_rewrite fallback), which is exactly
+                    # backwards here: this pod has zero native-executable work, not unknown
+                    # work. metadata_only_sizing_hint tells the estimator "size for the
+                    # cheapest real case (metadata-only), not the rewrite default" without
+                    # otherwise changing _normalize_operations' empty-input contract for genuine
+                    # callers that pass no operations because none were ever planned.
+                    sizing_params["metadata_only_sizing_hint"] = True
+            else:
+                ops_hint = job.operations
             # Keep the CPU estimate in sync with the group_concurrency actually dispatched
             # (see the matching override in build_native_request below) -- otherwise the pod
             # gets sized/CPU-limited for concurrency=2 while the engine is told to run more
@@ -814,7 +854,7 @@ def admit_native_k8s_jobs(
                     spec,
                     defer_job=defer_job,
                     release_lock=release_lock,
-                    reason="native_cluster_capacity",
+                    reason=NATIVE_CLUSTER_CAPACITY_DEFER_REASON,
                     resolved=resolved,
                 )
                 continue
@@ -824,7 +864,7 @@ def admit_native_k8s_jobs(
                     spec,
                     defer_job=defer_job,
                     release_lock=release_lock,
-                    reason="fleet_admission_rate_cap",
+                    reason=FLEET_ADMISSION_RATE_CAP_DEFER_REASON,
                     resolved=resolved,
                 )
                 continue
@@ -839,7 +879,7 @@ def admit_native_k8s_jobs(
                     spec,
                     defer_job=defer_job,
                     release_lock=release_lock,
-                    reason=f"metastore_capacity:{over_capacity_uri}",
+                    reason=f"{METASTORE_CAPACITY_DEFER_REASON_PREFIX}{over_capacity_uri}",
                     resolved=resolved,
                 )
                 continue

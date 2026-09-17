@@ -116,6 +116,26 @@ scannerWorker:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
     scaleDownStabilizationSeconds: 300
+    # Cost remediation plan §5, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the CPU/
+    # memory HPA above sits at its floor of 3 replicas nearly continuously between ad-hoc scan
+    # bursts (observed 0% CPU / 68-80% memory) because CPU/mem utilization lags real queue
+    # demand. This KEDA path scales on chunks_pending+chunks_running (cli.py's
+    # _scanner_scale_metric, via each pod's own /scale-metric endpoint) instead -- "pending
+    # plus actively claimed" scan chunks, matching the cost doc's exact recommendation and
+    # avoiding the raw-queue-length blind spot (drops to 0 the instant a chunk is claimed, long
+    # before that chunk's scan finishes) the doc explicitly warns against. Requires the KEDA
+    # operator installed in the cluster. Mutually exclusive with `enabled` above -- the
+    # ScaledObject and HPA must never both target the same Deployment (two controllers fighting
+    # over one Deployment's replica count is exactly the anti-pattern
+    # keda-worker-scaledobject.yaml's own history warns about); the template enforces this by
+    # only rendering when keda.enabled is true AND `enabled` (the plain HPA) above is false.
+    keda:
+      enabled: false
+      minReplicas: 3
+      maxReplicas: 8
+      pollingInterval: 15
+      cooldownPeriod: 120
+      targetValue: "1"
 
 scanner:
   schedule: "0 */6 * * *"

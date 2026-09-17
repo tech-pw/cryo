@@ -46,6 +46,50 @@ def test_orphan_and_expire_peak_not_sum() -> None:
     assert "orphan_files" in " ".join(est.reasons) or any("orphan" in r for r in est.reasons)
 
 
+def test_metadata_only_cpu_does_not_reserve_rewrite_capacity() -> None:
+    for operations in (
+        (OperationType.EXPIRE_SNAPSHOTS,),
+        (OperationType.REMOVE_ORPHAN_FILES,),
+        (OperationType.EXPIRE_SNAPSHOTS, OperationType.REMOVE_ORPHAN_FILES),
+    ):
+        small = estimate_table_resources(
+            {"total_size_gb": 1, "total_files": 100, "manifest_count": 10},
+            operations=operations,
+        )
+        large = estimate_table_resources(
+            {"total_size_gb": 50_000, "total_files": 100, "manifest_count": 10},
+            operations=operations,
+        )
+        assert large.cpu_milli == small.cpu_milli
+        assert not large.has_rewrite
+
+
+def test_empty_operations_defaults_to_worst_case_rewrite() -> None:
+    """Baseline this fix must not change: a genuinely empty/unknown operations sequence (no
+    operations were ever planned, not "planned then filtered to zero") still means "assume
+    the worst" -- a real, huge, never-scanned table must still get sized conservatively."""
+    est = estimate_table_resources(
+        {"total_size_gb": 50_000, "total_files": 100_000},
+        operations=(),
+    )
+    assert est.has_rewrite
+
+
+def test_metadata_only_sizing_hint_suppresses_the_empty_operations_rewrite_default() -> None:
+    """Cost remediation plan §2, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md):
+    native_admit.py now passes an empty operations sequence when every *planned* operation was
+    filtered out because none of them are native-executable for this table (e.g. an
+    OPTIMIZE-only job on a delete-heavy table, entirely routed to the SQL fallback) -- that's
+    known-zero native work, not unknown work, so it must not trigger the same worst-case-
+    rewrite default as a genuinely empty/unplanned operations sequence."""
+    est = estimate_table_resources(
+        {"total_size_gb": 50_000, "total_files": 100_000},
+        operations=(),
+        params={"metadata_only_sizing_hint": True},
+    )
+    assert not est.has_rewrite
+
+
 def test_rewrite_scales_with_table_size_not_preset_chunk() -> None:
     small = estimate_table_resources(
         {"total_size_gb": 20, "total_files": 100, "max_files_per_partition": 10},
@@ -98,9 +142,7 @@ def test_missing_size_with_no_stats_at_all_gets_small_floor_not_100gb_assumption
     100GB-driven near-ceiling default -- not literally the smallest possible request, since
     the packing-floor logic still applies its own real minimum for a genuinely tiny table."""
     no_stats = estimate_table_resources({}, operations=(OperationType.OPTIMIZE,))
-    known_1gb = estimate_table_resources(
-        {"total_size_gb": 1}, operations=(OperationType.OPTIMIZE,)
-    )
+    known_1gb = estimate_table_resources({"total_size_gb": 1}, operations=(OperationType.OPTIMIZE,))
     known_100gb = estimate_table_resources(
         {"total_size_gb": 100}, operations=(OperationType.OPTIMIZE,)
     )
@@ -114,9 +156,7 @@ def test_missing_size_but_total_files_present_scales_with_file_count() -> None:
     with many more files than one with few, using an estimate calibrated against the fleet's
     own real median/p90 per-file size (live-verified 2026-09-01: 0.44MB median, 74MB p90),
     not the old flat 100GB assumption regardless of file count."""
-    few_files = estimate_table_resources(
-        {"total_files": 50}, operations=(OperationType.OPTIMIZE,)
-    )
+    few_files = estimate_table_resources({"total_files": 50}, operations=(OperationType.OPTIMIZE,))
     many_files = estimate_table_resources(
         {"total_files": 5_000}, operations=(OperationType.OPTIMIZE,)
     )

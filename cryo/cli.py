@@ -18,6 +18,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from threading import Event, Thread
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 from cryo.config import get_settings
@@ -289,6 +290,7 @@ class GovernorRunner(DaemonRunner):
         self._governor: Any = None
         self._last_lock_reconcile_at: float = 0.0
         self._last_spark_pod_cleanup_at: float = 0.0
+        self._consecutive_native_watcher_failures: int = 0
 
     def _tick(self) -> None:
         governor = self._get_governor()
@@ -341,6 +343,7 @@ class GovernorRunner(DaemonRunner):
                 run_events=getattr(wiring, "run_events", None),
             )
             watch = watcher.tick()
+            self._consecutive_native_watcher_failures = 0
             if watch.finalized:
                 self._logger.info(
                     "Native JobWatcher: finalized=%d still_running=%d errors=%d",
@@ -349,7 +352,29 @@ class GovernorRunner(DaemonRunner):
                     watch.errors,
                 )
         except Exception as exc:
-            self._logger.debug("Native JobWatcher tick skipped: %s", exc)
+            # Real incident, 2026-09-15/16: this used to be logger.debug (invisible in prod --
+            # configure_logging sets INFO there) with no metric and no retry-vs-give-up
+            # distinction. A run of transient failures (matching the same window's metastore/
+            # cluster congestion) silently skipped every tick, leaving completed K8s Jobs'
+            # MaintenanceJob rows stuck at status=running -- which then fed straight into
+            # native_admit.py's metastore-capacity headroom as phantom load. Logging at
+            # warning (with an escalating level after repeated failures) plus a counter gives
+            # this failure mode the visibility every other reconciler in this file already has.
+            from cryo.observability.metrics import native_watcher_tick_failures_total
+
+            self._consecutive_native_watcher_failures += 1
+            native_watcher_tick_failures_total.labels(exception_type=type(exc).__name__).inc()
+            log = (
+                self._logger.error
+                if self._consecutive_native_watcher_failures >= 5
+                else self._logger.warning
+            )
+            log(
+                "Native JobWatcher tick failed (consecutive_failures=%d): %s",
+                self._consecutive_native_watcher_failures,
+                exc,
+                exc_info=True,
+            )
 
     def _cleanup_stale_spark_driver_pods(self) -> None:
         import os
@@ -932,17 +957,67 @@ def _worker_scale_metric() -> int:
         return int(result.scalar() or 0)
 
 
+def _scanner_scale_metric() -> int:
+    """Count of ad-hoc scan chunks that need a scanner replica to make progress right now.
+
+    Cost remediation plan §5, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the
+    scanner-worker HPA was already at its floor of 3 replicas, CPU 0%/memory 68-80%, sitting
+    mostly idle between ad-hoc scan bursts -- a fixed floor sized for the fleet's largest-ever
+    burst, not actual demand. The cost doc explicitly warns against a pending-list-length-only
+    trigger: RedisScanQueue.pending_count() drops to 0 the instant a chunk is claimed, long
+    before that chunk's scan actually finishes (same blind spot _worker_scale_metric's own
+    docstring describes for the worker's admitted/running count) -- so a queue-depth-only KEDA
+    trigger would revert a scale-up mid-scan the same way the pre-2026-07-31 worker trigger did.
+
+    Uses chunks_pending + chunks_running (MaintenanceRun.summary, kept live by
+    cryo/db/repositories/scanner.py's chunk-status bookkeeping) across every open scan run
+    instead -- this is "pending plus actively claimed", matching the cost doc's exact
+    recommendation, and it stays elevated for a chunk's whole duration rather than dropping to
+    zero the moment it's claimed.
+
+    Reads MaintenanceRun.summary via the ORM (a JSON-typed column) and sums in Python rather
+    than a raw ->>'...' SQL JSON extraction -- the latter is Postgres-only syntax and this
+    codebase's test suite runs the same query path against SQLite (see
+    tests/test_worker_scale_metric.py, this function's sibling), so a portable read here keeps
+    this function equally testable.
+    """
+    from sqlalchemy import select
+
+    from cryo.db.models import MaintenanceRun
+    from cryo.db.repositories.scanner import ACTIVE_SCAN_STATUSES
+    from cryo.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        summaries = session.scalars(
+            select(MaintenanceRun.summary).where(
+                MaintenanceRun.kind == "scan",
+                MaintenanceRun.status.in_(ACTIVE_SCAN_STATUSES),
+            )
+        ).all()
+        total = 0
+        for summary in summaries:
+            if not isinstance(summary, dict):
+                continue
+            total += int(summary.get("chunks_pending") or 0)
+            total += int(summary.get("chunks_running") or 0)
+        return total
+
+
 def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -> NoReturn:
     settings = get_settings()
     init_tracing(settings, service_name=service_name or runner.name)
     if service_name and settings.health_port:
         from cryo.observability.health_server import start_health_server
 
+        scale_metric_providers: dict[str, Callable[[], int]] = {
+            "worker": _worker_scale_metric,
+            "scanner": _scanner_scale_metric,
+        }
         start_health_server(
             port=settings.health_port,
             service_name=service_name,
             readiness_check=lambda: not runner._stop.is_set(),
-            scale_metric_provider=_worker_scale_metric if service_name == "worker" else None,
+            scale_metric_provider=scale_metric_providers.get(service_name),
         )
 
     def handle_signal(signum: int, frame: object) -> None:

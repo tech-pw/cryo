@@ -17,7 +17,11 @@ from cryo.db.repositories.native_dispatch import (
     mark_dispatch_finished,
 )
 from cryo.domain.enums import EngineType, JobStatus, OperationType
-from cryo.engines.native.batch import TABLE_RESULT_PREFIX
+from cryo.engines.native.batch import (
+    TABLE_RESULT_PREFIX,
+    TRANSIENT_METASTORE_ERROR_SUBSTRING,
+    is_transient_metastore_error,
+)
 from cryo.engines.native.job_dispatch import (
     _get_job_pods,
     _read_pod_logs,
@@ -64,16 +68,6 @@ class WatchResult:
 # tick duration under load says otherwise.
 _MAX_DISPATCHES_PER_TICK = 200
 
-# Substring match for engine-go's own connect-timeout error text (connectWithTimeout,
-# third_party/iceberg-go-v0.6.0-patched/catalog/hive/client.go: "connect timed out after
-# %s") as it surfaces through catalog.go's wrapping ("failed to connect to catalog: after
-# N attempts: failed to create Hive client: failed to connect to metastore: connect timed
-# out after 45s"). Deliberately narrow -- this must only match the specific bounded-timeout
-# signature the 2026-08-28 fix produces, not every metastore-adjacent error string, so a
-# genuinely broken/misconfigured table (bad credentials, malformed URI, table truly deleted)
-# still fails fast instead of retrying pointlessly.
-_TRANSIENT_METASTORE_ERROR_SUBSTRING = "connect timed out after"
-
 # How many times a single table may be deferred (not terminally failed) for a transient
 # metastore-connect timeout within the lookback window below, before the next occurrence is
 # treated as a real, terminal failure instead. Bounds the retry loop -- a table whose every
@@ -86,7 +80,7 @@ _METASTORE_RETRY_LOOKBACK_HOURS = 24
 
 
 def _is_transient_metastore_error(error: str) -> bool:
-    return _TRANSIENT_METASTORE_ERROR_SUBSTRING in error
+    return is_transient_metastore_error(error)
 
 
 def _under_retry_cap(session: Session, *, table_id: uuid.UUID) -> bool:
@@ -112,7 +106,7 @@ def _under_retry_cap(session: Session, *, table_id: uuid.UUID) -> bool:
             MaintenanceJob.table_id == table_id,
             MaintenanceJob.status.in_((JobStatus.DEFERRED.value, JobStatus.FAILED.value)),
             MaintenanceJob.finished_at >= since,
-            MaintenanceJob.error.like(f"%{_TRANSIENT_METASTORE_ERROR_SUBSTRING}%"),
+            MaintenanceJob.error.like(f"%{TRANSIENT_METASTORE_ERROR_SUBSTRING}%"),
         )
     )
     return (count or 0) < _METASTORE_RETRY_CAP
@@ -294,6 +288,7 @@ class NativeJobWatcher:
         stdout: str | None,
     ) -> None:
         per_table = _parse_batch_results(stdout)
+        _log_batch_memory_telemetry(dispatch_id, stdout)
         jobs = jobs_for_dispatch(session, dispatch_id)
         succeeded = 0
         failed = 0
@@ -306,6 +301,14 @@ class NativeJobWatcher:
                 entry = next(iter(per_table.values()))
             ok = bool(entry.get("ok", False)) if entry else False
             error = None if ok else (entry or {}).get("error") or "native_job_no_result"
+            if ok:
+                noop_operations = _reported_zero_work_operations(entry)
+                if noop_operations:
+                    ok = False
+                    error = (
+                        "native_job_reported_success_with_zero_work: "
+                        + ", ".join(noop_operations)
+                    )
             if ok:
                 status = JobStatus.SUCCEEDED
             elif error and _is_transient_metastore_error(error) and _under_retry_cap(
@@ -633,6 +636,44 @@ def _parse_batch_results(stdout: str | None) -> dict[str, dict[str, Any]]:
     return by_job
 
 
+def _log_batch_memory_telemetry(dispatch_id: uuid.UUID, stdout: str | None) -> None:
+    """Cost remediation plan §3, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the
+    per-member serial-batch memory allowance in packing.py's _serial_pod_request is an
+    admitted heuristic, explicitly flagged there as "pending real cgroup-memory telemetry from
+    a live batch pod -- revisit the exact number once that exists." batch.py's execute_batch
+    now reports member_count and peak_cgroup_memory_mib (this pod's own cgroup v2/v1 peak
+    memory high-water-mark) in its aggregate result JSON -- logging it here at info level on
+    every successful dispatch means a real distribution of (member_count, peak_memory) pairs
+    accumulates in the logs/log-search backend over time, which is exactly the measurement
+    basis packing.py's own comment says is missing before that heuristic can be safely
+    replaced. Deliberately just a log line, not a new metrics pipeline or DB table -- the doc's
+    own required regression is "measure real batch memory," not "build a dashboard for it,"
+    and a structured log line is queryable via the existing S3/Trino query-log ingestion path
+    this codebase already uses for cost telemetry."""
+    if not stdout:
+        return
+    _, lines = split_stdout_lines(stdout)
+    aggregate_lines = [line for line in lines if not line.startswith(TABLE_RESULT_PREFIX)]
+    if not aggregate_lines:
+        return
+    try:
+        parsed = json.loads(aggregate_lines[-1])
+    except json.JSONDecodeError:
+        return
+    if not isinstance(parsed, dict) or not parsed.get("batch"):
+        return
+    peak_mib = parsed.get("peak_cgroup_memory_mib")
+    member_count = parsed.get("member_count")
+    if peak_mib is None:
+        return
+    logger.info(
+        "Native batch dispatch %s: member_count=%s peak_cgroup_memory_mib=%s",
+        dispatch_id,
+        member_count,
+        peak_mib,
+    )
+
+
 def _get_job_pods_by_selector(core_api: Any, job_name: str, namespace: str) -> list[Any]:
     try:
         pods = core_api.list_namespaced_pod(
@@ -788,10 +829,80 @@ def _native_operation_type(value: Any) -> OperationType | None:
         "optimize": OperationType.OPTIMIZE,
         "rewrite_manifests": OperationType.OPTIMIZE_MANIFESTS,
         "optimize_manifests": OperationType.OPTIMIZE_MANIFESTS,
+        # Real incident, 2026-09-15/16: rewrite_position_deletes and compute_statistics were
+        # missing from this map entirely, so their per-operation audit records were silently
+        # dropped in _record_result_audits (action resolves to None -> skipped) -- the exact
+        # operation type in the gold_dbt_poll_dashboard_view silent-no-op incident had no audit
+        # trail at all, which is part of why the no-op went unnoticed for 5 days.
+        "rewrite_position_deletes": OperationType.REWRITE_POSITION_DELETES,
+        "compute_statistics": OperationType.COMPUTE_STATISTICS,
+        "convert_deletes": OperationType.CONVERT_DELETES,
     }
     if isinstance(value, OperationType):
         return value
     return aliases.get(str(value))
+
+
+# Real incident, 2026-09-15/16: gold_dbt_poll_dashboard_view's native-engine job reported
+# status=succeeded with a real, correctly-planned operation list (rewrite_position_deletes,
+# optimize, compute_statistics, expire_snapshots, remove_orphan_files), ran for 25 minutes, but
+# the table's live Iceberg $snapshots history showed zero new commits -- the native binary
+# self-reported success=true on every operation while doing nothing. _finalize_success trusted
+# that self-report verbatim: nothing here cross-checked the file/byte/snapshot counters the
+# binary itself returned against what a real mutation of that operation type must produce. For
+# these operation types, success=true with an all-zero (or absent) work-counter is not
+# distinguishable from "there was nothing to do" using the counters alone in every case, but for
+# a job whose plan explicitly selected this table for this operation (planner already found
+# something to fix), that combination is best treated as a suspicious no-op rather than a clean
+# success -- the cost of a false-positive retry is far lower than silently losing 5 days of
+# maintenance on a delete-heavy table.
+_WORK_COUNTER_FIELDS_BY_OPERATION: dict[OperationType, tuple[str, ...]] = {
+    OperationType.REWRITE_POSITION_DELETES: ("files_rewritten", "input_files", "bytes_removed"),
+    OperationType.OPTIMIZE: ("files_rewritten", "input_files", "bytes_removed"),
+    OperationType.CONVERT_DELETES: ("files_rewritten", "input_files", "bytes_removed"),
+    OperationType.EXPIRE_SNAPSHOTS: ("snapshots_expired",),
+    OperationType.REMOVE_ORPHAN_FILES: ("bytes_removed", "input_files"),
+    OperationType.OPTIMIZE_MANIFESTS: ("manifests_rewritten",),
+}
+
+
+def _reported_zero_work(result: dict[str, Any], op_type: OperationType) -> bool:
+    fields = _WORK_COUNTER_FIELDS_BY_OPERATION.get(op_type)
+    if not fields:
+        # compute_statistics and any operation type without a defined work counter never
+        # commits a data/snapshot change by design -- nothing to sanity-check here.
+        return False
+    for field in fields:
+        value = _optional_int(result.get(field))
+        if value:
+            return False
+    return True
+
+
+def _reported_zero_work_operations(entry: dict[str, Any] | None) -> list[str]:
+    """Operation names inside a per-table result entry that claimed success=true but reported
+    no work-counter evidence of an actual mutation -- see _WORK_COUNTER_FIELDS_BY_OPERATION's
+    docstring for the incident this guards against. Returns an empty list for a clean result
+    (including a job with no results at all, which _record_result_audits already flags via
+    native_job_no_result -- this check only adds signal on top of a claimed per-operation
+    success, never invents a failure where the binary already reported one)."""
+    if not entry:
+        return []
+    results = entry.get("results")
+    if not isinstance(results, list) or not results:
+        return []
+    flagged: list[str] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if not bool(result.get("success", False)):
+            continue
+        op_type = _native_operation_type(result.get("operation"))
+        if op_type is None:
+            continue
+        if _reported_zero_work(result, op_type):
+            flagged.append(str(result.get("operation")))
+    return flagged
 
 
 def _optional_int(value: Any) -> int | None:

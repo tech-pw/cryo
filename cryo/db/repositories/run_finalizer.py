@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import MaintenanceJob, MaintenanceRun
-from cryo.domain.enums import JobStatus
+from cryo.domain.enums import JobStatus, is_capacity_defer_reason
 
 TERMINAL = {
     JobStatus.SUCCEEDED.value,
@@ -41,13 +41,40 @@ TERMINAL = {
 # chances to un-defer it first.
 _DEFERRED_FINALIZE_GRACE = timedelta(minutes=10)
 
+# Real incident, 2026-09-15/16: the 10-minute grace above assumes deferrals resolve "within a
+# wave or two" -- true for the job-specific reasons it was built for (cooldown, table lock,
+# per-job guardrails), but false for fleet-wide *capacity* gates. max_concurrent_jobs_per_
+# metastore (native_admit.py's _MetastoreHeadroom) stayed over its 150-job cap for multiple
+# HOURS during a metastore-congestion incident -- every native-engine job deferred with
+# "metastore_capacity:..." kept re-deferring wave after wave, exactly as designed, but after
+# 10 minutes finalize_open_runs closed their parent runs out from under them anyway, and
+# reconcile_deferred_jobs then fast-failed all of them as "orphaned_deferred" the moment it
+# next looked -- 29,832 jobs failed this way in 24h, ~99% of that day's total failures, while
+# the underlying capacity constraint was still real and would have cleared on its own given
+# more time. A job deferred for a genuinely fleet-wide capacity reason gets this much longer
+# grace before its run is allowed to finalize out from under it -- the failure mode of waiting
+# too long (a run stays "running" a bit longer than ideal) is far cheaper than the failure mode
+# of giving up too soon (thousands of legitimately-recoverable jobs permanently failed).
+_CAPACITY_DEFERRED_FINALIZE_GRACE = timedelta(hours=6)
+
+# Root-cause redesign, 2026-09-16: this used to be a locally-declared prefix tuple, duplicated
+# by hand from native_admit.py's own reason strings -- exactly the "two systems designed
+# independently, agreeing only by string convention" gap that let the two disagree in the first
+# place. Now imported from cryo.domain.enums, the one shared classification both the admission
+# side (native_admit.py, the reason strings' actual source) and this module (the sole consumer)
+# rely on. See is_capacity_defer_reason's docstring for the fuller incident history.
+
 
 def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime | None = None) -> int:
     """Mark runs finished when all child jobs reached a terminal state.
 
     A run with only DEFERRED jobs left is not finalized until each of those jobs has been
     deferred for at least _DEFERRED_FINALIZE_GRACE -- see that constant's docstring for the
-    race this avoids.
+    race this avoids. Jobs deferred for a fleet-wide capacity reason (metastore_capacity,
+    native_cluster_capacity, fleet_admission_rate_cap) get the much longer
+    _CAPACITY_DEFERRED_FINALIZE_GRACE instead -- see that constant's docstring for the 2026-09-15
+    incident this fixes (29,832 jobs mass-failed as "orphaned_deferred" while the capacity
+    constraint that deferred them was still genuinely active, not abandoned).
     """
     finalized = 0
     current = now or datetime.now(UTC)
@@ -67,16 +94,25 @@ def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime 
                     run.status = "running"
                 continue
             if counts.get(JobStatus.DEFERRED.value, 0) > 0:
-                recently_deferred = session.execute(
-                    select(func.count())
-                    .select_from(MaintenanceJob)
+                deferred_jobs = session.execute(
+                    select(MaintenanceJob.finished_at, MaintenanceJob.error)
                     .where(
                         MaintenanceJob.run_id == run.id,
                         MaintenanceJob.status == JobStatus.DEFERRED.value,
-                        MaintenanceJob.finished_at > current - _DEFERRED_FINALIZE_GRACE,
                     )
-                ).scalar_one()
-                if recently_deferred:
+                ).all()
+                still_in_grace = any(
+                    finished_at is not None
+                    and (finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=UTC))
+                    > current
+                    - (
+                        _CAPACITY_DEFERRED_FINALIZE_GRACE
+                        if is_capacity_defer_reason(error)
+                        else _DEFERRED_FINALIZE_GRACE
+                    )
+                    for finished_at, error in deferred_jobs
+                )
+                if still_in_grace:
                     if run.status != "running":
                         run.status = "running"
                     continue

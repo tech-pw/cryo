@@ -21,7 +21,14 @@ logger = logging.getLogger(__name__)
 def run_benefit_score_update() -> int:
     """Run one benefit score refresh pass and return partitions updated."""
     with SessionLocal() as session:
-        return update_all_benefit_scores(session)
+        # The realized-value dataset joins 90 days of audit, stats, cost, and query history --
+        # running that per table across a 12k-table fleet every sweep is a real memory/IO storm
+        # (this used refresh_realized_value=False, unconditionally, as an emergency 2026-09-15/16
+        # OOM stopgap -- but that stops per-table learning forever, not just during the
+        # incident, which is CR-04's exact regression). update_all_benefit_scores now bounds this
+        # internally (max_realized_value_refreshes, default 500/sweep, always spent on the
+        # stalest tables first) instead of an all-or-nothing switch -- see its own docstring.
+        return update_all_benefit_scores(session, refresh_realized_value=True)
 
 
 def benefit_score_updater_loop_sync(*, stop_event: Event | None = None) -> None:
