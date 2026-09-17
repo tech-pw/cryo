@@ -962,6 +962,55 @@ def test_update_all_benefit_scores_prefers_the_stalest_tables_when_over_budget(s
     assert "autocomp_realized_value" in never_after.raw
 
 
+def test_stalest_realized_value_table_ids_ranks_correctly_across_multiple_batches(session):
+    """Real incident, 2026-09-17: the original implementation queried TableStats.raw for
+    every table_id in a single query -- looked memory-safe ("one column, never a full ORM
+    object") but the live fleet's raw JSONB averages 522KB/row (max 10.3MB), totaling ~6.8GB
+    across 13,043 tables, and loading that in one Python list OOMKilled the scheduler pod 45
+    times in under 5 hours. Fixed by scanning in _STALENESS_SCAN_BATCH_SIZE-sized batches,
+    keeping only a running top-`limit` candidate list across batches. This test forces more
+    than one batch (2.5x _STALENESS_SCAN_BATCH_SIZE tables) and confirms the ranking is still
+    correct across the batch boundary -- the stalest tables must win regardless of which batch
+    they land in, not just within their own batch."""
+    from cryo.planner.benefit_score import _STALENESS_SCAN_BATCH_SIZE, _stalest_realized_value_table_ids
+
+    table_count = int(_STALENESS_SCAN_BATCH_SIZE * 2.5)
+    tables = [
+        _seed_table(session, schema_name="test", table_name=f"batch_check_{i}")
+        for i in range(table_count)
+    ]
+    # Stagger computed_at so table i is staler than table i+1 -- the single stalest table
+    # (index 0) is seeded in the middle of the id list, deliberately not aligned with any
+    # batch boundary, so a correct implementation must still find it.
+    base = datetime.now(UTC)
+    for i, table in enumerate(tables):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=base,
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw={
+                    "autocomp_realized_value": {
+                        "computed_at": (base - timedelta(days=table_count - i)).isoformat()
+                    }
+                },
+            )
+        )
+    session.commit()
+
+    table_ids = [t.id for t in tables]
+    stalest_ids = _stalest_realized_value_table_ids(session, table_ids, limit=5)
+
+    # The 5 stalest are the lowest-index tables (staggered oldest-first).
+    assert stalest_ids == {tables[i].id for i in range(5)}
+
+
 def test_get_top_compaction_candidates(session):
     """Test getting top compaction candidates by benefit score."""
     table = _seed_table(session, schema_name="test", table_name="ranked_table")
