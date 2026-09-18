@@ -309,7 +309,21 @@ scheduler:
   resources:
     requests:
       cpu: 100m
-      memory: 512Mi
+      # Raised 512Mi -> 3Gi, 2026-09-18: real root cause of a recurring OOM/eviction pattern
+      # (this incident and the 2026-08-25 one below) that the repeated limit-only raises never
+      # actually fixed -- this is a Karpenter-autoscaled cluster, and Karpenter provisions/
+      # sizes nodes against a pod's REQUEST, not its limit. With request stuck at 512Mi while
+      # the limit climbed to 10Gi, the scheduler kept landing on small nodes sized for ~512Mi
+      # of actual demand (confirmed live: ip-10-1-221-71, 8003280Ki capacity / 6474448Ki
+      # allocatable -- smaller than the pod's own 10Gi limit) whose neighbors + node-level
+      # kubelet eviction thresholds kicked in long before the scheduler ever reached its own
+      # cgroup limit. Two consecutive pods on that exact node were evicted at ~6.0GB usage
+      # ("The node was low on resource: memory... Container scheduler was using 6021228Ki") --
+      # well under the 10Gi cgroup limit, proving the limit was never the binding constraint.
+      # Raising the request (not just the limit) is what actually changes which node Karpenter
+      # picks. 3Gi matches this incident's own observed ~2-6GB steady-state range with headroom
+      # short of triggering the next size tier unnecessarily when idle.
+      memory: 3Gi
     limits:
       cpu: "2"
       # Raised 6Gi -> 10Gi 2026-08-25: OOMKilled 9x in 15h (exit 137), confirmed live via
@@ -327,9 +341,15 @@ scheduler:
       # utilization, kubectl top nodes) -- stop-gap like the 1Gi->3Gi/2Gi->6Gi raises before it; the
       # real fix (bounding update_all_benefit_scores' peak memory instead of just raising the
       # ceiling to match it) is a separate, larger change, not done here.
+      #
+      # 2026-09-18 addendum: this limit-only fix was incomplete on its own -- see the request
+      # comment above for why raising only the limit never actually fixed the underlying
+      # eviction pattern on a Karpenter-autoscaled cluster.
       memory: 10Gi
 
 scannerWorker:
+  # Demand-based KEDA now replaces the historical HPA described below. Keep an idle
+  # consumer serving /scale-metric and preserve the eight-consumer burst ceiling.
   # `replicas: 8` was a fixed floor, not a target -- provisioned for this fleet's largest
   # observed scan burst (12,938 tables, one 397k-partition outlier) and left running at
   # that size continuously, because the base chart's default of 3 (see values.yaml,
@@ -344,9 +364,14 @@ scannerWorker:
   # (cryo:scan:pending) these pods consume is empty most of the time between bursts.
   replicas: 8
   autoscaling:
-    enabled: true
+    enabled: false
     minReplicas: 3
     maxReplicas: 8
+    keda:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 8
+      targetValue: "1"
   resources:
     requests:
       cpu: 500m
