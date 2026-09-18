@@ -1,5 +1,23 @@
 # Cryo capacity check — September 18, 2026
 
+## Production rollout — September 18
+
+Source/configuration through `6effd68d` is on `gitlab/gitlab-main`. Pinned image digest:
+`sha256:b307f8015bb328430880fa81afa8bf3694072dcc4b7059a0bdf596866ab8de53`.
+Helm release **193** is deployed on `infra:data-platform-cluster`, namespace `cryo`.
+
+Revision 192 failed because KEDA's admission webhook refused the new ScaledObject while
+the existing plain HPA still owned the Deployment. The old HPA was removed during the
+rollout transition, and revision 193 created `keda-hpa-cryo-scanner-worker`. For future
+HPA-to-KEDA migrations, render mutual exclusion is not enough: transfer/remove the existing
+controller before KEDA admission, preserving the Deployment and its pods during the handoff.
+
+Verified from the live scanner: localhost and Service `/scale-metric` return HTTP 200 with
+`{"value": 0}`. The new HPA reports `ValidMetricFound`, minimum 1, maximum 8, and the configured
+300-second stabilization / one-pod-per-minute downscale. At 08:16 UTC it retained three
+replicas with `ScaleDownStabilized`; wait for this protection rather than manually forcing scale.
+All deployments were available at this check. Burst behavior and financial savings are not yet proven.
+
 ## Implementation update
 
 Implemented locally after the check:
@@ -24,7 +42,7 @@ failures (missing production image digest) were corrected and pass in the final 
 two fleet-trend aggregation tests remain failing. The whole suite was not rerun after that
 fixture correction. Full lint reported 146 findings and typecheck 28 errors in 12 files.
 
-Production rollout is still pending. The diagnostic observations below describe the earlier
+Production rollout is recorded above. The diagnostic observations below describe the earlier
 live state. This source change does not certify active-scan drain behavior in production or
 actual billing savings. Roll out while scan demand is zero, verify KEDA health and service
 reachability, then observe idle floor and a subsequent scan burst/recovery cycle. To revert,
