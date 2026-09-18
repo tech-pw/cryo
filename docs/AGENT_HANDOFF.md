@@ -1,5 +1,16 @@
 # Cryo — Agent Handoff Notes
 
+**Scanner autoscaling implementation (2026-09-18, not deployed):** Production values now enable
+KEDA at 1–8 scanner replicas. Added its missing metric Service, fixed Helm replica ownership
+for either autoscaler, and bounded HPA scale-down (300s stabilization, one pod/minute).
+See the implementation update in [the capacity report](CRYO_CAPACITY_CHECK_2026-09-18.md).
+
+**2026-09-18 capacity refresh:** [Live check and exact autoscaling levers](CRYO_CAPACITY_CHECK_2026-09-18.md).
+Scanner remains at HPA floor 3 with zero pending/running chunks; worker KEDA is now at 10
+with hundreds of admitted jobs lacking dispatch IDs. Governor/scheduler use more than requests.
+Scanner KEDA exists but is disabled and still defaults to floor 3. Latest CUR rows were refreshed;
+no production scaling changes were applied by this check.
+
 **2026-09-16 unused-cost investigation:** See [the diagnosis and fix plan](CRYO_UNUSED_COST_FIX_2026-09-16.md).
 Live native batches hold ~55GiB of requests across six pods while catalog connections time out;
 32-member packing adds 6,200MiB before the largest member estimate. Scheduler's latest

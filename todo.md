@@ -1,5 +1,10 @@
 # Cryo — TODO
 
+- [x] Implement scanner KEDA production bounds 1–8, metric Service, exclusive replica ownership,
+      and bounded downscale; add Helm render regressions (2026-09-18).
+- [ ] Roll out scanner autoscaling during zero demand; verify idle floor, active-scan recovery,
+      burst throughput and subsequent actual cost reduction.
+
 ## Unused-cost incident — 2026-09-16
 
 - [x] Refresh/log CUR, inspect live resources and metastore timeouts; document [the fix plan](docs/CRYO_UNUSED_COST_FIX_2026-09-16.md).

@@ -34,6 +34,15 @@ spec:
   maxReplicaCount: {{ .Values.scannerWorker.autoscaling.keda.maxReplicas | default 8 }}
   pollingInterval: {{ .Values.scannerWorker.autoscaling.keda.pollingInterval | default 15 }}
   cooldownPeriod: {{ .Values.scannerWorker.autoscaling.keda.cooldownPeriod | default 120 }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ .Values.scannerWorker.autoscaling.scaleDownStabilizationSeconds }}
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
   triggers:
     - type: metrics-api
       metadata:
