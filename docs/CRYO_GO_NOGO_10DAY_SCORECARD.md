@@ -715,3 +715,24 @@ memory it does use gets a node that can actually host it, addressing both halves
 problem (the code needed to not grow unbounded, AND the infra needed to size correctly for
 what it legitimately does use). Watching for the next several hours to confirm no further
 evictions before this counts as burn-in-clean.
+
+---
+
+### Check-in — 2026-09-18 08:25 UTC (~10min post-redeploy)
+
+**Scheduler**: still `1/1 Running`, 0 restarts, 10min uptime on the new node/digest -- too
+early to call clean, but no regression yet.
+
+**North star (GB-freed)**: 81.8 GB yesterday, -53.8% DoD, -87.9% WoW -- still reflects the
+same contaminated 24h window as the last few checks, not a fresh signal.
+
+**Vitals**: 32/100, CRITICAL. `stuck_runs` still 10 (oldest 36h, unchanged -- these are not
+clearing on their own yet and are worth a dedicated look once the scheduler's stability is
+confirmed). Success rate 9.8% (1,449 succeeded / 13,287 failed/24h) -- still the same
+`stuck_admitted_no_dispatch` backlog-reaping pattern from yesterday's outage dominating this
+window, not a live new failure signal (`dispatch_heartbeat` shows 0min since last activity,
+i.e. actively working).
+
+**Read**: No new information yet -- watching the same open items (does the scheduler stay up
+past the ~4.5h mark this time, do the 10 stuck runs eventually clear, does the 24h success
+rate recover once the contaminated window rolls past). Burn-in still not started.
