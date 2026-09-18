@@ -1,6 +1,6 @@
 # Cryo — Agent Handoff Notes
 
-**Scanner autoscaling implementation (2026-09-18, not deployed):** Production values now enable
+**Scanner autoscaling deployed (2026-09-18, Helm revision 193):** Production values now enable
 KEDA at 1–8 scanner replicas. Added its missing metric Service, fixed Helm replica ownership
 for either autoscaler, and bounded HPA scale-down (300s stabilization, one pod/minute).
 See the implementation update in [the capacity report](CRYO_CAPACITY_CHECK_2026-09-18.md).
