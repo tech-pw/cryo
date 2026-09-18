@@ -15,6 +15,15 @@ Implemented locally after the check:
   metric URL, production bounds, unchanged limits, and scale-down behavior. Existing scanner
   demand/chunk accounting tests are included in validation.
 
+Validation: **20 focused tests pass**, including stale-chunk recovery; production Helm lint
+passes, as do lint/format for the new test file and diff whitespace checks. These are local
+tests, not a live burst/drain experiment. Full-repository lint/typecheck still report findings;
+the chart implementation does not make the entire repository release-ready by itself.
+The full test run recorded 2,508 passed and six failures: four initial chart-test fixture
+failures (missing production image digest) were corrected and pass in the final focused rerun;
+two fleet-trend aggregation tests remain failing. The whole suite was not rerun after that
+fixture correction. Full lint reported 146 findings and typecheck 28 errors in 12 files.
+
 Production rollout is still pending. The diagnostic observations below describe the earlier
 live state. This source change does not certify active-scan drain behavior in production or
 actual billing savings. Roll out while scan demand is zero, verify KEDA health and service
