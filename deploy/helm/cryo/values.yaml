@@ -124,12 +124,9 @@ scannerWorker:
     # plus actively claimed" scan chunks, matching the cost doc's exact recommendation and
     # avoiding the raw-queue-length blind spot (drops to 0 the instant a chunk is claimed, long
     # before that chunk's scan finishes) the doc explicitly warns against. Requires the KEDA
-    # operator installed in the cluster. Mutually exclusive with `enabled` above -- the
-    # ScaledObject and HPA must never both target the same Deployment (two controllers fighting
-    # over one Deployment's replica count is exactly the anti-pattern
-    # keda-worker-scaledobject.yaml's own history warns about); the template enforces this by
-    # KEDA takes precedence when enabled; the plain HPA is then omitted, and neither
-    # autoscaler permits Helm to set a fixed Deployment replica count.
+    # operator installed in the cluster. KEDA takes precedence over `enabled` above:
+    # the plain HPA is omitted when KEDA is enabled. Either autoscaler prevents Helm
+    # from setting a fixed Deployment replica count.
     keda:
       enabled: false
       minReplicas: 3
