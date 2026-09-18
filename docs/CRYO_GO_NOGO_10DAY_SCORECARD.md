@@ -630,3 +630,47 @@ large-scale operational issue, but it is NOT a regression from today's deploy --
 pre-existing approval-workflow bottleneck that today's fixes didn't create and can't resolve
 on their own. Someone needs to either work through the 1,664 pending approvals or investigate
 why they're not being processed/expiring appropriately.
+
+---
+
+### Check-in — 2026-09-18 03:49 UTC (~overnight recovery, mixed picture)
+
+**Scheduler pod**: OOMKilled once more overnight (02:40-07:12 IST, ~4.5h uptime before the
+kill) -- a large improvement over the pre-fix 45x/5h crash loop, but confirms the batching fix
+reduced OOM frequency, not eliminated it entirely. Currently `1/1 Running`, 1 restart, stable
+for 125+ minutes as of this check. Not chasing this further tonight; the approval-expiry and
+admission mechanisms are both now demonstrably working again (see below), which was the
+actual production-impacting problem -- worth a proper look at the benefit-score sweep's real
+memory ceiling in daylight, but not an active outage right now.
+
+**Approval backlog**: genuinely clearing. `expired` count grew 3,038 -> 3,546 (508 rows
+processed), past-due-pending dropped from 244 down to **14**. The scheduler tick is
+demonstrably running again (this was the open question from the last check) -- confirmed via
+the actual DB state changing, not just log absence.
+
+**Admission**: no longer stuck at `admitted=0` -- current live counts show 794 admitted, 65
+running, 755 deferred (a healthy mix, not a wall).
+
+**Vitals**: score 26/100, still CRITICAL. `stuck_runs` jumped to 10 (oldest 19h), and 24h
+success rate reads a very low 13.0% (1,148 succeeded / 7,709 failed) -- but this 24h window
+now spans the entire overnight scheduler outage, so it's heavily contaminated by historical
+failures, not a live signal. Checked the fresh, uncontaminated trailing-30min window directly:
+597 failed / 588 deferred / 25 succeeded, and **578 of those 597 failures are
+`stuck_admitted_no_dispatch`** -- a separate, pre-existing, correctly-designed reaper
+(cryo/queue/reconcile.py) that fails jobs admitted-but-never-dispatched past a grace window,
+specifically built for exactly this scenario ("correlated with governor/worker pod restarts,"
+per its own docstring). This is the system cleaning up the backlog the overnight scheduler
+outage created, not a new bug -- those jobs' work didn't happen and will need to be
+re-picked-up on their next scheduled run, but the reaper is behaving as designed rather than
+leaving them stuck forever. ~604 more admitted-without-engine_ref jobs remain queued for
+similar reaping over the next grace-window cycle -- a finite, shrinking backlog, not an
+ongoing failure source.
+
+**Read**: Net picture is positive but not yet clean. The two fixes from yesterday (native
+kill switch, scheduler OOM/approval-backlog) are both demonstrably working -- approvals are
+expiring again, admission is flowing, native isn't dispatching. The current bad-looking vitals
+(13% success rate, 10 stuck runs) are overwhelmingly explained by cleanup from last night's
+~4.5h scheduler outage, not new problems. Real open item: the scheduler still OOMs eventually
+(now ~4.5h between kills instead of ~7min) -- the batching fix reduced severity dramatically
+but didn't fully solve the underlying memory growth. Burn-in clock has not started; this
+needs at least one full OOM-free 24h cycle before it can.
