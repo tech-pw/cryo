@@ -109,7 +109,7 @@ scannerWorker:
     # scanner-worker-hpa.yaml for why (this Deployment polls an ad-hoc scan queue that's
     # empty most of the time, so a fixed replica count sized for the largest burst sits
     # mostly idle otherwise). `replicas` above still applies as the Deployment's initial
-    # replica count on first create; the HPA takes over from there.
+    # replica count only when both HPA and KEDA are disabled.
     enabled: true
     minReplicas: 3
     maxReplicas: 8
@@ -128,7 +128,8 @@ scannerWorker:
     # ScaledObject and HPA must never both target the same Deployment (two controllers fighting
     # over one Deployment's replica count is exactly the anti-pattern
     # keda-worker-scaledobject.yaml's own history warns about); the template enforces this by
-    # only rendering when keda.enabled is true AND `enabled` (the plain HPA) above is false.
+    # KEDA takes precedence when enabled; the plain HPA is then omitted, and neither
+    # autoscaler permits Helm to set a fixed Deployment replica count.
     keda:
       enabled: false
       minReplicas: 3
