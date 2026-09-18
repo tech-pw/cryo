@@ -674,3 +674,44 @@ expiring again, admission is flowing, native isn't dispatching. The current bad-
 (now ~4.5h between kills instead of ~7min) -- the batching fix reduced severity dramatically
 but didn't fully solve the underlying memory growth. Burn-in clock has not started; this
 needs at least one full OOM-free 24h cycle before it can.
+
+---
+
+### DEPLOY — 2026-09-18 ~08:15 UTC — real root cause found: node-eviction, not app OOM
+
+Investigated the recurring scheduler crash pattern further: `kubectl describe pod` on the two
+most recent crashed schedulers showed **`Evicted`** (node-level memory pressure), not
+`OOMKilled` against the pod's own 10Gi cgroup limit -- both were killed at ~6.0GB actual usage,
+on a node (`ip-10-1-221-71`) with only **~6.4GB allocatable memory total**. This is a
+Karpenter-autoscaled cluster: Karpenter sizes/selects nodes against a pod's **request**, not
+its limit. The scheduler's request had been stuck at 512Mi since original chart creation while
+the limit was raised repeatedly (2Gi->6Gi->10Gi) across three separate OOM incidents including
+this one -- every prior "fix" raised the ceiling without ever telling Karpenter the pod
+actually needed a bigger node. Raised `scheduler.resources.requests.memory` 512Mi -> 3Gi in
+`values-prod.yaml`.
+
+**Deploy hit a real blocker on the way out**: concurrent work in this same session enabled
+`scannerWorker.autoscaling.keda.enabled=true` in prod (migrating the scanner-worker autoscaler
+from a plain HPA to KEDA), but the live 36-day-old HPA object was never deleted, and the KEDA
+admission webhook correctly refused to create a ScaledObject targeting the same Deployment an
+HPA still owned -- the whole `helm upgrade` aborted, meaning the scheduler memory fix above
+never actually reached the cluster on the first attempt. Fixed by deleting the stale HPA
+(`kubectl delete hpa cryo-scanner-worker`, safe since Helm's own template already omits it once
+KEDA is enabled) and retrying; the second `helm upgrade` succeeded cleanly.
+
+**Verified live, post-redeploy**:
+- All 14 pods (api x2, governor, scheduler, worker x10) confirmed on digest
+  `sha256:b307f8015...` via direct `kubectl get pods -o json` inspection
+- Scheduler pod's live resource spec confirms `requests.memory: 3Gi` actually took effect
+- Scheduler landed on a **different, correctly-sized node** (`ip-10-1-197-199`, ~14.5GB
+  allocatable -- comfortably larger than the pod's own 10Gi limit, unlike the previous
+  ~6.4GB node that was smaller than the limit)
+- Scanner-worker KEDA transition also landed correctly: `keda-hpa-cryo-scanner-worker` is
+  `READY: True`, old plain HPA is gone, no lingering dual-controller conflict
+
+**Read**: This should be the actual fix, not another stopgap -- the app-level batching change
+from the last deploy bounds the sweep's own memory use, and this request fix ensures whatever
+memory it does use gets a node that can actually host it, addressing both halves of the
+problem (the code needed to not grow unbounded, AND the infra needed to size correctly for
+what it legitimately does use). Watching for the next several hours to confirm no further
+evictions before this counts as burn-in-clean.
