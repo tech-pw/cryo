@@ -736,3 +736,44 @@ i.e. actively working).
 **Read**: No new information yet -- watching the same open items (does the scheduler stay up
 past the ~4.5h mark this time, do the 10 stuck runs eventually clear, does the 24h success
 rate recover once the contaminated window rolls past). Burn-in still not started.
+
+---
+
+### Check-in — 2026-09-20 10:49 UTC (two days later) -- worst vitals reading yet, mostly explained
+
+**Scheduler memory**: still genuinely unresolved. `cryo-scheduler-545df76f96-p4mzp`:
+`OOMKilled` at ~3h15min uptime (12:21->15:37 IST), restarted, currently at **5.2GB and
+climbing** ~40min into a fresh sweep with zero completed passes yet. A sibling pod
+(`...-4ghnm`) was separately **`Evicted`** at 9.3GB on a different, apparently smaller node.
+The 2026-09-18 request fix (512Mi->3Gi) stopped guaranteed small-node placement, but the
+scheduler process itself still grows large enough to eventually OOM or get evicted depending
+on which node it lands on -- frequency improved (hours between incidents now, not minutes),
+severity did not: this is not yet a solved problem, just a slower-burning one.
+
+**Vitals**: 12/100 -- the worst single reading of this whole investigation. GB-freed dropped
+to **zero**, success rate to **2.7%** (1,912 succeeded / 68,644 failed/24h).
+
+**Investigated the 68,644 failures directly** rather than take the number at face value:
+~2,058/hour are `orphaned_deferred: parent run already finalized`. Traced to their source --
+**only 20 distinct runs**, all `created_at` on 2026-09-17/18, i.e. runs opened during the
+outage investigated earlier in this document. One traced run alone
+(`a4d4d1a6-...`) has **5,340 total jobs**, of which 5,320 already failed on 2026-09-19 with
+`stuck_admitted_no_dispatch` -- the run itself only just finalized today (10:50 UTC) once its
+last 20 straggler jobs resolved, and those 20 are exactly what's now surfacing as
+`orphaned_deferred`. This is the grace-period fix behaving correctly, not a regression: it
+kept these ancient runs open far longer than the old 10-minute window would have, and now that
+they're genuinely done, it's cleaning up the last few stragglers rather than leaving them open
+forever. The volume looks alarming (2,058/hour) purely because ~20 multi-thousand-job zombie
+runs from a days-old outage are all finalizing in the same rolling 24h window, dragging both
+GB-freed and success-rate down to look like an active new failure, when it is mostly historical
+cleanup finally completing.
+
+**Read**: Two genuinely separate things are true at once: (1) the scheduler's memory growth is
+still a real, unsolved problem -- worth a proper fix (likely running the realized-value
+refresh sweep as its own short-lived subprocess/Job rather than a thread in the long-lived
+scheduler daemon, so its memory is reclaimed by the OS on exit instead of accumulating for
+hours) rather than another parameter tweak; (2) today's alarming-looking vitals are
+overwhelmingly the tail of the 2026-09-17/18 outage's oldest runs finally closing out, not a
+new live failure mode. Burn-in has still not started, and realistically can't start cleanly
+until (a) the scheduler stops OOMing/getting evicted and (b) these last legacy zombie runs
+finish draining out of the 24h window.
