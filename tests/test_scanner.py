@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import sessionmaker
 
@@ -24,10 +25,35 @@ from cryo.scanner.persistence import (
 from cryo.scanner.run import _rebuild_cost_analysis, deterministic_chunk, parse_args
 from tests.test_presets_api_db import (
     _assign_missing_uuid_primary_keys,
-    _patch_sqlite_incompatible_defaults,
+    _patch_sqlite_incompatible_defaults as _do_patch_sqlite_incompatible_defaults,
 )
 
 MB = 1024 * 1024
+
+
+def _patch_sqlite_incompatible_defaults() -> None:
+    """Thin wrapper preserving this file's existing bare no-restore call sites' call shape
+    (`_patch_sqlite_incompatible_defaults()`, no captured return value) while fixing the actual
+    leak: _restore_sqlite_defaults below (an autouse fixture) puts the real server_default back
+    on teardown regardless of which test in this module called this. Real bug fixed 2026-09-21:
+    this file used to call test_presets_api_db.py's helper directly with no restore at all --
+    same shared-Base.metadata-mutation leak as that file's own api_db fixture had, corrupting
+    later real-Postgres tests' primary-key generation for the rest of the pytest process."""
+    global _pending_sqlite_restore
+    _pending_sqlite_restore = _do_patch_sqlite_incompatible_defaults()
+
+
+_pending_sqlite_restore: list[tuple[object, object]] = []
+
+
+@pytest.fixture(autouse=True)
+def _restore_sqlite_defaults():
+    global _pending_sqlite_restore
+    _pending_sqlite_restore = []
+    yield
+    for column, original_default in _pending_sqlite_restore:
+        column.server_default = original_default
+    _pending_sqlite_restore = []
 
 
 def test_health_score_uses_warn_and_critical_deductions() -> None:
