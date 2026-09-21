@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from cryo.domain.enums import Mode
 from cryo.scheduler.rules import (
     PresetConfig,
@@ -177,6 +179,54 @@ def test_tables_for_preset_uses_effective_preset_and_skips_inactive_tables() -> 
     assert [
         table.id for table in tables_for_preset(standard, tables, [standard, large], rules)
     ] == ["table-2"]
+
+
+def test_tables_for_preset_excludes_tables_with_a_future_missing_metadata_retry_after() -> None:
+    """Critical vitals action plan, 2026-09-20: a table under missing-metadata containment
+    (record_missing_metadata) must not be re-selected for scheduling until its retry-after
+    passes -- same shape as the is_active gate, but reversible and bounded."""
+    standard = PresetConfig("standard", "standard", "trino", priority=100)
+    now = datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
+    tables = [
+        TableCandidate("table-1", "s", "healthy", {"total_size_gb": 10}),
+        TableCandidate(
+            "table-2",
+            "s",
+            "contained",
+            {"total_size_gb": 10},
+            maintenance_retry_after=now + timedelta(hours=1),
+        ),
+        TableCandidate(
+            "table-3",
+            "s",
+            "retry_window_passed",
+            {"total_size_gb": 10},
+            maintenance_retry_after=now - timedelta(minutes=1),
+        ),
+    ]
+    rules = [PresetRule("all", "standard", {"field": "total_size_gb", "op": ">=", "value": 0})]
+
+    matched = tables_for_preset(standard, tables, [standard], rules, now=now)
+
+    assert [t.id for t in matched] == ["table-1", "table-3"]
+
+
+def test_tables_for_preset_treats_a_naive_retry_after_as_utc() -> None:
+    """SQLite (the test backend) drops tzinfo on read-back -- the gate must still work
+    correctly on a naive datetime, same pattern as run_finalizer.py's grace-window check."""
+    standard = PresetConfig("standard", "standard", "trino", priority=100)
+    now = datetime(2026, 9, 20, 17, 0, tzinfo=UTC)
+    naive_future = datetime(2026, 9, 20, 18, 0)  # no tzinfo
+    tables = [
+        TableCandidate(
+            "table-1", "s", "contained", {"total_size_gb": 10}, maintenance_retry_after=naive_future
+        ),
+    ]
+    rules = [PresetRule("all", "standard", {"field": "total_size_gb", "op": ">=", "value": 0})]
+
+    matched = tables_for_preset(standard, tables, [standard], rules, now=now)
+
+    assert matched == []
 
 
 def test_ephemeral_temp_tables_are_not_rule_matched_but_pins_still_win() -> None:

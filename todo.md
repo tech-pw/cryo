@@ -1,5 +1,25 @@
 # Cryo — TODO
 
+## Permanent recovery — 2026-09-20
+
+- [ ] Execute the [critical-vitals incident plan](docs/CRYO_CRITICAL_VITALS_ACTION_PLAN_2026-09-20.md):
+      reproduce the 59,673-failure window, classify legacy versus fresh causes, reconcile two
+      stuck runs/32 stale jobs, contain confirmed missing-metadata retries, repair impact
+      evidence output, restore scan coverage, and validate capacity/economic improvements.
+
+Detailed tickets and acceptance tests: [R1–R8 recovery plan](docs/CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md).
+
+Current closure status: [follow-up review](docs/CRYO_RECOVERY_FOLLOWUP_REVIEW_2026-09-20.md).
+- [ ] Finish partial F03/F04/F05/F08/F09/F10 and original F12 isolation, alongside open
+      F02/F06/F07. Do not count clean-yield tests as crash recovery or fixture restoration as
+      database isolation; keep analysis Jobs disabled until the documented gates pass.
+
+- [x] Document permanent scheduler, lifecycle, impact and metric recovery fixes against `9e015aff`.
+- [ ] R1–R3: profile heavy runners; isolate bounded resumable analysis Jobs; page scoring with full coverage.
+- [ ] R4–R5: make finalization idempotent; safely reconcile the exact legacy incident cohort.
+- [ ] R6: independently trace zero GB freed and distinguish missing evidence from measured no-op.
+- [ ] R7–R8: verify capacity efficiency, honest cohort metrics and the event-gated clean evaluation.
+
 - [x] Implement scanner KEDA production bounds 1–8, metric Service, exclusive replica ownership,
       and bounded downscale; add Helm render regressions (2026-09-18).
 - [ ] Roll out scanner autoscaling during zero demand; verify idle floor, active-scan recovery,
@@ -429,6 +449,14 @@ until real evidence exists.
 ---
 
 ## Cross-cutting / backlog
+- [ ] Close R1–R6 review blockers before analysis Job rollout: isolated PostgreSQL tests,
+      production entrypoint/runtime wiring, resumable fenced attempts, complete bounded scoring,
+      fleet-wide refresh budget, concurrent finalization, and complete impact evidence semantics.
+      See `docs/CRYO_R1_R6_REVIEW_AND_NEXT_STEPS_2026-09-20.md` (F01–F12).
+- [ ] R7: measured capacity baseline, dependency containment, execution sizing, replica-floor
+      canaries, and billing reconciliation, preserving throughput/freshness gates.
+- [ ] R8: cohort-aware reliability, measurement coverage, matched query efficiency, and
+      comparable-period net savings; retain aggregate failures and unknown-impact states.
 - [ ] AuthN via OIDC/SSO (swap from local JWT) — pending SSO confirmation.
 - [ ] Field-level Fernet/KMS encryption for stored credentials and webhook URLs.
 - [ ] Additional source adapters (Polaris/Lakekeeper/Nessie) beyond REST/HMS/Glue.

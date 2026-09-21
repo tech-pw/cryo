@@ -1,0 +1,62 @@
+{{- /*
+RBAC for the analysis runner (recovery plan §2, 2026-09-20): a dedicated ServiceAccount for the
+short-lived K8s Jobs the scheduler coordinator dispatches to run one bounded batch of a durable
+analysis_tasks row (e.g. the benefit-score fleet sweep) and exit. Scoped to Job create/get/list/
+watch/delete plus pod log reads for observability -- no secrets, no pod delete, no cross-
+namespace access, per the recovery plan's "grant only the Job and log permissions this runner
+needs." The scheduler Deployment (scheduler-deployment.yaml) already runs under the `-native`
+ServiceAccount (see rbac-native.yaml) for its own legacy Job-dispatch needs -- rather than add a
+third SA to that same pod, this Role is also bound to `-native` so the scheduler can dispatch
+analysis Jobs through the same identity. The dedicated `-analysis` ServiceAccount below is what
+the analysis Job pods themselves run under; they only ever read their own pod's status, never
+create further Jobs.
+*/ -}}
+{{- if .Values.analysis.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cryo.fullname" . }}-analysis
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analysis-runner
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cryo.fullname" . }}-analysis
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analysis-runner
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cryo.fullname" . }}-analysis
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analysis-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "cryo.fullname" . }}-analysis
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cryo.fullname" . }}-analysis
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ include "cryo.fullname" . }}-native
+    namespace: {{ .Release.Namespace }}
+{{- end }}

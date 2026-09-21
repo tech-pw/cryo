@@ -10,7 +10,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table, TableCost, TableStats
+from cryo.db.models import (
+    Destination,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableCost,
+    TableStats,
+)
 from cryo.reporting.vitals import (
     _SUCCESS_RATE_MIN_TERMINAL_JOBS,
     compute_cryo_vitals,
@@ -328,6 +336,54 @@ class TestScoreAndPayload:
         vitals = compute_cryo_vitals(session, now=NOW)
         assert 0.0 <= vitals.score <= 100.0
 
+    def test_trino_hot_cost_signal_populates_without_affecting_score(self, session, monkeypatch) -> None:
+        """The Trino-hot-tables cost signal answers a different question ("is this specific
+        cost lever working") than vitals' score ("is Cryo healthy") -- a worsening cost trend
+        must surface in the payload but never move the score/status, which would conflate an
+        optional preset's own performance with platform health."""
+        from cryo.config import get_settings
+        from cryo.db.models import Preset, QueryLog, TableAssignment
+
+        source, table = _seed_source_table(session)
+        destination = Destination(id=uuid4(), name="spark-hot", engine="spark_emr", config={})
+        session.add(destination)
+        session.flush()
+        preset = Preset(
+            id=uuid4(),
+            name=get_settings().trino_hot_preset_name,
+            destination_id=destination.id,
+            mode="standard",
+            operations=["optimize"],
+            params={},
+            guardrails={},
+            enabled=True,
+        )
+        session.add(preset)
+        session.flush()
+        session.add(TableAssignment(table_id=table.id, preset_id=preset.id, assigned_by="test", pinned=True))
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"q-{uuid4()}",
+                engine="trino",
+                executed_at=NOW - timedelta(days=1),
+                bytes_read=10 * 1024**3,
+            )
+        )
+        session.commit()
+
+        vitals = compute_cryo_vitals(session, now=NOW)
+        assert vitals.trino_hot_cost is not None
+        assert vitals.trino_hot_cost.today.cohort_size == 1
+        # Never contributes a deduction, regardless of its own trend -- it answers a different
+        # question than the score does (see CryoVitals.trino_hot_cost's own docstring).
+        assert not any("trino_hot" in d.reason for d in vitals.deductions)
+
+        payload = cryo_vitals_to_payload(vitals)
+        assert payload["trino_hot_cost"]["cohort_size"] == 1
+        assert payload["trino_hot_cost"]["preset_name"] == preset.name
+
     def test_payload_is_json_safe_and_carries_key_fields(self, session) -> None:
         session.commit()
         vitals = compute_cryo_vitals(session, now=NOW)
@@ -338,8 +394,14 @@ class TestScoreAndPayload:
         assert "generated_at" in payload
         assert "health" in payload and "overall_status" in payload["health"]
         assert "impact" in payload and "gb_freed_yesterday" in payload["impact"]
+        # Review finding F10: gb_freed_yesterday alone doesn't say whether it's a complete
+        # measurement or a partial subtotal -- measurement_state must accompany it.
+        assert payload["impact"]["measurement_state"] == vitals.impact.measurement_state
         assert "dispatch_heartbeat" in payload
         assert "success_rate" in payload
+        # No trino-hot-tables preset seeded in this test DB -- must be None, not absent/error.
+        assert payload["trino_hot_cost"] is None
+        assert vitals.trino_hot_cost is None
 
         import json
 

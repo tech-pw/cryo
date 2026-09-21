@@ -197,6 +197,8 @@ class JobStore(Protocol):
 
     def deactivate_table(self, table_id: str, reason: str) -> None: ...
 
+    def record_missing_metadata(self, table_id: str, reason: str) -> None: ...
+
 
 class InMemoryJobStore:
     def __init__(self) -> None:
@@ -205,6 +207,7 @@ class InMemoryJobStore:
         self.tables: dict[str, TableMaintenanceData] = {}
         self.audit: list[AuditRecord] = []
         self.deactivated_tables: dict[str, str] = {}
+        self.missing_metadata_tables: dict[str, str] = {}
 
     def add_destination(self, destination: DestinationConfig) -> None:
         self.destinations[destination.id] = destination
@@ -278,6 +281,9 @@ class InMemoryJobStore:
 
     def deactivate_table(self, table_id: str, reason: str) -> None:
         self.deactivated_tables[table_id] = reason
+
+    def record_missing_metadata(self, table_id: str, reason: str) -> None:
+        self.missing_metadata_tables[table_id] = reason
 
     def pending_jobs(self, destination_id: str) -> list[MaintenanceJobRecord]:
         return [
@@ -1147,13 +1153,48 @@ class Worker:
         return self._store.get_job(job.id)
 
     def _deactivate_dropped_table(self, table_id: str, error: str | None) -> None:
-        """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to."""
+        """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to.
+
+        Critical vitals action plan, 2026-09-20: this call's own failures were previously
+        swallowed with zero logging -- confirmed live, a table (nurture_service.silver_next_
+        day_question_summary_evolving) hit this exact code path on 2026-09-19 with
+        is_table_not_found_error(error) returning True, yet stayed is_active=True and kept
+        getting re-admitted/re-failing (consecutive_scan_failures=60) with no trace of why
+        deactivation didn't take. Logging the exception here is the difference between "this
+        never happens" and "we can't tell if/why it's failing" the next time it does.
+
+        Also records a bounded retry-after containment (cryo.db.repositories.sources.
+        record_missing_metadata) independent of whether deactivation itself succeeds -- a
+        table not fitting deactivate_orphaned_evolving_catalog_entries' narrow location-IS-NULL
+        heuristic (this table's own case: a real, non-null location whose metadata.json 404s)
+        never gets deactivated by that path either, so without this second, deliberately
+        narrower containment it would keep consuming a guaranteed-failing maintenance attempt
+        every wave indefinitely. Reversible, no is_active change, no data/S3 changes.
+        """
         try:
             self._store.deactivate_table(
                 table_id, f"Table not found in catalog during maintenance: {error}"
             )
-        except Exception:  # noqa: BLE001 - best-effort, job outcome already recorded
-            pass
+        except Exception:
+            logger.exception(
+                "Failed to deactivate table %s after is_table_not_found_error match "
+                "(job outcome already recorded; table remains is_active and will be "
+                "re-selected for maintenance again)",
+                table_id,
+            )
+
+        record_missing_metadata = getattr(self._store, "record_missing_metadata", None)
+        if callable(record_missing_metadata):
+            try:
+                record_missing_metadata(
+                    table_id, f"Table not found in catalog during maintenance: {error}"
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to record missing-metadata containment for table %s -- table "
+                    "will continue to be re-selected for maintenance every wave",
+                    table_id,
+                )
 
     def _record_job_metrics(
         self,

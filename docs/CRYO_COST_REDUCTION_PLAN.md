@@ -1,5 +1,9 @@
 # Cryo cost reduction: diagnosis and implementation plan
 
+**September 20 recovery priority:** [Permanent recovery and metric improvement plan](CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md)
+specifies the scheduler memory architecture, run lifecycle invariants and metric evidence required
+after the latest OOM/legacy-run incident. Use it for immediate sequencing; retain this broader backlog.
+
 **September 16 update:** [Unused-cost incident diagnosis and fix plan](CRYO_UNUSED_COST_FIX_2026-09-16.md)
 contains fresh billing attribution, live resource/timeout evidence, a tested local CPU sizing
 correction, and the ordered plan for dependency containment, batch sizing, and autoscaling.

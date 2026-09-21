@@ -146,6 +146,10 @@ async def generate_daily_report(
         },
         "impact": (
             {
+                # Review finding F10: distinguishes "gb_freed_yesterday is the real complete
+                # total" from "partial subtotal, some evidence missing" from "no evidence at
+                # all" -- a bare gb_freed number used to imply the first case unconditionally.
+                "measurement_state": report_data.impact_signal.measurement_state,
                 "gb_freed_yesterday": round(report_data.impact_signal.today.gb_freed, 2),
                 "actions_succeeded": report_data.impact_signal.today.actions_succeeded,
                 "tables_touched": report_data.impact_signal.today.tables_touched,
@@ -212,6 +216,11 @@ def _impact_signal_sentence(data: DailyReportData) -> str:
     signal = data.impact_signal
     if signal is None or signal.direction == "flat":
         return ""
+    if signal.direction == "unknown":
+        # Recovery plan §6: no reclaim action yesterday reported actual_bytes_freed (e.g. the
+        # fleet ran entirely on Trino/Spark, which don't emit it yet) -- say so plainly rather
+        # than print "0.0 GB freed", which would misreport an absent measurement as a real one.
+        return " Reclaim impact unknown: no engine reported bytes-freed evidence yesterday."
     pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
     baseline = signal.dod_baseline_gb if signal.primary_signal == "dod" else signal.wow_baseline_gb
     window = "DoD" if signal.primary_signal == "dod" else "WoW"
@@ -223,6 +232,10 @@ def _impact_signal_sentence(data: DailyReportData) -> str:
         if pct is not None
         else ""
     )
+    # Review finding F10: a "partial" day's gb_freed is real but incomplete -- flag it inline
+    # rather than let a reader assume it's the full day total the way "complete" coverage is.
+    if signal.measurement_state == "partial":
+        comparison += " -- partial coverage, some actions had no bytes-freed evidence"
     return f" Reclaim impact {signal.direction}{comparison}: {signal.today.gb_freed:.1f} GB freed yesterday."
 
 
@@ -532,6 +545,7 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
         "impact_signal": (
             {
                 "direction": data.impact_signal.direction,
+                "measurement_state": data.impact_signal.measurement_state,
                 "gb_freed_yesterday": round(data.impact_signal.today.gb_freed, 1),
                 "dod_baseline_gb": (
                     round(data.impact_signal.dod_baseline_gb, 1)
@@ -644,7 +658,9 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
     if data.impact_signal is not None:
         blocks.append(divider_block())
         impact = data.impact_signal
-        direction_emoji = {"improving": "📈", "worsening": "📉", "flat": "➖"}[impact.direction]
+        direction_emoji = {"improving": "📈", "worsening": "📉", "flat": "➖", "unknown": "❓"}[
+            impact.direction
+        ]
         blocks.append(section_block(f"{direction_emoji} *North Star: Reclaim Impact*"))
         opt_pct = impact.today.optimize_file_reduction_pct
         opt_str = (
@@ -693,6 +709,10 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             "improving": "Reclaiming more than usual — going the right direction.",
             "worsening": "Reclaiming less than usual — going the wrong direction, see action items.",
             "flat": "No significant change from baseline.",
+            "unknown": (
+                "No bytes-freed evidence reported yesterday (likely ran entirely on an engine "
+                "that doesn't emit it yet) -- not a measured reclaim regression."
+            ),
         }[impact.direction]
         blocks.append(section_block(f"{direction_emoji} *{impact.direction.title()}*. {verdict}"))
 

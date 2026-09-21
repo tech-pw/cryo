@@ -234,6 +234,22 @@ class Table(Base):
     # needing a separate catalog-discovery step. Updated in place on each scan, not
     # appended-to, so this column is not a scale concern.
     location: Mapped[str | None] = mapped_column(Text)
+    # Critical vitals action plan, 2026-09-20, P1 "contain repeated NoSuchKey work safely":
+    # a maintenance job failing with cryo.engines.base.is_table_not_found_error(error) means
+    # the table's registered location's metadata.json/manifest is confirmed missing in S3 --
+    # a maintenance retry cannot fix that (there's nothing to load), but the table doesn't
+    # necessarily meet deactivate_orphaned_evolving_catalog_entries' narrow location-IS-NULL
+    # heuristic (confirmed live: nurture_service.silver_next_day_question_summary_evolving has
+    # a real non-null location whose metadata.json 404s in S3 -- the null-location automated
+    # cleanup structurally cannot catch this, and is_active=False is a bigger, less-reversible
+    # decision than "stop re-dispatching for a while" per the plan's own "missing metadata is
+    # not permission to deactivate the table" guidance). These two columns implement the
+    # narrower, fully reversible containment instead: persisted retry-after + reason, checked
+    # at scheduling time (see cryo.scheduler.rules.tables_for_preset), so a confirmed-missing
+    # table stops consuming a guaranteed-failing maintenance cycle every single admission wave
+    # without touching is_active or dropping the row.
+    maintenance_missing_metadata_reason: Mapped[str | None] = mapped_column(Text)
+    maintenance_retry_after: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(
@@ -318,6 +334,20 @@ class TableStats(Base):
         BigInteger, nullable=False, server_default=text("0")
     )
     raw: Mapped[JsonDict | None] = mapped_column(JSONB)
+    # Recovery plan §3, 2026-09-20: resumable per-table partition-scoring coverage cursor. A
+    # dedicated small scalar column, deliberately NOT stored inside `raw` -- that JSONB column
+    # already caused one real OOM incident this same day (averaged 522KB/row, max 10.3MB,
+    # ~6.8GB total across the fleet when read in bulk) precisely because it accumulates
+    # unbounded nested data over time; a hot, frequently-read/written cursor value has no
+    # business living in the same blob. NULL means "not mid-sweep for this table's current
+    # scan" (either never started, or the last sweep reached the end and reset it -- see
+    # update_partition_benefit_scores). Paired with
+    # partition_coverage_cursor_scan_at so a fresh scan (new scan_at) never accidentally
+    # resumes against a stale cursor computed for the previous scan's partition rows.
+    partition_coverage_cursor: Mapped[int | None] = mapped_column(BigInteger)
+    partition_coverage_cursor_scan_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
 
     table: Mapped[Table] = relationship(back_populates="stats")
 
@@ -863,6 +893,183 @@ class MaintenanceJob(Base):
     audit_entries: Mapped[list[AuditLog]] = relationship(back_populates="job")
     dispatch: Mapped[NativeDispatch | None] = relationship(back_populates="jobs")
     steps: Mapped[list[JobStep]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class AnalysisTask(TimestampMixin, Base):
+    """Durable, resumable heavy-analysis work unit (recovery plan §3, 2026-09-20).
+
+    Root incident this exists to fix: the scheduler process ran a multi-hour, ~13k-table
+    benefit-score/realized-value sweep as an in-process thread with no persisted progress. A
+    restart (crash, OOM, redeploy) threw away all progress and started the entire sweep over
+    from table 1 -- the crash-loop was actively costing scheduling throughput, not just
+    restarting harmlessly. This table lets the actual analysis work run as a short-lived,
+    separately-resourced K8s Job (see cryo/analysis/runner.py's one-shot CLI entrypoint) while
+    the scheduler stays a lightweight coordinator that only claims/dispatches/reconciles these
+    rows -- heavy allocation lives and dies in a bounded child process, never in the scheduler's
+    own long-lived memory space.
+
+    One active logical task per (task_type, scope) is enforced by the partial unique index
+    below (WHERE status IN ('pending', 'leased', 'running')) -- a new due task for the same
+    (task_type, scope) cannot be created while a prior generation is still open, so restarts
+    reconcile the existing row instead of ever creating a second one racing it.
+
+    generation increments each time a *new* logical run of this task starts (not each retry --
+    retries reuse attempt/lease_generation on the same generation). A stale child that finishes
+    after being superseded (e.g. its lease expired and another owner already claimed a new
+    generation) can be detected by comparing its own captured generation against the current
+    row's generation before committing output -- see AnalysisTaskRepository.commit_progress's
+    docstring for the compare-and-set this enables.
+    """
+
+    __tablename__ = "analysis_tasks"
+    __table_args__ = (
+        # Enforces "one active logical task per (task_type, scope)" -- see class docstring.
+        Index(
+            "ux_analysis_tasks_active_type_scope",
+            "task_type",
+            "scope",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'leased', 'running')"),
+        ),
+        Index("ix_analysis_tasks_due_at", "due_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    # e.g. "benefit_score_sweep" -- see cryo/analysis/registry.py for the known task types.
+    task_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Free-form scope key distinguishing concurrent instances of the same task_type -- "fleet"
+    # for a whole-fleet sweep today; a specific table_id/shard key if this is ever split
+    # narrower. Never NULL: use a fixed literal like "fleet" for singleton tasks so the unique
+    # index above has a real value to constrain on.
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    # Incremented each new logical run (not each retry of the same run) -- see class docstring.
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    due_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    # The scan/data watermark this generation is pinned against (e.g. a scan_at timestamp or
+    # snapshot id) -- see recovery plan §3's "never mix generations silently": if new scan
+    # evidence invalidates the watermark mid-sweep, the coordinator starts a fresh generation
+    # rather than silently blending old and new pages into one cursor's progress.
+    input_watermark: Mapped[str | None] = mapped_column(Text)
+    # Opaque, task-type-defined resume position (e.g. a table_id to resume keyset pagination
+    # from). NULL means "not started" for this generation.
+    cursor: Mapped[str | None] = mapped_column(Text)
+    lease_owner: Mapped[str | None] = mapped_column(Text)
+    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # The dispatched K8s Job's name -- deterministic (derived from id+generation+attempt, see
+    # cryo/analysis/coordinator.py) so an uncertain create response (timeout, ambiguous error)
+    # can be reconciled by re-reading the Job's actual status instead of blindly retrying and
+    # risking a duplicate. Kubernetes Jobs are not exactly-once; this is what makes replay safe.
+    external_job_ref: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    processed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    next_retry_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # Review finding F08, 2026-09-20: opaque, task-type-defined extra checkpoint state that
+    # doesn't fit the single-string `cursor` field -- e.g. the benefit-score sweep's
+    # realized-value refresh budget, which must be consumed once across an entire fleet
+    # generation's batches, not reset to its full allowance on every individual batch (the bug:
+    # _DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP=100 was being re-applied per 200-table
+    # batch, so a ~13,000-table fleet could spend roughly 6,500 expensive refreshes per
+    # generation instead of the intended 100). NULL means "no extra state yet" for this
+    # generation; start_new_generation resets it to NULL along with cursor/processed_count.
+    task_state: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+
+class IncidentCohort(TimestampMixin, Base):
+    """A named, durable record of runs/jobs affected by a specific production incident
+    (recovery plan §4/§5, 2026-09-20).
+
+    Real gap this fixes: the Sep 17-18 zombie-run investigation (2,058/hour orphaned_deferred
+    spike, traced via ad-hoc kubectl exec SQL queries to a set of runs from that outage window)
+    existed only as a one-off finding in an investigation session -- nothing persisted which
+    specific run/job IDs were confirmed part of that incident, the query used to derive them, or
+    what happened to each one afterward. A later engineer (or agent) re-investigating the same
+    symptom has no way to tell "this is the same known cohort, already tracked" from "this is a
+    new, unrelated occurrence" without re-deriving the whole finding from scratch -- and worse,
+    has no record to check before assuming a stale job is safe to fail outright.
+
+    Deliberately read-heavy, not an automation trigger: creating a cohort record does not, by
+    itself, fail/cancel/relabel anything. Actual remediation of each member still goes through
+    the existing reconciliation machinery (cryo.worker.orphan_recovery.recover_orphaned_jobs,
+    cryo.queue.reconcile.reconcile_stuck_admitted_jobs) which already checks external execution
+    state before touching a job -- this table is where that machinery's *outcome* per member
+    gets recorded for accountability, not a new code path for mutating job/run state.
+    """
+
+    __tablename__ = "incident_cohorts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    # Human-readable stable slug, e.g. "sep-17-18-zombie-runs" -- not a UUID, so it can be typed
+    # into a doc/runbook/query without a lookup.
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    # The exact SQL (or equivalent) used to derive membership -- so "is this run part of the
+    # cohort" is always re-verifiable against the original evidence, not just trusted by name.
+    evidence_query: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class IncidentCohortMember(TimestampMixin, Base):
+    """One run believed to be part of an IncidentCohort, plus the current reconciliation
+    outcome for it. See IncidentCohort's docstring for the "persist, don't auto-mutate"
+    design intent.
+
+    reconciliation_status is deliberately a free-text-ish enum-like string, not tied to
+    MaintenanceRun/MaintenanceJob's own status vocabulary -- "attempt ended", "intent still
+    outstanding", and "run scope closed" are three genuinely distinct concepts (recovery plan
+    §4) that a run's own `status` column cannot represent simultaneously, and conflating them
+    was exactly what made the original Sep 17-18 investigation hard to reason about precisely.
+    """
+
+    __tablename__ = "incident_cohort_members"
+    __table_args__ = (
+        Index("ux_incident_cohort_members_cohort_run", "cohort_id", "run_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    cohort_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.incident_cohorts.id"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.runs.id"), nullable=False
+    )
+    # "pending" (not yet reconciled), "attempt_ended" (the specific job attempt finished, terminal
+    # or not, but the run's overall scope may still have outstanding work), "run_scope_closed"
+    # (the run itself reached a terminal status -- distinct from any one job/attempt within it),
+    # "unresolved" (investigated, genuinely still stuck, needs a human decision). Never
+    # "reconciled_as_success" for a job that actually failed -- see IncidentCohort's docstring:
+    # this table records outcomes, it never relabels history.
+    reconciliation_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    # Review finding F11, 2026-09-20: the original seed script selected every run created in a
+    # time window and inserted them all as equally-weighted "members" -- broader than an
+    # evidence-confirmed "this run was actually affected by the incident" cohort. A window
+    # match is a real, useful starting point (it's how the investigation actually found these
+    # runs), but it is NOT the same claim as "confirmed affected," and collapsing the two let a
+    # later reader treat every window-matched run as equally implicated. "candidate" (default:
+    # matched the window query, not yet individually verified), "confirmed" (independently
+    # checked against the run's own evidence -- e.g. its job statuses/timestamps -- and found
+    # to actually exhibit the incident's symptom), "excluded" (checked and found NOT actually
+    # affected, e.g. a run that happens to have been created in the window but has no
+    # orphaned_deferred/stuck-job symptoms at all).
+    membership_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'candidate'")
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    reconciled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
 
 class MaintenanceIntent(TimestampMixin, Base):
@@ -2243,11 +2450,14 @@ __all__ = [
     "AWSCostInsightConfig",
     "AWSCurLineItem",
     "AWSInventoryObject",
+    "AnalysisTask",
     "AuditLog",
     "ColumnStatsSketch",
     "DeletionTracking",
     "Destination",
     "GovernorBanditState",
+    "IncidentCohort",
+    "IncidentCohortMember",
     "LayoutRecommendation",
     "LLMObservation",
     "MaintenanceJob",

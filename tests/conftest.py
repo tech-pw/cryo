@@ -180,30 +180,38 @@ def _session_maker() -> Iterator[sessionmaker]:
     in-memory database, so code under test (like run_finalizer) that opens its own session via
     a factory -- rather than reusing a caller-held session -- still reads/writes the same data
     the test set up."""
-    _patch_sqlite_incompatible_defaults()
+    restore_defaults = _patch_sqlite_incompatible_defaults()
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    with engine.begin() as connection:
-        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
-        Base.metadata.create_all(connection)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+            Base.metadata.create_all(connection)
 
-    maker = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        autocommit=False,
-        expire_on_commit=False,
-    )
-    event.listen(maker, "before_flush", _assign_missing_uuid_primary_keys)
-    event.listen(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
+        maker = sessionmaker(
+            bind=engine,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+        )
+        event.listen(maker, "before_flush", _assign_missing_uuid_primary_keys)
+        event.listen(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
 
-    yield maker
+        yield maker
 
-    event.remove(maker, "before_flush", _assign_missing_uuid_primary_keys)
-    event.remove(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
-    engine.dispose()
+        event.remove(maker, "before_flush", _assign_missing_uuid_primary_keys)
+        event.remove(maker, "before_flush", _assign_missing_autoincrement_primary_keys)
+        engine.dispose()
+    finally:
+        # Restore the real server_default values this fixture cleared above -- see
+        # _patch_sqlite_incompatible_defaults's docstring for the real-Postgres-test-corruption
+        # bug this prevents. Runs even if create_all/yield raised, so a failed test doesn't
+        # leave the shared model classes patched for the rest of the process either.
+        for column, original_default in restore_defaults:
+            column.server_default = original_default
 
 
 @pytest.fixture()
@@ -248,10 +256,31 @@ def _assign_missing_uuid_primary_keys(
 
 
 def _patch_sqlite_incompatible_defaults() -> None:
+    """Clears server_default on columns SQLite can't evaluate (::jsonb casts, gen_random_uuid())
+    so Base.metadata.create_all() succeeds against the in-memory SQLite engine.
+
+    Real bug fixed here, 2026-09-20: this used to mutate column.server_default on the SAME
+    shared Base.metadata / model classes every real-Postgres test file also imports (e.g.
+    cryo.db.models.AnalysisTask) -- once any test using the `session`/`session_factory`
+    fixtures ran (even in an unrelated file, earlier in the same pytest process), AnalysisTask.
+    id's real `gen_random_uuid()` server_default was gone from the shared model class for the
+    rest of the process. Any later real-Postgres test (test_analysis_tasks_postgres.py and
+    friends, which insert AnalysisTask rows and rely on Postgres generating the UUID) then
+    failed with a NULL primary key -- not because those tests were wrong, but because an
+    unrelated SQLite-only fixture had already permanently vandalized the shared column
+    definition. Restoring the original server_default values via a fixture finalizer (see
+    _session_maker below) makes the patch properly scoped to one fixture's lifetime instead of
+    process-lifetime, matching every other fixture's teardown discipline in this file.
+
+    Returns the original (column, server_default) pairs so the caller can restore them.
+    """
+    originals: list[tuple[object, object]] = []
     for table in Base.metadata.tables.values():
         for column in table.columns:
             if column.server_default is None:
                 continue
             default = str(column.server_default.arg)
             if "::jsonb" in default or "gen_random_uuid" in default:
+                originals.append((column, column.server_default))
                 column.server_default = None
+    return originals

@@ -50,9 +50,11 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from cryo.config import get_settings
 from cryo.db.models import MaintenanceJob
 from cryo.reporting.health_check import ProductionHealthReport, run_production_health_checks
 from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal
+from cryo.reporting.trino_hot_cost_signal import TrinoHotCostSignal, compute_trino_hot_cost_signal
 
 VitalsStatus = Literal["HEALTHY", "DEGRADED", "CRITICAL"]
 
@@ -146,6 +148,13 @@ class CryoVitals:
     dispatch_heartbeat: DispatchHeartbeat
     success_rate: SuccessRatePulse
     deductions: list[VitalsDeduction] = field(default_factory=list)
+    # None when the daily Trino-hot-tables preset (cryo.scheduler.trino_hot_preset) isn't
+    # seeded in this deployment, or its cohort is currently empty -- a genuinely different
+    # state from a signal that IS computed but reads "unknown" (no Trino traffic yesterday).
+    # Never contributes to `score`/`status`: it answers "is a specific cost-reduction lever
+    # working," not "is Cryo healthy" -- conflating the two would make disabling an optional
+    # preset look like a health regression.
+    trino_hot_cost: TrinoHotCostSignal | None = None
 
     @property
     def headline(self) -> str:
@@ -206,6 +215,9 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
     impact = compute_impact_signal(session, now=now)
     heartbeat = _dispatch_heartbeat(session, now=now)
     success_rate = _success_rate_pulse(session, now=now)
+    trino_hot_cost = compute_trino_hot_cost_signal(
+        session, preset_name=get_settings().trino_hot_preset_name, now=now
+    )
 
     score = 100.0
     deductions: list[VitalsDeduction] = []
@@ -271,6 +283,7 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
         dispatch_heartbeat=heartbeat,
         success_rate=success_rate,
         deductions=deductions,
+        trino_hot_cost=trino_hot_cost,
     )
 
 
@@ -288,10 +301,29 @@ def cryo_vitals_to_payload(vitals: CryoVitals) -> dict[str, Any]:
         },
         "impact": {
             "direction": vitals.impact.direction,
+            # Review finding F10, 2026-09-20: gb_freed alone (without this field) let a
+            # consumer read "0.2 GB freed" as the real day total even when it was actually a
+            # partial subtotal (1 measured action out of 1000 successful ones) or missing
+            # entirely -- measurement_state makes that coverage explicit instead of silently
+            # implied. See cryo/reporting/impact_signals.py::MeasurementState's docstring.
+            "measurement_state": vitals.impact.measurement_state,
             "gb_freed_yesterday": vitals.impact.today.gb_freed,
             "dod_pct": vitals.impact.dod_pct,
             "wow_pct": vitals.impact.wow_pct,
         },
+        "trino_hot_cost": (
+            {
+                "preset_name": vitals.trino_hot_cost.preset_name,
+                "trend": vitals.trino_hot_cost.trend,
+                "cohort_size": vitals.trino_hot_cost.today.cohort_size,
+                "gib_scanned_yesterday": round(vitals.trino_hot_cost.today.gib_scanned, 2),
+                "estimated_scan_cost_usd_yesterday": vitals.trino_hot_cost.today.estimated_scan_cost_usd,
+                "dod_bytes_pct": vitals.trino_hot_cost.dod_bytes_pct,
+                "wow_bytes_pct": vitals.trino_hot_cost.wow_bytes_pct,
+            }
+            if vitals.trino_hot_cost is not None
+            else None
+        ),
         "dispatch_heartbeat": {
             "last_activity_at": vitals.dispatch_heartbeat.last_activity_at.isoformat()
             if vitals.dispatch_heartbeat.last_activity_at

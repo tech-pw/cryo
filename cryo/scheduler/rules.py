@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from cryo.domain.enums import Mode
@@ -49,6 +50,12 @@ class TableCandidate:
     stats: Mapping[str, Any] = field(default_factory=dict)
     is_active: bool = True
     last_maintained_at: Any | None = None
+    # Critical vitals action plan, 2026-09-20: set (via cryo.db.repositories.sources.
+    # record_missing_metadata) when a maintenance job confirmed this table's registered
+    # location's metadata.json/manifest is missing in S3. tables_for_preset excludes it from
+    # scheduling until this passes -- same is_active-style gate, but reversible and narrower
+    # (does not deactivate the table, just pauses scheduling for a bounded window).
+    maintenance_retry_after: Any | None = None
 
     @property
     def row(self) -> dict[str, Any]:
@@ -148,11 +155,24 @@ def tables_for_preset(
     presets: Iterable[PresetConfig],
     rules: Iterable[PresetRule],
     assignments: Iterable[TableAssignment] = (),
+    *,
+    now: datetime | None = None,
 ) -> list[TableCandidate]:
+    current = now or datetime.now(UTC)
     matched: list[TableCandidate] = []
     for table in tables:
         if not table.is_active:
             continue
+        # Critical vitals action plan, 2026-09-20: same shape as the is_active gate above, but
+        # reversible and bounded -- see TableCandidate.maintenance_retry_after's own docstring.
+        # A naive/None-tzinfo value (SQLite test backend, matching this repo's other tz-aware
+        # comparisons -- e.g. run_finalizer.py's grace-window check) is treated as UTC.
+        retry_after = table.maintenance_retry_after
+        if retry_after is not None:
+            if retry_after.tzinfo is None:
+                retry_after = retry_after.replace(tzinfo=UTC)
+            if retry_after > current:
+                continue
         effective = effective_preset(table, presets, rules, assignments)
         if effective and effective.preset.id == preset.id:
             matched.append(table)

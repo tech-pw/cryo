@@ -16,9 +16,9 @@ import logging
 import signal
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from threading import Event, Thread
-from collections.abc import Callable
 from typing import Any, NoReturn
 
 from cryo.config import get_settings
@@ -96,6 +96,19 @@ def create_parser() -> argparse.ArgumentParser:
         help="Seconds between snapshot polls (default: 5)",
     )
 
+    # Analysis command (recovery plan §2/§3, 2026-09-20): bounded one-shot K8s Job entrypoint,
+    # NOT a daemon -- claims one AnalysisTask batch and exits, unlike every other subcommand
+    # above which runs an indefinite loop. See cryo/analysis/runner.py for the full rationale.
+    analysis_parser = subparsers.add_parser(
+        "analysis",
+        help="Run one bounded batch of a durable analysis task, then exit (K8s Job entrypoint)",
+    )
+    analysis_parser.add_argument(
+        "task_type",
+        choices=["benefit_score_sweep"],
+        help="Which analysis task type to claim and process",
+    )
+
     return parser
 
 
@@ -136,6 +149,10 @@ class BenefitScoreUpdaterRunner(DaemonRunner):
         )
 
     def _tick(self) -> None:
+        if get_settings().benefit_score_sweep_via_k8s_jobs:
+            self._tick_via_k8s_job()
+            return
+
         from cryo.scheduler.benefit_score_updater import run_benefit_score_update
 
         partitions_updated = run_benefit_score_update()
@@ -143,6 +160,67 @@ class BenefitScoreUpdaterRunner(DaemonRunner):
             self._logger.info(
                 "Updated benefit scores for %s partitions",
                 partitions_updated,
+            )
+
+    def _tick_via_k8s_job(self) -> None:
+        """Recovery plan §2: dispatch a bounded K8s Job instead of running the sweep in this
+        scheduler process. This coordinator tick only ensures a due task exists and that a Job
+        is out to work it -- it never itself loops over the fleet, so it cannot reproduce the
+        OOM this whole mechanism replaces. If Job dispatch isn't available (e.g. running
+        somewhere without in-cluster k8s credentials), logs and defers to the next tick rather
+        than silently falling back to the in-process sweep, which would defeat the point of
+        enabling this flag at all."""
+        from cryo.analysis.dispatch import dispatch_analysis_job, k8s_dispatch_available
+        from cryo.db.repositories.analysis_tasks import ensure_task_due, get_active_task
+        from cryo.db.session import SessionLocal
+
+        task_type = "benefit_score_sweep"
+        now = datetime.now(UTC)
+        with SessionLocal() as session:
+            active = get_active_task(session, task_type=task_type, scope="fleet")
+            if active is not None and active.external_job_ref and active.lease_until:
+                lease_until = active.lease_until if active.lease_until.tzinfo else active.lease_until.replace(tzinfo=UTC)
+                if lease_until > now:
+                    # A Job is out and its lease hasn't expired -- claim_due_task on the runner
+                    # side would refuse a second claim anyway (see its own docstring), but
+                    # checking here avoids creating a redundant Job pod every tick while one is
+                    # already legitimately running. Once the lease expires (crashed Job, no
+                    # heartbeat), this falls through and a fresh Job is dispatched -- the new
+                    # Job's claim_due_task call will correctly reclaim the expired lease.
+                    self._logger.debug(
+                        "benefit_score_sweep task %s already has an outstanding Job (%s, "
+                        "lease valid until %s); skipping dispatch this tick.",
+                        active.id,
+                        active.external_job_ref,
+                        lease_until,
+                    )
+                    return
+            task = active or ensure_task_due(session, task_type=task_type, scope="fleet")
+
+            if not k8s_dispatch_available():
+                self._logger.warning(
+                    "benefit_score_sweep task %s is due but k8s Job dispatch is unavailable "
+                    "(not running in-cluster, or kubernetes client missing) -- will retry "
+                    "next tick rather than fall back to the in-process sweep.",
+                    task.id,
+                )
+                return
+
+            result = dispatch_analysis_job(task_type)
+            if not result.ok:
+                self._logger.error(
+                    "Failed to dispatch analysis Job for benefit_score_sweep task %s: %s",
+                    task.id,
+                    result.error,
+                )
+                return
+
+            task.external_job_ref = result.job_name
+            session.commit()
+            self._logger.info(
+                "Dispatched analysis Job %s for benefit_score_sweep task %s",
+                result.job_name,
+                task.id,
             )
 
 
@@ -201,6 +279,48 @@ class CostModelRefreshRunner(DaemonRunner):
             refreshed = refresh_cost_model_cache(session, _get_settings())
             if refreshed:
                 self._logger.info("Refreshed learned cost model cache")
+
+
+class TrinoHotPresetRunner(DaemonRunner):
+    """Daily repin of the top-N-by-Trino-query-frequency maintenance preset -- see
+    cryo.scheduler.trino_hot_preset.repin_trino_hot_tables for the reconciliation logic.
+
+    Repinning itself does not run any maintenance job -- it only updates which tables are
+    eligible for the preset (TableAssignment). Actual job creation still goes through the
+    normal cron-preset dispatch path (SchedulerService._dispatch_due_presets), gated by the
+    preset's own rule (needs_compaction=true) and existing priority ordering, on whatever
+    schedule_cron the preset itself is configured with.
+    """
+
+    def __init__(self, interval: int | None = None) -> None:
+        settings_interval = get_settings().trino_hot_preset_repin_interval_hours * 3600
+        super().__init__("trino-hot-preset-repin", interval or settings_interval)
+
+    def _tick(self) -> None:
+        from cryo.db.session import SessionLocal
+        from cryo.scheduler.trino_hot_preset import repin_trino_hot_tables
+
+        settings = get_settings()
+        with SessionLocal() as session:
+            try:
+                result = repin_trino_hot_tables(
+                    session,
+                    preset_name=settings.trino_hot_preset_name,
+                    limit=settings.trino_hot_preset_table_limit,
+                )
+            except ValueError:
+                self._logger.warning(
+                    "Trino-hot preset %r not found -- seed it via "
+                    "scripts/seed_trino_hot_preset.py before this runner can repin it.",
+                    settings.trino_hot_preset_name,
+                )
+                return
+            self._logger.info(
+                "Trino-hot preset repin: pinned=%d unpinned=%d unchanged=%d",
+                result.pinned,
+                result.unpinned,
+                result.unchanged,
+            )
 
 
 class AlertDispatcherRunner(DaemonRunner):
@@ -774,14 +894,20 @@ def run_worker(args: argparse.Namespace) -> NoReturn:
 
 def run_scheduler(args: argparse.Namespace) -> NoReturn:
     from cryo.reporting.scheduler import ReportScheduler
-    from cryo.scheduler.benefit_score_updater import benefit_score_updater_loop_sync
 
-    updater_stop = Event()
+    # Review finding F01, 2026-09-20: this function (the actual "cryo scheduler" production
+    # entrypoint -- deploy/helm/cryo/templates/scheduler-deployment.yaml runs "cryo scheduler",
+    # never "cryo serve") used to start benefit_score_updater_loop_sync directly, a raw loop
+    # with NO knowledge of benefit_score_sweep_via_k8s_jobs at all. The flag check lived
+    # entirely inside BenefitScoreUpdaterRunner._tick, which only run_serve's other_runners list
+    # ever instantiated -- so enabling the flag in production changed nothing: the heavy
+    # in-process sweep kept running exactly as before, on the one entrypoint that actually
+    # matters. Using the same Runner class here (matching every other daemon in this function,
+    # which already all use the DaemonRunner/_tick pattern) makes both CLI entrypoints share one
+    # flag-aware code path instead of two independently-implemented loops that can drift.
+    benefit_score_updater = BenefitScoreUpdaterRunner()
     updater_thread = Thread(
-        target=benefit_score_updater_loop_sync,
-        kwargs={"stop_event": updater_stop},
-        name="benefit-score-updater",
-        daemon=True,
+        target=benefit_score_updater.run, name="benefit-score-updater", daemon=True
     )
     updater_thread.start()
 
@@ -824,11 +950,17 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
     report_scheduler = ReportScheduler()
     report_thread = Thread(target=report_scheduler.run, name=report_scheduler.name, daemon=True)
     report_thread.start()
+
+    trino_hot_preset = TrinoHotPresetRunner()
+    trino_hot_preset_thread = Thread(
+        target=trino_hot_preset.run, name="trino-hot-preset-repin", daemon=True
+    )
+    trino_hot_preset_thread.start()
     try:
         runner = SchedulerRunner(interval=args.check_interval)
         _run_with_signal(runner, service_name="scheduler")
     finally:
-        updater_stop.set()
+        benefit_score_updater.stop()
         updater_thread.join(timeout=5)
         alert_dispatcher.stop()
         alert_thread.join(timeout=5)
@@ -838,6 +970,8 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
         evolving_cleanup_thread.join(timeout=5)
         cost_model_refresh.stop()
         cost_model_refresh_thread.join(timeout=5)
+        trino_hot_preset.stop()
+        trino_hot_preset_thread.join(timeout=5)
         report_scheduler.stop()
         report_thread.join(timeout=5)
 
@@ -882,6 +1016,7 @@ def run_serve(args: argparse.Namespace) -> NoReturn:
         AlertDispatcherRunner(),
         S3LogIngestRunner(),
         EvolvingCatalogCleanupRunner(),
+        TrinoHotPresetRunner(),
         ReportScheduler(),
     ]
     runners: list[DaemonRunner | ReportScheduler] = [*core_runners, *other_runners]
@@ -1032,6 +1167,16 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
     sys.exit(0)
 
 
+def run_analysis(args: argparse.Namespace) -> NoReturn:
+    """One-shot, non-daemon entrypoint -- see cryo/analysis/runner.py. Deliberately does not go
+    through _run_with_signal (no health server, no daemon loop, no SIGTERM-triggered graceful
+    stop): a K8s Job is expected to run to completion or be killed outright by
+    activeDeadlineSeconds, not to receive a graceful-shutdown signal mid-batch."""
+    from cryo.analysis.runner import main as analysis_main
+
+    sys.exit(analysis_main([args.task_type]))
+
+
 def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
@@ -1043,6 +1188,7 @@ def main() -> NoReturn:
         "scanner": run_scanner,
         "events": run_events,
         "serve": run_serve,
+        "analysis": run_analysis,
     }
 
     handler = commands.get(args.command)

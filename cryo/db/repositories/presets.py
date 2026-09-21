@@ -118,6 +118,11 @@ def table_to_candidate(
         stats=stats,
         is_active=table.is_active,
         last_maintained_at=last_maintained_at,
+        # Critical vitals action plan, 2026-09-20: bounded containment for a table whose
+        # metadata was confirmed missing in S3 (cryo.db.repositories.sources.
+        # record_missing_metadata) -- see cryo.scheduler.rules.tables_for_preset's gate on
+        # this field for the actual exclusion logic.
+        maintenance_retry_after=table.maintenance_retry_after,
     )
 
 

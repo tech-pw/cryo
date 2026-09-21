@@ -1,5 +1,11 @@
 # Cryo Go/No-Go 10-Day Scorecard
 
+**September 20 recovery contract:** Follow the
+[permanent recovery plan](CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md) for scheduler isolation,
+bounded scoring, run lifecycle repair, zero-impact diagnosis and versioned metric definitions.
+Historical entries below remain unchanged as evidence. Their interpretations are hypotheses,
+not substitutes for the plan's explicit effect and cohort checks.
+
 **Purpose**: decide whether to keep investing in Cryo (in-house Iceberg maintenance platform) or
 scrap it in favor of a build/buy alternative (Apache Amoro, a LakeOps pilot, or reverting to
 manual/cron-based maintenance). This is a decision record, not a status report — every entry below
@@ -13,7 +19,8 @@ feeds directly into the day-10 keep/scrap call.
 deploy above) completes — every 2026-09-16 and pre-burn-in 2026-09-17 number in this doc is the
 *contaminated* baseline (known bugs still live, or too soon post-deploy to have reconciled),
 kept for before/after comparison, not counted toward the pass/fail window.
-**Decision date**: 10 clean days after burn-in completes (~2026-09-19 + 10 days)
+**Decision date**: 10 clean days after the recovery readiness gate actually passes. The September
+20 scheduler OOM/eviction means the previous estimated start date is no longer valid.
 
 ---
 
@@ -45,8 +52,8 @@ kept for before/after comparison, not counted toward the pass/fail window.
 
 | # | Metric | Source | Target |
 |---|--------|--------|--------|
-| 4 | Net savings ($) | namespace cost ratio in vitals (`namespace_unused_cost` deduction) vs. `cost_trend.projected_savings_usd_month` | clearly and growingly positive (currently net-negative: unused 3.4x used) |
-| 5 | GB-freed/day (north star) | `/api/v1/vitals` → `impact.gb_freed_yesterday`, `dod_pct` | stable or growing, not the current -45% DoD |
+| 4 | Net savings ($) | Comparable same-scope baseline S3/Trino/maintenance cost minus observed total; forecasts and unused-cost ratio shown separately | Positive measured net result; unused/used ratio alone cannot determine this |
+| 5 | Maintenance impact | `/api/v1/vitals` → `impact`, plus eligible debt age and receipt coverage | Verified useful effects and controlled debt; distinguish measured zero from missing evidence, without requiring GB freed to grow forever |
 | 6 | Fleet-wide delete-file ratio & small-file ratio | `/api/v1/dashboard/fleet-trends` → `health_trend` (proxy: `avg_health_score`, `tables_at_grade_df`) | trending down (fewer D/F-grade tables) |
 
 **Decision rule**: reliability gate 1-3 all green AND value gate 4-6 all trending positive →
@@ -767,6 +774,13 @@ forever. The volume looks alarming (2,058/hour) purely because ~20 multi-thousan
 runs from a days-old outage are all finalizing in the same rolling 24h window, dragging both
 GB-freed and success-rate down to look like an active new failure, when it is mostly historical
 cleanup finally completing.
+
+**Subsequent review correction (2026-09-20):** The preceding causal claim about GB-freed is
+not supported by the metric implementation. Historical failed-job finalization changes the
+rolling success denominator; byte impact is independently aggregated from successful audit
+receipts. Missing byte evidence can appear as zero. The newer user-reported 59,673 failures
+also require fresh attribution rather than assuming the same incident distribution. See
+[the critical-vitals action plan](CRYO_CRITICAL_VITALS_ACTION_PLAN_2026-09-20.md).
 
 **Read**: Two genuinely separate things are true at once: (1) the scheduler's memory growth is
 still a real, unsolved problem -- worth a proper fix (likely running the realized-value

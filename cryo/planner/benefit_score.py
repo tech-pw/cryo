@@ -51,6 +51,55 @@ DEFAULT_MIN_BENEFIT_SCORE = 1.0
 # references by the time each collection runs, so each pass stays cheap.
 _GC_COLLECT_EVERY_N_TABLES = 250
 
+# Recovery plan §3, 2026-09-20: bounds how many partitions one update_partition_benefit_scores
+# call scores per table per sweep. Replaces the old bare `.limit(10000)` (no ORDER BY, so no
+# guaranteed coverage and a different arbitrary subset scored each sweep for any table over
+# this size) with a real keyset cursor (TableStats.partition_coverage_cursor) -- a table with
+# more partitions than this makes resumable progress across multiple sweeps instead of the
+# same ~fraction of a huge table (confirmed live: one table at 397k partitions) being rescored
+# forever while the remainder is never reached.
+_MAX_PARTITIONS_PER_TABLE_SWEEP = 10000
+
+
+def _tz_aware(value: datetime | None) -> datetime | None:
+    """SQLite (the test backend) drops tzinfo on read-back even for TIMESTAMP(timezone=True)
+    columns, while Postgres (production) preserves it -- normalize before comparing two
+    datetimes that might have come from either backend, same pattern as run_finalizer.py's
+    grace-window comparison."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _get_partition_coverage_cursor(
+    session: Session, table_id: uuid.UUID, *, scan_at: datetime
+) -> int | None:
+    """Returns the saved cursor only if it was computed against this same scan_at -- a fresh
+    scan (new scan_at) invalidates any prior cursor rather than resuming a stale position
+    against different partition rows (recovery plan §3: "never mix generations silently")."""
+    stats = session.get(TableStats, table_id)
+    if stats is None or _tz_aware(stats.partition_coverage_cursor_scan_at) != _tz_aware(scan_at):
+        return None
+    return stats.partition_coverage_cursor
+
+
+def _set_partition_coverage_cursor(
+    session: Session, table_id: uuid.UUID, *, scan_at: datetime, cursor: int
+) -> None:
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        return
+    stats.partition_coverage_cursor = cursor
+    stats.partition_coverage_cursor_scan_at = scan_at
+
+
+def _clear_partition_coverage_cursor(session: Session, table_id: uuid.UUID) -> None:
+    stats = session.get(TableStats, table_id)
+    if stats is None:
+        return
+    stats.partition_coverage_cursor = None
+    stats.partition_coverage_cursor_scan_at = None
+
 
 class _SchedulingBaseline(TypedDict):
     name: str
@@ -479,18 +528,44 @@ def update_partition_benefit_scores(
     if not latest_scan:
         return 0
 
-    # Then get partitions from that scan
+    # Then get partitions from that scan, ordered by id for a stable, deterministic slice.
+    #
+    # Recovery plan §3, 2026-09-20: this used a bare .limit(10000) safety cap with no ORDER BY
+    # at all -- for any table over 10k partitions (confirmed live: a 397k-partition outlier),
+    # Postgres has no guaranteed ordering without one, so a *different arbitrary* ~10k-partition
+    # subset could get scored on each sweep, with zero coverage tracking and no guarantee the
+    # remaining partitions are ever reached. Ordering by id makes the slice deterministic
+    # (same partitions every sweep until update_partition_coverage below advances past them),
+    # and _PARTITION_COVERAGE_CURSOR_TABLE_ID lets one table's oversized backlog be worked
+    # through across multiple sweeps instead of the same ~2.5% of a 397k-partition table's
+    # partitions being rescored forever while the rest are never seen.
+    coverage_cursor = _get_partition_coverage_cursor(session, table_id, scan_at=latest_scan)
+    query = select(TablePartition).where(
+        TablePartition.table_id == table_id,
+        TablePartition.scan_at == latest_scan,
+    )
+    if coverage_cursor is not None:
+        query = query.where(TablePartition.id > coverage_cursor)
     partitions = session.scalars(
-        select(TablePartition)
-        .where(
-            TablePartition.table_id == table_id,
-            TablePartition.scan_at == latest_scan,
-        )
-        .limit(10000)  # safety cap
+        query.order_by(TablePartition.id.asc()).limit(_MAX_PARTITIONS_PER_TABLE_SWEEP)
     ).all()
 
     if not partitions:
+        # Either a genuinely small table with nothing new, or we've reached the end of this
+        # scan's partitions -- reset the cursor so the next sweep starts this table over from
+        # the beginning rather than staying permanently exhausted against a scan_at that will
+        # never produce more rows.
+        if coverage_cursor is not None:
+            _clear_partition_coverage_cursor(session, table_id)
         return 0
+
+    has_more = len(partitions) == _MAX_PARTITIONS_PER_TABLE_SWEEP
+    if has_more:
+        _set_partition_coverage_cursor(session, table_id, scan_at=latest_scan, cursor=partitions[-1].id)
+    elif coverage_cursor is not None:
+        # This was the final page for this scan -- clear the cursor so the next sweep starts
+        # this table's next scan fresh rather than skipping partitions before a stale cursor.
+        _clear_partition_coverage_cursor(session, table_id)
 
     from cryo.intelligence.autocomp_feedback import (
         realized_cost_multiplier,
@@ -655,20 +730,120 @@ def update_all_benefit_scores(
         # expunge right after so this table's (and its partitions') objects don't linger either.
         session.expunge_all()
         if index % _GC_COLLECT_EVERY_N_TABLES == 0:
-            # expunge_all() releases every object's *references*, but CPython doesn't
-            # necessarily reclaim their memory back to the OS immediately or ever (freed
-            # arenas can sit unused rather than being returned via malloc_trim) -- especially
-            # for cyclic garbage (e.g. SQLAlchemy ORM instances' back-references to their
-            # InstanceState/session), which needs a real GC pass, not just refcounting, to be
-            # collected at all. Confirmed live 2026-08-25: even with expunge_all() already
-            # firing correctly every table (verified via code review, not a regression), the
-            # scheduler pod's RSS still climbed to 8.9GB+ over a ~99min, 1.56M-partition sweep
-            # and was OOMKilled/evicted -- consistent with heap fragmentation across ~13k
-            # short-lived per-table object graphs rather than a true reference leak. Forcing a
-            # full collection periodically (not every table -- gc.collect() itself isn't free)
-            # trades a small amount of CPU for materially lower peak RSS across the sweep.
             gc.collect()
     return total
+
+
+# Recovery plan §3, 2026-09-20: bounds how many tables a single K8s-Job batch of the fleet sweep
+# processes before the runner commits progress and (if it hasn't run out of lease time) claims
+# the next batch. Deliberately much smaller than a full fleet (13k+ tables) -- this is what makes
+# a crash mid-sweep lose at most one batch's work instead of the whole sweep, and lets
+# cryo/analysis/runner.py checkpoint the coordinator's `cursor` (a Table.id) between batches.
+_DEFAULT_TABLES_PER_BATCH = 200
+
+
+@dataclass(frozen=True)
+class BenefitScoreBatchResult:
+    """One fleet-sweep batch's outcome -- see update_all_benefit_scores_batch."""
+
+    partitions_updated: int
+    tables_processed: int
+    next_cursor: uuid.UUID | None
+    done: bool
+    # Review finding F08: how many of this batch's tables actually got the expensive
+    # realized-value refresh -- the caller must subtract this from its own carried
+    # refresh_budget_remaining before the next batch call, or the fleet-wide budget silently
+    # resets to full every batch (the exact bug this field exists to let the caller avoid).
+    realized_value_refreshes_spent: int
+
+
+def update_all_benefit_scores_batch(
+    session: Session,
+    *,
+    cursor: uuid.UUID | None = None,
+    batch_size: int = _DEFAULT_TABLES_PER_BATCH,
+    refresh_realized_value: bool = True,
+    max_realized_value_refreshes: int | None = None,
+    refresh_budget_remaining: int | None = None,
+) -> BenefitScoreBatchResult:
+    """Fleet-level keyset-paginated counterpart to update_all_benefit_scores.
+
+    update_all_benefit_scores itself loads every active Table.id into memory before looping --
+    fine for the ids alone (13k UUIDs is small), but the *loop* over all of them is exactly the
+    long-lived, unbounded-duration work that OOMed/evicted the scheduler process (recovery plan
+    §3, "R2/R3 required together": a Job wrapper around this unbounded loop still risks running
+    past its own activeDeadlineSeconds with no checkpoint to resume from). This function instead
+    processes one bounded batch of tables (ordered by Table.id, keyset-paginated the same way
+    update_partition_benefit_scores paginates partitions) and returns a cursor the caller
+    (cryo/analysis/runner.py) persists via commit_progress after each batch, so a crash mid-fleet
+    -sweep resumes at the next table instead of restarting from table 1.
+
+    Real bug fixed here (review finding F08, 2026-09-20): max_realized_value_refreshes used to
+    be computed fresh from *this batch's* table_ids on every call -- for a ~13,000-table fleet
+    at 200 tables/batch (~65 batches/generation), that meant roughly 65 * 100 = 6,500 expensive
+    realized-value refreshes per fleet generation instead of the intended 100/generation, each
+    one a 90-day audit/stats/cost/query-history join (the exact query shape that caused the
+    2026-09-17 scheduler OOM this whole batching mechanism exists to prevent). The comment
+    claiming "roughly (batch_count * max_realized_value_refreshes) total... consistent with
+    existing per-sweep semantics" was simply wrong: that IS the multiplication bug, not a
+    justification for it.
+
+    `refresh_budget_remaining`, when provided, is the caller-tracked budget left for the
+    CURRENT FLEET GENERATION (not this batch) -- the caller (cryo/analysis/runner.py) persists
+    the returned `realized_value_refreshes_spent` via AnalysisTask.task_state across batches and
+    invocations, so the fleet-wide total spend is bounded by max_realized_value_refreshes (or
+    the default) exactly once per generation, regardless of how many batches it takes. When
+    omitted (the default), the OLD per-batch-fresh-budget behavior applies -- update_all_
+    benefit_scores (the non-batched, whole-fleet-in-one-call function) still calls the per-table
+    _stalest_realized_value_table_ids logic once for its entire run, so it never had this bug;
+    only the batched entrypoint needs the caller-tracked budget.
+    """
+    query = select(Table.id).where(Table.is_active.is_(True))
+    if cursor is not None:
+        query = query.where(Table.id > cursor)
+    table_ids = list(session.scalars(query.order_by(Table.id.asc()).limit(batch_size)).all())
+
+    if not table_ids:
+        return BenefitScoreBatchResult(
+            partitions_updated=0,
+            tables_processed=0,
+            next_cursor=None,
+            done=True,
+            realized_value_refreshes_spent=0,
+        )
+
+    default_budget = (
+        max_realized_value_refreshes
+        if max_realized_value_refreshes is not None
+        else _DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP
+    )
+    refresh_budget = (
+        max(0, refresh_budget_remaining) if refresh_budget_remaining is not None else default_budget
+    )
+    stale_table_ids = (
+        _stalest_realized_value_table_ids(session, table_ids, limit=refresh_budget)
+        if refresh_realized_value
+        else frozenset()
+    )
+
+    total = 0
+    for table_id in table_ids:
+        total += update_partition_benefit_scores(session, table_id)
+        update_table_effectiveness(
+            session, table_id, refresh_realized_value=table_id in stale_table_ids
+        )
+        session.expunge_all()
+    gc.collect()
+
+    last_id = table_ids[-1]
+    done = len(table_ids) < batch_size
+    return BenefitScoreBatchResult(
+        partitions_updated=total,
+        tables_processed=len(table_ids),
+        realized_value_refreshes_spent=len(stale_table_ids),
+        next_cursor=None if done else last_id,
+        done=done,
+    )
 
 
 # Bounds how many tables per sweep pay the expensive 90-day realized-value join (see
