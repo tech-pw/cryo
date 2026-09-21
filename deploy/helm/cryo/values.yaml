@@ -224,6 +224,14 @@ native:
     limitCpu: "64"
     limitMemory: "256Gi"
 
+# Recovery plan §2, 2026-09-20: RBAC + dedicated ServiceAccount for the bounded one-shot
+# analysis-task K8s Jobs (see cryo/analysis/runner.py, cryo/analysis/dispatch.py). The scheduler
+# dispatches these Jobs in place of the old in-process benefit-score-sweep thread; each Job runs
+# one batch of a durable analysis_tasks row and exits. Job resource sizing itself lives in
+# cryo/analysis/dispatch.py (not here) pending real R1 profiling numbers against the live fleet.
+analysis:
+  enabled: false
+
 spark:
   # Cryo-managed Spark-on-Kubernetes (cryo.engines.spark.k8s) -- no cloud Spark
   # service required. Intended as the SQL fallback for tables the native engine

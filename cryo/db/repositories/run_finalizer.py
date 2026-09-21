@@ -79,7 +79,32 @@ def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime 
     finalized = 0
     current = now or datetime.now(UTC)
     with session_factory() as session:
-        runs = session.scalars(select(MaintenanceRun).where(MaintenanceRun.status != "cancelled"))
+        # Recovery plan §4, 2026-09-20: `status != "cancelled"` re-selected every already-
+        # terminal run (succeeded/failed/partial) on every tick forever, not just genuinely open
+        # ones -- each one recomputed its full job-status breakdown for nothing, and (the real
+        # bug, not just wasted work) could still fall through to the `run.finished_at =
+        # datetime.now(UTC)` assignment below and silently overwrite an already-recorded
+        # completion time with the current tick's timestamp, corrupting run duration history.
+        # "running" is this table's actual open-run marker (see the column's server_default and
+        # the `if run.status != "running": run.status = "running"` still-in-grace branches
+        # below, which only ever move a run *into* "running", never a terminal run back out of
+        # it) -- restrict the query to it so a terminal run is never reconsidered at all.
+        #
+        # Review finding F09, 2026-09-20: restricting to status=="running" and null-guarding
+        # finished_at (both above) close the *sequential re-entry* case (a run genuinely already
+        # terminal from a prior tick), but do nothing about two finalize_open_runs invocations
+        # (two governor replicas, or overlapping ticks) racing the SAME still-open run
+        # concurrently -- both could load it with status="running"/finished_at=None before
+        # either commits, and Postgres's default read-committed isolation does not itself
+        # prevent that. FOR UPDATE SKIP LOCKED makes this finalizer instance's own selection
+        # exclusive: a run row already locked by a concurrent finalize_open_runs call for this
+        # same tick is skipped entirely rather than raced -- the other instance will finish
+        # deciding it (or not) on its own, but never both.
+        runs = session.scalars(
+            select(MaintenanceRun)
+            .where(MaintenanceRun.status == "running")
+            .with_for_update(skip_locked=True)
+        )
         for run in runs:
             rows = session.execute(
                 select(MaintenanceJob.status, func.count())
@@ -132,7 +157,13 @@ def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime 
                 run.status = "partial"
             else:
                 run.status = "failed"
-            run.finished_at = datetime.now(UTC)
+            # Immutable once set (recovery plan §4): even though the query above already
+            # excludes non-"running" runs, guard finished_at directly too -- a second
+            # finalize_open_runs invocation racing this one (two governor replicas, or a retry
+            # after a partial commit) must never get a chance to stamp a later timestamp over
+            # the run's real completion time.
+            if run.finished_at is None:
+                run.finished_at = current
             run.summary = {
                 "jobs_total": sum(counts.values()),
                 "succeeded": succeeded_count,

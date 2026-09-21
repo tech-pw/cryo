@@ -333,3 +333,50 @@ def test_native_cluster_capacity_and_fleet_rate_cap_also_get_the_longer_grace(
 
         session.refresh(run)
         assert run.status == "running", f"reason={reason} should still be in its capacity grace"
+
+
+def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(session, session_factory) -> None:
+    """Recovery plan §4, 2026-09-20: the old query (`status != "cancelled"`) re-selected every
+    already-terminal run (succeeded/failed/partial) on every tick forever, not just genuinely
+    open ones. Restricting to status == "running" means a terminal run is never even loaded, so
+    it can never be re-finalized or have its finished_at touched again."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session, status="succeeded")
+    original_finished_at = NOW - timedelta(days=3)
+    run.finished_at = original_finished_at
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    session.commit()
+
+    finalized = finalize_open_runs(session_factory, now=NOW)
+
+    assert finalized == 0
+    session.refresh(run)
+    assert run.status == "succeeded"
+    saved_finished_at = run.finished_at
+    if saved_finished_at is not None and saved_finished_at.tzinfo is None:
+        saved_finished_at = saved_finished_at.replace(tzinfo=UTC)
+    assert saved_finished_at == original_finished_at
+
+
+def test_finalize_open_runs_never_overwrites_an_already_set_finished_at(session, session_factory) -> None:
+    """Direct regression test for the actual data-corruption bug (not just the wasted-query
+    side of it): even in a hypothetical race where a "running" row somehow already carries a
+    finished_at (e.g. two finalize_open_runs invocations racing the same run), the second one
+    to observe it terminal must not stamp a later timestamp over the real completion time."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session, status="running")
+    original_finished_at = NOW - timedelta(minutes=5)
+    run.finished_at = original_finished_at
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "succeeded"
+    saved_finished_at = run.finished_at
+    if saved_finished_at is not None and saved_finished_at.tzinfo is None:
+        saved_finished_at = saved_finished_at.replace(tzinfo=UTC)
+    assert saved_finished_at == original_finished_at

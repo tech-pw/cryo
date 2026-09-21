@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -9,6 +10,15 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, aliased
 
 from cryo.db.models import Source, Table
+
+# Critical vitals action plan, 2026-09-20, P1: how long a table confirmed to have a missing
+# catalog metadata/manifest file (is_table_not_found_error) stays excluded from scheduling
+# before a bounded verification probe is allowed to re-check it. Deliberately much longer than
+# any scan/maintenance cadence -- live-confirmed the same table was re-admitted and re-failed
+# on essentially every wave with no repair in between (consecutive_scan_failures=60 observed on
+# one such table) -- but still finite, since a catalog re-registration or metadata-location fix
+# does happen and must not be permanently invisible to the fleet just because it once 404'd.
+_MISSING_METADATA_RETRY_AFTER = timedelta(hours=24)
 
 
 def normalize_maintenance_schema_names(names: Sequence[str] | None) -> list[str]:
@@ -173,3 +183,48 @@ def deactivate_tables_by_id(session: Session, table_ids: Sequence[uuid.UUID]) ->
         update(Table).where(Table.id.in_(table_ids)).values(is_active=False)
     )
     return int(result.rowcount or 0)
+
+
+def record_missing_metadata(
+    session: Session,
+    table_id: uuid.UUID,
+    *,
+    reason: str,
+    now: datetime | None = None,
+    retry_after: timedelta = _MISSING_METADATA_RETRY_AFTER,
+) -> None:
+    """Record that this table's registered location's metadata.json/manifest was confirmed
+    missing in S3 (caller must have already checked ``cryo.engines.base.is_table_not_found_
+    error(error)`` -- this function does no classification of its own) -- containment, NOT
+    deactivation. Sets a future retry-after so scheduling stops re-selecting this table for a
+    guaranteed-failing maintenance attempt every wave (see
+    cryo.scheduler.rules.tables_for_preset's is_active-style gate), while leaving is_active,
+    the row, and its history completely untouched -- fully reversible, no data/S3 changes,
+    matching the plan's "missing metadata is not permission to deactivate the table."
+
+    Idempotent and safe to call repeatedly: each call just re-arms the retry-after window from
+    ``now``, so a table that keeps failing the same way never becomes eligible again until a
+    verification probe (not built here -- see record's own "bounded verification probe" note in
+    the action plan) or a fresh catalog scan clears it via clear_missing_metadata.
+    """
+    current = now or datetime.now(UTC)
+    session.execute(
+        update(Table)
+        .where(Table.id == table_id)
+        .values(
+            maintenance_missing_metadata_reason=reason,
+            maintenance_retry_after=current + retry_after,
+        )
+    )
+
+
+def clear_missing_metadata(session: Session, table_id: uuid.UUID) -> None:
+    """Release the containment -- call this once a fresh scan/probe confirms the table's
+    metadata is readable again (e.g. the scanner successfully reads it, or a manual
+    verification probe finds the catalog pointer now resolves). Never called automatically by
+    record_missing_metadata itself; a caller must have positive evidence of repair first."""
+    session.execute(
+        update(Table)
+        .where(Table.id == table_id)
+        .values(maintenance_missing_metadata_reason=None, maintenance_retry_after=None)
+    )
