@@ -73,37 +73,50 @@ class ApiDb:
 @pytest.fixture()
 def api_db() -> Iterator[ApiDb]:
     ensure_test_jwt_secret()
-    _patch_sqlite_incompatible_defaults()
+    # Real bug fixed here, 2026-09-21: this file's own private _patch_sqlite_incompatible_
+    # defaults() below is a near-duplicate of conftest.py's _session_maker fixture's helper of
+    # the same name, but with no restore-on-teardown -- it permanently nulled server_default
+    # (e.g. gen_random_uuid()) on every shared model class, process-wide, for the rest of the
+    # test run the instant any test using this api_db fixture executed. Confirmed live: any
+    # later real-Postgres test inserting an IncidentCohort/AnalysisTask/etc. row (relying on
+    # Postgres to generate the UUID) then failed with a NULL identity key, purely because this
+    # fixture ran earlier in the same pytest process and never put the default back. Restoring
+    # it in `finally`, same pattern as conftest.py's own fixture, closes that leak here too.
+    restore_defaults = _patch_sqlite_incompatible_defaults()
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    with engine.begin() as connection:
-        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
-        Base.metadata.create_all(connection)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+            Base.metadata.create_all(connection)
 
-    session_factory = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        autocommit=False,
-        expire_on_commit=False,
-    )
-    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
-    event.listen(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
+        session_factory = sessionmaker(
+            bind=engine,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+        )
+        event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+        event.listen(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
 
-    def override_session() -> Iterator[Session]:
-        with session_factory() as session:
-            yield session
+        def override_session() -> Iterator[Session]:
+            with session_factory() as session:
+                yield session
 
-    app = create_app(Settings(_env_file=None, environment="test"))
-    app.dependency_overrides[get_tenant_session] = override_session
-    with TestClient(app) as client:
-        yield ApiDb(client=client, session_factory=session_factory)
+        app = create_app(Settings(_env_file=None, environment="test"))
+        app.dependency_overrides[get_tenant_session] = override_session
+        with TestClient(app) as client:
+            yield ApiDb(client=client, session_factory=session_factory)
 
-    event.remove(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
-    event.remove(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
-    engine.dispose()
+        event.remove(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+        event.remove(session_factory, "before_flush", _assign_missing_autoincrement_primary_keys)
+        engine.dispose()
+    finally:
+        for column, original_default in restore_defaults:
+            column.server_default = original_default
 
 
 _PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
@@ -1259,11 +1272,17 @@ def _assign_missing_uuid_primary_keys(
             item.id = uuid.uuid4()
 
 
-def _patch_sqlite_incompatible_defaults() -> None:
+def _patch_sqlite_incompatible_defaults() -> list[tuple[object, object]]:
+    """Clears server_default on columns SQLite can't evaluate -- see the api_db fixture's own
+    comment for the restore-on-teardown bug this used to have (fixed 2026-09-21). Returns the
+    original (column, server_default) pairs so the caller can put them back."""
+    originals: list[tuple[object, object]] = []
     for table in Base.metadata.tables.values():
         for column in table.columns:
             if column.server_default is None:
                 continue
             default = str(column.server_default.arg)
             if "::jsonb" in default or "gen_random_uuid" in default:
+                originals.append((column, column.server_default))
                 column.server_default = None
+    return originals
