@@ -48,7 +48,7 @@ def build_scheduled_run(
     now: datetime | None = None,
 ) -> ScheduledRunDraft:
     current = now or datetime.now(UTC)
-    candidates = tables_for_preset(preset, tables, presets, rules, assignments)
+    candidates = tables_for_preset(preset, tables, presets, rules, assignments, now=current)
     candidates = drop_recently_maintained(candidates, preset)
     candidates = apply_priority_order(candidates)
     if budget_hint is not None:

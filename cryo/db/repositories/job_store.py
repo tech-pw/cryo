@@ -135,6 +135,18 @@ class SQLJobStore:
             table.last_scan_error_at = datetime.now(UTC)
             session.commit()
 
+    def record_missing_metadata(self, table_id: str, reason: str) -> None:
+        """Critical vitals action plan, 2026-09-20: thin wrapper delegating to
+        cryo.db.repositories.sources.record_missing_metadata -- see that function's docstring
+        for the full rationale (containment for a table whose registered location's metadata
+        404s in S3 but doesn't fit deactivate_orphaned_evolving_catalog_entries' narrower
+        automated heuristic)."""
+        from cryo.db.repositories.sources import record_missing_metadata
+
+        with self._session_factory() as session:
+            record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
+            session.commit()
+
     def set_force_admit(self, job_id: str, value: bool) -> None:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))

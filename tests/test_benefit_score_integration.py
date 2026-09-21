@@ -16,6 +16,7 @@ from cryo.planner.benefit_score import (
     get_compaction_effectiveness_stats,
     get_top_compaction_candidates,
     update_all_benefit_scores,
+    update_all_benefit_scores_batch,
     update_partition_benefit_scores,
     update_table_effectiveness,
 )
@@ -972,7 +973,10 @@ def test_stalest_realized_value_table_ids_ranks_correctly_across_multiple_batche
     than one batch (2.5x _STALENESS_SCAN_BATCH_SIZE tables) and confirms the ranking is still
     correct across the batch boundary -- the stalest tables must win regardless of which batch
     they land in, not just within their own batch."""
-    from cryo.planner.benefit_score import _STALENESS_SCAN_BATCH_SIZE, _stalest_realized_value_table_ids
+    from cryo.planner.benefit_score import (
+        _STALENESS_SCAN_BATCH_SIZE,
+        _stalest_realized_value_table_ids,
+    )
 
     table_count = int(_STALENESS_SCAN_BATCH_SIZE * 2.5)
     tables = [
@@ -1009,6 +1013,176 @@ def test_stalest_realized_value_table_ids_ranks_correctly_across_multiple_batche
 
     # The 5 stalest are the lowest-index tables (staggered oldest-first).
     assert stalest_ids == {tables[i].id for i in range(5)}
+
+
+def test_update_partition_benefit_scores_resumes_via_coverage_cursor_across_sweeps(
+    session, monkeypatch
+):
+    """Recovery plan §3, 2026-09-20: a table with more partitions than one sweep's page size
+    must make real forward progress across multiple sweeps (via TableStats.
+    partition_coverage_cursor) instead of the old bare `.limit(N)` silently scoring the same
+    arbitrary subset forever. Uses a small monkeypatched page size so this test doesn't need
+    to seed 10,000+ real rows to exercise the same logic path."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    monkeypatch.setattr(benefit_score_module, "_MAX_PARTITIONS_PER_TABLE_SWEEP", 2)
+
+    table = _seed_table(session, schema_name="test", table_name="paged_table")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=1.0,
+        )
+    )
+    scan_at = datetime.now(UTC)
+    partitions = [
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": f"2024-01-{i:02d}"},
+            partition_fields=[],
+            partition_value=f"2024-01-{i:02d}",
+            partition_size_gb=1.0,
+            small_files_in_partition_count=10,
+            scan_at=scan_at,
+        )
+        for i in range(1, 6)  # 5 partitions, page size 2 -> 3 sweeps to cover them all
+    ]
+    session.add_all(partitions)
+    session.commit()
+
+    seen_partition_ids: set[int] = set()
+
+    # Sweep 1: first page (2 of 5).
+    updated_1 = update_partition_benefit_scores(session, table.id)
+    assert updated_1 == 2
+    stats = session.get(TableStats, table.id)
+    assert stats.partition_coverage_cursor is not None
+    assert stats.partition_coverage_cursor_scan_at.replace(tzinfo=UTC) == scan_at
+    seen_partition_ids.update(
+        p.id
+        for p in session.scalars(
+            select(TablePartition).where(
+                TablePartition.table_id == table.id,
+                TablePartition.compaction_benefit_score.isnot(None),
+            )
+        ).all()
+    )
+    assert len(seen_partition_ids) == 2
+
+    # Sweep 2: second page (next 2 of 5) -- must not re-cover the first page's ids.
+    updated_2 = update_partition_benefit_scores(session, table.id)
+    assert updated_2 == 2
+    newly_scored = {
+        p.id
+        for p in session.scalars(
+            select(TablePartition).where(
+                TablePartition.table_id == table.id,
+                TablePartition.compaction_benefit_score.isnot(None),
+            )
+        ).all()
+    }
+    assert len(newly_scored) == 4  # 2 + 2, no overlap
+    assert seen_partition_ids <= newly_scored
+
+    # Sweep 3: final page (last 1 of 5) -- cursor must clear once the end is reached.
+    updated_3 = update_partition_benefit_scores(session, table.id)
+    assert updated_3 == 1
+    stats_after = session.get(TableStats, table.id)
+    assert stats_after.partition_coverage_cursor is None
+    assert stats_after.partition_coverage_cursor_scan_at is None
+
+    all_scored = session.scalars(
+        select(TablePartition).where(
+            TablePartition.table_id == table.id,
+            TablePartition.compaction_benefit_score.isnot(None),
+        )
+    ).all()
+    assert len(all_scored) == 5  # every partition eventually covered across the 3 sweeps
+
+    # Sweep 4: with the cursor cleared, a fresh sweep against the same scan_at starts over
+    # from the beginning (this is the documented "reached the end, reset" behavior) rather
+    # than permanently starving this table of future rescoring.
+    updated_4 = update_partition_benefit_scores(session, table.id)
+    assert updated_4 == 2
+
+
+def test_update_partition_benefit_scores_ignores_a_cursor_from_a_stale_scan(session, monkeypatch):
+    """A cursor computed against an old scan_at must never be reused against a newer scan's
+    partition rows -- recovery plan §3's 'never mix generations silently'."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    monkeypatch.setattr(benefit_score_module, "_MAX_PARTITIONS_PER_TABLE_SWEEP", 2)
+
+    table = _seed_table(session, schema_name="test", table_name="rescanned_table")
+    old_scan_at = datetime.now(UTC) - timedelta(hours=1)
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=old_scan_at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=1.0,
+        )
+    )
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": f"2024-01-{i:02d}"},
+                partition_fields=[],
+                partition_value=f"2024-01-{i:02d}",
+                partition_size_gb=1.0,
+                small_files_in_partition_count=10,
+                scan_at=old_scan_at,
+            )
+            for i in range(1, 4)
+        ]
+    )
+    session.commit()
+
+    # First sweep against the old scan leaves a cursor set for old_scan_at.
+    update_partition_benefit_scores(session, table.id)
+    stats = session.get(TableStats, table.id)
+    assert stats.partition_coverage_cursor is not None
+    assert stats.partition_coverage_cursor_scan_at.replace(tzinfo=UTC) == old_scan_at
+
+    # A fresh scan lands with a new scan_at and entirely new partition rows.
+    new_scan_at = datetime.now(UTC)
+    stats.scan_at = new_scan_at
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-02-01"},
+            partition_fields=[],
+            partition_value="2024-02-01",
+            partition_size_gb=1.0,
+            small_files_in_partition_count=10,
+            scan_at=new_scan_at,
+        )
+    )
+    session.commit()
+
+    # The next sweep must score against the NEW scan's partition (ignoring the stale cursor),
+    # not silently apply an old-scan cursor value to the new scan's unrelated partition ids.
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 1
+    new_partition = session.scalars(
+        select(TablePartition).where(
+            TablePartition.table_id == table.id, TablePartition.scan_at == new_scan_at
+        )
+    ).first()
+    assert new_partition.compaction_benefit_score is not None
 
 
 def test_get_top_compaction_candidates(session):
@@ -1267,4 +1441,154 @@ def test_benefit_score_prevents_premature_compaction(session):
         min_score=1.0,
         limit=10,
     )
-    assert len(candidates) == 0
+    assert candidates == []
+
+
+def _seed_table_with_one_partition(session, *, table_name: str) -> Table:
+    table = _seed_table(session, schema_name="test", table_name=table_name)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+    return table
+
+
+def test_update_all_benefit_scores_batch_processes_one_bounded_batch(session):
+    """Recovery plan §3's fleet-level keyset pagination: a batch smaller than the fleet must
+    report done=False and a next_cursor pointing at the last table it processed, in Table.id
+    order -- this is the contract cryo/analysis/runner.py relies on to resume mid-fleet."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"batch_{i}") for i in range(5)],
+        key=lambda t: t.id,
+    )
+
+    result = update_all_benefit_scores_batch(session, batch_size=2)
+
+    assert result.tables_processed == 2
+    assert result.partitions_updated == 2
+    assert result.done is False
+    assert result.next_cursor == tables[1].id
+
+
+def test_update_all_benefit_scores_batch_resumes_from_cursor_and_terminates(session):
+    """A full walk of batch_size=2 over 5 tables must cover every table exactly once and end
+    with done=True, next_cursor=None -- the resumable-fleet-sweep analogue of the per-table
+    partition pagination tests."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"resume_{i}") for i in range(5)],
+        key=lambda t: t.id,
+    )
+
+    seen_ids: list = []
+    cursor = None
+    for _ in range(10):  # generous upper bound; real loop stops via `done`
+        result = update_all_benefit_scores_batch(session, cursor=cursor, batch_size=2)
+        if result.tables_processed == 0:
+            break
+        seen_ids.append(cursor)
+        cursor = result.next_cursor
+        if result.done:
+            break
+
+    all_partitions = session.scalars(select(TablePartition)).all()
+    assert len(all_partitions) == 5
+    for partition in all_partitions:
+        assert partition.compaction_benefit_score is not None
+    assert cursor is None  # final batch cleared the cursor
+    assert {t.id for t in tables} == {p.table_id for p in all_partitions}
+
+
+def test_update_all_benefit_scores_batch_honors_a_caller_tracked_generation_wide_budget(session):
+    """Review finding F08: without refresh_budget_remaining, a multi-batch fleet sweep spends
+    up to max_realized_value_refreshes PER BATCH, not once per generation -- 6 tables at
+    batch_size=2 with a nominal budget of 2 would (bug, proven below by re-running WITHOUT
+    tracking the budget) spend up to 2 refreshes/batch * 3 batches = 6 total, i.e. the entire
+    fleet, when the intended cap was 2 for the whole generation. Tracking
+    refresh_budget_remaining across calls (as cryo/analysis/runner.py now does via
+    AnalysisTask.task_state) must cap the total spend across all batches at the configured
+    budget instead."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"budget_{i}") for i in range(6)],
+        key=lambda t: t.id,
+    )
+    # A TableStats row with no autocomp_realized_value at all ranks "never refreshed" --
+    # stalest of all -- so every table is an equally eligible refresh candidate and the budget
+    # is the only thing limiting how many actually get refresh_realized_value=True this
+    # generation. (_stalest_realized_value_table_ids only considers table_ids that HAVE a
+    # TableStats row at all -- a table with none is silently excluded from refresh
+    # consideration entirely, a separate, real gap not in scope for this test.)
+    for table in tables:
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw={},
+            )
+        )
+    session.commit()
+
+    total_budget = 2
+
+    def _run_full_sweep(*, track_budget: bool) -> int:
+        remaining = total_budget
+        cursor = None
+        total_spent = 0
+        for _ in range(10):
+            kwargs = (
+                {"refresh_budget_remaining": remaining}
+                if track_budget
+                else {"max_realized_value_refreshes": total_budget}
+            )
+            result = update_all_benefit_scores_batch(session, cursor=cursor, batch_size=2, **kwargs)
+            if result.tables_processed == 0:
+                break
+            total_spent += result.realized_value_refreshes_spent
+            remaining = max(0, remaining - result.realized_value_refreshes_spent)
+            cursor = result.next_cursor
+            if result.done:
+                break
+        return total_spent
+
+    untracked_spend = _run_full_sweep(track_budget=False)
+    assert untracked_spend > total_budget, (
+        "sanity check: per-batch-fresh budget (the pre-fix behavior) must actually exceed the "
+        "intended generation-wide total across multiple batches, or this test cannot "
+        "distinguish the fix from a no-op"
+    )
+
+    tracked_spend = _run_full_sweep(track_budget=True)
+    assert tracked_spend <= total_budget, (
+        f"generation-wide spend ({tracked_spend}) must never exceed the tracked budget "
+        f"({total_budget}), even across {len(tables)} tables' worth of batches"
+    )
+
+
+def test_update_all_benefit_scores_batch_returns_done_immediately_past_the_fleet_end(session):
+    """A cursor already past every table's id (e.g. the fleet shrank, or this is the batch right
+    after the last real one) must report done=True with zero tables processed, not raise or
+    loop -- this is what lets the runner treat 'no more work' as a clean success."""
+    table = _seed_table_with_one_partition(session, table_name="only_table")
+
+    import uuid as _uuid
+
+    far_cursor = _uuid.UUID(int=int(table.id.int) + 1) if table.id.int < 2**127 else table.id
+    result = update_all_benefit_scores_batch(session, cursor=far_cursor)
+
+    assert result.tables_processed == 0
+    assert result.done is True
+    assert result.next_cursor is None

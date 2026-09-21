@@ -512,6 +512,18 @@ class Settings(BaseSettings):
         ge=1,
         description="Hours between AutoComp benefit score recalculations.",
     )
+    benefit_score_sweep_via_k8s_jobs: bool = Field(
+        default=False,
+        description=(
+            "Recovery plan §2/§8, 2026-09-20: when true, BenefitScoreUpdaterRunner's tick "
+            "ensures a durable analysis_tasks row is due and dispatches a bounded K8s Job "
+            "(cryo.analysis.dispatch) to process it, instead of running the multi-hour sweep "
+            "in-process (the scheduler-OOM root cause this whole mechanism replaces). Defaults "
+            "to False so upgrading this chart does not silently cut over production before the "
+            "plan's required shadow-run/burn-in gate passes -- flip only after analysis.enabled "
+            "is deployed and the runner has been observed clean across several real cycles."
+        ),
+    )
     evolving_catalog_cleanup_interval_hours: int = Field(
         default=6,
         ge=1,
@@ -539,6 +551,28 @@ class Settings(BaseSettings):
             "of the secondary queries). Moved to a periodic CostModelRefreshRunner daemon, "
             "matching the same fix shape as evolving_catalog_cleanup_interval_hours above."
         ),
+    )
+    trino_hot_preset_repin_interval_hours: int = Field(
+        default=24,
+        ge=1,
+        description=(
+            "Hours between repins of the daily top-N-by-Trino-query-frequency maintenance "
+            "preset (cryo.scheduler.trino_hot_preset.repin_trino_hot_tables) -- daily by "
+            "default, matching its purpose: concentrate maintenance effort on whichever tables "
+            "are actually driving Trino scan cost right now, re-evaluated once a day."
+        ),
+    )
+    trino_hot_preset_name: str = Field(
+        default="daily-trino-hot-tables",
+        description=(
+            "Name of the Preset (see scripts/seed_trino_hot_preset.py) that "
+            "TrinoHotPresetRunner repins daily -- must match an existing, seeded Preset.name."
+        ),
+    )
+    trino_hot_preset_table_limit: int = Field(
+        default=500,
+        ge=1,
+        description="How many top-Trino-query-frequency tables to pin to the preset each repin.",
     )
 
     # API protection

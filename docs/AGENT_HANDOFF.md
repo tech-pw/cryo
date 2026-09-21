@@ -1,5 +1,33 @@
 # Cryo — Agent Handoff Notes
 
+**Latest incident action plan (2026-09-20):**
+[Critical vitals recovery plan](CRYO_CRITICAL_VITALS_ACTION_PLAN_2026-09-20.md) addresses the
+user-reported 12/100 snapshot: 59,673 failed jobs, two stuck runs, scan gaps and 4.7x unused/used
+allocation. Observation/billing timestamps still need confirmation. Trace failures and missing
+impact evidence independently; no live investigation or deployment is claimed by this plan.
+
+**Latest recovery review (2026-09-20, after reported 146-test run):**
+[Follow-up review and closure plan](CRYO_RECOVERY_FOLLOWUP_REVIEW_2026-09-20.md) supersedes the
+initial finding statuses. F01 entrypoint wiring is repaired; F03/F04/F05/F08/F09/F10 still have
+specific correctness gaps, and the original F12 database-isolation requirement remains open.
+F02/F06/F07 can receive meaningful offline tests before staging validation. Independently
+reran 91 targeted tests successfully; did not rerun unsafe configured-database tests. Keep
+analysis Jobs disabled. No deployment was performed by either review.
+
+**R1–R6 implementation review (2026-09-20):** Read
+[the review and next-step plan](CRYO_R1_R6_REVIEW_AND_NEXT_STEPS_2026-09-20.md) before enabling
+analysis Jobs. The current working tree has rollout blockers in production entrypoint wiring,
+Job runtime configuration, resumability, fencing, coverage, and impact reporting. The review
+records 69 passing targeted tests, remaining validation gaps, and bounded R7/R8 deliverables.
+Nothing was deployed by this review; keep the Job switch disabled pending those repairs.
+
+**Permanent recovery priority (2026-09-20):** Read
+[CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md](CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md).
+It specifies bounded resumable analysis Jobs, idempotent run finalization, legacy incident
+reconciliation, independent diagnosis of zero GB freed, and honest metric/burn-in gates.
+Evidence baseline is `9e015aff`; implementation now exists in the working tree, but the review
+above supersedes any assumption that R1–R6 are complete or ready to enable.
+
 **Scanner autoscaling deployed (2026-09-18, Helm revision 193):** Production values now enable
 KEDA at 1–8 scanner replicas. Added its missing metric Service, fixed Helm replica ownership
 for either autoscaler, and bounded HPA scale-down (300s stabilization, one pod/minute).
