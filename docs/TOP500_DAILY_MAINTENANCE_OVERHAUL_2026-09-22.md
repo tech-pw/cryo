@@ -219,7 +219,46 @@ takes `--disabled` so it can be staged, but the ordering below is not optional.
 
 ---
 
-## 6. What this does not fix
+## 6. Rollout outcome (2026-09-22, complete)
+
+Deployed as digest `sha256:6078408e…`, Helm revision 196, migration `20260922_0055` applied by
+the `pre-upgrade` hook before any pod rolled. All 14 pods verified on the new digest, no
+exceptions in api/worker/governor/scheduler. Final state: **one enabled preset**
+(`daily-trino-hot-tables`, `0 19 * * *`), **500 tables pinned**, 13 workers heartbeating,
+`cryo:admitted` depth 0. First fire is 00:30 IST.
+
+Three things surfaced during rollout that were not visible beforehand.
+
+**`cryo:admitted` held 17,760 stale entries.** Postgres reported zero admitted jobs, but the
+Redis claim list still held 17,760 job IDs — 17,731 `failed`, 25 `succeeded`, and 2 genuinely
+`running` continuations. These are tombstones from the 2026-09-21 spiral: the old reaper marked
+jobs FAILED in Postgres and released their locks but never removed them from the list, because
+on a bare `LPOP` list nothing owns removal. The new reaper cannot recreate them (it skips
+anything still `awaiting_claim`), so this was a one-time cleanup — rebuilt atomically via a Lua
+`DEL` + `RPUSH` preserving the 2 live continuations.
+
+This mattered immediately: `_worker_drain_headroom()` reads `admitted_depth()`, so 17,760 would
+have computed as `max(0, 13×3 − 17760) = 0` and blocked fleet-wide admission indefinitely. It is
+also the sharpest available evidence for replacing the list with a Redis Streams consumer group
+— see §7.
+
+**20 of the top 500 were pinned to now-disabled presets.** The repin protects operator pins by
+design, so it left them and pinned only 480. But those pins pointed at `spark-medium`,
+`spark-large`, `default-native-deep`, and `native-deep-with-delete-cleanup`, all disabled in
+step 1 — so the protection was guarding a choice that no longer led anywhere, and 20 hot tables
+would have received no maintenance from any preset. Cleared those assignments and re-ran the
+repin to reach 500. Worth generalizing: the operator-pin guard should treat a pin to a disabled
+preset as vacant.
+
+**The deploy script's digest verification raced pod termination.** It reported six workers on
+the old digest; they were mid-drain and gone moments later. `kubectl rollout status` returns
+once the new ReplicaSet is available, not once the old one is empty, and workers hold a long
+graceful shutdown to finish in-flight maintenance. Fixed by skipping pods with a
+`deletionTimestamp`.
+
+---
+
+## 7. What this does not fix
 
 - **The 2,250 tables unscanned in 168h.** Scan freshness is a separate path (`cryo-scanner-worker`,
   HPA 3–8) and is untouched here. Stale stats degrade planner decisions for the hot cohort too.
