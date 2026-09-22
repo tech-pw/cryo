@@ -239,15 +239,6 @@ class Settings(BaseSettings):
             "queue is."
         ),
     )
-    max_dispatch_attempts: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "How many times a job dropped by the at-most-once admit handoff may be returned to "
-            "the pending queue before it is failed for real. Bounds the requeue loop so a job "
-            "that is genuinely poisonous still terminates."
-        ),
-    )
     worker_dispatch_backlog_per_replica: int = Field(
         default=3,
         ge=1,
@@ -1137,6 +1128,23 @@ class Settings(BaseSettings):
         default=200,
         ge=10,
         description="Minimum shadow decisions before suggesting ROI enforcement.",
+    )
+    governor_bandit_tuning_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, a Thompson-sampling bandit may override the admission config an "
+            "operator set on a destination (per_replica_cap, high_load_ratio/fraction, "
+            "default_cooldown_hours, min_benefit_score) and learning signals are recorded on "
+            "every admission and deferral. Off by default because both halves were costly: "
+            "admission became non-deterministic -- the concurrency cap was resampled every "
+            "wave, so the same fleet state could admit a different amount each time, which "
+            "makes the governor's behaviour unreproducible exactly when it is being debugged "
+            "-- and recording did a load-modify-save of one Postgres row per job, so a wave "
+            "deferring 800 jobs meant ~1,600 round trips and 800 commits contending on that "
+            "single row, plus a read-modify-write of a node-local JSON file per admission "
+            "that multiple governor replicas cannot keep consistent. The knobs it tunes are "
+            "ones the operator already sets explicitly per destination."
+        ),
     )
     governor_shadow_sample_rate: int = Field(
         default=20,

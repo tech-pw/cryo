@@ -851,19 +851,9 @@ class MaintenanceJob(Base):
     # reconcile_stuck_admitted_jobs (queue/reconcile.py) can tell "just admitted this wave" from
     # "admitted N hours ago and never dispatched" -- neither started_at nor finished_at cover
     # this: started_at is only set on RUNNING, and finished_at is cleared (not set) on ADMITTED.
-    # Root cause this exists for, live-confirmed 2026-09-08: the Worker's admit handoff
-    # (RedisMaintenanceQueue.admit -> rpush cryo:admitted, claim_admitted -> lpop, no ack/
-    # visibility-timeout) is at-most-once -- a worker that claims a job_id and dies before
-    # reaching mark_running() drops it from the Redis list forever, leaving the DB row ADMITTED
-    # with no engine_ref and no owner, permanently invisible to every other reconciliation pass.
+    # Only the "the queue lost this entirely" case is left (a Redis restart without
+    # persistence); a worker dying mid-handoff is now recovered by the consumer group itself.
     admitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    # How many times this job was admitted and then lost by that same at-most-once handoff.
-    # reconcile_stuck_admitted_jobs returns a dropped job to QUEUED rather than failing it, so
-    # the work is retried instead of discarded; this bounds that loop (max_dispatch_attempts)
-    # so a job that keeps getting dropped still reaches a terminal state instead of cycling.
-    dispatch_attempts: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)

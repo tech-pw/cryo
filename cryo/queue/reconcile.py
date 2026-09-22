@@ -235,9 +235,6 @@ def reconcile_stale_running_jobs(
     return reaped
 
 
-_STUCK_ADMITTED_AFTER_SECONDS = 15 * 60
-
-
 def reconcile_stuck_admitted_jobs(
     store: JobStore,
     queue: MaintenanceQueue,
@@ -246,118 +243,64 @@ def reconcile_stuck_admitted_jobs(
     now: datetime | None = None,
     stuck_after_seconds: int | None = None,
 ) -> int:
-    """Fail jobs stuck in ADMITTED past `stuck_after_seconds` with no engine_ref and free
-    their in-flight slot and table lock.
+    """Return ADMITTED jobs to QUEUED when the queue has no record of them at all.
 
-    Root cause, live-confirmed 2026-09-08: the Worker's admit handoff
-    (RedisMaintenanceQueue.admit -> rpush cryo:admitted, claim_admitted -> lpop) is
-    at-most-once, with no ack or visibility timeout. A worker that pops a job_id off
-    cryo:admitted and dies (OOM, node eviction, rollout) before reaching mark_running() drops
-    it from the Redis list forever: the DB row stays ADMITTED, its Redis hash entry
-    independently expires/gets evicted, and no engine_ref or dispatch_id is ever set. None of
-    the existing reconciliation passes catch this -- reconcile_queued_jobs/
-    reconcile_deferred_jobs/reconcile_stale_running_jobs key off QUEUED/DEFERRED/RUNNING, never
-    ADMITTED. Confirmed live: 165 jobs fleet-wide stuck exactly this way, all on one
-    destination, ages spanning 26.6h down to 1.4h, correlated with governor/worker pod
-    restarts. Same failure shape (and same fix pattern) as reconcile_stale_running_jobs's own
-    RUNNING-side version of this bug.
+    Since admitted jobs travel over a Redis Streams consumer group, a worker dying between
+    claiming a job and starting it is handled by the queue itself: the entry stays in the
+    group's pending list and another worker reclaims it. What this pass still covers is the
+    one case the queue cannot repair from the inside -- the entry being gone outright, as
+    after a Redis restart without persistence. The DB row says ADMITTED, the in-flight slot
+    is still held, and nothing in Redis will ever produce that job again.
 
-    engine_ref is the discriminator, not just age: a job legitimately mid-dispatch (native k8s
-    admit already created its Job, about to mark_status(RUNNING, engine_ref=...)) still reads
-    ADMITTED for a brief window but will have -- or is about to have -- a real engine_ref. Only
-    a job with no engine_ref at all past the grace window has no live signal anything is
-    happening for it.
-
-    Second discriminator, added 2026-09-22: still being on the claim list. Age plus missing
-    engine_ref does NOT mean a job was dropped -- it equally describes a job queued behind
-    more work than the worker fleet can drain in 15 minutes, which is the normal state of any
-    run larger than (worker replicas x 900s / job duration). Failing those was the single
-    largest source of recorded failures in the fleet: live 2026-09-21, 5,952 of one run's
-    6,117 jobs were failed as `stuck_admitted_no_dispatch` while workers were healthy and
-    still working through the same list, and the freed in-flight slots let the governor admit
-    the next batch straight into the same reaper. queue.awaiting_claim() separates the two:
-    absent from the list means genuinely lost (requeue it), present means simply waiting
-    (leave it alone).
-
-    A lost job is returned to QUEUED rather than FAILED, so the work is retried instead of
-    discarded, bounded by max_dispatch_attempts so a job that keeps getting dropped still
-    reaches a terminal state.
+    `queue.awaiting_claim()` is an exact test now rather than a heuristic, so there is no
+    guessing left here. Before Streams this pass had to infer loss from age plus a missing
+    engine_ref, which also describes a job merely queued behind more work than the fleet can
+    drain -- and failing those was the single largest source of recorded failures in the
+    fleet: live 2026-09-21, 5,952 of one run's 6,117 jobs were failed as
+    `stuck_admitted_no_dispatch` while workers were healthy and still working through the very
+    same list. The age window and engine_ref check are kept only to stay clear of jobs
+    mid-dispatch, whose stream entry is legitimately already acknowledged.
     """
     list_admitted = getattr(store, "list_admitted_jobs", None)
-    if not callable(list_admitted):
+    awaiting_claim = getattr(queue, "awaiting_claim", None)
+    return_to_pending = getattr(queue, "return_to_pending", None)
+    if not callable(list_admitted) or not callable(awaiting_claim):
+        return 0
+    if not callable(return_to_pending):
         return 0
 
     current = now or datetime.now(UTC)
-    settings = get_settings()
-    max_attempts = settings.max_dispatch_attempts
     if stuck_after_seconds is None:
-        stuck_after_seconds = settings.stuck_admitted_after_seconds
-    awaiting_claim = getattr(queue, "awaiting_claim", None)
-    return_to_pending = getattr(queue, "return_to_pending", None)
+        stuck_after_seconds = get_settings().stuck_admitted_after_seconds
     requeued = 0
-    failed = 0
-    waiting = 0
     for job in list_admitted():
         if job.engine_ref:
             continue
         admitted_at = job.admitted_at
         if admitted_at is None:
-            # Pre-migration row (admitted before admitted_at existed) or a store that doesn't
-            # stamp it -- can't tell "just admitted" from "stuck for days" without it, so skip
-            # rather than risk failing a job that's actually fine. Age out naturally once every
-            # currently-admitted job has gone through mark_status(ADMITTED) again.
             continue
         admitted_at = admitted_at if admitted_at.tzinfo else admitted_at.replace(tzinfo=UTC)
         if (current - admitted_at).total_seconds() <= stuck_after_seconds:
             continue
-        if callable(awaiting_claim) and awaiting_claim(job.id):
-            waiting += 1
+        if awaiting_claim(job.id):
             continue
 
-        attempts = (getattr(job, "dispatch_attempts", 0) or 0) + 1
-        if callable(return_to_pending) and attempts < max_attempts:
-            record_attempt = getattr(store, "record_dispatch_attempt", None)
-            if callable(record_attempt):
-                record_attempt(job.id, attempts)
-            store.mark_status(job.id, JobStatus.QUEUED)
-            return_to_pending(job.id, job.destination_id, fifo_priority(admitted_at))
-            lock_store.release_table_lock(job.table_id, job.id)
-            requeued += 1
-            logger.warning(
-                "Requeued undispatched job %s (table %s, destination %s): admitted %s, dropped "
-                "from the claim queue without an engine_ref (attempt %d/%d)",
-                job.id,
-                job.table_id,
-                job.destination_id,
-                admitted_at.isoformat(),
-                attempts,
-                max_attempts,
-            )
-            continue
-
-        store.mark_status(job.id, JobStatus.FAILED, error="stuck_admitted_no_dispatch")
-        queue.complete(job.id, JobStatus.FAILED)
-        queue.cancel_pending(job.id, job.destination_id)
+        store.mark_status(job.id, JobStatus.QUEUED)
+        return_to_pending(job.id, job.destination_id, fifo_priority(admitted_at))
         lock_store.release_table_lock(job.table_id, job.id)
-        failed += 1
+        requeued += 1
         logger.warning(
-            "Failed undispatched job %s (table %s, destination %s): admitted since %s, dropped "
-            "from the claim queue %d time(s) with no engine_ref",
+            "Requeued job %s (table %s, destination %s): admitted %s but the queue has no "
+            "record of it",
             job.id,
             job.table_id,
             job.destination_id,
             admitted_at.isoformat(),
-            attempts,
         )
 
-    if requeued or failed:
-        logger.warning(
-            "Undispatched ADMITTED jobs: %d requeued, %d failed, %d still awaiting a worker",
-            requeued,
-            failed,
-            waiting,
-        )
-    return requeued + failed
+    if requeued:
+        logger.warning("Requeued %d admitted job(s) the queue had lost", requeued)
+    return requeued
 
 
 def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:

@@ -10,6 +10,14 @@ spec:
   suspend: {{ .Values.scanner.suspend | default false }}
   jobTemplate:
     spec:
+      # Indexed, so each pod gets a distinct JOB_COMPLETION_INDEX to pass as --chunk-id.
+      # Before 2026-09-22 this ran a single pod with no arguments, so cryo.scanner.run fell
+      # back to its defaults (chunk_id=0, scan_num_chunks=4) and every run silently discarded
+      # three quarters of the fleet: `discovered=12584, assigned=3146`. Keep completions,
+      # parallelism and --num-chunks equal or the fleet is only partly covered again.
+      completionMode: Indexed
+      completions: {{ .Values.scanner.chunks }}
+      parallelism: {{ .Values.scanner.chunks }}
       template:
         metadata:
           labels:
@@ -24,7 +32,16 @@ spec:
               image: {{ include "cryo.imageRef" .Values.image | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["python", "-m", "cryo.scanner.run"]
+              args:
+                - "--chunk-id"
+                - "$(JOB_COMPLETION_INDEX)"
+                - "--num-chunks"
+                - {{ .Values.scanner.chunks | quote }}
               env:
+                - name: JOB_COMPLETION_INDEX
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
                 {{- range $k, $v := .Values.global.env }}
                 - name: {{ $k }}
                   value: {{ $v | quote }}

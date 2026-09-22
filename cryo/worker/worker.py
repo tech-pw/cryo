@@ -65,13 +65,8 @@ class MaintenanceJobRecord:
     plan: dict[str, Any] | None = None
     engine_ref: str | None = None
     replica: str | None = None
-    # Stamped when the job transitions to ADMITTED -- see MaintenanceJob.admitted_at's own
-    # docstring. Used by reconcile_stuck_admitted_jobs to age out jobs the Worker's at-most-
-    # once admit handoff (Redis rpush/lpop, no ack) silently dropped.
+    # Stamped when the job transitions to ADMITTED -- see MaintenanceJob.admitted_at.
     admitted_at: datetime | None = None
-    # Times this job was admitted and then lost by that same handoff -- see
-    # MaintenanceJob.dispatch_attempts. Bounds the reaper's requeue loop.
-    dispatch_attempts: int = 0
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
@@ -239,9 +234,6 @@ class InMemoryJobStore:
 
     def save_plan(self, job_id: str, plan: dict[str, Any]) -> None:
         self.jobs[job_id].plan = plan
-
-    def record_dispatch_attempt(self, job_id: str, attempts: int) -> None:
-        self.jobs[job_id].dispatch_attempts = attempts
 
     def has_shared_s3_location(self, table_id: str) -> bool:
         return table_id in self.shared_location_tables

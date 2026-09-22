@@ -5,7 +5,7 @@ import uuid
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -84,6 +84,102 @@ class WaveResult:
     orphaned: int = 0
     re_enqueued: int = 0
     reaped: int = 0
+
+
+_ADMITTED = "admitted"
+_DEFERRED = "deferred"
+_BLOCKED = "blocked"
+_ORPHANED = "orphaned"
+
+
+@dataclass(frozen=True)
+class _ReconcileCounts:
+    re_enqueued: int = 0
+    orphaned: int = 0
+    reaped: int = 0
+
+
+@dataclass
+class _WaveTally:
+    """Wave totals and their per-destination breakdown, incremented together.
+
+    Every outcome used to bump two counters by hand at each of the ~20 branches that produce
+    one, which is an easy place to update one and forget the other -- the per-destination
+    metric and the returned WaveResult could disagree about the same wave.
+    """
+
+    admitted: int = 0
+    deferred: int = 0
+    blocked: int = 0
+    orphaned: int = 0
+    per_destination: dict[str, dict[str, int]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(int))
+    )
+
+    def record(self, destination_id: str, outcome: str, count: int = 1) -> None:
+        if count <= 0:
+            return
+        setattr(self, outcome, getattr(self, outcome) + count)
+        self.per_destination[destination_id][outcome] += count
+
+    def emit_metrics(self) -> None:
+        for destination_id, outcomes in self.per_destination.items():
+            for outcome, count in outcomes.items():
+                if count:
+                    governor_admission_decisions.labels(
+                        destination=destination_id, outcome=outcome
+                    ).inc(count)
+
+
+class _WorkerDrainHeadroom:
+    """How many more jobs this wave may push onto the worker claim queue, shared across
+    destinations so one destination cannot spend the whole fleet's headroom twice.
+
+    None means the queue cannot report worker presence, in which case admission behaves as
+    it did before this cap existed.
+    """
+
+    def __init__(self, remaining: int | None) -> None:
+        self._remaining = remaining
+
+    def exhausted(self) -> bool:
+        return self._remaining is not None and self._remaining <= 0
+
+    def clamp(self, replicas: list[str]) -> list[str]:
+        if self._remaining is None:
+            return replicas
+        allowed = replicas[: self._remaining]
+        self._remaining -= len(allowed)
+        return allowed
+
+
+@dataclass(frozen=True)
+class _DestinationWave:
+    """Everything the gates need for one destination's admission pass, resolved once."""
+
+    destination: DestinationConfig
+    destination_id: str
+    config: AdmissionConfig
+    live_capacity: Mapping[str, CapacitySnapshot | int]
+    session: Any | None
+    current: datetime
+    approved_keys: dict[tuple[uuid.UUID, str], list[dict[str, Any]]]
+    stats_cache: dict[uuid.UUID, Any]
+    paused_table_ids: set[uuid.UUID]
+    paused_effect_destination_ids: set[str]
+    fleet_decisions: Mapping[str, Any]
+
+
+def _record_deferred_admission(config: AdmissionConfig) -> None:
+    from cryo.governor.bandit_feedback import record_deferred_admission
+
+    record_deferred_admission(config)
+
+
+def _register_admission(job_id: str, config: AdmissionConfig) -> None:
+    from cryo.governor.bandit_feedback import register_admission
+
+    register_admission(job_id, config)
 
 
 class _PendingFallbackDispatch:
@@ -248,628 +344,639 @@ class Governor:
         return max(0, allowance - int(admitted_depth()))
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
+        """One admission pass: repair queue state, then fill each destination's free slots.
+
+        Everything that decides whether a single job may run lives in _gate_job, and the
+        per-destination mechanics live in _admit_for_destination, so this stays a readable
+        sequence of phases. It used to be one 620-line body nested ten levels deep, where the
+        two things a reader actually needs to find -- the order the gates apply in, and which
+        counter each branch bumps -- were impossible to see at once.
+        """
         wave_start = perf_counter()
-        destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        tally = _WaveTally()
         try:
             current = now or datetime.now(UTC)
-            if self._session_factory is not None:
-                finalize_open_runs(self._session_factory, now=current)
-            re_enqueued = reconcile_queued_jobs(self._store, self._queue)
-            re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
-            orphaned = purge_stale_queue_entries(self._store, self._queue)
-            step_ledger = None
-            if self._session_factory is not None:
-                try:
-                    from cryo.db.repositories.job_steps import JobStepStore
-
-                    step_ledger = JobStepStore(self._session_factory)
-                except Exception:
-                    logger.debug("JobStepStore unavailable for stale reaper", exc_info=True)
-            reaped = reconcile_stale_running_jobs(
-                self._store,
-                self._queue,
-                self._lock_store,
-                now=current,
-                stale_after_seconds=self._lock_ttl_seconds,
-                step_ledger=step_ledger,
-                engine_activity_checker=self._spark_engine_still_active,
-            )
-            reaped += reconcile_stuck_admitted_jobs(
-                self._store,
-                self._queue,
-                self._lock_store,
-                now=current,
-            )
-            admitted = 0
-            deferred = 0
-            blocked = 0
-            worker_drain_headroom = self._worker_drain_headroom()
+            reconciled = self._reconcile(current)
+            tally.orphaned += reconciled.orphaned
 
             pending_by_destination = self._queue.pending_by_destination()
             for destination_id, job_ids in pending_by_destination.items():
                 governor_queue_depth.labels(destination=destination_id).set(len(job_ids))
 
+            headroom = _WorkerDrainHeadroom(self._worker_drain_headroom())
             for destination_id, job_ids in pending_by_destination.items():
-                destination = _try_get_destination(self._store, destination_id)
-                if destination is None:
-                    orphan_count = self._fail_orphaned_jobs(destination_id, job_ids)
-                    orphaned += orphan_count
-                    destination_outcomes[destination_id]["orphaned"] += orphan_count
-                    continue
-                config = _admission_config(destination, self._default_config)
-                live_capacity = self._capacity_provider.probe(destination)
-                local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
-                budget = compute_admission_budget(live_capacity, local_in_flight, config)
-                replicas = self._round_robin_slots(destination_id, budget.replicas)
-                # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
-                # with Cryo has no independent verification that a self-reported success
-                # actually mutated the table -- see use_native_k8s below, which this mirrors so
-                # worker backpressure is applied to exactly the destinations that go through
-                # the worker claim queue.
-                dispatches_via_worker_queue = not (
-                    destination_uses_k8s_dispatch(destination)
-                    and self._session_factory is not None
-                    and get_settings().native_engine_enabled
+                self._admit_for_destination(
+                    destination_id,
+                    job_ids,
+                    tally=tally,
+                    headroom=headroom,
+                    current=current,
                 )
-                if dispatches_via_worker_queue and worker_drain_headroom is not None:
-                    if worker_drain_headroom <= 0:
-                        blocked += len(job_ids)
-                        destination_outcomes[destination_id]["blocked"] += len(job_ids)
-                        continue
-                    if len(replicas) > worker_drain_headroom:
-                        replicas = replicas[:worker_drain_headroom]
-                    worker_drain_headroom -= len(replicas)
-                session_factory = self._session_factory
-                session_context = (
-                    session_factory() if session_factory is not None else nullcontext(None)
-                )
-
-                wave_start_replica_count = len(replicas)
-                # Populated at the two direct-dispatch points below (worker-queue admit, and
-                # the native-k8s-fallback-to-worker path) for the fleet-pack/dispatch-order
-                # counterfactual telemetry after this destination's dispatch work is done. Not
-                # populated for admit_native_k8s_jobs' own aggregate path (result.admitted is a
-                # count, not individual job_ids there) -- a partial signal, not a full one.
-                dispatched_job_ids: set[str] = set()
-                with session_context as session:
-                    wave_jobs: list[MaintenanceJobRecord] = []
-                    table_uuids: set[uuid.UUID] = set()
-                    native_k8s_buffer: list[MaintenanceJobRecord] = []
-                    # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
-                    # with Cryo has no independent verification that a self-reported success
-                    # actually mutated the table (gold_dbt_poll_dashboard_view ran 25 minutes,
-                    # reported success, committed zero snapshots). Until that's fixed, disabling
-                    # native_engine_enabled must stop new native K8s pod dispatch fleet-wide, not
-                    # just block cryo.engines.factory.create_engine's legacy path -- otherwise a
-                    # native destination with k8s_dispatch=true keeps spinning up Go-engine pods
-                    # that resolve_native_routing (cryo/engines/native/routing.py) would then
-                    # reroute to SQL fallback per-operation anyway, wasting a pod launch to learn
-                    # that. Checking the flag here means those jobs go straight to the regular
-                    # worker-queue path instead, which dispatches through create_engine to
-                    # whatever SQL fallback the destination is configured for.
-                    use_native_k8s = not dispatches_via_worker_queue
-                    # Inspect a bounded multiple of available slots, then round-robin that window
-                    # by tenant. This preserves the 11k-fleet OOM fix while giving later tenants a
-                    # chance to use capacity instead of letting one queue prefix monopolize a wave.
-                    candidate_limit = (
-                        len(replicas) if use_native_k8s else max(len(replicas), len(replicas) * 4)
-                    )
-                    # 2026-09-04 (docs/admission-ordering-and-scheduling.md): candidate_limit
-                    # truncates the queue to a bounded prefix before any priority ranking runs
-                    # (pack_fleet_budget, below, only ever sees this prefix) -- a genuinely
-                    # high-priority job past this cutoff is structurally invisible to admission
-                    # this wave, not merely deprioritized. truncated_this_wave records how many
-                    # jobs never got a look (still `break`s at the same point as before -- this
-                    # is a count for the telemetry emitted after the dispatch loop below, not a
-                    # behavior change; still bounded, same OOM-safety this cap exists for).
-                    truncated_this_wave = max(0, len(job_ids) - candidate_limit)
-                    for job_id in job_ids:
-                        if not replicas:
-                            blocked += 1
-                            destination_outcomes[destination_id]["blocked"] += 1
-                            break
-                        if len(wave_jobs) >= candidate_limit:
-                            blocked += 1
-                            destination_outcomes[destination_id]["blocked"] += 1
-                            break
-                        try:
-                            job = self._store.get_job(job_id)
-                        except KeyError:
-                            logger.warning("Purging queue entry for unknown job %s", job_id)
-                            self._queue.cancel_pending(job_id, destination_id)
-                            orphaned += 1
-                            destination_outcomes[destination_id]["orphaned"] += 1
-                            continue
-                        wave_jobs.append(job)
-                        table_uuid = _job_table_uuid(job)
-                        if table_uuid is not None:
-                            table_uuids.add(table_uuid)
-
-                    wave_jobs = _tenant_round_robin(wave_jobs)
-                    effect_destination_ids = {
-                        effect_destination_id
-                        for job in wave_jobs
-                        for effect_destination_id in job.intent_effect_destination_ids
-                    }
-                    approved_keys: dict[
-                        tuple[uuid.UUID, str],
-                        list[dict[str, Any]],
-                    ]
-                    stats_cache: dict[uuid.UUID, Any]
-                    paused_table_ids: set[uuid.UUID]
-                    paused_effect_destination_ids: set[str]
-                    if session is None:
-                        approved_keys = {}
-                        stats_cache = {}
-                        paused_table_ids = set()
-                        paused_effect_destination_ids = set()
-                    else:
-                        approved_keys = prefetch_approved_operation_keys(
-                            session,
-                            table_uuids,
-                        )
-                        stats_cache = prefetch_table_stats(session, table_uuids)
-                        paused_table_ids = prefetch_paused_table_ids(
-                            session,
-                            table_uuids,
-                            destination_id=destination_id,
-                        )
-                        paused_effect_destination_ids = prefetch_paused_destination_ids(
-                            session,
-                            effect_destination_ids,
-                        )
-                    # AutoComp §A2 "Fleet Decide": computed once per destination over the whole
-                    # wave, not per job, so a big low-priority job doesn't block a wave's worth
-                    # of higher-MOOP-score jobs from any budget headroom it leaves behind.
-                    fleet_decisions = pack_fleet_budget(
-                        [_admission_job(job) for job in wave_jobs], config
-                    )
-
-                    for job in wave_jobs:
-                        if not replicas:
-                            break
-
-                        set_context(
-                            replace=True,
-                            correlation_id=job.correlation_id or job.id,
-                            run_id=job.run_id,
-                            job_id=job.id,
-                            intent_id=job.intent_id,
-                            table_id=job.table_id,
-                            destination_id=job.destination_id,
-                        )
-                        job_id = job.id
-                        table_uuid = _job_table_uuid(job)
-                        if table_uuid in paused_table_ids or any(
-                            effect_destination_id in paused_effect_destination_ids
-                            for effect_destination_id in job.intent_effect_destination_ids
-                        ):
-                            reason = "Maintenance execution is paused"
-                            logger.info("Job %s deferred: %s", job_id, reason)
-                            self._defer(job, reason)
-                            deferred += 1
-                            destination_outcomes[destination_id]["deferred"] += 1
-                            continue
-                        abac_blocked = False
-                        if session is not None and table_uuid is not None and job.plan:
-                            from cryo.security.abac_enforcement import evaluate_maintenance_allowed
-
-                            for op in job.plan.get("operations") or []:
-                                op_type = op.get("type") if isinstance(op, dict) else op
-                                allowed, abac_reason = evaluate_maintenance_allowed(
-                                    session,
-                                    table_uuid,
-                                    None,
-                                    str(op_type),
-                                )
-                                if not allowed:
-                                    logger.warning(
-                                        "Deferring job %s: %s",
-                                        job_id,
-                                        abac_reason,
-                                    )
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                    from cryo.governor.bandit_feedback import (
-                                        record_deferred_admission,
-                                    )
-
-                                    record_deferred_admission(config)
-                                    abac_blocked = True
-                                    break
-                        if abac_blocked:
-                            continue
-
-                        plan_operations = job.plan.get("operations") if job.plan else None
-
-                        if job.intent_id is not None:
-                            if job.intent_status != IntentStatus.READY.value:
-                                reason = (
-                                    "Durable intent is not ready "
-                                    f"(status={job.intent_status or 'missing'})"
-                                )
-                                logger.info("Job %s deferred: %s", job_id, reason)
-                                self._defer(job, reason)
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                                continue
-                            if (
-                                job.intent_expires_at is None
-                                or _as_utc(job.intent_expires_at) <= current
-                            ):
-                                reason = "Durable intent expired before admission"
-                                logger.info("Job %s deferred: %s", job_id, reason)
-                                self._defer(job, reason)
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                                continue
-
-                        signal_triggered = False
-                        if (
-                            session is not None
-                            and self._enable_signal_triggers
-                            and table_uuid is not None
-                        ):
-                            try:
-                                trigger_result = self._trigger_evaluator.evaluate(
-                                    session,
-                                    table_uuid,
-                                    is_due_for_schedule=False,
-                                )
-                                if (
-                                    trigger_result.should_run
-                                    and trigger_result.trigger_type.value != "schedule"
-                                ):
-                                    signal_triggered = True
-                            except Exception as exc:
-                                logger.warning(
-                                    "Trigger evaluation failed for job %s table %s: %s",
-                                    job_id,
-                                    table_uuid,
-                                    exc,
-                                )
-
-                        if (
-                            session is not None
-                            and job.intent_id is None
-                            and table_uuid is not None
-                            and batch_job_requires_approval(
-                                table_uuid, plan_operations, approved_keys
-                            )
-                        ):
-                            logger.info(
-                                "Job %s deferred: destructive operation requires approval",
-                                job_id,
-                            )
-                            # Surface the block, not just log it -- see
-                            # ensure_pending_approval_requests's own docstring for the
-                            # incident this fixes. Best-effort: a failure creating the
-                            # request must never block the defer itself.
-                            try:
-                                from cryo.workflows.approvals import (
-                                    ensure_pending_approval_requests,
-                                )
-
-                                ensure_pending_approval_requests(
-                                    session, table_uuid, plan_operations
-                                )
-                            except Exception as exc:
-                                logger.warning(
-                                    "Failed to surface approval request for job %s table %s: %s",
-                                    job_id,
-                                    table_uuid,
-                                    exc,
-                                )
-                            self._defer(job, "Destructive operation requires approval")
-                            deferred += 1
-                            destination_outcomes[destination_id]["deferred"] += 1
-                            continue
-
-                        if session is not None and table_uuid is not None:
-                            try:
-                                pii_reason = batch_pii_block_reason(
-                                    session,
-                                    table_uuid,
-                                    plan_operations,
-                                    job_params=job.params,
-                                    stats_cache=stats_cache,
-                                )
-                                if pii_reason:
-                                    logger.info("Job %s deferred: %s", job_id, pii_reason)
-                                    self._defer(job, pii_reason)
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                    continue
-                            except Exception as exc:
-                                logger.warning(
-                                    "PII gate check failed for job %s table %s: %s",
-                                    job_id,
-                                    table_uuid,
-                                    exc,
-                                )
-                                self._defer(job, "pii_gate_check_failed")
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                                continue
-
-                        if not signal_triggered and not job.force_admit:
-                            fleet_decision = fleet_decisions.get(job.id)
-                            if fleet_decision is not None and not fleet_decision.admissible:
-                                from cryo.governor.bandit_feedback import (
-                                    record_deferred_admission,
-                                )
-
-                                record_deferred_admission(config)
-                                self._defer(job, fleet_decision.reason)
-                                deferred += 1
-                                destination_outcomes[destination_id]["deferred"] += 1
-                                continue
-
-                            decision = decide_job_admission(
-                                _admission_job(job), config, now=current
-                            )
-                            if not decision.admissible:
-                                if decision.defer:
-                                    from cryo.governor.bandit_feedback import (
-                                        record_deferred_admission,
-                                    )
-
-                                    record_deferred_admission(config)
-                                    self._defer(job, decision.reason)
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                else:
-                                    blocked += 1
-                                    destination_outcomes[destination_id]["blocked"] += 1
-                                continue
-
-                        # In shadow mode (roi_gate_shadow_mode), decide() only ever logs -- the
-                        # SKIP/DEFER branches below never fire (a shadow decision always takes
-                        # the `roi.shadow: log` branch and falls through). Sampling here is
-                        # therefore safe: it skips real enforcement work zero times, only
-                        # redundant logging-only evaluations. Once real enforcement is live
-                        # (roi_gate_shadow_mode=False), every candidate is evaluated regardless
-                        # of sample_rate -- the gate must never silently skip a real SKIP/DEFER
-                        # decision.
-                        roi = None
-                        if self._roi_gate_enabled and session is not None:
-                            skip_for_sampling = self._roi_gate_shadow_mode and not _shadow_sampled(
-                                job_id, self._shadow_sample_rate
-                            )
-                            if not skip_for_sampling:
-                                roi = self._roi_gate.decide(session, _admission_job(job))
-                        if roi is not None and roi.shadow:
-                            logger.info(
-                                "ROI gate shadow: job %s action=%s bcr=%.4f threshold=%.4f",
-                                job_id,
-                                roi.action.value,
-                                roi.bcr,
-                                roi.threshold,
-                            )
-                        elif roi is not None and roi.action == GateAction.SKIP:
-                            self._queue.cancel_pending(job.id, destination_id)
-                            self._store.mark_status(job.id, JobStatus.SKIPPED, error=roi.reason)
-                            blocked += 1
-                            destination_outcomes[destination_id]["blocked"] += 1
-                            continue
-                        elif roi is not None and roi.action == GateAction.DEFER:
-                            self._defer(job, roi.reason)
-                            deferred += 1
-                            destination_outcomes[destination_id]["deferred"] += 1
-                            continue
-
-                        if not self._lock_store.acquire_table_lock(
-                            job.table_id,
-                            job.id,
-                            self._lock_ttl_seconds,
-                        ):
-                            self._defer(job, "table_locked")
-                            deferred += 1
-                            destination_outcomes[destination_id]["deferred"] += 1
-                            continue
-
-                        if self._qpp_enabled:
-                            try:
-                                qpp_admit, predicted_p95_ms = _evaluate_qpp_for_governor(
-                                    table_uuid=table_uuid,
-                                    stats_cache=stats_cache,
-                                    live_capacity=live_capacity,
-                                    job=job,
-                                )
-                                if not qpp_admit:
-                                    logger.info(
-                                        "Job %s deferred: QPP refused (p95=%.0fms)",
-                                        job_id,
-                                        predicted_p95_ms,
-                                    )
-                                    governor_qpp_decisions_total.labels(
-                                        destination=destination_id,
-                                        outcome="refused",
-                                    ).inc()
-                                    self._lock_store.release_table_lock(job.table_id, job.id)
-                                    self._defer(job, "qpp_refused")
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                    continue
-                                governor_qpp_decisions_total.labels(
-                                    destination=destination_id,
-                                    outcome="confirmed",
-                                ).inc()
-                            except Exception as exc:
-                                logger.warning(
-                                    "QPP gate failed for job %s table %s: %s",
-                                    job_id,
-                                    table_uuid,
-                                    exc,
-                                )
-                                governor_qpp_decisions_total.labels(
-                                    destination=destination_id,
-                                    outcome="error",
-                                ).inc()
-
-                        # Resource predictor runs in shadow mode first: log recommendations and
-                        # compare against static sizing before any enforcement. No enforcement
-                        # path exists yet at all -- this block only ever logs -- so sampling
-                        # (see _shadow_sampled's own docstring) is unconditionally safe here,
-                        # unlike the ROI gate above which still evaluates every candidate once
-                        # real enforcement is live.
-                        if _shadow_sampled(job_id, self._shadow_sample_rate):
-                            try:
-                                from cryo.ai.resource_predictor import predict_resources_for_table
-
-                                if session is None:
-                                    raise ValueError("resource predictor has no database session")
-                                if table_uuid is None:
-                                    raise ValueError("job has no valid table UUID")
-                                sizing = predict_resources_for_table(session, table_uuid)
-                                logger.info(
-                                    "Resource predictor (shadow) for table %s: cpu=%.1f "
-                                    "mem=%.1fGiB p50=%.1fs p90=%.1fs conf=%.2f samples=%d "
-                                    "static_cap=%d",
-                                    table_uuid,
-                                    sizing.recommended_cpu_cores,
-                                    sizing.recommended_memory_gb,
-                                    sizing.predicted_p50_seconds,
-                                    sizing.predicted_p90_seconds,
-                                    sizing.confidence,
-                                    sizing.samples,
-                                    config.per_replica_cap,
-                                )
-                            except Exception as exc:
-                                logger.debug(
-                                    "Resource predictor shadow failed for %s: %s",
-                                    table_uuid,
-                                    exc,
-                                )
-
-                        if use_native_k8s:
-                            # Buffer for pack-on-admit; do not push to Worker admitted queue.
-                            native_k8s_buffer.append(job)
-                            continue
-
-                        replica = replicas.pop(0)
-                        self._queue.admit(job.id, destination_id, replica)
-                        self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
-                        from cryo.governor.bandit_feedback import register_admission
-
-                        register_admission(job.id, config)
-                        admitted += 1
-                        destination_outcomes[destination_id]["admitted"] += 1
-                        dispatched_job_ids.add(job.id)
-
-                    if native_k8s_buffer:
-                        assert session_factory is not None
-
-                        def _defer_native_job(jid: str, reason: str) -> None:
-                            self._queue.defer(jid)
-                            self._store.mark_status(jid, JobStatus.DEFERRED, error=reason)
-
-                        result = admit_native_k8s_jobs(
-                            jobs=native_k8s_buffer,
-                            destination=destination,
-                            store=self._store,
-                            session_factory=session_factory,
-                            live_capacity=live_capacity,
-                            stats_cache=stats_cache,
-                            mark_status=self._store.mark_status,
-                            cancel_pending=self._queue.cancel_pending,
-                            defer_job=_defer_native_job,
-                            release_lock=self._lock_store.release_table_lock,
-                        )
-                        if result.fallback_to_worker:
-                            for job in native_k8s_buffer:
-                                if not replicas:
-                                    self._defer(job, "no_replica_slots")
-                                    deferred += 1
-                                    destination_outcomes[destination_id]["deferred"] += 1
-                                    continue
-                                replica = replicas.pop(0)
-                                self._queue.admit(job.id, destination_id, replica)
-                                self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
-                                from cryo.governor.bandit_feedback import register_admission
-
-                                register_admission(job.id, config)
-                                admitted += 1
-                                destination_outcomes[destination_id]["admitted"] += 1
-                                dispatched_job_ids.add(job.id)
-                        else:
-                            admitted += result.admitted
-                            deferred += result.deferred
-                            destination_outcomes[destination_id]["admitted"] += result.admitted
-                            destination_outcomes[destination_id]["deferred"] += result.deferred
-                            from cryo.governor.bandit_feedback import register_admission
-
-                            for job in native_k8s_buffer:
-                                register_admission(job.id, config)
-                            self._enqueue_fallback_dispatches(
-                                result.pending_fallback_dispatches,
-                                destination.config,
-                            )
-
-                    # 2026-09-04 (docs/admission-ordering-and-scheduling.md, "Consequences"):
-                    # fleet_decisions ranks candidates by moop_score but dispatch order above
-                    # actually follows _tenant_round_robin's fairness interleaving, not that
-                    # rank -- so a job the fleet-packer ranked highly can still lose its replica
-                    # slot to a lower-ranked job that happened to come first in round-robin
-                    # order. Pure read-only counterfactual, computed after dispatch so it can
-                    # never affect what was actually admitted: how many of fleet_decisions' own
-                    # top-N admissible jobs (N = replicas available at the start of this
-                    # destination's wave) were NOT among the jobs this wave actually dispatched.
-                    # Exists to measure how often this mismatch happens before deciding whether
-                    # dispatch order is worth changing -- see the doc's Phase S0.
-                    try:
-                        if fleet_decisions and wave_start_replica_count > 0:
-                            fleet_admissible = {
-                                jid for jid, dec in fleet_decisions.items() if dec.admissible
-                            }
-
-                            def _rank_key(j: MaintenanceJobRecord) -> float:
-                                aj = _admission_job(j)
-                                if aj.moop_score is not None:
-                                    return aj.moop_score
-                                if aj.estimated_benefit_score is not None:
-                                    return aj.estimated_benefit_score
-                                return float("-inf")
-
-                            fleet_ranked = sorted(
-                                (j for j in wave_jobs if j.id in fleet_admissible),
-                                key=_rank_key,
-                                reverse=True,
-                            )
-                            top_n_ids = {j.id for j in fleet_ranked[:wave_start_replica_count]}
-                            missed = top_n_ids - dispatched_job_ids
-                            if missed:
-                                logger.info(
-                                    "Fleet-pack/dispatch-order mismatch for %s: %d of the top "
-                                    "%d fleet-ranked job(s) were not dispatched this wave "
-                                    "(round-robin order took priority over fleet rank)",
-                                    destination_id,
-                                    len(missed),
-                                    wave_start_replica_count,
-                                )
-                    except Exception as exc:  # noqa: BLE001 - telemetry only, must never affect dispatch
-                        logger.debug("Fleet-pack counterfactual telemetry failed: %s", exc)
 
             self._run_one_fallback_dispatch_wave()
 
             return WaveResult(
-                admitted=admitted,
-                deferred=deferred,
-                blocked=blocked,
-                orphaned=orphaned,
-                re_enqueued=re_enqueued,
-                reaped=reaped,
+                admitted=tally.admitted,
+                deferred=tally.deferred,
+                blocked=tally.blocked,
+                orphaned=tally.orphaned,
+                re_enqueued=reconciled.re_enqueued,
+                reaped=reconciled.reaped,
             )
         finally:
-            for destination_id, outcomes in destination_outcomes.items():
-                for outcome, count in outcomes.items():
-                    if count:
-                        governor_admission_decisions.labels(
-                            destination=destination_id,
-                            outcome=outcome,
-                        ).inc(count)
+            tally.emit_metrics()
             governor_wave_duration_seconds.observe(perf_counter() - wave_start)
             clear_context()
+
+    def _reconcile(self, current: datetime) -> _ReconcileCounts:
+        """Repair queue/DB disagreement before admitting anything new.
+
+        Runs first every wave because each pass can free capacity this wave then spends:
+        finalizing runs releases their jobs, and the reapers release in-flight slots and
+        table locks held by jobs nothing will ever finish.
+        """
+        if self._session_factory is not None:
+            finalize_open_runs(self._session_factory, now=current)
+        re_enqueued = reconcile_queued_jobs(self._store, self._queue)
+        re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
+        orphaned = purge_stale_queue_entries(self._store, self._queue)
+        reaped = reconcile_stale_running_jobs(
+            self._store,
+            self._queue,
+            self._lock_store,
+            now=current,
+            stale_after_seconds=self._lock_ttl_seconds,
+            step_ledger=self._step_ledger(),
+            engine_activity_checker=self._spark_engine_still_active,
+        )
+        reaped += reconcile_stuck_admitted_jobs(
+            self._store,
+            self._queue,
+            self._lock_store,
+            now=current,
+        )
+        return _ReconcileCounts(re_enqueued=re_enqueued, orphaned=orphaned, reaped=reaped)
+
+    def _step_ledger(self) -> Any | None:
+        if self._session_factory is None:
+            return None
+        try:
+            from cryo.db.repositories.job_steps import JobStepStore
+
+            return JobStepStore(self._session_factory)
+        except Exception:
+            logger.debug("JobStepStore unavailable for stale reaper", exc_info=True)
+            return None
+
+    def _admit_for_destination(
+        self,
+        destination_id: str,
+        job_ids: list[str],
+        *,
+        tally: _WaveTally,
+        headroom: _WorkerDrainHeadroom,
+        current: datetime,
+    ) -> None:
+        destination = _try_get_destination(self._store, destination_id)
+        if destination is None:
+            failed = self._fail_orphaned_jobs(destination_id, job_ids)
+            tally.record(destination_id, _ORPHANED, failed)
+            return
+
+        config = _admission_config(destination, self._default_config)
+        live_capacity = self._capacity_provider.probe(destination)
+        local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
+        budget = compute_admission_budget(live_capacity, local_in_flight, config)
+        replicas = self._round_robin_slots(destination_id, budget.replicas)
+
+        # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary with Cryo
+        # has no independent verification that a self-reported success actually mutated the
+        # table -- see _dispatch_native_k8s, which this mirrors so worker backpressure is
+        # applied to exactly the destinations that go through the worker claim queue.
+        use_native_k8s = (
+            destination_uses_k8s_dispatch(destination)
+            and self._session_factory is not None
+            and get_settings().native_engine_enabled
+        )
+        if not use_native_k8s:
+            if headroom.exhausted():
+                # The worker fleet already has as much queued as it can drain; adding more
+                # buys no throughput. Distinct from having no engine capacity, which is
+                # counted per candidate below.
+                tally.record(destination_id, _BLOCKED, len(job_ids))
+                return
+            replicas = headroom.clamp(replicas)
+
+        session_factory = self._session_factory
+        session_context = session_factory() if session_factory is not None else nullcontext(None)
+        wave_start_replica_count = len(replicas)
+        # Populated at the two direct-dispatch points below (worker-queue admit, and the
+        # native-k8s-fallback-to-worker path) for the fleet-pack/dispatch-order counterfactual
+        # telemetry. Not populated for admit_native_k8s_jobs' own aggregate path
+        # (result.admitted is a count, not individual job_ids there) -- a partial signal.
+        dispatched_job_ids: set[str] = set()
+        native_k8s_buffer: list[MaintenanceJobRecord] = []
+
+        with session_context as session:
+            wave_jobs = self._collect_wave_candidates(
+                destination_id,
+                job_ids,
+                slot_count=len(replicas),
+                use_native_k8s=use_native_k8s,
+                tally=tally,
+            )
+            wave = self._build_destination_wave(
+                session,
+                destination=destination,
+                destination_id=destination_id,
+                config=config,
+                live_capacity=live_capacity,
+                current=current,
+                wave_jobs=wave_jobs,
+            )
+
+            for job in wave_jobs:
+                if not replicas:
+                    break
+                set_context(
+                    replace=True,
+                    correlation_id=job.correlation_id or job.id,
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    intent_id=job.intent_id,
+                    table_id=job.table_id,
+                    destination_id=job.destination_id,
+                )
+                outcome = self._gate_job(job, wave)
+                if outcome is not None:
+                    tally.record(destination_id, outcome)
+                    continue
+                self._log_resource_predictor_shadow(job, wave)
+                if use_native_k8s:
+                    # Buffered for pack-on-admit; not pushed to the worker claim queue.
+                    native_k8s_buffer.append(job)
+                    continue
+                self._admit_to_worker_queue(job, destination_id, config, replicas.pop(0))
+                tally.record(destination_id, _ADMITTED)
+                dispatched_job_ids.add(job.id)
+
+            if native_k8s_buffer:
+                self._dispatch_native_k8s(
+                    native_k8s_buffer,
+                    wave,
+                    replicas=replicas,
+                    tally=tally,
+                    dispatched_job_ids=dispatched_job_ids,
+                )
+
+            self._log_fleet_pack_mismatch(
+                wave,
+                wave_jobs=wave_jobs,
+                dispatched_job_ids=dispatched_job_ids,
+                slot_count=wave_start_replica_count,
+            )
+
+    def _collect_wave_candidates(
+        self,
+        destination_id: str,
+        job_ids: list[str],
+        *,
+        slot_count: int,
+        use_native_k8s: bool,
+        tally: _WaveTally,
+    ) -> list[MaintenanceJobRecord]:
+        """Load a bounded window of the pending queue, then interleave it by tenant.
+
+        The cap preserves the 11k-fleet OOM fix while giving later tenants a chance at
+        capacity instead of letting one queue prefix monopolize a wave. It also truncates
+        before any priority ranking runs (pack_fleet_budget only ever sees this window), so a
+        genuinely high-priority job past the cutoff is invisible this wave rather than merely
+        deprioritized -- see docs/admission-ordering-and-scheduling.md.
+        """
+        candidate_limit = slot_count if use_native_k8s else max(slot_count, slot_count * 4)
+        wave_jobs: list[MaintenanceJobRecord] = []
+        for job_id in job_ids:
+            if len(wave_jobs) >= candidate_limit:
+                tally.record(destination_id, _BLOCKED)
+                break
+            try:
+                wave_jobs.append(self._store.get_job(job_id))
+            except KeyError:
+                logger.warning("Purging queue entry for unknown job %s", job_id)
+                self._queue.cancel_pending(job_id, destination_id)
+                tally.record(destination_id, _ORPHANED)
+        return _tenant_round_robin(wave_jobs)
+
+    def _build_destination_wave(
+        self,
+        session: Any | None,
+        *,
+        destination: DestinationConfig,
+        destination_id: str,
+        config: AdmissionConfig,
+        live_capacity: Mapping[str, CapacitySnapshot | int],
+        current: datetime,
+        wave_jobs: list[MaintenanceJobRecord],
+    ) -> _DestinationWave:
+        """Batch every per-table lookup the gates need into one round of queries.
+
+        Done once per destination rather than per job: at ~800 candidates a wave, per-job
+        lookups were the dominant cost of a wave.
+        """
+        table_uuids = {
+            table_uuid for job in wave_jobs if (table_uuid := _job_table_uuid(job)) is not None
+        }
+        effect_destination_ids = {
+            effect_destination_id
+            for job in wave_jobs
+            for effect_destination_id in job.intent_effect_destination_ids
+        }
+        if session is None:
+            approved_keys: dict[tuple[uuid.UUID, str], list[dict[str, Any]]] = {}
+            stats_cache: dict[uuid.UUID, Any] = {}
+            paused_table_ids: set[uuid.UUID] = set()
+            paused_effect_destination_ids: set[str] = set()
+        else:
+            approved_keys = prefetch_approved_operation_keys(session, table_uuids)
+            stats_cache = prefetch_table_stats(session, table_uuids)
+            paused_table_ids = prefetch_paused_table_ids(
+                session, table_uuids, destination_id=destination_id
+            )
+            paused_effect_destination_ids = prefetch_paused_destination_ids(
+                session, effect_destination_ids
+            )
+        return _DestinationWave(
+            destination=destination,
+            destination_id=destination_id,
+            config=config,
+            live_capacity=live_capacity,
+            session=session,
+            current=current,
+            approved_keys=approved_keys,
+            stats_cache=stats_cache,
+            paused_table_ids=paused_table_ids,
+            paused_effect_destination_ids=paused_effect_destination_ids,
+            # AutoComp §A2 "Fleet Decide": computed once per destination over the whole wave,
+            # not per job, so a big low-priority job doesn't block a wave's worth of
+            # higher-MOOP-score jobs from any budget headroom it leaves behind.
+            fleet_decisions=pack_fleet_budget([_admission_job(job) for job in wave_jobs], config),
+        )
+
+    def _gate_job(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        """Decide whether one job may be dispatched this wave.
+
+        Returns None to admit, or the outcome to record. Order matters and is the point of
+        keeping these in one flat sequence: cheap local checks first, then the ones that need
+        the database, then admission arithmetic, then the table lock -- which is the only gate
+        with a side effect a later refusal has to undo.
+        """
+        for gate in (
+            self._gate_paused,
+            self._gate_abac,
+            self._gate_intent,
+            self._gate_approval,
+            self._gate_pii,
+            self._gate_admission,
+            self._gate_roi,
+        ):
+            outcome = gate(job, wave)
+            if outcome is not None:
+                return outcome
+
+        if not self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds):
+            self._defer(job, "table_locked")
+            return _DEFERRED
+
+        # Past this point a refusal must release the lock taken above.
+        return self._gate_qpp(job, wave)
+
+    def _gate_paused(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        table_uuid = _job_table_uuid(job)
+        paused = table_uuid in wave.paused_table_ids or any(
+            effect_destination_id in wave.paused_effect_destination_ids
+            for effect_destination_id in job.intent_effect_destination_ids
+        )
+        if not paused:
+            return None
+        reason = "Maintenance execution is paused"
+        logger.info("Job %s deferred: %s", job.id, reason)
+        self._defer(job, reason)
+        return _DEFERRED
+
+    def _gate_abac(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        table_uuid = _job_table_uuid(job)
+        if wave.session is None or table_uuid is None or not job.plan:
+            return None
+        from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+        for op in job.plan.get("operations") or []:
+            op_type = op.get("type") if isinstance(op, dict) else op
+            allowed, abac_reason = evaluate_maintenance_allowed(
+                wave.session, table_uuid, None, str(op_type)
+            )
+            if not allowed:
+                logger.warning("Deferring job %s: %s", job.id, abac_reason)
+                _record_deferred_admission(wave.config)
+                return _DEFERRED
+        return None
+
+    def _gate_intent(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        if job.intent_id is None:
+            return None
+        if job.intent_status != IntentStatus.READY.value:
+            reason = f"Durable intent is not ready (status={job.intent_status or 'missing'})"
+            logger.info("Job %s deferred: %s", job.id, reason)
+            self._defer(job, reason)
+            return _DEFERRED
+        if job.intent_expires_at is None or _as_utc(job.intent_expires_at) <= wave.current:
+            reason = "Durable intent expired before admission"
+            logger.info("Job %s deferred: %s", job.id, reason)
+            self._defer(job, reason)
+            return _DEFERRED
+        return None
+
+    def _gate_approval(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        table_uuid = _job_table_uuid(job)
+        if wave.session is None or job.intent_id is not None or table_uuid is None:
+            return None
+        plan_operations = job.plan.get("operations") if job.plan else None
+        if not batch_job_requires_approval(table_uuid, plan_operations, wave.approved_keys):
+            return None
+        logger.info("Job %s deferred: destructive operation requires approval", job.id)
+        # Surface the block, not just log it -- see ensure_pending_approval_requests's own
+        # docstring for the incident this fixes. Best-effort: a failure creating the request
+        # must never block the defer itself.
+        try:
+            from cryo.workflows.approvals import ensure_pending_approval_requests
+
+            ensure_pending_approval_requests(wave.session, table_uuid, plan_operations)
+        except Exception as exc:
+            logger.warning(
+                "Failed to surface approval request for job %s table %s: %s",
+                job.id,
+                table_uuid,
+                exc,
+            )
+        self._defer(job, "Destructive operation requires approval")
+        return _DEFERRED
+
+    def _gate_pii(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        table_uuid = _job_table_uuid(job)
+        if wave.session is None or table_uuid is None:
+            return None
+        plan_operations = job.plan.get("operations") if job.plan else None
+        try:
+            pii_reason = batch_pii_block_reason(
+                wave.session,
+                table_uuid,
+                plan_operations,
+                job_params=job.params,
+                stats_cache=wave.stats_cache,
+            )
+        except Exception as exc:
+            logger.warning("PII gate check failed for job %s table %s: %s", job.id, table_uuid, exc)
+            self._defer(job, "pii_gate_check_failed")
+            return _DEFERRED
+        if pii_reason:
+            logger.info("Job %s deferred: %s", job.id, pii_reason)
+            self._defer(job, pii_reason)
+            return _DEFERRED
+        return None
+
+    def _gate_admission(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        """Cooldown, off-peak windows, deadlines and the per-destination budget.
+
+        Skipped entirely for a job whose table tripped a signal trigger or that was forced by
+        an operator -- both are explicit statements that this table needs work now.
+        """
+        if job.force_admit or self._signal_triggered(job, wave):
+            return None
+
+        fleet_decision = wave.fleet_decisions.get(job.id)
+        if fleet_decision is not None and not fleet_decision.admissible:
+            _record_deferred_admission(wave.config)
+            self._defer(job, fleet_decision.reason)
+            return _DEFERRED
+
+        decision = decide_job_admission(_admission_job(job), wave.config, now=wave.current)
+        if decision.admissible:
+            return None
+        if decision.defer:
+            _record_deferred_admission(wave.config)
+            self._defer(job, decision.reason)
+            return _DEFERRED
+        return _BLOCKED
+
+    def _signal_triggered(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> bool:
+        table_uuid = _job_table_uuid(job)
+        if wave.session is None or not self._enable_signal_triggers or table_uuid is None:
+            return False
+        try:
+            trigger_result = self._trigger_evaluator.evaluate(
+                wave.session, table_uuid, is_due_for_schedule=False
+            )
+        except Exception as exc:
+            logger.warning(
+                "Trigger evaluation failed for job %s table %s: %s", job.id, table_uuid, exc
+            )
+            return False
+        return bool(trigger_result.should_run and trigger_result.trigger_type.value != "schedule")
+
+    def _gate_roi(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        """Benefit-cost ratio gate, currently running in shadow mode.
+
+        In shadow mode decide() only ever logs, so sampling here skips redundant
+        logging-only evaluations and never a real decision. Once enforcement is live
+        (roi_gate_shadow_mode=False) every candidate is evaluated regardless of sample rate.
+        """
+        if not self._roi_gate_enabled or wave.session is None:
+            return None
+        if self._roi_gate_shadow_mode and not _shadow_sampled(job.id, self._shadow_sample_rate):
+            return None
+        roi = self._roi_gate.decide(wave.session, _admission_job(job))
+        if roi is None:
+            return None
+        if roi.shadow:
+            logger.info(
+                "ROI gate shadow: job %s action=%s bcr=%.4f threshold=%.4f",
+                job.id,
+                roi.action.value,
+                roi.bcr,
+                roi.threshold,
+            )
+            return None
+        if roi.action == GateAction.SKIP:
+            self._queue.cancel_pending(job.id, wave.destination_id)
+            self._store.mark_status(job.id, JobStatus.SKIPPED, error=roi.reason)
+            return _BLOCKED
+        if roi.action == GateAction.DEFER:
+            self._defer(job, roi.reason)
+            return _DEFERRED
+        return None
+
+    def _gate_qpp(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
+        """Predicted-latency gate. Runs after the table lock, so a refusal releases it."""
+        if not self._qpp_enabled:
+            return None
+        try:
+            qpp_admit, predicted_p95_ms = _evaluate_qpp_for_governor(
+                table_uuid=_job_table_uuid(job),
+                stats_cache=wave.stats_cache,
+                live_capacity=wave.live_capacity,
+                job=job,
+            )
+        except Exception as exc:
+            logger.warning("QPP gate failed for job %s: %s", job.id, exc)
+            governor_qpp_decisions_total.labels(
+                destination=wave.destination_id, outcome="error"
+            ).inc()
+            return None
+        if not qpp_admit:
+            logger.info("Job %s deferred: QPP refused (p95=%.0fms)", job.id, predicted_p95_ms)
+            governor_qpp_decisions_total.labels(
+                destination=wave.destination_id, outcome="refused"
+            ).inc()
+            self._lock_store.release_table_lock(job.table_id, job.id)
+            self._defer(job, "qpp_refused")
+            return _DEFERRED
+        governor_qpp_decisions_total.labels(
+            destination=wave.destination_id, outcome="confirmed"
+        ).inc()
+        return None
+
+    def _log_resource_predictor_shadow(
+        self, job: MaintenanceJobRecord, wave: _DestinationWave
+    ) -> None:
+        """Compare predicted sizing against the static cap. Logging only -- there is no
+        enforcement path yet, which is why sampling here is unconditionally safe."""
+        if not _shadow_sampled(job.id, self._shadow_sample_rate):
+            return
+        table_uuid = _job_table_uuid(job)
+        if wave.session is None or table_uuid is None:
+            return
+        try:
+            from cryo.ai.resource_predictor import predict_resources_for_table
+
+            sizing = predict_resources_for_table(wave.session, table_uuid)
+            logger.info(
+                "Resource predictor (shadow) for table %s: cpu=%.1f mem=%.1fGiB p50=%.1fs "
+                "p90=%.1fs conf=%.2f samples=%d static_cap=%d",
+                table_uuid,
+                sizing.recommended_cpu_cores,
+                sizing.recommended_memory_gb,
+                sizing.predicted_p50_seconds,
+                sizing.predicted_p90_seconds,
+                sizing.confidence,
+                sizing.samples,
+                wave.config.per_replica_cap,
+            )
+        except Exception as exc:
+            logger.debug("Resource predictor shadow failed for %s: %s", table_uuid, exc)
+
+    def _admit_to_worker_queue(
+        self,
+        job: MaintenanceJobRecord,
+        destination_id: str,
+        config: AdmissionConfig,
+        replica: str,
+    ) -> None:
+        self._queue.admit(job.id, destination_id, replica)
+        self._store.mark_status(job.id, JobStatus.ADMITTED, replica=replica)
+        _register_admission(job.id, config)
+
+    def _dispatch_native_k8s(
+        self,
+        buffered: list[MaintenanceJobRecord],
+        wave: _DestinationWave,
+        *,
+        replicas: list[str],
+        tally: _WaveTally,
+        dispatched_job_ids: set[str],
+    ) -> None:
+        session_factory = self._session_factory
+        assert session_factory is not None
+
+        def _defer_native_job(job_id: str, reason: str) -> None:
+            self._queue.defer(job_id)
+            self._store.mark_status(job_id, JobStatus.DEFERRED, error=reason)
+
+        result = admit_native_k8s_jobs(
+            jobs=buffered,
+            destination=wave.destination,
+            store=self._store,
+            session_factory=session_factory,
+            live_capacity=wave.live_capacity,
+            stats_cache=wave.stats_cache,
+            mark_status=self._store.mark_status,
+            cancel_pending=self._queue.cancel_pending,
+            defer_job=_defer_native_job,
+            release_lock=self._lock_store.release_table_lock,
+        )
+        if result.fallback_to_worker:
+            for job in buffered:
+                if not replicas:
+                    self._defer(job, "no_replica_slots")
+                    tally.record(wave.destination_id, _DEFERRED)
+                    continue
+                self._admit_to_worker_queue(job, wave.destination_id, wave.config, replicas.pop(0))
+                tally.record(wave.destination_id, _ADMITTED)
+                dispatched_job_ids.add(job.id)
+            return
+
+        tally.record(wave.destination_id, _ADMITTED, result.admitted)
+        tally.record(wave.destination_id, _DEFERRED, result.deferred)
+        for job in buffered:
+            _register_admission(job.id, wave.config)
+        self._enqueue_fallback_dispatches(
+            result.pending_fallback_dispatches, wave.destination.config
+        )
+
+    def _log_fleet_pack_mismatch(
+        self,
+        wave: _DestinationWave,
+        *,
+        wave_jobs: list[MaintenanceJobRecord],
+        dispatched_job_ids: set[str],
+        slot_count: int,
+    ) -> None:
+        """Read-only counterfactual: how much fleet rank and dispatch order disagree.
+
+        Dispatch follows _tenant_round_robin's fairness interleaving, not pack_fleet_budget's
+        moop_score rank, so a highly-ranked job can lose its slot to a lower-ranked one that
+        came first. Computed after dispatch so it can never affect what was admitted; exists
+        to measure how often this happens before deciding whether to change dispatch order --
+        see docs/admission-ordering-and-scheduling.md, Phase S0.
+        """
+        if not wave.fleet_decisions or slot_count <= 0:
+            return
+        try:
+            admissible = {job_id for job_id, dec in wave.fleet_decisions.items() if dec.admissible}
+
+            def _rank_key(job: MaintenanceJobRecord) -> float:
+                admission_job = _admission_job(job)
+                if admission_job.moop_score is not None:
+                    return admission_job.moop_score
+                if admission_job.estimated_benefit_score is not None:
+                    return admission_job.estimated_benefit_score
+                return float("-inf")
+
+            ranked = sorted(
+                (job for job in wave_jobs if job.id in admissible),
+                key=_rank_key,
+                reverse=True,
+            )
+            missed = {job.id for job in ranked[:slot_count]} - dispatched_job_ids
+            if missed:
+                logger.info(
+                    "Fleet-pack/dispatch-order mismatch for %s: %d of the top %d fleet-ranked "
+                    "job(s) were not dispatched this wave (round-robin order took priority "
+                    "over fleet rank)",
+                    wave.destination_id,
+                    len(missed),
+                    slot_count,
+                )
+        except Exception as exc:  # noqa: BLE001 - telemetry only, must never affect dispatch
+            logger.debug("Fleet-pack counterfactual telemetry failed: %s", exc)
 
     def _enqueue_fallback_dispatches(
         self,
@@ -1018,11 +1125,15 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _admission_config(destination: DestinationConfig, default: AdmissionConfig) -> AdmissionConfig:
+    """The admission config for one destination -- what the operator configured, unless bandit
+    tuning is explicitly enabled (see Settings.governor_bandit_tuning_enabled)."""
+    config = _admission_config_from_destination(destination, default)
+    if not get_settings().governor_bandit_tuning_enabled:
+        return config
 
     from cryo.db.session import SessionLocal
     from cryo.governor.bandit_store import load_bandit
 
-    config = _admission_config_from_destination(destination, default)
     try:
         with SessionLocal() as session:
             bandit = load_bandit(session)

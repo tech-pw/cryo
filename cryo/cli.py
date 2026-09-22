@@ -645,12 +645,6 @@ class WorkerRunner(DaemonRunner):
 
             wiring = self._get_wiring()
             step_ledger = JobStepStore(SessionLocal)
-            # Announce liveness before doing any work: the governor sizes its admission
-            # backlog off this count, and a worker that only reported after finishing a job
-            # would go invisible for the whole (p50 ~5min, p90 ~19min) duration of one.
-            heartbeat = getattr(wiring.queue, "record_worker_heartbeat", None)
-            if callable(heartbeat):
-                heartbeat(default_worker_holder_id())
             if get_settings().durable_intents_enabled:
                 IntentReconciler(
                     intents=IntentStore(SessionLocal),
