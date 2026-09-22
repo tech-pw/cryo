@@ -213,28 +213,65 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
   in settings or env-only wiring; S3 connections should offer IAM role / IRSA-style auth, not only
   static keys.
 - For research and Slack/report format work, ground recommendations in official docs and real
-  channel/data evidence — not impressions; land durable format guidance under `docs/`.
+  channel/data evidence — not impressions; land durable format guidance under `docs/`. Trust live
+  cluster/API/Grafana evidence over written docs when they disagree.
 - When a scoping or implementation doc marks items as **Scoped out**, leave those alone unless
   explicitly asked to expand scope.
-- Workload-aware research build order to prefer: finish **AutoComp** (highest near-term ROI) →
-  **PTO** (biggest net-new) → WAIR / Okolnychyi secondaries; master spec is
-  `docs/implementation/workload-aware-optimization.md`.
+- Workload-aware research build order (when investing in that track): finish **AutoComp**
+  (highest near-term ROI) → **PTO** (biggest net-new) → WAIR / Okolnychyi secondaries; master spec
+  is `docs/implementation/workload-aware-optimization.md`. That track is backlog relative to
+  making core maintenance actually run.
 - **Standing directive, added 2026-08-06: check Cryo's own infrastructure cost every day and keep
   fixing until fully optimized — this is ongoing, not a one-time pass.** Don't wait to be asked;
   proactively pull the numbers each session and investigate anything that looks off. See the
   "Cost self-check" entry below for the concrete how-to and what's already been fixed.
+- Cryo is judged by whether it actually maintains Iceberg and moves Trino/S3 cost, not by new
+  features. Near-term: run `optimize`, `expire_snapshots`, `remove_orphan_files`,
+  `optimize_manifests` daily on the hottest Trino tables (top ~500). Prefer simplifying the
+  execution path (queue / scanner / governor) over adding intelligence or competitor-feature
+  work; the 2026-09-22 pass on those three is written up in
+  `docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md`.
+- Frontend should feel like premium operator SaaS: runs/scans like Airflow 3.x DAG/run debug
+  (status, logs, a merged operations list); table detail like OpenMetadata.
+- When given a file path, read the file first — the filename is not the topic.
+- When editing Confluence pages, never strip existing images or charts.
+- On PDAE/Jira Cryo tickets: post evidence-backed progress comments as you go; do not close
+  tickets yourself (leave Dev Complete); do not silently expand scope onto a ticket another
+  session owns.
 
 ## Learned Workspace Facts
 
 - Public GitHub remote is `https://github.com/shelf-project/Cryo` (`origin`); GitLab remote
   `gitlab` points at `example-org/data/data-engineering/cryo` (often worked on branch
   `gitlab-main`).
-- Production Cryo for cost/Grafana lookups runs in the **data-platform** Kubernetes cluster
-  (Cryo namespace), not a generic default cluster guess.
+- Production Cryo: kubectl context **data-platform-cluster**, namespace **cryo**. Grafana
+  namespace-cost dashboards filter `var-cluster_name=data-platform-eks` (cost-allocation tag,
+  not the kube context) — do not guess a generic default cluster. Live API: `kubectl
+  port-forward -n cryo svc/cryo-api <local>:8000`, then `POST /api/v1/auth/token` with
+  `{"role":"admin"}` (`CRYO_ALLOW_DEV_TOKEN_IN_PROD=true`). Production deploys go through
+  `deploy/deploy.sh` (test gate → multi-arch push → pin **one** digest into all three
+  `values-prod.yaml` image fields → helm upgrade); do not hand-edit a single digest.
 - `EngineType` includes `trino`, `spark_emr`, `native`, and `flink`; **native** is the Go
-  compaction path — UI/run presets should expose it when configured, not Trino-only.
+  compaction path — UI/run presets should expose it when configured, not Trino-only. In
+  current prod `values-prod.yaml`, `CRYO_NATIVE_ENGINE_ENABLED=false` (native K8s dispatch
+  off; Spark/Trino go through workers) and `CRYO_SCAN_ENGINE=go`.
 - Slack daily-report structure guidance lives in `docs/SLACK_REPORT_FORMAT_GUIDE.md`; native-engine
   scope/gaps are tracked in `docs/native-engine-scoping-research.md`.
+- Job-store list methods (`list_queued_jobs` / `list_running_jobs` / `list_admitted_jobs`) must
+  stay **bounded, oldest-first**. Unbounded scans of those lists, called on a timer from every
+  worker, OOMed the fleet (~1GB/5s heap). Governor reconcile has the same trap — never add a
+  new periodic full-table job-list.
+- Governor engine-slot admission is not worker drain capacity. A worker runs one job at a time,
+  so the fleet drains at roughly (replicas / job duration); admitting against engine capacity
+  alone buries the claim queue under work no worker can reach. Scheduled runs need a table-count
+  cap (`budget_hint` / `max_jobs_per_scheduled_run`), and a waiting-but-healthy backlog must
+  never be treated as a failed dispatch — inferring that from age alone is what recorded 5,952
+  of one run's 6,117 jobs as failures on 2026-09-21. Since 2026-09-22 the backpressure signal is
+  the admitted stream's undelivered depth and worker presence comes from the Redis Streams
+  consumer group, so `stuck_admitted_no_dispatch` no longer exists as an error.
+- Trino "hot table" ranking should read `QueryLog` first, but a Source with
+  `query_log.mode == "iceberg_table"` writes `table_query_activity` and **no** `query_logs` rows.
+  Ranking must fall back to `table_query_activity` or the top-N preset silently unpins.
 - **Cost self-check, added 2026-08-06** (see the standing directive above): Cryo's own AWS EKS
   spend for its `cryo` namespace on the `data-platform-eks` cluster is visible two ways —
   - **Grafana dashboard**: `https://grafana.example.com`
