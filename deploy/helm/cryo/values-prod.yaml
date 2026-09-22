@@ -348,8 +348,17 @@ scheduler:
       memory: 10Gi
 
 scannerWorker:
-  # Demand-based KEDA now replaces the historical HPA described below. Keep an idle
-  # consumer serving /scale-metric and preserve the eight-consumer burst ceiling.
+  # Demand-based KEDA now replaces the historical HPA described below, and as of 2026-09-22
+  # it scales all the way to zero. The previous floor of 1 existed only because the KEDA
+  # trigger polled the scanner-worker's own Service, so one pod had to stay up to answer
+  # "should there be any pods?" -- a circular dependency, not a workload requirement. The
+  # trigger now polls the API instead (see keda-scanner-worker-scaledobject.yaml), which is
+  # always up and is where ad-hoc scans originate, so the floor could go.
+  #
+  # Measured before making the change: ScaledObject ACTIVE=False, HPA target 0/1, the single
+  # pod at 1m CPU / 117Mi against requests of 500m / 256Mi, and no non-cron scan trigger in
+  # the runs table since 2026-08-25 -- 28 days of a reserved pod doing nothing.
+  #
   # `replicas: 8` was a fixed floor, not a target -- provisioned for this fleet's largest
   # observed scan burst (12,938 tables, one 397k-partition outlier) and left running at
   # that size continuously, because the base chart's default of 3 (see values.yaml,
@@ -369,7 +378,7 @@ scannerWorker:
     maxReplicas: 8
     keda:
       enabled: true
-      minReplicas: 1
+      minReplicas: 0
       maxReplicas: 8
       targetValue: "1"
   resources:

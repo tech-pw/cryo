@@ -98,6 +98,26 @@ Full write-up: [docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md](docs/QUEUE_S
       `native_admit.py` (1,257 LOC, flag off in prod, but is the Go engine's dispatch path).
       `roi_gate.py` should stay — it is deliberately collecting shadow data.
 
+### Scanner-worker scale-to-zero — 2026-09-22
+
+Full write-up: [docs/SCANNER_WORKER_SCALE_TO_ZERO_2026-09-22.md](docs/SCANNER_WORKER_SCALE_TO_ZERO_2026-09-22.md).
+
+- [x] `cryo-scanner-worker` scales to zero when no ad-hoc scan is in flight. Its KEDA trigger
+      polled the Deployment's own Service, so one replica had to stay up to answer "should there
+      be any replicas?"; it now polls the API, which is always up and is where ad-hoc scans are
+      created. Last genuinely user-triggered scan was 2026-08-25, so the floor bought nothing.
+- [ ] Post-deploy watch: Deployment reaches `0/0`; a UI-triggered scan wakes it within
+      `pollingInterval` (15s) + pod start and the chunk is actually consumed; no ScaledObject
+      trigger errors.
+- [ ] **Bigger fish, unaddressed**: the untagged ephemeral bucket (Spark + native dispatch Jobs,
+      which don't inherit a Deployment's workload tags) ran at **$41.41/day unused, 87.3% unused**
+      over 2026-09-08→21 — ~145x the scanner-worker saving. This is where the namespace's waste
+      actually is.
+- [ ] **`trino-db` is up 14.8% month-over-month** (Sep days 1–21 mean $532.76 vs Aug $463.94,
+      Welch's t = −2.30, flagged likely significant by `compare_mom.py`). Against the standing
+      "this month below last month, with significance" goal that is a regression, and it is
+      moving the wrong way while Cryo's own footprint falls.
+
 ---
 
 ## Immediate cost rescue — 2026-09-11
