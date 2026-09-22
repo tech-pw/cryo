@@ -40,6 +40,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    # Real Redis Streams semantics (PEL, XAUTOCLAIM, XINFO) for the queue tests. Hand-rolled
+    # doubles cannot model consumer-group redelivery, which is the behaviour under test.
+    "fakeredis>=2.26",
     "httpx",
     "mypy",
     "pytest",

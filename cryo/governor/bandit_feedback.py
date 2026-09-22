@@ -61,8 +61,24 @@ def _save_pending(pending: dict[str, dict[str, float | int | bool]]) -> None:
     _pending_path().write_text(json.dumps(pending), encoding="utf-8")
 
 
+def _learning_enabled() -> bool:
+    """Whether to record bandit learning signals at all.
+
+    Each of the three entry points below runs per job, and every one of them does real I/O:
+    a load-modify-save of a single Postgres row, or a read-modify-write of a node-local JSON
+    file. Nothing reads what they record unless the tuning half is also enabled, so when it
+    is off this is pure cost on the governor's hottest path -- a wave deferring 800 jobs meant
+    ~1,600 round trips and 800 commits contending on one row.
+    """
+    from cryo.config import get_settings
+
+    return get_settings().governor_bandit_tuning_enabled
+
+
 def register_admission(job_id: str, config: AdmissionConfig) -> None:
     """Record the admission config used when a job is admitted."""
+    if not _learning_enabled():
+        return
     pending = _load_pending()
     pending[job_id] = {
         "offpeak_start_ist": config.offpeak_start_ist,
@@ -78,6 +94,8 @@ def register_admission(job_id: str, config: AdmissionConfig) -> None:
 
 def finalize_admission(job_id: str, *, job_succeeded: bool) -> None:
     """Update bandit state when a previously admitted job reaches a terminal status."""
+    if not _learning_enabled():
+        return
     pending = _load_pending()
     raw = pending.pop(job_id, None)
     if raw is None:
@@ -102,6 +120,8 @@ def finalize_admission(job_id: str, *, job_succeeded: bool) -> None:
 
 def record_deferred_admission(config: AdmissionConfig) -> None:
     """Record a deferred admission decision (not enough capacity / off-peak / cooldown)."""
+    if not _learning_enabled():
+        return
     bandit = _load_bandit()
     if bandit is None:
         return

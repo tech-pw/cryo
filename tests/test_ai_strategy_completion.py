@@ -107,6 +107,9 @@ def test_pii_gate_allows_with_force(session) -> None:
 
 def test_bandit_feedback_persists_across_processes(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CRYO_STATE_DIR", str(tmp_path))
+    # Bandit learning is opt-in (see Settings.governor_bandit_tuning_enabled); this test is
+    # about the persistence mechanics of that opt-in path.
+    monkeypatch.setattr("cryo.governor.bandit_feedback._learning_enabled", lambda: True)
     job_id = str(uuid.uuid4())
     config = AdmissionConfig(high_load_ratio=0.85)
     register_admission(job_id, config)

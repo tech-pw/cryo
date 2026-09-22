@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from cryo.config import get_settings
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
@@ -257,13 +256,14 @@ def test_reconcile_skips_stale_job_with_adopt_lease() -> None:
     assert store.get_job("job-1").status is JobStatus.RUNNING
 
 
-def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
-    """Direct regression test for the 2026-09-08 incident: the Worker's admit handoff
-    (RedisMaintenanceQueue.admit -> rpush cryo:admitted, claim_admitted -> lpop) is
-    at-most-once -- a worker that claims a job_id and dies before mark_running() drops it
-    from the Redis list forever, leaving the DB row ADMITTED with no engine_ref and no owner.
-    Confirmed live: 165 jobs stuck exactly this way. Mirrors reconcile_stale_running_jobs's own
-    RUNNING-side version of the same bug shape."""
+def test_reconcile_requeues_an_admitted_job_the_queue_has_lost_entirely() -> None:
+    """The one delivery failure the consumer group cannot repair from the inside.
+
+    A worker dying between claiming a job and starting it leaves the entry in the group's
+    pending list, so another worker reclaims it (see test_admitted_stream_queue). What is
+    left for this pass is the entry being gone outright -- a Redis restart without
+    persistence -- where the DB row says ADMITTED, the in-flight slot is still held, and
+    nothing in Redis will ever produce that job again."""
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()
     store = InMemoryJobStore()
@@ -281,13 +281,11 @@ def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
     )
     queue.enqueue("job-1", "dest")
     queue.admit("job-1", "dest", replica="r1")
-    # The bug this covers: a worker claimed the id and died before mark_running(), so the id
-    # is gone from the claim list while the DB row stays ADMITTED. Reproduce that exactly --
-    # a job still ON the list is a different case entirely (see the awaiting_claim test
-    # below), and conflating the two is what made this reaper fail healthy queued work.
-    assert queue.claim_admitted() == "job-1"
     assert locks.acquire_table_lock("table-1", "job-1", ttl_seconds=6 * 60 * 60)
     assert queue.local_in_flight_by_replica("dest") == {"r1": 1}
+    # Redis lost the admission: neither undelivered nor held by any worker.
+    queue._admitted.clear()
+    queue._claimed.clear()
 
     reaped = reconcile_stuck_admitted_jobs(
         store,
@@ -299,11 +297,46 @@ def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
 
     assert reaped == 1
     # Recovered, not discarded: the table still needs maintenance, and nothing about the
-    # dispatch being dropped says the work itself is bad.
+    # dispatch being lost says the work itself is bad.
     assert store.get_job("job-1").status is JobStatus.QUEUED
-    assert store.get_job("job-1").dispatch_attempts == 1
     assert queue.is_pending("job-1", "dest")
     assert not locks.is_table_locked("table-1")
+
+
+def test_reconcile_leaves_a_claimed_job_to_the_consumer_group() -> None:
+    """A worker that claimed a job and died is the queue's problem to solve, not this pass's.
+
+    Touching it here would be actively wrong: the entry is still in the group's pending list,
+    so requeueing would put the same work in two places at once."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
+            engine_ref=None,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", replica="r1")
+    assert queue.claim_admitted() == "job-1"
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
 
 
 def test_reconcile_leaves_an_old_admitted_job_that_is_still_awaiting_a_worker() -> None:
@@ -342,43 +375,6 @@ def test_reconcile_leaves_an_old_admitted_job_that_is_still_awaiting_a_worker() 
     assert reaped == 0
     assert store.get_job("job-1").status is JobStatus.ADMITTED
     assert queue.awaiting_claim("job-1")
-
-
-def test_reconcile_fails_a_job_dropped_more_times_than_max_dispatch_attempts() -> None:
-    """The requeue loop is bounded -- a job that keeps getting dropped must still terminate
-    rather than cycling between QUEUED and ADMITTED forever."""
-    queue = InMemoryMaintenanceQueue()
-    locks = InMemoryLockStore()
-    store = InMemoryJobStore()
-    store.add_job(
-        MaintenanceJobRecord(
-            id="job-1",
-            run_id="run-1",
-            table_id="table-1",
-            destination_id="dest",
-            mode=Mode.STANDARD,
-            status=JobStatus.ADMITTED,
-            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
-            engine_ref=None,
-            dispatch_attempts=get_settings().max_dispatch_attempts - 1,
-        )
-    )
-    queue.enqueue("job-1", "dest")
-    queue.admit("job-1", "dest", replica="r1")
-    assert queue.claim_admitted() == "job-1"
-
-    reaped = reconcile_stuck_admitted_jobs(
-        store,
-        queue,
-        locks,
-        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
-        stuck_after_seconds=15 * 60,
-    )
-
-    assert reaped == 1
-    assert store.get_job("job-1").status is JobStatus.FAILED
-    assert store.get_job("job-1").error == "stuck_admitted_no_dispatch"
-    assert not locks.is_table_locked("table-1")
 
 
 def test_reconcile_keeps_freshly_admitted_job_within_the_grace_window() -> None:
