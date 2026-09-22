@@ -112,6 +112,42 @@ Full write-up: [docs/SCANNER_WORKER_SCALE_TO_ZERO_2026-09-22.md](docs/SCANNER_WO
       returned to `0/0` in ~100s. ScaledObject shows `READY=True, FALLBACK=False`, no trigger
       errors.
 
+### Scanner health check — 2026-09-23
+
+Two separate problems found by triggering real scans against prod. One was Cryo's, one is not.
+
+**Fixed (Cryo's bug).** `_discover_candidates` connected to every enabled Source whenever
+`source_id` was None, even when `table_ids` already said exactly which tables were wanted. With
+`cdp_dev`'s metastore dead, two ad-hoc scans of **`cdp`** tables sat at `discovered=0` for 10+
+minutes and had to be cancelled — neither reached a table it was asked for. Now discovery is
+restricted to the sources owning the requested tables. After the fix the same five-table scan
+finished in **13.1s: discovered=5, scanned=5, failed=0**.
+
+**Not Cryo's bug: ~201 tables in `cdp.central` are genuinely corrupt.** A 387-table schema scan
+(4 chunks) came back `partial_failed` — 585 discovered, 384 scanned, **201 failed**. Every
+failure is the same: the Iceberg manifest list referenced by the table's metadata is **absent
+from S3** (`NoSuchKey` on GetObject — a real 404, not a permissions error).
+
+Verified against Trino, which reads the same metastore:
+
+| Table | Cryo | Trino |
+|---|---|---|
+| `central.gold_polls_evolving` | fails, missing `snap-2836956739…d2373dc1….avro` | `Metadata not found in metadata location` |
+| `central.gold_banners_evolving` | fails, missing manifest | `Error accessing metadata file` |
+| `temp.abhisek_duration` (control) | scanned OK | 7,661,016 rows |
+
+Trino names the **same** manifest-list file Cryo fails on. These tables are unreadable for every
+consumer, not just Cryo — the scanner is correctly reporting real corruption. Their metastore
+`metadata_location` points at `00000-*.metadata.json`, the very first metadata file, which
+suggests the pointer never advanced while the snapshot it references was later expired away.
+
+- [ ] Hand the broken-table list to the data platform team — these are dead for Trino too.
+- [ ] Decide whether Cryo should classify "manifest/metadata missing in S3" as its own outcome
+      rather than a generic scan failure, so the failure rate reflects unexpected errors and
+      these get an actionable list instead of being retried every six hours forever.
+- [ ] Re-check the fleet-wide ~10.7% scan failure rate against this: if most of it is the same
+      corruption, that long-standing mystery is solved and the number is honest, not a bug.
+
 ### `cdp_dev` metastore is unreachable from the cryo namespace — found 2026-09-23
 
 Found while verifying the above. **Not caused by that change** — `cryo-api` cannot reach these
