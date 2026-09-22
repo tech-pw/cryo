@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+from cryo.config import get_settings
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
@@ -280,6 +281,11 @@ def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
     )
     queue.enqueue("job-1", "dest")
     queue.admit("job-1", "dest", replica="r1")
+    # The bug this covers: a worker claimed the id and died before mark_running(), so the id
+    # is gone from the claim list while the DB row stays ADMITTED. Reproduce that exactly --
+    # a job still ON the list is a different case entirely (see the awaiting_claim test
+    # below), and conflating the two is what made this reaper fail healthy queued work.
+    assert queue.claim_admitted() == "job-1"
     assert locks.acquire_table_lock("table-1", "job-1", ttl_seconds=6 * 60 * 60)
     assert queue.local_in_flight_by_replica("dest") == {"r1": 1}
 
@@ -292,9 +298,86 @@ def test_reconcile_fails_a_job_stuck_admitted_with_no_engine_ref() -> None:
     )
 
     assert reaped == 1
+    # Recovered, not discarded: the table still needs maintenance, and nothing about the
+    # dispatch being dropped says the work itself is bad.
+    assert store.get_job("job-1").status is JobStatus.QUEUED
+    assert store.get_job("job-1").dispatch_attempts == 1
+    assert queue.is_pending("job-1", "dest")
+    assert not locks.is_table_locked("table-1")
+
+
+def test_reconcile_leaves_an_old_admitted_job_that_is_still_awaiting_a_worker() -> None:
+    """Age plus a missing engine_ref does not mean a job was dropped.
+
+    Live 2026-09-21: 5,952 of one run's 6,117 jobs were recorded as
+    `stuck_admitted_no_dispatch` while workers were healthy and still draining the same claim
+    list -- the run was simply larger than the fleet could process inside the grace window.
+    A job still on the claim list has an owner coming for it however long the queue is."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
+            engine_ref=None,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", replica="r1")
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 0
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
+    assert queue.awaiting_claim("job-1")
+
+
+def test_reconcile_fails_a_job_dropped_more_times_than_max_dispatch_attempts() -> None:
+    """The requeue loop is bounded -- a job that keeps getting dropped must still terminate
+    rather than cycling between QUEUED and ADMITTED forever."""
+    queue = InMemoryMaintenanceQueue()
+    locks = InMemoryLockStore()
+    store = InMemoryJobStore()
+    store.add_job(
+        MaintenanceJobRecord(
+            id="job-1",
+            run_id="run-1",
+            table_id="table-1",
+            destination_id="dest",
+            mode=Mode.STANDARD,
+            status=JobStatus.ADMITTED,
+            admitted_at=datetime(2026, 9, 7, 2, 47, tzinfo=UTC),
+            engine_ref=None,
+            dispatch_attempts=get_settings().max_dispatch_attempts - 1,
+        )
+    )
+    queue.enqueue("job-1", "dest")
+    queue.admit("job-1", "dest", replica="r1")
+    assert queue.claim_admitted() == "job-1"
+
+    reaped = reconcile_stuck_admitted_jobs(
+        store,
+        queue,
+        locks,
+        now=datetime(2026, 9, 8, 5, 0, tzinfo=UTC),
+        stuck_after_seconds=15 * 60,
+    )
+
+    assert reaped == 1
     assert store.get_job("job-1").status is JobStatus.FAILED
     assert store.get_job("job-1").error == "stuck_admitted_no_dispatch"
-    assert queue.local_in_flight_by_replica("dest") == {}
     assert not locks.is_table_locked("table-1")
 
 

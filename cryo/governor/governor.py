@@ -217,6 +217,36 @@ class Governor:
             )
             return False
 
+    def _worker_drain_headroom(self) -> int | None:
+        """How many more jobs this wave may push onto the worker claim queue, or None if the
+        queue can't report worker presence (in which case admission behaves as it always did).
+
+        Engine capacity and worker capacity are different things, and only the first was ever
+        measured. LiveCapacityProvider probes Trino's running queries, Spark's live K8s Jobs,
+        and the Redis in-flight counter -- none of which say anything about how fast workers
+        pull from `cryo:admitted`. Workers process one job at a time, so the fleet drains at
+        roughly (replicas / job duration), and anything admitted beyond that just queues.
+
+        Live 2026-09-21: with the engine slot_cap satisfied, the governor admitted thousands
+        of jobs per run against a fleet that can finish ~3,000 jobs/day; 5,952 of one run's
+        6,117 jobs aged out of ADMITTED without an engine ever touching the table. Keeping a
+        small multiple of the worker count queued is enough to keep every worker busy -- more
+        than that buys no throughput and only creates work for the reaper.
+        """
+        active_workers = getattr(self._queue, "active_worker_count", None)
+        admitted_depth = getattr(self._queue, "admitted_depth", None)
+        if not callable(active_workers) or not callable(admitted_depth):
+            return None
+        workers = int(active_workers())
+        if workers <= 0:
+            # No worker has heartbeat recently. Either the fleet is genuinely down (admitting
+            # is pointless) or heartbeats aren't being written yet on a mixed-version rollout.
+            # Treating it as "unknown" rather than zero keeps the old behavior instead of
+            # wedging admission fleet-wide on a signal that may simply be absent.
+            return None
+        allowance = workers * get_settings().worker_dispatch_backlog_per_replica
+        return max(0, allowance - int(admitted_depth()))
+
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         wave_start = perf_counter()
         destination_outcomes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -253,6 +283,7 @@ class Governor:
             admitted = 0
             deferred = 0
             blocked = 0
+            worker_drain_headroom = self._worker_drain_headroom()
 
             pending_by_destination = self._queue.pending_by_destination()
             for destination_id, job_ids in pending_by_destination.items():
@@ -270,6 +301,24 @@ class Governor:
                 local_in_flight = self._queue.local_in_flight_by_replica(destination_id)
                 budget = compute_admission_budget(live_capacity, local_in_flight, config)
                 replicas = self._round_robin_slots(destination_id, budget.replicas)
+                # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
+                # with Cryo has no independent verification that a self-reported success
+                # actually mutated the table -- see use_native_k8s below, which this mirrors so
+                # worker backpressure is applied to exactly the destinations that go through
+                # the worker claim queue.
+                dispatches_via_worker_queue = not (
+                    destination_uses_k8s_dispatch(destination)
+                    and self._session_factory is not None
+                    and get_settings().native_engine_enabled
+                )
+                if dispatches_via_worker_queue and worker_drain_headroom is not None:
+                    if worker_drain_headroom <= 0:
+                        blocked += len(job_ids)
+                        destination_outcomes[destination_id]["blocked"] += len(job_ids)
+                        continue
+                    if len(replicas) > worker_drain_headroom:
+                        replicas = replicas[:worker_drain_headroom]
+                    worker_drain_headroom -= len(replicas)
                 session_factory = self._session_factory
                 session_context = (
                     session_factory() if session_factory is not None else nullcontext(None)
@@ -298,11 +347,7 @@ class Governor:
                     # that. Checking the flag here means those jobs go straight to the regular
                     # worker-queue path instead, which dispatches through create_engine to
                     # whatever SQL fallback the destination is configured for.
-                    use_native_k8s = (
-                        destination_uses_k8s_dispatch(destination)
-                        and session_factory is not None
-                        and get_settings().native_engine_enabled
-                    )
+                    use_native_k8s = not dispatches_via_worker_queue
                     # Inspect a bounded multiple of available slots, then round-robin that window
                     # by tenant. This preserves the 11k-fleet OOM fix while giving later tenants a
                     # chance to use capacity instead of letting one queue prefix monopolize a wave.

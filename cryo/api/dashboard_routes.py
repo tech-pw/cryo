@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, contains_eager, selectinload
 
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.api.sla import sla_from_guardrails
+from cryo.config import get_settings
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import (
     AuditLog,
@@ -27,6 +28,7 @@ from cryo.db.models import (
 )
 from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
+from cryo.reporting.maintenance_coverage import coverage_to_payload, measure_cohort_coverage
 from cryo.reporting.vitals import compute_cryo_vitals, cryo_vitals_to_payload
 from cryo.scheduler.rules import effective_preset
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
@@ -695,6 +697,30 @@ def get_cryo_vitals(
     cryo/reporting/vitals.py for the composition and scoring rationale)."""
     vitals = compute_cryo_vitals(session)
     return cryo_vitals_to_payload(vitals)
+
+
+@router.get("/maintenance-coverage", tags=["dashboards"])
+def get_maintenance_coverage(
+    session: SessionDep,
+    _principal: Annotated[dict, Depends(require_viewer)],
+    preset_name: Annotated[str | None, Query()] = None,
+    window_hours: Annotated[int, Query(ge=1, le=720)] = 24,
+) -> dict[str, Any]:
+    """Per-operation maintenance coverage of a preset's pinned cohort.
+
+    Answers "did the tables we promised to maintain actually get each of the four
+    operations", which neither /vitals (is the machine healthy) nor
+    /dashboard/fleet-trends (how much good are we doing fleet-wide) can: a job-level success
+    rate cannot tell a table that got optimize but not expire_snapshots from one that got
+    nothing. Defaults to the Trino-hot preset -- see cryo/reporting/maintenance_coverage.py.
+    """
+    resolved = preset_name or get_settings().trino_hot_preset_name
+    coverage = measure_cohort_coverage(
+        session,
+        preset_name=resolved,
+        window_hours=window_hours,
+    )
+    return coverage_to_payload(coverage)
 
 
 @router.get("/sla-status", response_model=SLAResponse, tags=["dashboards"])

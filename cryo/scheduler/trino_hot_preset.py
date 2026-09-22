@@ -31,12 +31,23 @@ from cryo.planner.trino_hot_tables import top_trino_query_tables
 logger = logging.getLogger(__name__)
 
 
+class EmptyHotRankingError(RuntimeError):
+    """Raised instead of reconciling to an empty target set.
+
+    Distinct from the ValueError for a missing preset: that one means "not set up yet", this
+    one means "set up, but today's telemetry can't tell us what's hot". Both are recoverable
+    without operator action, but only this one implies data loss if ignored.
+    """
+
+
 @dataclass(frozen=True)
 class RepinResult:
     preset_id: uuid.UUID
     pinned: int
     unpinned: int
     unchanged: int
+    # Which telemetry source ranked this repin -- see TrinoHotTable.source.
+    ranking_source: str = "query_logs"
 
 
 def repin_trino_hot_tables(
@@ -60,6 +71,23 @@ def repin_trino_hot_tables(
         raise ValueError(f"preset {preset_name!r} not found -- seed it before running repin")
 
     hot_tables = top_trino_query_tables(session, limit=limit, window_days=window_days, now=current)
+    if not hot_tables:
+        # Reconciling to an empty target set would delete every pin this preset holds and
+        # leave the fleet's hottest tables with no scheduled maintenance at all. An empty
+        # ranking means the telemetry is missing, not that no table is queried -- both
+        # ranking sources going quiet is an ingest failure, and the correct response to
+        # "I can't tell what's hot right now" is to keep yesterday's answer.
+        logger.error(
+            "Trino-hot ranking returned no tables over a %dd window -- keeping the existing "
+            "pins rather than unpinning the whole preset. Check telemetry ingest "
+            "(query_logs / table_query_activity).",
+            window_days,
+        )
+        raise EmptyHotRankingError(
+            f"no hot tables found over a {window_days}d window; refusing to unpin "
+            f"{preset_name!r}"
+        )
+
     target_table_ids = {hot.table_id for hot in hot_tables}
 
     # Every TableAssignment row currently pointing at THIS preset -- the "who does this preset
@@ -70,12 +98,41 @@ def repin_trino_hot_tables(
     ).all()
     existing_by_table = {row.table_id: row for row in existing}
 
+    # TableAssignment.table_id is the primary key -- one assignment per table, fleet-wide. A
+    # hot table already pinned to a DIFFERENT preset therefore cannot just be inserted; the
+    # insert would violate the PK. Taking the table over is the intended behavior (the point
+    # of this preset is that the fleet's hottest tables are maintained here, not wherever
+    # they happened to land), so reassign the existing row instead of adding a second one.
+    # Operator intent is still respected: a row this job did not create is left alone.
+    claimed_elsewhere = {
+        row.table_id: row
+        for row in session.scalars(
+            select(TableAssignment).where(
+                TableAssignment.table_id.in_(target_table_ids),
+                TableAssignment.preset_id != preset.id,
+            )
+        ).all()
+    }
+
     pinned = 0
+    reassigned = 0
     unchanged = 0
+    skipped_operator_pins = 0
     for hot in hot_tables:
         row = existing_by_table.get(hot.table_id)
         if row is not None:
             unchanged += 1
+            continue
+        foreign = claimed_elsewhere.get(hot.table_id)
+        if foreign is not None:
+            if foreign.assigned_by != assigned_by:
+                # An operator deliberately pinned this table somewhere else. Overriding that
+                # silently is exactly the kind of surprise that makes a scheduler untrustworthy.
+                skipped_operator_pins += 1
+                continue
+            foreign.preset_id = preset.id
+            foreign.pinned = True
+            reassigned += 1
             continue
         session.add(
             TableAssignment(
@@ -101,13 +158,24 @@ def repin_trino_hot_tables(
 
     session.commit()
 
+    ranking_source = hot_tables[0].source
     logger.info(
-        "Repinned %s (top %d Trino-hot tables, %dd window): pinned=%d unpinned=%d unchanged=%d",
+        "Repinned %s (top %d hot tables by %s, %dd window): pinned=%d reassigned=%d "
+        "unpinned=%d unchanged=%d left_on_operator_pins=%d",
         preset_name,
         limit,
+        ranking_source,
         window_days,
         pinned,
+        reassigned,
         unpinned,
         unchanged,
+        skipped_operator_pins,
     )
-    return RepinResult(preset_id=preset.id, pinned=pinned, unpinned=unpinned, unchanged=unchanged)
+    return RepinResult(
+        preset_id=preset.id,
+        pinned=pinned + reassigned,
+        unpinned=unpinned,
+        unchanged=unchanged,
+        ranking_source=ranking_source,
+    )

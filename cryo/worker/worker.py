@@ -69,6 +69,9 @@ class MaintenanceJobRecord:
     # docstring. Used by reconcile_stuck_admitted_jobs to age out jobs the Worker's at-most-
     # once admit handoff (Redis rpush/lpop, no ack) silently dropped.
     admitted_at: datetime | None = None
+    # Times this job was admitted and then lost by that same handoff -- see
+    # MaintenanceJob.dispatch_attempts. Bounds the reaper's requeue loop.
+    dispatch_attempts: int = 0
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
@@ -208,6 +211,7 @@ class InMemoryJobStore:
         self.audit: list[AuditRecord] = []
         self.deactivated_tables: dict[str, str] = {}
         self.missing_metadata_tables: dict[str, str] = {}
+        self.shared_location_tables: set[str] = set()
 
     def add_destination(self, destination: DestinationConfig) -> None:
         self.destinations[destination.id] = destination
@@ -235,6 +239,12 @@ class InMemoryJobStore:
 
     def save_plan(self, job_id: str, plan: dict[str, Any]) -> None:
         self.jobs[job_id].plan = plan
+
+    def record_dispatch_attempt(self, job_id: str, attempts: int) -> None:
+        self.jobs[job_id].dispatch_attempts = attempts
+
+    def has_shared_s3_location(self, table_id: str) -> bool:
+        return table_id in self.shared_location_tables
 
     def mark_status(
         self,
@@ -533,6 +543,7 @@ class Worker:
                     destination=destination,
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
+                    has_shared_location=self._has_shared_location(job.table_id),
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
 
@@ -634,7 +645,20 @@ class Worker:
                 had_skip = native_had_skip
                 reconciliation_required = native_reconciliation_required
             else:
+                # Operations that already failed this pass. Their remaining statements (an
+                # OPTIMIZE plan is chunked into many) are skipped, but a DIFFERENT operation
+                # still runs: expire_snapshots failing says nothing about whether
+                # remove_orphan_files would have worked, and the four core ops touch disjoint
+                # parts of the table's metadata. Before this, one failure `break`ed the whole
+                # loop, so a table scheduled for all four ops could lose three of them to an
+                # unrelated failure in the first -- and with the canonical order putting
+                # cleanup last, the ops that actually reclaim space were the ones most often
+                # dropped. Ordering still matters within a pass, so nothing is retried or
+                # reordered here; a failed op is simply not fatal to its successors.
+                failed_actions: dict[Any, str] = {}
                 for index, statement in enumerate(statements):
+                    if statement.action in failed_actions:
+                        continue
                     existing_budget_error = _effect_budget_error(
                         active_intent,
                         effect_budget_usage,
@@ -871,11 +895,16 @@ class Worker:
                                 message=f"{statement.action.value} failed: {exc}",
                             ),
                         )
-                        final_status = (
-                            JobStatus.PARTIAL if receipt_id is not None else JobStatus.FAILED
-                        )
-                        error = f"effect_unknown:{exc}" if receipt_id is not None else str(exc)
-                        break
+                        if receipt_id is not None:
+                            # Durable intent open with no recorded outcome -- the effect may
+                            # or may not have landed, so the table's state is unknown and
+                            # running the next operation against it would be guessing.
+                            final_status = JobStatus.PARTIAL
+                            error = f"effect_unknown:{exc}"
+                            break
+                        failed_actions[statement.action] = str(exc)
+                        error = str(exc)
+                        continue
 
                     result_duration_ms = result.duration_ms
                     if result_duration_ms is None:
@@ -979,9 +1008,16 @@ class Worker:
                                 message=f"{statement.action.value} failed: {detail}",
                             ),
                         )
-                        final_status = JobStatus.PARTIAL if outcome_unknown else JobStatus.FAILED
-                        error = f"effect_unknown:{detail}" if outcome_unknown else detail
-                        break
+                        if outcome_unknown:
+                            # The effect may or may not have landed. Until reconciliation says
+                            # which, the table's state is unknown and running the next
+                            # operation against it would be guessing.
+                            final_status = JobStatus.PARTIAL
+                            error = f"effect_unknown:{detail}"
+                            break
+                        failed_actions[statement.action] = detail
+                        error = detail
+                        continue
                     had_success = True
                     if self._step_ledger is not None:
                         self._step_ledger.complete_step(
@@ -1056,6 +1092,14 @@ class Worker:
                         final_status = JobStatus.PARTIAL
                         error = budget_error
                         break
+                if failed_actions and final_status is JobStatus.SUCCEEDED:
+                    # Some operations landed and some didn't: PARTIAL is the honest answer.
+                    # Calling the whole job FAILED would hide real reclaimed space from the
+                    # impact numbers and re-queue work that already succeeded.
+                    final_status = JobStatus.PARTIAL if had_success else JobStatus.FAILED
+                    error = "; ".join(
+                        f"{action.value}: {detail}" for action, detail in failed_actions.items()
+                    )
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
             if error in frozenset({"table_not_quiet", "awaiting_started_step_recovery"}):
@@ -1282,6 +1326,25 @@ class Worker:
         return self._lock_store.renew_table_lock(
             job.table_id, job.id, self._lock_ttl_seconds
         ) or self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+
+    def _has_shared_location(self, table_id: str) -> bool:
+        """Whether this table's warehouse path overlaps another catalog entry's.
+
+        Optional on the store protocol so in-memory/test stores and older wiring keep
+        working -- see _shared_location_unknown for why the absent answer is "no overlap".
+        """
+        lookup = getattr(self._store, "has_shared_s3_location", None)
+        if not callable(lookup):
+            return _shared_location_unknown()
+        try:
+            return bool(lookup(table_id))
+        except Exception:
+            logger.warning(
+                "Shared-location lookup failed for table %s; proceeding without the gate",
+                table_id,
+                exc_info=True,
+            )
+            return _shared_location_unknown()
 
     def _renew_table_lock(self, job: MaintenanceJobRecord) -> bool:
         """Return whether this worker still holds the table lock -- CR-02: every call site
@@ -2542,6 +2605,16 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
     if schema_name and table_name:
         return f"{schema_name}.{table_name}"
     return None
+
+
+def _shared_location_unknown() -> bool:
+    """Default when the store can't answer whether a table's location overlaps another's.
+
+    False, i.e. "no known overlap", which preserves the pre-existing behavior. The gate is a
+    safety net over the procedure's own retention window; failing every orphan cleanup fleet
+    -wide because a reporting table is unavailable would trade a narrow risk for a broad one.
+    """
+    return False
 
 
 def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:

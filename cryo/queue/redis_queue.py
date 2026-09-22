@@ -3,9 +3,15 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from cryo.domain.enums import JobStatus
+
+# Worker heartbeats older than this are dropped from the presence set entirely. Generous
+# relative to the liveness window callers actually ask about (active_worker_count's
+# stale_after_seconds) so a brief Redis or scheduling hiccup doesn't erase a live pod.
+_WORKER_HEARTBEAT_RETENTION_SEC = 600
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,16 @@ class MaintenanceQueue(Protocol):
     def claim_admitted(self) -> str | None: ...
 
     def requeue_for_continuation(self, job_id: str) -> None: ...
+
+    def awaiting_claim(self, job_id: str) -> bool: ...
+
+    def admitted_depth(self) -> int: ...
+
+    def return_to_pending(self, job_id: str, destination_id: str, priority: int = 0) -> None: ...
+
+    def record_worker_heartbeat(self, worker_id: str) -> None: ...
+
+    def active_worker_count(self, stale_after_seconds: int = 60) -> int: ...
 
     def mark_running(self, job_id: str) -> None: ...
 
@@ -54,6 +70,7 @@ class InMemoryMaintenanceQueue:
         self._admitted: deque[str] = deque()
         self._entries: dict[str, QueueEntry] = {}
         self._statuses: dict[str, JobStatus] = {}
+        self._worker_heartbeats: dict[str, datetime] = {}
         self._sequence = 0
 
     def enqueue(self, job_id: str, destination_id: str, priority: int = 0) -> None:
@@ -95,6 +112,23 @@ class InMemoryMaintenanceQueue:
     def requeue_for_continuation(self, job_id: str) -> None:
         self._statuses[job_id] = JobStatus.ADMITTED
         self._admitted.append(job_id)
+
+    def awaiting_claim(self, job_id: str) -> bool:
+        return job_id in self._admitted
+
+    def admitted_depth(self) -> int:
+        return len(self._admitted)
+
+    def return_to_pending(self, job_id: str, destination_id: str, priority: int = 0) -> None:
+        self._admitted = deque(other for other in self._admitted if other != job_id)
+        self.enqueue(job_id, destination_id, priority)
+
+    def record_worker_heartbeat(self, worker_id: str) -> None:
+        self._worker_heartbeats[worker_id] = datetime.now(UTC)
+
+    def active_worker_count(self, stale_after_seconds: int = 60) -> int:
+        cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+        return sum(1 for seen in self._worker_heartbeats.values() if seen >= cutoff)
 
     def mark_running(self, job_id: str) -> None:
         self._statuses[job_id] = JobStatus.RUNNING
@@ -213,6 +247,72 @@ class RedisMaintenanceQueue:
         pipe.hset(self._job_key(job_id), "status", "admitted")
         pipe.rpush(self._admitted_key(), job_id)
         pipe.execute()
+
+    def awaiting_claim(self, job_id: str) -> bool:
+        """True while job_id is still sitting in the claim list waiting for a free worker.
+
+        This is the discriminator reconcile_stuck_admitted_jobs needs to tell the two very
+        different ADMITTED-with-no-engine_ref cases apart: a job dropped by the at-most-once
+        lpop handoff (gone from the list, nothing will ever pick it up) versus a job that is
+        simply behind a long queue (still on the list, a worker will reach it). Before this
+        existed the reaper could not distinguish them and failed both after 15 minutes.
+        """
+        try:
+            position = self._redis.lpos(self._admitted_key(), job_id)
+        except AttributeError:
+            # redis-py < 4.0 / a client stub without LPOS. Fall back to scanning the list;
+            # correctness matters more here than the O(n), and the reaper runs once a wave.
+            values = self._redis.lrange(self._admitted_key(), 0, -1)
+            return any(_decode(value) == job_id for value in values)
+        return position is not None
+
+    def admitted_depth(self) -> int:
+        return int(self._redis.llen(self._admitted_key()) or 0)
+
+    def return_to_pending(self, job_id: str, destination_id: str, priority: int = 0) -> None:
+        """Move an admitted-but-undispatched job back to its destination's pending zset.
+
+        Releases the in-flight slot the admission took, drops any stale claim-list entry, and
+        restores QUEUED so the next governor wave can admit it again. Used instead of failing
+        a job outright when its dispatch was lost rather than attempted.
+        """
+        pipe = self._redis.pipeline()
+        pipe.lrem(self._admitted_key(), 0, job_id)
+        pipe.hincrby(self._in_flight_key(destination_id), self._replica_of(job_id), -1)
+        pipe.hset(
+            self._job_key(job_id),
+            mapping={"destination_id": destination_id, "status": "queued"},
+        )
+        pipe.zadd(self._pending_key(destination_id), {job_id: priority})
+        pipe.sadd(self._destinations_key(), destination_id)
+        pipe.execute()
+
+    def _replica_of(self, job_id: str) -> str:
+        entry = self._redis.hgetall(self._job_key(job_id))
+        return _decode(entry.get(b"replica") or entry.get("replica")) or "default"
+
+    def record_worker_heartbeat(self, worker_id: str) -> None:
+        """Announce that this worker pod is alive and polling.
+
+        The governor has no other way to know how many workers exist: it probes ENGINE load
+        (Trino queries, Spark Jobs) which says nothing about how fast the claim queue drains,
+        and workers process one job at a time. Without a live worker count the governor
+        admits against engine capacity alone and buries the claim list under work no worker
+        can reach. A sorted set keyed by last-seen timestamp keeps the read O(log n) and lets
+        dead pods age out on their own -- no deregistration path to get wrong on a hard kill.
+        """
+        now = datetime.now(UTC).timestamp()
+        pipe = self._redis.pipeline()
+        pipe.zadd(self._workers_key(), {worker_id: now})
+        pipe.zremrangebyscore(self._workers_key(), "-inf", now - _WORKER_HEARTBEAT_RETENTION_SEC)
+        pipe.execute()
+
+    def active_worker_count(self, stale_after_seconds: int = 60) -> int:
+        cutoff = datetime.now(UTC).timestamp() - stale_after_seconds
+        return int(self._redis.zcount(self._workers_key(), cutoff, "+inf") or 0)
+
+    def _workers_key(self) -> str:
+        return f"{self._namespace}:workers"
 
     def mark_running(self, job_id: str) -> None:
         self._redis.hset(self._job_key(job_id), "status", "running")

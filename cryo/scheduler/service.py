@@ -190,6 +190,25 @@ class SchedulerService:
 
         return result
 
+    def _scheduled_run_budget(self, preset: PresetConfig) -> int | None:
+        """Max tables one cron fire of `preset` may target, or None for uncapped.
+
+        A preset can raise or lower the fleet default via guardrails.max_jobs_per_run; 0 or
+        negative means "no cap", for deliberate one-off backfills. Anything else clamps to
+        CRYO_MAX_JOBS_PER_SCHEDULED_RUN.
+        """
+        from cryo.config import get_settings
+
+        default = get_settings().max_jobs_per_scheduled_run
+        override = preset.guardrails.get("max_jobs_per_run")
+        if override is None:
+            return default
+        try:
+            limit = int(override)
+        except (TypeError, ValueError):
+            return default
+        return limit if limit > 0 else None
+
     def _dispatch_due_presets(self, current: datetime) -> SchedulerTickResult:
         """The actual cron-preset dispatch loop, extracted out of tick() so it can run first
         -- see tick()'s own docstring for why. Behavior unchanged from before that reordering."""
@@ -218,6 +237,7 @@ class SchedulerService:
                 rules,
                 assignments,
                 trigger="cron",
+                budget_hint=self._scheduled_run_budget(preset),
                 now=current,
             )
             if not run.jobs:
