@@ -674,6 +674,17 @@ def _discover_candidates(
                 (source_id, schema_name, table_name) for schema_name, table_name in table_names
             )
 
+    # ...and which *sources* matter. Without this the loop below connects to every enabled
+    # source even when every requested table lives in one of them, so one unreachable
+    # lakehouse stalls scans that never needed it. Confirmed in prod 2026-09-23: a five-table
+    # scan of `cdp` tables sat at scanned=0 for over five minutes burning TCP timeouts against
+    # cdp_dev's dead metastore (three A records, each timing out in turn) before it could get
+    # to any of the tables actually asked for.
+    if requested_tables is not None and source_id is None:
+        requested_source_ids = {owner for owner, _, _ in requested_tables}
+        if requested_source_ids:
+            stmt = stmt.where(Source.id.in_(requested_source_ids))
+
     requested_schemas = set(schema_names or ())
     # Knowing exactly which tables we want also tells us exactly which schemas matter --
     # narrows the live catalog walk below to just those namespaces.
