@@ -857,6 +857,13 @@ class MaintenanceJob(Base):
     # reaching mark_running() drops it from the Redis list forever, leaving the DB row ADMITTED
     # with no engine_ref and no owner, permanently invisible to every other reconciliation pass.
     admitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # How many times this job was admitted and then lost by that same at-most-once handoff.
+    # reconcile_stuck_admitted_jobs returns a dropped job to QUEUED rather than failing it, so
+    # the work is retried instead of discarded; this bounds that loop (max_dispatch_attempts)
+    # so a job that keeps getting dropped still reaches a terminal state instead of cycling.
+    dispatch_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)

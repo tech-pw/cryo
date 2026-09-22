@@ -101,18 +101,56 @@ def test_worker_records_actual_bytes_freed_when_engine_returns_them() -> None:
     assert [record.actual_bytes_freed for record in store.audit] == [512 * 1024**2, 1024**3]
 
 
-def test_worker_marks_failed_when_engine_statement_fails() -> None:
+def test_worker_marks_partial_when_one_of_several_operations_fails() -> None:
+    """One failed operation must not cancel the others.
+
+    The plan here is optimize then expire_snapshots; optimize lands, expire doesn't. The job
+    is PARTIAL, not FAILED -- real work was committed, and reporting it as a clean failure
+    both hides that work and invites a retry of something already done."""
     queue, locks, store = _worker_fixture()
     engine = FakeMaintenanceEngine(fail_actions={OperationType.EXPIRE_SNAPSHOTS})
 
     result = Worker(queue, store, lambda destination: engine, locks).process_next()
 
     assert result is not None
-    assert result.status is JobStatus.FAILED
-    assert result.error == "fake engine failed expire_snapshots"
-    assert queue.status("job-1") is JobStatus.FAILED
+    assert result.status is JobStatus.PARTIAL
+    assert result.error == "expire_snapshots: fake engine failed expire_snapshots"
+    assert queue.status("job-1") is JobStatus.PARTIAL
     assert [record.status for record in store.audit] == ["OK", "FAILED"]
     assert not locks.is_table_locked("table-1")
+
+
+def test_worker_marks_failed_when_every_operation_fails() -> None:
+    queue, locks, store = _worker_fixture()
+    engine = FakeMaintenanceEngine(
+        fail_actions={OperationType.OPTIMIZE, OperationType.EXPIRE_SNAPSHOTS}
+    )
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.FAILED
+    assert [record.status for record in store.audit] == ["FAILED", "FAILED"]
+    assert not locks.is_table_locked("table-1")
+
+
+def test_worker_runs_a_later_operation_after_an_earlier_one_fails() -> None:
+    """The regression that motivated per-operation isolation: with the canonical order
+    putting cleanup last (optimize -> manifests -> expire -> orphan), a failure in the first
+    operation used to drop every remaining one -- so the ops that actually reclaim space were
+    the ones most often skipped."""
+    queue, locks, store = _worker_fixture()
+    engine = FakeMaintenanceEngine(fail_actions={OperationType.OPTIMIZE})
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert [record.action for record in store.audit] == [
+        OperationType.OPTIMIZE,
+        OperationType.EXPIRE_SNAPSHOTS,
+    ]
+    assert [record.status for record in store.audit] == ["FAILED", "OK"]
+    assert result.status is JobStatus.PARTIAL
 
 
 def test_worker_continues_when_engine_skips_unsupported_operation() -> None:
@@ -406,7 +444,10 @@ def test_worker_does_not_deactivate_table_on_unrelated_failure() -> None:
     result = Worker(queue, store, lambda destination: engine, locks).process_next()
 
     assert result is not None
-    assert result.status is JobStatus.FAILED
+    # PARTIAL rather than FAILED because the plan's other operation still ran -- see
+    # test_worker_runs_a_later_operation_after_an_earlier_one_fails. Either way, a failure
+    # that isn't "table is gone" must never deactivate the table.
+    assert result.status is JobStatus.PARTIAL
     assert store.deactivated_tables == {}
 
 

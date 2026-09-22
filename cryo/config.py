@@ -216,6 +216,50 @@ class Settings(BaseSettings):
     default_emr_slot_cap: int = Field(default=10, gt=0)
     default_native_slot_cap: int = Field(default=5, gt=0)
     wave_wait_sec: int = Field(default=300, gt=0)
+    max_jobs_per_scheduled_run: int = Field(
+        default=500,
+        gt=0,
+        description=(
+            "Hard cap on how many tables one cron-triggered run may target. build_scheduled_run "
+            "has always accepted a budget_hint, but the cron path never passed one, so a single "
+            "preset fired against every matching table in the fleet. Live 2026-09-21: scheduled "
+            "runs of 3,478-6,117 jobs against a worker fleet whose real ceiling is ~3,000 "
+            "jobs/day, so 5,952 of 6,117 jobs in one run aged out of ADMITTED and were recorded "
+            "as failures without an engine ever touching the table. Candidates are ranked by "
+            "apply_priority_order before this slice, so the cap keeps the highest-value tables."
+        ),
+    )
+    stuck_admitted_after_seconds: int = Field(
+        default=900,
+        gt=0,
+        description=(
+            "Grace period before reconcile_stuck_admitted_jobs treats an ADMITTED job with no "
+            "engine_ref as undispatched. Only applies to jobs that are genuinely absent from "
+            "the claim queue; a job still waiting its turn is left alone however long the "
+            "queue is."
+        ),
+    )
+    max_dispatch_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "How many times a job dropped by the at-most-once admit handoff may be returned to "
+            "the pending queue before it is failed for real. Bounds the requeue loop so a job "
+            "that is genuinely poisonous still terminates."
+        ),
+    )
+    worker_dispatch_backlog_per_replica: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Admission backpressure: the governor will not grow the undispatched ADMITTED "
+            "backlog beyond this many jobs per live worker replica. Engine slot_cap bounds how "
+            "much load the ENGINE can take; it says nothing about how fast workers can drain "
+            "the claim queue, and workers process one job at a time. Without this the governor "
+            "admits against engine capacity alone and buries the claim queue under work no "
+            "worker can reach inside the stuck-admitted grace period."
+        ),
+    )
     engine_connect_timeout_sec: float = Field(
         default=5.0,
         gt=0,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -8,6 +10,7 @@ from typing import Any
 from sqlalchemy import Float, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
+from cryo.anomalies.report import shared_location_table_ids
 from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import (
     AuditLog,
@@ -29,10 +32,17 @@ from cryo.worker.worker import (
     TableMaintenanceData,
 )
 
+logger = logging.getLogger(__name__)
+
+# The shared-location snapshot refreshes on a daily cron, so a few minutes of staleness in
+# the maintenance path costs nothing and saves re-parsing its JSONB on every job.
+_SHARED_LOCATION_CACHE_TTL_SEC = 300
+
 
 class SQLJobStore:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
+        self._shared_locations_cache: tuple[float, frozenset[uuid.UUID]] | None = None
 
     def get_job(self, job_id: str) -> MaintenanceJobRecord:
         with self._session_factory() as session:
@@ -317,6 +327,49 @@ class SQLJobStore:
             jobs = session.scalars(query)
             return [_job_record(session, job) for job in jobs]
 
+    def has_shared_s3_location(self, table_id: str) -> bool:
+        """Whether this table shares a warehouse path with another catalog entry.
+
+        Cached per process: the underlying snapshot refreshes on a daily cron
+        (SHARED_S3_REPORT_CRON), so re-reading and re-parsing its JSONB on every job would
+        be pure overhead on the hot path.
+        """
+        try:
+            overlapping = self._shared_location_table_ids()
+        except Exception:
+            # Never let a reporting-table problem decide whether maintenance runs. Callers
+            # treat False as "no known overlap", which is the pre-existing behavior.
+            logger.warning("Shared-location lookup failed; treating as no overlap", exc_info=True)
+            return False
+        try:
+            return uuid.UUID(table_id) in overlapping
+        except (TypeError, ValueError):
+            return False
+
+    def _shared_location_table_ids(self) -> frozenset[uuid.UUID]:
+        now = time.monotonic()
+        cached = self._shared_locations_cache
+        if cached is not None and now - cached[0] < _SHARED_LOCATION_CACHE_TTL_SEC:
+            return cached[1]
+        with self._session_factory() as session:
+            table_ids = shared_location_table_ids(session)
+        self._shared_locations_cache = (now, table_ids)
+        return table_ids
+
+    def record_dispatch_attempt(self, job_id: str, attempts: int) -> None:
+        """Persist how many times this job's admission was lost before reaching a worker.
+
+        Written by reconcile_stuck_admitted_jobs just before it returns a dropped job to
+        QUEUED, so the retry loop is bounded by max_dispatch_attempts instead of cycling a
+        genuinely undispatchable job forever.
+        """
+        with self._session_factory() as session:
+            job = session.get(MaintenanceJob, uuid.UUID(job_id))
+            if job is None:
+                return
+            job.dispatch_attempts = attempts
+            session.commit()
+
     def count_running_jobs_by_metastore_uri(self) -> dict[str, int]:
         """Count RUNNING jobs grouped by their table's source metastore URI.
 
@@ -432,6 +485,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         engine_ref=job.engine_ref,
         replica=job.replica,
         admitted_at=job.admitted_at,
+        dispatch_attempts=int(job.dispatch_attempts or 0),
         started_at=job.started_at,
         finished_at=job.finished_at,
         error=job.error,

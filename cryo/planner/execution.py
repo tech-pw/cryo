@@ -34,6 +34,7 @@ def build_execution_plan(
     destination: ExecutionDestination,
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
+    has_shared_location: bool = False,
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
     skip_operations = skip_operations_from_preset(operations)
@@ -52,6 +53,10 @@ def build_execution_plan(
         Mode(mode),
         plan_params,
         protected_snapshot_ids=protected_snapshot_ids,
+    )
+    plan = gate_orphan_removal_on_shared_location(
+        plan,
+        has_shared_location=has_shared_location,
     )
     return gate_native_optimize_manifests(
         plan,
@@ -137,6 +142,51 @@ def skip_operations_from_preset(
     return [
         operation.value for operation in _PRESET_GATED_OPERATION_TYPES if operation not in requested
     ]
+
+
+def gate_orphan_removal_on_shared_location(
+    plan: MaintenancePlan,
+    *,
+    has_shared_location: bool,
+) -> MaintenancePlan:
+    """Drop remove_orphan_files when this table's S3 location overlaps another table's.
+
+    remove_orphan_files lists everything under the table root and deletes whatever is not
+    referenced by *this* table's metadata. When two catalog entries share a warehouse path --
+    exact same prefix, or one nested under the other -- the other table's live data files look
+    exactly like orphans, and the procedure deletes them. This is not hypothetical: see
+    docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md.
+
+    Neither Trino's nor Spark's procedure takes a narrower prefix argument, and iceberg-go
+    scans metadata.Location() (the whole table root, not just data/), so there is no way to
+    run this safely on an overlapping table -- the only safe action is not to run it. Overlap
+    detection already existed (cryo/anomalies/paths.py) but only produced a report; nothing
+    consulted it before deleting files.
+
+    The rest of the plan still runs: optimize, expire_snapshots, and optimize_manifests all
+    operate through table metadata and never delete another table's files.
+    """
+    if not has_shared_location:
+        return plan
+    if all(
+        operation.type is not OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations
+    ):
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(
+            operation
+            for operation in plan.operations
+            if operation.type is not OperationType.REMOVE_ORPHAN_FILES
+        ),
+        notes=(
+            *plan.notes,
+            "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
+            "so unreferenced-file deletion could remove the other table's live data. Give the "
+            "table a unique location, then re-enable.",
+        ),
+    )
 
 
 def gate_native_optimize_manifests(

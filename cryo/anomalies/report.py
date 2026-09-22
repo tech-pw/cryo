@@ -54,6 +54,31 @@ def latest_shared_s3_report(session: Session) -> SharedS3AnomalyReport | None:
     )
 
 
+def shared_location_table_ids(session: Session) -> frozenset[uuid.UUID]:
+    """Every table in the latest snapshot whose warehouse path overlaps another table's.
+
+    Consumed by the maintenance planner to refuse remove_orphan_files on these tables --
+    see cryo.planner.execution.gate_orphan_removal_on_shared_location. Returns an empty set
+    when no snapshot exists yet; the gate is a safety net over the procedure's own retention
+    window, not the only thing standing between the fleet and deletion, and refusing all
+    orphan cleanup fleet-wide because a report has not run yet would be its own outage.
+    """
+    report = latest_shared_s3_report(session)
+    if report is None:
+        return frozenset()
+    table_ids: set[uuid.UUID] = set()
+    for group in report.groups or []:
+        for table in group.get("tables", []):
+            raw = table.get("table_id")
+            if not raw:
+                continue
+            try:
+                table_ids.add(uuid.UUID(str(raw)))
+            except (TypeError, ValueError):
+                continue
+    return frozenset(table_ids)
+
+
 def empty_report_payload() -> dict[str, Any]:
     return {
         "id": None,
