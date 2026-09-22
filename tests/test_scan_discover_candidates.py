@@ -161,6 +161,64 @@ def test_run_scan_raises_when_source_scoped_discovery_fails(session) -> None:
         )
 
 
+def test_table_scoped_discovery_never_touches_a_source_it_did_not_ask_for(session) -> None:
+    """A scan scoped to specific table_ids must only connect to the sources owning those
+    tables. Prod, 2026-09-23: a five-table scan of `cdp` tables sat at scanned=0 for over five
+    minutes because discovery also walked cdp_dev, whose metastore is unreachable and whose
+    three A records each burned a full TCP connect timeout in turn."""
+    wanted = _seed_source(session)
+    unrelated = _seed_source(session)
+    table = Table(
+        id=uuid4(),
+        source_id=wanted.id,
+        schema_name="ns",
+        table_name="t1",
+        is_active=True,
+    )
+    session.add(table)
+    session.flush()
+
+    visited: list[str] = []
+
+    def factory(source: Source):
+        visited.append(source.name)
+        if source.id == unrelated.id:
+            raise AssertionError(f"connected to {source.name}, which owns none of the tables")
+        return _FakeCatalog({"ns": ["t1"]})
+
+    candidates, errors = _discover_candidates(
+        session, source_id=None, table_ids=[table.id], source_factory=factory
+    )
+
+    assert visited == [wanted.name]
+    assert [(c.schema_name, c.table_name) for c in candidates] == [("ns", "t1")]
+    assert errors == []
+
+
+def test_an_unreachable_unrelated_source_does_not_fail_a_table_scoped_scan(session) -> None:
+    """The same scenario end to end: the broken source must not even be reached, so the scan
+    reports a clean success rather than a discovery error it could do nothing about."""
+    wanted = _seed_source(session)
+    broken = _seed_source(session)
+    table = Table(
+        id=uuid4(), source_id=wanted.id, schema_name="ns", table_name="t1", is_active=True
+    )
+    session.add(table)
+    session.flush()
+
+    catalogs = {wanted.id: _FakeCatalog({"ns": ["t1"]}), broken.id: _FailingCatalog()}
+    summary = run_scan(
+        session,
+        source_id=None,
+        table_ids=[table.id],
+        chunk_id=0,
+        num_chunks=1,
+        source_factory=lambda source: catalogs[source.id],
+    )
+
+    assert summary.discovered == 1
+
+
 def test_run_scan_all_sources_tolerates_one_broken_source(session) -> None:
     """Without an explicit source_id (scanning every source), one broken source shouldn't abort
     discovery for the others -- only a source-scoped chunk request should hard-fail."""
