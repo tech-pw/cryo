@@ -106,9 +106,33 @@ Full write-up: [docs/SCANNER_WORKER_SCALE_TO_ZERO_2026-09-22.md](docs/SCANNER_WO
       polled the Deployment's own Service, so one replica had to stay up to answer "should there
       be any replicas?"; it now polls the API, which is always up and is where ad-hoc scans are
       created. Last genuinely user-triggered scan was 2026-08-25, so the floor bought nothing.
-- [ ] Post-deploy watch: Deployment reaches `0/0`; a UI-triggered scan wakes it within
-      `pollingInterval` (15s) + pod start and the chunk is actually consumed; no ScaledObject
-      trigger errors.
+- [x] Post-deploy verified on prod (helm rev 197, digest `sha256:7c626ea2`): Deployment idles at
+      `0/0`; a triggered scan took the metric to 1 and KEDA woke it to `1/1` within 5s; the woken
+      pod claimed the chunk (`chunks_pending 0 -> chunks_running 1`); after cancelling, it
+      returned to `0/0` in ~100s. ScaledObject shows `READY=True, FALLBACK=False`, no trigger
+      errors.
+
+### `cdp_dev` metastore is unreachable from the cryo namespace — found 2026-09-23
+
+Found while verifying the above. **Not caused by that change** — `cryo-api` cannot reach these
+hosts either.
+
+- `cdp` (11,594 active tables, the real fleet): `thrift://trino-prod-metastore.example.com:9083`
+  → `10.0.0.2` → **reachable**. Healthy.
+- `cdp_dev` (1,164 active tables, 9.1% of the fleet):
+  `thrift://trino-metastore-v2.example.com:9083` → `10.0.0.1`, `10.0.0.1`, `10.0.0.1`
+  → **all three time out**.
+
+- [ ] Get `cdp_dev`'s metastore reachable, or disable the source. Every connection attempt burns
+      a full TCP timeout against three dead IPs in turn.
+- [ ] **Suspected but not proven**: an unreachable source may block scans of tables in a *healthy*
+      source. A single-table ad-hoc scan of a **`cdp`** table did not finish in ~10 minutes, and
+      that pod's logs were entirely `cdp_dev` metastore timeouts. If a per-scan catalog warm-up
+      iterates all sources, one dead source stalls everything. Worth confirming in code before
+      treating it as the explanation.
+- [ ] Re-examine the scanner's unexplained ~10.7% per-run failure rate (`failed=338` of 3,146)
+      against this. `cdp_dev` is 9.1% of the fleet, which is close, but the stalled run above was
+      a `cdp` table — so "cdp_dev tables simply fail" is not on its own a sufficient explanation.
 - [ ] **Bigger fish, unaddressed**: the untagged ephemeral bucket (Spark + native dispatch Jobs,
       which don't inherit a Deployment's workload tags) ran at **$41.41/day unused, 87.3% unused**
       over 2026-09-08→21 — ~145x the scanner-worker saving. This is where the namespace's waste
