@@ -138,6 +138,10 @@ scannerWorker:
 scanner:
   schedule: "0 */6 * * *"
   suspend: false
+  # Parallel scanner pods per run. Drives completions, parallelism AND --num-chunks together
+  # so they cannot drift apart -- a --num-chunks larger than completions silently drops the
+  # unclaimed chunks, which is the 2026-09-22 bug (see scanner-cronjob.yaml).
+  chunks: 4
   resources:
     requests:
       cpu: 500m

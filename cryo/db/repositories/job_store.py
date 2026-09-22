@@ -356,20 +356,6 @@ class SQLJobStore:
         self._shared_locations_cache = (now, table_ids)
         return table_ids
 
-    def record_dispatch_attempt(self, job_id: str, attempts: int) -> None:
-        """Persist how many times this job's admission was lost before reaching a worker.
-
-        Written by reconcile_stuck_admitted_jobs just before it returns a dropped job to
-        QUEUED, so the retry loop is bounded by max_dispatch_attempts instead of cycling a
-        genuinely undispatchable job forever.
-        """
-        with self._session_factory() as session:
-            job = session.get(MaintenanceJob, uuid.UUID(job_id))
-            if job is None:
-                return
-            job.dispatch_attempts = attempts
-            session.commit()
-
     def count_running_jobs_by_metastore_uri(self) -> dict[str, int]:
         """Count RUNNING jobs grouped by their table's source metastore URI.
 
@@ -485,7 +471,6 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         engine_ref=job.engine_ref,
         replica=job.replica,
         admitted_at=job.admitted_at,
-        dispatch_attempts=int(job.dispatch_attempts or 0),
         started_at=job.started_at,
         finished_at=job.finished_at,
         error=job.error,

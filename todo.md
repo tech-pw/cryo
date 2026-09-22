@@ -69,11 +69,34 @@ Goal: all four core operations on the 500 most-queried Trino tables, daily, Spar
 - [ ] Watch three days: `fully_covered_pct` climbing, `untouched_tables` ≈ 0, `stuck_admitted_no_dispatch` ≈ 0.
 - [ ] Treat a pin to a *disabled* preset as vacant in `repin_trino_hot_tables` — 20 top-500 tables
       were stranded on disabled presets and had to be cleared by hand.
-- [ ] Replace the `cryo:admitted` list with a Redis Streams consumer group. Bare `LPOP` is
-      at-most-once, which is why the reaper exists at all and why 17,760 tombstones could
-      accumulate with nothing owning removal. `XREADGROUP`/`XACK`/`XAUTOCLAIM` would let us delete
-      the reaper, `jobs.dispatch_attempts`, and the `cryo:workers` heartbeat tracking. Redis is
-      7.4.10 and Streams are already used in `cryo/events/redis_stream.py`.
+- [x] Replace the `cryo:admitted` list with a Redis Streams consumer group (2026-09-22). Acks at
+      `mark_running`, so the pending list covers exactly the claim → RUNNING handoff and reclaim
+      can be 2 minutes rather than longer than the longest operation. Deleted the reaper's
+      guesswork, `jobs.dispatch_attempts` (migration `20260922_2100`), and the `cryo:workers`
+      heartbeat zset — the consumer group tracks worker presence correctly, including workers
+      busy on a long job, which the heartbeat could not.
+
+### Queue / scanner / governor overhaul — 2026-09-22
+
+Full write-up: [docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md](docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md).
+
+- [x] Scanner CronJob runs all four chunks (`completionMode: Indexed`, `completions`/`parallelism`/
+      `--num-chunks` all driven by `scanner.chunks`). It was a single pod with no arguments, so
+      every run discarded 75% of the fleet: `discovered=12584, assigned=3146`.
+- [x] Scanner orders candidates stalest-first instead of by catalog name, so an unfinished run is
+      self-correcting rather than rescanning the same alphabetical prefix every six hours.
+- [x] `run_wave` decomposed: 622 lines at depth 10 → 44 lines at depth 2, with the gate chain a
+      flat ordered sequence and outcome counters incremented in one place.
+- [x] Admission is deterministic again — the Thompson-sampling bandit that resampled
+      `per_replica_cap` and friends every wave is behind `governor_bandit_tuning_enabled`
+      (default false), which also removes a Postgres round trip per deferred job.
+- [ ] Post-deploy watch: scanner `assigned` ≈ 12.6k per run and >30d staleness falling from 10.7%;
+      zero `stuck_admitted_no_dispatch`; admitted-per-wave stable for unchanged fleet state.
+- [ ] Still unexplained: the scanner's ~10.7% per-run failure rate (`failed=338` of 3,146) and the
+      drop in daily distinct tables scanned after Sep 7.
+- [ ] Decide separately on `qpp.py` (391 LOC, flag off, but has API + frontend surface) and
+      `native_admit.py` (1,257 LOC, flag off in prod, but is the Go engine's dispatch path).
+      `roi_gate.py` should stay — it is deliberately collecting shadow data.
 
 ---
 

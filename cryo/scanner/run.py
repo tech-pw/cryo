@@ -107,6 +107,50 @@ def deterministic_chunk[T](items: list[T], *, chunk_id: int, num_chunks: int) ->
     return [item for index, item in enumerate(items) if index % num_chunks == chunk_id]
 
 
+def order_by_staleness(session: Session, candidates: list[ScanCandidate]) -> list[ScanCandidate]:
+    """Sort candidates stalest-first, never-scanned before everything else.
+
+    _discover_candidates returns catalog order (source, schema, table), which correlates with
+    nothing an operator cares about. When a run cannot finish every table -- the normal case
+    at 12.6k tables -- catalog order means the tables that get scanned are decided by
+    alphabet, and a table late in the sort can starve indefinitely while an early one is
+    rescanned every six hours. Live 2026-09-22: 686 tables were scanned all 7 days of the
+    week while 687 were scanned on exactly one, and 11% of the fleet had drifted past 30 days.
+
+    Stalest-first makes the run self-correcting instead: whatever it does not reach this pass
+    is nearer the front of the next one. Same idea as Amoro's `balanced` scheduling policy.
+    Ordering is total (staleness, then catalog order) so chunk assignment stays deterministic
+    for a given fleet state.
+    """
+    if not candidates:
+        return []
+
+    last_scan: dict[tuple[UUID, str, str], datetime] = {
+        (source_id, schema_name, table_name): scan_at
+        for source_id, schema_name, table_name, scan_at in session.execute(
+            select(Table.source_id, Table.schema_name, Table.table_name, TableStats.scan_at).join(
+                TableStats, TableStats.table_id == Table.id
+            )
+        ).all()
+        if scan_at is not None
+    }
+
+    def sort_key(candidate: ScanCandidate) -> tuple[int, float, str, str, str]:
+        scan_at = last_scan.get((candidate.source.id, candidate.schema_name, candidate.table_name))
+        # Never-scanned sorts ahead of every scanned table; among scanned, oldest first.
+        never_scanned = 0 if scan_at is None else 1
+        age_key = 0.0 if scan_at is None else scan_at.timestamp()
+        return (
+            never_scanned,
+            age_key,
+            candidate.source.name,
+            candidate.schema_name,
+            candidate.table_name,
+        )
+
+    return sorted(candidates, key=sort_key)
+
+
 def run_scan(
     session: Session,
     *,
@@ -170,6 +214,7 @@ def run_scan(
         # real error and let a broken source silently "succeed" with 0 tables. Raising here
         # routes it through the caller's existing failure handling instead.
         raise RuntimeError("; ".join(discovery_errors))
+    candidates = order_by_staleness(session, candidates)
     assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
 
     logger.info(
