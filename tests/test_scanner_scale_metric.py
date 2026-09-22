@@ -14,9 +14,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from cryo.api.app import create_app
 from cryo.cli import _scanner_scale_metric
+from cryo.config import Settings
 from cryo.db.models import MaintenanceRun
 
 
@@ -106,3 +109,28 @@ def test_missing_or_non_dict_summary_does_not_crash(session, monkeypatch) -> Non
     )
 
     assert _scanner_scale_metric() == 0
+
+
+def _api_scale_metric(session, monkeypatch) -> tuple[int, dict]:
+    monkeypatch.setattr(
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
+    )
+    response = TestClient(create_app(Settings(_env_file=None, environment="test"))).get(
+        "/scale-metric"
+    )
+    return response.status_code, response.json()
+
+
+def test_api_serves_the_metric_unauthenticated_in_keda_shape(session, monkeypatch) -> None:
+    """KEDA polls the API rather than the scanner-worker Service, because the Deployment it
+    scales has a floor of zero and so cannot be relied on to answer. The response has to match
+    what the CLI health server serves -- valueLocation "value" -- and carry no auth, since KEDA
+    sends no credentials."""
+    _seed_scan_run(session, status="running", summary={"chunks_pending": 4, "chunks_running": 2})
+
+    assert _api_scale_metric(session, monkeypatch) == (200, {"value": 6})
+
+
+def test_api_reports_zero_when_idle_so_the_deployment_can_reach_zero(session, monkeypatch) -> None:
+    assert _api_scale_metric(session, monkeypatch) == (200, {"value": 0})

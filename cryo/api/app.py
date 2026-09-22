@@ -134,6 +134,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def readyz() -> dict[str, str]:
         return {"status": "ready", "environment": settings.environment}
 
+    @app.get("/scale-metric", tags=["health"])
+    def scale_metric() -> dict[str, int]:
+        """Scanner-worker demand, in the same {"value": N} shape the CLI health server serves.
+
+        The scanner-worker Deployment scales to zero, so its KEDA trigger cannot poll the
+        scanner-worker Service -- at 0 replicas that Service has no endpoints and the metric
+        would be unreachable exactly when it needs to report "work arrived, scale up",
+        wedging the Deployment at zero forever. The API is always up and is where ad-hoc
+        scans are created in the first place (create_scan_trigger), so it can always answer.
+
+        Unauthenticated like /healthz and /readyz: KEDA sends no credentials, and the body
+        is a single integer queue depth.
+        """
+        from cryo.db.repositories.scanner import pending_scan_chunk_count
+        from cryo.db.session import SessionLocal
+
+        with SessionLocal() as session:
+            return {"value": pending_scan_chunk_count(session)}
+
     app.include_router(api_router)
     app.include_router(property_recommendations_router)
     app.include_router(smart_maintenance_router)

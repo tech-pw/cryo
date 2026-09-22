@@ -16,6 +16,37 @@ TERMINAL_SCAN_STATUSES = ("succeeded", "failed", "partial_failed", "cancelled")
 MAX_RECORDED_ERRORS = 25
 
 
+def pending_scan_chunk_count(session: Session) -> int:
+    """Ad-hoc scan chunks that need a scanner replica to make progress right now.
+
+    "Pending plus actively claimed" (chunks_pending + chunks_running), not raw Redis queue
+    depth: RedisScanQueue.pending_count() drops to 0 the instant a chunk is claimed, long
+    before that chunk's scan finishes, so a depth-only scaler reverts a scale-up mid-scan
+    (the July 2026 regression _worker_scale_metric's docstring records for the worker).
+
+    Lives here rather than in cli.py because the scanner-worker Deployment scales to zero --
+    the KEDA trigger has to be answerable by a service that is still up when there are no
+    scanner replicas left to ask. cli.py serves it to KEDA when a replica happens to be
+    running; cryo/api/app.py serves the same number when none is.
+
+    Sums in Python over the ORM rather than a Postgres ->> JSON extraction so the same code
+    path is exercisable against SQLite in tests.
+    """
+    summaries = session.scalars(
+        select(MaintenanceRun.summary).where(
+            MaintenanceRun.kind == "scan",
+            MaintenanceRun.status.in_(ACTIVE_SCAN_STATUSES),
+        )
+    ).all()
+    total = 0
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        total += int(summary.get("chunks_pending") or 0)
+        total += int(summary.get("chunks_running") or 0)
+    return total
+
+
 def get_scanner_config(session: Session) -> ScannerConfig:
     config = session.get(ScannerConfig, SCANNER_CONFIG_ID)
     if config is not None:
