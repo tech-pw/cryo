@@ -138,6 +138,13 @@ for p in d['items']:
     name = p['metadata']['name']
     if not any(x in name for x in ('cryo-api', 'cryo-worker', 'cryo-governor', 'cryo-scheduler')):
         continue
+    # Skip pods already terminating. rollout status returns as soon as the new ReplicaSet is
+    # fully available, which is before the old one's pods finish draining -- workers hold a
+    # long graceful shutdown while they finish in-flight maintenance. Counting those produced
+    # a false MISMATCH on the 2026-09-22 deploy; six old workers were mid-termination and
+    # were gone moments later.
+    if p['metadata'].get('deletionTimestamp'):
+        continue
     for cs in p['status'].get('containerStatuses', []):
         image_id = cs.get('imageID', '')
         if digest not in image_id:

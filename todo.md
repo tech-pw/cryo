@@ -61,9 +61,19 @@ Goal: all four core operations on the 500 most-queried Trino tables, daily, Spar
       `TableQueryActivity` fallback (validated: 500 tables, #1 = 3,375 queries/7d, #500 = 75).
 - [x] Disable the five legacy fleet-wide presets (2026-09-22; 0 enabled presets remain,
       backlog drained to 0 queued / 0 admitted).
-- [ ] Deploy code + migration `20260922_0055` (migration first — reconcile reads `dispatch_attempts`).
-- [ ] Seed `daily-trino-hot-tables` with `--disabled`, review the first repin cohort, then enable.
+- [x] Deploy code + migration `20260922_0055` (digest `sha256:6078408e…`, Helm rev 196; migration
+      ran as the `pre-upgrade` hook before any pod rolled; 14/14 pods verified on the new digest).
+- [x] Seed, repin, and enable `daily-trino-hot-tables` — 500 tables pinned, first fire 00:30 IST.
+- [x] One-time cleanup: 17,760 tombstones in `cryo:admitted` left by the old reaper, which would
+      have computed as zero admission headroom and blocked the fleet. Rebuilt atomically.
 - [ ] Watch three days: `fully_covered_pct` climbing, `untouched_tables` ≈ 0, `stuck_admitted_no_dispatch` ≈ 0.
+- [ ] Treat a pin to a *disabled* preset as vacant in `repin_trino_hot_tables` — 20 top-500 tables
+      were stranded on disabled presets and had to be cleared by hand.
+- [ ] Replace the `cryo:admitted` list with a Redis Streams consumer group. Bare `LPOP` is
+      at-most-once, which is why the reaper exists at all and why 17,760 tombstones could
+      accumulate with nothing owning removal. `XREADGROUP`/`XACK`/`XAUTOCLAIM` would let us delete
+      the reaper, `jobs.dispatch_attempts`, and the `cryo:workers` heartbeat tracking. Redis is
+      7.4.10 and Streams are already used in `cryo/events/redis_stream.py`.
 
 ---
 
