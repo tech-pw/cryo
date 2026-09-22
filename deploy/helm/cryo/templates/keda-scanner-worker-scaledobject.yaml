@@ -15,6 +15,13 @@ pre-2026-07-31 admitted-list trigger (KEDA saw "0 pending" and reverted a scale-
 "Pending plus actively claimed" (chunks_pending + chunks_running) stays elevated for a chunk's
 whole duration instead.
 
+The trigger polls the *API* Service, not the scanner-worker's own. That matters as soon as
+minReplicas is 0: at zero replicas the scanner-worker Service has no endpoints, so a
+self-referential trigger cannot be reached precisely when it needs to report "work arrived,
+scale up" -- the Deployment would wedge at zero permanently. The metric is a plain Postgres
+query (pending_scan_chunk_count) with no dependency on scanner-worker pod state, and the API
+is both always up and the place ad-hoc scans are created, so it can always answer.
+
 Requires the KEDA operator installed in the cluster. Disabled by default. Mutually exclusive
 with scanner-worker-hpa.yaml's plain HPA -- that template only renders when this is disabled,
 so exactly one controller ever targets this Deployment's replica count.
@@ -30,7 +37,10 @@ metadata:
 spec:
   scaleTargetRef:
     name: {{ include "cryo.fullname" . }}-scanner-worker
-  minReplicaCount: {{ .Values.scannerWorker.autoscaling.keda.minReplicas | default 3 }}
+  # No `| default N` here, unlike the sibling fields: Go templates treat 0 as empty, so
+  # `default 3` would silently rewrite the one value that turns scale-to-zero on back into 3.
+  # values.yaml always sets this, so there is nothing to default to.
+  minReplicaCount: {{ .Values.scannerWorker.autoscaling.keda.minReplicas }}
   maxReplicaCount: {{ .Values.scannerWorker.autoscaling.keda.maxReplicas | default 8 }}
   pollingInterval: {{ .Values.scannerWorker.autoscaling.keda.pollingInterval | default 15 }}
   cooldownPeriod: {{ .Values.scannerWorker.autoscaling.keda.cooldownPeriod | default 120 }}
@@ -46,7 +56,10 @@ spec:
   triggers:
     - type: metrics-api
       metadata:
+        # activationTargetValue is left at its default of 0, which is exactly the boundary we
+        # want: KEDA holds the Deployment at 0 replicas while the metric is 0, and activates
+        # the moment a single scan chunk is pending.
         targetValue: {{ .Values.scannerWorker.autoscaling.keda.targetValue | default "1" | quote }}
-        url: "http://{{ include "cryo.fullname" . }}-scanner-worker.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.observability.metricsPort }}/scale-metric"
+        url: "http://{{ include "cryo.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/scale-metric"
         valueLocation: "value"
 {{- end }}

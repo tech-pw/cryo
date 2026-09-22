@@ -120,7 +120,7 @@ scannerWorker:
     # memory HPA above sits at its floor of 3 replicas nearly continuously between ad-hoc scan
     # bursts (observed 0% CPU / 68-80% memory) because CPU/mem utilization lags real queue
     # demand. This KEDA path scales on chunks_pending+chunks_running (cli.py's
-    # _scanner_scale_metric, via each pod's own /scale-metric endpoint) instead -- "pending
+    # _scanner_scale_metric, served by the API's /scale-metric route) instead -- "pending
     # plus actively claimed" scan chunks, matching the cost doc's exact recommendation and
     # avoiding the raw-queue-length blind spot (drops to 0 the instant a chunk is claimed, long
     # before that chunk's scan finishes) the doc explicitly warns against. Requires the KEDA
@@ -129,7 +129,17 @@ scannerWorker:
     # from setting a fixed Deployment replica count.
     keda:
       enabled: false
-      minReplicas: 3
+      # 0 = scale to zero when no ad-hoc scan is in flight, which is the overwhelmingly
+      # common case: this queue is fed by UI/API "Trigger scan" requests, and in the 30 days
+      # to 2026-09-22 prod served exactly zero of them (last one 2026-08-25), while holding a
+      # pod at 500m CPU / 256Mi reserved around the clock. The full-fleet 6-hourly sweep does
+      # NOT use this Deployment -- scanner-cronjob.yaml brings up its own pods and they exit
+      # when done -- so nothing here needs to be resident on a schedule either.
+      #
+      # The cost of zero is cold-start latency on the next ad-hoc scan: up to pollingInterval
+      # (15s) to notice, plus image pull and process start. Accepted deliberately; a scan that
+      # walks thousands of tables is not latency-sensitive at the tens-of-seconds scale.
+      minReplicas: 0
       maxReplicas: 8
       pollingInterval: 15
       cooldownPeriod: 120

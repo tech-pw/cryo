@@ -1122,32 +1122,15 @@ def _scanner_scale_metric() -> int:
     recommendation, and it stays elevated for a chunk's whole duration rather than dropping to
     zero the moment it's claimed.
 
-    Reads MaintenanceRun.summary via the ORM (a JSON-typed column) and sums in Python rather
-    than a raw ->>'...' SQL JSON extraction -- the latter is Postgres-only syntax and this
-    codebase's test suite runs the same query path against SQLite (see
-    tests/test_worker_scale_metric.py, this function's sibling), so a portable read here keeps
-    this function equally testable.
+    The count itself is pending_scan_chunk_count(); it moved to the scanner repository when
+    the Deployment gained scale-to-zero, because KEDA also has to be able to ask the API for
+    it at 0 replicas -- see that function and cryo/api/app.py's /scale-metric route.
     """
-    from sqlalchemy import select
-
-    from cryo.db.models import MaintenanceRun
-    from cryo.db.repositories.scanner import ACTIVE_SCAN_STATUSES
+    from cryo.db.repositories.scanner import pending_scan_chunk_count
     from cryo.db.session import SessionLocal
 
     with SessionLocal() as session:
-        summaries = session.scalars(
-            select(MaintenanceRun.summary).where(
-                MaintenanceRun.kind == "scan",
-                MaintenanceRun.status.in_(ACTIVE_SCAN_STATUSES),
-            )
-        ).all()
-        total = 0
-        for summary in summaries:
-            if not isinstance(summary, dict):
-                continue
-            total += int(summary.get("chunks_pending") or 0)
-            total += int(summary.get("chunks_running") or 0)
-        return total
+        return pending_scan_chunk_count(session)
 
 
 def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -> NoReturn:
