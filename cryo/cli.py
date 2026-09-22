@@ -298,7 +298,10 @@ class TrinoHotPresetRunner(DaemonRunner):
 
     def _tick(self) -> None:
         from cryo.db.session import SessionLocal
-        from cryo.scheduler.trino_hot_preset import repin_trino_hot_tables
+        from cryo.scheduler.trino_hot_preset import (
+            EmptyHotRankingError,
+            repin_trino_hot_tables,
+        )
 
         settings = get_settings()
         with SessionLocal() as session:
@@ -308,6 +311,14 @@ class TrinoHotPresetRunner(DaemonRunner):
                     preset_name=settings.trino_hot_preset_name,
                     limit=settings.trino_hot_preset_table_limit,
                 )
+            except EmptyHotRankingError:
+                self._logger.error(
+                    "Trino-hot preset %r left at yesterday's pins -- no query telemetry to "
+                    "rank today. Maintenance continues on the existing set; investigate "
+                    "telemetry ingest.",
+                    settings.trino_hot_preset_name,
+                )
+                return
             except ValueError:
                 self._logger.warning(
                     "Trino-hot preset %r not found -- seed it via "
@@ -316,10 +327,11 @@ class TrinoHotPresetRunner(DaemonRunner):
                 )
                 return
             self._logger.info(
-                "Trino-hot preset repin: pinned=%d unpinned=%d unchanged=%d",
+                "Trino-hot preset repin: pinned=%d unpinned=%d unchanged=%d (ranked by %s)",
                 result.pinned,
                 result.unpinned,
                 result.unchanged,
+                result.ranking_source,
             )
 
 
@@ -633,6 +645,12 @@ class WorkerRunner(DaemonRunner):
 
             wiring = self._get_wiring()
             step_ledger = JobStepStore(SessionLocal)
+            # Announce liveness before doing any work: the governor sizes its admission
+            # backlog off this count, and a worker that only reported after finishing a job
+            # would go invisible for the whole (p50 ~5min, p90 ~19min) duration of one.
+            heartbeat = getattr(wiring.queue, "record_worker_heartbeat", None)
+            if callable(heartbeat):
+                heartbeat(default_worker_holder_id())
             if get_settings().durable_intents_enabled:
                 IntentReconciler(
                     intents=IntentStore(SessionLocal),

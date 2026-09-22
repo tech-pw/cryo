@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from cryo.db.models import Destination, Preset, QueryLog, Source, Table, TableAssignment
-from cryo.scheduler.trino_hot_preset import repin_trino_hot_tables
+from cryo.scheduler.trino_hot_preset import EmptyHotRankingError, repin_trino_hot_tables
 
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 _ASSIGNED_BY = "trino_hot_preset_repin"
@@ -96,6 +96,11 @@ def test_repin_unpins_tables_that_fell_out_of_top_n(session):
             table_id=was_hot.id, preset_id=preset.id, assigned_by=_ASSIGNED_BY, pinned=True
         )
     )
+    # Someone else is hot today. A ranking with at least one table is what distinguishes
+    # "was_hot cooled off" from "telemetry is down", which is refused outright -- see
+    # test_repin_refuses_to_unpin_everything_on_an_empty_ranking.
+    still_hot = _seed_table(session, source, name="still_hot")
+    _log_query(session, source=source, table=still_hot, when=NOW - timedelta(days=1))
     session.commit()
 
     # No QueryLog rows at all for was_hot in this window -- it's no longer in the top-N.
@@ -117,6 +122,8 @@ def test_repin_leaves_manually_pinned_tables_alone(session):
             table_id=manual.id, preset_id=preset.id, assigned_by="operator:aamir", pinned=True
         )
     )
+    hot = _seed_table(session, source, name="hot")
+    _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
     session.commit()
 
     result = repin_trino_hot_tables(session, preset_name=preset.name, limit=10, now=NOW)
@@ -138,16 +145,84 @@ def test_repin_never_touches_assignments_belonging_to_other_presets(session):
             table_id=table.id, preset_id=other_preset.id, assigned_by="operator:x", pinned=True
         )
     )
+    hot = _seed_table(session, source, name="hot")
+    _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
     session.commit()
 
     # table isn't queried on Trino at all, so it's not a repin candidate either way.
     result = repin_trino_hot_tables(session, preset_name=trino_hot_preset.name, limit=10, now=NOW)
 
-    assert result.pinned == 0
     assert result.unpinned == 0
     assignment = session.get(TableAssignment, table.id)
     assert assignment is not None
     assert assignment.preset_id == other_preset.id
+
+
+def test_repin_takes_over_a_table_this_job_pinned_to_a_different_preset(session):
+    """TableAssignment.table_id is the primary key, so a hot table already assigned elsewhere
+    cannot simply be inserted -- reassign the existing row instead of raising on the PK."""
+    source = _seed_source(session)
+    destination = _seed_destination(session)
+    trino_hot_preset = _seed_preset(session, destination, name="daily-trino-hot-tables")
+    other_preset = _seed_preset(session, destination, name="cold-sweep")
+    hot = _seed_table(session, source, name="hot")
+    session.add(
+        TableAssignment(
+            table_id=hot.id, preset_id=other_preset.id, assigned_by=_ASSIGNED_BY, pinned=True
+        )
+    )
+    _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
+    session.commit()
+
+    result = repin_trino_hot_tables(session, preset_name=trino_hot_preset.name, limit=10, now=NOW)
+
+    assert result.pinned == 1
+    assignment = session.get(TableAssignment, hot.id)
+    assert assignment is not None
+    assert assignment.preset_id == trino_hot_preset.id
+
+
+def test_repin_leaves_an_operator_pin_on_another_preset_in_place(session):
+    """Taking a table over is for pins this job made. An operator's explicit choice wins."""
+    source = _seed_source(session)
+    destination = _seed_destination(session)
+    trino_hot_preset = _seed_preset(session, destination, name="daily-trino-hot-tables")
+    other_preset = _seed_preset(session, destination, name="operator-owned")
+    hot = _seed_table(session, source, name="hot")
+    session.add(
+        TableAssignment(
+            table_id=hot.id, preset_id=other_preset.id, assigned_by="operator:aamir", pinned=True
+        )
+    )
+    _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
+    session.commit()
+
+    result = repin_trino_hot_tables(session, preset_name=trino_hot_preset.name, limit=10, now=NOW)
+
+    assert result.pinned == 0
+    assignment = session.get(TableAssignment, hot.id)
+    assert assignment is not None
+    assert assignment.preset_id == other_preset.id
+
+
+def test_repin_refuses_to_unpin_everything_on_an_empty_ranking(session):
+    """An empty ranking means telemetry is missing, not that nothing is queried. Reconciling
+    to it would strip every pin and leave the hottest tables unmaintained."""
+    source = _seed_source(session)
+    destination = _seed_destination(session)
+    preset = _seed_preset(session, destination)
+    pinned = _seed_table(session, source, name="pinned_yesterday")
+    session.add(
+        TableAssignment(
+            table_id=pinned.id, preset_id=preset.id, assigned_by=_ASSIGNED_BY, pinned=True
+        )
+    )
+    session.commit()
+
+    with pytest.raises(EmptyHotRankingError):
+        repin_trino_hot_tables(session, preset_name=preset.name, limit=10, now=NOW)
+
+    assert session.get(TableAssignment, pinned.id) is not None
 
 
 def test_repin_is_idempotent_when_top_n_is_unchanged(session):
