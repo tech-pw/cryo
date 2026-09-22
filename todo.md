@@ -40,6 +40,33 @@ phase plan; `P8+` = post-MVP extensions from `research-and-roadmap.md` Part 1 an
 
 Legend: `[ ]` todo · `[~]` in progress / partial · `[x]` done · `(parity)` must match the reference impl.
 
+## Top-500 daily maintenance overhaul — 2026-09-22
+
+Why, what changed, capacity math, and rollout order:
+[top-500 daily maintenance overhaul](docs/TOP500_DAILY_MAINTENANCE_OVERHAUL_2026-09-22.md).
+Goal: all four core operations on the 500 most-queried Trino tables, daily, Spark-on-K8s only.
+
+- [x] Bound cron-triggered runs (`CRYO_MAX_JOBS_PER_SCHEDULED_RUN`, default 500) — the cron path
+      never passed `build_scheduled_run`'s `budget_hint`, so one preset fired fleet-wide.
+- [x] Make governor admission throughput-aware via worker heartbeats (`cryo:workers`), not just
+      engine capacity.
+- [x] Stop the reaper manufacturing failures: skip jobs still awaiting a worker, requeue genuinely
+      dropped dispatches up to `CRYO_MAX_DISPATCH_ATTEMPTS` (`jobs.dispatch_attempts`, mig `20260922_0055`).
+- [x] Per-operation isolation in the worker — one failed operation no longer kills the other three.
+- [x] Fix top-500 selection: `TableQueryActivity` fallback, `EmptyHotRankingError` guard, cross-preset
+      repin takeover.
+- [x] Hard-gate `remove_orphan_files` on shared-S3-prefix overlap.
+- [x] Per-operation coverage metric + `GET /api/v1/maintenance-coverage`.
+- [x] Verify `cryo.query_logs` in prod — **0 Trino rows in 7d**, so the ranking rides the
+      `TableQueryActivity` fallback (validated: 500 tables, #1 = 3,375 queries/7d, #500 = 75).
+- [x] Disable the five legacy fleet-wide presets (2026-09-22; 0 enabled presets remain,
+      backlog drained to 0 queued / 0 admitted).
+- [ ] Deploy code + migration `20260922_0055` (migration first — reconcile reads `dispatch_attempts`).
+- [ ] Seed `daily-trino-hot-tables` with `--disabled`, review the first repin cohort, then enable.
+- [ ] Watch three days: `fully_covered_pct` climbing, `untouched_tables` ≈ 0, `stuck_admitted_no_dispatch` ≈ 0.
+
+---
+
 ## Immediate cost rescue — 2026-09-11
 
 Implementation details and acceptance gates: [consolidated cost reduction plan](docs/CRYO_COST_REDUCTION_PLAN.md).
