@@ -12,6 +12,8 @@ consumer-group semantics -- pending lists, idle-time reclaim, XINFO accounting.
 
 from __future__ import annotations
 
+import time
+
 import fakeredis
 import pytest
 
@@ -240,6 +242,13 @@ def test_continuation_puts_a_job_back_without_releasing_its_in_flight_slot(redis
     queue.mark_running("job-1")
     in_flight_before = queue.local_in_flight(DEST)
 
+    # fakeredis 2.38 resets a stream's last_id once XDEL empties it, so the XADD below can
+    # be handed back the id of the entry mark_running just deleted -- an id the group has
+    # already delivered, which XREADGROUP ">" then skips, failing this test ~20% of the time.
+    # Real Redis retains last_id across XDEL and never regresses an id: verified against
+    # redis:7-alpine over 20k XADD/XDEL/XADD cycles, 13,525 of which landed both writes in
+    # the same millisecond, with zero reuse. The sleep only dodges the fake's defect.
+    time.sleep(0.002)
     queue.requeue_for_continuation("job-1")
 
     assert queue.local_in_flight(DEST) == in_flight_before
