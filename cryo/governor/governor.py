@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -398,7 +398,7 @@ class Governor:
         if self._session_factory is not None:
             finalize_open_runs(self._session_factory, now=current)
         re_enqueued = reconcile_queued_jobs(self._store, self._queue)
-        re_enqueued += reconcile_deferred_jobs(self._store, self._queue, now=current)
+        re_enqueued += self._reconcile_deferred(current)
         orphaned = purge_stale_queue_entries(self._store, self._queue)
         reaped = reconcile_stale_running_jobs(
             self._store,
@@ -416,6 +416,25 @@ class Governor:
             now=current,
         )
         return _ReconcileCounts(re_enqueued=re_enqueued, orphaned=orphaned, reaped=reaped)
+
+    def _reconcile_deferred(self, current: datetime) -> int:
+        """reconcile_deferred_jobs, told why each job was actually deferred.
+
+        Without this it re-queues anything admission would take, including the jobs
+        _gate_approval refused -- which the very next wave refuses again. See
+        reconcile_deferred_jobs' own docstring for the measured loop.
+        """
+        if self._session_factory is None:
+            return reconcile_deferred_jobs(self._store, self._queue, now=current)
+        # One session for the whole pass, with the approved-key lookup memoised per table:
+        # this runs every wave, and the deferred backlog is bounded but not small.
+        with self._session_factory() as session:
+            return reconcile_deferred_jobs(
+                self._store,
+                self._queue,
+                now=current,
+                still_blocked=_awaiting_approval_predicate(session),
+            )
 
     def _step_ledger(self) -> Any | None:
         if self._session_factory is None:
@@ -1110,6 +1129,40 @@ def _try_get_destination(store: JobStore, destination_id: str) -> DestinationCon
 
 def _is_valid_job_id(job_id: str) -> bool:
     return bool(job_id) and job_id.lower() != "none"
+
+
+def _awaiting_approval_predicate(session: Any) -> Callable[[MaintenanceJobRecord], bool]:
+    """True while a deferred job is still waiting on the approval _gate_approval demanded.
+
+    Mirrors that gate's preconditions exactly -- an intent-scoped job, a job with no table or
+    no plan operations, is not approval-gated at all, so it answers False and stays eligible
+    for the ordinary admission-based re-queue. Anything this gets wrong in the True direction
+    strands a job until it is approved, so it errs the other way: a lookup that raises is
+    treated as "not blocked", which restores the old behaviour for that job rather than
+    silently parking it.
+    """
+    cache: dict[uuid.UUID, dict[tuple[uuid.UUID, str], list[dict[str, Any]]]] = {}
+
+    def still_awaiting(job: MaintenanceJobRecord) -> bool:
+        if job.intent_id is not None:
+            return False
+        table_uuid = _job_table_uuid(job)
+        if table_uuid is None or not job.plan:
+            return False
+        operations = job.plan.get("operations")
+        if not operations:
+            return False
+        try:
+            approved = cache.get(table_uuid)
+            if approved is None:
+                approved = prefetch_approved_operation_keys(session, {table_uuid})
+                cache[table_uuid] = approved
+            return batch_job_requires_approval(table_uuid, operations, approved)
+        except Exception as exc:
+            logger.warning("Approval re-check failed for deferred job %s: %s", job.id, exc)
+            return False
+
+    return still_awaiting
 
 
 def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:

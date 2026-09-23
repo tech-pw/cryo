@@ -923,3 +923,104 @@ def test_governor_wave_reaps_spark_job_whose_driver_pod_is_gone(monkeypatch) -> 
 
     assert result.reaped == 1
     assert store.get_job("job-1").status is JobStatus.FAILED
+
+
+class TestDeferredJobsBlockedByANonAdmissionGate:
+    """Live 2026-09-23: `deferred=24, re_enqueued=24` on every single governor wave, the same
+    24 job ids each time, every one of them "Destructive operation requires approval". The
+    wave's gate chain refuses them at _gate_approval, which sits *before* admission; this
+    function only ever re-ran the admission arithmetic, so it kept handing them back and the
+    next wave kept refusing them. At a ~39s wave that is ~2,250 pointless round trips per job
+    per day, none of which could ever succeed -- waiting does not approve anything.
+
+    The re-queue itself cannot simply be dropped: a deferred job is absent from the pending
+    zset, so this is the only path back to where the gate chain can see it at all.
+    """
+
+    @staticmethod
+    def _store_with_deferred_job() -> tuple[InMemoryMaintenanceQueue, InMemoryJobStore]:
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-approval",
+                run_id="run-1",
+                table_id="table-1",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                error="Destructive operation requires approval",
+            )
+        )
+        return queue, store
+
+    def test_a_job_whose_gate_still_refuses_it_is_left_alone(self) -> None:
+        queue, store = self._store_with_deferred_job()
+
+        requeued = reconcile_deferred_jobs(
+            store,
+            queue,
+            now=datetime(2026, 9, 23, 12, 0, tzinfo=UTC),
+            still_blocked=lambda job: True,
+        )
+
+        assert requeued == 0
+        assert store.get_job("job-approval").status is JobStatus.DEFERRED
+
+    def test_the_job_comes_straight_back_once_the_gate_stops_refusing(self) -> None:
+        """The half that matters more: approving a job has to actually release it. Skipping
+        the re-queue permanently would strand every approved job instead of churning it."""
+        queue, store = self._store_with_deferred_job()
+
+        requeued = reconcile_deferred_jobs(
+            store,
+            queue,
+            now=datetime(2026, 9, 23, 12, 0, tzinfo=UTC),
+            still_blocked=lambda job: False,
+        )
+
+        assert requeued == 1
+        assert store.get_job("job-approval").status is JobStatus.QUEUED
+
+    def test_admission_still_filters_first_so_the_check_stays_cheap(self) -> None:
+        """A job admission would defer anyway must never reach the predicate -- that lookup
+        hits the database, and this runs against the whole deferred backlog every wave."""
+        queue, store = self._store_with_deferred_job()
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-cooldown",
+                run_id="run-1",
+                table_id="table-2",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                last_maintained_at=datetime(2026, 9, 23, 11, 59, tzinfo=UTC),
+                cooldown_hours=24,
+            )
+        )
+        asked: list[str] = []
+
+        reconcile_deferred_jobs(
+            store,
+            queue,
+            now=datetime(2026, 9, 23, 12, 0, tzinfo=UTC),
+            still_blocked=lambda job: bool(asked.append(job.id)),
+        )
+
+        # Both halves: the approval job proves the predicate is reached at all, so the
+        # cooldown job's absence is admission filtering it rather than the loop never running.
+        assert "job-approval" in asked
+        assert "job-cooldown" not in asked
+
+    def test_without_a_predicate_the_previous_behaviour_is_unchanged(self) -> None:
+        queue, store = self._store_with_deferred_job()
+
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
+        )
+
+        assert requeued == 1
+        assert store.get_job("job-approval").status is JobStatus.QUEUED

@@ -107,6 +107,7 @@ def reconcile_deferred_jobs(
     queue: MaintenanceQueue,
     *,
     now: datetime | None = None,
+    still_blocked: Callable[[MaintenanceJobRecord], bool] | None = None,
 ) -> int:
     """Return deferred jobs to the queue when admission would admit them now.
 
@@ -117,6 +118,22 @@ def reconcile_deferred_jobs(
     forever and, combined with list_deferred_jobs's oldest-first bounded ordering, monopolized
     every wave's entire reconcile budget instead of ever reaching genuinely-reconsiderable
     jobs behind it.
+
+    `still_blocked` exists because admission is not the only thing that defers a job, but it
+    used to be the only thing asked about here. The wave's gate chain is
+    paused -> abac -> intent -> approval -> pii -> admission -> roi -> lock -> qpp, and a job
+    refused by any gate *before* admission gets re-queued by this function the moment
+    admission alone would take it -- then refused again by that same earlier gate on the very
+    next wave. Live 2026-09-23: `deferred=24, re_enqueued=24` on every single wave, the same
+    24 jobs each time, all of them "Destructive operation requires approval". At a ~39s wave
+    that is ~2,250 round trips a day per job, none of which could ever succeed, because no
+    amount of waiting approves anything.
+
+    Deleting the re-queue is not the fix: a deferred job is not in the pending zset, so this
+    function is the *only* thing that puts it back where the gate chain can see it. Drop it
+    and an approved job would never run. The caller instead supplies the missing question --
+    "is the thing that actually deferred this still true?" -- and the job is left alone while
+    the answer is yes. Optional so the in-memory/test paths keep the old behaviour.
     """
     from cryo.governor.admission import AdmissionConfig, AdmissionJob, decide_job_admission
 
@@ -140,6 +157,11 @@ def reconcile_deferred_jobs(
         admission_job = cast(AdmissionJob, _admission_job(job, AdmissionJob))
         decision = decide_job_admission(admission_job, config, now=current)
         if not decision.admissible and decision.defer:
+            continue
+        # Admission would take it, but admission is not why it was deferred. Checked after
+        # the admission decision so the cheap arithmetic still filters first and this only
+        # runs for the jobs actually about to be re-queued.
+        if still_blocked is not None and still_blocked(job):
             continue
         if queue.status(job.id) in _ACTIVE_QUEUE_STATUSES:
             store.mark_status(job.id, JobStatus.QUEUED)
