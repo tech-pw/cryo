@@ -44,6 +44,20 @@ def test_classifies_path_not_found_as_metadata_not_found() -> None:
     assert classify_scan_failure(error) == "metadata_not_found"
 
 
+def test_classifies_a_bare_http_403_as_permission_denied() -> None:
+    """The Go engine words a denied read as a plain 403 with code=Unknown, with no
+    ACCESS_DENIED string anywhere, so it used to be labelled "Other". Verbatim from the
+    2026-09-23 fleet run. It must stay non-permanent -- an IAM fix resolves it."""
+    error = (
+        'RuntimeError: failed to load table: blob (key "bronze/comment_service/ratings_v1/'
+        'metadata/00185-8ef46931-7274-4c41-aedf-46d18ceeee90.metadata.json") (code=Unknown): '
+        "operation error S3: GetObject, https response error StatusCode: 403"
+    )
+
+    assert classify_scan_failure(error) == "permission_denied"
+    assert scan_failure_is_permanent(error) is False
+
+
 def test_classifies_unrecognized_error_as_other() -> None:
     assert classify_scan_failure("connection reset by peer") == "other"
 
@@ -68,6 +82,34 @@ def test_every_category_has_a_label_and_guidance() -> None:
 
 def test_classifies_a_missing_manifest_list_as_manifest_missing() -> None:
     assert classify_scan_failure(MANIFEST_MISSING_ERROR) == "manifest_missing"
+
+
+def test_classifies_a_missing_metadata_json_as_metadata_not_found() -> None:
+    """The larger half of the real failures, and the one this module missed when it first
+    shipped: it names no manifest, and the Go engine words it as a 404 rather than "Path does
+    not exist", so it fell through to "other" and kept counting as a retryable failure.
+    Verbatim from the 2026-09-23 00:00 UTC fleet run (267 of one chunk's 339)."""
+    error = (
+        "RuntimeError: failed to load table: blob (key "
+        '"bronze/ai_ncert/chapters_evolving/metadata/'
+        '00000-248835ae-db78-4287-aae7-accae7860c8f.metadata.json") (code=NotFound): '
+        "operation error S3: GetObject, https response error StatusCode: 404, "
+        "RequestID: X1R9TFEZSSZ6SJ1T"
+    )
+
+    assert classify_scan_failure(error) == "metadata_not_found"
+    assert scan_failure_is_permanent(error) is True
+
+
+def test_a_metadata_json_read_error_that_is_not_a_missing_object_is_not_permanent() -> None:
+    """Same two-part rule as the manifest case: naming a metadata file is not enough, or an
+    ordinary read blip on a healthy table would be written off as permanently unreadable."""
+    error = (
+        'failed to load table: blob (key "bronze/x/y/metadata/00000-a.metadata.json"): '
+        "connection reset by peer"
+    )
+    assert classify_scan_failure(error) == "other"
+    assert scan_failure_is_permanent(error) is False
 
 
 def test_a_missing_data_file_is_not_a_missing_manifest() -> None:

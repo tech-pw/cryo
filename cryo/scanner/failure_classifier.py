@@ -66,10 +66,16 @@ def classify_scan_failure(error: str | None) -> FailureCategory | None:
     """Return a category for a scan-failure error string, or ``None`` if there's no error."""
     if not error:
         return None
-    if "ACCESS_DENIED" in error:
+    # The Go engine reports a denied read as a bare HTTP 403 with code=Unknown rather than
+    # AWS's ACCESS_DENIED string, so keying only on the latter labelled real permission
+    # problems "Other" (one such case in the 2026-09-23 fleet run). Checked before the
+    # missing-object markers below, which key on 404 and cannot collide.
+    if "ACCESS_DENIED" in error or _has_status(error, 403):
         return "permission_denied"
     if _is_manifest_missing(error):
         return "manifest_missing"
+    if _is_metadata_file_missing(error):
+        return "metadata_not_found"
     if "Path does not exist" in error or "No such file or directory" in error:
         return "metadata_not_found"
     return "other"
@@ -82,6 +88,11 @@ def classify_scan_failure(error: str | None) -> FailureCategory | None:
 _MISSING_OBJECT_MARKERS = ("nosuchkey", "code=notfound", "status code: 404", "statuscode: 404")
 
 
+def _has_status(error: str, code: int) -> bool:
+    lowered = error.lower()
+    return f"statuscode: {code}" in lowered or f"status code: {code}" in lowered
+
+
 def _is_manifest_missing(error: str) -> bool:
     """A missing-object error *about a manifest*, not about arbitrary table data.
 
@@ -91,6 +102,28 @@ def _is_manifest_missing(error: str) -> bool:
     """
     lowered = error.lower()
     return "manifest" in lowered and any(marker in lowered for marker in _MISSING_OBJECT_MARKERS)
+
+
+# The metadata.json case is the *larger* half and was missed when this module first shipped,
+# because it matches none of the patterns above -- it names no manifest, and the Go engine
+# words it as a 404 rather than "Path does not exist". Real text from the 2026-09-23 00:00 UTC
+# fleet run, where it was 267 of one chunk's 339 missing-object failures (the manifest case
+# above was the other 74):
+#   RuntimeError: failed to load table: blob (key
+#   "bronze/ai_ncert/chapters_evolving/metadata/00000-248835ae-....metadata.json")
+#   (code=NotFound): operation error S3: GetObject, https response error StatusCode: 404
+def _is_metadata_file_missing(error: str) -> bool:
+    """A missing-object error naming the table's own ``.metadata.json``.
+
+    Same two-part rule as _is_manifest_missing, for the same reason: a bare 404 can be a
+    transient read of some other object, and merely naming a metadata file covers errors a
+    retry can clear. Only the combination means the catalog pointer targets an object that
+    is not there.
+    """
+    lowered = error.lower()
+    return ".metadata.json" in lowered and any(
+        marker in lowered for marker in _MISSING_OBJECT_MARKERS
+    )
 
 
 def scan_failure_is_permanent(error: str | None) -> bool:
