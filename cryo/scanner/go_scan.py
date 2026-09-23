@@ -76,6 +76,45 @@ def analyze_catalog_table_go(
     )
 
 
+def _parse_engine_payload(
+    stdout: str,
+    *,
+    command: str,
+    returncode: int,
+    stderr: str,
+) -> dict[str, Any]:
+    """Extract the JSON response object from an engine binary's stdout.
+
+    The whole buffer is tried first because the engine writes exactly one JSON
+    document; the per-line pass only exists for the case where it also emitted
+    progress lines. Lines are split on ``\\n`` rather than with ``splitlines()``
+    because ``splitlines()`` also breaks on U+0085, U+2028 and U+2029, which are
+    legal unescaped characters inside a JSON string (Go's encoder only escapes
+    below U+0020) and do occur in sampled row data — that shreds a valid
+    single-line response into fragments, none of which parse on their own.
+    """
+    try:
+        whole = json.loads(stdout)
+    except json.JSONDecodeError:
+        whole = None
+    if isinstance(whole, dict):
+        return whole
+    for raw_line in reversed(stdout.split("\n")):
+        line = raw_line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    detail = f"{command} stdout was not JSON (exit={returncode}): {stdout[:500]}"
+    if stderr:
+        detail = f"{detail} | stderr: {stderr[:200]}"
+    raise RuntimeError(detail)
+
+
 def run_scan_stats(
     request: Mapping[str, Any],
     *,
@@ -100,21 +139,9 @@ def run_scan_stats(
         raise RuntimeError(
             f"scan-stats produced no JSON (exit={proc.returncode}): {stderr or 'empty stderr'}"
         )
-    # Engine may emit progress lines; take the last JSON object.
-    payload: dict[str, Any] | None = None
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            payload = parsed
-            break
-    if payload is None:
-        raise RuntimeError(f"scan-stats stdout was not JSON: {stdout[:500]}")
+    payload = _parse_engine_payload(
+        stdout, command="scan-stats", returncode=proc.returncode, stderr=stderr
+    )
     if not payload.get("ok", False):
         raise RuntimeError(payload.get("error") or f"scan-stats failed (exit={proc.returncode})")
     return payload
@@ -479,20 +506,9 @@ def run_aggregate_fixture(
             f"aggregate-fixture produced no JSON (exit={proc.returncode}): "
             f"{stderr or 'empty stderr'}"
         )
-    payload: dict[str, Any] | None = None
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            payload = parsed
-            break
-    if payload is None:
-        raise RuntimeError(f"aggregate-fixture stdout was not JSON: {stdout[:500]}")
+    payload = _parse_engine_payload(
+        stdout, command="aggregate-fixture", returncode=proc.returncode, stderr=stderr
+    )
     if not payload.get("ok", False):
         raise RuntimeError(
             payload.get("error") or f"aggregate-fixture failed (exit={proc.returncode})"
