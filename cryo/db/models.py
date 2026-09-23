@@ -971,7 +971,9 @@ class AnalysisTask(TimestampMixin, Base):
     external_job_ref: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    processed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    processed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
     failure_reason: Mapped[str | None] = mapped_column(Text)
     next_retry_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     # Review finding F08, 2026-09-20: opaque, task-type-defined extra checkpoint state that
@@ -1622,6 +1624,21 @@ class GovernorBanditState(TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(Text, primary_key=True)
     payload: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+
+
+class ReportSendState(TimestampMixin, Base):
+    """When each scheduled report was last actually delivered.
+
+    This lives in the database rather than in ReportScheduler's memory because the
+    scheduler is a restartable pod and cron_is_due() treats "no last run" as due. On
+    2026-09-23 that sent the daily report to Slack 5 times and fired all four reports
+    on 8 separate pod starts, so process memory is not a safe place to keep it.
+    """
+
+    __tablename__ = "report_send_state"
+
+    report_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_sent_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
 
 class ObservationArchiveMeta(TimestampMixin, Base):

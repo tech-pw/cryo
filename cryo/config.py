@@ -128,6 +128,21 @@ class Settings(BaseSettings):
         gt=0,
         description="Week-over-week change (%) in GB reclaimed that's worth flagging either way.",
     )
+    # Off by default: these three posted to the same channel as the daily report and each
+    # repeated its full body every scheduler restart. The daily report is the one deliberate
+    # digest; turn these back on individually if a specific signal is wanted again.
+    shared_s3_report_enabled: bool = Field(
+        default=False,
+        description="Post the shared-S3-path anomaly report to Slack.",
+    )
+    query_cost_report_enabled: bool = Field(
+        default=False,
+        description="Post the Trino query-cost report to Slack.",
+    )
+    production_health_check_enabled: bool = Field(
+        default=False,
+        description="Post the production health check to Slack.",
+    )
     scan_parallel_tables: int = Field(
         default=0,
         ge=0,
