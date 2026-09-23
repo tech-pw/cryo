@@ -7,8 +7,10 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from cryo.db.models import SlackConfig
+from cryo.config import get_settings
+from cryo.db.models import ReportSendState, SlackConfig
 from cryo.db.session import SessionLocal
 from cryo.reporting import SlackClient, generate_daily_report
 from cryo.scheduler.cron import cron_is_due
@@ -21,16 +23,39 @@ def _slack_webhook_url(stored: str | None) -> str | None:
     return decrypt_secret(stored)
 
 
+def last_sent_at(session: Session, report_key: str) -> datetime | None:
+    """When ``report_key`` last went out, or None if it never has.
+
+    Always tz-aware: cron_is_due() compares this against an aware ``now``, and a backend
+    that hands back a naive timestamp would raise rather than simply compare wrong.
+    """
+    state = session.get(ReportSendState, report_key)
+    if state is None:
+        return None
+    stored = state.last_sent_at
+    return stored if stored.tzinfo is not None else stored.replace(tzinfo=UTC)
+
+
+def record_sent(session: Session, report_key: str, sent_at: datetime) -> None:
+    """Persist a successful delivery.
+
+    Written before the next tick can run so a restart in between cannot re-fire the
+    report; cron_is_due() reads a missing row as "never sent, therefore due".
+    """
+    state = session.get(ReportSendState, report_key)
+    if state is None:
+        session.add(ReportSendState(report_key=report_key, last_sent_at=sent_at))
+    else:
+        state.last_sent_at = sent_at
+    session.commit()
+
+
 class ReportScheduler:
     """Scheduler for periodic reports (e.g., daily anomaly report)."""
 
     name = "report-scheduler"
 
     def __init__(self) -> None:
-        self._last_runs: dict[str, datetime] = {}  # config_id -> last_run
-        self._last_shared_s3_run: datetime | None = None
-        self._last_query_cost_run: datetime | None = None
-        self._last_health_check_run: datetime | None = None
         self._running = False
 
     async def start(self, poll_interval_sec: int = 60) -> None:
@@ -74,15 +99,20 @@ class ReportScheduler:
                 if not config.webhook_url_encrypted:
                     continue
 
-                last_run = self._last_runs.get(str(config.id))
+                report_key = f"daily_report:{config.id}"
+                last_run = last_sent_at(session, report_key)
                 if cron_is_due(config.daily_report_cron, now=now, last_run_at=last_run):
                     logger.info(f"Daily report is due for Slack config '{config.name}'")
                     await self._send_daily_report(config)
-                    self._last_runs[str(config.id)] = now
+                    record_sent(session, report_key, now)
 
-            await self._maybe_send_shared_s3_report(now)
-            await self._maybe_send_query_cost_report(now)
-            await self._maybe_send_production_health_check(now)
+            settings = get_settings()
+            if settings.shared_s3_report_enabled:
+                await self._maybe_send_shared_s3_report(now)
+            if settings.query_cost_report_enabled:
+                await self._maybe_send_query_cost_report(now)
+            if settings.production_health_check_enabled:
+                await self._maybe_send_production_health_check(now)
         finally:
             session.close()
 
@@ -94,12 +124,17 @@ class ReportScheduler:
             refresh_shared_s3_report,
         )
 
-        if not cron_is_due(
-            SHARED_S3_REPORT_CRON,
-            now=now,
-            last_run_at=self._last_shared_s3_run,
-            tz=SHARED_S3_REPORT_TZ,
-        ):
+        probe = SessionLocal()
+        try:
+            due = cron_is_due(
+                SHARED_S3_REPORT_CRON,
+                now=now,
+                last_run_at=last_sent_at(probe, "shared_s3_report"),
+                tz=SHARED_S3_REPORT_TZ,
+            )
+        finally:
+            probe.close()
+        if not due:
             return
 
         logger.info("Shared S3 anomaly report is due (10:00 IST)")
@@ -116,7 +151,7 @@ class ReportScheduler:
                     "Shared S3 anomalies found but Slack was not sent (%s)",
                     result.get("slack_skipped_reason"),
                 )
-            self._last_shared_s3_run = now
+            record_sent(session, "shared_s3_report", now)
         except Exception:
             logger.exception("Failed to run shared S3 anomaly report")
         finally:
@@ -129,12 +164,17 @@ class ReportScheduler:
             notify_query_cost_report,
         )
 
-        if not cron_is_due(
-            QUERY_COST_REPORT_CRON,
-            now=now,
-            last_run_at=self._last_query_cost_run,
-            tz=QUERY_COST_REPORT_TZ,
-        ):
+        probe = SessionLocal()
+        try:
+            due = cron_is_due(
+                QUERY_COST_REPORT_CRON,
+                now=now,
+                last_run_at=last_sent_at(probe, "query_cost_report"),
+                tz=QUERY_COST_REPORT_TZ,
+            )
+        finally:
+            probe.close()
+        if not due:
             return
 
         logger.info("Trino query-cost report is due (10:15 IST)")
@@ -148,7 +188,7 @@ class ReportScheduler:
                     "Trino query-cost report ready but Slack was not sent (%s)",
                     result.get("slack_skipped_reason"),
                 )
-            self._last_query_cost_run = now
+            record_sent(session, "query_cost_report", now)
         except Exception:
             logger.exception("Failed to run Trino query-cost report")
         finally:
@@ -161,12 +201,17 @@ class ReportScheduler:
             notify_production_health_check,
         )
 
-        if not cron_is_due(
-            PRODUCTION_HEALTH_CHECK_CRON,
-            now=now,
-            last_run_at=self._last_health_check_run,
-            tz=PRODUCTION_HEALTH_CHECK_TZ,
-        ):
+        probe = SessionLocal()
+        try:
+            due = cron_is_due(
+                PRODUCTION_HEALTH_CHECK_CRON,
+                now=now,
+                last_run_at=last_sent_at(probe, "production_health_check"),
+                tz=PRODUCTION_HEALTH_CHECK_TZ,
+            )
+        finally:
+            probe.close()
+        if not due:
             return
 
         logger.info("Production health check is due (09:45 IST)")
@@ -182,7 +227,7 @@ class ReportScheduler:
                     "Production health check ready but Slack was not sent (%s)",
                     result.get("slack_skipped_reason"),
                 )
-            self._last_health_check_run = now
+            record_sent(session, "production_health_check", now)
         except Exception:
             logger.exception("Failed to run production health check")
         finally:
@@ -200,10 +245,14 @@ class ReportScheduler:
                 _slack_webhook_url(config.webhook_url_encrypted) or "",
                 config.channel,
             )
+            # The digest renders neither the narrated bottom line nor the diagnostics
+            # sections, so generating them would be a ~9 minute blocking detour inside
+            # this async tick for output nobody sees.
             res = await generate_daily_report(
                 session,
                 slack_client=slack_client,
-                use_ai_summary=config.daily_report_use_ai,
+                use_ai_summary=False,
+                include_diagnostics=False,
             )
             if res.get("slack_sent"):
                 logger.info(f"Daily report sent successfully to '{config.name}'")
