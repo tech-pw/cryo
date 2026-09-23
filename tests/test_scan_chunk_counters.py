@@ -137,6 +137,101 @@ def test_finished_trims_over_reported_counters(session) -> None:
     assert run.summary["scanned"] + run.summary["failed"] == 25
 
 
+def test_unreadable_tables_roll_up_apart_from_failures(session) -> None:
+    """A table whose metadata is gone from object storage must not land in the failure count
+    or the run's error surface -- a retry produces the identical error, so reporting it as a
+    scan failure makes the failure rate a number that can never improve."""
+    run = _make_queued_scan(session, num_chunks=1)
+    factory = _bound_session_factory(session)
+    assert scanner_repo.try_claim_scan_chunk(factory, run.id, chunk_id=0, num_chunks=1)
+
+    scanner_repo.record_scan_progress(
+        factory,
+        run.id,
+        chunk_id=0,
+        num_chunks=1,
+        event={"event": "assigned", "discovered": 3, "assigned": 3},
+    )
+    for outcome, table_ref in (
+        ("scanned", "s.healthy"),
+        ("unreadable", "s.gold_polls_evolving"),
+        ("failed", "s.transient"),
+    ):
+        scanner_repo.record_scan_progress(
+            factory,
+            run.id,
+            chunk_id=0,
+            num_chunks=1,
+            event={
+                "event": "table_result",
+                "outcome": outcome,
+                "table_ref": table_ref,
+                "error": None if outcome == "scanned" else f"{outcome} error",
+            },
+        )
+
+    session.refresh(run)
+    summary = run.summary
+    assert (summary["scanned"], summary["failed"], summary["unreadable"]) == (1, 1, 1)
+    assert [entry["table"] for entry in summary["failed_tables"]] == ["s.transient"]
+    assert [entry["table"] for entry in summary["unreadable_tables"]] == ["s.gold_polls_evolving"]
+    assert summary["last_error"] == "failed error"
+
+
+def test_a_run_of_only_unreadable_tables_succeeds(session) -> None:
+    """385 of cdp.central's 585 tables scan fine and 201 have lost their manifests. The run
+    reports what it accomplished; the unreadable list is the thing to act on."""
+    run = _make_queued_scan(session, num_chunks=1)
+    factory = _bound_session_factory(session)
+    assert scanner_repo.try_claim_scan_chunk(factory, run.id, chunk_id=0, num_chunks=1)
+
+    scanner_repo.record_scan_chunk_finished(
+        factory,
+        run.id,
+        chunk_id=0,
+        num_chunks=1,
+        status="succeeded",
+        summary_update={
+            "discovered": 585,
+            "assigned": 585,
+            "scanned": 384,
+            "skipped": 0,
+            "failed": 0,
+            "unreadable": 201,
+        },
+    )
+    session.refresh(run)
+    assert run.status == "succeeded"
+    assert run.summary["unreadable"] == 201
+    assert run.summary["failed"] == 0
+
+
+def test_finished_trims_unreadable_within_assigned(session) -> None:
+    run = _make_queued_scan(session, num_chunks=1)
+    factory = _bound_session_factory(session)
+    assert scanner_repo.try_claim_scan_chunk(factory, run.id, chunk_id=0, num_chunks=1)
+
+    scanner_repo.record_scan_chunk_finished(
+        factory,
+        run.id,
+        chunk_id=0,
+        num_chunks=1,
+        status="succeeded",
+        summary_update={
+            "discovered": 20,
+            "assigned": 10,
+            "scanned": 8,
+            "skipped": 0,
+            "failed": 0,
+            "unreadable": 8,
+        },
+    )
+    session.refresh(run)
+    chunk = run.summary["chunks"]["0"]
+    outcomes = chunk["scanned"] + chunk["skipped"] + chunk["failed"] + chunk["unreadable"]
+    assert outcomes == 10
+
+
 def test_chunk_summary_does_not_invent_phantom_chunks(session) -> None:
     run = _make_queued_scan(session, num_chunks=2)
     factory = _bound_session_factory(session)

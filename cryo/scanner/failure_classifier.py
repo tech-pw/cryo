@@ -16,11 +16,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-FailureCategory = Literal["permission_denied", "metadata_not_found", "other"]
+FailureCategory = Literal["permission_denied", "metadata_not_found", "manifest_missing", "other"]
 
 _CATEGORY_LABELS: dict[FailureCategory, str] = {
     "permission_denied": "Permission denied",
     "metadata_not_found": "Metadata not found",
+    "manifest_missing": "Manifest missing",
     "other": "Other",
 }
 
@@ -31,8 +32,16 @@ _CATEGORY_LABELS: dict[FailureCategory, str] = {
 _ACTIONABLE_FROM_CRYO: dict[FailureCategory, bool] = {
     "permission_denied": False,
     "metadata_not_found": False,
+    "manifest_missing": False,
     "other": False,
 }
+
+# Categories where the files the table's own metadata names are gone from object storage, so
+# re-running the scan produces the identical error forever. Counted apart from scan failures
+# (see ScanSummary.unreadable) so the failure rate stays a signal about things that can be
+# fixed. Permission denied is deliberately absent: an IAM policy change does fix those, and
+# burying thousands of them in "unreadable" would hide a real, correctable misconfiguration.
+_PERMANENTLY_UNREADABLE: frozenset[str] = frozenset({"metadata_not_found", "manifest_missing"})
 
 _CATEGORY_GUIDANCE: dict[FailureCategory, str] = {
     "permission_denied": (
@@ -44,6 +53,11 @@ _CATEGORY_GUIDANCE: dict[FailureCategory, str] = {
         "usually means the underlying data was deleted or moved outside Cryo, or the catalog's "
         "pointer is stale -- investigate before assuming this table is safe to drop."
     ),
+    "manifest_missing": (
+        "The table's metadata file was read, but the manifest list it points at is gone from "
+        "S3. Trino fails on these tables too, so this is a broken table in the lakehouse, not "
+        "a Cryo problem -- the owning team has to repoint the catalog or restore the table."
+    ),
     "other": "See the raw error below for detail.",
 }
 
@@ -54,9 +68,35 @@ def classify_scan_failure(error: str | None) -> FailureCategory | None:
         return None
     if "ACCESS_DENIED" in error:
         return "permission_denied"
+    if _is_manifest_missing(error):
+        return "manifest_missing"
     if "Path does not exist" in error or "No such file or directory" in error:
         return "metadata_not_found"
     return "other"
+
+
+# Real text from a cdp.central scan on 2026-09-23, which returned this for 201 of 585 tables:
+#   RuntimeError: load manifests: could not open manifest file: blob (key
+#   "silver/central/<table>/metadata/snap-<id>-1-<uuid>.avro") (code=NotFound): ... NoSuchKey
+# Checked against Trino on the same metastore: it names the same missing file and fails too.
+_MISSING_OBJECT_MARKERS = ("nosuchkey", "code=notfound", "status code: 404", "statuscode: 404")
+
+
+def _is_manifest_missing(error: str) -> bool:
+    """A missing-object error *about a manifest*, not about arbitrary table data.
+
+    Both halves are required. "NoSuchKey" alone also covers a missing data file mid-scan,
+    which is a different (and often transient) problem, and naming a manifest alone covers
+    ordinary read errors that a retry can clear.
+    """
+    lowered = error.lower()
+    return "manifest" in lowered and any(marker in lowered for marker in _MISSING_OBJECT_MARKERS)
+
+
+def scan_failure_is_permanent(error: str | None) -> bool:
+    """True when re-running the scan cannot possibly produce a different result."""
+    category = classify_scan_failure(error)
+    return category in _PERMANENTLY_UNREADABLE
 
 
 def failure_category_label(category: FailureCategory | None) -> str | None:

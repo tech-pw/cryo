@@ -23,6 +23,7 @@ FIELD_MAP = {
     "table_name": Table.table_name,
     "is_active": Table.is_active,
     "consecutive_scan_failures": Table.consecutive_scan_failures,
+    "last_scan_error_kind": Table.last_scan_error_kind,
     "last_snapshot_committed_at": TableStats.last_snapshot_committed_at,
     "needs_compaction": TableStats.needs_compaction,
     "compaction_priority": TableStats.compaction_priority,

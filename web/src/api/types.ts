@@ -173,6 +173,7 @@ export interface TableRead {
   consecutive_scan_failures?: number;
   last_scan_error?: string | null;
   last_scan_error_at?: string | null;
+  last_scan_error_kind?: string | null;
   failure_category?: string | null;
   failure_category_label?: string | null;
   failure_category_guidance?: string | null;

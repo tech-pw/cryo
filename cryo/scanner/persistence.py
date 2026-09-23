@@ -135,6 +135,7 @@ def record_table_scan_outcome(
     table_name: str,
     error: str | None,
     scanned_at: datetime,
+    error_kind: str = "failed",
 ) -> Table:
     """Idempotently records whether a table's scan attempt succeeded or failed.
 
@@ -156,10 +157,12 @@ def record_table_scan_outcome(
         table.consecutive_scan_failures = 0
         table.last_scan_error = None
         table.last_scan_error_at = None
+        table.last_scan_error_kind = None
     else:
         table.consecutive_scan_failures = (table.consecutive_scan_failures or 0) + 1
         table.last_scan_error = _json_safe(error)[:2000]
         table.last_scan_error_at = scanned_at
+        table.last_scan_error_kind = error_kind
     return table
 
 

@@ -632,6 +632,11 @@ class TableRead(OrmModel):
     consecutive_scan_failures: int = 0
     last_scan_error: str | None = None
     last_scan_error_at: datetime | None = None
+    # "failed" or "unreadable" -- the retryability call the scanner itself made when it
+    # recorded the error, stored (unlike failure_category below) because it's what the run's
+    # counters were derived from, and because filtering the fleet for unreadable tables needs
+    # a real column.
+    last_scan_error_kind: str | None = None
     # Derived from last_scan_error at serialization time (cryo/scanner/failure_classifier.py),
     # not stored -- lets the taxonomy evolve without a migration/backfill.
     failure_category: str | None = None

@@ -218,6 +218,10 @@ class Table(Base):
     )
     last_scan_error: Mapped[str | None] = mapped_column(Text)
     last_scan_error_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # "failed" (may succeed on retry) or "unreadable" (metadata gone from object storage, so
+    # retrying cannot help) -- see cryo/scanner/failure_classifier.py. Lets them be
+    # listed and handed to whoever owns the lakehouse instead of being rescanned forever.
+    last_scan_error_kind: Mapped[str | None] = mapped_column(Text)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),

@@ -5,6 +5,7 @@ export const BROKEN_TABLE_FAILURE_THRESHOLD = 2;
 export const FAILURE_CATEGORY_COLORS: Record<string, string> = {
   permission_denied: "gold",
   metadata_not_found: "volcano",
+  manifest_missing: "volcano",
   other: "default"
 };
 
