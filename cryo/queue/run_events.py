@@ -14,6 +14,15 @@ JsonDict = dict[str, Any]
 MAX_STREAM_LEN = 500
 DEFAULT_REPLAY_COUNT = 200
 
+# MAX_STREAM_LEN caps how large one run's stream gets, but nothing capped how many of them
+# accumulate: the key was created per run and never removed, so the count grew with every run
+# forever. Sliding expiry on publish means a run's buffer outlives its last event by this long
+# and then goes away on its own. Safe because this stream is only the live-tail/replay buffer
+# for the UI -- every event is also written to the observation lakehouse, which is the archive
+# (see attach_observation_lakehouse). A day is far longer than anyone tails a finished run,
+# and any request past it reads the lakehouse rather than Redis.
+STREAM_TTL_SEC = 24 * 60 * 60
+
 # Module-level handle to the observation lakehouse. Filled in by
 # ``attach_observation_lakehouse`` at process startup; the Redis/InMemory bus instances read it on
 # each publish so we can keep the bus immutable for tests while still enabling the feature in the
@@ -202,12 +211,11 @@ class RedisRunEventBus:
 
     def publish(self, run_id: str | uuid.UUID, event: JsonDict) -> None:
         try:
-            self._redis.xadd(
-                self._stream_key(run_id),
-                {"payload": json.dumps(event)},
-                maxlen=MAX_STREAM_LEN,
-                approximate=True,
-            )
+            key = self._stream_key(run_id)
+            pipe = self._redis.pipeline()
+            pipe.xadd(key, {"payload": json.dumps(event)}, maxlen=MAX_STREAM_LEN, approximate=True)
+            pipe.expire(key, STREAM_TTL_SEC)
+            pipe.execute()
         except Exception:
             logger.exception("Failed to publish run event for run_id=%s", run_id)
         _publish_to_lakehouse(run_id, event)

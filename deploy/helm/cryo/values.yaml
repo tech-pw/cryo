@@ -286,6 +286,22 @@ redis:
     limits:
       cpu: 500m
       memory: 512Mi
+  # Backstop only. With per-key TTLs in cryo/queue/redis_queue.py the steady state is a few MB,
+  # so reaching this means something started leaking again -- and it should surface as loud,
+  # bounded write errors rather than the kernel OOMKilling the container and taking the whole
+  # queue with it. Held well under the 512Mi limit because RSS runs above used_memory
+  # (36.8MiB vs 31.8MiB measured in prod) and the allocator does not return freed pages
+  # promptly.
+  maxmemory: 320mb
+  # noeviction, not an LRU policy: these keys are jobs and locks, and silently evicting one
+  # loses work with no record. Refusing the write is recoverable; dropping it is not.
+  maxmemoryPolicy: noeviction
+  # RDB snapshotting off. /data is the container's ephemeral layer -- there is no volume, so
+  # the 10MB dump.rdb prod was writing could never be read back after a restart. It bought no
+  # durability and cost real disk I/O plus a fork that can transiently double RSS, which is
+  # the worst thing to do next to a memory limit. Durability here is Postgres: both
+  # reconcile_queued_jobs and orphan recovery rebuild Redis state from it after a restart.
+  save: ""
 
 migration:
   image:
