@@ -29,6 +29,33 @@ _CLAIM_HANDOFF_IDLE_MS = 120_000
 # skipped; this stops a large pending list from turning a single poll into an unbounded loop.
 _MAX_RECLAIM_PROBES = 20
 
+# Every cryo:job:<id> hash carries an expiry, because nothing else ever removes one. Before
+# this, complete() set the hash's status field to a terminal value and left the key behind
+# forever: 2026-09-23 prod held 22,552 of them, and Redis grew 17.1 MB/day against a 512Mi
+# container limit -- roughly a month from an empty start to being OOMKilled by the kernel.
+# Because maxmemory was 0, Redis never pushed back, and /data was the node's ephemeral disk,
+# so the kill took the RDB snapshot with it.
+#
+# Two horizons rather than one:
+#
+# _ACTIVE_JOB_TTL_SEC is a safety net refreshed on every state transition, so a job stays
+# addressable for as long as it is genuinely in play. It has to clear the worst legitimate
+# case, which is queue time, not run time -- reconcile_stale_running_jobs reaps a RUNNING job
+# after 6h, but a QUEUED job can wait far longer behind a backlog (3,046 jobs once sat queued
+# for 21+ hours). A week is comfortably past that while still bounding the leak.
+#
+# _TERMINAL_JOB_TTL_SEC applies once complete() runs and no further transition can occur. It
+# only has to outlive readers already holding the id, so it is short -- this is what keeps the
+# steady state small, since completions are the overwhelming majority of keys.
+#
+# Expiry is safe to be wrong in the "too early" direction: Postgres is the source of truth and
+# both recovery paths rebuild from it. reconcile_queued_jobs re-enqueues a DB-QUEUED job that
+# is missing from Redis, and orphan recovery re-admits a DB-ADMITTED job whose hash is gone
+# (worker/orphan_recovery.py, `if queue.status(job.id) is None`). Neither inspects a job that
+# is already terminal in Postgres, which is the only kind the short TTL can reach.
+_ACTIVE_JOB_TTL_SEC = 7 * 24 * 60 * 60
+_TERMINAL_JOB_TTL_SEC = 60 * 60
+
 
 @dataclass(frozen=True)
 class QueueEntry:
@@ -255,6 +282,7 @@ class RedisMaintenanceQueue:
         pipe.hset(
             self._job_key(job_id), mapping={"destination_id": destination_id, "status": "queued"}
         )
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
         pipe.zadd(self._pending_key(destination_id), {job_id: priority})
         pipe.sadd(self._destinations_key(), destination_id)
         pipe.execute()
@@ -285,6 +313,7 @@ class RedisMaintenanceQueue:
                 "stream_id": entry_id,
             },
         )
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
         pipe.hincrby(self._in_flight_key(destination_id), replica_name, 1)
         pipe.execute()
 
@@ -352,9 +381,10 @@ class RedisMaintenanceQueue:
         step; nothing ever dispatched the remaining operations."""
         self._ack(job_id)
         entry_id = _decode(self._redis.xadd(self._stream_key(), {"job_id": job_id}))
-        self._redis.hset(
-            self._job_key(job_id), mapping={"status": "admitted", "stream_id": entry_id}
-        )
+        pipe = self._redis.pipeline()
+        pipe.hset(self._job_key(job_id), mapping={"status": "admitted", "stream_id": entry_id})
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
+        pipe.execute()
 
     def awaiting_claim(self, job_id: str) -> bool:
         """True while the stream still holds this job's admission entry.
@@ -395,6 +425,7 @@ class RedisMaintenanceQueue:
             self._job_key(job_id),
             mapping={"destination_id": destination_id, "status": "queued"},
         )
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
         pipe.zadd(self._pending_key(destination_id), {job_id: priority})
         pipe.sadd(self._destinations_key(), destination_id)
         pipe.execute()
@@ -430,7 +461,10 @@ class RedisMaintenanceQueue:
         return alive
 
     def mark_running(self, job_id: str) -> None:
-        self._redis.hset(self._job_key(job_id), "status", "running")
+        pipe = self._redis.pipeline()
+        pipe.hset(self._job_key(job_id), "status", "running")
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
+        pipe.execute()
         self._ack(job_id)
 
     def complete(self, job_id: str, status: JobStatus | str) -> None:
@@ -440,6 +474,9 @@ class RedisMaintenanceQueue:
         self._ack(job_id)
         pipe = self._redis.pipeline()
         pipe.hset(self._job_key(job_id), "status", JobStatus(status).value)
+        # The one transition after which no further transition can happen, so this is where
+        # the long active TTL is traded down for the short terminal one.
+        pipe.expire(self._job_key(job_id), _TERMINAL_JOB_TTL_SEC)
         if destination_id:
             pipe.hincrby(self._in_flight_key(destination_id), replica, -1)
         pipe.execute()
@@ -452,6 +489,9 @@ class RedisMaintenanceQueue:
         if destination_id:
             pipe.zrem(self._pending_key(destination_id), job_id)
         pipe.hset(self._job_key(job_id), "status", "deferred")
+        # Deferred is not terminal -- the job comes back on a later wave, so it keeps the
+        # active horizon rather than the short one complete() applies.
+        pipe.expire(self._job_key(job_id), _ACTIVE_JOB_TTL_SEC)
         pipe.execute()
 
     def cancel_pending(self, job_id: str, destination_id: str | None = None) -> None:
