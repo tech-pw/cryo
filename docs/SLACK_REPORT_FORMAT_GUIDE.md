@@ -236,6 +236,13 @@ This fallback is used for:
 
 ## 3. Daily Report Structure
 
+> **Superseded for the Cryo daily digest (2026-09-23).** The 6-section framework below is
+> retained as general guidance, but `daily_report.py::_build_slack_blocks` no longer follows
+> it. The digest was cut to the counters actually tracked day to day — see
+> "Shipped shape (2026-09-23)" immediately after this section. The status banner, narrated
+> bottom line, anomaly list, cost/savings figures, top-unhealthy list and action items were
+> all removed on request.
+
 ### The 6-Section Framework
 
 Research shows the most effective daily reports follow this structure:
@@ -255,6 +262,35 @@ Research shows the most effective daily reports follow this structure:
 │ 6. FOOTER — Drill-down links + timestamp                     │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+### Shipped shape (2026-09-23)
+
+What `_build_slack_blocks` renders today, in order. Every value is a counter someone is
+tracking over time; nothing is narrated or inferred.
+
+| Section | Rows |
+|---|---|
+| Fleet | Total Tables · Scanned (yesterday) · Needing Compaction · Total Size |
+| Maintenance Operations (yesterday) | one row per operation, succeeded / failed |
+| Impact | GB Reclaimed · Successful Actions · Tables Touched · Optimize File Reduction |
+| Trend | Day-over-day (vs 2 days ago) · Week-over-week (vs same day last week) |
+| Grade Distribution | tables per grade |
+| Files | Total Files · Small Files · Small-File Ratio · Avg File Size |
+
+Two things worth preserving if this is ever reworked:
+
+- **Every "yesterday" means the same window.** Maintenance counts, the scanned count and
+  the impact numbers all use `impact_signals.day_bounds(now, 1)` — a full UTC calendar day.
+  They previously mixed a rolling 24 hours with a calendar day and disagreed by ~900 actions
+  in the same message.
+- **`AuditLog.status` is `'OK'` / `'FAILED'`.** The old summary line matched on the string
+  `"succeeded"`, which never appears, so it printed "0 succeeded, 0 failed" on days with
+  thousands of successful actions. `_maintenance_split` maps the real vocabulary.
+
+The digest is generated with `include_diagnostics=False`, which skips `detect_all_anomalies`
+— measured at **540s** against the 12.6k-table fleet, blocking the scheduler's async tick
+for nine minutes to compute a section that is no longer rendered. With it off, collection
+takes ~1s.
 
 ### Section Details
 

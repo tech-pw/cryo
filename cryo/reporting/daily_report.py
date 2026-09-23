@@ -26,7 +26,7 @@ from cryo.reporting.cost_signals import (
     compute_cost_signal,
     correlate_with_maintenance,
 )
-from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal
+from cryo.reporting.impact_signals import ImpactSignal, day_bounds, compute_impact_signal
 from cryo.reporting.slack import (
     SlackBlock,
     SlackClient,
@@ -63,6 +63,9 @@ class DailyReportData:
     unhealthy_tables: int
     tables_needing_compaction: int
     total_anomalies: int
+    tables_scanned_yesterday: int = 0
+    total_files: int = 0
+    small_files: int = 0
     critical_anomalies: list[dict[str, Any]] = field(default_factory=list)
     grade_distribution: dict[str, int] = field(default_factory=dict)
     maintenance_stats: dict[str, int] = field(default_factory=dict)
@@ -82,6 +85,7 @@ async def generate_daily_report(
     slack_client: SlackClient | None = None,
     *,
     use_ai_summary: bool = True,
+    include_diagnostics: bool = True,
 ) -> dict[str, Any]:
     """Generate and optionally send the daily fleet-health report.
 
@@ -95,7 +99,7 @@ async def generate_daily_report(
     """
     logger.info("Generating daily fleet-health report")
 
-    report_data = _collect_report_data(session)
+    report_data = _collect_report_data(session, include_diagnostics=include_diagnostics)
 
     bottom_line = None
     if use_ai_summary:
@@ -394,8 +398,14 @@ def _add_impact_action_item(
     return [item, *items[:2]]
 
 
-def _collect_report_data(session: Session) -> DailyReportData:
-    """Collect all data needed for the report."""
+def _collect_report_data(session: Session, *, include_diagnostics: bool = True) -> DailyReportData:
+    """Collect the data for the report.
+
+    ``include_diagnostics`` covers the parts only the API response renders -- anomalies,
+    the worst-table list, the cost signal and the derived status/action items. The
+    scheduled Slack digest stopped showing all of those, and computing them anyway cost
+    ~9 minutes of blocking work per send, so it opts out.
+    """
     now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
 
@@ -422,7 +432,13 @@ def _collect_report_data(session: Session) -> DailyReportData:
 
     # Richer, seasonality-aware anomaly detection -- the same detector already proven out for
     # per-table Slack breach alerts (cryo/scheduler/alert_dispatcher.py), fleet-wide.
-    anomaly_alerts = detect_all_anomalies(session, min_severity="medium", lookback_days=7)
+    # Measured at 540s against the 12.6k-table fleet on 2026-09-23, so it is skipped unless
+    # a caller actually renders it; the scheduled Slack digest does not.
+    anomaly_alerts: list[AnomalyAlert] = (
+        detect_all_anomalies(session, min_severity="medium", lookback_days=7)
+        if include_diagnostics
+        else []
+    )
     critical_anomalies = [
         {
             "table": a.table_name,
@@ -436,62 +452,86 @@ def _collect_report_data(session: Session) -> DailyReportData:
         for a in anomaly_alerts
     ]
 
+    # Calendar yesterday, matching compute_impact_signal's window rather than a rolling 24h.
+    # The digest shows both side by side, and two "yesterday" numbers spanning different
+    # windows disagreed by ~900 actions.
+    yesterday_start, yesterday_end = day_bounds(now, 1)
     maintenance_rows = session.execute(
         select(AuditLog.action, AuditLog.status, func.count(AuditLog.id))
-        .where(AuditLog.ts >= yesterday)
+        .where(AuditLog.ts >= yesterday_start, AuditLog.ts < yesterday_end)
         .group_by(AuditLog.action, AuditLog.status)
     ).fetchall()
     maintenance_stats: dict[str, int] = {
         f"{action}_{status}": count for action, status, count in maintenance_rows
     }
 
-    top_issues_rows = session.execute(
-        select(
-            Table.schema_name,
-            Table.table_name,
-            TableStats.grade,
-            TableStats.overall_score,
-            TableStats.small_files_count,
-        )
-        .join(TableStats, TableStats.table_id == Table.id)
-        .where(TableStats.overall_score < 60)
-        .order_by(TableStats.overall_score.asc())
-        .limit(10)
-    ).fetchall()
-    top_issues = [
-        {"table": f"{row[0]}.{row[1]}", "grade": row[2], "score": row[3], "small_files": row[4]}
-        for row in top_issues_rows
-    ]
+    top_issues: list[dict[str, Any]] = []
+    if include_diagnostics:
+        top_issues_rows = session.execute(
+            select(
+                Table.schema_name,
+                Table.table_name,
+                TableStats.grade,
+                TableStats.overall_score,
+                TableStats.small_files_count,
+            )
+            .join(TableStats, TableStats.table_id == Table.id)
+            .where(TableStats.overall_score < 60)
+            .order_by(TableStats.overall_score.asc())
+            .limit(10)
+        ).fetchall()
+        top_issues = [
+            {"table": f"{row[0]}.{row[1]}", "grade": row[2], "score": row[3], "small_files": row[4]}
+            for row in top_issues_rows
+        ]
 
     cost_stats = session.execute(
         select(
             func.sum(TableStats.total_size_gb),
             func.sum(TableStats.estimated_monthly_s3_cost_usd),
             func.sum(TableStats.projected_savings_usd_month),
+            func.sum(TableStats.total_files),
+            func.sum(TableStats.small_files_count),
         )
     ).first()
     total_size_gb = float(cost_stats[0] or 0.0) if cost_stats is not None else 0.0
     total_cost = float(cost_stats[1] or 0.0) if cost_stats is not None else 0.0
     projected_savings = float(cost_stats[2] or 0.0) if cost_stats is not None else 0.0
+    total_files = int(cost_stats[3] or 0) if cost_stats is not None else 0
+    small_files = int(cost_stats[4] or 0) if cost_stats is not None else 0
     total_size_tb = total_size_gb / 1024
+
+    tables_scanned_yesterday = (
+        session.scalar(
+            select(func.count(TableStats.table_id)).where(
+                TableStats.scan_at >= yesterday_start,
+                TableStats.scan_at < yesterday_end,
+            )
+        )
+        or 0
+    )
 
     size_yesterday_tb = _size_snapshot_asof(session, yesterday)
     size_delta = (total_size_tb - size_yesterday_tb) if size_yesterday_tb is not None else None
 
+    # Sub-second each, and the digest renders the impact numbers, so these always run.
     cost_signal = compute_cost_signal(session, now=now)
     cost_correlation = correlate_with_maintenance(session, cost_signal, now=now)
     impact_signal = compute_impact_signal(session, now=now)
 
-    status = _classify_status(unhealthy, anomaly_alerts, cost_signal, cost_correlation)
-    if status != "CRITICAL" and impact_signal.direction == "worsening":
-        status = "WATCH"
-    action_items = (
-        _build_action_items(session, anomaly_alerts, top_issues) if status != "CLEAR" else []
-    )
-    if cost_signal.direction != "stable" and cost_correlation is not None:
-        action_items = _add_cost_action_item(action_items, cost_signal, cost_correlation)
-    if impact_signal.direction == "worsening":
-        action_items = _add_impact_action_item(action_items, impact_signal)
+    status: ReportStatus = "CLEAR"
+    action_items: list[dict[str, Any]] = []
+    if include_diagnostics:
+        status = _classify_status(unhealthy, anomaly_alerts, cost_signal, cost_correlation)
+        if status != "CRITICAL" and impact_signal.direction == "worsening":
+            status = "WATCH"
+        action_items = (
+            _build_action_items(session, anomaly_alerts, top_issues) if status != "CLEAR" else []
+        )
+        if cost_signal.direction != "stable" and cost_correlation is not None:
+            action_items = _add_cost_action_item(action_items, cost_signal, cost_correlation)
+        if impact_signal.direction == "worsening":
+            action_items = _add_impact_action_item(action_items, impact_signal)
 
     return DailyReportData(
         report_date=now,
@@ -501,6 +541,9 @@ def _collect_report_data(session: Session) -> DailyReportData:
         unhealthy_tables=unhealthy,
         tables_needing_compaction=compaction_count,
         total_anomalies=len(anomaly_alerts),
+        tables_scanned_yesterday=tables_scanned_yesterday,
+        total_files=total_files,
+        small_files=small_files,
         critical_anomalies=critical_anomalies,
         grade_distribution=grade_distribution,
         maintenance_stats=maintenance_stats,
@@ -614,54 +657,87 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
         return None
 
 
+def _format_bytes(num_bytes: float) -> str:
+    """Human-readable size for a single file's average, which spans KB to GB across the fleet."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(num_bytes) < 1024.0 or unit == "GB":
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024.0
+    return f"{num_bytes:.1f} GB"
+
+
+_SUCCESS_STATUSES = {"ok", "success", "succeeded", "completed"}
+_FAILURE_STATUSES = {"failed", "failure", "error"}
+
+
+def _maintenance_split(stats: dict[str, int]) -> list[list[str]]:
+    """Turn ``{"optimize_OK": 12, ...}`` into per-operation succeeded/failed rows.
+
+    Keys are ``f"{action}_{status}"`` built in _collect_report_data, and status is the last
+    underscore-separated token. AuditLog writes 'OK' and 'FAILED', not the 'succeeded' the
+    previous summary line matched on, which is why every report read "0 succeeded, 0 failed"
+    on days with thousands of actions.
+    """
+    per_action: dict[str, dict[str, int]] = {}
+    for key, count in stats.items():
+        action, _, status = key.rpartition("_")
+        if not action:
+            continue
+        bucket = per_action.setdefault(action, {"succeeded": 0, "failed": 0})
+        normalised = status.lower()
+        if normalised in _SUCCESS_STATUSES:
+            bucket["succeeded"] += count
+        elif normalised in _FAILURE_STATUSES:
+            bucket["failed"] += count
+
+    return [
+        [action, f"{counts['succeeded']:,}", f"{counts['failed']:,}"]
+        for action, counts in sorted(per_action.items())
+        if counts["succeeded"] or counts["failed"]
+    ]
+
+
 def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBlock]:
-    """Build Slack Block Kit blocks per docs/SLACK_REPORT_FORMAT_GUIDE.md's 6-section framework:
-    header, status, bottom line, key metrics, action items, footer."""
+    """Build the daily digest.
+
+    Deliberately limited to the fleet counters, yesterday's maintenance and impact, the
+    two trend comparisons, the grade spread and the file-size picture. The narrated
+    bottom line, anomaly list, cost/savings estimates, top-unhealthy table list and
+    action items were removed on request: they made the message long enough that the
+    numbers being tracked day to day were hard to find in it.
+    """
     blocks: list[SlackBlock] = []
 
     date_str = data.report_date.strftime("%B %d, %Y")
     blocks.append(header_block(f"🧊 Cryo Daily Report — {date_str}"))
 
-    status_emoji = {"CLEAR": "🟢", "WATCH": "🟡", "CRITICAL": "🔴"}[data.status]
-    status_label = (
-        f"{status_emoji} *{data.status}*"
-        if data.status == "CLEAR"
-        else f"{status_emoji} *{data.status}* ({len(data.action_items)} item"
-        f"{'s' if len(data.action_items) != 1 else ''})"
-    )
-    blocks.append(section_block(status_label))
-    blocks.append(section_block(bottom_line))
-    blocks.append(divider_block())
-
     size_delta_str = ""
     if data.total_size_tb_delta is not None:
         arrow = "↑" if data.total_size_tb_delta >= 0 else "↓"
         size_delta_str = f" {arrow}{abs(data.total_size_tb_delta):.2f}"
+
     blocks.append(
         table_block(
-            ["Metric", "Value"],
+            ["Fleet", "Value"],
             [
-                ["📊 Total Tables", str(data.total_tables)],
-                ["💚 Health", f"{data.healthy_tables} ✓ / {data.unhealthy_tables} ✗"],
-                ["🔧 Needing Compaction", str(data.tables_needing_compaction)],
-                [
-                    "⚠️ Anomalies",
-                    f"{data.total_anomalies} ({len(data.critical_anomalies)} flagged)",
-                ],
-                ["💾 Total Size", f"{data.total_size_tb:.2f} TB{size_delta_str}"],
-                ["💰 Monthly S3 Cost", f"${data.total_cost_usd:,.2f}"],
-                ["💵 Projected Savings", f"${data.projected_savings_usd:,.2f}/mo"],
+                ["Total Tables", f"{data.total_tables:,}"],
+                ["Scanned (yesterday)", f"{data.tables_scanned_yesterday:,}"],
+                ["Needing Compaction", f"{data.tables_needing_compaction:,}"],
+                ["Total Size", f"{data.total_size_tb:.2f} TB{size_delta_str}"],
             ],
         )
     )
 
+    blocks.append(divider_block())
+    blocks.append(section_block("*Maintenance Operations (yesterday)*"))
+    operation_rows = _maintenance_split(data.maintenance_stats)
+    if operation_rows:
+        blocks.append(table_block(["Operation", "Succeeded", "Failed"], operation_rows))
+    else:
+        blocks.append(section_block("No maintenance operations ran."))
+
     if data.impact_signal is not None:
-        blocks.append(divider_block())
         impact = data.impact_signal
-        direction_emoji = {"improving": "📈", "worsening": "📉", "flat": "➖", "unknown": "❓"}[
-            impact.direction
-        ]
-        blocks.append(section_block(f"{direction_emoji} *North Star: Reclaim Impact*"))
         opt_pct = impact.today.optimize_file_reduction_pct
         opt_str = (
             f"{impact.today.optimize_files_in:,} → {impact.today.optimize_files_out:,} "
@@ -669,66 +745,49 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             if opt_pct is not None
             else "no optimize runs"
         )
+        blocks.append(divider_block())
         blocks.append(
             table_block(
-                ["Metric", "Yesterday"],
+                ["Impact", "Yesterday"],
                 [
-                    ["💾 GB Reclaimed", f"{impact.today.gb_freed:.1f} GB"],
-                    ["✅ Successful Actions", str(impact.today.actions_succeeded)],
-                    ["📋 Tables Touched", str(impact.today.tables_touched)],
-                    ["🗂️ Optimize File Reduction", opt_str],
+                    ["GB Reclaimed", f"{impact.today.gb_freed:.1f} GB"],
+                    ["Successful Actions", f"{impact.today.actions_succeeded:,}"],
+                    ["Tables Touched", f"{impact.today.tables_touched:,}"],
+                    ["Optimize File Reduction", opt_str],
                 ],
             )
         )
-        # DoD/WoW absolute numbers side by side with the delta -- a bare "-94.9%" tells a
-        # reader the direction but not what it's relative to. Always show both baselines
-        # (even on a "flat" day) so a reader never has to reconstruct "compared to what?"
-        # from a percentage alone.
-        dod_arrow = "↑" if (impact.dod_pct or 0) >= 0 else "↓"
-        wow_arrow = "↑" if (impact.wow_pct or 0) >= 0 else "↓"
+
+        # Both baselines are shown next to the percentage because a bare "-94.9%" says
+        # which way it moved but not what it moved against.
         dod_baseline_str = (
             f"{impact.dod_baseline_gb:.1f} GB" if impact.dod_baseline_gb is not None else "n/a"
         )
         wow_baseline_str = (
             f"{impact.wow_baseline_gb:.1f} GB" if impact.wow_baseline_gb is not None else "n/a"
         )
-        dod_pct_str = f"{dod_arrow} {impact.dod_pct:+.1f}%" if impact.dod_pct is not None else "n/a"
-        wow_pct_str = f"{wow_arrow} {impact.wow_pct:+.1f}%" if impact.wow_pct is not None else "n/a"
+        dod_pct_str = f"{impact.dod_pct:+.1f}%" if impact.dod_pct is not None else "n/a"
+        wow_pct_str = f"{impact.wow_pct:+.1f}%" if impact.wow_pct is not None else "n/a"
+        yesterday_str = f"{impact.today.gb_freed:.1f} GB"
         blocks.append(
             table_block(
                 ["Trend", "Baseline", "Yesterday", "Change"],
                 [
-                    ["Day-over-day (vs 2 days ago)", dod_baseline_str,
-                     f"{impact.today.gb_freed:.1f} GB", dod_pct_str],
-                    ["Week-over-week (vs same day last week)", wow_baseline_str,
-                     f"{impact.today.gb_freed:.1f} GB", wow_pct_str],
+                    [
+                        "Day-over-day (vs 2 days ago)",
+                        dod_baseline_str,
+                        yesterday_str,
+                        dod_pct_str,
+                    ],
+                    [
+                        "Week-over-week (vs same day last week)",
+                        wow_baseline_str,
+                        yesterday_str,
+                        wow_pct_str,
+                    ],
                 ],
             )
         )
-        verdict = {
-            "improving": "Reclaiming more than usual — going the right direction.",
-            "worsening": "Reclaiming less than usual — going the wrong direction, see action items.",
-            "flat": "No significant change from baseline.",
-            "unknown": (
-                "No bytes-freed evidence reported yesterday (likely ran entirely on an engine "
-                "that doesn't emit it yet) -- not a measured reclaim regression."
-            ),
-        }[impact.direction]
-        blocks.append(section_block(f"{direction_emoji} *{impact.direction.title()}*. {verdict}"))
-
-    if data.cost_signal is not None and data.cost_signal.direction != "stable":
-        blocks.append(divider_block())
-        signal = data.cost_signal
-        pct = signal.dod_pct if signal.primary_signal == "dod" else signal.wow_pct
-        window = "day-over-day" if signal.primary_signal == "dod" else "week-over-week"
-        emoji = "📈" if signal.direction == "spike" else "📉"
-        pct_str = f" ({pct:+.1f}% {window})" if pct is not None else ""
-        blocks.append(section_block(f"{emoji} *Fleet Cost {signal.direction.title()}*{pct_str}"))
-        if data.cost_correlation is not None:
-            explained_emoji = "✅" if data.cost_correlation.explains_change else "❓"
-            blocks.append(
-                section_block(f"{explained_emoji} {data.cost_correlation.summary}")
-            )
 
     if data.grade_distribution:
         blocks.append(divider_block())
@@ -736,44 +795,28 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
         blocks.append(
             table_block(
                 ["Grade", "Tables"],
-                [[grade, str(count)] for grade, count in sorted(data.grade_distribution.items())],
+                [[grade, f"{count:,}"] for grade, count in sorted(data.grade_distribution.items())],
             )
         )
 
-    if data.top_issues:
-        blocks.append(divider_block())
-        blocks.append(section_block("*Top Unhealthy Tables*"))
-        blocks.append(
-            table_block(
-                ["Table", "Grade", "Score", "Small Files"],
-                [
-                    [issue["table"], issue["grade"], str(issue["score"]), str(issue["small_files"])]
-                    for issue in data.top_issues[:5]
-                ],
-            )
-        )
-
-    if data.maintenance_stats:
-        succeeded = sum(v for k, v in data.maintenance_stats.items() if "succeeded" in k)
-        failed = sum(v for k, v in data.maintenance_stats.items() if "failed" in k)
-        blocks.append(divider_block())
-        blocks.append(section_block(f"*Maintenance (24h):* {succeeded} succeeded, {failed} failed"))
-
+    ratio_str = f"{100 * data.small_files / data.total_files:.1f}%" if data.total_files else "n/a"
+    avg_size_str = (
+        _format_bytes(data.total_size_tb * (1024**4) / data.total_files)
+        if data.total_files
+        else "n/a"
+    )
     blocks.append(divider_block())
-    if data.action_items:
-        severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}
-        blocks.append(section_block("*Action Items*"))
-        blocks.append(
-            table_block(
-                ["Severity", "Issue", "Owner"],
-                [
-                    [severity_emoji.get(item["severity"], "🟡"), item["text"], item["owner"]]
-                    for item in data.action_items
-                ],
-            )
+    blocks.append(
+        table_block(
+            ["Files", "Value"],
+            [
+                ["Total Files", f"{data.total_files:,}"],
+                ["Small Files", f"{data.small_files:,}"],
+                ["Small-File Ratio", ratio_str],
+                ["Avg File Size", avg_size_str],
+            ],
         )
-    else:
-        blocks.append(section_block("*Action Items*\nNo action required."))
+    )
 
     blocks.append(divider_block())
     blocks.append(context_block([f"Generated by Cryo at {data.report_date.strftime('%H:%M UTC')}"]))
