@@ -1,6 +1,11 @@
 # In-namespace Redis for Cryo's own job queue (governor/worker/scanner). Single instance,
 # no persistence, no LoadBalancer/Ingress -- ClusterIP only. This is intentionally minimal:
 # not a shared/HA Redis, just enough for Cryo's queue to function inside the cryo namespace.
+#
+# "No persistence" is deliberate and now honest: there is no volume here, so snapshotting to
+# /data only ever wrote to the container's ephemeral layer. Postgres is the source of truth
+# and the reconcile paths rebuild Redis after a restart. See values.yaml `redis:` for why
+# maxmemory/save are set the way they are.
 {{- if .Values.redis.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -27,6 +32,16 @@ spec:
         - name: redis
           image: {{ include "cryo.imageRef" .Values.redis.image | quote }}
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          args:
+            - --maxmemory
+            - {{ .Values.redis.maxmemory | quote }}
+            - --maxmemory-policy
+            - {{ .Values.redis.maxmemoryPolicy | quote }}
+            # Empty string disables RDB snapshots entirely. Quoted and passed as one argument
+            # so redis-server sees `--save ""` rather than a bare flag followed by the next
+            # option, which it would read as a save spec.
+            - --save
+            - {{ .Values.redis.save | quote }}
           ports:
             - name: redis
               containerPort: 6379
