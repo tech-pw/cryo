@@ -210,6 +210,7 @@ def initialize_scan_chunks(
             "scanned": 0,
             "skipped": 0,
             "failed": 0,
+            "unreadable": 0,
         }
         for index in range(num_chunks)
     }
@@ -257,6 +258,7 @@ def _apply_chunk_claim(
             "scanned": 0,
             "skipped": 0,
             "failed": 0,
+            "unreadable": 0,
             "started_at": now,
             "heartbeat_at": now,
         }
@@ -400,18 +402,20 @@ def record_scan_progress(
             chunk["scanned"] = 0
             chunk["skipped"] = 0
             chunk["failed"] = 0
+            chunk["unreadable"] = 0
         elif event_type == "start_table":
             chunk["current_table"] = table_ref
             summary["current_table"] = table_ref
         elif event_type == "table_result":
             outcome = str(event.get("outcome") or "")
-            if outcome in {"scanned", "skipped", "failed"}:
+            if outcome in {"scanned", "skipped", "failed", "unreadable"}:
                 next_count = int(chunk.get(outcome) or 0) + 1
                 assigned = int(chunk.get("assigned") or 0)
                 completed = (
                     int(chunk.get("scanned") or 0)
                     + int(chunk.get("skipped") or 0)
                     + int(chunk.get("failed") or 0)
+                    + int(chunk.get("unreadable") or 0)
                 )
                 # Hard cap: never let outcome totals exceed tables assigned to this chunk.
                 if assigned > 0 and completed >= assigned:
@@ -424,6 +428,15 @@ def record_scan_progress(
                 error = str(event.get("error") or "scan failed")
                 summary["last_error"] = error
                 _append_failed_table(summary, table_ref=table_ref, error=error)
+            elif outcome == "unreadable":
+                # Kept out of last_error/failed_tables: these are not run failures, they are a
+                # list of tables whose metadata the lakehouse has lost. Recorded separately so
+                # the run's error surface stays about things a retry could fix.
+                _append_unreadable_table(
+                    summary,
+                    table_ref=table_ref,
+                    error=str(event.get("error") or "table metadata missing"),
+                )
         _recompute_chunk_totals(summary)
         run.summary = summary
         session.commit()
@@ -453,9 +466,10 @@ def record_scan_chunk_finished(
         scanned = int(summary_update.get("scanned", int(chunk.get("scanned") or 0)) or 0)
         skipped = int(summary_update.get("skipped", int(chunk.get("skipped") or 0)) or 0)
         failed = int(summary_update.get("failed", int(chunk.get("failed") or 0)) or 0)
+        unreadable = int(summary_update.get("unreadable", int(chunk.get("unreadable") or 0)) or 0)
         if assigned > 0:
             # Keep finished counters self-consistent even if a buggy worker over-reports.
-            overflow = max(0, scanned + skipped + failed - assigned)
+            overflow = max(0, scanned + skipped + failed + unreadable - assigned)
             if overflow:
                 # Prefer trimming scanned first (most likely double-count path).
                 trim = min(scanned, overflow)
@@ -463,6 +477,9 @@ def record_scan_chunk_finished(
                 overflow -= trim
                 trim = min(skipped, overflow)
                 skipped -= trim
+                overflow -= trim
+                trim = min(unreadable, overflow)
+                unreadable -= trim
                 overflow -= trim
                 failed = max(0, failed - overflow)
 
@@ -475,6 +492,7 @@ def record_scan_chunk_finished(
                 "scanned": scanned,
                 "skipped": skipped,
                 "failed": failed,
+                "unreadable": unreadable,
             }
         )
         chunk.pop("current_table", None)
@@ -573,6 +591,7 @@ def _chunk_summary(run: MaintenanceRun, *, chunk_id: int, num_chunks: int) -> di
                 "scanned": 0,
                 "skipped": 0,
                 "failed": 0,
+                "unreadable": 0,
             },
         )
     summary["chunks"] = chunks
@@ -621,7 +640,7 @@ def _recompute_chunk_totals(summary: dict[str, Any]) -> None:
         (int(chunk.get("discovered") or 0) for chunk in chunk_values),
         default=0,
     )
-    for key in ("assigned", "scanned", "skipped", "failed"):
+    for key in ("assigned", "scanned", "skipped", "failed", "unreadable"):
         summary[key] = sum(int(chunk.get(key) or 0) for chunk in chunk_values)
     # Surface remaining work for the UI (pending + still running).
     summary["chunks_remaining"] = int(summary["chunks_pending"]) + int(summary["chunks_running"])
@@ -644,6 +663,25 @@ def _append_failed_table(
         }
     )
     summary["failed_tables"] = failed_tables[-MAX_RECORDED_ERRORS:]
+
+
+def _append_unreadable_table(
+    summary: dict[str, Any],
+    *,
+    table_ref: object,
+    error: str,
+) -> None:
+    unreadable_tables = summary.get("unreadable_tables")
+    if not isinstance(unreadable_tables, list):
+        unreadable_tables = []
+    unreadable_tables.append(
+        {
+            "table": str(table_ref or "unknown"),
+            "error": error,
+            "ts": datetime.now(UTC).isoformat(),
+        }
+    )
+    summary["unreadable_tables"] = unreadable_tables[-MAX_RECORDED_ERRORS:]
 
 
 def _cancel_requested(summary: dict[str, Any]) -> bool:
@@ -766,6 +804,7 @@ def mark_chunk_requeued(
                 "scanned": 0,
                 "skipped": 0,
                 "failed": 0,
+                "unreadable": 0,
             }
         )
         chunk.pop("current_table", None)

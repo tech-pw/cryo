@@ -14,6 +14,16 @@ from cryo.scanner.failure_classifier import (
     failure_category_actionable_from_cryo,
     failure_category_guidance,
     failure_category_label,
+    scan_failure_is_permanent,
+)
+
+# Verbatim from a cdp.central scan on 2026-09-23, which produced this for 201 of 585 tables.
+MANIFEST_MISSING_ERROR = (
+    "RuntimeError: load manifests: could not open manifest file: blob (key "
+    '"silver/central/gold_polls_evolving/metadata/'
+    'snap-2836956739000000000-1-d2373dc1-0000-0000-0000-000000000000.avro") '
+    "(code=NotFound): operation error S3: GetObject, https response error StatusCode: 404, "
+    "api error NoSuchKey: The specified key does not exist."
 )
 
 
@@ -46,11 +56,53 @@ def test_classifies_none_and_empty_as_none() -> None:
 def test_no_category_claims_actionable_from_cryo() -> None:
     """Every current category requires an out-of-band fix (IAM policy change, or manual
     investigation into a stale catalog pointer) -- none should claim a one-click Cryo fix."""
-    for category in ("permission_denied", "metadata_not_found", "other"):
+    for category in ("permission_denied", "metadata_not_found", "manifest_missing", "other"):
         assert failure_category_actionable_from_cryo(category) is False  # type: ignore[arg-type]
 
 
 def test_every_category_has_a_label_and_guidance() -> None:
-    for category in ("permission_denied", "metadata_not_found", "other"):
+    for category in ("permission_denied", "metadata_not_found", "manifest_missing", "other"):
         assert failure_category_label(category) is not None  # type: ignore[arg-type]
         assert failure_category_guidance(category) is not None  # type: ignore[arg-type]
+
+
+def test_classifies_a_missing_manifest_list_as_manifest_missing() -> None:
+    assert classify_scan_failure(MANIFEST_MISSING_ERROR) == "manifest_missing"
+
+
+def test_a_missing_data_file_is_not_a_missing_manifest() -> None:
+    """NoSuchKey on its own also covers a data file vanishing mid-scan, which a retry can
+    clear. Only a missing *manifest* means the table's metadata itself is unreadable."""
+    error = (
+        'could not open data file: blob (key "silver/central/events/data/part-0.parquet") '
+        "(code=NotFound): api error NoSuchKey: The specified key does not exist."
+    )
+    assert classify_scan_failure(error) == "other"
+
+
+def test_a_manifest_read_error_that_is_not_a_missing_object_is_not_permanent() -> None:
+    error = "load manifests: could not open manifest file: connection reset by peer"
+    assert classify_scan_failure(error) == "other"
+    assert scan_failure_is_permanent(error) is False
+
+
+def test_missing_metadata_and_missing_manifests_are_permanent() -> None:
+    assert scan_failure_is_permanent(MANIFEST_MISSING_ERROR) is True
+    assert (
+        scan_failure_is_permanent(
+            "[Errno 2] Path does not exist 'lake/bronze/ott/x/metadata/00001-x.json'"
+        )
+        is True
+    )
+
+
+def test_permission_denied_is_not_permanent() -> None:
+    """An IAM policy change fixes these, so they must keep counting as scan failures --
+    burying thousands of them as "unreadable" would hide a correctable misconfiguration."""
+    error = "AWS Error ACCESS_DENIED during HeadObject operation: No response body."
+    assert scan_failure_is_permanent(error) is False
+
+
+def test_a_healthy_scan_is_not_permanent_failure() -> None:
+    assert scan_failure_is_permanent(None) is False
+    assert scan_failure_is_permanent("") is False

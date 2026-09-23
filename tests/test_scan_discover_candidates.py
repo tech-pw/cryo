@@ -219,6 +219,74 @@ def test_an_unreachable_unrelated_source_does_not_fail_a_table_scoped_scan(sessi
     assert summary.discovered == 1
 
 
+def test_a_table_with_a_missing_manifest_is_unreadable_not_failed(session) -> None:
+    """201 of cdp.central's 585 tables reference a snap-*.avro that S3 returns NoSuchKey for,
+    and Trino fails on them identically. Retrying cannot change the outcome, so they must not
+    inflate the scan failure rate -- they're reported as their own thing to hand to the team
+    that owns the lakehouse."""
+    source = _seed_source(session)
+    table = Table(
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="central",
+        table_name="gold_polls_evolving",
+        is_active=True,
+    )
+    session.add(table)
+    # Committed, not just flushed: the failure path rolls the session back, which would
+    # expunge a merely-pending row before the assertion below can read it.
+    session.commit()
+    table_id = table.id
+
+    class _MissingManifestCatalog(_FakeCatalog):
+        def load_table(self, schema: str, table_name: str) -> None:
+            raise RuntimeError(
+                "load manifests: could not open manifest file: blob (key "
+                f'"silver/{schema}/{table_name}/metadata/snap-2836956739000000000-1-x.avro") '
+                "(code=NotFound): api error NoSuchKey: The specified key does not exist."
+            )
+
+    catalog = _MissingManifestCatalog({"central": ["gold_polls_evolving"]})
+    summary = run_scan(
+        session,
+        source_id=None,
+        table_ids=[table.id],
+        chunk_id=0,
+        num_chunks=1,
+        source_factory=lambda _source: catalog,
+    )
+
+    assert (summary.scanned, summary.failed, summary.unreadable) == (0, 0, 1)
+    assert session.get(Table, table_id).last_scan_error_kind == "unreadable"
+
+
+def test_a_transient_scan_error_still_counts_as_a_failure(session) -> None:
+    """The counterpart: classification must not swallow errors a retry could clear."""
+    source = _seed_source(session)
+    table = Table(
+        id=uuid4(), source_id=source.id, schema_name="central", table_name="events", is_active=True
+    )
+    session.add(table)
+    session.commit()
+    table_id = table.id
+
+    class _FlakyCatalog(_FakeCatalog):
+        def load_table(self, schema: str, table_name: str) -> None:
+            raise RuntimeError("connection reset by peer")
+
+    summary = run_scan(
+        session,
+        source_id=None,
+        table_ids=[table.id],
+        chunk_id=0,
+        num_chunks=1,
+        source_factory=lambda _source: _FlakyCatalog({"central": ["events"]}),
+    )
+
+    assert (summary.scanned, summary.failed, summary.unreadable) == (0, 1, 0)
+    assert session.get(Table, table_id).last_scan_error_kind == "failed"
+
+
 def test_run_scan_all_sources_tolerates_one_broken_source(session) -> None:
     """Without an explicit source_id (scanning every source), one broken source shouldn't abort
     discovery for the others -- only a source-scoped chunk request should hard-fail."""

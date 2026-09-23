@@ -25,6 +25,7 @@ from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
 from cryo.observability.metrics import scanner_tables_scanned_total
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
+from cryo.scanner.failure_classifier import scan_failure_is_permanent
 from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
 from cryo.scanner.persistence import (
     already_scanned_today,
@@ -55,6 +56,9 @@ class ScanSummary:
     scanned: int = 0
     skipped: int = 0
     failed: int = 0
+    # Tables whose metadata is gone from object storage -- counted apart from `failed` because
+    # retrying cannot fix them. See cryo/scanner/failure_classifier.py.
+    unreadable: int = 0
     cancelled: bool = False
 
 
@@ -275,7 +279,7 @@ def _run_scan_serial(
     cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables serially within the current session."""
-    scanned = skipped = failed = 0
+    scanned = skipped = failed = unreadable = 0
     live_price_cache: dict[UUID, float | None] = {}
 
     for candidate in assigned:
@@ -366,19 +370,31 @@ def _run_scan_serial(
             )
         except Exception as exc:
             session.rollback()
-            failed += 1
-            logger.exception(
-                "Failed to scan %s.%s from source %s",
-                candidate.schema_name,
-                candidate.table_name,
-                candidate.source.name,
-            )
+            outcome = "unreadable" if scan_failure_is_permanent(str(exc)) else "failed"
+            if outcome == "unreadable":
+                unreadable += 1
+                logger.warning(
+                    "Table metadata missing in object storage for %s.%s from source %s: %s",
+                    candidate.schema_name,
+                    candidate.table_name,
+                    candidate.source.name,
+                    exc,
+                )
+            else:
+                failed += 1
+                logger.exception(
+                    "Failed to scan %s.%s from source %s",
+                    candidate.schema_name,
+                    candidate.table_name,
+                    candidate.source.name,
+                )
             _record_scan_failure(
                 session,
                 source_id=candidate.source.id,
                 schema_name=candidate.schema_name,
                 table_name=candidate.table_name,
                 error=str(exc),
+                error_kind=outcome,
                 scanned_at=scan_at,
             )
             _emit_progress(
@@ -386,7 +402,7 @@ def _run_scan_serial(
                 {
                     "event": "table_result",
                     "table_ref": table_ref,
-                    "outcome": "failed",
+                    "outcome": outcome,
                     "error": str(exc),
                 },
             )
@@ -397,6 +413,7 @@ def _run_scan_serial(
         scanned=scanned,
         skipped=skipped,
         failed=failed,
+        unreadable=unreadable,
     )
 
 
@@ -413,7 +430,7 @@ def _run_scan_parallel(
     cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables in parallel using separate DB sessions per table."""
-    scanned = skipped = failed = 0
+    scanned = skipped = failed = unreadable = 0
     # Shared across worker threads (GIL makes individual dict get/set safe enough for a
     # best-effort cache; a rare race just costs one redundant AWS lookup, not a correctness
     # bug -- see _resolve_live_s3_get_price's docstring).
@@ -484,21 +501,32 @@ def _run_scan_parallel(
                 return ("scanned", None)
             except Exception as exc:
                 table_session.rollback()
-                logger.exception(
-                    "Failed to scan %s.%s from source %s",
-                    candidate.schema_name,
-                    candidate.table_name,
-                    candidate.source.name,
-                )
+                outcome = "unreadable" if scan_failure_is_permanent(str(exc)) else "failed"
+                if outcome == "unreadable":
+                    logger.warning(
+                        "Table metadata missing in object storage for %s.%s from source %s: %s",
+                        candidate.schema_name,
+                        candidate.table_name,
+                        candidate.source.name,
+                        exc,
+                    )
+                else:
+                    logger.exception(
+                        "Failed to scan %s.%s from source %s",
+                        candidate.schema_name,
+                        candidate.table_name,
+                        candidate.source.name,
+                    )
                 _record_scan_failure(
                     table_session,
                     source_id=candidate.source.id,
                     schema_name=candidate.schema_name,
                     table_name=candidate.table_name,
                     error=str(exc),
+                    error_kind=outcome,
                     scanned_at=scan_at,
                 )
-                return ("failed", str(exc))
+                return (outcome, str(exc))
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(assigned))) as executor:
         futures = {}
@@ -521,6 +549,8 @@ def _run_scan_parallel(
                     {"event": "table_result", "table_ref": table_ref, "outcome": "skipped"},
                 )
                 continue
+            elif result == "unreadable":
+                unreadable += 1
             else:
                 failed += 1
             _emit_progress(
@@ -541,6 +571,7 @@ def _run_scan_parallel(
         scanned=scanned,
         skipped=skipped,
         failed=failed,
+        unreadable=unreadable,
         cancelled=_cancel_requested(cancel_checker),
     )
 
@@ -553,6 +584,7 @@ def _record_scan_failure(
     table_name: str,
     error: str,
     scanned_at: datetime,
+    error_kind: str = "failed",
 ) -> None:
     """Best-effort wrapper around record_table_scan_outcome for the failure path.
 
@@ -568,6 +600,7 @@ def _record_scan_failure(
             schema_name=schema_name,
             table_name=table_name,
             error=error,
+            error_kind=error_kind,
             scanned_at=scanned_at,
         )
         session.commit()
