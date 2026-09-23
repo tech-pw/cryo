@@ -18,6 +18,7 @@ from cryo.reporting.daily_report import (
     DailyReportData,
     _build_action_items,
     _build_slack_blocks,
+    _maintenance_split,
     _classify_status,
     _collect_report_data,
     _deterministic_bottom_line,
@@ -448,29 +449,40 @@ def test_generate_daily_report_uses_deterministic_fallback_without_ai_provider(s
 # ---------------------------------------------------------------------------
 
 
-def test_build_slack_blocks_clear_status_shows_no_action_required() -> None:
+def test_build_slack_blocks_reports_the_fleet_and_file_counters() -> None:
     data = DailyReportData(
         report_date=datetime(2026, 7, 9, 10, 0, tzinfo=UTC),
         status="CLEAR",
-        total_tables=5,
+        total_tables=12591,
         healthy_tables=5,
         unhealthy_tables=0,
-        tables_needing_compaction=0,
+        tables_needing_compaction=4297,
         total_anomalies=0,
+        tables_scanned_yesterday=2373,
+        total_files=1_000_000,
+        small_files=250_000,
+        total_size_tb=2.0,
+        grade_distribution={"A": 10, "F": 2},
     )
 
-    blocks = _build_slack_blocks(data, "All clear.")
-    rendered = [b.to_dict() for b in blocks]
+    rendered = [b.to_dict() for b in _build_slack_blocks(data, "ignored")]
+    body = str(rendered)
 
     assert rendered[0]["type"] == "header"
     assert "July 09, 2026" in rendered[0]["text"]["text"]
-    status_block = next(b for b in rendered if b["type"] == "section" and "CLEAR" in str(b))
-    assert "🟢" in status_block["text"]["text"]
-    action_block = next(b for b in rendered if "Action Items" in str(b))
-    assert "No action required" in action_block["text"]["text"]
+    for expected in ("12,591", "2,373", "4,297", "2.00 TB", "1,000,000", "250,000"):
+        assert expected in body
+    assert "25.0%" in body, "small-file ratio"
+    assert "2.1 MB" in body, "avg file size = 2 TB / 1M files"
+    assert "Grade Distribution" in body
 
 
-def test_build_slack_blocks_critical_status_lists_action_items() -> None:
+def test_build_slack_blocks_omits_the_sections_that_were_removed() -> None:
+    """The narrative, anomaly, cost and action-item sections are gone on purpose.
+
+    They are still populated on the data object (the API response keeps them), so this
+    guards the Slack surface specifically rather than the collector.
+    """
     data = DailyReportData(
         report_date=datetime(2026, 7, 9, 10, 0, tzinfo=UTC),
         status="CRITICAL",
@@ -480,6 +492,11 @@ def test_build_slack_blocks_critical_status_lists_action_items() -> None:
         tables_needing_compaction=1,
         total_anomalies=1,
         critical_anomalies=[{"table": "finance.orders"}],
+        total_cost_usd=1234.0,
+        projected_savings_usd=99.0,
+        top_issues=[
+            {"table": "finance.orders", "grade": "F", "score": 10, "small_files": 900},
+        ],
         action_items=[
             {
                 "severity": "high",
@@ -489,13 +506,40 @@ def test_build_slack_blocks_critical_status_lists_action_items() -> None:
         ],
     )
 
-    blocks = _build_slack_blocks(data, "Orders table degraded.")
-    rendered = [b.to_dict() for b in blocks]
+    body = str([b.to_dict() for b in _build_slack_blocks(data, "Orders table degraded.")])
 
-    status_block = next(b for b in rendered if b["type"] == "section" and "CRITICAL" in str(b))
-    assert "🔴" in status_block["text"]["text"]
-    action_table = next(b for b in rendered if b["type"] == "table" and "null-rate spike" in str(b))
-    assert "@owner@example.com" in str(action_table)
+    assert "Orders table degraded." not in body, "narrated bottom line"
+    assert "CRITICAL" not in body, "status banner"
+    assert "Action Items" not in body
+    assert "null-rate spike" not in body
+    assert "Top Unhealthy Tables" not in body
+    assert "Anomalies" not in body
+    assert "1234" not in body and "Projected Savings" not in body
+
+
+def test_maintenance_split_reports_each_operation_separately() -> None:
+    """AuditLog writes 'OK' and 'FAILED' -- these are the real status strings in prod."""
+    rows = _maintenance_split(
+        {
+            "optimize_OK": 1200,
+            "optimize_FAILED": 3,
+            "expire_snapshots_OK": 822,
+            "remove_orphan_files_FAILED": 2,
+            "optimize_SKIPPED": 17,
+        }
+    )
+
+    assert rows == [
+        ["expire_snapshots", "822", "0"],
+        ["optimize", "1,200", "3"],
+        ["remove_orphan_files", "0", "2"],
+    ], "SKIPPED counts as neither succeeded nor failed"
+
+
+def test_maintenance_split_handles_an_action_name_containing_a_dot() -> None:
+    assert _maintenance_split({"fast_path.missing_target_file_size_OK": 50}) == [
+        ["fast_path.missing_target_file_size", "50", "0"],
+    ]
 
 
 def test_build_slack_blocks_always_includes_fallback_footer() -> None:
