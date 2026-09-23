@@ -149,8 +149,25 @@ suggests the pointer never advanced while the snapshot it references was later e
       `scan_failure_is_permanent()`; the scanner counts those as `ScanSummary.unreadable`,
       records `tables.last_scan_error_kind`, and rolls them up beside `failed` (a run of only
       unreadable tables now succeeds instead of reporting `partial_failed`).
-- [ ] Re-check the fleet-wide ~10.7% scan failure rate against this: if most of it is the same
-      corruption, that long-standing mystery is solved and the number is honest, not a bug.
+**The fleet-wide ~10.7% failure rate is explained — it was never a Cryo bug.** The 00:00 UTC
+2026-09-23 cron run is the first on the fixed code, and the first to cover the whole fleet:
+
+| | before | 2026-09-23 00:00 UTC |
+|---|---|---|
+| chunks completed | 1/1 | **4/4** |
+| discovered | 12,584 | 12,589 |
+| assigned | 3,146 (25%) | **12,589 (100%)** |
+| scanned | — | 11,161 |
+| failed | 338 | 1,356 (**10.8%**) |
+
+Classifying chunk 2's 342 failures by error: **339 are `NoSuchKey` / HTTP 404** (267
+`failed to load table` = the metadata.json itself is gone, 74 `load manifests` = the manifest
+list is gone), plus 6 timeouts and 1 403. So ~99% of all scan failures are missing S3 objects,
+spread across `bronze/` and `silver/` prefixes in many schemas — not concentrated in `central`.
+
+Roughly **1,340 tables in the fleet have Iceberg metadata pointing at objects that no longer
+exist in S3**, and Trino cannot read them either. The scanner has been accurately reporting a
+real data problem for months; the number to act on is the corruption, not the failure rate.
       Now measurable directly — compare `unreadable` vs `failed` on the next full scan wave.
 
 ### `cdp_dev` metastore is unreachable from the cryo namespace — found 2026-09-23
