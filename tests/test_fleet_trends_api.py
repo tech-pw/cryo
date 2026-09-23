@@ -46,8 +46,13 @@ def test_aggregate_fleet_health_trend_groups_by_day(session) -> None:
     source = _seed_source(session)
     table_a = _seed_table(session, source, schema_name="analytics", table_name="orders")
     table_b = _seed_table(session, source, schema_name="analytics", table_name="users")
-    day_one = datetime(2026, 7, 8, 10, tzinfo=UTC)
-    day_two = datetime(2026, 7, 9, 10, tzinfo=UTC)
+    # Relative to now, not fixed calendar dates: the query below only looks back 30 days, so
+    # hardcoded dates quietly age out of the window and the test fails on a date rather than on
+    # a behavior change. Two distinct days is all the grouping assertion needs.
+    day_one = datetime.now(UTC).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(
+        days=3
+    )
+    day_two = day_one + timedelta(days=1)
     session.add_all(
         [
             TableStatsHistory(
@@ -78,10 +83,10 @@ def test_aggregate_fleet_health_trend_groups_by_day(session) -> None:
         tenant_id=require_tenant(session),
     )
     assert len(points) == 2
-    assert points[0].day.isoformat() == "2026-07-08"
+    assert points[0].day.isoformat() == day_one.date().isoformat()
     assert points[0].avg_health_score == 60.0
     assert points[0].tables_at_grade_df == 1
-    assert points[1].day.isoformat() == "2026-07-09"
+    assert points[1].day.isoformat() == day_two.date().isoformat()
     assert points[1].avg_health_score == 20.0
     assert points[1].tables_at_grade_df == 1
 
@@ -92,7 +97,9 @@ def test_aggregate_fleet_cost_trend_sums_daily_totals(session) -> None:
     source = _seed_source(session)
     table_a = _seed_table(session, source, schema_name="billing", table_name="invoices")
     table_b = _seed_table(session, source, schema_name="billing", table_name="payments")
-    scan_day = datetime(2026, 7, 8, 15, tzinfo=UTC)
+    scan_day = datetime.now(UTC).replace(hour=15, minute=0, second=0, microsecond=0) - timedelta(
+        days=3
+    )
     session.add_all(
         [
             TableCostHistory(
@@ -117,7 +124,7 @@ def test_aggregate_fleet_cost_trend_sums_daily_totals(session) -> None:
         tenant_id=require_tenant(session),
     )
     assert len(points) == 1
-    assert points[0].day.isoformat() == "2026-07-08"
+    assert points[0].day.isoformat() == scan_day.date().isoformat()
     assert points[0].total_monthly_cost_usd == 20.0
     assert points[0].projected_savings_usd_month == 3.5
 

@@ -51,6 +51,17 @@ went there:
   (`NoSuchKey` / `code=NotFound` / `404`) *and* a manifest. Both halves are required: `NoSuchKey`
   alone also covers a data file vanishing mid-scan, which is a different and often transient
   problem.
+- `metadata_not_found` extended to the same two-part shape for a missing `.metadata.json`.
+  This was the gap in the first cut: the `cdp.central` sample above is the *manifest* flavour,
+  but fleet-wide it is the minority. Replaying a full chunk's error text from the 2026-09-23
+  00:00 UTC run through the classifier gives **265 `metadata_not_found`, 74 `manifest_missing`,
+  1 `permission_denied`, 1 `other`** — so keying only on manifests caught 74 of 341, and the
+  other 265 kept counting as retryable failures. The metadata flavour names no manifest and the
+  Go engine words it as a 404, so it matched neither the manifest rule nor the pre-existing
+  `Path does not exist` one.
+- `permission_denied` also matches a bare HTTP 403 (`code=Unknown`, no `ACCESS_DENIED` string),
+  which is how the Go engine reports a denied read. Still non-permanent, so this only fixes the
+  label; one table in that run was affected.
 - `scan_failure_is_permanent(error)` — true for `manifest_missing` and the pre-existing
   `metadata_not_found`. **`permission_denied` is deliberately excluded**: an IAM policy change
   does fix those, and burying thousands of them would hide a correctable misconfiguration.
