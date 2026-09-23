@@ -1,6 +1,6 @@
 """Tests for cryo/reporting/impact_signals.py's north-star reclaim-impact metric.
 
-NOW is pinned to 06:00 UTC on a day so `_day_bounds`' calendar-day windows land where each
+NOW is pinned to 06:00 UTC on a day so `day_bounds`' calendar-day windows land where each
 test expects: "yesterday" is the full UTC day before NOW's date, DoD baseline the day before
 that, WoW baseline 7 days before "yesterday".
 """
@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.db.models import AuditLog, Source, Table
-from cryo.reporting.impact_signals import _daily_impact, _day_bounds, compute_impact_signal
+from cryo.reporting.impact_signals import _daily_impact, day_bounds, compute_impact_signal
 
 NOW = datetime(2026, 8, 19, 6, 0, tzinfo=UTC)
 
@@ -44,7 +44,7 @@ def _log(
     files_out: int | None = None,
 ) -> None:
     """days_ago=1 lands inside 'yesterday' (the target day this module treats as current)."""
-    day_start, _ = _day_bounds(NOW, days_ago)
+    day_start, _ = day_bounds(NOW, days_ago)
     session.add(
         AuditLog(
             ts=day_start + timedelta(hours=6),
@@ -59,12 +59,12 @@ def _log(
 
 
 # ---------------------------------------------------------------------------
-# _day_bounds
+# day_bounds
 # ---------------------------------------------------------------------------
 
 
 def test_day_bounds_is_a_full_utc_calendar_day() -> None:
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     assert start == datetime(2026, 8, 18, 0, 0, tzinfo=UTC)
     assert end == datetime(2026, 8, 19, 0, 0, tzinfo=UTC)
 
@@ -75,7 +75,7 @@ def test_day_bounds_is_a_full_utc_calendar_day() -> None:
 
 
 def test_daily_impact_zero_with_no_audit_rows(session) -> None:
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
     assert impact.bytes_freed == 0
     assert impact.actions_succeeded == 0
@@ -97,7 +97,7 @@ def test_daily_impact_sums_reclaim_actions_only(session) -> None:
     _log(session, t1, days_ago=1, action="apply_table_properties", bytes_freed=1)
     session.commit()
 
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
 
     assert impact.bytes_freed == 3 * 1024**3
@@ -111,7 +111,7 @@ def test_daily_impact_excludes_failed_actions(session) -> None:
     _log(session, table, days_ago=1, action="optimize", status="FAILED", bytes_freed=1024**3)
     session.commit()
 
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
 
     assert impact.bytes_freed == 0
@@ -125,7 +125,7 @@ def test_daily_impact_excludes_rows_outside_the_day_window(session) -> None:
     _log(session, table, days_ago=2, action="optimize", bytes_freed=999 * 1024**3)
     session.commit()
 
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
 
     assert impact.bytes_freed == 1024**3
@@ -135,13 +135,23 @@ def test_daily_impact_computes_optimize_file_reduction_ratio(session) -> None:
     source = _seed_source(session)
     t1 = _seed_table(session, source, name="t1")
     t2 = _seed_table(session, source, name="t2")
-    _log(session, t1, days_ago=1, action="optimize", bytes_freed=1024**3, files_in=100, files_out=10)
+    _log(
+        session, t1, days_ago=1, action="optimize", bytes_freed=1024**3, files_in=100, files_out=10
+    )
     _log(session, t2, days_ago=1, action="optimize", bytes_freed=1024**3, files_in=50, files_out=5)
     # remove_orphan_files input==output (it doesn't rewrite files) -- must not dilute the ratio.
-    _log(session, t1, days_ago=1, action="remove_orphan_files", bytes_freed=1024**2, files_in=5, files_out=5)
+    _log(
+        session,
+        t1,
+        days_ago=1,
+        action="remove_orphan_files",
+        bytes_freed=1024**2,
+        files_in=5,
+        files_out=5,
+    )
     session.commit()
 
-    start, end = _day_bounds(NOW, 1)
+    start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
 
     assert impact.optimize_files_in == 150
@@ -296,7 +306,9 @@ def test_daily_impact_zero_successful_actions_is_still_a_real_measured_zero(sess
     assert signal.direction == "worsening"
 
 
-def test_daily_impact_mixed_evidence_day_has_real_bytes_but_untrustworthy_percentage(session) -> None:
+def test_daily_impact_mixed_evidence_day_has_real_bytes_but_untrustworthy_percentage(
+    session,
+) -> None:
     """Review finding F10 (follow-up review, 2026-09-20): a day where SOME but not all actions
     reported bytes has real evidence (bytes_freed_is_known True, a genuine measured subtotal --
     not the fully-blind 'unmeasured' case), but that subtotal is NOT a trustworthy percentage
@@ -371,7 +383,9 @@ def test_measurement_state_is_complete_when_every_action_reports_bytes(session) 
     assert signal.measurement_state == "complete"
 
 
-def test_measurement_state_is_partial_not_complete_when_only_some_actions_report_bytes(session) -> None:
+def test_measurement_state_is_partial_not_complete_when_only_some_actions_report_bytes(
+    session,
+) -> None:
     """Review finding F10's core fix: the old boolean (bytes_freed_is_known) treated 1-of-1000
     measured actions the same as 1000-of-1000 -- both read as fully 'known'. measurement_state
     must distinguish 'partial' (gb_freed is a real but INCOMPLETE subtotal) from 'complete'."""
@@ -393,7 +407,9 @@ def test_measurement_state_is_partial_not_complete_when_only_some_actions_report
     )
 
 
-def test_measurement_state_is_unmeasured_when_actions_succeeded_but_none_report_bytes(session) -> None:
+def test_measurement_state_is_unmeasured_when_actions_succeeded_but_none_report_bytes(
+    session,
+) -> None:
     source = _seed_source(session)
     table = _seed_table(session, source, name="t1")
     _log(session, table, days_ago=1, action="remove_orphan_files", bytes_freed=None)

@@ -197,7 +197,7 @@ def _daily_impact(session: Session, day_start: datetime, day_end: datetime) -> D
     )
 
 
-def _day_bounds(now: datetime, days_ago: int) -> tuple[datetime, datetime]:
+def day_bounds(now: datetime, days_ago: int) -> tuple[datetime, datetime]:
     """UTC calendar-day bounds for `days_ago` days before `now`'s date -- a full day, never a
     partial one, matching cost_signals.py's same-day-range rule."""
     anchor = (now - timedelta(days=days_ago)).date()
@@ -221,9 +221,9 @@ def compute_impact_signal(session: Session, *, now: datetime | None = None) -> I
     now = now or datetime.now(UTC)
     settings = get_settings()
 
-    today_start, today_end = _day_bounds(now, 1)
-    dod_start, dod_end = _day_bounds(now, 2)
-    wow_start, wow_end = _day_bounds(now, 8)
+    today_start, today_end = day_bounds(now, 1)
+    dod_start, dod_end = day_bounds(now, 2)
+    wow_start, wow_end = day_bounds(now, 8)
 
     today = _daily_impact(session, today_start, today_end)
     dod_baseline = _daily_impact(session, dod_start, dod_end)
@@ -252,8 +252,12 @@ def compute_impact_signal(session: Session, *, now: datetime | None = None) -> I
     # comparing today's real total against a baseline day that only measured a fragment of
     # its own actions). _pct_change already treats a None baseline as "no comparison" rather
     # than dividing by an untrustworthy number.
-    dod_pct = _pct_change(today.gb_freed, dod_baseline.gb_freed if dod_baseline.is_comparable_total else None)
-    wow_pct = _pct_change(today.gb_freed, wow_baseline.gb_freed if wow_baseline.is_comparable_total else None)
+    dod_pct = _pct_change(
+        today.gb_freed, dod_baseline.gb_freed if dod_baseline.is_comparable_total else None
+    )
+    wow_pct = _pct_change(
+        today.gb_freed, wow_baseline.gb_freed if wow_baseline.is_comparable_total else None
+    )
 
     # "Improving" means reclaiming MORE than baseline -- the opposite polarity from
     # cost_signals.py's spike/decline (there, less cost is good; here, more bytes freed is
