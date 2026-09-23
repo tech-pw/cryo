@@ -142,11 +142,16 @@ consumer, not just Cryo — the scanner is correctly reporting real corruption. 
 suggests the pointer never advanced while the snapshot it references was later expired away.
 
 - [ ] Hand the broken-table list to the data platform team — these are dead for Trino too.
-- [ ] Decide whether Cryo should classify "manifest/metadata missing in S3" as its own outcome
-      rather than a generic scan failure, so the failure rate reflects unexpected errors and
-      these get an actionable list instead of being retried every six hours forever.
+      Query it with `last_scan_error_kind = 'unreadable'` (or export the tables CSV, which now
+      carries that column) once every source has been rescanned since 2026-09-23.
+- [x] Classify "manifest/metadata missing in S3" as its own outcome rather than a generic scan
+      failure. `cryo/scanner/failure_classifier.py` gained a `manifest_missing` category and
+      `scan_failure_is_permanent()`; the scanner counts those as `ScanSummary.unreadable`,
+      records `tables.last_scan_error_kind`, and rolls them up beside `failed` (a run of only
+      unreadable tables now succeeds instead of reporting `partial_failed`).
 - [ ] Re-check the fleet-wide ~10.7% scan failure rate against this: if most of it is the same
       corruption, that long-standing mystery is solved and the number is honest, not a bug.
+      Now measurable directly — compare `unreadable` vs `failed` on the next full scan wave.
 
 ### `cdp_dev` metastore is unreachable from the cryo namespace — found 2026-09-23
 
@@ -159,13 +164,16 @@ hosts either.
   `thrift://trino-metastore-v2.example.com:9083` → `10.0.0.1`, `10.0.0.1`, `10.0.0.1`
   → **all three time out**.
 
-- [ ] Get `cdp_dev`'s metastore reachable, or disable the source. Every connection attempt burns
-      a full TCP timeout against three dead IPs in turn.
-- [ ] **Suspected but not proven**: an unreachable source may block scans of tables in a *healthy*
-      source. A single-table ad-hoc scan of a **`cdp`** table did not finish in ~10 minutes, and
-      that pod's logs were entirely `cdp_dev` metastore timeouts. If a per-scan catalog warm-up
-      iterates all sources, one dead source stalls everything. Worth confirming in code before
-      treating it as the explanation.
+- [x] Disabled the `cdp_dev` source in prod (`sources.enabled = false`, 2026-09-23) to stop the
+      timeout burn. **Re-enable it once the metastore is reachable** — 1,164 tables are
+      currently invisible to Cryo, which is a deliberate, temporary blind spot, not a fix.
+- [ ] Get `cdp_dev`'s metastore reachable (DevOps) and re-enable the source. Until then every
+      connection attempt would burn a full TCP timeout against three dead IPs in turn.
+- [x] **Confirmed and fixed**: an unreachable source did block scans of tables in a *healthy*
+      source. `_discover_candidates` connected to every enabled source even when every
+      requested table lived in one of them; it now filters sources down to the ones the
+      requested tables actually belong to. The same five-table `cdp` scan went from stalling
+      past ten minutes to finishing in 13.1s.
 - [ ] Re-examine the scanner's unexplained ~10.7% per-run failure rate (`failed=338` of 3,146)
       against this. `cdp_dev` is 9.1% of the fleet, which is close, but the stalled run above was
       a `cdp` table — so "cdp_dev tables simply fail" is not on its own a sufficient explanation.

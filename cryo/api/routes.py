@@ -177,6 +177,7 @@ SORT_FIELDS = {
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
     "consecutive_scan_failures": Table.consecutive_scan_failures,
+    "last_scan_error_kind": Table.last_scan_error_kind,
     "last_snapshot_committed_at": TableStats.last_snapshot_committed_at,
     "total_size_gb": TableStats.total_size_gb,
     "small_files_count": TableStats.small_files_count,
@@ -980,6 +981,7 @@ def export_tables_csv(
             TableStats.total_size_gb,
             TableStats.small_files_count,
             TableStats.total_files,
+            Table.last_scan_error_kind,
         )
         .select_from(Table)
         .join(Source, Source.id == Table.source_id)
@@ -1005,6 +1007,7 @@ def export_tables_csv(
             "consecutive_scan_failures",
             "last_scan_error",
             "last_scan_error_at",
+            "last_scan_error_kind",
             "grade",
             "health_score",
             "size_gb",
@@ -1025,6 +1028,7 @@ def export_tables_csv(
                 row[4],
                 row[5] or "",
                 row[6].isoformat() if row[6] else "",
+                row[14] or "",
                 row[9] or "",
                 row[10] if row[10] is not None else "",
                 row[11] if row[11] is not None else "",

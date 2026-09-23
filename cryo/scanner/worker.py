@@ -232,6 +232,7 @@ class ScanWorker:
                     "scanned": scan_summary.scanned,
                     "skipped": scan_summary.skipped,
                     "failed": scan_summary.failed,
+                    "unreadable": scan_summary.unreadable,
                 },
             )
             safe_publish(
