@@ -24,6 +24,7 @@ from cryo.integrations.aws_credentials import credentials_for_source
 from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
 from cryo.observability.logging import quiet_third_party_loggers
 from cryo.observability.metrics import scanner_tables_scanned_total
+from cryo.optimizer.wair.ranges import wair_sample_columns
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.failure_classifier import scan_failure_is_permanent
@@ -332,10 +333,12 @@ def _run_scan_serial(
 
         try:
             history = stats_history_for_signals(session, table_row.id)
+            wair_columns = _wair_columns(session, table_row.id)
 
             def _analyze(
                 candidate: ScanCandidate = candidate,
                 history: Sequence[Mapping[str, Any]] | None = history,
+                wair_columns: Sequence[str] = wair_columns,
             ) -> TableAnalysis:
                 return analyze_catalog_table(
                     candidate.catalog,
@@ -347,6 +350,7 @@ def _run_scan_serial(
                     settings=settings,
                     stats_history=history,
                     source_config=candidate.source.config,
+                    wair_columns=wair_columns,
                 )
 
             analysis = _run_bounded(
@@ -477,6 +481,7 @@ def _run_scan_parallel(
 
             try:
                 history = stats_history_for_signals(table_session, table_row.id)
+                wair_columns = _wair_columns(table_session, table_row.id)
                 table_ref = _table_ref(candidate)
                 analysis = _run_bounded(
                     lambda: analyze_catalog_table(
@@ -489,6 +494,7 @@ def _run_scan_parallel(
                         settings=settings,
                         stats_history=history,
                         source_config=candidate.source.config,
+                        wair_columns=wair_columns,
                     ),
                     timeout_seconds=settings.scan_table_timeout_seconds,
                     description=f"analyze_catalog_table({table_ref})",
@@ -658,6 +664,12 @@ def _cancel_requested(cancel_checker: Any | None) -> bool:
 def _table_ref(candidate: ScanCandidate) -> str:
     catalog = catalog_name_for_source(candidate.source)
     return qualified_name(catalog, candidate.schema_name, candidate.table_name)
+
+
+def _wair_columns(session: Session, table_id: UUID) -> list[str]:
+    """Columns to sample per-file bounds for, from the last scan and the query-log window."""
+    stats = session.get(TableStats, table_id)
+    return wair_sample_columns(stats.raw) if stats is not None else []
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

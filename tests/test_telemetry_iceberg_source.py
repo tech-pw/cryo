@@ -4,6 +4,7 @@ import json
 
 from cryo.telemetry.iceberg_source import (
     _accumulate,
+    _accumulate_ranges,
     _selectivity_for_query,
     parse_iceberg_query_log_config,
 )
@@ -118,9 +119,10 @@ class TestSelectivityForQuery:
         assert _selectivity_for_query(inputs_json, schema_name="s", table_name="t") is None
 
     def test_returns_none_when_top_level_json_is_not_a_list(self) -> None:
-        assert _selectivity_for_query(
-            json.dumps({"not": "a list"}), schema_name="s", table_name="t"
-        ) is None
+        assert (
+            _selectivity_for_query(json.dumps({"not": "a list"}), schema_name="s", table_name="t")
+            is None
+        )
 
 
 class TestAccumulateWithSelectivity:
@@ -224,3 +226,37 @@ class TestParseIcebergQueryLogConfig:
         )
         assert config is not None
         assert config.inputs_json_column is None
+
+    def test_cost_columns_default_to_trino_event_listener_names(self) -> None:
+        config = parse_iceberg_query_log_config(
+            {"query_log": {"mode": "iceberg_table", "table": "logging.trino_queries"}}
+        )
+        assert config is not None
+        assert config.cpu_time_column == "cpu_time_millis"
+        assert config.input_bytes_column == "physical_input_bytes"
+
+
+class TestAccumulateRanges:
+    def test_counts_numeric_and_temporal_ranges_with_their_cost(self) -> None:
+        hits: dict = {}
+        sql = (
+            "SELECT * FROM t WHERE event_date >= DATE '2026-09-01' "
+            "AND event_date < DATE '2026-09-08' AND amount > 10"
+        )
+
+        _accumulate_ranges(hits, sql, cpu_ms=400, input_bytes=2000)
+        _accumulate_ranges(hits, sql, cpu_ms=None, input_bytes=None)
+
+        assert hits[("event_date", "2026-09-01", "2026-09-08")] == {
+            "queries": 2,
+            "cpu_ms": 400.0,
+            "input_bytes": 2000,
+        }
+        assert hits[("amount", 10, None)]["queries"] == 2
+
+    def test_text_literals_are_never_kept(self) -> None:
+        hits: dict = {}
+
+        _accumulate_ranges(hits, "SELECT * FROM t WHERE email BETWEEN 'a@x.com' AND 'b@x.com'")
+
+        assert hits == {}

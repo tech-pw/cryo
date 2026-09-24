@@ -3,9 +3,9 @@ from __future__ import annotations
 import dataclasses
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -1000,9 +1000,17 @@ class WairBoundaryReportResponse(BaseModel):
     selected_file_count: int
     proposed_rewrite_gb: float
     selected_file_paths: tuple[str, ...]
-    skipped_oversize: int
-    truncated: bool
     abstention_reason: str | None = None
+    window_days: int
+    clustering_column: str | None = None
+    savings_cpu_seconds_per_window: float
+    recluster_cpu_seconds: float
+    net_cpu_seconds: float
+    aggressiveness: float
+    rewrite_gb_per_hour: float | None = None
+    boundary_values: list[Any]
+    spark_sql: str | None = None
+    model_notes: list[str]
 
 
 class EngineRewriteSemanticsResponse(BaseModel):
@@ -1208,11 +1216,18 @@ def record_deployed_layout_conformance(
 def analyze_wair_boundary_report(
     table_id: uuid.UUID,
     session: SessionDep,
+    aggressiveness: Annotated[float, Query(ge=0.0, le=10.0)] = 1.0,
+    cost_limit_cpu_seconds: Annotated[float | None, Query(gt=0.0)] = None,
 ) -> WairBoundaryReportResponse:
     from cryo.optimizer.wair import analyze_wair_boundaries
 
     try:
-        report = analyze_wair_boundaries(session, table_id)
+        report = analyze_wair_boundaries(
+            session,
+            table_id,
+            aggressiveness=aggressiveness,
+            cost_limit_cpu_seconds=cost_limit_cpu_seconds,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return WairBoundaryReportResponse(**dataclasses.asdict(report))
@@ -2041,8 +2056,14 @@ def get_table_checklist(table_id: uuid.UUID, session: SessionDep) -> TableCheckl
         checked_at=datetime.now(UTC),
         items=[
             ChecklistItemResponse(
-                key=i.key, label=i.label, weight_pct=i.weight_pct, tier=i.tier,
-                status=i.status, reason=i.reason, metric_value=i.metric_value, threshold=i.threshold,
+                key=i.key,
+                label=i.label,
+                weight_pct=i.weight_pct,
+                tier=i.tier,
+                status=i.status,
+                reason=i.reason,
+                metric_value=i.metric_value,
+                threshold=i.threshold,
             )
             for i in items
         ],

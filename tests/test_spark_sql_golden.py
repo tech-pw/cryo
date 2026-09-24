@@ -10,7 +10,7 @@ from cryo.domain.models import (
     PartitionPredicate,
     PartitionPredicateTerm,
 )
-from cryo.engines.spark.sql import render, render_predicate
+from cryo.engines.spark.sql import render, render_predicate, render_wair_recluster
 
 
 def _predicate(*terms: PartitionPredicateTerm) -> PartitionPredicate:
@@ -450,3 +450,25 @@ def test_spark_renders_rewrite_position_deletes_operation() -> None:
     assert statements[0].sql == (
         "CALL iceberg.system.rewrite_position_delete_files(table => 'iceberg.demo.events')"
     )
+
+
+def test_spark_wair_recluster_sorts_only_files_straddling_query_endpoints() -> None:
+    assert render_wair_recluster(
+        "ice",
+        "analytics.events",
+        "event_date",
+        ["2026-06-01", 20619],
+        column_type="date",
+    ) == (
+        "CALL ice.system.rewrite_data_files(table => 'ice.analytics.events', "
+        "strategy => 'sort', sort_order => 'event_date ASC NULLS LAST', "
+        "where => 'event_date = DATE ''2026-06-01'' OR event_date = DATE ''2026-06-15''', "
+        "options => map('rewrite-all', 'true', 'target-file-size-bytes', '268435456', "
+        "'partial-progress.enabled', 'true', 'max-concurrent-file-group-rewrites', '5'))"
+    )
+
+
+def test_spark_wair_recluster_quotes_odd_identifiers_and_keeps_numbers_bare() -> None:
+    sql = render_wair_recluster("ice", "analytics.events", "user-id", [10, 20], column_type="long")
+    assert "sort_order => '`user-id` ASC NULLS LAST'" in sql
+    assert "where => '`user-id` = 10 OR `user-id` = 20'" in sql

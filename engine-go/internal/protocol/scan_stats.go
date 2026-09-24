@@ -19,6 +19,9 @@ type ScanStatsRequest struct {
 	MaxPartitions int `json:"max_partitions,omitempty"`
 	// MaxFileSamples caps deterministic file-bound evidence retained for offline WAIR.
 	MaxFileSamples int `json:"max_file_samples,omitempty"`
+	// SampleColumns limits file-bound samples to these columns (WAIR clustering-key
+	// candidates). Empty means no samples are kept.
+	SampleColumns []string `json:"sample_columns,omitempty"`
 }
 
 // ToExecuteRequest adapts scan-stats catalog fields for catalog.LoadTable.
@@ -90,18 +93,23 @@ type ScanStatsResponse struct {
 	SchemaName string `json:"schema_name,omitempty"`
 	TableName  string `json:"table_name,omitempty"`
 
-	TotalFiles          int64 `json:"total_files"`
-	TotalRecords        int64 `json:"total_records"`
-	TotalSizeBytes      int64 `json:"total_size_bytes"`
-	HealthSmallFiles    int64 `json:"health_small_files"`
-	SmallFilesCount     int64 `json:"small_files_count"`
-	DeleteFiles         int64 `json:"delete_files"`
-	EqualityDeleteFiles int64 `json:"equality_delete_files"`
-	PositionDeleteFiles int64 `json:"position_delete_files"`
-	DeleteBytes         int64 `json:"delete_bytes"`
-	ManifestCount       int   `json:"manifest_count"`
-	ManifestTotalBytes  int64 `json:"manifest_total_bytes"`
-	TotalSnapshots      int   `json:"total_snapshots"`
+	TotalFiles       int64 `json:"total_files"`
+	TotalRecords     int64 `json:"total_records"`
+	TotalSizeBytes   int64 `json:"total_size_bytes"`
+	HealthSmallFiles int64 `json:"health_small_files"`
+	SmallFilesCount  int64 `json:"small_files_count"`
+	// FilesBelowTarget / BytesBelowTarget: data files smaller than ReductionTargetBytes (the
+	// table's write.target-file-size-bytes, else 256 MiB) -- AutoComp's file-count reduction.
+	FilesBelowTarget     int64 `json:"files_below_target"`
+	BytesBelowTarget     int64 `json:"bytes_below_target"`
+	ReductionTargetBytes int64 `json:"reduction_target_bytes"`
+	DeleteFiles          int64 `json:"delete_files"`
+	EqualityDeleteFiles  int64 `json:"equality_delete_files"`
+	PositionDeleteFiles  int64 `json:"position_delete_files"`
+	DeleteBytes          int64 `json:"delete_bytes"`
+	ManifestCount        int   `json:"manifest_count"`
+	ManifestTotalBytes   int64 `json:"manifest_total_bytes"`
+	TotalSnapshots       int   `json:"total_snapshots"`
 	// TotalPartitions is the full distinct-partition count before MaxPartitions truncation.
 	TotalPartitions int `json:"total_partitions"`
 	// Full-map partition distribution (computed before MaxPartitions truncation).
@@ -130,6 +138,18 @@ type ScanStatsResponse struct {
 	WorstNullColumn        *string                    `json:"worst_null_column,omitempty"`
 	WairFileSample         []ScanStatsFileBoundSample `json:"wair_file_sample,omitempty"`
 	WairFileSampleComplete bool                       `json:"wair_file_sample_complete"`
+	Commits                []ScanStatsCommit          `json:"commits"`
+}
+
+// ScanStatsCommit is one retained snapshot's commit metadata (newest last). Summary counters
+// are nil when the writer did not record them.
+type ScanStatsCommit struct {
+	CommittedAtMs        int64  `json:"committed_at_ms"`
+	Operation            string `json:"operation,omitempty"`
+	AddedRecords         *int64 `json:"added_records,omitempty"`
+	DeletedRecords       *int64 `json:"deleted_records,omitempty"`
+	TotalRecords         *int64 `json:"total_records,omitempty"`
+	TotalPositionDeletes *int64 `json:"total_position_deletes,omitempty"`
 }
 
 // AggregateFixtureRequest drives `cryo-engine-go aggregate-fixture` for parity tests
@@ -156,6 +176,7 @@ type AggregateFixtureRequest struct {
 	Location              string                    `json:"location,omitempty"`
 	FormatVersion         *int                      `json:"format_version,omitempty"`
 	Columns               []AggregateFixtureColumn  `json:"columns,omitempty"`
+	Commits               []ScanStatsCommit         `json:"commits,omitempty"`
 }
 
 // AggregateFixtureRecord is one synthetic data/delete file.

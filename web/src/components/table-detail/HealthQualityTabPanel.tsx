@@ -7,6 +7,7 @@ import { ChartCard } from "./ChartCard";
 import { PropertyRecommendations } from "./PropertyRecommendations";
 import { QualityTab } from "./QualityTab";
 import { SectionNav } from "./SectionNav";
+import { WairRecluster } from "./WairRecluster";
 
 /**
  * Previously: outer page Tabs -> a 2-column grid of ChartCards -> one ChartCard containing
@@ -36,6 +37,7 @@ export const HealthQualityTabPanel = () => {
       </div>
       <div id="hq-properties" style={{ marginTop: 16 }}>
         <PropertyRecommendations />
+        <WairRecluster />
       </div>
       <div id="hq-compaction" style={{ marginTop: 16 }}>
         <ChartCard title="Compaction">

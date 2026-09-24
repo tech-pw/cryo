@@ -14,14 +14,16 @@ class _FakeDataFile:
 @dataclass(frozen=True)
 class _FakeField:
     name: str
+    field_type: str | None = None
 
 
 class _FakeSchema:
-    def __init__(self, names: dict[int, str]) -> None:
+    def __init__(self, names: dict[int, str], types: dict[int, str] | None = None) -> None:
         self._names = names
+        self._types = types or {}
 
     def find_field(self, field_id: int) -> _FakeField:
-        return _FakeField(self._names[field_id])
+        return _FakeField(self._names[field_id], self._types.get(field_id))
 
 
 def test_accumulator_computes_null_rate_across_multiple_files() -> None:
@@ -68,7 +70,7 @@ def test_accumulator_ignores_files_with_no_stats() -> None:
 
 
 def test_accumulator_tracks_min_max_bounds() -> None:
-    schema = _FakeSchema({1: "amount"})
+    schema = _FakeSchema({1: "amount"}, {1: "long"})
     accum = ColumnQualityAccumulator(schema)
     accum.add(
         type(
@@ -97,6 +99,39 @@ def test_accumulator_tracks_min_max_bounds() -> None:
     columns = accum.finish()
     assert columns[0].min_value == 5
     assert columns[0].max_value == 200
+
+
+def test_text_and_untyped_column_bounds_are_never_kept() -> None:
+    schema = _FakeSchema(
+        {1: "email", 2: "id", 3: "mystery", 4: "price"},
+        {1: "string", 2: "uuid", 4: "decimal(10, 2)"},
+    )
+    accum = ColumnQualityAccumulator(schema)
+    data_file = type(
+        "_File",
+        (),
+        {
+            "file_path": "s3://bucket/a.parquet",
+            "file_size_in_bytes": 10,
+            "null_value_counts": {1: 0, 2: 0, 3: 0, 4: 0},
+            "value_counts": {1: 5, 2: 5, 3: 5, 4: 5},
+            "lower_bounds": {1: "alice@example.com", 2: "0000", 3: "x", 4: 1},
+            "upper_bounds": {1: "zed@example.com", 2: "ffff", 3: "y", 4: 9},
+        },
+    )()
+    accum.add(data_file)
+
+    columns = {c.column_name: c for c in accum.finish()}
+    assert columns["email"].value_count == 5
+    for name in ("email", "id", "mystery"):
+        assert columns[name].min_value is None and columns[name].max_value is None
+    assert (columns["price"].min_value, columns["price"].max_value) == (1, 9)
+    assert accum.file_bound_sample(data_file) == {
+        "file_path": "s3://bucket/a.parquet",
+        "size_bytes": 10,
+        "lower_bounds": {"price": 1},
+        "upper_bounds": {"price": 9},
+    }
 
 
 def test_summarize_column_quality_finds_worst_offender() -> None:

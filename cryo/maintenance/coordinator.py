@@ -32,7 +32,14 @@ from cryo.maintenance.manifest import (
     lane_manifest_bytes,
 )
 from cryo.maintenance.results import StatementResult
-from cryo.maintenance.selection import RankedCandidate, load_candidates, rank_candidates
+from cryo.maintenance.selection import (
+    AutoCompParams,
+    RankedCandidate,
+    autocomp_trace,
+    fit_budget,
+    load_candidates,
+    rank_candidates,
+)
 from cryo.queue.locks import LockStore
 
 logger = logging.getLogger(__name__)
@@ -113,6 +120,15 @@ class RunReport:
     rescan_error: str | None = None
     failures: list[dict[str, str]] = field(default_factory=list)
     planned_statements: int = 0
+    over_budget: int = 0
+    rewrite_seconds: float = 0.0
+    autocomp: dict[str, Any] | None = None
+
+    @property
+    def observed_rewrite_gb_per_hour(self) -> float | None:
+        if self.rewrite_seconds < 60 or self.bytes_rewritten < 2**30:
+            return None
+        return (self.bytes_rewritten / 2**30) / (self.rewrite_seconds / 3600)
 
     @property
     def maintained(self) -> int:
@@ -144,6 +160,12 @@ class RunReport:
             "rescanned": self.rescanned,
             "rescan_error": self.rescan_error,
             "failures": self.failures[:20],
+            "over_budget": self.over_budget,
+            "rewrite_seconds": round(self.rewrite_seconds, 1),
+            "observed_rewrite_gb_per_hour": (
+                None if (rate := self.observed_rewrite_gb_per_hour) is None else round(rate, 3)
+            ),
+            "autocomp": self.autocomp,
         }
 
 
@@ -152,6 +174,39 @@ class _Destination:
     id: uuid.UUID
     engine: str
     config: Mapping[str, Any]
+
+
+def _lane_budget_gbhr(settings: Settings) -> float:
+    """GB·hours the run's lanes can supply: every lane's memory for as long as lanes may
+    still start a table."""
+    runtime = timedelta(minutes=settings.maintenance_max_runtime_minutes)
+    usable_hours = max((runtime - _START_CUTOFF).total_seconds(), 0.0) / 3600
+    lane_gb = settings.maintenance_lane_max_mem_mib / 1024
+    return settings.maintenance_max_lanes * lane_gb * usable_hours
+
+
+def calibrated_rewrite_gb_per_hour(session: Session, *, runs: int = 5) -> float | None:
+    """Median rewrite throughput the last few batch runs measured (AutoComp's
+    RewriteBytesPerHour), so the cost estimate tracks this fleet instead of a constant."""
+    summaries = session.scalars(
+        select(MaintenanceRun.summary)
+        .where(MaintenanceRun.finished_at.is_not(None))
+        .order_by(MaintenanceRun.finished_at.desc())
+        .limit(runs * 4)
+    ).all()
+    recent = [
+        float(rate)
+        for summary in summaries
+        if isinstance(summary, Mapping)
+        and summary.get("pipeline") == "batch"
+        and (rate := summary.get("observed_rewrite_gb_per_hour"))
+    ][:runs]
+    session.commit()
+    rates = sorted(recent)
+    if not rates:
+        return None
+    mid = len(rates) // 2
+    return rates[mid] if len(rates) % 2 else (rates[mid - 1] + rates[mid]) / 2
 
 
 def _metric_int(metrics: Mapping[str, Any], key: str) -> int:
@@ -212,6 +267,7 @@ class BatchMaintenance:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep
         self._holder = f"{ACTOR}-{uuid.uuid4().hex[:8]}"
+        self._autocomp_params: AutoCompParams | None = None
 
     # -- defaults wired to the real stores -------------------------------------------------
 
@@ -252,7 +308,7 @@ class BatchMaintenance:
         if report.orphan_gate_closed:
             params["skip_operations"] = [OperationType.REMOVE_ORPHAN_FILES.value]
 
-        ranked = self._select(table_ids=table_ids, limit=limit, now=started)
+        ranked = self._select(table_ids=table_ids, limit=limit, now=started, report=report)
         report.selected = len(ranked)
 
         work: list[tuple[RankedCandidate, TableWork]] = []
@@ -263,7 +319,7 @@ class BatchMaintenance:
                     table_id,
                     load_table=self._load_table,
                     destination=destination,
-                    params=params,
+                    params=self._table_params(params, item),
                     protected_snapshot_ids=self._protected,
                     has_shared_location=lambda tid: tid in shared_ids,
                 )
@@ -495,7 +551,12 @@ class BatchMaintenance:
         return ids
 
     def _select(
-        self, *, table_ids: Sequence[uuid.UUID] | None, limit: int | None, now: datetime
+        self,
+        *,
+        table_ids: Sequence[uuid.UUID] | None,
+        limit: int | None,
+        now: datetime,
+        report: RunReport,
     ) -> list[RankedCandidate]:
         s = self._settings
         with self._session_factory() as session:
@@ -506,11 +567,37 @@ class BatchMaintenance:
                 max_stats_age_days=s.maintenance_max_stats_age_days,
                 table_ids=table_ids,
             )
-        return rank_candidates(
-            candidates,
-            limit=limit or (len(candidates) if table_ids else s.maintenance_top_n),
-            require_eligible=not table_ids,
+            rewrite_rate = calibrated_rewrite_gb_per_hour(session)
+        params = AutoCompParams(
+            w_file_reduction=s.maintenance_autocomp_w_file_reduction,
+            w_compute_cost=1.0 - s.maintenance_autocomp_w_file_reduction,
+            heat_weight=s.maintenance_autocomp_heat_weight,
+            executor_memory_gb=s.maintenance_lane_max_mem_mib / 1024,
+            rewrite_gb_per_hour=rewrite_rate or s.maintenance_autocomp_rewrite_gb_per_hour,
+            max_table_gbhr=None if table_ids else _lane_budget_gbhr(s) / s.maintenance_max_lanes,
         )
+        self._autocomp_params = params
+        top_n = limit or (len(candidates) if table_ids else s.maintenance_top_n)
+        ranked = rank_candidates(
+            candidates, limit=top_n, params=params, require_eligible=not table_ids
+        )
+        if table_ids:
+            return ranked
+        budget = s.maintenance_autocomp_budget_gbhr or _lane_budget_gbhr(s)
+        chosen, over = fit_budget(ranked, budget)
+        report.over_budget = len(over)
+        report.autocomp = autocomp_trace(
+            candidates, chosen, limit=top_n, params=params, budget_gbhr=budget
+        )
+        report.autocomp["rewrite_rate_source"] = "observed" if rewrite_rate else "setting"
+        return chosen
+
+    def _table_params(self, params: Mapping[str, Any], item: RankedCandidate) -> dict[str, Any]:
+        cap_gb = self._autocomp_params.max_table_rewrite_gb if self._autocomp_params else None
+        if not item.capped or cap_gb is None:
+            return dict(params)
+        chunk_gb = float(params.get("chunk_size_gb") or 50)
+        return {**params, "max_chunks": max(1, int(cap_gb // chunk_gb))}
 
     def _spark_config(self, destination: _Destination) -> SparkK8sConfig:
         cfg = SparkK8sConfig.from_config(destination.config)
@@ -770,6 +857,7 @@ class BatchMaintenance:
                     report.files_rewritten += _metric_int(m, "rewritten_data_files_count")
                     report.files_added += _metric_int(m, "added_data_files_count")
                     report.bytes_rewritten += _metric_int(m, "rewritten_bytes_count")
+                    report.rewrite_seconds += (result.duration_ms or 0) / 1000
                 elif result.action == OperationType.REMOVE_ORPHAN_FILES.value:
                     report.orphan_files_removed += int(result.rows or 0)
                 elif result.action == OperationType.EXPIRE_SNAPSHOTS.value:

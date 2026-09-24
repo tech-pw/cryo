@@ -25,6 +25,8 @@ from cryo.scanner.persistence import (
 from cryo.scanner.run import _rebuild_cost_analysis, deterministic_chunk, parse_args
 from tests.test_presets_api_db import (
     _assign_missing_uuid_primary_keys,
+)
+from tests.test_presets_api_db import (
     _patch_sqlite_incompatible_defaults as _do_patch_sqlite_incompatible_defaults,
 )
 
@@ -176,16 +178,16 @@ def test_analyze_table_retains_bounded_wair_file_bounds() -> None:
                 10,
                 ("2026-06-29",),
                 file_path="s3://bucket/b.parquet",
-                lower_bounds={2: "m"},
-                upper_bounds={2: "z"},
+                lower_bounds={1: "2026-06-20", 2: "m"},
+                upper_bounds={1: "2026-06-29", 2: "z"},
             ),
             FakeDataFile(
                 20 * MB,
                 20,
                 ("2026-06-29",),
                 file_path="s3://bucket/a.parquet",
-                lower_bounds={2: "a"},
-                upper_bounds={2: "l"},
+                lower_bounds={1: "2026-06-01", 2: "a"},
+                upper_bounds={1: "2026-06-10", 2: "l"},
             ),
         ],
         snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
@@ -197,21 +199,22 @@ def test_analyze_table_retains_bounded_wair_file_bounds() -> None:
         "events",
         scan_at=scan_at,
         settings=Settings(scanner_wair_file_sample_size=1),
+        wair_columns=["event_date"],
     )
 
     assert analysis.raw["wair_file_sample"] == [
         {
             "file_path": "s3://bucket/a.parquet",
             "size_bytes": 20 * MB,
-            "lower_bounds": {"user_id": "a"},
-            "upper_bounds": {"user_id": "l"},
+            "lower_bounds": {"event_date": "2026-06-01"},
+            "upper_bounds": {"event_date": "2026-06-10"},
         }
     ]
     assert analysis.raw["wair_file_sample_complete"] is False
 
 
-def test_file_bound_samples_are_off_by_default_on_both_scan_paths() -> None:
-    # File bounds are raw column values; nothing stores them unless explicitly enabled.
+def test_file_bound_samples_need_range_queried_columns_on_both_scan_paths() -> None:
+    # Bounds are only sampled for columns the query log shows being range-filtered.
     from cryo.scanner.go_scan import _build_scan_stats_request
 
     scan_at = datetime(2026, 6, 30, tzinfo=UTC)
@@ -239,6 +242,16 @@ def test_file_bound_samples_are_off_by_default_on_both_scan_paths() -> None:
         settings=Settings(),
     )
     assert request["max_file_samples"] == -1
+    assert "sample_columns" not in request
+    scoped = _build_scan_stats_request(
+        {"uri": "http://catalog:8181", "warehouse": "s3://wh/"},
+        schema_name="demo",
+        table_name="events",
+        settings=Settings(),
+        wair_columns=["event_date"],
+    )
+    assert scoped["max_file_samples"] == 1000
+    assert scoped["sample_columns"] == ["event_date"]
 
 
 def _small_file_analysis(scan_at: datetime):

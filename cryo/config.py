@@ -186,6 +186,31 @@ class Settings(BaseSettings):
             "than this, the run skips remove_orphan_files on every table."
         ),
     )
+    # AutoComp ranking (cryo/maintenance/selection.py). Weights must sum to 1, so the compute
+    # cost weight is 1 - maintenance_autocomp_w_file_reduction; 0.7 is the paper's evaluation.
+    maintenance_autocomp_w_file_reduction: float = Field(default=0.7, ge=0.0, le=1.0)
+    maintenance_autocomp_heat_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Cryo extension: share of the score from Trino query heat; 0 = paper-only.",
+    )
+    maintenance_autocomp_rewrite_gb_per_hour: float = Field(
+        default=25.0,
+        gt=0,
+        description=(
+            "RewriteBytesPerHour until a run has measured it; afterwards the median of recent "
+            "runs' observed rewrite throughput is used."
+        ),
+    )
+    maintenance_autocomp_budget_gbhr: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Compute budget per scheduled run. Unset: max_lanes x lane memory x the hours "
+            "lanes may start tables."
+        ),
+    )
     maintenance_poll_seconds: int = Field(default=30, ge=5)
     maintenance_rescan_enabled: bool = Field(default=True)
     maintenance_slack_enabled: bool = Field(default=True)
@@ -203,16 +228,17 @@ class Settings(BaseSettings):
             "manifest still materializes its entry list."
         ),
     )
-    # Off by default: file bounds are real column values (student IDs, question text, emails),
-    # and at 1000 files per table they were most of table_stats.raw and table_stats_history.
+    # Samples cover only the (at most 3) numeric/temporal columns the query log shows being
+    # range-filtered, so no text values are stored; they live on the current table_stats row
+    # only, never in table_stats_history.
     scanner_wair_file_sample_size: int = Field(
-        default=0,
+        default=1000,
         ge=0,
         le=10_000,
         description=(
             "Maximum deterministic current-snapshot data-file bound samples retained per table "
-            "for offline WAIR analysis. Zero disables collection. The samples hold raw column "
-            "min/max values, so enabling this stores table data in Cryo's database."
+            "for WAIR analysis, restricted to range-queried numeric/temporal columns. Zero "
+            "disables collection."
         ),
     )
     scan_engine: Literal["pyiceberg", "go"] = Field(

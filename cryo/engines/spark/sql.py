@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -303,6 +304,41 @@ def render_clustering_operation(
         options.append(f"'sort-order', '{sort_expr}'")
 
     args.append(f"options => map({', '.join(options)})")
+    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def render_wair_recluster(
+    catalog: str,
+    table_name: str,
+    column: str,
+    boundary_values: Sequence[Any],
+    *,
+    column_type: str,
+    target_file_size_bytes: int = 256 * 1024 * 1024,
+) -> str:
+    """Sort-rewrite only the files that straddle queried range endpoints (WAIR boundary files).
+
+    ``where`` selects every file whose min/max may contain one of the endpoint values -- exactly
+    the files partially overlapping those query boundaries. ``sort_order`` is passed as the
+    procedure argument, so the table's own write order is left untouched.
+    """
+    if not boundary_values:
+        raise ValueError("WAIR recluster needs at least one boundary value")
+    quoted = _quote_identifier(column)
+    where = " OR ".join(f"{quoted} = {_literal(v, column_type)}" for v in boundary_values)
+    options = [
+        "'rewrite-all', 'true'",
+        f"'target-file-size-bytes', '{target_file_size_bytes}'",
+        "'partial-progress.enabled', 'true'",
+        "'max-concurrent-file-group-rewrites', '5'",
+    ]
+    args = [
+        f"table => '{catalog}.{table_name}'",
+        "strategy => 'sort'",
+        f"sort_order => '{_escape_sql_string(quoted)} ASC NULLS LAST'",
+        f"where => '{_escape_sql_string(where)}'",
+        f"options => map({', '.join(options)})",
+    ]
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
 
 
