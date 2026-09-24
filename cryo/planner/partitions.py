@@ -140,7 +140,14 @@ def partition_fields_from_stats(
     params: Mapping[str, Any] | None = None,
 ) -> tuple[PartitionFieldSpec, ...]:
     params = params or {}
-    raw_fields = params.get("partition_fields") or stats.get("partition_fields")
+    # Both scanners store the real spec under stats.raw. The partition_col fallback below
+    # guesses the transform from the column name; for columns like `joining_date` (a month
+    # transform) that guessed identity, which live 2026-09-24 was wrong for ~2,500 tables.
+    raw_fields = (
+        params.get("partition_fields")
+        or stats.get("partition_fields")
+        or (stats.get("raw") or {}).get("partition_fields")
+    )
     if raw_fields:
         fields = tuple(
             field
@@ -258,10 +265,14 @@ def _field_from_raw(field: Any) -> PartitionFieldSpec:
 
 def _partition_value(field: PartitionFieldSpec, partition_row: Mapping[str, Any]) -> Any:
     values = partition_row.get("partition_values")
-    if isinstance(values, Mapping):
+    if isinstance(values, Mapping) and values:
         for key in field.value_keys:
             if key in values:
                 return values[key]
+        # A structured row without this field is a partition written under another spec
+        # (e.g. before the table was partitioned). `partition_value` is only a display
+        # string there -- "<nil>" from the Go scanner -- never a bindable value.
+        return None
 
     for key in field.value_keys:
         if key in partition_row:

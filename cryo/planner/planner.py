@@ -714,8 +714,9 @@ def _skewed_partition_predicates(
     if not skewed:
         return ()
     skewed = skewed[:max_partitions]
+    capabilities = _predicate_capabilities(params)
     predicates = tuple(build_predicate(fields, row) for row in skewed)
-    predicates = tuple(p for p in predicates if not any(t.unsupported_reason for t in p.terms))
+    predicates = tuple(p for p in predicates if p.unsupported_for(capabilities) is None)
     if not predicates:
         return ()
     parts_desc = []
