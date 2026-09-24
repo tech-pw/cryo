@@ -143,6 +143,44 @@ class Settings(BaseSettings):
         default=False,
         description="Post the production health check to Slack.",
     )
+    # Batch maintenance (cryo.maintenance.run): one CronJob selects the top tables, runs them
+    # across a few local-mode Spark pods, rescans them with the Go scanner and posts one
+    # Slack message. See docs/BATCH_MAINTENANCE.md.
+    maintenance_top_n: int = Field(default=500, ge=1, description="Tables per batch run.")
+    maintenance_destination_id: str | None = Field(
+        default=None,
+        description="Spark destination to run on; defaults to the only enabled Spark one.",
+    )
+    maintenance_max_lanes: int = Field(default=4, ge=1, le=16, description="Max Spark pods.")
+    maintenance_lane_max_cpu_milli: int = Field(default=4000, ge=500)
+    maintenance_lane_max_mem_mib: int = Field(default=16384, ge=2048)
+    maintenance_lane_target_gb: float = Field(
+        default=200.0,
+        gt=0,
+        description="Rewrite GB one lane should carry before another pod is worth starting.",
+    )
+    maintenance_max_runtime_minutes: int = Field(
+        default=360,
+        ge=15,
+        description="Hard stop for the whole run; lanes stop starting tables 20 min earlier.",
+    )
+    maintenance_cooldown_hours: int = Field(default=20, ge=0)
+    maintenance_max_stats_age_days: int = Field(
+        default=3,
+        ge=1,
+        description="Skip tables whose last successful scan is older than this.",
+    )
+    maintenance_shared_snapshot_max_age_hours: int = Field(
+        default=72,
+        ge=1,
+        description=(
+            "If the shared-S3-path snapshot cannot be refreshed and the last one is older "
+            "than this, the run skips remove_orphan_files on every table."
+        ),
+    )
+    maintenance_poll_seconds: int = Field(default=30, ge=5)
+    maintenance_rescan_enabled: bool = Field(default=True)
+    maintenance_slack_enabled: bool = Field(default=True)
     scan_parallel_tables: int = Field(
         default=0,
         ge=0,

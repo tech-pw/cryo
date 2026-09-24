@@ -61,6 +61,13 @@ def test_configure_logging_still_suppresses_existing_noisy_loggers() -> None:
     assert logging.getLogger("sqlalchemy.engine").getEffectiveLevel() == logging.WARNING
 
 
+def test_configure_logging_never_emits_httpx_request_urls() -> None:
+    configure_logging(level="DEBUG", json_format=False, environment="dev")
+
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+    assert not logging.getLogger("httpcore").isEnabledFor(logging.INFO)
+
+
 def test_configure_logging_root_logger_still_respects_requested_level() -> None:
     configure_logging(level="DEBUG", json_format=False, environment="dev")
 

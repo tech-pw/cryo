@@ -15,11 +15,15 @@ Catalog auth/S3 credentials are read from the environment (AWS_ACCESS_KEY_ID,
 AWS_SECRET_ACCESS_KEY, standard for S3A/S3FileIO) rather than CLI args, so they
 never show up in `ps`/K8s pod specs/job event logs.
 """
+
 from __future__ import annotations
 
 import argparse
+import gzip
+import json
 import sys
-from typing import NoReturn
+import time
+from typing import Any, NoReturn
 
 from pyspark.sql import SparkSession
 
@@ -51,7 +55,9 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
     from urllib.parse import urlparse
 
     print(f"[cryo] Listing current data files for {table_ref} via metadata table...")
-    paths = [row["file_path"] for row in spark.sql(f"SELECT file_path FROM {table_ref}.files").collect()]
+    paths = [
+        row["file_path"] for row in spark.sql(f"SELECT file_path FROM {table_ref}.files").collect()
+    ]
     print(f"[cryo] {len(paths)} data files in current snapshot")
 
     s3 = boto3.client("s3")
@@ -103,7 +109,9 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
         tasks.close()
 
     matched_paths = {str(f.path()) for f in matched_files}
-    print(f"[cryo] Matched {len(matched_files)} of {len(missing)} missing paths to live DataFile objects via table scan")
+    print(
+        f"[cryo] Matched {len(matched_files)} of {len(missing)} missing paths to live DataFile objects via table scan"
+    )
     for path in missing_set - matched_paths:
         print(f"[cryo]   unmatched (not found in current scan): {path!r}")
 
@@ -112,7 +120,9 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
         return 0
 
     if dry_run:
-        print(f"[cryo] Dry run -- not committing. Re-run with --commit to remove {len(matched_files)} entries.")
+        print(
+            f"[cryo] Dry run -- not committing. Re-run with --commit to remove {len(matched_files)} entries."
+        )
         return 0
 
     delete = table.newDelete()
@@ -124,9 +134,110 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
     return 0
 
 
+RESULT_PREFIX = "[cryo-result] "
+TABLE_START_PREFIX = "[cryo-table-start] "
+LANE_DONE_PREFIX = "[cryo-lane-done] "
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _emit(prefix: str, payload: dict[str, Any]) -> None:
+    print(prefix + json.dumps(payload, separators=(",", ":")), flush=True)
+
+
+def _run_statement(spark: SparkSession, sql: str) -> tuple[int, dict[str, Any]]:
+    # The Spark renderer joins multi-part operations (ALTER TABLE ... ; CALL rewrite_data_files)
+    # with ";\n", and spark.sql runs exactly one statement. The last part is the procedure
+    # whose result carries the counters.
+    parts = [part.strip() for part in sql.split(";\n") if part.strip()]
+    result = None
+    for part in parts:
+        result = spark.sql(part)
+    if result is None:
+        return 0, {}
+    rows = result.collect()
+    # Single-row procedure results carry the counters (rewritten_data_files_count,
+    # deleted_data_files_count, ...). Multi-row results are file listings from
+    # remove_orphan_files, where only the count is worth keeping.
+    metrics = {k: _json_safe(v) for k, v in rows[0].asDict().items()} if len(rows) == 1 else {}
+    return len(rows), metrics
+
+
+def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: float | None) -> int:
+    """Run every table in a lane manifest, isolating failures per table.
+
+    A failed statement skips the rest of that table's statements, because the plan is ordered
+    (compaction before cleanup) and later steps assume earlier ones landed -- the same
+    short-circuit the per-job path applied. The lane itself always moves on to the next table,
+    so one broken table cannot strand the rest of the lane.
+    """
+    with gzip.open(manifest_path, "rt", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    tables = manifest.get("tables") or []
+    succeeded_tables = 0
+    for table in tables:
+        table_id = table["table_id"]
+        statements = table.get("statements") or []
+        past_deadline = deadline_epoch is not None and time.time() >= deadline_epoch
+        failed_reason: str | None = (
+            "deadline reached before this table started" if past_deadline else None
+        )
+        table_ok = not past_deadline
+        if not past_deadline:
+            # Lets the coordinator tell the table in flight when the pod died (OOM, deadline
+            # kill) apart from tables that never started.
+            _emit(TABLE_START_PREFIX, {"table_id": table_id})
+        for stmt in statements:
+            base = {"table_id": table_id, "seq": stmt["seq"], "action": stmt["action"]}
+            if failed_reason is not None:
+                _emit(RESULT_PREFIX, {**base, "ok": False, "skipped": True, "error": failed_reason})
+                continue
+            started = time.monotonic()
+            try:
+                row_count, metrics = _run_statement(spark, stmt["sql"])
+            except Exception as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                error = str(exc)[:2000]
+                _emit(
+                    RESULT_PREFIX, {**base, "ok": False, "duration_ms": duration_ms, "error": error}
+                )
+                failed_reason = f"skipped: {stmt['action']} (seq {stmt['seq']}) failed earlier"
+                table_ok = False
+                continue
+            duration_ms = int((time.monotonic() - started) * 1000)
+            _emit(
+                RESULT_PREFIX,
+                {
+                    **base,
+                    "ok": True,
+                    "duration_ms": duration_ms,
+                    "rows": row_count,
+                    "metrics": metrics,
+                },
+            )
+        succeeded_tables += int(table_ok)
+    _emit(LANE_DONE_PREFIX, {"tables": len(tables), "succeeded": succeeded_tables})
+    return 0
+
+
 def main() -> int | NoReturn:
     parser = argparse.ArgumentParser(description="Execute Cryo maintenance SQL via Spark")
     parser.add_argument("--sql", default=None, help="SQL statement(s) to execute, ';\\n'-joined")
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="Gzipped JSON lane manifest (batch maintenance): runs many tables in one session",
+    )
+    parser.add_argument(
+        "--deadline-epoch",
+        type=float,
+        default=None,
+        help="Unix time after which no new table is started (--manifest mode)",
+    )
     parser.add_argument(
         "--repair-missing-files",
         action="store_true",
@@ -156,8 +267,8 @@ def main() -> int | NoReturn:
     if args.repair_missing_files:
         if not args.table:
             parser.error("--table is required with --repair-missing-files")
-    elif not args.sql:
-        parser.error("--sql is required unless --repair-missing-files is set")
+    elif not args.sql and not args.manifest:
+        parser.error("--sql or --manifest is required unless --repair-missing-files is set")
 
     builder = (
         SparkSession.builder.appName("cryo-maintenance")
@@ -199,9 +310,7 @@ def main() -> int | NoReturn:
                 f"spark.sql.catalog.{args.catalog}.http-client.apache.max-connections", "200"
             )
     if args.s3_endpoint:
-        builder = builder.config(
-            f"spark.sql.catalog.{args.catalog}.s3.endpoint", args.s3_endpoint
-        )
+        builder = builder.config(f"spark.sql.catalog.{args.catalog}.s3.endpoint", args.s3_endpoint)
     # Hive metastore catalogs need Hive support enabled; harmless no-op for REST/Glue/JDBC.
     if _resolve_catalog_impl(args.catalog_impl) == _CATALOG_IMPL_SHORTHAND["hive"]:
         builder = builder.enableHiveSupport()
@@ -211,6 +320,11 @@ def main() -> int | NoReturn:
     try:
         if args.repair_missing_files:
             return _repair_missing_files(spark, args.table, dry_run=not args.commit)
+        if args.manifest:
+            # Result lines are parsed from the pod log; INFO-level Spark chatter would push
+            # them past the kubelet's log rotation on a long lane.
+            spark.sparkContext.setLogLevel("WARN")
+            return _run_manifest(spark, args.manifest, deadline_epoch=args.deadline_epoch)
 
         exit_code = 0
         for statement in args.sql.split(";\n"):
