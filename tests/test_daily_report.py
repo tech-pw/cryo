@@ -314,6 +314,40 @@ def test_collect_report_data_watch_when_unhealthy_table_present(session) -> None
     assert data.tables_needing_compaction == 1
 
 
+def test_fleet_numbers_exclude_disabled_sources_and_inactive_tables(session) -> None:
+    live = _seed_source(session)
+    dev = Source(id=uuid4(), name=f"dev-{uuid4()}", type="rest", config={}, enabled=False)
+    session.add(dev)
+    session.flush()
+    kept = _seed_table(session, live, name="orders")
+    retired = _seed_table(session, live, name="orders_old")
+    retired.is_active = False
+    dev_table = _seed_table(session, dev, name="orders_dev")
+    for table in (kept, retired, dev_table):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="F",
+                overall_score=20,
+                total_files=900,
+                small_files_count=850,
+                total_size_gb=1024.0,
+            )
+        )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.total_tables == 1
+    assert data.unhealthy_tables == 1
+    assert data.tables_needing_compaction == 1
+    assert data.total_size_tb == 1.0
+    assert data.total_files == 900
+
+
 def test_collect_report_data_unexplained_cost_spike_forces_watch(session) -> None:
     """An unexplained fleet-cost spike must surface even when every table itself looks
     healthy -- the cost signal is a fleet-wide check, not a table-health one, and the two

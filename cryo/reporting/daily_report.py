@@ -14,11 +14,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
-from cryo.db.models import AIProvider, AuditLog, Table, TableStats, TableStatsHistory
+from cryo.db.models import AIProvider, AuditLog, Source, Table, TableStats, TableStatsHistory
 from cryo.ml.anomaly_detector import AnomalyAlert, detect_all_anomalies
 from cryo.reporting.cost_signals import (
     CostSignal,
@@ -293,6 +293,19 @@ def _classify_status(
     return "CLEAR"
 
 
+def _fleet_table_ids() -> Select[tuple[uuid.UUID]]:
+    """Active tables on enabled sources: the fleet every Fleet number in the digest describes.
+
+    A disabled source's tables keep is_active=True and their last stats rows (cdp_dev: 1,164
+    tables), so filtering on is_active alone overstated the fleet by ~10%.
+    """
+    return (
+        select(Table.id)
+        .join(Source, Source.id == Table.source_id)
+        .where(Table.is_active.is_(True), Source.enabled.is_(True))
+    )
+
+
 def _size_snapshot_asof(session: Session, as_of: datetime) -> float | None:
     """Fleet total_size_gb as of the nearest prior scan per table to ``as_of`` -- used only to
     compute a real day-over-day size delta. Returns None (no delta shown, never fabricated) if
@@ -302,7 +315,10 @@ def _size_snapshot_asof(session: Session, as_of: datetime) -> float | None:
             TableStatsHistory.table_id,
             func.max(TableStatsHistory.scan_at).label("scan_at"),
         )
-        .where(TableStatsHistory.scan_at <= as_of)
+        .where(
+            TableStatsHistory.scan_at <= as_of,
+            TableStatsHistory.table_id.in_(_fleet_table_ids()),
+        )
         .group_by(TableStatsHistory.table_id)
         .subquery()
     )
@@ -411,13 +427,14 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
     now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
 
+    in_fleet = TableStats.table_id.in_(_fleet_table_ids())
     total_tables = (
-        session.scalar(select(func.count(Table.id)).where(Table.is_active.is_(True))) or 0
+        session.scalar(select(func.count()).select_from(_fleet_table_ids().subquery())) or 0
     )
 
     grade_rows = session.execute(
         select(TableStats.grade, func.count(TableStats.table_id))
-        .where(TableStats.grade.isnot(None))
+        .where(TableStats.grade.isnot(None), in_fleet)
         .group_by(TableStats.grade)
     ).fetchall()
     grade_distribution = {row[0]: row[1] for row in grade_rows}
@@ -427,7 +444,9 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
 
     compaction_count = (
         session.scalar(
-            select(func.count(TableStats.table_id)).where(TableStats.needs_compaction.is_(True))
+            select(func.count(TableStats.table_id)).where(
+                TableStats.needs_compaction.is_(True), in_fleet
+            )
         )
         or 0
     )
@@ -478,7 +497,7 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
                 TableStats.small_files_count,
             )
             .join(TableStats, TableStats.table_id == Table.id)
-            .where(TableStats.overall_score < 60)
+            .where(TableStats.overall_score < 60, in_fleet)
             .order_by(TableStats.overall_score.asc())
             .limit(10)
         ).fetchall()
@@ -494,7 +513,7 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
             func.sum(TableStats.projected_savings_usd_month),
             func.sum(TableStats.total_files),
             func.sum(TableStats.small_files_count),
-        )
+        ).where(in_fleet)
     ).first()
     total_size_gb = float(cost_stats[0] or 0.0) if cost_stats is not None else 0.0
     total_cost = float(cost_stats[1] or 0.0) if cost_stats is not None else 0.0
@@ -508,6 +527,7 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
             select(func.count(TableStats.table_id)).where(
                 TableStats.scan_at >= yesterday_start,
                 TableStats.scan_at < yesterday_end,
+                in_fleet,
             )
         )
         or 0
@@ -723,7 +743,7 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
         table_block(
             ["Fleet", "Value"],
             [
-                ["Total Tables", f"{data.total_tables:,}"],
+                ["Active Tables", f"{data.total_tables:,}"],
                 ["Scanned (yesterday)", f"{data.tables_scanned_yesterday:,}"],
                 ["Needing Compaction", f"{data.tables_needing_compaction:,}"],
                 ["Total Size", f"{data.total_size_tb:.2f} TB{size_delta_str}"],

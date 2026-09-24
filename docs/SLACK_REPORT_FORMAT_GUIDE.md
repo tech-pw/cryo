@@ -270,7 +270,7 @@ tracking over time; nothing is narrated or inferred.
 
 | Section | Rows |
 |---|---|
-| Fleet | Total Tables · Scanned (yesterday) · Needing Compaction · Total Size |
+| Fleet | Active Tables · Scanned (yesterday) · Needing Compaction · Total Size (all limited to active tables on enabled sources) |
 | Maintenance Operations (yesterday) | one row per operation, succeeded / failed |
 | Impact | GB Reclaimed · Successful Actions · Tables Touched · Optimize File Reduction |
 | Trend | Day-over-day (vs 2 days ago) · Week-over-week (vs same day last week) |
