@@ -230,7 +230,7 @@ class ScanWorker:
                     "discovered": scan_summary.discovered,
                     "assigned": scan_summary.assigned,
                     "scanned": scan_summary.scanned,
-                    "skipped": scan_summary.skipped,
+                    "skipped": scan_summary.skipped + scan_summary.deferred,
                     "failed": scan_summary.failed,
                     "unreadable": scan_summary.unreadable,
                 },

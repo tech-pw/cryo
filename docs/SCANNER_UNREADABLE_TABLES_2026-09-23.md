@@ -111,3 +111,47 @@ owns those tables has to repoint the catalog or restore them.
 
 Whether the fleet-wide ~10.7% scan failure rate is mostly this same corruption is now
 *measurable* (compare `unreadable` vs `failed` on the next full wave) but not yet measured.
+
+## Follow-up, 2026-09-24: stop retrying them every six hours
+
+Measured: on 2026-09-24, 1,353 tables failed a scan. 1,227 of them were already deactivated
+dead `*_evolving` entries, and most had failed 20+ times in a row. Two things kept them
+coming back:
+
+- **Scans reactivated them.** `upsert_table` set `is_active = True` on every discovery, so each
+  6-hourly scan undid the scheduler's `EvolvingCatalogCleanupRunner`. The scan then failed, and
+  the daemon deactivated them again. Reactivation now happens only on a successful scan, in
+  `record_table_scan_outcome`.
+- **Nothing spaced out the retries.** A table that never scanned successfully has no stats row,
+  so `already_scanned_today` never skipped it, and `order_by_staleness` sorted it first as
+  "never scanned".
+
+**Retry ladder** (`cryo/scanner/persistence.py::SCAN_RETRY_LADDER`), keyed on
+`consecutive_scan_failures` and `last_scan_error_at`, so no migration was needed:
+
+| Failure streak | Next scheduled retry |
+|---|---|
+| 1–2 | after 1 day (same cadence as a healthy table) |
+| 3 | after 7 days |
+| 4 | after 15 days |
+| 5+ | after 30 days |
+
+Every rung is due 3 hours early, because a table can be reached hours into a run and would
+otherwise slip a whole 6-hour slot. Any success resets the streak. Tables in backoff count as
+`ScanSummary.deferred`. In the ad-hoc run UI they show under "skipped", and they never touch
+the catalog or S3. A full scan or a scan of explicit `table_ids`/`table_names` ignores the
+ladder, so the way to re-check a repaired table is to scan it by name. Tables that already
+had long streaks go straight to the 30-day rung; on prod data the next scheduled scan skips
+1,353 guaranteed-to-fail retries.
+
+**Classifier.** A catalog `metadata_location` with no bucket (Go error `failed to load table:
+open /youtube/videos/metadata/….metadata.json: invalid argument`) is now `metadata_not_found`.
+The four `cdp.youtube` tables that fail this way (`silver_videos`, `silver_channels`,
+`silver_comments`, `silver_video_metrics`) have NULL locations and a working `*_fixed` copy
+rebuilt by the owning team, so they are dead entries, not a scanner bug.
+
+**Daily digest "Scan Health" block** (`cryo/reporting/scan_health.py`). It covers every table
+row on an enabled source, active or not: tables in catalog, passed (last attempt succeeded),
+corrupt (metadata or manifest gone from S3), failed (permissions or other, fixable), not yet
+scanned, and how many failing tables sit on each retry rung. First numbers on prod,
+2026-09-24: **12,970 in catalog: 11,435 passed, 1,489 corrupt, 46 failed**.

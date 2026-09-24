@@ -32,6 +32,7 @@ from cryo.scanner.persistence import (
     needs_weekly_reconcile,
     persist_table_analysis,
     record_table_scan_outcome,
+    scan_retry_deferred,
     stats_history_for_signals,
     upsert_table,
 )
@@ -59,6 +60,8 @@ class ScanSummary:
     # Tables whose metadata is gone from object storage -- counted apart from `failed` because
     # retrying cannot fix them. See cryo/scanner/failure_classifier.py.
     unreadable: int = 0
+    # Failing tables not yet due on the retry ladder (persistence.SCAN_RETRY_LADDER).
+    deferred: int = 0
     cancelled: bool = False
 
 
@@ -220,6 +223,7 @@ def run_scan(
         raise RuntimeError("; ".join(discovery_errors))
     candidates = order_by_staleness(session, candidates)
     assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
+    honor_retry_backoff = not full_scan and table_ids is None and table_names is None
 
     logger.info(
         "Scanner chunk %s/%s assigned %s of %s discovered tables (parallel=%s)",
@@ -245,6 +249,7 @@ def run_scan(
             assigned,
             settings=settings,
             full_scan=full_scan,
+            honor_retry_backoff=honor_retry_backoff,
             cost_full_scan=cost_full_scan,
             scan_at=scan_at,
             max_workers=effective_parallel,
@@ -258,6 +263,7 @@ def run_scan(
         assigned,
         settings=settings,
         full_scan=full_scan,
+        honor_retry_backoff=honor_retry_backoff,
         cost_full_scan=cost_full_scan,
         scan_at=scan_at,
         total_discovered=len(candidates),
@@ -272,6 +278,7 @@ def _run_scan_serial(
     *,
     settings: Settings,
     full_scan: bool,
+    honor_retry_backoff: bool,
     cost_full_scan: bool,
     scan_at: datetime,
     total_discovered: int,
@@ -279,7 +286,7 @@ def _run_scan_serial(
     cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables serially within the current session."""
-    scanned = skipped = failed = unreadable = 0
+    scanned = skipped = failed = unreadable = deferred = 0
     live_price_cache: dict[UUID, float | None] = {}
 
     for candidate in assigned:
@@ -290,6 +297,8 @@ def _run_scan_serial(
                 scanned=scanned,
                 skipped=skipped,
                 failed=failed,
+                unreadable=unreadable,
+                deferred=deferred,
                 cancelled=True,
             )
 
@@ -301,6 +310,13 @@ def _run_scan_serial(
             schema_name=candidate.schema_name,
             table_name=candidate.table_name,
         )
+        if honor_retry_backoff and scan_retry_deferred(table_row, now=scan_at):
+            deferred += 1
+            _emit_progress(
+                progress_callback,
+                {"event": "table_result", "table_ref": table_ref, "outcome": "skipped"},
+            )
+            continue
         if (
             not full_scan
             and already_scanned_today(session, table_id=table_row.id, now=scan_at)
@@ -414,6 +430,7 @@ def _run_scan_serial(
         skipped=skipped,
         failed=failed,
         unreadable=unreadable,
+        deferred=deferred,
     )
 
 
@@ -422,6 +439,7 @@ def _run_scan_parallel(
     *,
     settings: Settings,
     full_scan: bool,
+    honor_retry_backoff: bool,
     cost_full_scan: bool,
     scan_at: datetime,
     max_workers: int,
@@ -430,7 +448,7 @@ def _run_scan_parallel(
     cancel_checker: Any | None,
 ) -> ScanSummary:
     """Scan tables in parallel using separate DB sessions per table."""
-    scanned = skipped = failed = unreadable = 0
+    scanned = skipped = failed = unreadable = deferred = 0
     # Shared across worker threads (GIL makes individual dict get/set safe enough for a
     # best-effort cache; a rare race just costs one redundant AWS lookup, not a correctness
     # bug -- see _resolve_live_s3_get_price's docstring).
@@ -447,6 +465,8 @@ def _run_scan_parallel(
                 schema_name=candidate.schema_name,
                 table_name=candidate.table_name,
             )
+            if honor_retry_backoff and scan_retry_deferred(table_row, now=scan_at):
+                return ("deferred", None)
             if (
                 not full_scan
                 and already_scanned_today(table_session, table_id=table_row.id, now=scan_at)
@@ -539,7 +559,10 @@ def _run_scan_parallel(
         for future in as_completed(futures):
             result, error = future.result()
             table_ref = _table_ref(futures[future])
-            if result == "scanned":
+            if result == "deferred":
+                deferred += 1
+                result = "skipped"
+            elif result == "scanned":
                 scanned += 1
             elif result == "skipped":
                 skipped += 1
@@ -572,6 +595,7 @@ def _run_scan_parallel(
         skipped=skipped,
         failed=failed,
         unreadable=unreadable,
+        deferred=deferred,
         cancelled=_cancel_requested(cancel_checker),
     )
 

@@ -101,6 +101,18 @@ def test_classifies_a_missing_metadata_json_as_metadata_not_found() -> None:
     assert scan_failure_is_permanent(error) is True
 
 
+def test_a_metadata_pointer_with_no_bucket_is_metadata_not_found() -> None:
+    """The catalog's metadata_location has no scheme, so the Go engine opens it as a local
+    file. Verbatim from cdp youtube.silver_videos, 2026-09-24 (location NULL, superseded by
+    silver_videos_fixed)."""
+    error = (
+        "failed to load table: open /youtube/videos/metadata/"
+        "00009-7022095b-96a9-418b-8ff0-221c4999762c.metadata.json: invalid argument"
+    )
+    assert classify_scan_failure(error) == "metadata_not_found"
+    assert scan_failure_is_permanent(error) is True
+
+
 def test_a_metadata_json_read_error_that_is_not_a_missing_object_is_not_permanent() -> None:
     """Same two-part rule as the manifest case: naming a metadata file is not enough, or an
     ordinary read blip on a healthy table would be written off as permanently unreadable."""
