@@ -433,11 +433,9 @@ def persist_table_analysis(
                     # profiler (cryo/quality/profiler.py) needs per-column history for baseline
                     # comparison and schema-drift detection, not just the table-level rollup.
                     "column_quality": (analysis.raw or {}).get("column_quality"),
-                    "wair_file_sample": (analysis.raw or {}).get("wair_file_sample"),
-                    "wair_file_sample_complete": (analysis.raw or {}).get(
-                        "wair_file_sample_complete"
-                    ),
-                    "wair_query_ranges": (analysis.raw or {}).get("wair_query_ranges"),
+                    # No wair_* keys: WAIR reads only the current table_stats row, and a
+                    # per-scan copy of up to 1000 files' raw column bounds was most of this
+                    # table's 48 GB.
                     # Real Trino query latency as of this scan (trailing window, not this
                     # table's whole history) -- see _table_p95_query_latency_ms. Populates
                     # cryo.intelligence.outcomes' pre/post_p95_query_latency_ms, previously
