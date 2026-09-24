@@ -1,4 +1,12 @@
-"""Shadow-only Predictive Table Optimizer."""
+"""Shadow-only layout recommender over PTO's parameter space.
+
+Meduri, Kreismann, Barber, Reinwald, "PTO: A Workload-driven Predictive Table Optimizer for
+Lakehouse Systems", SIGMOD 2026, DOI 10.1145/3786681. The search space (partition column,
+target file size, row-group size, binpack/sort/zorder) and its workload-driven pruning follow
+the paper. The scorer does not: PTO rewrites table samples per candidate and fits gradient
+boosted trees to measured query latencies, whereas ``score_heuristic`` is a fixed weighted
+estimate (``PTO_MODEL = "heuristic_v1"``), so recommendations stay shadow-only.
+"""
 
 from cryo.optimizer.pto.counterfactual import (
     CounterfactualArm,

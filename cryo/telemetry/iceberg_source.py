@@ -49,14 +49,20 @@ import json
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from cryo.db.models import Source, Table
-from cryo.telemetry.parser import extract_table_from_query, parse_query_predicates
+from cryo.db.models import Source, Table, TableStats
+from cryo.optimizer.wair.ranges import is_range_literal, merge_range_window
+from cryo.telemetry.parser import (
+    extract_query_ranges,
+    extract_table_from_query,
+    parse_query_predicates,
+)
 from cryo.telemetry.patterns import (
     ColumnPatternStats,
     _upsert_query_patterns,
@@ -86,6 +92,10 @@ _DEFAULT_INPUTS_JSON_COLUMN = "inputs_json"
 # event-listener table, so this is configurable, not hardcoded. None/False disables user-level
 # attribution for sources whose table doesn't have one.
 _DEFAULT_USER_COLUMN = "user"
+# WAIR's per-query savings estimate (paper Eq. 3) scales saved bytes by the query's own
+# t_read / size_read; Trino's event listener records both. Read only if the table has them.
+_DEFAULT_CPU_TIME_COLUMN = "cpu_time_millis"
+_DEFAULT_INPUT_BYTES_COLUMN = "physical_input_bytes"
 _DEFAULT_LOOKBACK_DAYS = 7  # only used the first time a source has no persisted watermark yet
 
 
@@ -98,6 +108,8 @@ class IcebergQueryLogConfig:
     executed_at_column: str = _DEFAULT_EXECUTED_AT_COLUMN
     inputs_json_column: str | None = _DEFAULT_INPUTS_JSON_COLUMN
     user_column: str | None = _DEFAULT_USER_COLUMN
+    cpu_time_column: str | None = _DEFAULT_CPU_TIME_COLUMN
+    input_bytes_column: str | None = _DEFAULT_INPUT_BYTES_COLUMN
     last_aggregated_at: datetime | None = None
 
     @property
@@ -149,8 +161,29 @@ def parse_iceberg_query_log_config(source_config: dict[str, Any]) -> IcebergQuer
         executed_at_column=str(block.get("executed_at_column") or _DEFAULT_EXECUTED_AT_COLUMN),
         inputs_json_column=inputs_json_column,
         user_column=user_column,
+        cpu_time_column=_optional_column(block, "cpu_time_column", _DEFAULT_CPU_TIME_COLUMN),
+        input_bytes_column=_optional_column(
+            block, "input_bytes_column", _DEFAULT_INPUT_BYTES_COLUMN
+        ),
         last_aggregated_at=last_aggregated_at,
     )
+
+
+def _optional_column(block: dict[str, Any], key: str, default: str) -> str | None:
+    if key not in block:
+        return default
+    raw = block.get(key)
+    return str(raw) if raw else None
+
+
+def _has_field(iceberg_table: object, name: str) -> bool:
+    schema = getattr(iceberg_table, "schema", None)
+    if not callable(schema):
+        return False
+    try:
+        return schema().find_field(name) is not None
+    except Exception:
+        return False
 
 
 def _read_query_texts(
@@ -160,7 +193,7 @@ def _read_query_texts(
     since: datetime,
     until: datetime,
     max_rows: int,
-) -> tuple[list[tuple[str, str | None]], bool]:
+) -> tuple[list[tuple[Any, ...]], bool]:
     """Scan the query-log Iceberg table for query text (and, when configured, that query's
     ``inputs_json``) within a bounded half-open time window.
 
@@ -181,9 +214,17 @@ def _read_query_texts(
     catalog = source_catalog_for(source)
     iceberg_table = catalog.load_table(namespace, table_name)
 
-    selected_fields = (config.query_text_column, config.executed_at_column)
+    selected_fields: tuple[str, ...] = (config.query_text_column, config.executed_at_column)
     if config.inputs_json_column:
         selected_fields = (*selected_fields, config.inputs_json_column)
+    cost_columns = tuple(
+        col
+        for col in (config.cpu_time_column, config.input_bytes_column)
+        if col and _has_field(iceberg_table, col)
+    )
+    with_cost = len(cost_columns) == 2
+    if with_cost:
+        selected_fields = (*selected_fields, *cost_columns)
 
     scan = iceberg_table.scan(
         row_filter=And(
@@ -193,7 +234,7 @@ def _read_query_texts(
         selected_fields=selected_fields,
     )
 
-    rows: list[tuple[str, str | None]] = []
+    rows: list[tuple[Any, ...]] = []
     for batch in scan.to_arrow_batch_reader():
         query_col = batch.column(config.query_text_column).to_pylist()
         inputs_col = (
@@ -201,9 +242,14 @@ def _read_query_texts(
             if config.inputs_json_column
             else [None] * len(query_col)
         )
-        for value, inputs_json in zip(query_col, inputs_col, strict=True):
+        cpu_col = batch.column(cost_columns[0]).to_pylist() if with_cost else None
+        bytes_col = batch.column(cost_columns[1]).to_pylist() if with_cost else None
+        for i, (value, inputs_json) in enumerate(zip(query_col, inputs_col, strict=True)):
             if value:
-                rows.append((str(value), inputs_json))
+                if cpu_col is not None and bytes_col is not None:
+                    rows.append((str(value), inputs_json, cpu_col[i], bytes_col[i]))
+                else:
+                    rows.append((str(value), inputs_json))
             if len(rows) >= max_rows:
                 return rows, True
     return rows, False
@@ -294,6 +340,9 @@ def aggregate_from_iceberg_query_log(
 
     table_stats: defaultdict[uuid.UUID, dict[str, ColumnPatternStats]] = defaultdict(dict)
     all_query_counts: defaultdict[uuid.UUID, int] = defaultdict(int)
+    range_hits: defaultdict[uuid.UUID, defaultdict[date, RangeHits]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
     total_read = 0
     total_matched = 0
     windows_processed = 0
@@ -337,7 +386,8 @@ def aggregate_from_iceberg_query_log(
         # query in this window under window_end's own date is close enough for a 30-day rolling
         # count and needs no extra column read.
         window_query_counts: defaultdict[uuid.UUID, int] = defaultdict(int)
-        for query_text, inputs_json in query_texts:
+        for row in query_texts:
+            query_text, inputs_json = row[0], row[1]
             schema_name, table_name = extract_table_from_query(query_text)
             if not schema_name or not table_name:
                 continue
@@ -351,6 +401,12 @@ def aggregate_from_iceberg_query_log(
                 inputs_json, schema_name=schema_name, table_name=table_name
             )
             _accumulate(table_stats[table.id], predicate_info, selectivity=selectivity)
+            _accumulate_ranges(
+                range_hits[table.id][window_end.date()],
+                query_text,
+                cpu_ms=row[2] if len(row) > 3 else None,
+                input_bytes=row[3] if len(row) > 3 else None,
+            )
 
         if window_query_counts:
             record_table_query_activity(session, window_query_counts, day=window_end.date())
@@ -364,6 +420,7 @@ def aggregate_from_iceberg_query_log(
         windows_processed += 1
 
     updated = _upsert_query_patterns(session, table_stats)
+    _store_wair_ranges(session, range_hits)
     if all_query_counts:
         refresh_query_count_30d(session, set(all_query_counts.keys()), now=now)
     logger.info(
@@ -413,6 +470,51 @@ def _accumulate(
         if not col:
             continue
         stats_by_col.setdefault(col, ColumnPatternStats(column_name=col)).projection_count += 1
+
+
+RangeHits = dict[tuple[str, Any, Any], dict[str, float]]
+
+
+def _accumulate_ranges(
+    hits: RangeHits,
+    query_text: str,
+    *,
+    cpu_ms: object = None,
+    input_bytes: object = None,
+) -> None:
+    """Count this query's numeric/temporal range predicates (one-sided included) for WAIR.
+
+    Non-numeric literals are dropped: they would be stored, and could be personal data.
+    """
+    cpu = float(cpu_ms) if isinstance(cpu_ms, int | float) and cpu_ms > 0 else 0.0
+    read = int(input_bytes) if isinstance(input_bytes, int | float) and input_bytes > 0 else 0
+    for item in extract_query_ranges(query_text, open_ended=True):
+        if not (is_range_literal(item.lower) and is_range_literal(item.upper)):
+            continue
+        bucket = hits.setdefault(
+            (item.column, item.lower, item.upper),
+            {"queries": 0, "cpu_ms": 0.0, "input_bytes": 0},
+        )
+        bucket["queries"] += 1
+        if cpu and read:
+            bucket["cpu_ms"] += cpu
+            bucket["input_bytes"] += read
+
+
+def _store_wair_ranges(
+    session: Session, range_hits: Mapping[uuid.UUID, Mapping[date, RangeHits]]
+) -> None:
+    for table_id, by_day in range_hits.items():
+        if not any(by_day.values()):
+            continue
+        stats = session.get(TableStats, table_id)
+        if stats is None:
+            continue
+        ranges: object = (stats.raw or {}).get("wair_query_ranges")
+        for day in sorted(by_day):
+            ranges = merge_range_window(ranges, by_day[day], day=day)
+        stats.raw = {**dict(stats.raw or {}), "wair_query_ranges": ranges}
+    session.commit()
 
 
 def _persist_watermark(session: Session, source: Source, now: datetime) -> None:

@@ -44,6 +44,7 @@ class DataQualityProfile:
     schema_version_changed: bool
     new_columns: list[str]
     dropped_columns: list[str]
+    commit_signals: dict[str, Any] | None = None
 
 
 def _column_quality_by_name(raw: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -209,6 +210,15 @@ def profile_table_quality(
             schema_version_changed = True
             anomalies_detected += len(new_columns) + len(dropped_columns)
 
+    raw = current_stats.raw if isinstance(current_stats.raw, dict) else {}
+    commit_signals = raw.get("commit_signals")
+    if not isinstance(commit_signals, dict):
+        commit_signals = None
+    elif commit_signals.get("arrival_overdue") or commit_signals.get("row_count_anomaly"):
+        anomalies_detected += bool(commit_signals.get("arrival_overdue")) + bool(
+            commit_signals.get("row_count_anomaly")
+        )
+
     return DataQualityProfile(
         table_id=str(table_id),
         table_name=table_name,
@@ -218,4 +228,5 @@ def profile_table_quality(
         schema_version_changed=schema_version_changed,
         new_columns=new_columns,
         dropped_columns=dropped_columns,
+        commit_signals=commit_signals,
     )

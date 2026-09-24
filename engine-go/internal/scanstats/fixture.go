@@ -18,7 +18,11 @@ func AggregateFromFixture(req *protocol.AggregateFixtureRequest) protocol.ScanSt
 		SmallFileMB:          req.SmallFileMB,
 		HealthSmallFileBytes: req.HealthSmallFileBytes,
 		MaxPartitions:        req.MaxPartitions,
-	}.withDefaults()
+	}
+	if req.TargetFileSizeBytes != nil {
+		opts.TargetFileBytes = *req.TargetFileSizeBytes
+	}
+	opts = opts.withDefaults()
 
 	columns := make(map[int]protocol.AggregateFixtureColumn, len(req.Columns))
 	for _, col := range req.Columns {
@@ -59,6 +63,7 @@ func AggregateFromFixture(req *protocol.AggregateFixtureRequest) protocol.ScanSt
 		firstSnapshotAt:   req.FirstSnapshotAt,
 		lastSnapshotAt:    req.LastSnapshotAt,
 		currentSnapshotID: req.CurrentSnapshotID,
+		commits:           req.Commits,
 	}
 	resp := acc.finish(req.SchemaName, req.TableName, meta)
 	resp.OK = true

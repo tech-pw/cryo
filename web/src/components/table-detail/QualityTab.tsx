@@ -325,6 +325,41 @@ export const QualityTab = () => {
                           : "None"}
                       </span>
                     </div>
+                    <div
+                      className="td-quality-check-row"
+                      title="From Iceberg commit metadata; compaction (replace) commits are excluded"
+                    >
+                      <span className="td-quality-check-label">Data arrival</span>
+                      <span
+                        className={
+                          qualityBreakdown.arrivalOverdue
+                            ? "td-quality-check-value-bad"
+                            : "td-quality-check-value-ok"
+                        }
+                      >
+                        {qualityBreakdown.arrivalOverdue == null
+                          ? "Not enough history"
+                          : qualityBreakdown.arrivalOverdue
+                            ? `Overdue (${formatSlaHours(qualityBreakdown.hoursSinceDataCommit ?? 0)} silent)`
+                            : "On time"}
+                      </span>
+                    </div>
+                    <div className="td-quality-check-row">
+                      <span className="td-quality-check-label">Row count</span>
+                      <span
+                        className={
+                          qualityBreakdown.rowCountAnomaly
+                            ? "td-quality-check-value-bad"
+                            : "td-quality-check-value-ok"
+                        }
+                      >
+                        {qualityBreakdown.rowCountAnomaly
+                          ? `Unusual ${qualityBreakdown.rowCountAnomaly}`
+                          : qualityBreakdown.rowCountBaselined
+                            ? "Normal"
+                            : "Not enough history"}
+                      </span>
+                    </div>
                     <div className="td-quality-check-row">
                       <span className="td-quality-check-label">Total tracked columns</span>
                       <span className="td-quality-check-value-ok">

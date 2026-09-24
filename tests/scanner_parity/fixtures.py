@@ -14,6 +14,7 @@ from cryo.scanner.analyze import (
 from cryo.scanner.analyze import (
     partition_fields as extract_partition_fields,
 )
+from cryo.scanner.commit_signals import commits_from_snapshots, commits_to_payload
 from cryo.scanner.cost import _snapshot_timestamp
 from cryo.scanner.signals import detect_format_version
 from tests.test_scanner import (
@@ -182,6 +183,7 @@ def build_fixture_request(
         ],
         "records": records,
         "total_snapshots": len(snapshots),
+        "commits": commits_to_payload(commits_from_snapshots(snapshots)),
         "manifest_count": manifest_count,
         "manifest_total_bytes": manifest_total_bytes,
         "write_distribution_mode": write_mode,

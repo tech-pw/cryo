@@ -5,8 +5,69 @@ import (
 	"testing"
 
 	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
 	"github.com/cryo-lake/cryo/engine-go/internal/protocol"
 )
+
+func TestTemporalBoundsRenderLikePythonAndSamplesKeepOnlyRequestedColumns(t *testing.T) {
+	if got := jsonable(iceberg.Date(20605)); got != "2026-06-01" {
+		t.Fatalf("date = %v", got)
+	}
+	if got := jsonable(iceberg.Timestamp(1780272000000000)); got != "2026-06-01T00:00:00Z" {
+		t.Fatalf("timestamp = %v", got)
+	}
+	kept := keepColumns(map[string]any{"event_date": "2026-06-01", "email": "a@x.com"}, []string{"event_date"})
+	if len(kept) != 1 || kept["event_date"] != "2026-06-01" {
+		t.Fatalf("kept = %v", kept)
+	}
+
+	acc := newAccumulator(nil, Options{SampleColumns: []string{"email", "event_date", "missing"}})
+	acc.columnDefs = map[int]protocol.AggregateFixtureColumn{
+		1: {FieldID: 1, ColumnName: "email"}, 2: {FieldID: 2, ColumnName: "event_date"},
+	}
+	acc.columnTypes = map[int]iceberg.Type{1: iceberg.PrimitiveTypes.String, 2: iceberg.PrimitiveTypes.Date}
+	if got := acc.boundSafeSampleColumns(); len(got) != 1 || got[0] != "event_date" {
+		t.Fatalf("string column must never be sampled: %v", got)
+	}
+}
+
+func TestCommitLogIsOrderedCappedAndParsesSummaryCounters(t *testing.T) {
+	snaps := make([]table.Snapshot, 0, maxCommitLog+5)
+	for i := maxCommitLog + 4; i >= 0; i-- {
+		snaps = append(snaps, table.Snapshot{
+			TimestampMs: int64(1000 + i),
+			Summary: &table.Summary{
+				Operation: table.OpAppend,
+				Properties: iceberg.Properties{
+					"added-records": "10", "total-records": "500", "deleted-records": "x",
+				},
+			},
+		})
+	}
+	snaps = append(snaps, table.Snapshot{TimestampMs: 5000})
+
+	log := commitLog(snaps)
+
+	if len(log) != maxCommitLog {
+		t.Fatalf("len = %d, want %d", len(log), maxCommitLog)
+	}
+	last := log[len(log)-1]
+	if last.CommittedAtMs != 5000 || last.Operation != "" || last.AddedRecords != nil {
+		t.Fatalf("summary-less snapshot should be last with no counters: %+v", last)
+	}
+	prev := log[len(log)-2]
+	if prev.Operation != "append" || *prev.AddedRecords != 10 || *prev.TotalRecords != 500 {
+		t.Fatalf("counters not parsed: %+v", prev)
+	}
+	if prev.DeletedRecords != nil || prev.TotalPositionDeletes != nil {
+		t.Fatalf("unparseable or absent counters must be nil: %+v", prev)
+	}
+	for i := 1; i < len(log); i++ {
+		if log[i].CommittedAtMs < log[i-1].CommittedAtMs {
+			t.Fatalf("not ordered at %d", i)
+		}
+	}
+}
 
 func TestDecodeBoundsUsesSchemaTypesAndNames(t *testing.T) {
 	encoded, err := iceberg.NewLiteral[int64](42).MarshalBinary()
@@ -144,6 +205,31 @@ func TestAggregateFromRecordsDeletesDoNotInflateFileCounts(t *testing.T) {
 	}
 	if p.Small != 0 {
 		t.Fatalf("partition small=%d, want 0", p.Small)
+	}
+}
+
+// AutoComp's file-count reduction counts every data file below the rewrite target, including
+// mid-size files the 89.6 MB small-file threshold ignores; delete files never count.
+func TestAggregateFromRecordsCountsFilesBelowTarget(t *testing.T) {
+	const mb = 1024 * 1024
+	records := []FileRecord{
+		{SizeBytes: 10 * mb, Content: "DATA"},
+		{SizeBytes: 120 * mb, Content: "DATA"},
+		{SizeBytes: 300 * mb, Content: "DATA"},
+		{SizeBytes: 4 * 1024, Content: "POSITION_DELETES"},
+	}
+
+	resp := AggregateFromRecords(records, nil, Options{})
+	if resp.ReductionTargetBytes != 256*mb {
+		t.Fatalf("reduction_target_bytes=%d, want 256 MiB default", resp.ReductionTargetBytes)
+	}
+	if resp.FilesBelowTarget != 2 || resp.BytesBelowTarget != 130*mb {
+		t.Fatalf("below target = %d files / %d bytes, want 2 / %d", resp.FilesBelowTarget, resp.BytesBelowTarget, 130*mb)
+	}
+
+	resp = AggregateFromRecords(records, nil, Options{TargetFileBytes: 512 * mb})
+	if resp.FilesBelowTarget != 3 {
+		t.Fatalf("files_below_target=%d with a 512 MiB table target, want 3", resp.FilesBelowTarget)
 	}
 }
 

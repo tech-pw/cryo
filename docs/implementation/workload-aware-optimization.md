@@ -24,6 +24,12 @@ Cross-links: [`../research-and-roadmap.md`](../research-and-roadmap.md) Part 2,
 
 ## 0. Ground truth — shipped vs gap
 
+> **Status 2026-09-24:** superseded in part by
+> [`../PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md`](../PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md),
+> which reads each paper against the code on the running batch path. AutoComp now ranks the
+> batch pipeline (`cryo/maintenance/selection.py`), WAIR is implemented recommend-only (§C1), and
+> PTO's scorer is still a heuristic. The table below describes the older governor path.
+
 Cryo already has substantial scaffolding. **Do not rebuild** what exists; close the gaps below.
 
 | Area | Already shipped | Real gap |
@@ -513,14 +519,31 @@ bounded set of current-snapshot file paths with decoded column bounds, independe
 completion order. Telemetry extracts only concrete two-sided SQL ranges and persists the top 100
 frequency-ranked ranges per table. Planner/engine execution remains open.
 
-**Collection off since 2026-09-24.** `CRYO_SCANNER_WAIR_FILE_SAMPLE_SIZE` now defaults to `0`.
-The file bounds are real column values; prod rows held student IDs, question text and emails.
-At 1000 files per table they were most of `table_stats.raw`, and every scan copied them into
-`table_stats_history`, where they made up most of its 48 GB. Only one table had
-`wair_query_ranges`, so the report abstained for every other table anyway. The stored samples
-were purged from both tables, and history rows no longer carry `wair_*` keys. To run WAIR on a
-table again, re-enable the sample deliberately (it stores table data in Cryo's database), and
-prefer limiting it to the columns in that table's `wair_query_ranges`.
+**Collection turned off, then rebuilt scoped (2026-09-24).** The original samples held every
+column's bounds, including student IDs, question text and emails, and every scan copied them
+into `table_stats_history` (most of its 48 GB). They were purged, and history rows no longer
+carry `wair_*` keys. The rebuilt pipeline is what the paper actually needs:
+
+- **Query ranges** come from the Trino query log in both telemetry modes. Prod's `cdp` source is
+  `iceberg_table` mode, which never extracted ranges before, which is why only one table had any.
+  Each range keeps per-day query counts plus the queries' own `cpu_time_millis` and
+  `physical_input_bytes` over a 7-day window (`cryo/optimizer/wair/ranges.py`). One-sided ranges
+  are kept, and only numeric/temporal literals are stored.
+- **File bounds** are sampled only for the (at most 3) range-queried columns whose type is
+  numeric or temporal, taken from the table's last scan (`wair_sample_columns`), in both the Python
+  and Go scanners. `CRYO_SCANNER_WAIR_FILE_SAMPLE_SIZE` defaults to 1000 again.
+- **Cost model** (`boundary.py`, `select.py`): Eq. 3 savings per boundary file, Algorithm 2's
+  prefix cut against the recluster cost at the measured Spark rewrite rate, Eq. 4 aggressiveness.
+- **Action** (recommend-only): `render_wair_recluster` in `engines/spark/sql.py` emits
+  `rewrite_data_files(strategy => 'sort', sort_order => …, where => 'key = b1 OR …')`, where
+  `where` selects exactly the files straddling the chosen endpoints. `sort_order` is a procedure
+  argument, so the table's own write order is untouched. The UI surfaces it on Table detail,
+  Health & Quality tab.
+
+Not implemented, and labelled as such in the report's `model_notes`: measured utilization
+(Cryo assumes uniform values within a file's min/max), the hybrid DBSCAN layout (single global
+key, the paper's own baseline), the adaptive window, and debt accounting against realized
+savings (the cost limit caps each recommendation instead).
 
 The differential oracle renders PTO intent through both Trino and Spark and records SHA-256
 fingerprints without returning executable SQL. It fails closed when either renderer ignores a

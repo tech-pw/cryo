@@ -433,6 +433,7 @@ def persist_table_analysis(
                     # profiler (cryo/quality/profiler.py) needs per-column history for baseline
                     # comparison and schema-drift detection, not just the table-level rollup.
                     "column_quality": (analysis.raw or {}).get("column_quality"),
+                    "commit_signals": (analysis.raw or {}).get("commit_signals"),
                     # No wair_* keys: WAIR reads only the current table_stats row, and a
                     # per-scan copy of up to 1000 files' raw column bounds was most of this
                     # table's 48 GB.
