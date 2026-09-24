@@ -61,7 +61,7 @@ _SIZE_TIERS: tuple[tuple[float, int, int], ...] = (
 _LARGEST_TIER = (4000, 16384)
 
 
-def _lane_size(largest_gb: float, limits: LaneLimits) -> tuple[int, int]:
+def lane_size(largest_gb: float, limits: LaneLimits) -> tuple[int, int]:
     cpu, mem = _LARGEST_TIER
     for upper, tier_cpu, tier_mem in _SIZE_TIERS:
         if largest_gb < upper:
@@ -91,5 +91,5 @@ def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) ->
         lanes[target].tables.append(table)
         loads[target] += table.rewrite_gb + limits.per_table_overhead_gb
     for lane in lanes:
-        lane.cpu_milli, lane.mem_mib = _lane_size(lane.largest_table_gb, limits)
+        lane.cpu_milli, lane.mem_mib = lane_size(lane.largest_table_gb, limits)
     return lanes

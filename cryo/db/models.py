@@ -1641,6 +1641,65 @@ class ReportSendState(TimestampMixin, Base):
     last_sent_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
 
+class QualityConstraint(TimestampMixin, Base):
+    """A user-declared expectation over a table's stored scan metrics (cryo.quality.constraints).
+
+    ``field_id`` pins column constraints to the Iceberg field, so a rename keeps the rule and a
+    dropped column turns it unknown instead of silently matching a new column of the same name.
+    """
+
+    __tablename__ = "quality_constraints"
+    __table_args__ = (UniqueConstraint("table_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    field_id: Mapped[int | None] = mapped_column(Integer)
+    column_name: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+    # 'warn' results stay on the table page; 'error' failures also raise a table alert.
+    severity: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'error'"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_by: Mapped[str | None] = mapped_column(Text)
+
+
+class QualityConstraintResult(Base):
+    """One evaluation of a constraint against one scan; Deequ's metrics repository."""
+
+    __tablename__ = "quality_constraint_results"
+    __table_args__ = (Index(None, "constraint_id", "evaluated_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    constraint_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.quality_constraints.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    scanned_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    observed: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+    reason: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+
+
 class ObservationArchiveMeta(TimestampMixin, Base):
     """Singleton-ish row tracking the local observation lakehouse (SANER 2026, arXiv:2512.02795).
     Records when the archive was last compacted so /observability/stats + the cron compactor can
@@ -2484,6 +2543,8 @@ __all__ = [
     "PresetRule",
     "ProtectedSnapshot",
     "QPPObservation",
+    "QualityConstraint",
+    "QualityConstraintResult",
     "QueryLog",
     "QueryPattern",
     "RunFailureDiagnosis",

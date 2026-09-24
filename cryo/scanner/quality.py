@@ -57,6 +57,7 @@ class _ColumnAccum:
     value_count: int = 0
     min_value: Any = None
     max_value: Any = None
+    bounds_complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,9 @@ class ColumnQualityStats:
     column_type: str | None = None
     min_value: Any = None
     max_value: Any = None
+    # None for types whose bounds are never kept. False when a file holding non-null values
+    # had no bounds, so min/max cover only part of the data.
+    bounds_complete: bool | None = None
 
 
 class ColumnQualityAccumulator:
@@ -105,11 +109,21 @@ class ColumnQualityAccumulator:
             if not bound_safe_type(accum.column_type):
                 continue
             low = self._decode_bound(field_id, lower_bounds.get(field_id))
-            if low is not None and (accum.min_value is None or low < accum.min_value):
-                accum.min_value = low
             high = self._decode_bound(field_id, upper_bounds.get(field_id))
-            if high is not None and (accum.max_value is None or high > accum.max_value):
-                accum.max_value = high
+            if low is None or high is None:
+                has_values = field_id not in value_counts or (
+                    value_counts[field_id] - null_counts.get(field_id, 0) > 0
+                )
+                if has_values:
+                    accum.bounds_complete = False
+                continue
+            try:
+                if accum.min_value is None or low < accum.min_value:
+                    accum.min_value = low
+                if accum.max_value is None or high > accum.max_value:
+                    accum.max_value = high
+            except TypeError:
+                accum.bounds_complete = False
 
     def file_bound_sample(
         self, data_file: object, columns: Collection[str] | None = None
@@ -206,6 +220,9 @@ class ColumnQualityAccumulator:
                     column_type=accum.column_type,
                     min_value=_jsonable(accum.min_value),
                     max_value=_jsonable(accum.max_value),
+                    bounds_complete=(
+                        accum.bounds_complete if bound_safe_type(accum.column_type) else None
+                    ),
                 )
             )
         return results

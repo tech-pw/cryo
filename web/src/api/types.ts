@@ -14,6 +14,11 @@ export type CapabilityExecutionMode = components["schemas"]["ExecutionMode"];
 export type JsonObject = Record<string, unknown>;
 
 export type WairBoundaryReport = components["schemas"]["WairBoundaryReportResponse"];
+export type QualityConstraintsResponse = components["schemas"]["QualityConstraintsResponse"];
+export type QualityConstraintRead = components["schemas"]["QualityConstraintRead"];
+export type QualityConstraintCreate = components["schemas"]["QualityConstraintCreate"];
+export type QualityConstraintUpdate = components["schemas"]["QualityConstraintUpdate"];
+export type ConstraintResultRead = components["schemas"]["ConstraintResultRead"];
 export type CapabilityEvidence = components["schemas"]["CapabilityEvidence"];
 export type MaturityDefinition = components["schemas"]["MaturityDefinition"];
 export type OperationDefinition = components["schemas"]["OperationDefinition"];

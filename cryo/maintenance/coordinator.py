@@ -22,8 +22,9 @@ from cryo.config import Settings
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, TableStats
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.spark.k8s import SparkK8sConfig
+from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
 from cryo.maintenance.k8s_lanes import LaneRunner, LaneSpec, LaneState, PollUpdate, lane_names
-from cryo.maintenance.lanes import LaneLimits, LaneTable, plan_lanes
+from cryo.maintenance.lanes import LaneLimits, LaneTable, lane_size, plan_lanes
 from cryo.maintenance.manifest import (
     DEFAULT_PARAMS,
     TableData,
@@ -34,6 +35,7 @@ from cryo.maintenance.manifest import (
 from cryo.maintenance.results import StatementResult
 from cryo.maintenance.selection import (
     AutoCompParams,
+    Candidate,
     RankedCandidate,
     autocomp_trace,
     fit_budget,
@@ -51,6 +53,7 @@ _ENGINE = EngineType.SPARK_EMR.value
 # near the end has room to finish instead of being killed mid-commit.
 _START_CUTOFF = timedelta(minutes=20)
 _OWNER_TTL_SECONDS = 300
+_MAX_DURATION_SAMPLES = 2000
 
 
 class LaneRunnerLike(Protocol):
@@ -123,6 +126,8 @@ class RunReport:
     over_budget: int = 0
     rewrite_seconds: float = 0.0
     autocomp: dict[str, Any] | None = None
+    # Per rewrite statement (gib, cores, seconds): the duration model's training data.
+    duration_samples: list[dict[str, float]] = field(default_factory=list)
 
     @property
     def observed_rewrite_gb_per_hour(self) -> float | None:
@@ -166,6 +171,7 @@ class RunReport:
                 None if (rate := self.observed_rewrite_gb_per_hour) is None else round(rate, 3)
             ),
             "autocomp": self.autocomp,
+            "duration_samples": self.duration_samples[:_MAX_DURATION_SAMPLES],
         }
 
 
@@ -183,6 +189,30 @@ def _lane_budget_gbhr(settings: Settings) -> float:
     usable_hours = max((runtime - _START_CUTOFF).total_seconds(), 0.0) / 3600
     lane_gb = settings.maintenance_lane_max_mem_mib / 1024
     return settings.maintenance_max_lanes * lane_gb * usable_hours
+
+
+def load_duration_samples(session: Session, *, runs: int = 30) -> list[DurationSample]:
+    """Rewrite statements from recent batch runs, oldest first."""
+    summaries = session.scalars(
+        select(MaintenanceRun.summary)
+        .where(MaintenanceRun.finished_at.is_not(None))
+        .order_by(MaintenanceRun.finished_at.desc())
+        .limit(runs * 4)
+    ).all()
+    session.commit()
+    batches = [s for s in summaries if isinstance(s, Mapping) and s.get("pipeline") == "batch"][
+        :runs
+    ]
+    samples: list[DurationSample] = []
+    for summary in reversed(batches):
+        for entry in summary.get("duration_samples") or []:
+            if isinstance(entry, Mapping) and (sample := DurationSample.from_summary(entry)):
+                samples.append(sample)
+    return samples
+
+
+def duration_calibration(session: Session) -> Calibration | None:
+    return calibrate(load_duration_samples(session))
 
 
 def calibrated_rewrite_gb_per_hour(session: Session, *, runs: int = 5) -> float | None:
@@ -568,6 +598,12 @@ class BatchMaintenance:
                 table_ids=table_ids,
             )
             rewrite_rate = calibrated_rewrite_gb_per_hour(session)
+            calibration = duration_calibration(session)
+        use_ernest = (
+            s.maintenance_duration_model == "ernest"
+            and calibration is not None
+            and calibration.preferred
+        )
         params = AutoCompParams(
             w_file_reduction=s.maintenance_autocomp_w_file_reduction,
             w_compute_cost=1.0 - s.maintenance_autocomp_w_file_reduction,
@@ -575,6 +611,11 @@ class BatchMaintenance:
             executor_memory_gb=s.maintenance_lane_max_mem_mib / 1024,
             rewrite_gb_per_hour=rewrite_rate or s.maintenance_autocomp_rewrite_gb_per_hour,
             max_table_gbhr=None if table_ids else _lane_budget_gbhr(s) / s.maintenance_max_lanes,
+            duration_hours=(
+                _ernest_hours(calibration, self._lane_limits())
+                if use_ernest and calibration is not None
+                else None
+            ),
         )
         self._autocomp_params = params
         top_n = limit or (len(candidates) if table_ids else s.maintenance_top_n)
@@ -590,6 +631,11 @@ class BatchMaintenance:
             candidates, chosen, limit=top_n, params=params, budget_gbhr=budget
         )
         report.autocomp["rewrite_rate_source"] = "observed" if rewrite_rate else "setting"
+        report.autocomp["duration_model"] = {
+            "configured": s.maintenance_duration_model,
+            "used": "ernest" if use_ernest else "rate",
+            "calibration": calibration.as_dict() if calibration is not None else None,
+        }
         return chosen
 
     def _table_params(self, params: Mapping[str, Any], item: RankedCandidate) -> dict[str, Any]:
@@ -835,6 +881,7 @@ class BatchMaintenance:
             session.commit()
 
     def _tally(self, report: RunReport, outcomes: Mapping[uuid.UUID, TableOutcome]) -> None:
+        lane_cores = {lane["lane"]: lane["cpu_milli"] / 1000 for lane in report.lanes}
         for outcome in outcomes.values():
             if outcome.status is JobStatus.SUCCEEDED:
                 report.succeeded += 1
@@ -856,8 +903,18 @@ class BatchMaintenance:
                 }:
                     report.files_rewritten += _metric_int(m, "rewritten_data_files_count")
                     report.files_added += _metric_int(m, "added_data_files_count")
-                    report.bytes_rewritten += _metric_int(m, "rewritten_bytes_count")
+                    rewritten = _metric_int(m, "rewritten_bytes_count")
+                    report.bytes_rewritten += rewritten
                     report.rewrite_seconds += (result.duration_ms or 0) / 1000
+                    cores = lane_cores.get(outcome.lane)
+                    if rewritten > 0 and result.duration_ms and cores:
+                        report.duration_samples.append(
+                            {
+                                "gib": round(rewritten / 2**30, 6),
+                                "cores": cores,
+                                "seconds": round(result.duration_ms / 1000, 3),
+                            }
+                        )
                 elif result.action == OperationType.REMOVE_ORPHAN_FILES.value:
                     report.orphan_files_removed += int(result.rows or 0)
                 elif result.action == OperationType.EXPIRE_SNAPSHOTS.value:
@@ -932,6 +989,17 @@ class BatchMaintenance:
             self._notify(report)
         except Exception:
             logger.exception("Slack report for run %s failed", report.run_id)
+
+
+def _ernest_hours(calibration: Calibration, limits: LaneLimits) -> Callable[[Candidate], float]:
+    model = calibration.model
+
+    def hours(candidate: Candidate) -> float:
+        # Cores of the table's own size tier; sharing a lane with a bigger table can give it more.
+        cpu_milli, _ = lane_size(candidate.rewrite_gb, limits)
+        return max(model.predict_seconds(candidate.rewrite_data_gb, cpu_milli / 1000), 0.0) / 3600
+
+    return hours
 
 
 def _run_kind(trigger: str) -> str:

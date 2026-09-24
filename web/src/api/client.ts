@@ -130,7 +130,11 @@ import type {
   DarkTableDismissRequest,
   DarkTableDismissResponse,
   ScanCostAttributionResponse,
-  WairBoundaryReport
+  WairBoundaryReport,
+  QualityConstraintCreate,
+  QualityConstraintRead,
+  QualityConstraintsResponse,
+  QualityConstraintUpdate
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -1740,6 +1744,29 @@ export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressive
     api,
     { method: "POST" }
   );
+
+export const listQualityConstraints = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<QualityConstraintsResponse>(`/tables/${tableId}/quality-constraints`, api);
+
+export const createQualityConstraint = (api: ApiOptions, tableId: UUID, body: QualityConstraintCreate) =>
+  apiFetch<QualityConstraintRead>(`/tables/${tableId}/quality-constraints`, api, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+
+export const updateQualityConstraint = (api: ApiOptions, constraintId: UUID, body: QualityConstraintUpdate) =>
+  apiFetch<QualityConstraintRead>(`/quality-constraints/${constraintId}`, api, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+
+export const deleteQualityConstraint = (api: ApiOptions, constraintId: UUID) =>
+  apiFetch<void>(`/quality-constraints/${constraintId}`, api, { method: "DELETE" });
+
+export const evaluateQualityConstraints = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<QualityConstraintsResponse>(`/tables/${tableId}/quality-constraints/evaluate`, api, {
+    method: "POST"
+  });
 
 export const applyTableProperties = (
   api: ApiOptions,

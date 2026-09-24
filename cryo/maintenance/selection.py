@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -52,6 +52,8 @@ class AutoCompParams:
     # needing more are capped (the planner then rewrites their worst partitions first) instead
     # of being discarded as over budget every night.
     max_table_gbhr: float | None = None
+    # Replaces rewrite_data_gb / rewrite_gb_per_hour as the hours estimate (Ernest model).
+    duration_hours: Callable[[Candidate], float] | None = None
 
     @property
     def max_table_rewrite_gb(self) -> float | None:
@@ -123,7 +125,12 @@ def is_eligible(candidate: Candidate, *, min_delete_file_pct: float) -> bool:
 
 
 def compute_cost_gbhr(candidate: Candidate, params: AutoCompParams) -> float:
-    gbhr = params.executor_memory_gb * candidate.rewrite_data_gb / params.rewrite_gb_per_hour
+    hours = (
+        params.duration_hours(candidate)
+        if params.duration_hours is not None
+        else candidate.rewrite_data_gb / params.rewrite_gb_per_hour
+    )
+    gbhr = params.executor_memory_gb * hours
     if params.max_table_gbhr is not None:
         return min(gbhr, params.max_table_gbhr)
     return gbhr
@@ -212,14 +219,7 @@ def autocomp_trace(
     min_delete_file_pct: float = 1.0,
 ) -> dict[str, Any]:
     """What the paper-only ranking (heat_weight = 0) would have picked next to what ran."""
-    paper_params = AutoCompParams(
-        w_file_reduction=params.w_file_reduction,
-        w_compute_cost=params.w_compute_cost,
-        heat_weight=0.0,
-        executor_memory_gb=params.executor_memory_gb,
-        rewrite_gb_per_hour=params.rewrite_gb_per_hour,
-        max_table_gbhr=params.max_table_gbhr,
-    )
+    paper_params = replace(params, heat_weight=0.0)
     paper, _ = fit_budget(
         rank_candidates(
             candidates, limit=limit, params=paper_params, min_delete_file_pct=min_delete_file_pct

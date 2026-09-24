@@ -18,7 +18,11 @@ Cryo's.
 |---|---|---|
 | AutoComp — Gruenheid, Camacho-Rodríguez et al. (LinkedIn) | SIGMOD 2025 Companion, DOI 10.1145/3722212.3724430, arXiv:2504.04186 | **Implemented** on the batch path: paper traits, pool normalization, 0.7/0.3, budgeted greedy top-k. Query heat is an opt-out extension. |
 | Okolnychyi et al. (Apple) | PVLDB 17, VLDB 2024 | **Faithful** minor/major delete policy; thresholds are Cryo's |
-| Zero-Scan DQ — Verma et al. (LinkedIn) | FORMATS '26, DOI 10.1145/3802514.3812601, arXiv:2605.30308 | **Implemented** except §5.4 declarative constraints: manifest stats, writer identity, arrival/freshness, row-count anomalies, MOR-corrected live rows |
+| Zero-Scan DQ — Verma et al. (LinkedIn) | FORMATS '26, DOI 10.1145/3802514.3812601, arXiv:2605.30308 | **Implemented**: manifest stats, writer identity, arrival/freshness, row-count anomalies, MOR-corrected live rows, §5.4 declarative constraints (via Deequ below) |
+| Deequ — Schelter et al. (Amazon) | PVLDB 11(12), VLDB 2018 | **Implemented, metadata subset**: declarative constraints, metrics repository, rate-of-change check; three-valued verdicts |
+| Ernest — Venkataraman et al. | NSDI 2016 | **Implemented, opt-in**: the paper's four-term model fit by NNLS on measured rewrites; used for AutoComp's cost only when it beats the rate model on held-out runs |
+| Pivoted Query Synthesis — Rigger & Su | OSDI 2020 | **Implemented as a test oracle** for maintenance rewrites, not for engines |
+| LST-Bench, CherryPick, Bao | SIGMOD 2024, NSDI 2017, SIGMOD 2021 | **Deferred**, reasons below |
 | WAIR — Liu, Zhou, Yan, Zhang (Tsinghua/CMU/Snowflake) | SIGMOD 2026 (PACMMOD 43), DOI 10.1145/3802127, arXiv:2602.23289 | **Implemented, recommend-only**: boundary files, Eq. 3 savings, Algorithm 2 cut, Eq. 4 α, scoped Spark sort rewrite |
 | PTO — Meduri, Kreismann, Barber, Reinwald (IBM) | SIGMOD 2026 (PACMMOD 4(1)), DOI 10.1145/3786681 | **Partial**: PTO's parameter space and workload pruning; heuristic scorer instead of sampling + gradient-boosted trees; shadow-only |
 
@@ -90,7 +94,110 @@ What Cryo does now:
   `tmp/purge_string_bounds.py` run once after deploy.
 - Signals feed the alert dispatcher and the Quality tab ("Data arrival", "Row count").
 
-Missing: §5.4 declarative zero-scan constraints (user-declared rules evaluated per commit).
+§5.4, declarative constraints, is covered by the Deequ implementation below. Rules are evaluated
+after every scan of the table rather than on every commit. Cryo sees a table when it scans it.
+
+## Deequ
+
+The paper: users declare constraints (size, completeness, containment, uniqueness, patterns and
+more). Deequ computes the metrics they need in batched scans, stores them in a metrics repository,
+and uses anomaly checks such as relative rate of change over that history.
+
+Cryo (`cryo/quality/constraints.py`, `constraint_store.py`, the Quality tab and
+`/api/v1/tables/{id}/quality-constraints`) keeps the declarative model and replaces the scan with
+Iceberg metadata. That limits the rule set to what metadata can decide:
+
+| Kind | Deequ counterpart | Decided from |
+|---|---|---|
+| `size` | hasSize | live rows (MOR-corrected) |
+| `completeness` | hasCompleteness / isComplete | manifest null and value counts |
+| `range` | isContainedIn / isNonNegative | table-level min/max aggregated across files |
+| `size_change` | RelativeRateOfChangeStrategy | the previous result for an earlier snapshot |
+| `freshness` | none (Zero-Scan DQ) | last data commit, excluding `replace` snapshots |
+
+Uniqueness, distinct counts, patterns and custom predicates need the data and are not offered.
+
+The difference from Deequ that matters is that metadata can be incomplete. Every verdict is
+therefore `passed`, `failed` or `unknown`, and missing evidence never counts as a pass:
+
+- Column rules require every data file to carry metrics for the column (value counts summing to
+  the table's record count). Otherwise the result is unknown. Columns are identified by Iceberg field
+  id, so a rename doesn't detach a rule.
+- Range rules require complete bounds. Both scanners now record `bounds_complete`, which is false
+  when any file holding values for the column lacks a bound. The Go scanner, the one prod runs,
+  did not emit table-level bounds before this change. Bounds are aggregated with typed comparisons
+  for numeric, date and timestamp types only.
+- Delete files: removing rows can only take nulls and values away. So a pass computed over all
+  rows still holds, while a failure is only asserted when the snapshot has no delete files.
+  Equality deletes make the live row count unknown.
+- Results are as of the scanned snapshot and record its id.
+
+The results table is the metrics repository: one row per rule per scanned snapshot (re-checking
+the same snapshot with the same outcome only refreshes its timestamp), newest 100 kept per rule.
+`size_change` compares against the newest result from a different snapshot. Failed rules with severity `error` feed the existing alert
+dispatcher. Evaluation runs inside the scan's persistence transaction, in a savepoint, so a
+broken rule cannot fail a scan.
+
+## Ernest
+
+The paper models a job's time on m machines at data scale s as
+t = θ0 + θ1·s/m + θ2·log m + θ3·m, with θ ≥ 0 fit by non-negative least squares. It picks
+training runs by optimal experiment design and predicts larger configurations from small ones.
+
+Cryo (`cryo/maintenance/ernest.py`):
+
+- Samples are real rewrite statements from past batch runs, recorded per statement in
+  `summary.duration_samples`: rewritten GiB, the lane's cores and seconds. They are collected
+  passively. No runs are spent on experiment design, which is the paper's other half.
+- Fit: exact NNLS by enumerating active sets (4 terms, 15 supports), in pure Python.
+- Validation: the newest 25% of samples (at least 5) are held out in time order. The model is
+  *preferred* only when its MAPE beats the incumbent single-rate model's by 5%, with at least 20
+  training samples.
+- Use: `CRYO_MAINTENANCE_DURATION_MODEL=ernest` (default `rate`) makes AutoComp's GBHr cost use
+  Ernest's prediction, but only while it is preferred. Every run's `summary.autocomp.duration_model`
+  records the calibration either way, and `GET /api/v1/maintenance/duration-model` shows it.
+
+Caveat: lanes run Spark local mode with 1, 2 or 4 cores, so "machines" means cores on one pod,
+and the paper's extrapolation to larger clusters isn't exercised. Leave it `rate` in prod until
+the endpoint reports `preferred` on real history.
+
+## Pivoted Query Synthesis
+
+The paper tests database engines. It picks a pivot row, builds a random predicate, evaluates it
+under three-valued logic and rectifies it (keep, NOT, or IS NULL) so it is TRUE for the pivot.
+Any engine that then omits the pivot has a bug.
+
+Cryo uses it to test maintenance, not engines (`cryo/testing/pqs.py`, `tests/test_pqs.py`). Probes
+run through PyIceberg's scan planning, so a rewrite that writes wrong bounds or loses rows makes
+pruning skip the pivot. Generated values are edge cases: extreme longs, 40-character strings past
+the 16-character bound truncation, 1970 and 9999 dates, NULLs, and a column added mid-history.
+Small fixtures also compare full results against a reference evaluation, catching extra rows,
+and a greedy shrinker reduces failing predicates.
+
+**Finding.** PyIceberg 0.11.1 does not treat NULL consistently under negation. `v <> 5` drops an
+explicit NULL but keeps a row from a file written before `v` existed. `NOT v IN (...)` keeps both.
+Compaction rewrites old files into new ones with explicit NULLs, so those filters return different
+rows before and after a rewrite of identical data. Trino and Spark apply SQL semantics and aren't
+affected. The harness renders negation onto the atoms PyIceberg evaluates consistently, and
+`test_probes_agree_after_a_rewrite_materializes_an_evolved_column` pins the rewrite case. Anything
+in Cryo that filters with PyIceberg expressions should avoid `NotEqualTo`, `NotIn` and `Not` over
+nullable, schema-evolved columns.
+
+Not yet done: the same probes against a native Go rewrite end to end
+(`tests/integration/native/`, needs `make up-datalake-native`).
+
+## Deferred papers
+
+- **LST-Bench** (SIGMOD 2024) benchmarks table formats over long-running workloads with
+  maintenance phases. Using it properly means TPC-DS-style data, engine replay and repeated
+  multi-hour runs on a real cluster, so it's a benchmark project, not a code change. PQS covers
+  correctness now. LST-Bench is the right tool for publishing performance-over-time numbers.
+- **CherryPick** (NSDI 2017) finds a cloud configuration by Bayesian optimization over real
+  trial runs. It needs a replayable workload to spend trials on, plus a duration model that has
+  proven itself. Ernest's calibration is the prerequisite; revisit when it reports `preferred`.
+- **Bao** (SIGMOD 2021) steers a query optimizer with hint sets learned from executed queries.
+  That changes Trino query planning, which is outside Cryo's maintenance scope. The adoption
+  doc marks it deferred.
 
 ## WAIR
 
@@ -138,4 +245,10 @@ rewrites per candidate and replayed queries, which is a research project with re
   metadata without scanning data, filtering out maintenance commits, as in Verma et al. (FORMATS '26)."
 - "Cryo recommends WAIR-style boundary reclustering (Liu et al., SIGMOD '26) with the paper's cost
   model, scoped to the files that straddle queried ranges."
+- "Declarative data-quality constraints in the style of Deequ (Schelter et al., VLDB '18),
+  decided from Iceberg metadata alone, with an explicit unknown when metadata can't decide."
+- "Maintenance rewrites are tested with Pivoted Query Synthesis (Rigger & Su, OSDI '20) probes."
+- "An Ernest-style (Venkataraman et al., NSDI '16) duration model, fit on Cryo's own rewrite
+  history and used only when it beats the baseline on held-out runs." Don't claim Ernest's
+  experiment design or cluster-size extrapolation.
 - Not yet: "implements PTO". Say "searches PTO's layout space with a heuristic scorer".

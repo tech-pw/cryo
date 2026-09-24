@@ -434,6 +434,7 @@ def analyze_table(
                 "null_rate": stat.null_rate,
                 "lower_bound": stat.min_value,
                 "upper_bound": stat.max_value,
+                "bounds_complete": stat.bounds_complete,
             }
             for stat in column_quality
         ],

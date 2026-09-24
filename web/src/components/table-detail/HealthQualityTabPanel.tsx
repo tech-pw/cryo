@@ -5,6 +5,7 @@ import { TableChecklistPanel } from "../ChecklistMatrix";
 import { TableCompactionAnalytics } from "../TableCompactionAnalytics";
 import { ChartCard } from "./ChartCard";
 import { PropertyRecommendations } from "./PropertyRecommendations";
+import { QualityConstraints } from "./QualityConstraints";
 import { QualityTab } from "./QualityTab";
 import { SectionNav } from "./SectionNav";
 import { WairRecluster } from "./WairRecluster";
@@ -34,6 +35,7 @@ export const HealthQualityTabPanel = () => {
       </div>
       <div id="hq-quality" style={{ marginTop: 16 }}>
         <QualityTab />
+        <QualityConstraints />
       </div>
       <div id="hq-properties" style={{ marginTop: 16 }}>
         <PropertyRecommendations />

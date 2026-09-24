@@ -75,6 +75,9 @@ type ScanStatsColumnQuality struct {
 	NullRate   float64 `json:"null_rate"`
 	LowerBound any     `json:"lower_bound,omitempty"`
 	UpperBound any     `json:"upper_bound,omitempty"`
+	// Set for bound-safe (numeric/temporal) columns: false when some file holding non-null
+	// values carried no bounds, so lower/upper cover only part of the data.
+	BoundsComplete *bool `json:"bounds_complete,omitempty"`
 }
 
 type ScanStatsFileBoundSample struct {
