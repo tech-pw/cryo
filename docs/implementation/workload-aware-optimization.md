@@ -513,6 +513,15 @@ bounded set of current-snapshot file paths with decoded column bounds, independe
 completion order. Telemetry extracts only concrete two-sided SQL ranges and persists the top 100
 frequency-ranked ranges per table. Planner/engine execution remains open.
 
+**Collection off since 2026-09-24.** `CRYO_SCANNER_WAIR_FILE_SAMPLE_SIZE` now defaults to `0`.
+The file bounds are real column values; prod rows held student IDs, question text and emails.
+At 1000 files per table they were most of `table_stats.raw`, and every scan copied them into
+`table_stats_history`, where they made up most of its 48 GB. Only one table had
+`wair_query_ranges`, so the report abstained for every other table anyway. The stored samples
+were purged from both tables, and history rows no longer carry `wair_*` keys. To run WAIR on a
+table again, re-enable the sample deliberately (it stores table data in Cryo's database), and
+prefer limiting it to the columns in that table's `wair_query_ranges`.
+
 The differential oracle renders PTO intent through both Trino and Spark and records SHA-256
 fingerprints without returning executable SQL. It fails closed when either renderer ignores a
 requested semantic. `partition-scope/v1` accepts only non-empty identity/day/month/year partition
