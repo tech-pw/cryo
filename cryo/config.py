@@ -159,6 +159,14 @@ class Settings(BaseSettings):
         gt=0,
         description="Rewrite GB one lane should carry before another pod is worth starting.",
     )
+    maintenance_max_lane_respawns: int = Field(
+        default=8,
+        ge=0,
+        description=(
+            "Replacement pods one run may start for lanes that died mid-run (OOM, node loss). "
+            "The table a lane died on is recorded as failed; the replacement takes the rest."
+        ),
+    )
     maintenance_max_runtime_minutes: int = Field(
         default=360,
         ge=15,
