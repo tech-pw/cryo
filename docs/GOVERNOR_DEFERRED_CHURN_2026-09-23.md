@@ -111,3 +111,20 @@ across a per-table loop over a 12k-table fleet, so Postgres sees `Client/ClientR
 session for minutes at a time. `idle_in_transaction_session_timeout` on the database is `1d`,
 which is no protection at all. Worth fixing at the source — committing between units of work —
 rather than only defending the migration path.
+
+**Follow-up, 2026-09-24.** Right after a deploy, `pg_stat_activity` showed four scheduler
+sessions holding transactions for 4–5 minutes, each still pinning a `backend_xmin` while idle
+(under read-committed isolation), so autovacuum couldn't clean anything newer:
+
+- **S3 request-cost ingest** read tables and partitions, then listed and aggregated S3 access
+  logs (minutes of network I/O) inside the same transaction. It now does the database reads
+  first and commits before touching S3.
+- **Benefit-score staleness scan** read `table_stats.raw` in 50-row batches across the whole
+  fleet in one transaction. It now commits after each batch. (The per-table loop after it
+  already committed per table.)
+- **Anomaly detector** loaded full `table_stats_history` rows, `raw` included, 30 per table,
+  for every table. It now selects four columns plus `raw->'p95_query_latency_ms'`, the only
+  key it reads; that blob load was most of its measured 540 s.
+
+The digest's Fleet numbers were also counting every stats row, including 1,164 active tables
+on the disabled `cdp_dev` source; they're now limited to active tables on enabled sources.
