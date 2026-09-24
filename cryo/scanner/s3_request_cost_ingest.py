@@ -593,6 +593,26 @@ def ingest_bucket(
     if s3_client is None:
         return IngestResult(0, 0, 0, error="No AWS credentials configured for this bucket")
 
+    table_locations = session.execute(
+        select(Table.id, Table.location).where(
+            Table.source_id == config.source_id, Table.location.is_not(None)
+        )
+    ).all()
+    table_prefixes: list[tuple[str, str]] = []
+    table_data_prefixes: dict[str, str] = {}
+    for table_id, location in table_locations:
+        row_bucket, prefix = parse_s3_location(location)
+        if row_bucket == config.bucket:
+            table_prefixes.append((str(table_id), prefix))
+            table_data_prefixes[str(table_id)] = prefix
+
+    table_partition_context = _load_table_partition_context(
+        session, [uuid.UUID(tid) for tid in table_data_prefixes], table_data_prefixes
+    )
+    # The S3 listing and log aggregation below take minutes and touch no table; an open read
+    # transaction across them sat "idle in transaction" holding back vacuum the whole time.
+    session.commit()
+
     located: dict[date, str] = {}
     for candidate_date in candidate_dates:
         location = locate_date_partition(
@@ -616,23 +636,6 @@ def ingest_bucket(
                 "landed for the reconciliation window"
             ),
         )
-
-    table_locations = session.execute(
-        select(Table.id, Table.location).where(
-            Table.source_id == config.source_id, Table.location.is_not(None)
-        )
-    ).all()
-    table_prefixes: list[tuple[str, str]] = []
-    table_data_prefixes: dict[str, str] = {}
-    for table_id, location in table_locations:
-        row_bucket, prefix = parse_s3_location(location)
-        if row_bucket == config.bucket:
-            table_prefixes.append((str(table_id), prefix))
-            table_data_prefixes[str(table_id)] = prefix
-
-    table_partition_context = _load_table_partition_context(
-        session, [uuid.UUID(tid) for tid in table_data_prefixes], table_data_prefixes
-    )
 
     try:
         outcome = _aggregate_log_objects(

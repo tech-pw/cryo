@@ -907,6 +907,9 @@ def _stalest_realized_value_table_ids(
         ).all()
         candidates.extend((_computed_at(row.raw), row.table_id) for row in rows)
         session.expunge_all()
+        # Read-only, but a fleet-wide pass is hundreds of batches; one transaction across all
+        # of them held a snapshot (and the vacuum horizon) for minutes.
+        session.commit()
         candidates.sort(key=lambda item: item[0])
         del candidates[limit:]
 

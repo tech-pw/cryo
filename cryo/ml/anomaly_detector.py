@@ -203,14 +203,22 @@ def detect_table_anomalies(
     # Get historical stats (capped rows per table to limit memory)
     since = datetime.now(UTC) - timedelta(days=lookback_days)
     max_history_rows = get_settings().anomaly_history_rows_per_table
+    # Columns, not the entity: raw is the whole scan blob (up to MBs per row) and only one key
+    # of it is used. Loading it for 30 rows x every table was most of the fleet sweep's 540s.
     stmt = (
-        select(TableStatsHistory)
+        select(
+            TableStatsHistory.scan_at,
+            TableStatsHistory.small_files_count,
+            TableStatsHistory.total_size_gb,
+            TableStatsHistory.overall_score,
+            TableStatsHistory.raw["p95_query_latency_ms"].label("p95_query_latency_ms"),
+        )
         .where(TableStatsHistory.table_id == table_uuid)
         .where(TableStatsHistory.scan_at >= since)
         .order_by(TableStatsHistory.scan_at.desc())
         .limit(max_history_rows)
     )
-    history = list(reversed(session.execute(stmt).scalars().all()))
+    history = list(reversed(session.execute(stmt).all()))
 
     if len(history) < 5:
         return []  # Not enough history for anomaly detection
@@ -325,45 +333,47 @@ def detect_table_anomalies(
             )
 
     # 4. Query latency spike (if we have query metrics in raw stats)
-    if current.raw and isinstance(current.raw, dict):
-        current_p95 = current.raw.get("p95_query_latency_ms")
-        if current_p95:
-            p95_history = []
-            for h in historical:
-                if h.raw and isinstance(h.raw, dict):
-                    p95 = h.raw.get("p95_query_latency_ms")
-                    if p95:
-                        p95_history.append(p95)
+    current_p95 = _number(current.p95_query_latency_ms)
+    if current_p95:
+        p95_history = [p for h in historical if (p := _number(h.p95_query_latency_ms))]
+        if p95_history:
+            is_anomaly, expected, deviation = detect_anomaly_robust(
+                current_p95,
+                p95_history,
+                2.5,
+            )
 
-            if p95_history:
-                is_anomaly, expected, deviation = detect_anomaly_robust(
-                    current_p95,
-                    p95_history,
-                    2.5,
+            if is_anomaly and current_p95 > expected:
+                severity = "high" if deviation > 4.0 else "medium"
+                description = (
+                    f"Query latency spike: P95 {current_p95:.0f}ms "
+                    f"(expected: {expected:.0f}ms, {deviation:.1f}σ). "
+                    "Check for data skew."
+                )
+                anomalies.append(
+                    AnomalyAlert(
+                        table_id=str(table_uuid),
+                        table_name=table_name,
+                        metric_name="p95_query_latency_ms",
+                        current_value=current_p95,
+                        expected_value=expected,
+                        deviation_sigma=deviation,
+                        severity=severity,
+                        description=description,
+                        detected_at=current.scan_at,
+                    )
                 )
 
-                if is_anomaly and current_p95 > expected:
-                    severity = "high" if deviation > 4.0 else "medium"
-                    description = (
-                        f"Query latency spike: P95 {current_p95:.0f}ms "
-                        f"(expected: {expected:.0f}ms, {deviation:.1f}σ). "
-                        "Check for data skew."
-                    )
-                    anomalies.append(
-                        AnomalyAlert(
-                            table_id=str(table_uuid),
-                            table_name=table_name,
-                            metric_name="p95_query_latency_ms",
-                            current_value=current_p95,
-                            expected_value=expected,
-                            deviation_sigma=deviation,
-                            severity=severity,
-                            description=description,
-                            detected_at=current.scan_at,
-                        )
-                    )
-
     return anomalies
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def detect_all_anomalies(

@@ -97,6 +97,29 @@ def test_detect_table_anomalies_finds_small_files_spike(session):
     assert anomalies[0].severity in ("low", "medium", "high")
 
 
+def test_latency_spike_is_read_from_raw_without_loading_the_rest_of_it(session):
+    table = _seed_table(session, schema_name="test", table_name="latency_table")
+    start = datetime.now(UTC) - timedelta(days=8)
+    for offset, p95 in enumerate([400, 410, 395, 405, 402, 398, 401, 4000]):
+        session.add(
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=start + timedelta(days=offset),
+                small_files_count=100,
+                total_size_gb=10.0,
+                overall_score=80,
+                raw={"p95_query_latency_ms": p95, "column_quality": [{"x": "y" * 1000}]},
+            )
+        )
+    session.commit()
+
+    anomalies = detect_table_anomalies(session, table.id, lookback_days=30)
+
+    latency = [a for a in anomalies if a.metric_name == "p95_query_latency_ms"]
+    assert len(latency) == 1
+    assert latency[0].current_value == 4000
+
+
 def test_detect_all_anomalies_processes_tables_in_batches(session):
     """detect_all_anomalies should scan recent tables and respect batch sizing."""
     tables = [
