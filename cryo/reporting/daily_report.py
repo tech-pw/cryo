@@ -26,7 +26,8 @@ from cryo.reporting.cost_signals import (
     compute_cost_signal,
     correlate_with_maintenance,
 )
-from cryo.reporting.impact_signals import ImpactSignal, day_bounds, compute_impact_signal
+from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal, day_bounds
+from cryo.reporting.scan_health import ScanHealth, collect_scan_health
 from cryo.reporting.slack import (
     SlackBlock,
     SlackClient,
@@ -77,6 +78,7 @@ class DailyReportData:
     cost_signal: CostSignal | None = None
     cost_correlation: MaintenanceCorrelation | None = None
     impact_signal: ImpactSignal | None = None
+    scan_health: ScanHealth | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -555,6 +557,7 @@ def _collect_report_data(session: Session, *, include_diagnostics: bool = True) 
         cost_signal=cost_signal,
         cost_correlation=cost_correlation,
         impact_signal=impact_signal,
+        scan_health=collect_scan_health(session),
         action_items=action_items,
     )
 
@@ -727,6 +730,24 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             ],
         )
     )
+
+    if data.scan_health is not None:
+        health = data.scan_health
+        retry_str = " · ".join(
+            f"{count:,} {label}" for label, count in health.retry_tiers.items() if count
+        )
+        rows = [
+            ["Tables in catalog", f"{health.total:,}"],
+            ["Passed", f"{health.passed:,}"],
+            ["Corrupt (metadata missing in S3)", f"{health.corrupt:,}"],
+            ["Failed (permissions / other)", f"{health.failed:,}"],
+        ]
+        if health.never_scanned:
+            rows.append(["Not scanned yet", f"{health.never_scanned:,}"])
+        if retry_str:
+            rows.append(["Failing tables retried", retry_str])
+        blocks.append(divider_block())
+        blocks.append(table_block(["Scan Health", "Tables"], rows))
 
     blocks.append(divider_block())
     blocks.append(section_block("*Maintenance Operations (yesterday)*"))

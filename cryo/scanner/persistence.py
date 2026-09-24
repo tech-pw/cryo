@@ -122,8 +122,6 @@ def upsert_table(
             )
             if table is None:
                 raise
-    else:
-        table.is_active = True
     return table
 
 
@@ -154,6 +152,10 @@ def record_table_scan_outcome(
         session, source_id=source_id, schema_name=schema_name, table_name=table_name
     )
     if error is None:
+        # Reactivate only on success. Reactivating on every discovery undid the deactivation
+        # of ~1,200 dead catalog entries each 6-hourly scan (live 2026-09-24), so they flapped
+        # back into scheduling until the cleanup daemon deactivated them again.
+        table.is_active = True
         table.consecutive_scan_failures = 0
         table.last_scan_error = None
         table.last_scan_error_at = None
@@ -185,6 +187,45 @@ def already_scanned_today(
         )
         is not None
     )
+
+
+# Failure streak -> minimum wait before a scheduled scan retries the table, longest first. A
+# healthy table is scanned once a day, so the first two failures wait a day like any other
+# table. A table still failing after that is almost always genuinely broken (metadata gone
+# from S3, a bucket Cryo can't read), so it drops to weekly, then fortnightly, then monthly.
+# Any success resets the streak and puts the table back on the daily cadence.
+SCAN_RETRY_LADDER: tuple[tuple[int, timedelta], ...] = (
+    (5, timedelta(days=30)),
+    (4, timedelta(days=15)),
+    (3, timedelta(days=7)),
+    (1, timedelta(days=1)),
+)
+# Scans run every 6h and a table can be reached minutes to hours into a run, so an exact
+# interval would regularly slip a whole slot past the day it was due.
+_SCAN_RETRY_SLACK = timedelta(hours=3)
+
+
+def scan_retry_interval(consecutive_failures: int) -> timedelta | None:
+    for streak, interval in SCAN_RETRY_LADDER:
+        if consecutive_failures >= streak:
+            return interval
+    return None
+
+
+def scan_retry_due_at(table: Table) -> datetime | None:
+    """When a failing table is next due for a scheduled scan; None if it isn't failing."""
+    interval = scan_retry_interval(table.consecutive_scan_failures or 0)
+    last = table.last_scan_error_at
+    if interval is None or last is None:
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return last + interval - _SCAN_RETRY_SLACK
+
+
+def scan_retry_deferred(table: Table, *, now: datetime) -> bool:
+    due = scan_retry_due_at(table)
+    return due is not None and now < due
 
 
 def needs_weekly_reconcile(

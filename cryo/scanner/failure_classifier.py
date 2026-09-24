@@ -74,7 +74,7 @@ def classify_scan_failure(error: str | None) -> FailureCategory | None:
         return "permission_denied"
     if _is_manifest_missing(error):
         return "manifest_missing"
-    if _is_metadata_file_missing(error):
+    if _is_metadata_file_missing(error) or _is_schemeless_metadata_pointer(error):
         return "metadata_not_found"
     if "Path does not exist" in error or "No such file or directory" in error:
         return "metadata_not_found"
@@ -124,6 +124,16 @@ def _is_metadata_file_missing(error: str) -> bool:
     return ".metadata.json" in lowered and any(
         marker in lowered for marker in _MISSING_OBJECT_MARKERS
     )
+
+
+# The catalog's metadata_location has no bucket or scheme, so the Go engine opens it as a local
+# path. Real text, 2026-09-24, cdp youtube.silver_videos (location NULL; the owning team rebuilt
+# it as silver_videos_fixed at the real S3 path):
+#   failed to load table: open /youtube/videos/metadata/00009-7022....metadata.json:
+#   invalid argument
+def _is_schemeless_metadata_pointer(error: str) -> bool:
+    lowered = error.lower()
+    return "failed to load table: open /" in lowered and ".metadata.json" in lowered
 
 
 def scan_failure_is_permanent(error: str | None) -> bool:
