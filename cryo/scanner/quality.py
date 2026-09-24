@@ -19,8 +19,34 @@ assumed.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
+
+# Bounds are kept only for orderable non-text types. Iceberg writers store a column's min/max
+# string verbatim (truncated to 16 chars), so for email/phone/name columns the "bound" is a real
+# person's value; range-violation checks only need numeric and temporal bounds anyway.
+_BOUND_SAFE_TYPES = frozenset(
+    {
+        "boolean",
+        "int",
+        "long",
+        "float",
+        "double",
+        "date",
+        "time",
+        "timestamp",
+        "timestamptz",
+        "timestamp_ns",
+        "timestamptz_ns",
+    }
+)
+
+
+def bound_safe_type(type_label: str | None) -> bool:
+    if not type_label:
+        return False
+    return type_label in _BOUND_SAFE_TYPES or type_label.startswith("decimal(")
 
 
 @dataclass
@@ -76,6 +102,8 @@ class ColumnQualityAccumulator:
             accum.null_count += null_counts.get(field_id, 0)
             accum.value_count += value_counts.get(field_id, 0)
 
+            if not bound_safe_type(accum.column_type):
+                continue
             low = self._decode_bound(field_id, lower_bounds.get(field_id))
             if low is not None and (accum.min_value is None or low < accum.min_value):
                 accum.min_value = low
@@ -83,7 +111,9 @@ class ColumnQualityAccumulator:
             if high is not None and (accum.max_value is None or high > accum.max_value):
                 accum.max_value = high
 
-    def file_bound_sample(self, data_file: object) -> dict[str, Any] | None:
+    def file_bound_sample(
+        self, data_file: object, columns: Collection[str] | None = None
+    ) -> dict[str, Any] | None:
         path = getattr(data_file, "file_path", None)
         if callable(path):
             path = path()
@@ -97,7 +127,11 @@ class ColumnQualityAccumulator:
         lower: dict[str, Any] = {}
         upper: dict[str, Any] = {}
         for field_id in sorted(set(lower_bounds) | set(upper_bounds)):
+            if not bound_safe_type(self._resolve_type(field_id)):
+                continue
             name = self._resolve_name(field_id)
+            if columns is not None and name not in columns:
+                continue
             low = self._decode_bound(field_id, lower_bounds.get(field_id))
             high = self._decode_bound(field_id, upper_bounds.get(field_id))
             if low is not None:

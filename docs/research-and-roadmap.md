@@ -278,8 +278,8 @@ Full implementation spec (algorithms, modules, APIs, UI wireframes, tests):
 
 | Track | Paper | Cryo fit | Status |
 |-------|-------|----------|--------|
-| **PTO** | [SIGMOD 2026](https://doi.org/10.1145/3786681) — workload-driven joint choice of partition / file size / row group / sort|binpack|zorder via search-space reduction + sampling + GBT | Biggest **net-new** layout brain on top of existing `layout_analyzer` + Smart Maintenance approve/execute | 🔴 Specced (Part B); not built |
-| **WAIR** | [arXiv:2602.23289](https://arxiv.org/abs/2602.23289) — recluster only **boundary** micro-partitions under a cost model; decouple policy from key selection | Incremental sort rewrite budget; complements PTO keys | 🔴 Specced (Part C1) |
+| **PTO** | [SIGMOD 2026](https://doi.org/10.1145/3786681) — workload-driven joint choice of partition / file size / row group / sort|binpack|zorder via search-space reduction + sampling + GBT | Biggest **net-new** layout brain on top of existing `layout_analyzer` + Smart Maintenance approve/execute | 🟡 Shadow-only: PTO's search space with a heuristic scorer; sampling + GBT not built ([audit](./PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md#pto)) |
+| **WAIR** | [arXiv:2602.23289](https://arxiv.org/abs/2602.23289) — recluster only **boundary** micro-partitions under a cost model; decouple policy from key selection | Incremental sort rewrite budget; complements PTO keys | ✅ Recommend-only (2026-09-24): boundary files, Eq. 3 savings, Algorithm 2 cut, scoped Spark sort rewrite ([audit](./PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md#wair)) |
 | **Okolnychyi** | [VLDB’24](https://vldb.org/pvldb/vol17/p4159-okolnychyi.pdf) — minor vs major position-delete compaction | Extends `CONVERT_DELETES` with `rewrite_position_delete_files` policy | ✅ Shipped (Part C2); `iterations_since_major` counter not yet tracked |
 | **Qd-tree** | SIGMOD 2020 | Prior art only — no implementation track | Cite-only (Part C3) |
 

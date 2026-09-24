@@ -129,7 +129,8 @@ import type {
   DarkTableCandidatesResponse,
   DarkTableDismissRequest,
   DarkTableDismissResponse,
-  ScanCostAttributionResponse
+  ScanCostAttributionResponse,
+  WairBoundaryReport
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -1732,6 +1733,13 @@ export interface ApplyTablePropertiesResponse {
 
 export const getPropertyRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<PropertyRecommendationsResponse>(`/tables/${tableId}/property-recommendations`, api);
+
+export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
+  apiFetch<WairBoundaryReport>(
+    `/tables/${tableId}/wair/analyze?aggressiveness=${encodeURIComponent(aggressiveness)}`,
+    api,
+    { method: "POST" }
+  );
 
 export const applyTableProperties = (
   api: ApiOptions,

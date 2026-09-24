@@ -493,6 +493,64 @@ def test_slack_message_leads_with_status_and_reports_before_after(session_factor
     assert canary.startswith("Cryo maintenance (batch-canary)")
 
 
+def test_autocomp_budget_cuts_the_selection_and_the_trace_lands_in_the_run_summary(
+    session_factory,
+) -> None:
+    _seed(session_factory)
+    h = _harness(session_factory, settings=_settings(maintenance_autocomp_budget_gbhr=12.0))
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    assert report.over_budget >= 1 and report.selected + report.over_budget == 3
+    with session_factory() as session:
+        run = session.get(MaintenanceRun, report.run_id)
+    assert run is not None
+    trace = run.summary["autocomp"]
+    assert trace["budget_gbhr"] == 12.0 and trace["chosen_gbhr"] <= 12.0
+    assert trace["weights"] == {"w_file_reduction": 0.7, "w_compute_cost": 0.3, "heat_weight": 0.3}
+    assert trace["rewrite_rate_source"] == "setting" and trace["rewrite_gb_per_hour"] == 25.0
+    assert run.summary["over_budget"] == report.over_budget
+
+
+def test_rewrite_throughput_is_calibrated_from_recent_runs(session_factory) -> None:
+    _seed(session_factory)
+    with session_factory() as session:
+        for hours_ago, rate in ((30, 40.0), (54, 60.0), (78, 1000.0)):
+            session.add(
+                MaintenanceRun(
+                    id=uuid.uuid4(),
+                    kind="scheduled",
+                    trigger="batch-cron",
+                    status="succeeded",
+                    scheduled_at=NOW - timedelta(hours=hours_ago),
+                    finished_at=NOW - timedelta(hours=hours_ago - 2),
+                    summary={"pipeline": "batch", "observed_rewrite_gb_per_hour": rate},
+                )
+            )
+        session.commit()
+    h = _harness(session_factory)
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    assert report.autocomp is not None
+    assert report.autocomp["rewrite_rate_source"] == "observed"
+    assert report.autocomp["rewrite_gb_per_hour"] == 60.0
+
+
+def test_a_table_bigger_than_one_lane_is_capped_to_its_worst_chunks(session_factory) -> None:
+    _seed(session_factory, tables=1)
+    h = _harness(session_factory, settings=_settings(maintenance_max_runtime_minutes=30))
+    report = RunReport(run_id=None, trigger="batch-cron", dry_run=True, started_at=NOW)
+
+    (item,) = h.coordinator._select(table_ids=None, limit=None, now=NOW, report=report)
+
+    assert item.capped and report.autocomp is not None and report.autocomp["capped"] == 1
+    params = h.coordinator._autocomp_params
+    assert params is not None and params.max_table_rewrite_gb is not None
+    planned_params = h.coordinator._table_params({"chunk_size_gb": 1}, item)
+    assert planned_params["max_chunks"] == max(1, int(params.max_table_rewrite_gb // 1))
+
+
 def test_nothing_eligible_still_records_the_run_and_reports(session_factory) -> None:
     _seed(session_factory, tables=0)
     h = _harness(session_factory)

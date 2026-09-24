@@ -179,43 +179,47 @@ def aggregate_query_patterns(
 
 
 def _refresh_wair_query_ranges(session: Session, logs: Sequence[QueryLog]) -> None:
-    grouped: defaultdict[uuid.UUID, dict[tuple[str, str, str], dict[str, Any]]] = defaultdict(dict)
+    """Rebuild each table's WAIR range window from query_logs (a full recompute each call)."""
+    from cryo.optimizer.wair.ranges import is_range_literal, merge_range_window
+
+    grouped: defaultdict[uuid.UUID, dict[date, dict[tuple[str, Any, Any], dict[str, float]]]] = (
+        defaultdict(lambda: defaultdict(dict))
+    )
     for log in logs:
         raw = getattr(log, "raw", None)
-        if log.table_id is None or not isinstance(raw, dict):
+        if log.table_id is None or log.executed_at is None or not isinstance(raw, dict):
             continue
         ranges = raw.get("query_ranges")
         if not isinstance(ranges, list):
             continue
+        day_hits = grouped[log.table_id][log.executed_at.date()]
         for item in ranges:
             if not isinstance(item, dict):
                 continue
             column = item.get("column")
             lower = item.get("lower")
             upper = item.get("upper")
-            if not isinstance(column, str) or lower is None or upper is None:
+            if not isinstance(column, str) or (lower is None and upper is None):
                 continue
-            key = (column, repr(lower), repr(upper))
-            aggregate = grouped[log.table_id].setdefault(
-                key,
-                {"column": column, "lower": lower, "upper": upper, "frequency": 0},
+            if not (is_range_literal(lower) and is_range_literal(upper)):
+                continue
+            bucket = day_hits.setdefault(
+                (column, lower, upper), {"queries": 0, "cpu_ms": 0.0, "input_bytes": 0}
             )
-            aggregate["frequency"] += 1
+            bucket["queries"] += 1
+            # query_logs carry wall time, not CPU; it stands in for the paper's t_read(Q).
+            if log.duration_ms and log.bytes_read:
+                bucket["cpu_ms"] += float(log.duration_ms)
+                bucket["input_bytes"] += int(log.bytes_read)
 
-    for target_table_id, ranges_by_key in grouped.items():
+    for target_table_id, by_day in grouped.items():
         stats = session.get(TableStats, target_table_id)
         if stats is None:
             continue
-        ranked = sorted(
-            ranges_by_key.values(),
-            key=lambda item: (
-                -int(item["frequency"]),
-                str(item["column"]),
-                repr(item["lower"]),
-                repr(item["upper"]),
-            ),
-        )[:100]
-        stats.raw = {**dict(stats.raw or {}), "wair_query_ranges": ranked}
+        window: object = None
+        for day in sorted(by_day):
+            window = merge_range_window(window, by_day[day], day=day)
+        stats.raw = {**dict(stats.raw or {}), "wair_query_ranges": window}
     if grouped:
         session.commit()
 

@@ -22,6 +22,7 @@ import (
 const (
 	defaultSmallFileMB          = 89.6
 	defaultHealthSmallFileBytes = 8 * 1024 * 1024
+	defaultTargetFileBytes      = 256 * 1024 * 1024
 	defaultMaxPartitions        = 5000
 	defaultMaxFileSamples       = 1000
 	mb                          = 1024 * 1024
@@ -61,11 +62,20 @@ type Options struct {
 	HealthSmallFileBytes int64
 	MaxPartitions        int
 	MaxFileSamples       int
+	// SampleColumns are the only columns whose per-file bounds are sampled; none means no
+	// samples. Callers pass numeric/temporal query-range columns only.
+	SampleColumns []string
+	// TargetFileBytes is what a rewrite of this table produces. AutoComp's file-count
+	// reduction counts every data file below it, not just "small" ones.
+	TargetFileBytes int64
 }
 
 func (o Options) withDefaults() Options {
 	if o.SmallFileMB <= 0 {
 		o.SmallFileMB = defaultSmallFileMB
+	}
+	if o.TargetFileBytes <= 0 {
+		o.TargetFileBytes = defaultTargetFileBytes
 	}
 	if o.HealthSmallFileBytes <= 0 {
 		o.HealthSmallFileBytes = defaultHealthSmallFileBytes
@@ -99,6 +109,7 @@ func Run(ctx context.Context, req *protocol.ScanStatsRequest) protocol.ScanStats
 		HealthSmallFileBytes: req.HealthSmallFileBytes,
 		MaxPartitions:        req.MaxPartitions,
 		MaxFileSamples:       req.MaxFileSamples,
+		SampleColumns:        req.SampleColumns,
 	})
 }
 
@@ -107,6 +118,10 @@ func Run(ctx context.Context, req *protocol.ScanStatsRequest) protocol.ScanStats
 // during NullValueCounts → initializeMapData) are recovered into a failed response
 // so the subprocess exits cleanly instead of exit=2 with no JSON.
 func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protocol.ScanStatsResponse) {
+	props := tableProps(tbl)
+	if props.targetFileSizeBytes != nil && *props.targetFileSizeBytes > 0 {
+		opts.TargetFileBytes = *props.targetFileSizeBytes
+	}
 	opts = opts.withDefaults()
 	schemaName, tableName := splitIdent(tbl.Identifier())
 	defer func() {
@@ -156,7 +171,6 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 	}
 
 	meta := snapshotMeta(tbl)
-	props := tableProps(tbl)
 	formatVersion := detectFormatVersion(tbl)
 	resp = acc.finish(schemaName, tableName, &meta)
 	resp.OK = true
@@ -175,11 +189,48 @@ type snapshotInfo struct {
 	firstSnapshotAt   *string
 	lastSnapshotAt    *string
 	currentSnapshotID *int64
+	commits           []protocol.ScanStatsCommit
+}
+
+// maxCommitLog bounds the per-table commit log; streaming tables retain thousands of
+// snapshots and arrival statistics need only the recent ones.
+const maxCommitLog = 200
+
+func commitLog(snaps []table.Snapshot) []protocol.ScanStatsCommit {
+	out := make([]protocol.ScanStatsCommit, 0, len(snaps))
+	for _, s := range snaps {
+		c := protocol.ScanStatsCommit{CommittedAtMs: s.TimestampMs}
+		if s.Summary != nil {
+			c.Operation = string(s.Summary.Operation)
+			c.AddedRecords = summaryInt(s.Summary.Properties, "added-records")
+			c.DeletedRecords = summaryInt(s.Summary.Properties, "deleted-records")
+			c.TotalRecords = summaryInt(s.Summary.Properties, "total-records")
+			c.TotalPositionDeletes = summaryInt(s.Summary.Properties, "total-position-deletes")
+		}
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CommittedAtMs < out[j].CommittedAtMs })
+	if len(out) > maxCommitLog {
+		out = out[len(out)-maxCommitLog:]
+	}
+	return out
+}
+
+func summaryInt(props map[string]string, key string) *int64 {
+	raw, ok := props[key]
+	if !ok {
+		return nil
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
 }
 
 func snapshotMeta(tbl *table.Table) snapshotInfo {
 	snaps := tbl.Metadata().Snapshots()
-	info := snapshotInfo{totalSnapshots: len(snaps)}
+	info := snapshotInfo{totalSnapshots: len(snaps), commits: commitLog(snaps)}
 	var first, last int64
 	have := false
 	for _, s := range snaps {
@@ -410,6 +461,8 @@ type accumulator struct {
 	totalRecords        int64
 	totalSizeBytes      int64
 	healthSmallFiles    int64
+	filesBelowTarget    int64
+	bytesBelowTarget    int64
 	deleteFiles         int64
 	equalityDeleteFiles int64
 	positionDeleteFiles int64
@@ -422,6 +475,7 @@ type accumulator struct {
 	columns             map[int]*columnAccum
 	columnTypes         map[int]iceberg.Type
 	fileSamples         map[string]protocol.ScanStatsFileBoundSample
+	sampleColumns       []string
 }
 
 func newAccumulator(fields []protocol.ScanStatsPartitionField, opts Options) *accumulator {
@@ -487,6 +541,7 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	if rec.SizeBytes < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
 	}
+	a.countBelowTarget(rec.SizeBytes)
 	a.addColumnStats(rec.NullValueCounts, rec.ValueCounts)
 	values := map[string]any{}
 	for k, v := range rec.Partition {
@@ -503,6 +558,13 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	acc.sizeBytes += rec.SizeBytes
 	if float64(rec.SizeBytes) < a.opts.SmallFileMB*float64(mb) {
 		acc.small++
+	}
+}
+
+func (a *accumulator) countBelowTarget(size int64) {
+	if size < a.opts.TargetFileBytes {
+		a.filesBelowTarget++
+		a.bytesBelowTarget += size
 	}
 }
 
@@ -589,6 +651,7 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	if size < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
 	}
+	a.countBelowTarget(size)
 	// NullValueCounts/ValueCounts/Partition all call iceberg-go initializeMapData,
 	// which panics on nil date/timestamp partition values (v0.6.0). Recover per file
 	// so totals still land; column_quality / partition key may be degraded for that file.
@@ -617,11 +680,12 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 }
 
 func (a *accumulator) addFileSample(df iceberg.DataFile) {
-	if a.opts.MaxFileSamples <= 0 || df.FilePath() == "" {
+	if a.opts.MaxFileSamples <= 0 || len(a.opts.SampleColumns) == 0 || df.FilePath() == "" {
 		return
 	}
-	lower := decodeBounds(df.LowerBoundValues(), a.columnDefs, a.columnTypes)
-	upper := decodeBounds(df.UpperBoundValues(), a.columnDefs, a.columnTypes)
+	columns := a.boundSafeSampleColumns()
+	lower := keepColumns(decodeBounds(df.LowerBoundValues(), a.columnDefs, a.columnTypes), columns)
+	upper := keepColumns(decodeBounds(df.UpperBoundValues(), a.columnDefs, a.columnTypes), columns)
 	if len(lower) == 0 || len(upper) == 0 {
 		return
 	}
@@ -641,6 +705,45 @@ func (a *accumulator) addFileSample(df iceberg.DataFile) {
 		}
 	}
 	delete(a.fileSamples, largest)
+}
+
+// boundSafeSampleColumns drops requested columns that are not numeric/temporal: string
+// bounds are verbatim row values (emails, names), whatever the caller asked for.
+func (a *accumulator) boundSafeSampleColumns() []string {
+	if a.sampleColumns != nil {
+		return a.sampleColumns
+	}
+	safe := map[string]bool{}
+	for id, typ := range a.columnTypes {
+		name := strconv.Itoa(id)
+		if def, ok := a.columnDefs[id]; ok {
+			name = def.ColumnName
+		}
+		switch typ.(type) {
+		case iceberg.BooleanType, iceberg.Int32Type, iceberg.Int64Type, iceberg.Float32Type,
+			iceberg.Float64Type, iceberg.DecimalType, iceberg.DateType, iceberg.TimeType,
+			iceberg.TimestampType, iceberg.TimestampTzType, iceberg.TimestampNsType,
+			iceberg.TimestampTzNsType:
+			safe[name] = true
+		}
+	}
+	a.sampleColumns = []string{}
+	for _, name := range a.opts.SampleColumns {
+		if safe[name] {
+			a.sampleColumns = append(a.sampleColumns, name)
+		}
+	}
+	return a.sampleColumns
+}
+
+func keepColumns(bounds map[string]any, columns []string) map[string]any {
+	kept := make(map[string]any, len(columns))
+	for _, name := range columns {
+		if v, ok := bounds[name]; ok {
+			kept[name] = v
+		}
+	}
+	return kept
 }
 
 func decodeBounds(
@@ -836,6 +939,9 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 		TotalSizeBytes:       a.totalSizeBytes,
 		HealthSmallFiles:     a.healthSmallFiles,
 		SmallFilesCount:      smallFilesCount,
+		FilesBelowTarget:     a.filesBelowTarget,
+		BytesBelowTarget:     a.bytesBelowTarget,
+		ReductionTargetBytes: a.opts.TargetFileBytes,
 		DeleteFiles:          a.deleteFiles,
 		EqualityDeleteFiles:  a.equalityDeleteFiles,
 		PositionDeleteFiles:  a.positionDeleteFiles,
@@ -869,6 +975,7 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 		resp.FirstSnapshotAt = meta.firstSnapshotAt
 		resp.LastSnapshotAt = meta.lastSnapshotAt
 		resp.CurrentSnapshotID = meta.currentSnapshotID
+		resp.Commits = meta.commits
 	}
 	return resp
 }
@@ -972,6 +1079,12 @@ func jsonable(value any) any {
 		return v
 	case time.Time:
 		return v.UTC().Format(time.RFC3339Nano)
+	case iceberg.Date:
+		return v.ToTime().UTC().Format("2006-01-02")
+	case iceberg.Timestamp:
+		return v.ToTime().UTC().Format(time.RFC3339Nano)
+	case iceberg.TimestampNano:
+		return v.ToTime().UTC().Format(time.RFC3339Nano)
 	default:
 		return fmt.Sprint(v)
 	}

@@ -57,13 +57,20 @@ def test_refresh_wair_ranges_persists_frequency_ranked_evidence(session: Session
     )
     session.add_all([source, table, stats])
     session.commit()
+    day = datetime(2026, 9, 20, 10, tzinfo=UTC)
     logs = [
         SimpleNamespace(
             table_id=table.id,
+            executed_at=day,
+            duration_ms=500,
+            bytes_read=1000,
             raw={"query_ranges": [{"column": "amount", "lower": 10, "upper": 20}]},
         ),
         SimpleNamespace(
             table_id=table.id,
+            executed_at=day,
+            duration_ms=None,
+            bytes_read=None,
             raw={"query_ranges": [{"column": "amount", "lower": 10, "upper": 20}]},
         ),
     ]
@@ -73,5 +80,58 @@ def test_refresh_wair_ranges_persists_frequency_ranked_evidence(session: Session
     session.refresh(stats)
     assert stats.raw is not None
     assert stats.raw["wair_query_ranges"] == [
-        {"column": "amount", "lower": 10, "upper": 20, "frequency": 2}
+        {
+            "column": "amount",
+            "lower": 10,
+            "upper": 20,
+            "days": {"2026-09-20": {"queries": 2, "cpu_ms": 500.0, "input_bytes": 1000}},
+            "frequency": 2,
+            "cpu_ms": 500.0,
+            "input_bytes": 1000,
+        }
     ]
+
+
+def test_merge_range_window_drops_days_outside_the_window() -> None:
+    from datetime import date
+
+    from cryo.optimizer.wair.ranges import merge_range_window
+
+    first = merge_range_window(
+        None,
+        {("v", 1, 2): {"queries": 3, "cpu_ms": 30.0, "input_bytes": 300}},
+        day=date(2026, 9, 1),
+    )
+    later = merge_range_window(
+        first,
+        {("v", 5, None): {"queries": 1, "cpu_ms": 0.0, "input_bytes": 0}},
+        day=date(2026, 9, 8),
+    )
+
+    assert [(r["lower"], r["upper"], r["frequency"]) for r in later] == [(5, None, 1)]
+
+
+def test_wair_sample_columns_keeps_only_ranged_numeric_or_temporal_columns() -> None:
+    from cryo.optimizer.wair.ranges import wair_sample_columns
+
+    raw = {
+        "column_quality": [
+            {"column_name": "event_date", "column_type": "date"},
+            {"column_name": "email", "column_type": "string"},
+            {"column_name": "amount", "column_type": "long"},
+        ],
+        "wair_query_ranges": [
+            {"column": "email", "frequency": 50},
+            {"column": "amount", "frequency": 3},
+            {"column": "event_date", "frequency": 9},
+            {"column": "untyped", "frequency": 99},
+        ],
+    }
+
+    assert wair_sample_columns(raw) == ["event_date", "amount"]
+
+
+def test_open_ended_extraction_keeps_one_sided_ranges() -> None:
+    ranges = extract_query_ranges("SELECT * FROM t WHERE amount > 10", open_ended=True)
+
+    assert [(r.column, r.lower, r.upper) for r in ranges] == [("amount", 10, None)]

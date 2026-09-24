@@ -20,6 +20,7 @@ from cryo.scanner.analyze import (
     _needs_compaction,
     _priority,
 )
+from cryo.scanner.commit_signals import commit_signals, commits_from_payload
 from cryo.scanner.cost import (
     GB,
     MB,
@@ -43,6 +44,7 @@ def analyze_catalog_table_go(
     stats_history: Sequence[Mapping[str, Any]] | None = None,
     table_obj: object | None = None,
     table_obj_loader: Callable[[], object] | None = None,
+    wair_columns: Sequence[str] = (),
 ) -> TableAnalysis:
     """Run cryo-engine-go scan-stats and map the result into TableAnalysis.
 
@@ -62,6 +64,7 @@ def analyze_catalog_table_go(
         schema_name=schema_name,
         table_name=table_name,
         settings=settings,
+        wair_columns=wair_columns,
     )
     payload = run_scan_stats(request, settings=settings)
     return table_analysis_from_go_payload(
@@ -364,6 +367,7 @@ def table_analysis_from_go_payload(
         "current_snapshot_id": payload.get("current_snapshot_id"),
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
+        **_below_target_stats(payload),
         "location": location,
         "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
         "gc_enabled": payload.get("gc_enabled"),
@@ -376,6 +380,10 @@ def table_analysis_from_go_payload(
         "wair_file_sample_complete": total_files == 0
         or bool(payload.get("wair_file_sample_complete")),
     }
+    if "commits" in payload:
+        raw["commit_signals"] = commit_signals(
+            commits_from_payload(payload["commits"]), now=scan_at
+        )
     if payload.get("manifest_read_errors"):
         raw["manifest_read_errors"] = list(payload["manifest_read_errors"])
     if cost_analysis is not None:
@@ -464,19 +472,21 @@ def _build_scan_stats_request(
     schema_name: str,
     table_name: str,
     settings: Settings,
+    wair_columns: Sequence[str] = (),
 ) -> dict[str, Any]:
     catalog = source_catalog_config(source_config)
     table_ref = f"{schema_name}.{table_name}"
+    sampling = bool(settings.scanner_wair_file_sample_size and wair_columns)
     request: dict[str, Any] = {
         **catalog,
         "table_ref": table_ref,
         "small_file_mb": settings.scan_small_file_mb,
         "health_small_file_bytes": HEALTH_SMALL_FILE_BYTES,
         "max_partitions": settings.scanner_max_partitions_per_table,
-        "max_file_samples": settings.scanner_wair_file_sample_size
-        if settings.scanner_wair_file_sample_size
-        else -1,
+        "max_file_samples": settings.scanner_wair_file_sample_size if sampling else -1,
     }
+    if sampling:
+        request["sample_columns"] = list(wair_columns)
     return request
 
 
@@ -514,6 +524,18 @@ def run_aggregate_fixture(
             payload.get("error") or f"aggregate-fixture failed (exit={proc.returncode})"
         )
     return payload
+
+
+def _below_target_stats(payload: Mapping[str, Any]) -> dict[str, int]:
+    """Omitted when the engine binary predates the field, so readers can tell "not measured"
+    apart from "zero files below target"."""
+    if payload.get("files_below_target") is None:
+        return {}
+    return {
+        "files_below_target": int(payload["files_below_target"]),
+        "bytes_below_target": int(payload.get("bytes_below_target") or 0),
+        "reduction_target_bytes": int(payload.get("reduction_target_bytes") or 0),
+    }
 
 
 def _parse_snapshot_ts(value: Any) -> datetime | None:

@@ -38,6 +38,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scale-metric": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scale Metric
+         * @description Scanner-worker demand, in the same {"value": N} shape the CLI health server serves.
+         *
+         *     The scanner-worker Deployment scales to zero, so its KEDA trigger cannot poll the
+         *     scanner-worker Service -- at 0 replicas that Service has no endpoints and the metric
+         *     would be unreachable exactly when it needs to report "work arrived, scale up",
+         *     wedging the Deployment at zero forever. The API is always up and is where ad-hoc
+         *     scans are created in the first place (create_scan_trigger), so it can always answer.
+         *
+         *     Unauthenticated like /healthz and /readyz: KEDA sends no credentials, and the body
+         *     is a single integer queue depth.
+         */
+        get: operations["scale_metric_scale_metric_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboards/datalake": {
         parameters: {
             query?: never;
@@ -503,6 +532,31 @@ export interface paths {
          * @description Set table-level fields not owned by the scanner -- currently just the alert owner.
          */
         patch: operations["patch_table_api_v1_tables__table_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/tables/deactivate-batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate Tables Batch
+         * @description Deactivate an explicit, caller-supplied list of table_ids (is_active=False only --
+         *     never touches S3/underlying files, fully reversible via a direct DB update). Requires
+         *     admin: unlike the automated deactivate_orphaned_evolving_catalog_entries sweep (which
+         *     only matches a verified-safe location IS NULL shape), this trusts the caller's own
+         *     per-table verification, so it's scoped to explicit IDs with no filter/heuristic that
+         *     could silently expand scope. See deactivate_tables_by_id's docstring.
+         */
+        post: operations["deactivate_tables_batch_api_v1_tables_deactivate_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/tables/{table_id}/alert-subscriptions": {
@@ -2386,6 +2440,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/checklist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Checklist
+         * @description The 12-item Trino/S3/Iceberg optimization checklist for one table -- see
+         *     cryo/scanner/checklist.py's module docstring for the full item inventory, weights, and the
+         *     live incidents that grounded the three items (partition_match, cadence_match,
+         *     storage_class) not already covered by health.py's existing deduction score.
+         */
+        get: operations["get_table_checklist_api_v1_tables__table_id__checklist_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/checklist/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fleet Checklist
+         * @description Fleet-wide checklist rollup, scoped to an explicit table_id list (comma-separated) when
+         *     given -- e.g. the top-20-by-cost cohort -- since computing all 12 items for the whole fleet
+         *     on every request would be expensive (partition_match and storage_class each do real work
+         *     per table). Without table_ids, falls back to the `limit` most recently scanned active
+         *     tables so the endpoint is still useful standalone.
+         */
+        get: operations["get_fleet_checklist_api_v1_checklist_fleet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/signals": {
         parameters: {
             query?: never;
@@ -2576,6 +2677,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/vitals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cryo Vitals
+         * @description Cryo's own vitals: one 0-100 score + HEALTHY/DEGRADED/CRITICAL status answering "is
+         *     everything in Cryo working as expected right now" -- the operational-health counterpart to
+         *     /dashboard/fleet-trends' "how much good are we doing" north-star metric. Fleet-wide, not
+         *     tenant-scoped, same as the health_check.py checklist it's built on (see
+         *     cryo/reporting/vitals.py for the composition and scoring rationale).
+         */
+        get: operations["get_cryo_vitals_api_v1_vitals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance-coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Maintenance Coverage
+         * @description Per-operation maintenance coverage of a preset's pinned cohort.
+         *
+         *     Answers "did the tables we promised to maintain actually get each of the four
+         *     operations", which neither /vitals (is the machine healthy) nor
+         *     /dashboard/fleet-trends (how much good are we doing fleet-wide) can: a job-level success
+         *     rate cannot tell a table that got optimize but not expire_snapshots from one that got
+         *     nothing. Defaults to the Trino-hot preset -- see cryo/reporting/maintenance_coverage.py.
+         */
+        get: operations["get_maintenance_coverage_api_v1_maintenance_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sla-status": {
         parameters: {
             query?: never;
@@ -2603,10 +2754,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Cost Attribution
-         * @description Get cost attribution by team/department.
-         */
+        /** Get Cost Attribution */
         get: operations["get_cost_attribution_api_v1_cost_attribution_get"];
         put?: never;
         post?: never;
@@ -2691,6 +2839,29 @@ export interface paths {
          * @description Return Cryo's versioned catalog and engine capability contract.
          */
         get: operations["get_capabilities_api_v1_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/advanced/fast-path-findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fast Path Findings
+         * @description Current fast-path findings for newly discovered tables.
+         *
+         *     On-read compute (cheap: Postgres stats + stored properties, no catalog I/O).
+         *     Does not enqueue compaction and does not apply table properties.
+         */
+        get: operations["get_fast_path_findings_api_v1_advanced_fast_path_findings_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3921,6 +4092,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dark-tables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Dark Tables */
+        get: operations["list_dark_tables_api_v1_dark_tables_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dark-tables/{table_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss Dark Table */
+        post: operations["dismiss_dark_table_api_v1_dark_tables__table_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/anomalies/shared-s3": {
         parameters: {
             query?: never;
@@ -3966,6 +4171,23 @@ export interface paths {
         put?: never;
         /** Notify Shared S3 */
         post: operations["notify_shared_s3_api_v1_anomalies_shared_s3_notify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/partition-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Partition Access */
+        get: operations["get_partition_access_api_v1_tables__table_id__partition_access_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4827,6 +5049,25 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** ChecklistItemResponse */
+        ChecklistItemResponse: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Weight Pct */
+            weight_pct: number;
+            /** Tier */
+            tier: number;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason: string;
+            /** Metric Value */
+            metric_value?: number | null;
+            /** Threshold */
+            threshold?: number | null;
+        };
         /** ColumnQualityMetricRead */
         ColumnQualityMetricRead: {
             /** Column Name */
@@ -4999,6 +5240,17 @@ export interface components {
             /** Answer */
             answer?: string | null;
         };
+        /** CostAttributionByClient */
+        CostAttributionByClient: {
+            /** Client */
+            client: string;
+            /** Query Count */
+            query_count: number;
+            /** Physical Bytes Scanned */
+            physical_bytes_scanned: number;
+            /** Physical Gb Scanned */
+            physical_gb_scanned: number;
+        };
         /**
          * CostAttributionRead
          * @description Cost attribution by team/department.
@@ -5021,19 +5273,20 @@ export interface components {
             /** Month */
             month: string;
         };
-        /**
-         * CostAttributionResponse
-         * @description Response for cost attribution dashboard.
-         */
-        CostAttributionResponse: {
-            /** Attributions */
-            attributions: components["schemas"]["CostAttributionRead"][];
-            /** Total Cost Usd */
-            total_cost_usd: number;
-            /** Unattributed Cost Usd */
-            unattributed_cost_usd: number;
-            /** Month */
-            month: string;
+        /** CostAttributionRow */
+        CostAttributionRow: {
+            /** Client */
+            client: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Query Count */
+            query_count: number;
+            /** Failed Query Count */
+            failed_query_count: number;
+            /** Physical Bytes Scanned */
+            physical_bytes_scanned: number;
+            /** Physical Gb Scanned */
+            physical_gb_scanned: number;
         };
         /** CostByBucketItem */
         CostByBucketItem: {
@@ -5341,6 +5594,82 @@ export interface components {
              */
             slack_sent: boolean;
         };
+        /** DarkTableCandidateRead */
+        DarkTableCandidateRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Table Name */
+            table_name: string;
+            /** Consecutive Zero Query Windows */
+            consecutive_zero_query_windows: number;
+            /** First Zero Query At */
+            first_zero_query_at: string | null;
+            /**
+             * Last Checked At
+             * Format: date-time
+             */
+            last_checked_at: string;
+            /** Total Size Gb */
+            total_size_gb: number;
+            /** Estimated Monthly Cost Usd */
+            estimated_monthly_cost_usd: number | null;
+            /** Status */
+            status: string;
+        };
+        /** DarkTableCandidatesResponse */
+        DarkTableCandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["DarkTableCandidateRead"][];
+            /**
+             * Total Candidates
+             * @default 0
+             */
+            total_candidates: number;
+            /**
+             * Total Size Gb
+             * @default 0
+             */
+            total_size_gb: number;
+            /**
+             * Total Estimated Monthly Cost Usd
+             * @default 0
+             */
+            total_estimated_monthly_cost_usd: number;
+        };
+        /** DarkTableDismissRequest */
+        DarkTableDismissRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** DarkTableDismissResponse */
+        DarkTableDismissResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Status */
+            status: string;
+            /** Dismissed By */
+            dismissed_by: string;
+            /**
+             * Dismissed At
+             * Format: date-time
+             */
+            dismissed_at: string;
+            /** Dismissed Reason */
+            dismissed_reason: string;
+        };
         /** DashboardDriftPoint */
         DashboardDriftPoint: {
             /**
@@ -5418,6 +5747,10 @@ export interface components {
             new_columns: string[];
             /** Dropped Columns */
             dropped_columns: string[];
+            /** Commit Signals */
+            commit_signals?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** DatalakeDashboardResponse */
         DatalakeDashboardResponse: {
@@ -5892,7 +6225,7 @@ export interface components {
              * Provenance
              * @enum {string}
              */
-            provenance: "assignment" | "rule" | "default" | "none";
+            provenance: "assignment" | "rule" | "rule_after_stale_pin" | "default" | "none";
             /** Rule Id */
             rule_id?: string | null;
         };
@@ -5992,6 +6325,62 @@ export interface components {
             table_id: string;
             /** Explanation */
             explanation: string;
+        };
+        /** FastPathFindingRead */
+        FastPathFindingRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Table Name */
+            table_name: string;
+            /** Finding Type */
+            finding_type: string;
+            /** Reason */
+            reason: string;
+            /** Severity */
+            severity: string;
+            /** Metric Value */
+            metric_value?: number | null;
+            /**
+             * Detected At
+             * Format: date-time
+             */
+            detected_at: string;
+        };
+        /** FastPathFindingsResponse */
+        FastPathFindingsResponse: {
+            /** Findings */
+            findings: components["schemas"]["FastPathFindingRead"][];
+        };
+        /** FleetChecklistResponse */
+        FleetChecklistResponse: {
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Rows */
+            rows: components["schemas"]["FleetChecklistRow"][];
+        };
+        /** FleetChecklistRow */
+        FleetChecklistRow: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Table Name */
+            table_name: string;
+            /** Summary */
+            summary: {
+                [key: string]: unknown;
+            };
+            /** Red Items */
+            red_items: string[];
         };
         /**
          * FleetCostTrendPoint
@@ -6804,6 +7193,59 @@ export interface components {
              */
             has_more: boolean;
         };
+        /**
+         * PartitionAccessPoint
+         * @description One (day, partition) cell for the scatter chart -- docs/
+         *     PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md. ``partition_path`` is the raw Hive-style
+         *     fragment (e.g. "dt=2026-08-19/"), "" for an unpartitioned table's data files.
+         */
+        PartitionAccessPoint: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Partition Path */
+            partition_path: string;
+            /** Request Count */
+            request_count: number;
+        };
+        /** PartitionAccessResponse */
+        PartitionAccessResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /**
+             * Since
+             * Format: date
+             */
+            since: string;
+            /** Points */
+            points: components["schemas"]["PartitionAccessPoint"][];
+            /** Partitions */
+            partitions: components["schemas"]["PartitionAccessSummary"][];
+        };
+        /** PartitionAccessSummary */
+        PartitionAccessSummary: {
+            /** Partition Path */
+            partition_path: string;
+            /** Total Requests */
+            total_requests: number;
+            /**
+             * First Seen
+             * Format: date
+             */
+            first_seen: string;
+            /**
+             * Last Seen
+             * Format: date
+             */
+            last_seen: string;
+            /** Days Since Last Access */
+            days_since_last_access: number;
+        };
         /** PartitionEvolutionRecommendationRead */
         PartitionEvolutionRecommendationRead: {
             /** Table Id */
@@ -6836,28 +7278,8 @@ export interface components {
             scan_ratio?: number | null;
             /** Avg Selectivity */
             avg_selectivity?: number | null;
-            /**
-             * Trigger
-             * filter_frequency | scan_ratio | granularity | bucket_sizing
-             */
-            trigger?: "filter_frequency" | "scan_ratio" | "granularity" | "bucket_sizing" | null;
-        };
-        /** FastPathFindingRead */
-        FastPathFindingRead: {
-            /** Table Id */
-            table_id: string;
-            /** Table Name */
-            table_name: string;
-            /** Finding Type */
-            finding_type: string;
-            /** Reason */
-            reason: string;
-            /** Severity */
-            severity: string;
-            /** Metric Value */
-            metric_value: number | null;
-            /** Detected At */
-            detected_at: string;
+            /** Trigger */
+            trigger?: string | null;
         };
         /** PartitionPredicateRead */
         PartitionPredicateRead: {
@@ -9293,6 +9715,25 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /** TableChecklistResponse */
+        TableChecklistResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Items */
+            items: components["schemas"]["ChecklistItemResponse"][];
+            /** Summary */
+            summary: {
+                [key: string]: unknown;
+            };
+        };
         /** TableCostRead */
         TableCostRead: {
             /**
@@ -9335,10 +9776,33 @@ export interface components {
             put_requests_30d?: number | null;
             /** List Requests 30D */
             list_requests_30d?: number | null;
+            /** Head Requests 30D */
+            head_requests_30d?: number | null;
+            /** Delete Requests 30D */
+            delete_requests_30d?: number | null;
             /** Request Cost Usd Month */
             request_cost_usd_month?: number | null;
             /** Request Cost Pricing Source */
             request_cost_pricing_source?: string | null;
+        };
+        /**
+         * TableDeactivateBatchRequest
+         * @description Explicit, caller-verified table_ids to deactivate -- not a filter or heuristic, so a
+         *     typo or over-broad selection can't silently expand scope. See
+         *     deactivate_tables_by_id's docstring (cryo/db/repositories/sources.py).
+         */
+        TableDeactivateBatchRequest: {
+            /** Table Ids */
+            table_ids: string[];
+        };
+        /** TableDeactivateBatchResponse */
+        TableDeactivateBatchResponse: {
+            /** Requested */
+            requested: number;
+            /** Deactivated */
+            deactivated: number;
+            /** Deactivated Ids */
+            deactivated_ids: string[];
         };
         /** TableFilterTranslationRequest */
         TableFilterTranslationRequest: {
@@ -9585,6 +10049,8 @@ export interface components {
             last_scan_error?: string | null;
             /** Last Scan Error At */
             last_scan_error_at?: string | null;
+            /** Last Scan Error Kind */
+            last_scan_error_kind?: string | null;
             /** Failure Category */
             failure_category?: string | null;
             /** Failure Category Label */
@@ -10060,12 +10526,28 @@ export interface components {
             proposed_rewrite_gb: number;
             /** Selected File Paths */
             selected_file_paths: string[];
-            /** Skipped Oversize */
-            skipped_oversize: number;
-            /** Truncated */
-            truncated: boolean;
             /** Abstention Reason */
             abstention_reason?: string | null;
+            /** Window Days */
+            window_days: number;
+            /** Clustering Column */
+            clustering_column?: string | null;
+            /** Savings Cpu Seconds Per Window */
+            savings_cpu_seconds_per_window: number;
+            /** Recluster Cpu Seconds */
+            recluster_cpu_seconds: number;
+            /** Net Cpu Seconds */
+            net_cpu_seconds: number;
+            /** Aggressiveness */
+            aggressiveness: number;
+            /** Rewrite Gb Per Hour */
+            rewrite_gb_per_hour?: number | null;
+            /** Boundary Values */
+            boundary_values: unknown[];
+            /** Spark Sql */
+            spark_sql?: string | null;
+            /** Model Notes */
+            model_notes: string[];
         };
         /** WorkloadForecastRead */
         WorkloadForecastRead: {
@@ -10085,6 +10567,42 @@ export interface components {
             expected_total_queries: number;
             /** Points */
             points: components["schemas"]["ForecastPointRead"][];
+        };
+        /**
+         * CostAttributionResponse
+         * @description Response for cost attribution dashboard.
+         */
+        cryo__api__dashboard_routes__CostAttributionResponse: {
+            /** Attributions */
+            attributions: components["schemas"]["CostAttributionRead"][];
+            /** Total Cost Usd */
+            total_cost_usd: number;
+            /** Unattributed Cost Usd */
+            unattributed_cost_usd: number;
+            /** Month */
+            month: string;
+        };
+        /** CostAttributionResponse */
+        cryo__api__schemas__CostAttributionResponse: {
+            /**
+             * Since
+             * Format: date
+             */
+            since: string;
+            /** Rows */
+            rows: components["schemas"]["CostAttributionRow"][];
+            /** By Client */
+            by_client: components["schemas"]["CostAttributionByClient"][];
+            /**
+             * Total Query Count
+             * @default 0
+             */
+            total_query_count: number;
+            /**
+             * Total Physical Gb Scanned
+             * @default 0
+             */
+            total_physical_gb_scanned: number;
         };
     };
     responses: never;
@@ -10134,6 +10652,28 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    scale_metric_scale_metric_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
                     };
                 };
             };
@@ -11206,6 +11746,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TableRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deactivate_tables_batch_api_v1_tables_deactivate_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableDeactivateBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableDeactivateBatchResponse"];
                 };
             };
             /** @description Validation Error */
@@ -14148,7 +14721,10 @@ export interface operations {
     };
     analyze_wair_boundary_report_api_v1_tables__table_id__wair_analyze_post: {
         parameters: {
-            query?: never;
+            query?: {
+                aggressiveness?: number;
+                cost_limit_cpu_seconds?: number | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -14729,6 +15305,69 @@ export interface operations {
             };
         };
     };
+    get_table_checklist_api_v1_tables__table_id__checklist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableChecklistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fleet_checklist_api_v1_checklist_fleet_get: {
+        parameters: {
+            query?: {
+                table_ids?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetChecklistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     check_table_signals_api_v1_tables__table_id__signals_get: {
         parameters: {
             query?: never;
@@ -15107,6 +15746,62 @@ export interface operations {
             };
         };
     };
+    get_cryo_vitals_api_v1_vitals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    get_maintenance_coverage_api_v1_maintenance_coverage_get: {
+        parameters: {
+            query?: {
+                preset_name?: string | null;
+                window_hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_sla_status_api_v1_sla_status_get: {
         parameters: {
             query?: {
@@ -15144,8 +15839,7 @@ export interface operations {
     get_cost_attribution_api_v1_cost_attribution_get: {
         parameters: {
             query?: {
-                /** @description Month in YYYY-MM format (default: current month) */
-                month?: string | null;
+                days?: number;
             };
             header?: never;
             path?: never;
@@ -15159,7 +15853,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CostAttributionResponse"];
+                    "application/json": components["schemas"]["cryo__api__schemas__CostAttributionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -15295,6 +15989,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilityManifest"];
+                };
+            };
+        };
+    };
+    get_fast_path_findings_api_v1_advanced_fast_path_findings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FastPathFindingsResponse"];
                 };
             };
         };
@@ -15574,37 +16288,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PartitionEvolutionRecommendationRead"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_fast_path_findings_api_v1_advanced_fast_path_findings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        findings: components["schemas"]["FastPathFindingRead"][];
-                    };
                 };
             };
             /** @description Validation Error */
@@ -17335,6 +18018,61 @@ export interface operations {
             };
         };
     };
+    list_dark_tables_api_v1_dark_tables_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DarkTableCandidatesResponse"];
+                };
+            };
+        };
+    };
+    dismiss_dark_table_api_v1_dark_tables__table_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DarkTableDismissRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DarkTableDismissResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_shared_s3_report_api_v1_anomalies_shared_s3_get: {
         parameters: {
             query?: never;
@@ -17391,6 +18129,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SharedS3ReportRead"];
+                };
+            };
+        };
+    };
+    get_partition_access_api_v1_tables__table_id__partition_access_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartitionAccessResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

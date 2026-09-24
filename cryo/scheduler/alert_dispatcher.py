@@ -63,6 +63,21 @@ def _raw_datetime(raw: object, *keys: str) -> datetime | None:
     return None
 
 
+def _last_data_commit(raw: object) -> datetime | None:
+    """Last commit that changed data; compaction (``replace``) snapshots don't count.
+
+    When every retained snapshot is a system commit, the last data write predates them all,
+    so the oldest retained snapshot is the latest it can have been.
+    """
+    data = raw if isinstance(raw, dict) else {}
+    signals = data.get("commit_signals")
+    if not isinstance(signals, dict):
+        return _raw_datetime(data, "last_snapshot_committed_at")
+    if signals.get("data_commits"):
+        return _raw_datetime(signals, "last_data_commit_at")
+    return _raw_datetime(data, "first_snapshot_at")
+
+
 def _sla_breach_reasons(session: Session, table: Table) -> list[str]:
     stats = table.stats
     if stats is None:
@@ -73,7 +88,7 @@ def _sla_breach_reasons(session: Session, table: Table) -> list[str]:
     guardrails = dict(effective.preset.guardrails) if effective and effective.preset else {}
     sla = sla_from_guardrails(guardrails)
 
-    last_commit = _raw_datetime(stats.raw, "last_snapshot_committed_at")
+    last_commit = _last_data_commit(stats.raw)
     freshness_hours = (now - (last_commit or _as_utc(stats.scan_at))).total_seconds() / 3600
 
     last_maintenance = session.scalar(
@@ -142,6 +157,18 @@ def _quality_breach_reasons(session: Session, table_id: object) -> list[str]:
         if profile.dropped_columns:
             parts.append(f"-{len(profile.dropped_columns)} dropped")
         reasons.append(f"Schema drift ({', '.join(parts)})")
+    signals = profile.commit_signals or {}
+    if signals.get("arrival_overdue"):
+        reasons.append(
+            f"Data arrival overdue: {signals.get('hours_since_data_commit')}h since the last "
+            f"data commit (p90 gap {signals.get('arrival_gap_p90_hours')}h)"
+        )
+    if signals.get("row_count_anomaly"):
+        reasons.append(
+            f"Row-count {signals['row_count_anomaly']}: last data commit net "
+            f"{signals.get('last_commit_net_rows')} rows vs median "
+            f"{signals.get('net_rows_baseline_median')}"
+        )
     return reasons
 
 

@@ -13,6 +13,7 @@ from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
 from cryo.planner.partitions import normalize_transform
+from cryo.scanner.commit_signals import commit_signals, commits_from_snapshots
 from cryo.scanner.cost import (
     GB,
     MB,
@@ -31,6 +32,8 @@ from cryo.scanner.signals import detect_format_version, enrich_stats_signals
 logger = logging.getLogger(__name__)
 
 HEALTH_SMALL_FILE_BYTES = 8 * MB
+# Rewrite target when the table sets no write.target-file-size-bytes; matches the Go scanner.
+DEFAULT_REDUCTION_TARGET_BYTES = 256 * MB
 
 
 class _LoadableCatalog(Protocol):
@@ -111,6 +114,7 @@ def analyze_catalog_table(
     parallel_manifests: bool = True,
     stats_history: Sequence[Mapping[str, Any]] | None = None,
     source_config: Mapping[str, Any] | None = None,
+    wair_columns: Sequence[str] = (),
 ) -> TableAnalysis:
     del file_size_threshold_mb
     effective_settings = settings or Settings(scan_small_file_mb=small_file_mb)
@@ -139,6 +143,7 @@ def analyze_catalog_table(
             table_obj_loader=lambda: cast(_LoadableCatalog, catalog).load_table(
                 schema_name, table_name
             ),
+            wair_columns=wair_columns,
         )
     table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     result = analyze_table(
@@ -149,6 +154,7 @@ def analyze_catalog_table(
         settings=effective_settings,
         parallel_manifests=parallel_manifests,
         stats_history=stats_history,
+        wair_columns=wair_columns,
     )
     assert isinstance(result, TableAnalysis)
     return result
@@ -163,6 +169,7 @@ def analyze_table(
     settings: Settings | None = None,
     parallel_manifests: bool = True,
     stats_history: Sequence[Mapping[str, Any]] | None = None,
+    wair_columns: Sequence[str] = (),
 ) -> TableAnalysis | dict[str, Any]:
     if isinstance(schema_name, Settings):
         settings = schema_name
@@ -174,8 +181,11 @@ def analyze_table(
 
     fields = partition_fields(table_obj)
     manifests = _manifests(table_obj)
+    props = _table_properties(table_obj)
+    reduction_target_bytes = int(props["target_file_size_bytes"] or DEFAULT_REDUCTION_TARGET_BYTES)
     partitions: dict[str, _PartitionAccum] = {}
     total_files = total_records = total_size_bytes = 0
+    files_below_target = bytes_below_target = 0
     delete_files = delete_bytes = health_small_files = 0
     equality_delete_files = 0
     position_delete_files = 0
@@ -231,9 +241,12 @@ def analyze_table(
         total_records += int(_attr(data_file, "record_count", 0) or 0)
         if file_size < HEALTH_SMALL_FILE_BYTES:
             health_small_files += 1
+        if file_size < reduction_target_bytes:
+            files_below_target += 1
+            bytes_below_target += file_size
         quality_accum.add(data_file)
-        if settings.scanner_wair_file_sample_size:
-            sample = quality_accum.file_bound_sample(data_file)
+        if settings.scanner_wair_file_sample_size and wair_columns:
+            sample = quality_accum.file_bound_sample(data_file, wair_columns)
             if sample is not None:
                 wair_file_samples[sample["file_path"]] = sample
                 if len(wair_file_samples) > settings.scanner_wair_file_sample_size:
@@ -286,7 +299,6 @@ def analyze_table(
         partition_rows = sorted(partition_rows, key=lambda p: p.partition_key)
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
-    props = _table_properties(table_obj)
     format_version = detect_format_version(table_obj)
     cost = estimate_storage_cost(
         total_size_bytes=total_size_bytes,
@@ -431,11 +443,15 @@ def analyze_table(
         "current_snapshot_id": snapshot_info["current_snapshot_id"],
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
+        "files_below_target": files_below_target,
+        "bytes_below_target": bytes_below_target,
+        "reduction_target_bytes": reduction_target_bytes,
         "location": table_location(table_obj),
         "iceberg_properties": props["iceberg_properties"],
         "gc_enabled": props["gc_enabled"],
         "wair_file_sample": [wair_file_samples[path] for path in sorted(wair_file_samples)],
         "wair_file_sample_complete": len(wair_file_samples) == total_files,
+        "commit_signals": commit_signals(snapshot_info["commits"], now=scan_time),
     }
     for signal_key in (
         "format_version",
@@ -707,6 +723,7 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
         "first_snapshot_at": first_snapshot_at,
         "last_snapshot_committed_at": last_snapshot_committed_at,
         "current_snapshot_id": current_snapshot_id,
+        "commits": commits_from_snapshots(snapshots),
     }
 
 

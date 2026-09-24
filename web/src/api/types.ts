@@ -13,6 +13,7 @@ export type CapabilitySupportStatus = components["schemas"]["SupportStatus"];
 export type CapabilityExecutionMode = components["schemas"]["ExecutionMode"];
 export type JsonObject = Record<string, unknown>;
 
+export type WairBoundaryReport = components["schemas"]["WairBoundaryReportResponse"];
 export type CapabilityEvidence = components["schemas"]["CapabilityEvidence"];
 export type MaturityDefinition = components["schemas"]["MaturityDefinition"];
 export type OperationDefinition = components["schemas"]["OperationDefinition"];
@@ -299,6 +300,22 @@ export interface DataQualityProfileRead {
   schema_version_changed: boolean;
   new_columns: string[];
   dropped_columns: string[];
+  commit_signals?: CommitSignals | null;
+}
+
+export interface CommitSignals {
+  retained_commits: number;
+  system_commits: number;
+  data_commits: number;
+  last_data_commit_at: string | null;
+  hours_since_data_commit: number | null;
+  arrival_gap_p50_hours: number | null;
+  arrival_gap_p90_hours: number | null;
+  arrival_overdue: boolean | null;
+  live_rows: number | null;
+  last_commit_net_rows: number | null;
+  net_rows_baseline_median: number | null;
+  row_count_anomaly: "drop" | "spike" | null;
 }
 
 export interface AWSIntegrationRead {

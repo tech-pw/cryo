@@ -36,8 +36,8 @@ class PredicateInfo:
 @dataclass(frozen=True)
 class QueryRange:
     column: str
-    lower: bool | int | float | str
-    upper: bool | int | float | str
+    lower: bool | int | float | str | None
+    upper: bool | int | float | str | None
 
 
 # Patterns for SQL parsing
@@ -72,7 +72,9 @@ def parse_query_predicates(sql: str) -> PredicateInfo:
     return _parse_with_regex(sql)
 
 
-def extract_query_ranges(sql: str) -> list[QueryRange]:
+def extract_query_ranges(sql: str, *, open_ended: bool = False) -> list[QueryRange]:
+    """Range predicates per column; ``open_ended`` also keeps one-sided ones (``x >= 5``)
+    with the missing side as None."""
     try:
         import sqlglot
         from sqlglot import exp
@@ -104,9 +106,9 @@ def extract_query_ranges(sql: str) -> list[QueryRange]:
             if column is not None and value is not None:
                 bounds.setdefault(column, {})[effective_side] = value
     return [
-        QueryRange(column, values["lower"], values["upper"])
+        QueryRange(column, values.get("lower"), values.get("upper"))
         for column, values in sorted(bounds.items())
-        if "lower" in values and "upper" in values
+        if ("lower" in values and "upper" in values) or (open_ended and values)
     ]
 
 

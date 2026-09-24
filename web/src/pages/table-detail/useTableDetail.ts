@@ -652,11 +652,16 @@ export function useTableDetail() {
 
   const qualityBreakdown = useMemo(() => {
     const metrics = dataQuality.data?.column_metrics ?? [];
+    const signals = dataQuality.data?.commit_signals;
     return {
       nullSpikeCount: metrics.filter((c) => c.null_rate_spike).length,
       rangeShiftCount: metrics.filter((c) => c.value_range_changed).length,
       schemaChangeCount:
-        (dataQuality.data?.new_columns.length ?? 0) + (dataQuality.data?.dropped_columns.length ?? 0)
+        (dataQuality.data?.new_columns.length ?? 0) + (dataQuality.data?.dropped_columns.length ?? 0),
+      arrivalOverdue: signals?.arrival_overdue ?? null,
+      hoursSinceDataCommit: signals?.hours_since_data_commit ?? null,
+      rowCountAnomaly: signals?.row_count_anomaly ?? null,
+      rowCountBaselined: signals?.net_rows_baseline_median != null
     };
   }, [dataQuality.data]);
 

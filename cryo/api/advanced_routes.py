@@ -490,6 +490,7 @@ class DataQualityProfileRead(BaseModel):
     schema_version_changed: bool
     new_columns: list[str]
     dropped_columns: list[str]
+    commit_signals: dict[str, Any] | None = None
 
 
 @router.get("/data-quality/{table_id}", response_model=DataQualityProfileRead)
@@ -526,6 +527,7 @@ def get_data_quality_profile(
         schema_version_changed=profile.schema_version_changed,
         new_columns=profile.new_columns,
         dropped_columns=profile.dropped_columns,
+        commit_signals=profile.commit_signals,
     )
 
 

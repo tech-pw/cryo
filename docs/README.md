@@ -24,6 +24,9 @@ The authoritative architecture / contract docs live at the repo root:
 - [`architecture.md`](./architecture.md) — architecture & AI strategy.
 - [`research-and-roadmap.md`](./research-and-roadmap.md) — recommendations,
   performance & openness, competitive analysis, research notes, roadmap.
+- [`PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md`](./PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md)
+  — each cited paper (AutoComp, Okolnychyi, Zero-Scan DQ, WAIR, PTO) read against the running
+  code: what is implemented, what deviates, and what is safe to claim.
 - [`implementation/workload-aware-optimization.md`](./implementation/workload-aware-optimization.md)
   — AutoComp finish, PTO, WAIR, Okolnychyi delete policy: algorithms, APIs, UI
   wireframes (docs-only spec; build order inside).

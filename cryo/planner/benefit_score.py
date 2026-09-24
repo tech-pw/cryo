@@ -287,11 +287,14 @@ def compute_benefit_score(
     return round(score, 4)
 
 
-# AutoComp §A2 default scalarization weights (paper-aligned): S_c = 0.55 T1' + 0.15 T3' +
-# 0.15 T4' - 0.15 T2'. When T3 (file entropy) has no data yet -- the scanner doesn't populate
-# TablePartition.file_entropy today, see docs/implementation/workload-aware-optimization.md
-# §A.4 -- its weight is redistributed proportionally across T1/T4 rather than letting a missing
-# trait silently score as "worst possible entropy".
+# Cryo's own four-trait variant of AutoComp's MOOP (the paper's formula is two-trait,
+# 0.7 T1' - 0.3 T2'; the paper-exact version drives batch selection in
+# cryo/maintenance/selection.py): S_c = 0.55 T1' + 0.15 T3' + 0.15 T4' - 0.15 T2'. These
+# weights are not from the paper. When T3 (file entropy) has no data yet -- the scanner
+# doesn't populate TablePartition.file_entropy today, see
+# docs/implementation/workload-aware-optimization.md §A.4 -- its weight is redistributed
+# proportionally across T1/T4 rather than letting a missing trait silently score as "worst
+# possible entropy".
 @dataclass(frozen=True)
 class MoopWeights:
     t1_file_count: float = 0.55
@@ -333,9 +336,9 @@ def compute_moop_scores(
 
     Each candidate is a mapping with ``small_files``, ``size_gb``, ``query_frequency``, and
     optionally ``file_entropy`` and ``avg_bytes_per_query``. Normalization is min-max *within
-    this batch* (a table's partitions from one scan, or a fleet-wide batch the caller assembles)
-    -- the paper allows either; per-table keeps this a pure function with no cross-table state
-    to manage.
+    this batch*. The paper normalizes over the pool being ranked, so scores from different
+    per-table batches are not comparable with each other; rank across tables only with a
+    single fleet-wide batch.
 
     T4 (query_affinity) folds in real Trino scan cost (``avg_bytes_per_query``, when given) via
     the same log2-scaled multiplier ``compute_benefit_score`` uses, rather than adding a 5th
@@ -561,7 +564,9 @@ def update_partition_benefit_scores(
 
     has_more = len(partitions) == _MAX_PARTITIONS_PER_TABLE_SWEEP
     if has_more:
-        _set_partition_coverage_cursor(session, table_id, scan_at=latest_scan, cursor=partitions[-1].id)
+        _set_partition_coverage_cursor(
+            session, table_id, scan_at=latest_scan, cursor=partitions[-1].id
+        )
     elif coverage_cursor is not None:
         # This was the final page for this scan -- clear the cursor so the next sweep starts
         # this table's next scan fresh rather than skipping partitions before a stale cursor.

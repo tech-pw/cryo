@@ -131,6 +131,60 @@ def test_check_table_breach_empty_when_healthy(session):
     assert breach.reasons == []
 
 
+def test_a_fresh_compaction_does_not_hide_stale_upstream_data(session):
+    table = _seed_table(session)
+    scan_at = datetime.now(UTC)
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=scan_at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=98,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+            raw={
+                "column_quality": _column_quality(null_rate=0.0),
+                "last_snapshot_committed_at": (scan_at - timedelta(hours=1)).isoformat(),
+                "commit_signals": {
+                    "data_commits": 8,
+                    "system_commits": 1,
+                    "last_data_commit_at": (scan_at - timedelta(hours=72)).isoformat(),
+                    "hours_since_data_commit": 72.0,
+                    "arrival_gap_p90_hours": 24.0,
+                    "arrival_overdue": True,
+                    "row_count_anomaly": "drop",
+                    "last_commit_net_rows": -30000,
+                    "net_rows_baseline_median": 1000,
+                },
+            },
+        )
+    )
+    session.commit()
+
+    reasons = check_table_breach(session, table).reasons
+
+    assert any(r.startswith("Freshness breached: 72.0h") for r in reasons)
+    assert any(r.startswith("Data arrival overdue") for r in reasons)
+    assert any(r.startswith("Row-count drop") for r in reasons)
+
+
+def test_only_compaction_commits_retained_uses_the_oldest_snapshot_for_freshness():
+    now = datetime(2026, 9, 24, tzinfo=UTC)
+    raw = {
+        "last_snapshot_committed_at": now.isoformat(),
+        "first_snapshot_at": (now - timedelta(days=5)).isoformat(),
+        "commit_signals": {"data_commits": 0, "last_data_commit_at": None},
+    }
+
+    assert alert_dispatcher._last_data_commit(raw) == now - timedelta(days=5)
+    assert (
+        alert_dispatcher._last_data_commit({"last_snapshot_committed_at": now.isoformat()}) == now
+    )
+
+
 def test_run_alert_dispatch_tick_skips_tables_without_owner_or_subscribers(session):
     table = _seed_table(session, owner_email=None)
     _seed_breached_stats(session, table, scan_at=datetime.now(UTC))
