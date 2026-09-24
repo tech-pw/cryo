@@ -24,6 +24,26 @@ except ImportError:
     HAS_STRUCTLOG = False
 
 
+def quiet_third_party_loggers() -> None:
+    """Entrypoints using ``logging.basicConfig`` instead of ``configure_logging`` call this."""
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # httpx logs every request URL at INFO; Slack incoming-webhook URLs are the credential
+    # itself, and the root-logger SensitiveDataFilter never sees propagated child records.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("fastapi").setLevel(logging.INFO)
+    # botocore/boto3/s3transfer log every request's full signing details, headers, and retry
+    # hooks at DEBUG -- ~15-20 lines per S3 call. Under concurrent S3-heavy work (orphan
+    # scanning, bucket-logging checks, request-cost log ingestion) with DEBUG-level logging
+    # (the default for environment=dev), that log I/O becomes the actual throughput bottleneck,
+    # not the network calls themselves -- observed dropping concurrent S3 GET throughput by two
+    # orders of magnitude in production. WARNING still surfaces real request failures.
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("boto3").setLevel(logging.WARNING)
+    logging.getLogger("s3transfer").setLevel(logging.WARNING)
+
+
 def configure_logging(
     *,
     level: str = "INFO",
@@ -97,23 +117,7 @@ def configure_logging(
     if not any(isinstance(f, SensitiveDataFilter) for f in root_logger.filters):
         root_logger.addFilter(SensitiveDataFilter())
 
-    # Configure third-party loggers
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    # httpx logs every request URL at INFO; Slack incoming-webhook URLs are the credential
-    # itself, and the root-logger SensitiveDataFilter never sees propagated child records.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-    logging.getLogger("fastapi").setLevel(logging.INFO)
-    # botocore/boto3/s3transfer log every request's full signing details, headers, and retry
-    # hooks at DEBUG -- ~15-20 lines per S3 call. Under concurrent S3-heavy work (orphan
-    # scanning, bucket-logging checks, request-cost log ingestion) with DEBUG-level logging
-    # (the default for environment=dev), that log I/O becomes the actual throughput bottleneck,
-    # not the network calls themselves -- observed dropping concurrent S3 GET throughput by two
-    # orders of magnitude in production. WARNING still surfaces real request failures.
-    logging.getLogger("botocore").setLevel(logging.WARNING)
-    logging.getLogger("boto3").setLevel(logging.WARNING)
-    logging.getLogger("s3transfer").setLevel(logging.WARNING)
+    quiet_third_party_loggers()
 
     # Log configuration
     logger = get_logger(__name__)
