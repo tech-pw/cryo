@@ -385,7 +385,14 @@ class BatchMaintenance:
                 runner = self._launch(
                     run_id, destination, catalog, runnable, outcomes, deadline, report
                 )
-                self._watch(runner, outcomes, deadline)
+                self._watch(
+                    runner,
+                    outcomes,
+                    deadline,
+                    run_id=run_id,
+                    work={planned.table_id: planned for _, planned in runnable},
+                    report=report,
+                )
         except BaseException as exc:
             # SIGTERM (CronJob deadline, eviction) arrives as SystemExit via run.py's handler.
             interrupted = exc
@@ -575,13 +582,25 @@ class BatchMaintenance:
         runner: LaneRunnerLike,
         outcomes: dict[uuid.UUID, TableOutcome],
         deadline: datetime,
+        *,
+        run_id: uuid.UUID,
+        work: Mapping[uuid.UUID, TableWork],
+        report: RunReport,
     ) -> None:
         # A minute past the Jobs' own activeDeadlineSeconds, so Kubernetes has killed the pods
         # and the final log read sees everything they printed.
         hard_stop = deadline + timedelta(minutes=1)
+        respawns = 0
         while True:
             update = runner.poll()
             self._apply(update, outcomes, runner)
+            for lane in update.newly_finished:
+                if lane.exit_reason is None:
+                    continue
+                if respawns >= self._settings.maintenance_max_lane_respawns:
+                    continue
+                if self._respawn(run_id, runner, lane, outcomes, work, deadline, report):
+                    respawns += 1
             if runner.all_finished:
                 return
             if self._clock() >= hard_stop:
@@ -623,6 +642,74 @@ class BatchMaintenance:
             self._locks.release_job_owner(str(outcome.job_id), self._holder)
             self._locks.release_table_lock(str(outcome.table_id), str(outcome.job_id))
 
+    def _respawn(
+        self,
+        run_id: uuid.UUID,
+        runner: LaneRunnerLike,
+        dead: LaneState,
+        outcomes: dict[uuid.UUID, TableOutcome],
+        work: Mapping[uuid.UUID, TableWork],
+        deadline: datetime,
+        report: RunReport,
+    ) -> bool:
+        """Start a replacement pod for a dead lane's tables it never started.
+
+        The table the lane died on is closed as failed rather than retried: an OOM on a table
+        repeats on the same pod size. A lane that died before starting any table (bad image,
+        unreachable catalog) isn't replaced, since the replacement would die the same way.
+        """
+        now = self._clock()
+        if not dead.started_tables or now >= deadline - _START_CUTOFF:
+            return False
+        mine = [o for o in outcomes.values() if o.lane == dead.spec.index and o.status is None]
+        in_flight = [o for o in mine if o.results or o.table_id in dead.started_tables]
+        waiting = [o for o in mine if not (o.results or o.table_id in dead.started_tables)]
+        if not waiting:
+            return False
+        reason = dead.exit_reason or "lane pod failed"
+        for outcome in in_flight:
+            _close_mid_table(outcome, reason)
+        self._persist_finished(in_flight)
+        for outcome in in_flight:
+            self._locks.release_job_owner(str(outcome.job_id), self._holder)
+            self._locks.release_table_lock(str(outcome.table_id), str(outcome.job_id))
+
+        index = max(lane.spec.index for lane in runner.lanes) + 1
+        spec = LaneSpec(
+            index=index,
+            cpu_milli=dead.spec.cpu_milli,
+            mem_mib=dead.spec.mem_mib,
+            manifest=lane_manifest_bytes(run_id, index, [work[o.table_id] for o in waiting]),
+        )
+        name = lane_names(run_id, index)
+        with self._session_factory() as session:
+            for outcome in waiting:
+                outcome.lane = index
+                job = session.get(MaintenanceJob, outcome.job_id)
+                if job is not None:
+                    job.engine_ref = name
+                    job.replica = name
+            session.commit()
+        report.lanes.append(
+            {
+                **_lane_summary(index, spec.cpu_milli, spec.mem_mib, len(waiting)),
+                "replaces": dead.spec.index,
+            }
+        )
+        runner.launch(
+            [spec],
+            deadline_epoch=(deadline - _START_CUTOFF).timestamp(),
+            active_deadline_seconds=int((deadline - now).total_seconds()),
+        )
+        logger.warning(
+            "Lane %d died (%s); replaced it with lane %d for %d remaining tables",
+            dead.spec.index,
+            reason,
+            index,
+            len(waiting),
+        )
+        return True
+
     def _finalize_unfinished(
         self,
         runner: LaneRunnerLike | None,
@@ -639,15 +726,7 @@ class BatchMaintenance:
             reason = (lane.exit_reason if lane else None) or default_reason
             started = lane is not None and outcome.table_id in lane.started_tables
             if outcome.results or started:
-                status, error = table_status(outcome)
-                if status is JobStatus.SUCCEEDED:
-                    status = JobStatus.PARTIAL
-                if status is JobStatus.SKIPPED:
-                    status = JobStatus.FAILED
-                outcome.status = status
-                outcome.error = f"lane pod ended mid-table: {reason}" + (
-                    f"; {error}" if error else ""
-                )
+                _close_mid_table(outcome, reason)
             else:
                 outcome.status = JobStatus.SKIPPED
                 outcome.error = f"not reached before the lane ended: {reason}"
@@ -769,6 +848,16 @@ class BatchMaintenance:
 
 def _run_kind(trigger: str) -> str:
     return "scheduled" if trigger == CRON_TRIGGER else "adhoc"
+
+
+def _close_mid_table(outcome: TableOutcome, reason: str) -> None:
+    status, error = table_status(outcome)
+    if status is JobStatus.SUCCEEDED:
+        status = JobStatus.PARTIAL
+    if status is JobStatus.SKIPPED:
+        status = JobStatus.FAILED
+    outcome.status = status
+    outcome.error = f"lane pod ended mid-table: {reason}" + (f"; {error}" if error else "")
 
 
 def _lane_summary(index: int, cpu_milli: int, mem_mib: int, tables: int) -> dict[str, Any]:

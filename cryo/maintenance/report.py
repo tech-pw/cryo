@@ -120,6 +120,7 @@ def build_blocks(
             "Spark pods",
             ", ".join(
                 f"{lane['cpu_milli'] // 1000} vCPU/{lane['mem_mib'] // 1024} GiB×{lane['tables']}t"
+                + (" (replacement)" if "replaces" in lane else "")
                 for lane in report.lanes
             )
             or "none",

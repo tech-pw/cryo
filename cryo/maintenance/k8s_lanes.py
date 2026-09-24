@@ -30,7 +30,15 @@ _MANIFEST_KEY = "manifest.json.gz"
 _MANIFEST_MOUNT = "/manifest"
 _RUNNER = "/opt/cryo/cryo_spark_runner.py"
 # Headroom inside the pod limit for the Python runner and JVM off-heap on top of the heap.
-_HEAP_FRACTION = 0.7
+# 0.7 left ~4.8 GiB on a 16 GiB lane and the kernel still OOM-killed one mid-rewrite.
+_HEAP_FRACTION = 0.6
+# Parquet codecs pin the heap through JNI critical sections. On Java 21's G1 a large
+# allocation (vectored reads ask for whole column chunks) that hits a pinned heap gives up
+# after 2 retries and throws OutOfMemoryError with most of the heap free.
+_JAVA_OPTIONS = "-XX:+UnlockDiagnosticVMOptions -XX:GCLockerRetryAllocationCount=100"
+# glibc gives each thread that mallocs its own arena; Spark's task + S3 pools grow native RSS
+# far past the heap. Hadoop caps YARN containers at 4 for the same reason.
+_MALLOC_ARENA_MAX = "4"
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,8 @@ def spark_submit_command(
         f"local[{cores}]",
         "--driver-memory",
         f"{heap_mib}m",
+        "--driver-java-options",
+        _JAVA_OPTIONS,
         "--conf",
         "spark.ui.enabled=false",
         "--conf",
@@ -142,11 +152,11 @@ def build_lane_objects(
         "type": "Opaque",
         "data": secret_data,
     }
-    env: list[dict[str, Any]] = []
+    env: list[dict[str, Any]] = [{"name": "MALLOC_ARENA_MAX", "value": _MALLOC_ARENA_MAX}]
     if has_keys:
         # secretKeyRef rather than a literal value: pod specs are readable far more widely
         # than Secrets are.
-        env = [
+        env += [
             {
                 "name": "AWS_ACCESS_KEY_ID",
                 "valueFrom": {"secretKeyRef": {"name": name, "key": "access_key_id"}},

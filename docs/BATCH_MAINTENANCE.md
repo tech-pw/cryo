@@ -88,6 +88,22 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   leases expire (5 min). After that the governor's stale-running reaper fails them 6 h after
   start. Table locks expire at deadline + 30 min. Lane Jobs have `ttlSecondsAfterFinished:
   3600`.
+- **A lane pod dies mid-run (OOM, node loss).** The table it died on is recorded `failed`
+  ("lane pod ended mid-table: OOMKilled (exit 137)") and not retried, since it would hit the
+  same limit on the same pod size. The tables that lane never started go to a replacement pod
+  of the same size (the Slack "Spark pods" line marks it `(replacement)`), up to
+  `CRYO_MAINTENANCE_MAX_LANE_RESPAWNS` (default 8) per run and only until 20 min before the
+  deadline. A lane that dies before starting any table isn't replaced: that's a config or
+  image problem, and a replacement would die the same way. Before 2026-09-24 a dead lane
+  stranded all of its remaining tables; the first full run lost two of four lanes (~250
+  tables) this way.
+- **Lane JVM memory.** The heap is 60% of the pod limit. The rest covers off-heap memory and
+  the Python runner; at 70% the kernel OOM-killed a 16 GiB lane. `MALLOC_ARENA_MAX=4` caps
+  glibc's per-thread native arenas (Hadoop's YARN default). The JVM runs with
+  `-XX:GCLockerRetryAllocationCount=100`: on Java 21 G1, a large Parquet vectored-read buffer
+  that meets a heap pinned by a JNI codec fails after 2 retries with `OutOfMemoryError: Java
+  heap space` and the log line "Retried waiting for GCLocker too often", even with the heap
+  mostly free.
 - **Kubelet log rotation on a long lane.** Results are deduplicated by (table, statement
   seq), not by line position, so a rotation can't misattribute results. Lines rotated away
   before a poll are lost; the affected table then finalizes from whatever did arrive.
@@ -102,6 +118,16 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   canary, a single 1-vCPU lane took about 21 s per file group on a 3.4 GB table like that
   (Spark's row-based reader applies deletes). Nightly lanes are sized up to 4 vCPU. The
   deadline bounds the rest: tables not reached are `skipped`, not lost.
+- **Partition spec comes from `stats.raw.partition_fields`.** The job store's stats carry
+  `partition_col` / `partition_col_type` at the top level but the real spec only under `raw`.
+  Until 2026-09-24 `partition_fields_from_stats` ignored `raw` and guessed the transform from
+  the column name, which got 2,515 of 6,068 partitioned prod tables wrong (mostly `month` /
+  `day` read as `identity`). A month partition `671` then rendered as
+  `joining_date = DATE '1971-11-03'`, which rewrites nothing. The spec now wins, and a
+  partition row written under an older spec (no value for the current field) is skipped
+  with a note instead of binding its display string (`"<nil>"` from the Go scanner).
+  `convert_deletes` skew predicates also drop what the engine can't render (bucket filters),
+  as optimize already did.
 
 ## Canary log
 
@@ -110,6 +136,13 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   deleted, the Go rescan ran, one Slack message was sent and no lane objects were left behind.
   Total runtime was about 4 min, most of it spent on the shared-S3 snapshot refresh (~1.5 min)
   and pod start.
+- 2026-09-24: first full manual run (`ea135ba6`, 499 tables, 4 lanes × 4 vCPU / 16 GiB).
+  Lanes used 3.8–4 CPU and 7–12.7 GiB; about one table per minute. One planning failure,
+  `mview.gold_dbt_test_data_temp`, from the `"<nil>"` partition bug above. About 30 min in,
+  lane 0 was OOM-killed on `offline.gold_dbt_offline_solutions_mapped_all` (27 GB, 578M
+  rows) and lane 1 hit the GCLocker heap OOM on `cdp_revenue.gold_doubts_ops_new` (30 GB).
+  Both lanes' remaining tables were stranded, which led to the replacement-lane and JVM
+  memory changes above.
 
 ## Still to do
 
