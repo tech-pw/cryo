@@ -22,6 +22,7 @@ from cryo.db.session import SessionLocal
 from cryo.domain.enums import CostPrecision
 from cryo.integrations.aws_credentials import credentials_for_source
 from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
+from cryo.observability.logging import quiet_third_party_loggers
 from cryo.observability.metrics import scanner_tables_scanned_total
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
@@ -686,6 +687,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
+    quiet_third_party_loggers()
     args = parse_args(argv)
     with SessionLocal() as session:
         summary = run_scan(

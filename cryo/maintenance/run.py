@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from cryo.config import get_settings
 from cryo.db.session import SessionLocal
 from cryo.maintenance.coordinator import CRON_TRIGGER, BatchMaintenance, RunReport
+from cryo.observability.logging import quiet_third_party_loggers
 from cryo.queue.locks import LockStore
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def _exit_on_sigterm(signum: int, _frame: object) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    quiet_third_party_loggers()
     args = parse_args(argv)
     settings = get_settings()
     table_ids = _parse_ids(args.table_ids)

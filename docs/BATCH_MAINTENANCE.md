@@ -142,7 +142,13 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   lane 0 was OOM-killed on `offline.gold_dbt_offline_solutions_mapped_all` (27 GB, 578M
   rows) and lane 1 hit the GCLocker heap OOM on `cdp_revenue.gold_doubts_ops_new` (30 GB).
   Both lanes' remaining tables were stranded, which led to the replacement-lane and JVM
-  memory changes above.
+  memory changes above. Final tally after 2h 18m: 117 succeeded, 3 partial, 3 failed, 376
+  skipped (mostly the stranded lanes); 11,183 files rewritten into 791 (27,723 → 18,374
+  files), 903 orphans removed, 6,816 expired files deleted, 3,112 → 3,092 GB. The Go rescan
+  covered all 120 touched tables and one Slack message went out. Its log also printed the
+  full Slack webhook URL: `cryo.maintenance.run` used `logging.basicConfig` without the
+  `httpx` level cap in `configure_logging`. Every `basicConfig` entrypoint now calls
+  `quiet_third_party_loggers()`, and `tests/test_logging_secrets.py` fails if one doesn't.
 
 ## Still to do
 

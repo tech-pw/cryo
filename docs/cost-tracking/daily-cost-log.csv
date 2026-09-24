@@ -440,3 +440,6 @@ date,namespace,daily_cost_usd,source,checked_at
 2026-09-22,cryo,20.1,cur:grafana-mcp:split+unused,2026-09-24T05:04:01.244566+00:00
 2026-09-22,cryo-unused,13.32,cur:grafana-mcp:unused,2026-09-24T05:04:01.244566+00:00
 2026-09-22,cryo-used,6.78,cur:grafana-mcp:used,2026-09-24T05:04:01.244566+00:00
+2026-09-23,cryo,34.28,cur:grafana-mcp:split+unused,2026-09-24T12:09:42+00:00
+2026-09-23,cryo-unused,26.0,cur:grafana-mcp:unused,2026-09-24T12:09:42+00:00
+2026-09-23,cryo-used,8.29,cur:grafana-mcp:used,2026-09-24T12:09:42+00:00
