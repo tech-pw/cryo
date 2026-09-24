@@ -203,13 +203,16 @@ class Settings(BaseSettings):
             "manifest still materializes its entry list."
         ),
     )
+    # Off by default: file bounds are real column values (student IDs, question text, emails),
+    # and at 1000 files per table they were most of table_stats.raw and table_stats_history.
     scanner_wair_file_sample_size: int = Field(
-        default=1000,
+        default=0,
         ge=0,
         le=10_000,
         description=(
             "Maximum deterministic current-snapshot data-file bound samples retained per table "
-            "for offline WAIR analysis. Zero disables collection."
+            "for offline WAIR analysis. Zero disables collection. The samples hold raw column "
+            "min/max values, so enabling this stores table data in Cryo's database."
         ),
     )
     scan_engine: Literal["pyiceberg", "go"] = Field(

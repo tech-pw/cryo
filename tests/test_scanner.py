@@ -210,6 +210,37 @@ def test_analyze_table_retains_bounded_wair_file_bounds() -> None:
     assert analysis.raw["wair_file_sample_complete"] is False
 
 
+def test_file_bound_samples_are_off_by_default_on_both_scan_paths() -> None:
+    # File bounds are raw column values; nothing stores them unless explicitly enabled.
+    from cryo.scanner.go_scan import _build_scan_stats_request
+
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = FakeTable(
+        files=[
+            FakeDataFile(
+                10 * MB,
+                10,
+                ("2026-06-29",),
+                file_path="s3://bucket/a.parquet",
+                lower_bounds={2: "student-0001"},
+                upper_bounds={2: "student-9999"},
+            )
+        ],
+        snapshots=[FakeSnapshotMeta(scan_at - timedelta(days=1))],
+    )
+
+    analysis = analyze_table(table, "demo", "events", scan_at=scan_at, settings=Settings())
+
+    assert analysis.raw["wair_file_sample"] == []
+    request = _build_scan_stats_request(
+        {"uri": "http://catalog:8181", "warehouse": "s3://wh/"},
+        schema_name="demo",
+        table_name="events",
+        settings=Settings(),
+    )
+    assert request["max_file_samples"] == -1
+
+
 def _small_file_analysis(scan_at: datetime):
     table = FakeTable(
         files=[
@@ -477,6 +508,31 @@ def test_persist_table_analysis_strips_nul_bytes_from_history_column_quality() -
     assert history.raw["column_quality"] == [
         {"column_name": "notes", "lower_bound": "dirtyvalue", "upper_bound": "clean"}
     ]
+
+
+def test_history_rows_never_copy_the_wair_file_sample() -> None:
+    source_id = uuid.uuid4()
+    table_id = uuid.uuid4()
+    scan_at = datetime(2026, 6, 30, tzinfo=UTC)
+    table = Table(id=table_id, source_id=source_id, schema_name="demo", table_name="events")
+    analysis = analyze_table(
+        FakeTable(
+            files=[FakeDataFile(10 * MB, 10, ("2026-06-29",))],
+            snapshots=[FakeSnapshotMeta(scan_at)],
+        ),
+        "demo",
+        "events",
+        scan_at=scan_at,
+    )
+    analysis.raw["wair_file_sample"] = [
+        {"file_path": "s3://b/a.parquet", "lower_bounds": {"studentid": "5ecd1fdb"}}
+    ]
+    session = FakeSession()
+
+    persist_table_analysis(session, source_id=source_id, table=table, analysis=analysis)
+
+    history = next(item for item in session.added if isinstance(item, TableStatsHistory))
+    assert not any(key.startswith("wair_") for key in history.raw)
 
 
 def test_persist_table_analysis_writes_real_p95_query_latency(session) -> None:
