@@ -268,7 +268,10 @@ def test_lane_objects_run_local_mode_sized_to_the_lane() -> None:
     container = pod["containers"][0]
     command = container["command"]
     assert command[command.index("--master") + 1] == "local[2]"
-    assert command[command.index("--driver-memory") + 1] == f"{int(8192 * 0.7)}m"
+    assert command[command.index("--driver-memory") + 1] == f"{int(8192 * 0.6)}m"
+    java_options = command[command.index("--driver-java-options") + 1]
+    assert "-XX:+UnlockDiagnosticVMOptions -XX:GCLockerRetryAllocationCount=100" in java_options
+    assert {"name": "MALLOC_ARENA_MAX", "value": "4"} in container["env"]
     assert command[command.index("--catalog") + 1] == "cdp"
     assert command[command.index("--deadline-epoch") + 1] == "1800000000"
     assert container["resources"]["requests"] == container["resources"]["limits"]
@@ -305,7 +308,8 @@ def test_no_keys_means_no_aws_env_so_the_service_account_role_applies() -> None:
         uuid.uuid4(), _spec(), _cfg(), catalog="cdp", deadline_epoch=0, active_deadline_seconds=600
     )
 
-    assert job["spec"]["template"]["spec"]["containers"][0]["env"] == []
+    env = job["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert not {e["name"] for e in env} & {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 
 
 def _pod(name: str, phase: str, *, exit_code: int | None = None) -> SimpleNamespace:

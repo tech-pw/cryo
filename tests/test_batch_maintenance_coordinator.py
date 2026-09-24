@@ -40,8 +40,10 @@ NOW = datetime(2026, 9, 24, 19, 0, tzinfo=UTC)
 @dataclass
 class _Behaviour:
     fail_seq: dict[uuid.UUID, int] = field(default_factory=dict)
-    # Table on which its lane's pod dies right after printing the table-start line.
-    die_on: uuid.UUID | None = None
+    # Tables on which their lane's pod dies right after printing the table-start line.
+    die_on: set[uuid.UUID] = field(default_factory=set)
+    # Lane pods that die before starting any table (bad image, catalog unreachable).
+    die_at_start: bool = False
 
 
 class _FakeLaneRunner:
@@ -51,7 +53,6 @@ class _FakeLaneRunner:
         self.lanes: list[LaneState] = []
         self.manifests: dict[int, dict[str, Any]] = {}
         self.torn_down = False
-        self._polled = False
 
     def launch(
         self, specs: Sequence[LaneSpec], *, deadline_epoch: float, active_deadline_seconds: int
@@ -67,13 +68,16 @@ class _FakeLaneRunner:
 
     def poll(self) -> PollUpdate:
         update = PollUpdate()
-        if self._polled:
-            return update
-        self._polled = True
         for lane in self.lanes:
+            if lane.finished:
+                continue
+            if self.behaviour.die_at_start:
+                lane.exit_reason = "Error (exit 1)"
             for table in self.manifests[lane.spec.index]["tables"]:
+                if lane.exit_reason is not None:
+                    break
                 table_id = uuid.UUID(table["table_id"])
-                if table_id == self.behaviour.die_on:
+                if table_id in self.behaviour.die_on:
                     lane.started_tables.add(table_id)
                     lane.exit_reason = "OOMKilled (exit 137)"
                     break
@@ -278,28 +282,65 @@ def test_happy_path_records_every_statement_rescans_and_reports_once(session_fac
 def test_one_table_failing_does_not_stop_the_rest_and_lane_death_is_attributed(
     session_factory,
 ) -> None:
-    ids = _seed(session_factory, tables=4)
-    # One lane (small tables), so the lane runs the tables in rank order: t0, t1, t2, t3.
-    behaviour = _Behaviour(fail_seq={ids[0]: 1}, die_on=ids[2])
+    ids = _seed(session_factory, tables=5)
+    # One lane (small tables), so the lane runs the tables in rank order: t0 .. t4.
+    behaviour = _Behaviour(fail_seq={ids[0]: 1}, die_on={ids[2]})
     h = _harness(session_factory, behaviour=behaviour)
 
     report = h.coordinator.run(trigger="batch-cron")
 
     jobs = _jobs(session_factory)
-    assert len(h.runners[0].lanes) == 1
+    lanes = h.runners[0].lanes
+    assert [lane.spec.index for lane in lanes] == [0, 1]
+    assert lanes[1].spec.mem_mib == lanes[0].spec.mem_mib
+    replacement = [uuid.UUID(t["table_id"]) for t in h.runners[0].manifests[1]["tables"]]
+    assert replacement == [ids[3], ids[4]]
     assert jobs[ids[0]].status == "partial" and "Commit conflict" in (jobs[ids[0]].error or "")
     assert jobs[ids[1]].status == "succeeded"
     assert jobs[ids[2]].status == "failed"
     assert "lane pod ended mid-table: OOMKilled (exit 137)" in (jobs[ids[2]].error or "")
-    assert jobs[ids[3]].status == "skipped"
-    assert "not reached" in (jobs[ids[3]].error or "")
-    assert (report.succeeded, report.partial, report.failed, report.skipped) == (1, 1, 1, 1)
+    assert jobs[ids[3]].status == "succeeded" and jobs[ids[4]].status == "succeeded"
+    assert jobs[ids[3]].engine_ref == lane_names(report.run_id, 1)
+    assert (report.succeeded, report.partial, report.failed, report.skipped) == (3, 1, 1, 0)
+    assert report.lanes[-1]["replaces"] == 0
     with session_factory() as session:
         run = session.get(MaintenanceRun, report.run_id)
     assert run is not None and run.status == "partial"
-    assert sorted(h.rescanned[0]) == sorted([ids[0], ids[1]])
+    assert sorted(h.rescanned[0]) == sorted([ids[0], ids[1], ids[3], ids[4]])
     for table_id in ids:
         assert h.locks.acquire_table_lock(str(table_id), "someone-else", 60)
+
+
+def test_replacement_lanes_stop_at_the_respawn_cap(session_factory) -> None:
+    ids = _seed(session_factory, tables=4)
+    behaviour = _Behaviour(die_on={ids[0], ids[1], ids[2]})
+    h = _harness(
+        session_factory,
+        behaviour=behaviour,
+        settings=_settings(maintenance_max_lane_respawns=1),
+    )
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    jobs = _jobs(session_factory)
+    assert len(h.runners[0].lanes) == 2
+    assert jobs[ids[0]].status == "failed" and jobs[ids[1]].status == "failed"
+    assert jobs[ids[2]].status == "skipped" and jobs[ids[3]].status == "skipped"
+    assert "not reached" in (jobs[ids[3]].error or "")
+    assert (report.failed, report.skipped) == (2, 2)
+
+
+def test_a_lane_that_dies_before_its_first_table_is_not_replaced(session_factory) -> None:
+    ids = _seed(session_factory, tables=3)
+    h = _harness(session_factory, behaviour=_Behaviour(die_at_start=True))
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    assert len(h.runners[0].lanes) == 1
+    jobs = _jobs(session_factory)
+    assert {jobs[i].status for i in ids} == {"skipped"}
+    assert "Error (exit 1)" in (jobs[ids[0]].error or "")
+    assert report.skipped == 3
 
 
 def test_a_table_locked_by_another_job_is_skipped_and_never_sent_to_spark(session_factory) -> None:
