@@ -203,6 +203,15 @@ class Settings(BaseSettings):
             "runs' observed rewrite throughput is used."
         ),
     )
+    maintenance_duration_model: Literal["rate", "ernest"] = Field(
+        default="rate",
+        description=(
+            "How AutoComp estimates a table's rewrite hours. 'rate': GiB / RewriteBytesPerHour. "
+            "'ernest': the Ernest model fitted on completed rewrite statements "
+            "(cryo/maintenance/ernest.py), used only while it beats 'rate' on held-out runs; "
+            "the comparison is recorded in every run's autocomp trace either way."
+        ),
+    )
     maintenance_autocomp_budget_gbhr: float | None = Field(
         default=None,
         gt=0,

@@ -1013,6 +1013,30 @@ class WairBoundaryReportResponse(BaseModel):
     model_notes: list[str]
 
 
+class DurationModelResponse(BaseModel):
+    configured: str
+    status: str
+    calibration: dict[str, Any] | None = None
+
+
+@router.get(
+    "/maintenance/duration-model",
+    response_model=DurationModelResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_duration_model(session: SessionDep) -> DurationModelResponse:
+    """Ernest rewrite-duration fit on recent batch statements vs the pooled-rate estimate."""
+    from cryo.config import get_settings
+    from cryo.maintenance.coordinator import duration_calibration
+
+    calibration = duration_calibration(session)
+    return DurationModelResponse(
+        configured=get_settings().maintenance_duration_model,
+        status="insufficient_samples" if calibration is None else "calibrated",
+        calibration=calibration.as_dict() if calibration is not None else None,
+    )
+
+
 class EngineRewriteSemanticsResponse(BaseModel):
     engine: str
     supported: bool
