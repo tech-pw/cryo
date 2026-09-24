@@ -168,6 +168,26 @@ scanner:
     enabled: false
     batchSize: 1
 
+# Batch maintenance (templates/maintenance-cronjob.yaml, docs/BATCH_MAINTENANCE.md).
+# Requires spark.k8s.enabled for the Spark image and ServiceAccounts.
+maintenance:
+  enabled: false
+  # 19:00 UTC = 00:30 IST, the start of the Trino off-peak window.
+  schedule: "0 19 * * *"
+  suspend: false
+  topN: 500
+  maxLanes: 4
+  laneMaxCpuMilli: 4000
+  laneMaxMemMib: 16384
+  maxRuntimeMinutes: 360
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
 backup:
   enabled: false
   schedule: "0 2 * * *"
