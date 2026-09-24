@@ -214,6 +214,12 @@ scanner:
     enabled: true
     batchSize: 1
 
+# Replaced every maintenance preset on 2026-09-24 (all 33 deleted; backup outside the repo).
+# One nightly run of the top 500 tables on at most 4 local-mode Spark pods, in place of one
+# spark-submit wrapper + driver + executors per SQL statement (~35k driver pods in 8 days).
+maintenance:
+  enabled: true
+
 api:
   replicas: 2
   resources:
@@ -428,9 +434,11 @@ spark:
     enabled: true
     image:
       repository: registry.example.com/cryo
-      tag: spark-latest
-      # Built + pushed 2026-08-05 from gitlab-main commit eee1788.
-      digest: "sha256:7c508fbb330b5af493187c58c20c3180f9dd173ecd25f32c5ea6e528da3bf7fb"
+      tag: spark-batch-2026-09-24
+      # Built + pushed 2026-09-24 (multi-arch): adds cryo_spark_runner.py --manifest, the
+      # batch-maintenance lane mode. The --sql mode the old per-statement path uses is
+      # unchanged. Previous: sha256:7c508fbb... (2026-08-05, commit eee1788).
+      digest: "sha256:8781e9a945981676a19f573dccfefff24555f4f3c5afba18e36a5cf2583ef751"
       pullPolicy: Always
     # Right-sized 2026-08-06 from real usage sampled via `kubectl top` on ~15 live
     # dispatch pods while the manifest-fix rollout was running: driver averaged

@@ -1,0 +1,89 @@
+{{- /*
+Batch maintenance (cryo.maintenance.run): one pod per run selects the top tables, starts up to
+maintenance.maxLanes local-mode Spark pods, records every statement, deletes the pods, rescans
+the maintained tables with the Go scanner and posts one Slack message. See
+docs/BATCH_MAINTENANCE.md.
+
+Runs as the cryo-native ServiceAccount, which already has what the lanes need: create/delete
+Jobs and Secrets, read pods and pod logs, delete stray pods.
+*/ -}}
+{{- if .Values.maintenance.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cryo.fullname" . }}-maintenance
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maintenance
+spec:
+  schedule: {{ .Values.maintenance.schedule | quote }}
+  suspend: {{ .Values.maintenance.suspend | default false }}
+  # Two runs at once would race for the same tables' locks and double the Spark footprint.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A failed run is reported and retried by the next schedule, not immediately: an
+      # automatic retry would re-run tables whose maintenance already committed.
+      backoffLimit: 0
+      # Run budget plus an hour for the rescan and report.
+      activeDeadlineSeconds: {{ add (mul .Values.maintenance.maxRuntimeMinutes 60) 3600 }}
+      template:
+        metadata:
+          labels:
+            {{- include "cryo.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: maintenance
+            eks-workload-name: cryo-maintenance
+          annotations:
+            # Evicting the coordinator mid-run strands its lanes until their own deadline.
+            karpenter.sh/do-not-disrupt: "true"
+        spec:
+          restartPolicy: Never
+          # Time after SIGTERM to delete lane pods, finalize jobs and post the report.
+          terminationGracePeriodSeconds: 120
+          serviceAccountName: {{ include "cryo.fullname" . }}-native
+          {{- include "cryo.imagePullSecrets" . | nindent 10 }}
+          {{- include "cryo.nodeSelector" . | nindent 10 }}
+          containers:
+            - name: maintenance
+              image: {{ include "cryo.imageRef" .Values.image | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "cryo.maintenance.run"]
+              env:
+                {{- range $k, $v := .Values.global.env }}
+                - name: {{ $k }}
+                  value: {{ $v | quote }}
+                {{- end }}
+                - name: CRYO_MAINTENANCE_TOP_N
+                  value: {{ .Values.maintenance.topN | quote }}
+                - name: CRYO_MAINTENANCE_MAX_LANES
+                  value: {{ .Values.maintenance.maxLanes | quote }}
+                - name: CRYO_MAINTENANCE_LANE_MAX_CPU_MILLI
+                  value: {{ .Values.maintenance.laneMaxCpuMilli | quote }}
+                - name: CRYO_MAINTENANCE_LANE_MAX_MEM_MIB
+                  value: {{ .Values.maintenance.laneMaxMemMib | quote }}
+                - name: CRYO_MAINTENANCE_MAX_RUNTIME_MINUTES
+                  value: {{ .Values.maintenance.maxRuntimeMinutes | quote }}
+                - name: CRYO_SPARK_K8S_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: CRYO_SPARK_K8S_IMAGE
+                  value: {{ include "cryo.imageRef" .Values.spark.k8s.image | quote }}
+                - name: CRYO_SPARK_K8S_IMAGE_PULL_POLICY
+                  value: {{ .Values.spark.k8s.image.pullPolicy | quote }}
+                {{- if .Values.imagePullSecrets }}
+                - name: CRYO_SPARK_K8S_IMAGE_PULL_SECRETS
+                  value: {{ join "," .Values.imagePullSecrets | quote }}
+                {{- end }}
+                - name: CRYO_SPARK_K8S_SERVICE_ACCOUNT
+                  value: {{ include "cryo.fullname" . }}-spark
+                - name: CRYO_SPARK_K8S_NODE_SELECTOR
+                  value: {{ .Values.spark.k8s.nodeSelector | quote }}
+              envFrom:
+                {{- include "cryo.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.maintenance.resources | nindent 16 }}
+{{- end }}
