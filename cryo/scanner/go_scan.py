@@ -257,6 +257,7 @@ def table_analysis_from_go_payload(
             "null_rate": float(col.get("null_rate") or 0.0),
             "lower_bound": col.get("lower_bound"),
             "upper_bound": col.get("upper_bound"),
+            "bounds_complete": col.get("bounds_complete"),
         }
         for col in (payload.get("column_quality") or [])
         if isinstance(col, Mapping)

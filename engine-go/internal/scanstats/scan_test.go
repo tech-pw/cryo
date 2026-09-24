@@ -69,6 +69,52 @@ func TestCommitLogIsOrderedCappedAndParsesSummaryCounters(t *testing.T) {
 	}
 }
 
+func TestColumnBoundsAggregateAcrossFilesAndFlagMissingBounds(t *testing.T) {
+	enc := func(v int64) []byte {
+		b, err := iceberg.NewLiteral[int64](v).MarshalBinary()
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return b
+	}
+	acc := newAccumulator(nil, Options{})
+	acc.columnDefs = map[int]protocol.AggregateFixtureColumn{
+		1: {FieldID: 1, ColumnName: "amount"}, 2: {FieldID: 2, ColumnName: "email"}, 3: {FieldID: 3, ColumnName: "late"},
+	}
+	acc.columnTypes = map[int]iceberg.Type{
+		1: iceberg.PrimitiveTypes.Int64, 2: iceberg.PrimitiveTypes.String, 3: iceberg.PrimitiveTypes.Int64,
+	}
+	file := func(lower, upper map[int][]byte, nulls, vals map[int]int64) {
+		acc.addColumnStats(nulls, vals)
+		acc.mergeColumnBounds(lower, upper, true, nulls, vals)
+	}
+	file(map[int][]byte{1: enc(5), 3: enc(1)}, map[int][]byte{1: enc(9), 3: enc(2)},
+		map[int]int64{}, map[int]int64{1: 10, 2: 10, 3: 10})
+	file(map[int][]byte{1: enc(-3)}, map[int][]byte{1: enc(7)},
+		map[int]int64{3: 4}, map[int]int64{1: 10, 2: 10, 3: 10})
+	// An all-null file has no bounds and must not mark the column incomplete.
+	file(map[int][]byte{}, map[int][]byte{}, map[int]int64{1: 5}, map[int]int64{1: 5})
+	acc.totalFiles = 3
+
+	got := map[string]protocol.ScanStatsColumnQuality{}
+	for _, col := range acc.finish("s", "t", &snapshotInfo{}).ColumnQuality {
+		got[col.ColumnName] = col
+	}
+	amount := got["amount"]
+	if amount.LowerBound != int64(-3) || amount.UpperBound != int64(9) {
+		t.Fatalf("amount bounds = %v..%v, want -3..9", amount.LowerBound, amount.UpperBound)
+	}
+	if amount.BoundsComplete == nil || !*amount.BoundsComplete {
+		t.Fatalf("amount bounds should be complete: %+v", amount)
+	}
+	if late := got["late"]; late.BoundsComplete == nil || *late.BoundsComplete {
+		t.Fatalf("file 2 held non-null 'late' values without bounds: %+v", late)
+	}
+	if email := got["email"]; email.LowerBound != nil || email.BoundsComplete != nil {
+		t.Fatalf("string bounds must never be emitted: %+v", email)
+	}
+}
+
 func TestDecodeBoundsUsesSchemaTypesAndNames(t *testing.T) {
 	encoded, err := iceberg.NewLiteral[int64](42).MarshalBinary()
 	if err != nil {

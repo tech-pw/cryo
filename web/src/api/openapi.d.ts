@@ -2089,6 +2089,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/maintenance/duration-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Duration Model
+         * @description Ernest rewrite-duration fit on recent batch statements vs the pooled-rate estimate.
+         */
+        get: operations["get_duration_model_api_v1_maintenance_duration_model_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/layout-differential": {
         parameters: {
             query?: never;
@@ -4194,6 +4214,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/quality-constraints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Quality Constraints */
+        get: operations["list_quality_constraints_api_v1_tables__table_id__quality_constraints_get"];
+        put?: never;
+        /** Create Quality Constraint */
+        post: operations["create_quality_constraint_api_v1_tables__table_id__quality_constraints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/quality-constraints/{constraint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Quality Constraint */
+        delete: operations["delete_quality_constraint_api_v1_quality_constraints__constraint_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Quality Constraint */
+        patch: operations["update_quality_constraint_api_v1_quality_constraints__constraint_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/quality-constraints/{constraint_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Constraint Results */
+        get: operations["list_constraint_results_api_v1_quality_constraints__constraint_id__results_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/quality-constraints/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Quality Constraints */
+        post: operations["evaluate_quality_constraints_api_v1_tables__table_id__quality_constraints_evaluate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5190,6 +5280,51 @@ export interface components {
             /** Abac Enforcement Note */
             abac_enforcement_note?: string | null;
         };
+        /** ConstraintColumn */
+        ConstraintColumn: {
+            /** Field Id */
+            field_id: number;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string | null;
+            /** Kinds */
+            kinds: ("size" | "completeness" | "range" | "size_change" | "freshness")[];
+        };
+        /** ConstraintResultRead */
+        ConstraintResultRead: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "unknown";
+            /** Evaluated At */
+            evaluated_at?: string | null;
+            /** Snapshot Id */
+            snapshot_id?: number | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+            /** Observed */
+            observed?: {
+                [key: string]: unknown;
+            };
+            /** Reason */
+            reason?: string | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ConstraintResultsResponse */
+        ConstraintResultsResponse: {
+            /**
+             * Constraint Id
+             * Format: uuid
+             */
+            constraint_id: string;
+            /** Results */
+            results: components["schemas"]["ConstraintResultRead"][];
+        };
         /**
          * ControlScope
          * @enum {string}
@@ -6049,6 +6184,17 @@ export interface components {
              * @default dismissed_by_operator
              */
             reason: string;
+        };
+        /** DurationModelResponse */
+        DurationModelResponse: {
+            /** Configured */
+            configured: string;
+            /** Status */
+            status: string;
+            /** Calibration */
+            calibration?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** EffectBatchResolutionItem */
         EffectBatchResolutionItem: {
@@ -7921,6 +8067,106 @@ export interface components {
             target_p95_ms: number;
             /** Exceeded Tolerance */
             exceeded_tolerance: boolean;
+        };
+        /** QualityConstraintCreate */
+        QualityConstraintCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "size" | "completeness" | "range" | "size_change" | "freshness";
+            /** Field Id */
+            field_id?: number | null;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Severity
+             * @default error
+             * @enum {string}
+             */
+            severity: "warn" | "error";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** QualityConstraintRead */
+        QualityConstraintRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "size" | "completeness" | "range" | "size_change" | "freshness";
+            /** Field Id */
+            field_id: number | null;
+            /** Column Name */
+            column_name: string | null;
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "warn" | "error";
+            /** Enabled */
+            enabled: boolean;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            latest?: components["schemas"]["ConstraintResultRead"] | null;
+        };
+        /** QualityConstraintUpdate */
+        QualityConstraintUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Severity */
+            severity?: ("warn" | "error") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
+        /** QualityConstraintsResponse */
+        QualityConstraintsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Constraints */
+            constraints: components["schemas"]["QualityConstraintRead"][];
+            /** Columns */
+            columns: components["schemas"]["ConstraintColumn"][];
         };
         /**
          * QueryPerformanceRead
@@ -14587,6 +14833,26 @@ export interface operations {
             };
         };
     };
+    get_duration_model_api_v1_maintenance_duration_model_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurationModelResponse"];
+                };
+            };
+        };
+    };
     get_layout_differential_api_v1_tables__table_id__layout_differential_get: {
         parameters: {
             query?: never;
@@ -18153,6 +18419,200 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PartitionAccessResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_quality_constraints_api_v1_tables__table_id__quality_constraints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityConstraintsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_quality_constraint_api_v1_tables__table_id__quality_constraints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QualityConstraintCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityConstraintRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_quality_constraint_api_v1_quality_constraints__constraint_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                constraint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_quality_constraint_api_v1_quality_constraints__constraint_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                constraint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QualityConstraintUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityConstraintRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_constraint_results_api_v1_quality_constraints__constraint_id__results_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                constraint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConstraintResultsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_quality_constraints_api_v1_tables__table_id__quality_constraints_evaluate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityConstraintsResponse"];
                 };
             };
             /** @description Validation Error */

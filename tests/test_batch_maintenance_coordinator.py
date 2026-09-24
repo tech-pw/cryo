@@ -101,7 +101,11 @@ class _FakeLaneRunner:
                             ok=True,
                             duration_ms=10,
                             rows=1,
-                            metrics={"rewritten_data_files_count": 40, "added_data_files_count": 2}
+                            metrics={
+                                "rewritten_data_files_count": 40,
+                                "added_data_files_count": 2,
+                                "rewritten_bytes_count": 2**30,
+                            }
                             if stmt["action"] == "optimize"
                             else {},
                         )
@@ -535,6 +539,71 @@ def test_rewrite_throughput_is_calibrated_from_recent_runs(session_factory) -> N
     assert report.autocomp is not None
     assert report.autocomp["rewrite_rate_source"] == "observed"
     assert report.autocomp["rewrite_gb_per_hour"] == 60.0
+
+
+def test_rewrite_statements_are_recorded_as_duration_samples(session_factory) -> None:
+    _seed(session_factory)
+    h = _harness(session_factory)
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    with session_factory() as session:
+        run = session.get(MaintenanceRun, report.run_id)
+    assert run is not None
+    samples = run.summary["duration_samples"]
+    lane_cores = {lane["cpu_milli"] / 1000 for lane in report.lanes}
+    assert samples and all(s["gib"] == 1.0 and s["seconds"] == 0.01 for s in samples)
+    assert {s["cores"] for s in samples} <= lane_cores
+
+
+def _seed_duration_history(session_factory: Any) -> None:
+    # Ernest-shaped history: 120 s fixed cost plus 300 s per GiB per core. A pooled GiB/hour
+    # rate cannot represent the fixed cost, so the model should win on the newest runs.
+    with session_factory() as session:
+        for run in range(12):
+            samples = [
+                {"gib": gib, "cores": cores, "seconds": 120 + 300 * gib / cores}
+                for gib, cores in ((0.2, 1), (1.0, 1), (4.0, 2), (20.0, 4), (0.5, 2))
+            ]
+            session.add(
+                MaintenanceRun(
+                    id=uuid.uuid4(),
+                    kind="scheduled",
+                    trigger="batch-cron",
+                    status="succeeded",
+                    scheduled_at=NOW - timedelta(days=13 - run),
+                    finished_at=NOW - timedelta(days=13 - run, hours=-2),
+                    summary={"pipeline": "batch", "duration_samples": samples},
+                )
+            )
+        session.commit()
+
+
+def test_ernest_drives_cost_only_when_configured_and_better_on_held_out_runs(
+    session_factory,
+) -> None:
+    _seed(session_factory)
+    _seed_duration_history(session_factory)
+
+    advisory = RunReport(run_id=None, trigger="batch-cron", dry_run=True, started_at=NOW)
+    _harness(session_factory).coordinator._select(
+        table_ids=None, limit=None, now=NOW, report=advisory
+    )
+    assert advisory.autocomp is not None
+    trace = advisory.autocomp["duration_model"]
+    assert trace["configured"] == "rate" and trace["used"] == "rate"
+    assert trace["calibration"]["preferred"] is True
+    assert trace["calibration"]["holdout_mape_ernest"] < 0.01
+
+    report = RunReport(run_id=None, trigger="batch-cron", dry_run=True, started_at=NOW)
+    h = _harness(session_factory, settings=_settings(maintenance_duration_model="ernest"))
+    chosen = h.coordinator._select(table_ids=None, limit=None, now=NOW, report=report)
+    assert report.autocomp is not None and report.autocomp["duration_model"]["used"] == "ernest"
+    params = h.coordinator._autocomp_params
+    assert params is not None and params.duration_hours is not None
+    assert chosen and chosen[0].gbhr == pytest.approx(
+        params.executor_memory_gb * params.duration_hours(chosen[0].candidate)
+    )
 
 
 def test_a_table_bigger_than_one_lane_is_capped_to_its_worst_chunks(session_factory) -> None:

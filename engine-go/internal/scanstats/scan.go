@@ -451,6 +451,11 @@ type columnAccum struct {
 	colType    string
 	nullCount  int64
 	valueCount int64
+	lower      iceberg.Literal
+	upper      iceberg.Literal
+	// A file holding non-null values without both bounds makes lower/upper a bound over some
+	// files only; quality constraints must not treat them as the column's min/max.
+	boundsIncomplete bool
 }
 
 type accumulator struct {
@@ -664,6 +669,7 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 		a.noteManifestError(note)
 	}
 	a.addColumnStats(nulls, vals)
+	a.addColumnBounds(df, nulls, vals)
 	a.addFileSample(df)
 	key := partitionKey(values)
 	acc := a.partitions[key]
@@ -707,6 +713,119 @@ func (a *accumulator) addFileSample(df iceberg.DataFile) {
 	delete(a.fileSamples, largest)
 }
 
+func (a *accumulator) addColumnBounds(df iceberg.DataFile, nulls, vals map[int]int64) {
+	lowerRaw, upperRaw, ok := readBoundMaps(df)
+	a.mergeColumnBounds(lowerRaw, upperRaw, ok, nulls, vals)
+}
+
+func (a *accumulator) mergeColumnBounds(lowerRaw, upperRaw map[int][]byte, ok bool, nulls, vals map[int]int64) {
+	for id, count := range vals {
+		col := a.columns[id]
+		typ, known := a.columnTypes[id]
+		if col == nil || !known || !boundSafeType(typ) {
+			continue
+		}
+		hasValues := count-nulls[id] > 0
+		if !ok {
+			col.boundsIncomplete = col.boundsIncomplete || hasValues
+			continue
+		}
+		low := decodeLiteral(typ, lowerRaw[id])
+		high := decodeLiteral(typ, upperRaw[id])
+		if low == nil || high == nil {
+			col.boundsIncomplete = col.boundsIncomplete || hasValues
+			continue
+		}
+		if col.lower == nil {
+			col.lower, col.upper = low, high
+			continue
+		}
+		lowLess, lowCmp := literalLess(low, col.lower)
+		highLess, highCmp := literalLess(col.upper, high)
+		if !lowCmp || !highCmp {
+			col.boundsIncomplete = true
+			continue
+		}
+		if lowLess {
+			col.lower = low
+		}
+		if highLess {
+			col.upper = high
+		}
+	}
+}
+
+// readBoundMaps recovers from the same iceberg-go map-init panics as readDataFileMaps.
+func readBoundMaps(df iceberg.DataFile) (lower, upper map[int][]byte, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			lower, upper, ok = nil, nil, false
+		}
+	}()
+	return df.LowerBoundValues(), df.UpperBoundValues(), true
+}
+
+func decodeLiteral(typ iceberg.Type, encoded []byte) iceberg.Literal {
+	if encoded == nil {
+		return nil
+	}
+	literal, err := iceberg.LiteralFromBytes(typ, encoded)
+	if err != nil {
+		return nil
+	}
+	return literal
+}
+
+// literalLess reports a < b for two literals of the same physical type; cmp is false when
+// the types differ or are not orderable here.
+func literalLess(a, b iceberg.Literal) (less, cmp bool) {
+	if a == nil || b == nil {
+		return false, false
+	}
+	switch x := a.(type) {
+	case iceberg.TypedLiteral[bool]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[int32]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[int64]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[float32]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[float64]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[iceberg.Date]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[iceberg.Time]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[iceberg.Timestamp]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[iceberg.TimestampNano]:
+		return typedLess(x, b)
+	case iceberg.TypedLiteral[iceberg.Decimal]:
+		return typedLess(x, b)
+	}
+	return false, false
+}
+
+func typedLess[T iceberg.LiteralType](a iceberg.TypedLiteral[T], b iceberg.Literal) (bool, bool) {
+	other, ok := b.(iceberg.TypedLiteral[T])
+	if !ok {
+		return false, false
+	}
+	return a.Comparator()(a.Value(), other.Value()) < 0, true
+}
+
+func boundSafeType(typ iceberg.Type) bool {
+	switch typ.(type) {
+	case iceberg.BooleanType, iceberg.Int32Type, iceberg.Int64Type, iceberg.Float32Type,
+		iceberg.Float64Type, iceberg.DecimalType, iceberg.DateType, iceberg.TimeType,
+		iceberg.TimestampType, iceberg.TimestampTzType, iceberg.TimestampNsType,
+		iceberg.TimestampTzNsType:
+		return true
+	}
+	return false
+}
+
 // boundSafeSampleColumns drops requested columns that are not numeric/temporal: string
 // bounds are verbatim row values (emails, names), whatever the caller asked for.
 func (a *accumulator) boundSafeSampleColumns() []string {
@@ -719,11 +838,7 @@ func (a *accumulator) boundSafeSampleColumns() []string {
 		if def, ok := a.columnDefs[id]; ok {
 			name = def.ColumnName
 		}
-		switch typ.(type) {
-		case iceberg.BooleanType, iceberg.Int32Type, iceberg.Int64Type, iceberg.Float32Type,
-			iceberg.Float64Type, iceberg.DecimalType, iceberg.DateType, iceberg.TimeType,
-			iceberg.TimestampType, iceberg.TimestampTzType, iceberg.TimestampNsType,
-			iceberg.TimestampTzNsType:
+		if boundSafeType(typ) {
 			safe[name] = true
 		}
 	}
@@ -908,14 +1023,23 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 				worst = &name
 			}
 		}
-		columnQuality = append(columnQuality, protocol.ScanStatsColumnQuality{
+		entry := protocol.ScanStatsColumnQuality{
 			FieldID:    id,
 			ColumnName: col.name,
 			ColumnType: col.colType,
 			NullCount:  col.nullCount,
 			ValueCount: col.valueCount,
 			NullRate:   rounded,
-		})
+		}
+		if typ, ok := a.columnTypes[id]; ok && boundSafeType(typ) {
+			if col.lower != nil {
+				entry.LowerBound = jsonable(col.lower.Any())
+				entry.UpperBound = jsonable(col.upper.Any())
+			}
+			complete := !col.boundsIncomplete
+			entry.BoundsComplete = &complete
+		}
+		columnQuality = append(columnQuality, entry)
 	}
 	var avgNull, maxNull *float64
 	if rated > 0 {

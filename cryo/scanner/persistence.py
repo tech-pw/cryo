@@ -453,6 +453,10 @@ def persist_table_analysis(
     if analysis.cost is not None:
         persist_table_cost(session, table_id=table_id, cost=analysis.cost)
 
+    from cryo.quality.constraint_store import evaluate_after_scan
+
+    evaluate_after_scan(session, table_id)
+
     # Update AutoComp benefit scores after scan (if enabled)
     try:
         from cryo.config import get_settings

@@ -169,7 +169,16 @@ def _quality_breach_reasons(session: Session, table_id: object) -> list[str]:
             f"{signals.get('last_commit_net_rows')} rows vs median "
             f"{signals.get('net_rows_baseline_median')}"
         )
-    return reasons
+    return reasons + _constraint_breach_reasons(session, table_id)
+
+
+def _constraint_breach_reasons(session: Session, table_id: object) -> list[str]:
+    from cryo.quality.constraint_store import failing_constraints
+
+    return [
+        f"Quality constraint '{constraint.name}' failed: {result.reason or result.status}"
+        for constraint, result in failing_constraints(session, table_id)  # type: ignore[arg-type]
+    ]
 
 
 def _effectiveness_breach_reasons(session: Session, table_id: object) -> list[str]:

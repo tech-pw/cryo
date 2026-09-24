@@ -393,6 +393,38 @@ CREATE TABLE cryo.audit_log (
     duration_ms  bigint
 );
 CREATE INDEX ON cryo.audit_log (table_id, ts);
+
+-- Deequ-style declarative rules checked from stored scan metadata (cryo/quality/constraints.py)
+CREATE TABLE cryo.quality_constraints (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    table_id     uuid NOT NULL REFERENCES cryo.tables(id) ON DELETE CASCADE,
+    name         text NOT NULL,
+    kind         text NOT NULL,        -- size | completeness | range | size_change | freshness
+    field_id     int,                  -- Iceberg field id; column kinds only
+    column_name  text,                 -- display only; identity is field_id
+    params       jsonb NOT NULL DEFAULT '{}',
+    severity     text NOT NULL DEFAULT 'error',   -- error alerts; warning only shows
+    enabled      boolean NOT NULL DEFAULT true,
+    created_by   text,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (table_id, name)
+);
+
+-- Metrics repository: one row per rule per scanned snapshot, newest 100 per rule
+CREATE TABLE cryo.quality_constraint_results (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    constraint_id uuid NOT NULL REFERENCES cryo.quality_constraints(id) ON DELETE CASCADE,
+    table_id      uuid NOT NULL REFERENCES cryo.tables(id) ON DELETE CASCADE,
+    evaluated_at  timestamptz NOT NULL,
+    snapshot_id   bigint,              -- results are as of the scanned snapshot
+    scanned_at    timestamptz,
+    status        text NOT NULL,       -- passed | failed | unknown (missing metrics never pass)
+    observed      jsonb NOT NULL DEFAULT '{}',
+    reason        text,
+    evidence      jsonb NOT NULL DEFAULT '{}'
+);
+CREATE INDEX ON cryo.quality_constraint_results (constraint_id, evaluated_at);
 ```
 
 #### 3.4.1 `MaintenanceRun.kind` — canonical taxonomy
@@ -822,6 +854,10 @@ GET   /api/v1/dashboards/cost                                 # datalake current
         # by operation + by schema, top savings opportunities, precision coverage
 POST  /api/v1/scans                                           # trigger ad-hoc scan (optional scope)
         # body: {selection?, full_scan?, cost_full_scan?}  (cost_full_scan -> Tier-2 orphan pass)
+GET/POST /api/v1/tables/{id}/quality-constraints              # rules + latest result + eligible columns
+PATCH/DELETE /api/v1/quality-constraints/{id}                 # operator; audited
+GET   /api/v1/quality-constraints/{id}/results                # result history, one per snapshot
+POST  /api/v1/tables/{id}/quality-constraints/evaluate        # re-check against the latest scan
 
 # Shared S3 warehouse-path anomalies (not ML fleet anomalies)
 GET   /api/v1/anomalies/shared-s3                             # latest harvest snapshot
@@ -849,6 +885,7 @@ POST  /api/v1/maintenance/run                                 # create adhoc run
 GET   /api/v1/maintenance/control                             # visible global/tenant/destination controls
 POST  /api/v1/maintenance/control/pause                       # operator; global requires admin
 POST  /api/v1/maintenance/control/resume
+GET   /api/v1/maintenance/duration-model                      # Ernest fit vs rate model, held-out MAPE
 GET   /api/v1/maintenance/safety/summary
 GET   /api/v1/maintenance/safety/intents
 GET   /api/v1/maintenance/safety/effects                      # filter by state/ambiguous_only
