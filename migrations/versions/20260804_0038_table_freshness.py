@@ -22,17 +22,29 @@ def upgrade() -> None:
         sa.Column("last_snapshot_committed_at", sa.DateTime(timezone=True), nullable=True),
         schema="cryo",
     )
+    # pg_input_is_valid() is PostgreSQL 16+; the dev database is 14. A session-scoped try-cast
+    # leaves unparseable values NULL the same way on every version.
+    op.execute(
+        """
+        CREATE FUNCTION pg_temp.cryo_try_timestamptz(value text) RETURNS timestamptz
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN value::timestamptz;
+        EXCEPTION WHEN others THEN
+            RETURN NULL;
+        END;
+        $$
+        """
+    )
     op.execute(
         """
         UPDATE cryo.table_stats
-        SET last_snapshot_committed_at = (raw ->> 'last_snapshot_committed_at')::timestamptz
+        SET last_snapshot_committed_at =
+            pg_temp.cryo_try_timestamptz(raw ->> 'last_snapshot_committed_at')
         WHERE raw ->> 'last_snapshot_committed_at' IS NOT NULL
-          AND pg_input_is_valid(
-            raw ->> 'last_snapshot_committed_at',
-            'timestamp with time zone'
-          )
         """
     )
+    op.execute("DROP FUNCTION pg_temp.cryo_try_timestamptz(text)")
     op.create_index(
         "ix_table_stats_last_snapshot_committed_at",
         "table_stats",
