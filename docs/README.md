@@ -32,8 +32,14 @@ The authoritative architecture / contract docs live at the repo root:
   wireframes (docs-only spec; build order inside).
 - [`RATING_2026.md`](./RATING_2026.md) — 2026-07-07 deep rating (25
   attributes) and remediation roadmap.
+- [`oss-launch-plan-2026-09-25.md`](./oss-launch-plan-2026-09-25.md) — current
+  OSS portability, Helm distribution, independent adoption, and release-gate plan;
+  replaces the July OSS readiness checklist below.
+- [`OSS_0_BASELINE_2026-09-25.md`](./OSS_0_BASELINE_2026-09-25.md) — OSS-0
+  release-boundary and evidence checklist: candidate commit, publication
+  hygiene findings, secrets scan, CI state, open blockers.
 - [`OSS_READINESS.md`](./OSS_READINESS.md) — OSS launch readiness
-  checklist.
+  checklist (July 2026, superseded by the plan above).
 - [`OSS_P0_REVERIFY_2026_07_07.md`](./OSS_P0_REVERIFY_2026_07_07.md) —
   P0 reverification log.
 - [`current-state.md`](./current-state.md) — snapshot of what works /

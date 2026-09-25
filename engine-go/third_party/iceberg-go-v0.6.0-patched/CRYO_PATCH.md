@@ -37,7 +37,7 @@ The fix normalizes a bare `time.Time` value back to the same days-since-epoch `i
 `transforms.go`'s `epochTM`), regardless of whether the logical-type hint survived
 the round trip.
 
-### 2. Nil-safe Avro partition value conversion (PDAE-8279)
+### 2. Nil-safe Avro partition value conversion
 
 `manifest.go`, `convertAvroValueToIcebergType()`: every logical-type branch
 (`Date`, `TimeMillis`, `TimeMicros`, `TimestampMillis`, `TimestampMicros`,
@@ -59,8 +59,7 @@ github.com/apache/iceberg-go.(*dataFile).Partition(...)
 github.com/apache/iceberg-go/table.GetPartitionRecord(...)
 ```
 
-Reproduced in production 2026-08-14 on `hive.icesheet.silver_offline_drip_read_status_2`
-during the fleet-wide cold-table cleanup — crashed the whole native
+Reproduced in production during a fleet-wide cold-table cleanup — crashed the whole native
 maintenance subprocess mid-batch, taking 29 unrelated tables' jobs down
 with it (they were reported `native_job_no_result` despite having nothing
 to do with the failing table).
@@ -85,7 +84,7 @@ down unrelated operations in the *same* job. This patch fixes the actual
 root-cause panic; `recoverOperation` is defense-in-depth for whatever
 still-unknown panic shows up next. Whether cross-*table* batch-pod
 isolation (the 29-collateral-jobs scenario) needs its own fix at the
-Python dispatch/packing layer is tracked separately in PDAE-8279.
+Python dispatch/packing layer is tracked separately as an open follow-up.
 
 ### 3. UTF-8–safe string metrics truncate (Spark parity)
 
@@ -109,7 +108,7 @@ Fixes (aligned with Iceberg Java `UnicodeUtil` and upstream iceberg-go #1198):
 
 Regression tests: `transforms_utf8_test.go`, `table/internal/metrics_truncate_utf8_test.go`.
 
-### 4. Unwrapped branch-changed commit conflicts (PDAE-8353)
+### 4. Unwrapped branch-changed commit conflicts
 
 Hive/Glue `UpdateAndStageTable` requirement validation returns
 `requirement failed: branch "main" has changed: expected id …` without wrapping
