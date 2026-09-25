@@ -18,6 +18,7 @@ no separate destination or config duplication needed.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 # (size_gb_upper_bound, fraction_of_configured_max) -- table size is compared against each
@@ -47,10 +48,13 @@ class ExecutorProfile:
 
 
 def _tier_fraction(total_size_gb: float | None) -> float:
-    # Unknown size (e.g. a table Cryo has never scanned) -- better to over-provision once
-    # than silently starve a table that turns out to be genuinely large.
+    # Unknown size used to take the full configured profile. The live spark-k8s-fallback
+    # destination was 24 executors × 3 vCPU × 6Gi, so one unscanned table reserved ~76 vCPU
+    # for up to 4h and landed in the untagged cost bucket (Spark creates the driver and
+    # executors with no Deployment owner). Use the sub-50GB tier; cap_dispatch_profile still
+    # bounds the result if that destination config is restored.
     if total_size_gb is None:
-        return _FULL_FRACTION
+        return 0.15
     for upper_bound, fraction in _SIZE_TIERS:
         if total_size_gb < upper_bound:
             return fraction
@@ -75,3 +79,67 @@ def scale_executor_profile(
         driver_cpu_milli=max(500, round(max_driver_cpu_milli * driver_fraction)),
         driver_mem_mib=max(1024, round(max_driver_mem_mib * driver_fraction)),
     )
+
+
+# Hard ceiling applied at spark-submit time, independent of destination.config.
+# Live spark-k8s-fallback was 24×3000m×6144Mi driver 4000m/16384Mi, deadline 14400s,
+# slot_cap 12. That is one cryo-spark Job plus an untagged driver and 24 executors.
+DISPATCH_EXECUTOR_INSTANCES = 2
+DISPATCH_EXECUTOR_CPU_MILLI = 1000
+DISPATCH_EXECUTOR_MEM_MIB = 2048
+DISPATCH_DRIVER_CPU_MILLI = 1000
+DISPATCH_DRIVER_MEM_MIB = 2048
+DISPATCH_DEADLINE_SECONDS = 7200
+
+_LIGHTWEIGHT_OPS = frozenset(
+    {
+        "expire_snapshots",
+        "remove_orphan_files",
+        "optimize_manifests",
+        "compute_statistics",
+    }
+)
+_LIGHTWEIGHT_PROFILE = ExecutorProfile(
+    executor_instances=1,
+    executor_cpu_milli=500,
+    executor_mem_mib=1024,
+    driver_cpu_milli=500,
+    driver_mem_mib=1024,
+)
+
+
+def cap_dispatch_profile(
+    profile: ExecutorProfile, *, operation: str | None = None
+) -> ExecutorProfile:
+    """Bound what a cryo-spark submit is allowed to reserve, whatever the destination says."""
+    if operation in _LIGHTWEIGHT_OPS:
+        return _LIGHTWEIGHT_PROFILE
+    return ExecutorProfile(
+        executor_instances=min(profile.executor_instances, DISPATCH_EXECUTOR_INSTANCES),
+        executor_cpu_milli=min(profile.executor_cpu_milli, DISPATCH_EXECUTOR_CPU_MILLI),
+        executor_mem_mib=min(profile.executor_mem_mib, DISPATCH_EXECUTOR_MEM_MIB),
+        driver_cpu_milli=min(profile.driver_cpu_milli, DISPATCH_DRIVER_CPU_MILLI),
+        driver_mem_mib=min(profile.driver_mem_mib, DISPATCH_DRIVER_MEM_MIB),
+    )
+
+
+def cap_deadline_seconds(seconds: int) -> int:
+    return min(seconds, DISPATCH_DEADLINE_SECONDS)
+
+
+def spark_slot_ceiling(configured: int) -> int:
+    """Honor CRYO_SPARK_K8S_SLOT_CAP as a ceiling over a destination's slot_cap.
+
+    Absent in tests and local runs, so an explicit slot_cap still wins there. Prod sets
+    the env to 2 so a destination left at 12 cannot start 12 clusters at once.
+    """
+    raw = os.environ.get("CRYO_SPARK_K8S_SLOT_CAP")
+    if not raw:
+        return configured
+    try:
+        ceiling = int(raw)
+    except ValueError:
+        return configured
+    if ceiling < 1:
+        return configured
+    return min(configured, ceiling)

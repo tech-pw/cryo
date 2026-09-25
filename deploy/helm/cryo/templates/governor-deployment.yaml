@@ -111,6 +111,8 @@ spec:
               value: {{ .Values.spark.k8s.activeDeadlineSeconds | quote }}
             - name: CRYO_SPARK_K8S_TTL_SECONDS_AFTER_FINISHED
               value: {{ .Values.spark.k8s.ttlSecondsAfterFinished | quote }}
+            - name: CRYO_SPARK_K8S_SLOT_CAP
+              value: {{ .Values.spark.k8s.slotCap | quote }}
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
