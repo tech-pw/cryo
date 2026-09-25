@@ -44,6 +44,18 @@ def quiet_third_party_loggers() -> None:
     logging.getLogger("s3transfer").setLevel(logging.WARNING)
 
 
+def configure_process_logging() -> None:
+    """JSON logs in staging/prod, console logs in dev. Shared by every process entrypoint."""
+    from cryo.config import get_settings
+
+    settings = get_settings()
+    configure_logging(
+        level="DEBUG" if settings.environment == "dev" else "INFO",
+        json_format=settings.environment in {"staging", "prod"},
+        environment=settings.environment,
+    )
+
+
 def configure_logging(
     *,
     level: str = "INFO",

@@ -94,7 +94,7 @@ def test_deactivate_orphaned_evolving_catalog_entries_deactivates_only_confirmed
         source_id=source.id,
         schema_name="ezpay",
         table_name="gold_notifications",
-        location="s3a://example-lake-prod-gold-layer/silver/ezpay/notifications_evolving",
+        location="s3a://example-prod-bucket/silver/ezpay/notifications_evolving",
         is_active=True,
     )
     session.add_all([orphan, real_sibling])
@@ -154,7 +154,7 @@ def test_deactivate_orphaned_evolving_catalog_entries_ignores_tables_with_a_real
         source_id=source.id,
         schema_name="lms",
         table_name="course_change_histories_evolving",
-        location="s3a://example-lake-prod-gold-layer/silver/lms/course_change_histories_evolving",
+        location="s3a://example-prod-bucket/silver/lms/course_change_histories_evolving",
         is_active=True,
     )
     session.add(legit)
@@ -190,7 +190,7 @@ def test_deactivate_orphaned_evolving_catalog_entries_ignores_already_inactive_o
         source_id=source.id,
         schema_name="curiousjr",
         table_name="keystores",
-        location="s3a://example-lake-prod-gold-layer/bronze/curiousjr/keystores_evolving",
+        location="s3a://example-prod-bucket/bronze/curiousjr/keystores_evolving",
         is_active=True,
     )
     session.add_all([already_deactivated, real_sibling])

@@ -77,6 +77,19 @@ describe("RunDetail", () => {
     mockUseRunLiveEvents.mockReturnValue(liveEventsDefault);
   });
 
+  it("shows measured bytes freed and does not invent a zero", async () => {
+    vi.mocked(getRun).mockResolvedValue({
+      ...baseRun,
+      realized_bytes_freed: 1024 ** 3,
+      realized_actions_measured: 1,
+      realized_actions_succeeded: 2
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Freed 1 GB \(1 of 2 actions measured\)/)).toBeInTheDocument();
+  });
+
   it("does not show a stalled label when the run has recent activity", async () => {
     renderPage();
     await screen.findByRole("heading", { name: /Run 22222222/ });

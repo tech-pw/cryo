@@ -56,15 +56,15 @@ def test_source_catalog_connection_overrides_destination_default(session) -> Non
         session,
         source_config={
             "catalog_name": "hive",
-            "uri": "thrift://trino-metastore-v2.example.com:9083",
-            "warehouse": "s3://example-lake-dev-bronze-layer/",
+            "uri": "thrift://metastore-dev.example.invalid:9083",
+            "warehouse": "s3://example-dev-bucket/",
         },
         fallback_config={
             "catalog": "cdp",
             "spark_k8s": {
                 "catalog_impl": "hive",
-                "catalog_uri": "thrift://trino-prod-metastore.example.com:9083",
-                "catalog_warehouse": "s3://example-lake-prod-gold-layer/",
+                "catalog_uri": "thrift://metastore.example.invalid:9083",
+                "catalog_warehouse": "s3://example-prod-bucket/",
             },
         },
     )
@@ -72,8 +72,8 @@ def test_source_catalog_connection_overrides_destination_default(session) -> Non
     client, table_ref = _resolve_spark_fallback(session, table_id)
 
     assert table_ref == "hive.lms.silver_adminactions"
-    assert client._config.catalog_uri == "thrift://trino-metastore-v2.example.com:9083"
-    assert client._config.catalog_warehouse == "s3://example-lake-dev-bronze-layer/"
+    assert client._config.catalog_uri == "thrift://metastore-dev.example.invalid:9083"
+    assert client._config.catalog_warehouse == "s3://example-dev-bucket/"
 
 
 def test_missing_source_catalog_name_raises_clear_error(session) -> None:

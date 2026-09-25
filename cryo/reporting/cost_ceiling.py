@@ -357,6 +357,11 @@ def enforce_cost_ceiling(
     settings = get_settings()
     if not settings.cost_ceiling_enabled:
         return None
+    if not grafana_url or not settings.cost_ceiling_cluster_name:
+        logger.warning(
+            "Cost ceiling enabled without grafana_base_url or cluster name; skipping"
+        )
+        return None
 
     try:
         check = fetch_latest_billed_namespace_cost(

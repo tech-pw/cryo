@@ -7,17 +7,20 @@ import {
   assignTables,
   exportTablesCsv as requestTablesCsv,
   groupTables,
+  deleteExplorerView,
   listDestinations,
+  listExplorerViews,
   listPresets,
   listSources,
   listTables,
+  saveExplorerView,
   translateTableFilter,
   runMaintenance,
   runManifestRewrite,
   triggerScan,
   unassignTables
 } from "../../api/client";
-import type { Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
+import type { ExplorerViewRead, Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
 import { HintLabel, Sparkline } from "../../components/common";
@@ -164,12 +167,22 @@ const CATALOG_DEFAULT_VIEW_STORAGE_KEY = "cryo.catalog.defaultView.v1";
 const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v1";
 
 interface CatalogSavedView {
+  id?: string;
   name: string;
   filters: TableFilterState;
   sort?: string;
   groupBy?: TableGroupByField | null;
   savingsView?: boolean;
 }
+
+const viewFromServer = (view: ExplorerViewRead): CatalogSavedView => ({
+  id: view.id,
+  name: view.name,
+  filters: view.filters as TableFilterState,
+  sort: view.sort ?? undefined,
+  groupBy: (view.group_by as TableGroupByField | null) ?? null,
+  savingsView: view.savings_view
+});
 
 const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
   {
@@ -323,6 +336,24 @@ export const TableExplorerSection = () => {
   const [userViews, setUserViews] = useState<CatalogSavedView[]>(() =>
     readJson(CATALOG_VIEWS_STORAGE_KEY, [])
   );
+  const serverViews = useQuery({
+    queryKey: ["explorer-views", token],
+    queryFn: () => listExplorerViews(api),
+    enabled: Boolean(token)
+  });
+  useEffect(() => {
+    if (!serverViews.data) return;
+    setUserViews((local) => {
+      const server = serverViews.data.map(viewFromServer);
+      const serverNames = new Set(server.map((view) => view.name));
+      // Server rows are the source of truth. A local copy with an id that the server
+      // no longer returns was deleted elsewhere and must not be resurrected.
+      const localOnly = local.filter((view) => !view.id && !serverNames.has(view.name));
+      const next = [...server, ...localOnly];
+      writeJson(CATALOG_VIEWS_STORAGE_KEY, next);
+      return next;
+    });
+  }, [serverViews.data]);
   const allViews = useMemo(() => [...BUILTIN_CATALOG_VIEWS, ...userViews], [userViews]);
 
   const applyView = (view: CatalogSavedView) => {
@@ -367,12 +398,45 @@ export const TableExplorerSection = () => {
       groupBy: groupByField,
       savingsView
     };
-    setUserViews((current) => {
-      const next = [...current.filter((existing) => existing.name !== view.name), view];
-      writeJson(CATALOG_VIEWS_STORAGE_KEY, next);
-      return next;
-    });
-    toast.success(`Saved view "${view.name}"`);
+    void saveExplorerView(api, {
+      name: view.name,
+      filters: view.filters,
+      sort: view.sort,
+      group_by: view.groupBy,
+      savings_view: Boolean(view.savingsView)
+    })
+      .then((saved) => {
+        const stored = viewFromServer(saved);
+        setUserViews((current) => {
+          const next = [...current.filter((existing) => existing.name !== stored.name), stored];
+          writeJson(CATALOG_VIEWS_STORAGE_KEY, next);
+          return next;
+        });
+        toast.success(`Saved view "${stored.name}"`);
+        void queryClient.invalidateQueries({ queryKey: ["explorer-views", token] });
+      })
+      .catch(() => toast.error("Could not save this view."));
+  };
+
+  const deleteSavedView = (name: string) => {
+    const view = userViews.find((candidate) => candidate.name === name);
+    const drop = () => {
+      setUserViews((current) => {
+        const next = current.filter((existing) => existing.name !== name);
+        writeJson(CATALOG_VIEWS_STORAGE_KEY, next);
+        return next;
+      });
+    };
+    if (!view?.id) {
+      drop();
+      return;
+    }
+    void deleteExplorerView(api, view.id)
+      .then(() => {
+        drop();
+        void queryClient.invalidateQueries({ queryKey: ["explorer-views", token] });
+      })
+      .catch(() => toast.error("Could not delete this view."));
   };
 
   const setCurrentAsDefaultView = (name: string) => {
@@ -868,6 +932,16 @@ export const TableExplorerSection = () => {
           <Button type="button" variant="secondary" onClick={saveCurrentAsView}>
             Save view
           </Button>
+          {userViews.length ? (
+            <Select
+              aria-label="Delete saved view"
+              className="w-[160px]"
+              value=""
+              placeholder="Delete view..."
+              onChange={(next) => next && deleteSavedView(next)}
+              options={userViews.map((view) => ({ label: view.name, value: view.name }))}
+            />
+          ) : null}
           {userViews.length ? (
             <Select
               aria-label="Set default catalog view"

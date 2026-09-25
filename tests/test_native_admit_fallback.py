@@ -188,8 +188,8 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
                 "catalog": "cdp",
                 "spark_k8s": {
                     "catalog_impl": "hive",
-                    "catalog_uri": "thrift://trino-prod-metastore.example.com:9083",
-                    "catalog_warehouse": "s3://example-lake-prod-gold-layer/",
+                    "catalog_uri": "thrift://metastore.example.invalid:9083",
+                    "catalog_warehouse": "s3://example-prod-bucket/",
                 },
             },
         )
@@ -208,8 +208,8 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={
                 "catalog_name": "hive",
-                "uri": "thrift://trino-metastore-v2.example.com:9083",
-                "warehouse": "s3://example-lake-dev-bronze-layer/",
+                "uri": "thrift://metastore-dev.example.invalid:9083",
+                "warehouse": "s3://example-dev-bucket/",
             },
             table_ref="hive.lms.silver_adminactions",
             job_id="job-1",
@@ -219,9 +219,9 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
     passed_config = create_engine.call_args.args[1]
     assert passed_config["catalog"] == "hive"
     assert (
-        passed_config["spark_k8s"]["catalog_uri"] == "thrift://trino-metastore-v2.example.com:9083"
+        passed_config["spark_k8s"]["catalog_uri"] == "thrift://metastore-dev.example.invalid:9083"
     )
-    assert passed_config["spark_k8s"]["catalog_warehouse"] == "s3://example-lake-dev-bronze-layer/"
+    assert passed_config["spark_k8s"]["catalog_warehouse"] == "s3://example-dev-bucket/"
     # catalog_impl wasn't overridden (source doesn't carry one) -- the destination's default
     # correctly still applies since both this source and the "cdp" default are
     # Hive-Metastore-backed.

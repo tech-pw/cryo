@@ -48,6 +48,9 @@ class RepinResult:
     unchanged: int
     # Which telemetry source ranked this repin -- see TrinoHotTable.source.
     ranking_source: str = "query_logs"
+    # Hot tables whose only pin pointed at a disabled preset. Those slots do not
+    # schedule anything, so they are reclaimed rather than treated as operator intent.
+    reclaimed_from_disabled: int = 0
 
 
 def repin_trino_hot_tables(
@@ -84,8 +87,7 @@ def repin_trino_hot_tables(
             window_days,
         )
         raise EmptyHotRankingError(
-            f"no hot tables found over a {window_days}d window; refusing to unpin "
-            f"{preset_name!r}"
+            f"no hot tables found over a {window_days}d window; refusing to unpin {preset_name!r}"
         )
 
     target_table_ids = {hot.table_id for hot in hot_tables}
@@ -113,11 +115,29 @@ def repin_trino_hot_tables(
             )
         ).all()
     }
+    # A pin whose preset is disabled does not schedule maintenance. Leaving it in place
+    # stranded hot tables on the legacy fleet-wide presets after those presets were turned
+    # off (2026-09-22: 20 top-500 tables had to be cleared by hand). Treat that slot as
+    # vacant even when an operator created the pin — the pin is not doing any work.
+    foreign_preset_ids = {row.preset_id for row in claimed_elsewhere.values()}
+    disabled_preset_ids = (
+        set(
+            session.scalars(
+                select(Preset.id).where(
+                    Preset.id.in_(foreign_preset_ids),
+                    Preset.enabled.is_(False),
+                )
+            ).all()
+        )
+        if foreign_preset_ids
+        else set()
+    )
 
     pinned = 0
     reassigned = 0
     unchanged = 0
     skipped_operator_pins = 0
+    reclaimed_from_disabled = 0
     for hot in hot_tables:
         row = existing_by_table.get(hot.table_id)
         if row is not None:
@@ -125,11 +145,17 @@ def repin_trino_hot_tables(
             continue
         foreign = claimed_elsewhere.get(hot.table_id)
         if foreign is not None:
-            if foreign.assigned_by != assigned_by:
+            on_disabled = foreign.preset_id in disabled_preset_ids
+            if foreign.assigned_by != assigned_by and not on_disabled:
                 # An operator deliberately pinned this table somewhere else. Overriding that
                 # silently is exactly the kind of surprise that makes a scheduler untrustworthy.
                 skipped_operator_pins += 1
                 continue
+            if on_disabled and foreign.assigned_by != assigned_by:
+                # Own the row so a later repin can release it if the table cools off.
+                # Leaving the operator marker would pin it to this preset forever.
+                foreign.assigned_by = assigned_by
+                reclaimed_from_disabled += 1
             foreign.preset_id = preset.id
             foreign.pinned = True
             reassigned += 1
@@ -161,7 +187,7 @@ def repin_trino_hot_tables(
     ranking_source = hot_tables[0].source
     logger.info(
         "Repinned %s (top %d hot tables by %s, %dd window): pinned=%d reassigned=%d "
-        "unpinned=%d unchanged=%d left_on_operator_pins=%d",
+        "unpinned=%d unchanged=%d left_on_operator_pins=%d reclaimed_from_disabled=%d",
         preset_name,
         limit,
         ranking_source,
@@ -171,6 +197,7 @@ def repin_trino_hot_tables(
         unpinned,
         unchanged,
         skipped_operator_pins,
+        reclaimed_from_disabled,
     )
     return RepinResult(
         preset_id=preset.id,
@@ -178,4 +205,5 @@ def repin_trino_hot_tables(
         unpinned=unpinned,
         unchanged=unchanged,
         ranking_source=ranking_source,
+        reclaimed_from_disabled=reclaimed_from_disabled,
     )

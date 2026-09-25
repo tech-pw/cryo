@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from cryo.observability.fleet_metrics import refresh_fleet_metrics_cached
 from cryo.observability.health import health_check
 
 router = APIRouter(tags=["observability"])
@@ -21,6 +22,7 @@ def metrics() -> PlainTextResponse:
     This endpoint returns all registered Prometheus metrics in the
     standard exposition format.
     """
+    refresh_fleet_metrics_cached()
     return PlainTextResponse(
         content=generate_latest().decode("utf-8"),
         media_type=CONTENT_TYPE_LATEST,

@@ -327,10 +327,12 @@ class TrinoHotPresetRunner(DaemonRunner):
                 )
                 return
             self._logger.info(
-                "Trino-hot preset repin: pinned=%d unpinned=%d unchanged=%d (ranked by %s)",
+                "Trino-hot preset repin: pinned=%d unpinned=%d unchanged=%d "
+                "reclaimed_from_disabled=%d (ranked by %s)",
                 result.pinned,
                 result.unpinned,
                 result.unchanged,
+                result.reclaimed_from_disabled,
                 result.ranking_source,
             )
 

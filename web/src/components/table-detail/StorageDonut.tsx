@@ -34,7 +34,11 @@ export const StorageDonut = ({
 
   return (
     <div className="td-storage-donut-wrap">
-      <div className="td-storage-donut-chart">
+      <div
+        className="td-storage-donut-chart"
+        role="img"
+        aria-label={`Storage breakdown totaling ${formatBytesGb(total)}: ${parts.map((part) => `${part.key} ${formatBytesGb(part.bytes)}`).join(", ")}.`}
+      >
         <ResponsiveContainer width="100%" height={168}>
           <PieChart>
             <Pie

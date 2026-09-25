@@ -1155,6 +1155,12 @@ class RunRead(BaseModel):
     created_at: datetime
     finished_at: datetime | None = None
     summary: JsonDict | None = None
+    # Detail endpoints only. None means the list path did not compute them.
+    # realized_bytes_freed is None when no successful action reported bytes —
+    # that is missing evidence, not a measured zero.
+    realized_bytes_freed: int | None = None
+    realized_actions_measured: int | None = None
+    realized_actions_succeeded: int | None = None
 
 
 class ScannerStatusRead(BaseModel):

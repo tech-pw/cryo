@@ -272,7 +272,7 @@ def test_capacity_deferred_job_does_not_orphan_within_ten_minutes(session, sessi
         destination=destination,
         status="deferred",
         finished_at=NOW - timedelta(minutes=20),
-        error="metastore_capacity:thrift://trino-prod-metastore.example.com:9083",
+        error="metastore_capacity:thrift://metastore.example.invalid:9083",
     )
     session.commit()
 
@@ -298,7 +298,7 @@ def test_capacity_deferred_job_finalizes_once_past_its_own_longer_grace(session,
         destination=destination,
         status="deferred",
         finished_at=NOW - timedelta(hours=6, minutes=1),
-        error="metastore_capacity:thrift://trino-prod-metastore.example.com:9083",
+        error="metastore_capacity:thrift://metastore.example.invalid:9083",
     )
     session.commit()
 

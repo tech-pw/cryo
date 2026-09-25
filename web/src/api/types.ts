@@ -696,6 +696,16 @@ export interface ScanTriggerResponse {
   num_chunks?: number | null;
 }
 
+export interface ExplorerViewRead {
+  id: UUID;
+  name: string;
+  filters: JsonObject;
+  sort?: string | null;
+  group_by?: string | null;
+  savings_view: boolean;
+  updated_at: string;
+}
+
 export interface RunRead {
   id: UUID;
   kind: string;
@@ -707,6 +717,9 @@ export interface RunRead {
   created_at: string;
   finished_at?: string | null;
   summary?: JsonObject | null;
+  realized_bytes_freed?: number | null;
+  realized_actions_measured?: number | null;
+  realized_actions_succeeded?: number | null;
 }
 
 export interface ScannerStatusRead {
