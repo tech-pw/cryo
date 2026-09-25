@@ -1,5 +1,33 @@
 # Cryo — TODO
 
+## Open-source portability and adoption — 2026-09-25
+
+Plan, evidence, owners and acceptance criteria:
+[OSS launch plan](docs/oss-launch-plan-2026-09-25.md). Implementation remains proposed;
+existing recovery/safety gates still apply to production claims.
+
+- [x] Audit current portability, Helm and OSS-process gaps; write the phased delivery plan.
+- [~] OSS-0: establish candidate CI/evidence, public/private inventory, release attribution,
+      clean artifact boundaries and working private vulnerability reporting.
+      [Baseline checklist](docs/OSS_0_BASELINE_2026-09-25.md): PW-internal docs and agent
+      scratch state moved out of the tracked tree, secrets scan clean, vendored Iceberg Go
+      attribution confirmed sound and internal-ticket references redacted, GitHub `main`
+      fast-forwarded to the candidate commit. **Remaining open items:** security disclosure
+      route unverified against a truly public/unauthenticated reporter (repo is still
+      private); `gitlab-main` has moved further since the CI sync push, needs re-sync/re-check.
+- [ ] OSS-1: remove implicit organization assumptions; preserve explicit existing settings;
+      validate timezone, placement, identifiers, auth and optional integration configuration.
+- [ ] OSS-2: publish a complete versioned Helm/image set with secure bootstrap, dependency
+      wiring, portable service names/identities and tested migration ordering.
+- [ ] OSS-3: deliver and rehearse public install → connect → scan → preview → opt-in
+      maintenance, with actionable diagnostics and operator/contributor instructions.
+- [ ] OSS-4: require fresh-cluster, correctness, failure/recovery and upgrade checks;
+      publish reproducible net-value evidence with its limitations.
+- [ ] OSS-5: reconcile policies/claims, assign maintainers, retain release evidence,
+      verify repository protections and rehearse an external contribution.
+- [ ] Complete two independent non-PW installation/maintenance pilots; apply staged
+      public-alpha, beta and production-support gates from the plan.
+
 ## Permanent recovery — 2026-09-20
 
 - [ ] Execute the [critical-vitals incident plan](docs/CRYO_CRITICAL_VITALS_ACTION_PLAN_2026-09-20.md):
