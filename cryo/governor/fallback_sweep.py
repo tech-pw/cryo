@@ -120,6 +120,8 @@ def sweep_pending_fallback_dispatches(
             continue
         if result.state == JobRunState.SUCCESS:
             row.status = "OK"
+            if result.bytes_removed is not None:
+                row.actual_bytes_freed = result.bytes_removed
             resolved_ok += 1
             job_status = JobStatus.SUCCEEDED
         elif result.state == JobRunState.UNKNOWN:

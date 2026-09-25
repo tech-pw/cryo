@@ -27,6 +27,12 @@ from typing import Any, NoReturn
 
 from pyspark.sql import SparkSession
 
+from cryo.engines.spark.procedure_metrics import (
+    action_from_sql,
+    bytes_freed_from_procedure,
+    with_orphan_dry_run,
+)
+
 _CATALOG_IMPL_SHORTHAND = {
     "rest": "org.apache.iceberg.rest.RESTCatalog",
     "hive": "org.apache.iceberg.hive.HiveCatalog",
@@ -147,6 +153,38 @@ def _json_safe(value: Any) -> Any:
 
 def _emit(prefix: str, payload: dict[str, Any]) -> None:
     print(prefix + json.dumps(payload, separators=(",", ":")), flush=True)
+
+
+def _sum_input_lengths(spark: SparkSession, paths: list[str]) -> int:
+    """Size orphan files before they are deleted. S3A is not on this image; use Iceberg S3FileIO."""
+    if not paths:
+        return 0
+    jvm = spark._jvm
+    io = jvm.org.apache.iceberg.aws.s3.S3FileIO()
+    props = jvm.java.util.HashMap()
+    io.initialize(props)
+    total = 0
+    try:
+        for path in paths:
+            location = path.replace("s3a://", "s3://", 1)
+            total += int(io.newInputFile(location).getLength())
+    finally:
+        io.close()
+    return total
+
+
+def _orphan_bytes(spark: SparkSession, sql: str) -> int | None:
+    try:
+        rows = spark.sql(with_orphan_dry_run(sql)).collect()
+    except Exception as exc:
+        print(f"[cryo] orphan size probe failed: {exc}", file=sys.stderr)
+        return None
+    paths = [str(row[0]) for row in rows if row[0]]
+    try:
+        return _sum_input_lengths(spark, paths)
+    except Exception as exc:
+        print(f"[cryo] orphan size sum failed: {exc}", file=sys.stderr)
+        return None
 
 
 def _run_statement(spark: SparkSession, sql: str) -> tuple[int, dict[str, Any]]:
@@ -316,6 +354,7 @@ def main() -> int | NoReturn:
         builder = builder.enableHiveSupport()
 
     spark = builder.getOrCreate()
+    last_result: dict[str, Any] | None = None
 
     try:
         if args.repair_missing_files:
@@ -331,21 +370,32 @@ def main() -> int | NoReturn:
             statement = statement.strip()
             if not statement:
                 continue
+            action = action_from_sql(statement)
             print(f"[cryo] Executing SQL: {statement[:200]}{'...' if len(statement) > 200 else ''}")
-            result = spark.sql(statement)
-            if result is not None:
-                row_count = result.count()
-                print(f"[cryo] SQL executed successfully, rows affected/returned: {row_count}")
-                if 0 < row_count <= 100:
-                    result.show(truncate=False)
-            else:
-                print("[cryo] SQL executed successfully (no result set)")
+            extra: dict[str, Any] = {}
+            if action == "remove_orphan_files":
+                measured = _orphan_bytes(spark, statement)
+                if measured is not None:
+                    extra["bytes_removed"] = measured
+            row_count, metrics = _run_statement(spark, statement)
+            metrics.update(extra)
+            freed = bytes_freed_from_procedure(action or "", metrics)
+            last_result = {
+                "ok": True,
+                "action": action,
+                "rows": row_count,
+                "metrics": metrics,
+                "bytes_removed": freed,
+            }
+            _emit(RESULT_PREFIX, last_result)
         return exit_code
     except Exception as exc:
         print(f"[cryo] SQL execution failed: {exc}", file=sys.stderr)
         raise
     finally:
         spark.stop()
+        if last_result is not None:
+            _emit(RESULT_PREFIX, last_result)
 
 
 if __name__ == "__main__":
