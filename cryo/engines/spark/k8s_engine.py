@@ -310,6 +310,7 @@ class SparkK8sEngine:
                         engine_ref=job_id,
                         detail=stmt.sql,
                         duration_ms=duration_ms,
+                        actual_bytes_freed=result.bytes_removed,
                     )
                 state_details = result.state_details or "no details"
                 # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,

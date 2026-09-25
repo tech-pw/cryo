@@ -155,6 +155,7 @@ class JobRunResult:
     state: JobRunState
     state_details: str | None = None
     total_execution_duration_seconds: int | None = None
+    bytes_removed: int | None = None
 
 
 class SparkK8sClient:
@@ -514,7 +515,14 @@ class SparkK8sClient:
 
         phase = pod.status.phase if pod.status else None
         if phase == "Succeeded":
-            return JobRunResult(job_run_id=job_id, state=JobRunState.SUCCESS)
+            detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
+            from cryo.engines.spark.procedure_metrics import bytes_removed_from_log
+
+            return JobRunResult(
+                job_run_id=job_id,
+                state=JobRunState.SUCCESS,
+                bytes_removed=bytes_removed_from_log(detail),
+            )
         if phase == "Failed":
             detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
