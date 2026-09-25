@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cryo.config import Settings, get_settings
-from cryo.domain.enums import EngineType
+from cryo.domain.enums import EngineType, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement, truncate_error_message
 from cryo.engines.trino.client import TrinoCoordinator, connect, coordinators_from_config
@@ -18,6 +18,22 @@ from cryo.engines.trino.sql import render, session_setup
 logger = logging.getLogger(__name__)
 
 _SQL_LOG_TRUNCATE = 200
+
+# Operations that remove or rewrite files still referenced by the table's current snapshot --
+# their effect is visible as a live-file byte-sum delta on Iceberg's `$files` metadata table,
+# queryable before and after the statement with no extra privileges beyond what the statement
+# itself already needed. remove_orphan_files is deliberately excluded: orphan files are by
+# definition *not* in `$files` (that's what makes them orphans), so a $files diff is always
+# zero for that operation regardless of how much was actually deleted on S3 -- reporting 0
+# there would be a silent wrong answer, not an honest "unmeasured". optimize_manifests and
+# compute_statistics don't touch data files at all.
+_BYTES_MEASURABLE_VIA_FILES_DIFF = frozenset(
+    {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.OPTIMIZE,
+        OperationType.CONVERT_DELETES,
+    }
+)
 
 
 @dataclass
@@ -74,9 +90,15 @@ class TrinoEngine:
             table_id,
             stmt.sql[:_SQL_LOG_TRUNCATE],
         )
+        table_ref_raw = stmt.metadata.get("table_ref")
+        table_ref = table_ref_raw if isinstance(table_ref_raw, str) else None
+        measure_bytes = stmt.action in _BYTES_MEASURABLE_VIA_FILES_DIFF and table_ref is not None
         try:
             for setup_sql in self.session_setup():
                 cursor.execute(setup_sql)
+            bytes_before = (
+                _live_file_bytes(cursor, table_ref) if measure_bytes and table_ref else None
+            )
             # Regression, confirmed live 2026-09-09/10: a worker crash (OOM, pod eviction)
             # while blocked inside the synchronous cursor.execute() below left the job
             # permanently stuck at status='running', engine_ref=null forever -- the trino
@@ -146,6 +168,15 @@ class TrinoEngine:
                 except (ValueError, IndexError, TypeError):
                     pass
 
+            actual_bytes_freed = None
+            if bytes_before is not None and table_ref:
+                bytes_after = _live_file_bytes(cursor, table_ref)
+                if bytes_after is not None:
+                    # Clamp at zero: OPTIMIZE/expire_snapshots only remove/rewrite files, they
+                    # never add net live bytes, but a concurrent writer landing between the
+                    # before- and after- $files reads could otherwise produce a negative delta.
+                    actual_bytes_freed = max(bytes_before - bytes_after, 0)
+
             return ExecResult(
                 ok=True,
                 engine_ref=engine_ref,
@@ -154,6 +185,7 @@ class TrinoEngine:
                 duration_ms=_elapsed_ms(start),
                 input_files_count=input_files,
                 output_files_count=output_files,
+                actual_bytes_freed=actual_bytes_freed,
             )
         except Exception as exc:
             engine_ref = _query_id(cursor)
@@ -186,6 +218,25 @@ class TrinoEngine:
                 if replica in {coordinator.label, coordinator.host}:
                     return coordinator
         return self.coordinators[0]
+
+
+def _live_file_bytes(cursor: Any, table_ref: str) -> int | None:
+    """Sum of file_size_in_bytes over a table's currently-referenced data/delete files.
+
+    Best-effort: any failure (unsupported connector, permission gap, transient error) returns
+    None rather than raising -- a byte-measurement side query must never fail the maintenance
+    operation itself. None is later treated the same as "couldn't measure", same as if this
+    weren't attempted at all.
+    """
+    try:
+        cursor.execute(f'SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM {table_ref}."$files"')
+        row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+    except Exception:  # noqa: BLE001 - measurement is best-effort, never fatal
+        logger.debug("Live $files byte sum failed for %s", table_ref, exc_info=True)
+        return None
 
 
 def _query_id(cursor: object) -> str | None:
