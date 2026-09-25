@@ -66,7 +66,12 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         )
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
-    return RenderedStatement(action=operation.type, sql=sql, engine=EngineType.TRINO)
+    return RenderedStatement(
+        action=operation.type,
+        sql=sql,
+        engine=EngineType.TRINO,
+        metadata={"table_ref": table_ref},
+    )
 
 
 def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
