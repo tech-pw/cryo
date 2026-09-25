@@ -38,6 +38,9 @@ capabilities-docs-check:
 cryobench-fixture:
 	$(PYTHON) -m cryo.benchmarks.cli --output build/cryobench/fixture.json
 
+deployment-footprint:
+	$(PYTHON) scripts/deployment_footprint.py
+
 migrate:
 	alembic upgrade head
 
