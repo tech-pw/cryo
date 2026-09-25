@@ -64,20 +64,27 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
     retain_last = int(params.get("retain_last", 1))
     older_than = _older_than_expr(params)
     protected_ids = sorted({int(s) for s in params.get("protected_snapshot_ids") or []})
-    set_clause = ""
+    tag_stmt = ""
     if protected_ids:
-        set_clause = (
-            f"CALL {catalog}.system.set_snapshot_ref("
-            f"table => '{catalog}.{table_name}', "
-            f"snapshot_id => {protected_ids[-1]}, "
-            f"ref_name => 'cryo-protected-latest'); "
+        # expire_snapshots never removes a snapshot a tag points at. This used to render
+        # CALL system.set_snapshot_ref(...), which Iceberg does not have (1.11's
+        # SparkProcedures registry), joined with "; " that the runner never splits: any
+        # table with a protected snapshot failed expire and, with it, the rest of its plan.
+        tag_stmt = (
+            f"ALTER TABLE {catalog}.{table_name} CREATE OR REPLACE TAG "
+            f"`cryo-protected-latest` AS OF VERSION {protected_ids[-1]};\n"
         )
     expire_call = (
         f"CALL {catalog}.system.expire_snapshots("
         f"table => '{catalog}.{table_name}', older_than => {older_than}, "
-        f"retain_last => {retain_last})"
+        f"retain_last => {retain_last}"
     )
-    return f"{set_clause}{expire_call}"
+    if params.get("stream_results", True):
+        # Iceberg's docs recommend this to keep the driver from collecting every expired
+        # file path at once; lanes run Spark in local mode, where driver memory is the pod.
+        expire_call += ", stream_results => true"
+    expire_call += ")"
+    return f"{tag_stmt}{expire_call}"
 
 
 def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str:
