@@ -638,7 +638,9 @@ class Governor:
             # AutoComp §A2 "Fleet Decide": computed once per destination over the whole wave,
             # not per job, so a big low-priority job doesn't block a wave's worth of
             # higher-MOOP-score jobs from any budget headroom it leaves behind.
-            fleet_decisions=pack_fleet_budget([_admission_job(job) for job in wave_jobs], config),
+            fleet_decisions=pack_fleet_budget(
+                [_admission_job(job) for job in wave_jobs], config, now=current
+            ),
         )
 
     def _gate_job(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
@@ -1231,6 +1233,12 @@ def _admission_config_from_destination(
             float(config["fleet_budget_gb"])
             if config.get("fleet_budget_gb") is not None
             else default.fleet_budget_gb
+        ),
+        staleness_boost_days=float(
+            config.get("staleness_boost_days", default.staleness_boost_days)
+        ),
+        staleness_boost_max=float(
+            config.get("staleness_boost_max", default.staleness_boost_max)
         ),
     )
 

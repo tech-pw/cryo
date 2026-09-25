@@ -64,13 +64,15 @@ This isn't directly relevant to Cryo's design (we already speak to Iceberg REST 
 
 Three things. Listed in order of cost/value.
 
-### 3.1 Per-table optimizer quota (borrow)
+### 3.1 Per-table optimizer quota (borrow) — **partially landed, 2026-09-27**
 
 Cheap, high-value, matches the existing `Quota` policy in Amoro. Current Cryo governor (`cryo/governor/capacity.py`) treats native work as "all-of-one-budget". A per-table slot quota, configurable per group (e.g. "billing-tier gets 30% of native slots"), would give us an honest equivalent of Amoro's `self-optimizing.quota`.
 
-**Cost:** ~1 week. The model is well-understood; the implementation surface is `cryo.scheduler.rules` plus a new column on `MaintenanceRun.config`.
+**Status:** the *fairness* half of this — Amoro's `Balanced` policy equivalent — is implemented: `cryo.governor.admission.pack_fleet_budget` now takes a bounded, opt-in `staleness_boost_days`/`staleness_boost_max` (`AdmissionConfig`), so a table neglected past its threshold gets a capped score boost and can outrank a merely higher-scoring table that gets maintained every wave. Off by default (`staleness_boost_days=0.0` no-ops the existing sort); configurable per-destination via `_admission_config_from_destination`. See `cryo/governor/admission.py::_staleness_boost` and `tests/test_admission.py`'s fairness suite. **Not yet done:** the `Quota` half — a hard per-table/per-group *slot reservation* (e.g. "billing-tier gets 30% of native slots" as a guarantee, not just a tiebreak). The staleness boost prevents indefinite starvation; it does not guarantee a minimum share of capacity the way a real quota would.
+
+**Cost:** ~1 week for the quota half. The model is well-understood; the implementation surface is a new `cryo.scheduler.rules` module plus a per-table/group quota column (likely on `Preset` or a new table, since neither `MaintenanceRun` nor `Table` has a group/tier field today).
 **Risk:** Low. Existing load-aware admission stays unchanged; this is an orthogonal axis.
-**Recommendation:** Adopt. Already partially aligned with the tier-policies in `cryo/governor/`.
+**Recommendation:** Adopt the remaining quota half when a real noisy-neighbor complaint (not just this evaluation) motivates it — the staleness boost already closes the acute starvation risk cheaply.
 
 ### 3.2 Minor/major/full split taxonomy (reference, don't port)
 
@@ -116,7 +118,7 @@ A short, sharp rubric for when this evaluation should be revisited.
 
 * **Move 6 (governor live capacity accounting)** — unchanged. Adds live state; no Amoro dependency.
 * **Move 17 (protected snapshots)** — unchanged. Amoro doesn't have an equivalent; the Iceberg layer is what we extend.
-* **The §3.1 quota model** — **becomes a new fast-follow Move 25a** (candidate numbering TBD). Without it, "high-priority big-table compaction" is not enforceable per-table today.
+* **The §3.1 quota model** — **Move 25a, fairness half landed 2026-09-27** (`cryo.governor.admission._staleness_boost`, opt-in). The hard-quota half (guaranteed minimum slot share per table/group) remains open; without it, "high-priority big-table compaction" is not *guaranteed* per-table, only protected from indefinite starvation.
 * **The "from-scratch scheduler" risk in `native-engine-scoping-research.md` §6.8** — **closed.** With this doc, the team has a written decision; future contributors don't need to re-evaluate.
 * **No change** to Moves 1–4 sequencing. The Move 3 K8s-Job plan was already a *well-trodden K8s pattern* even with Amoro's structural similarity — building it does not duplicate Amoro, because the *interface* (Trino/Spark/Go workers, our own governor) is what we'd ship either way.
 
