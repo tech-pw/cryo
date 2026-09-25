@@ -116,6 +116,7 @@ from cryo.api.serializers import table_to_read
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
+    AuditLog,
     Destination,
     MaintenanceJob,
     MaintenanceRun,
@@ -2110,7 +2111,9 @@ def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     )
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return RunRead.model_validate(presets.run_summary(run))
+    payload = presets.run_summary(run)
+    payload.update(datalake.realized_savings_for_run(session, run.id))
+    return RunRead.model_validate(payload)
 
 
 @router.get(
@@ -2434,10 +2437,13 @@ def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
 @router.post(
     "/jobs/{job_id}/force-admit",
     response_model=JobRead,
-    dependencies=[Depends(require_operator)],
     tags=["runs"],
 )
-def force_admit_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
+def force_admit_job(
+    job_id: uuid.UUID,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_operator)],
+) -> JobRead:
     """Bypass soft scheduling gates (cooldown, benefit/moop score, offpeak window,
     fleet budget) for one job and requeue it immediately.
 
@@ -2454,8 +2460,19 @@ def force_admit_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
             status_code=409,
             detail=f"Job is {job.status}; force-admit only applies to queued or deferred jobs",
         )
+    previous_status = job.status
     job.force_admit = True
-    was_deferred = job.status == JobStatus.DEFERRED.value
+    was_deferred = previous_status == JobStatus.DEFERRED.value
+    session.add(
+        AuditLog(
+            table_id=job.table_id,
+            job_id=job.id,
+            action="force_admit",
+            status="OK",
+            detail=f"previous_status={previous_status}",
+            actor=principal.subject,
+        )
+    )
     if was_deferred:
         job.status = JobStatus.QUEUED.value
         job.error = None

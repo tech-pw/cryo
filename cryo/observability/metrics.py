@@ -267,6 +267,81 @@ cost_savings_projected_usd = Gauge(
     ["source"],
 )
 
+# Fleet gauges are republished from the same SQL aggregates on every API replica.
+# Aggregate with max(), never sum().
+_FLEET = "Aggregate with max() across API replicas; each replica publishes the same SQL aggregate."
+
+datalake_grade_tables = Gauge(
+    "cryo_datalake_grade_tables",
+    f"Active tables by health grade. {_FLEET}",
+    ["grade"],
+)
+
+datalake_small_files = Gauge(
+    "cryo_datalake_small_files",
+    f"Small files across active tables. delta() is the drift signal. {_FLEET}",
+)
+
+datalake_avg_health_score = Gauge(
+    "cryo_datalake_avg_health_score",
+    f"Mean health score of active tables with stats. {_FLEET}",
+)
+
+datalake_total_size_gb = Gauge(
+    "cryo_datalake_total_size_gb",
+    f"Sum of active-table size in GB. delta() is size drift. {_FLEET}",
+)
+
+scan_coverage_ratio = Gauge(
+    "cryo_scan_coverage_ratio",
+    f"Active tables scanned within the window, divided by active tables. {_FLEET}",
+    ["window"],
+)
+
+projected_savings_usd = Gauge(
+    "cryo_projected_savings_usd",
+    f"Projected monthly USD savings by operation, from reclaim bytes and price. {_FLEET}",
+    ["operation"],
+)
+
+reclaimable_bytes = Gauge(
+    "cryo_reclaimable_bytes",
+    f"Reclaimable bytes by operation, plus operation=total from table stats. {_FLEET}",
+    ["operation"],
+)
+
+realized_bytes_freed = Gauge(
+    "cryo_realized_bytes_freed",
+    f"Measured bytes freed by successful reclaim actions in the window. {_FLEET}",
+    ["window"],
+)
+
+realized_vs_projected_ratio = Gauge(
+    "cryo_realized_vs_projected_ratio",
+    f"30d realized bytes divided by current projected reclaim bytes. 0 if projected is 0. {_FLEET}",
+)
+
+orphan_bytes_total = Gauge(
+    "cryo_orphan_bytes",
+    f"Sum of orphan_bytes on active tables. {_FLEET}",
+)
+
+orphan_scan_oldest_age_seconds = Gauge(
+    "cryo_orphan_scan_oldest_age_seconds",
+    f"Age of the oldest full cost scan among active tables. 0 if none. {_FLEET}",
+)
+
+orphan_scan_coverage_ratio = Gauge(
+    "cryo_orphan_scan_coverage_ratio",
+    f"Active tables with a full cost scan, divided by active tables. {_FLEET}",
+)
+
+jobs_live = Gauge(
+    "cryo_jobs_live",
+    f"Non-terminal maintenance jobs by status. SQL count, not a row load. {_FLEET}",
+    ["status"],
+)
+
 # ==================== Anomaly Detection Metrics ====================
 
 anomaly_alerts_total = Counter(

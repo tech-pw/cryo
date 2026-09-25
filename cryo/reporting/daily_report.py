@@ -26,7 +26,13 @@ from cryo.reporting.cost_signals import (
     compute_cost_signal,
     correlate_with_maintenance,
 )
-from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal, day_bounds
+from cryo.reporting.impact_signals import (
+    ImpactSignal,
+    compute_impact_signal,
+    day_bounds,
+    measured_reclaim_gb,
+    reclaim_display,
+)
 from cryo.reporting.scan_health import ScanHealth, collect_scan_health
 from cryo.reporting.slack import (
     SlackBlock,
@@ -156,7 +162,11 @@ async def generate_daily_report(
                 # total" from "partial subtotal, some evidence missing" from "no evidence at
                 # all" -- a bare gb_freed number used to imply the first case unconditionally.
                 "measurement_state": report_data.impact_signal.measurement_state,
-                "gb_freed_yesterday": round(report_data.impact_signal.today.gb_freed, 2),
+                "gb_freed_yesterday": (
+                    round(measured, 2)
+                    if (measured := measured_reclaim_gb(report_data.impact_signal)) is not None
+                    else None
+                ),
                 "actions_succeeded": report_data.impact_signal.today.actions_succeeded,
                 "tables_touched": report_data.impact_signal.today.tables_touched,
                 "optimize_files_in": report_data.impact_signal.today.optimize_files_in,
@@ -179,16 +189,8 @@ async def generate_daily_report(
                     if report_data.impact_signal.wow_baseline_gb is not None
                     else None
                 ),
-                "dod_pct": (
-                    round(report_data.impact_signal.dod_pct, 1)
-                    if report_data.impact_signal.dod_pct is not None
-                    else None
-                ),
-                "wow_pct": (
-                    round(report_data.impact_signal.wow_pct, 1)
-                    if report_data.impact_signal.wow_pct is not None
-                    else None
-                ),
+                "dod_pct": _comparable_pct(report_data.impact_signal, "dod"),
+                "wow_pct": _comparable_pct(report_data.impact_signal, "wow"),
             }
             if report_data.impact_signal is not None
             else None
@@ -207,15 +209,23 @@ async def generate_daily_report(
         result["slack_sent"] = slack_sent
 
     from cryo.reporting.email import send_report_email
+    from cryo.reporting.html_report import render_daily_report_html
 
     email_sent = send_report_email(
         f"Cryo Daily Report — {report_data.report_date.date()}",
-        f"<pre>{narrated_bottom_line}</pre>",
+        render_daily_report_html(report_data, narrated_bottom_line),
     )
     if email_sent:
         result["email_sent"] = True
 
     return result
+
+
+def _comparable_pct(signal: ImpactSignal, window: Literal["dod", "wow"]) -> float | None:
+    if not signal.today.is_comparable_total:
+        return None
+    pct = signal.dod_pct if window == "dod" else signal.wow_pct
+    return round(pct, 1) if pct is not None else None
 
 
 def _impact_signal_sentence(data: DailyReportData) -> str:
@@ -612,7 +622,11 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
             {
                 "direction": data.impact_signal.direction,
                 "measurement_state": data.impact_signal.measurement_state,
-                "gb_freed_yesterday": round(data.impact_signal.today.gb_freed, 1),
+                "gb_freed_yesterday": (
+                    round(measured_reclaim_gb(data.impact_signal), 1)
+                    if measured_reclaim_gb(data.impact_signal) is not None
+                    else None
+                ),
                 "dod_baseline_gb": (
                     round(data.impact_signal.dod_baseline_gb, 1)
                     if data.impact_signal.dod_baseline_gb is not None
@@ -623,16 +637,8 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
                     if data.impact_signal.wow_baseline_gb is not None
                     else None
                 ),
-                "dod_pct": (
-                    round(data.impact_signal.dod_pct, 1)
-                    if data.impact_signal.dod_pct is not None
-                    else None
-                ),
-                "wow_pct": (
-                    round(data.impact_signal.wow_pct, 1)
-                    if data.impact_signal.wow_pct is not None
-                    else None
-                ),
+                "dod_pct": _comparable_pct(data.impact_signal, "dod"),
+                "wow_pct": _comparable_pct(data.impact_signal, "wow"),
             }
             if data.impact_signal is not None
             else None
@@ -791,7 +797,7 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
             table_block(
                 ["Impact", "Yesterday"],
                 [
-                    ["GB Reclaimed", f"{impact.today.gb_freed:.1f} GB"],
+                    ["GB Reclaimed", reclaim_display(impact)],
                     ["Successful Actions", f"{impact.today.actions_succeeded:,}"],
                     ["Tables Touched", f"{impact.today.tables_touched:,}"],
                     ["Optimize File Reduction", opt_str],
@@ -807,9 +813,11 @@ def _build_slack_blocks(data: DailyReportData, bottom_line: str) -> list[SlackBl
         wow_baseline_str = (
             f"{impact.wow_baseline_gb:.1f} GB" if impact.wow_baseline_gb is not None else "n/a"
         )
-        dod_pct_str = f"{impact.dod_pct:+.1f}%" if impact.dod_pct is not None else "n/a"
-        wow_pct_str = f"{impact.wow_pct:+.1f}%" if impact.wow_pct is not None else "n/a"
-        yesterday_str = f"{impact.today.gb_freed:.1f} GB"
+        dod_pct = _comparable_pct(impact, "dod")
+        wow_pct = _comparable_pct(impact, "wow")
+        dod_pct_str = f"{dod_pct:+.1f}%" if dod_pct is not None else "n/a"
+        wow_pct_str = f"{wow_pct:+.1f}%" if wow_pct is not None else "n/a"
+        yesterday_str = reclaim_display(impact)
         blocks.append(
             table_block(
                 ["Trend", "Baseline", "Yesterday", "Change"],

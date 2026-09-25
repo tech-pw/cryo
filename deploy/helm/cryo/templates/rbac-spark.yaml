@@ -32,7 +32,7 @@ rules:
   # patch is required alongside create: Spark's Kubernetes client applies the driver
   # pod/service/configmap via server-side apply (PATCH with fieldManager=fabric8), not a
   # plain POST create -- create-only RBAC 403s on "cannot patch resource" (confirmed live
-  # against data-platform-cluster, 2026-07-21). deletecollection is required alongside
+  # against example-cluster, 2026-07-21). deletecollection is required alongside
   # delete: the driver's shutdown hook cleans up its own executors/services/etc. by label
   # selector (a bulk delete), which is a distinct verb from single-resource delete.
   - apiGroups: [""]
@@ -53,7 +53,7 @@ rules:
     resources: ["persistentvolumeclaims"]
     verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
   # Spark 4.x manages a NetworkPolicy for driver<->executor isolation in cluster mode
-  # (confirmed live against data-platform-cluster, 2026-07-21).
+  # (confirmed live against example-cluster, 2026-07-21).
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]

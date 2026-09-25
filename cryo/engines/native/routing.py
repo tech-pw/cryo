@@ -322,7 +322,7 @@ def resolve_native_routing(
             # native-unsupported case below. Was a hard skip (never routed even with
             # sql_fallback set) until cryo.engines.spark.k8s landed and was proven to
             # actually execute rewrite_manifests/rewrite_data_files against a real
-            # delete-heavy table (data-platform-cluster, 2026-07-21) -- see
+            # delete-heavy table (example-cluster, 2026-07-21) -- see
             # tests/test_native_admit.py and tests/test_spark_k8s*.py.
             if has_nonzero_delete_files(stats):
                 if has_sql_fallback:

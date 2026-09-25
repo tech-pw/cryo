@@ -1,4 +1,5 @@
 import type { RunRead } from "../api/types";
+import { formatBytesGb } from "./format";
 
 export const shortRunId = (value?: string | null) => value?.slice(0, 8) ?? "-";
 
@@ -19,6 +20,16 @@ export const targetLabel = (run: RunRead): string =>
   summaryText(run.summary, "target_label") ?? (isScanRun(run) ? "Scan run" : `${run.kind} run`);
 
 export const targetTableId = (run: RunRead): string | undefined => summaryText(run.summary, "target_table_id");
+
+export const realizedSavingsLabel = (run?: RunRead | null): string | null => {
+  const succeeded = run?.realized_actions_succeeded;
+  const measured = run?.realized_actions_measured;
+  if (succeeded == null || measured == null) return null;
+  if (measured === 0) return succeeded > 0 ? "Realized savings unmeasured" : null;
+  const freed = `Freed ${formatBytesGb(run?.realized_bytes_freed ?? 0)}`;
+  if (measured < succeeded) return `${freed} (${measured} of ${succeeded} actions measured)`;
+  return freed;
+};
 
 export const runDurationMs = (run?: RunRead | null): number | null => {
   if (!run?.created_at) return null;

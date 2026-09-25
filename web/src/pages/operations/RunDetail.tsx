@@ -37,6 +37,7 @@ import {
   shortRunId,
   summaryNumber,
   summaryText,
+  realizedSavingsLabel,
   targetLabel,
   targetTableId
 } from "../../lib/operations";
@@ -303,6 +304,8 @@ export const RunDetail = () => {
     return <Alert variant="error" title="Missing run id" />;
   }
 
+  const savingsLabel = realizedSavingsLabel(runData);
+
   return (
     <div>
       <div aria-live="polite" className="sr-only">
@@ -317,6 +320,7 @@ export const RunDetail = () => {
             <span>{targetLabel(runData ?? { id: runId, kind: "", status: "", created_at: "" })}</span>
             <span>Duration {duration}</span>
             <span>Started {formatTime(runData?.created_at)}</span>
+            {savingsLabel ? <span>{savingsLabel}</span> : null}
             {possiblyStalled ? (
               <span
                 className="rounded px-1.5 py-0.5 text-xs font-medium text-[var(--color-status-warning)]"

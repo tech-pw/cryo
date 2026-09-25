@@ -508,6 +508,10 @@ export const SLAStatus = () => {
                   </Button>
                 ))}
               </div>
+              <p className="sr-only">
+                Freshness distribution:{" "}
+                {freshnessHistogram.map((bucket) => `${bucket.label} ${bucket.count}`).join(", ")}.
+              </p>
               <div aria-hidden="true" inert>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={freshnessHistogram} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>

@@ -119,6 +119,8 @@ global:
     # 2026-08-12 -- not chart-managed, rotate via `kubectl patch secret cryo-secrets`).
     # See cryo/reporting/cost_ceiling.py.
     CRYO_COST_CEILING_ENABLED: "true"
+    CRYO_GRAFANA_BASE_URL: "https://internal.example.com"
+    CRYO_COST_CEILING_CLUSTER_NAME: "data-platform-eks"
     # Explicit, deliberate bridge until real OIDC (CRYO_OIDC_ISSUER_URL/CLIENT_ID) is
     # configured -- re-enables the dev sign-in form (self-declared role, no real identity
     # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.

@@ -18,13 +18,14 @@ from cryo.reporting.daily_report import (
     DailyReportData,
     _build_action_items,
     _build_slack_blocks,
-    _maintenance_split,
     _classify_status,
     _collect_report_data,
     _deterministic_bottom_line,
+    _maintenance_split,
     _size_snapshot_asof,
     generate_daily_report,
 )
+from cryo.reporting.impact_signals import DailyImpact, ImpactSignal
 
 
 def _seed_source(session) -> Source:
@@ -590,3 +591,43 @@ def test_build_slack_blocks_always_includes_fallback_footer() -> None:
     blocks = _build_slack_blocks(data, "All clear.")
 
     assert blocks[-1].type == "context"
+
+
+def test_slack_does_not_print_unmeasured_reclaim_as_gb() -> None:
+    now = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
+    today = DailyImpact(
+        day_start=now,
+        day_end=now,
+        bytes_freed=0,
+        actions_succeeded=4,
+        tables_touched=2,
+        optimize_files_in=0,
+        optimize_files_out=0,
+        actions_with_bytes_evidence=0,
+        actions_without_bytes_evidence=4,
+    )
+    data = DailyReportData(
+        report_date=now,
+        status="CLEAR",
+        total_tables=1,
+        healthy_tables=1,
+        unhealthy_tables=0,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+        impact_signal=ImpactSignal(
+            direction="unknown",
+            dod_pct=-90.0,
+            wow_pct=-40.0,
+            primary_signal="dod",
+            today=today,
+            dod_baseline_gb=10.0,
+            wow_baseline_gb=8.0,
+            measurement_state=today.measurement_state,
+        ),
+    )
+
+    body = str([block.to_dict() for block in _build_slack_blocks(data, "ignored")])
+
+    assert "unmeasured" in body
+    assert "'text': '0.0 GB'" not in body
+    assert "-90.0%" not in body

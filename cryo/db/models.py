@@ -2522,6 +2522,33 @@ class SharedS3AnomalyReport(TimestampMixin, Base):
     )
 
 
+class SavedExplorerView(Base):
+    """Named catalog filter owned by one principal. Not a schedule."""
+
+    __tablename__ = "saved_explorer_views"
+    __table_args__ = (UniqueConstraint("owner_subject", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    owner_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    filters: Mapped[JsonDict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    sort: Mapped[str | None] = mapped_column(Text)
+    group_by: Mapped[str | None] = mapped_column(Text)
+    savings_view: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 __all__ = [
     "AIProvider",
     "AWSCostInsightConfig",
@@ -2548,6 +2575,7 @@ __all__ = [
     "QueryLog",
     "QueryPattern",
     "RunFailureDiagnosis",
+    "SavedExplorerView",
     "S3BucketLogConfig",
     "S3RequestCostDaily",
     "SilentDataLossEvent",

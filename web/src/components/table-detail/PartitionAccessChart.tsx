@@ -47,7 +47,11 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
     }));
 
   return (
-    <div className="td-partition-access-chart">
+    <div
+      className="td-partition-access-chart"
+      role="img"
+      aria-label={`Partition access for ${orderedPaths.length} partitions across ${data.length} request points.`}
+    >
       <ResponsiveContainer width="100%" height={Math.max(220, orderedPaths.length * 18)}>
         <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />

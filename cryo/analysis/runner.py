@@ -33,7 +33,7 @@ from cryo.db.repositories.analysis_tasks import (
     yield_task,
 )
 from cryo.db.session import SessionLocal
-from cryo.observability.logging import quiet_third_party_loggers
+from cryo.observability.logging import configure_process_logging
 from cryo.planner.benefit_score import (
     _DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP,
     update_all_benefit_scores_batch,
@@ -255,10 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
-    quiet_third_party_loggers()
+    configure_process_logging()
 
     if args.task_type == _BENEFIT_SCORE_SWEEP:
         return run_benefit_score_sweep_task()

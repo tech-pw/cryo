@@ -19,7 +19,9 @@ imagePullSecrets: []
 
 global:
   env:
-    CRYO_ENVIRONMENT: prod
+    # Public chart default. A production overlay must set this to prod and pin
+    # image.digest values; the chart refuses to render prod without them.
+    CRYO_ENVIRONMENT: dev
     CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
     # Go scan-stats (streaming manifests). Override to "pyiceberg" to fall back.
     CRYO_SCAN_ENGINE: go

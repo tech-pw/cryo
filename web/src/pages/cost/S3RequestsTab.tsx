@@ -261,6 +261,10 @@ export const S3RequestsTab = () => {
         <CardContent>
           {barData.length > 0 ? (
             <>
+              <div
+                role="img"
+                aria-label={`Top buckets by 30-day S3 request cost. Highest is ${barData[0]?.bucket ?? "unknown"} at ${formatCurrency(barData[0]?.cost ?? 0)}.`}
+              >
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={barData} margin={{ top: 8, right: 16, bottom: 64, left: 0 }}>
                   <CartesianGrid stroke={cryoColors.chartGrid} />
@@ -278,6 +282,7 @@ export const S3RequestsTab = () => {
                   <Bar dataKey="cost" fill={cryoColors.primary} name="$ / 30d" />
                 </BarChart>
               </ResponsiveContainer>
+              </div>
               <ChartDataTable
                 caption="Top buckets ranked by estimated 30-day S3 request cost, largest first."
                 columns={[
