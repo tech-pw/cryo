@@ -4,7 +4,7 @@ is attempted") but never actually passed to the ingester by its only call site
 (cryo/scheduler/service.py::_maybe_ingest_telemetry) -- every request only ever carried the
 trusted-network X-Trino-User header, so a coordinator with real password/LDAP auth enabled
 always 401'd regardless of what credentials were configured. Real production repro: 2026-07-14,
-trino-prod-replica-3.penpencil.co rejected every telemetry tick with 401 until this was found.
+trino.example.invalid rejected every telemetry tick with 401 until this was found.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def test_scheduler_wires_telemetry_credentials_into_ingester(session, monkeypatc
         "FakeSettings",
         (),
         {
-            "telemetry_trino_url": "https://trino-prod-replica-3.penpencil.co:443",
+            "telemetry_trino_url": "https://trino.example.invalid:443",
             "telemetry_trino_user": "phoenix_user",
             "telemetry_trino_password": "secret",
             "telemetry_trino_ssl_verify": False,

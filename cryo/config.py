@@ -967,8 +967,11 @@ class Settings(BaseSettings):
         ),
     )
     cost_ceiling_cluster_name: str = Field(
-        default="data-platform-eks",
-        description="EKS cluster name as tagged in AWS CUR (resource_tags_aws_eks_cluster_name).",
+        default="",
+        description=(
+            "EKS cluster name as tagged in AWS CUR "
+            "(resource_tags_aws_eks_cluster_name). Required when cost_ceiling_enabled is true."
+        ),
     )
     cost_ceiling_namespace: str = Field(
         default="cryo",
@@ -985,8 +988,11 @@ class Settings(BaseSettings):
         ),
     )
     grafana_base_url: str = Field(
-        default="https://platform-grafana.penpencil.co",
-        description="Base URL for cost_ceiling's Grafana API calls (no trailing slash).",
+        default="",
+        description=(
+            "Base URL for cost_ceiling's Grafana API calls, no trailing slash. "
+            "Required when cost_ceiling_enabled is true."
+        ),
     )
     trino_cost_pricing_enabled: bool = Field(
         default=False,

@@ -21,6 +21,7 @@ vi.mock("../lib/auth", () => ({
 vi.mock("../api/client", () => ({
   listPendingApprovals: vi.fn().mockResolvedValue([]),
   listFleetAnomalies: vi.fn().mockResolvedValue([]),
+  listFleetAlerts: vi.fn().mockResolvedValue([]),
   listMaintenanceSignals: vi.fn().mockResolvedValue([]),
   getCostForecast: vi.fn().mockResolvedValue({
     forecast_month: "2026-08",

@@ -53,7 +53,7 @@ class _FakeSettings:
     trino_cost_pricing_enabled = True
     trino_cost_pricing_namespace = "trino-db"
     trino_cost_pricing_lookback_days = 10
-    cost_ceiling_cluster_name = "data-platform-eks"
+    cost_ceiling_cluster_name = "example-eks"
     grafana_base_url = "https://grafana.example.com"
 
 

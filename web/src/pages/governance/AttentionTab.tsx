@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   approvalAction,
   createApprovalRequest,
+  listFleetAlerts,
   listFleetAnomalies,
   listPendingApprovals,
   type AnomalyAlertRead,
@@ -83,6 +84,11 @@ export const AttentionTab = () => {
     queryKey: ["pending-approvals", api.token],
     queryFn: () => listPendingApprovals(api),
     refetchInterval: 30_000
+  });
+  const costAlerts = useQuery({
+    queryKey: ["fleet-alerts", api.token],
+    queryFn: () => listFleetAlerts(api),
+    refetchInterval: 60_000
   });
   const anomalies = useQuery({
     queryKey: ["fleet-anomalies", api.token],
@@ -306,6 +312,15 @@ export const AttentionTab = () => {
             <CardTitle>Fleet anomalies</CardTitle>
           </CardHeader>
           <CardContent>
+            {(costAlerts.data ?? []).map((alert) => (
+              <Alert
+                key={alert.summary}
+                variant={alert.severity === "high" ? "error" : "warning"}
+                title={alert.explained ? "Cost move, explained" : "Cost alert"}
+                description={alert.summary}
+                className="mb-3"
+              />
+            ))}
             <QueryErrorAlert error={anomalies.error} title="Failed to load anomalies" />
             <AsyncBoundary isLoading={anomalies.isLoading} isError={Boolean(anomalies.error)} error={anomalies.error}>
               <DataTable

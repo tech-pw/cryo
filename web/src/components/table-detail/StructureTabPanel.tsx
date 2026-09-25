@@ -113,7 +113,12 @@ export const StructureTabPanel = () => {
             emptyTitle="No stats history yet"
             emptyDescription="History appears after multiple scans."
           >
-            <div className="chart-frame" style={{ height: 260 }}>
+            <div
+              className="chart-frame"
+              style={{ height: 260 }}
+              role="img"
+              aria-label={`Small-file count and table size across ${historyPoints.length} scans.`}
+            >
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={historyPoints}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />

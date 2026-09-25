@@ -393,7 +393,7 @@ def test_get_job_run_reads_driver_pod_not_wrapper_job() -> None:
     """The wrapper Job's spark-submit container can exit 0 even when the driver pod's
     SQL failed (spark-submit's own cleanup swallows the real failure in a background
     thread) -- get_job_run must trust the driver pod's phase, not the wrapper Job.
-    Regression for a live incident on data-platform-cluster, 2026-07-21."""
+    Regression for a live incident on example-cluster, 2026-07-21."""
     cfg = SparkK8sConfig(namespace="cryo")
     client = SparkK8sClient(cfg)
     core_api = MagicMock()

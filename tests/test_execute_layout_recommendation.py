@@ -56,8 +56,8 @@ def _seed(
         type="rest",
         config={
             "catalog_name": "hive",
-            "uri": "thrift://trino-metastore-v2.penpencil.co:9083",
-            "warehouse": "s3://pw-data-cdp-dev-bronze-layer/",
+            "uri": "thrift://metastore-dev.example.invalid:9083",
+            "warehouse": "s3://example-dev-bucket/",
         },
     )
     main_destination = Destination(id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={})
@@ -145,8 +145,8 @@ def _seed_with_spark_primary_destination(
         type="rest",
         config={
             "catalog_name": "lsq_pw",
-            "uri": "thrift://trino-prod-metastore.penpencil.co:9083",
-            "warehouse": "s3://pw-data-cdp-prod-gold-layer/",
+            "uri": "thrift://metastore.example.invalid:9083",
+            "warehouse": "s3://example-prod-bucket/",
         },
     )
     spark_destination = Destination(

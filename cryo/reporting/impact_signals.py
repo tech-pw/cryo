@@ -146,6 +146,25 @@ class ImpactSignal:
     measurement_state: MeasurementState
 
 
+def measured_reclaim_gb(signal: ImpactSignal) -> float | None:
+    """None when no action reported bytes. A missing total is not zero."""
+    if signal.measurement_state == "unmeasured":
+        return None
+    return signal.today.gb_freed
+
+
+def reclaim_display(signal: ImpactSignal) -> str:
+    state = signal.measurement_state
+    if state == "unmeasured":
+        return "unmeasured"
+    if state == "no_actions":
+        return "no reclaim actions"
+    label = f"{signal.today.gb_freed:.1f} GB"
+    if state == "partial":
+        return f"{label} measured (partial)"
+    return label
+
+
 def _daily_impact(session: Session, day_start: datetime, day_end: datetime) -> DailyImpact:
     """Sum AuditLog's real per-action outcomes for one UTC day, [day_start, day_end)."""
     row = session.execute(

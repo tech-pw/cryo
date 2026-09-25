@@ -326,7 +326,7 @@ class SparkK8sClient:
             f"spark.kubernetes.executor.limit.memory={cfg.executor_mem_mib}m",
             # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
             # spark-submit and need the same annotation or Karpenter consolidation can
-            # SIGTERM them mid-rewrite (data-platform-cluster 2026-08-12: run 3af23a9f,
+            # SIGTERM them mid-rewrite (example-cluster 2026-08-12: run 3af23a9f,
             # Evicted Underutilized → exit 143 → misleading "driver never observed").
             "--conf",
             "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true",
@@ -366,7 +366,7 @@ class SparkK8sClient:
         # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
         # that node pool's instance profile is what actually has S3 access to the
         # warehouse bucket. A generic node's instance role does not (confirmed live
-        # against data-platform-cluster, 2026-07-21: AccessDeniedException on
+        # against example-cluster, 2026-07-21: AccessDeniedException on
         # s3:GetObject from a pod scheduled off that pool). Not spot: fallback SQL runs
         # aren't checkpointed, so on-demand only, matching the native engine's own rule --
         # enforced via cfg.node_selector, which defaults to on-demand (see from_config
@@ -489,7 +489,7 @@ class SparkK8sClient:
         """Authoritative state comes from the driver pod, not the dispatch Job.
 
         spark-submit's own exit code does not reliably mirror the driver's outcome --
-        confirmed live against data-platform-cluster (2026-07-21): a driver pod whose SQL
+        confirmed live against example-cluster (2026-07-21): a driver pod whose SQL
         failed (container exit 1) still left the wrapping Job's spark-submit container at
         exit 0, because spark-submit's post-completion cleanup (deleting the driver's
         service/pods) threw its own RBAC exceptions in a background thread that never

@@ -182,6 +182,33 @@ def test_repin_takes_over_a_table_this_job_pinned_to_a_different_preset(session)
     assert assignment.preset_id == trino_hot_preset.id
 
 
+def test_repin_reclaims_a_pin_on_a_disabled_preset(session):
+    """A pin to a disabled preset does not schedule anything. Treating it as operator intent
+    stranded hot tables on the legacy presets after those presets were turned off."""
+    source = _seed_source(session)
+    destination = _seed_destination(session)
+    trino_hot_preset = _seed_preset(session, destination, name="daily-trino-hot-tables")
+    disabled = _seed_preset(session, destination, name="legacy-fleet-wide")
+    disabled.enabled = False
+    hot = _seed_table(session, source, name="stranded")
+    session.add(
+        TableAssignment(
+            table_id=hot.id, preset_id=disabled.id, assigned_by="operator:aamir", pinned=True
+        )
+    )
+    _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
+    session.commit()
+
+    result = repin_trino_hot_tables(session, preset_name=trino_hot_preset.name, limit=10, now=NOW)
+
+    assert result.pinned == 1
+    assert result.reclaimed_from_disabled == 1
+    assignment = session.get(TableAssignment, hot.id)
+    assert assignment is not None
+    assert assignment.preset_id == trino_hot_preset.id
+    assert assignment.assigned_by == _ASSIGNED_BY
+
+
 def test_repin_leaves_an_operator_pin_on_another_preset_in_place(session):
     """Taking a table over is for pins this job made. An operator's explicit choice wins."""
     source = _seed_source(session)

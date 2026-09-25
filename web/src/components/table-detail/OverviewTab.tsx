@@ -451,7 +451,12 @@ export const OverviewTab = (props: OverviewTabProps) => {
               >
                 {trendData.length ? (
                   <>
-                    <div className="chart-frame" style={{ height: 260 }}>
+                    <div
+                      className="chart-frame"
+                      style={{ height: 260 }}
+                      role="img"
+                      aria-label={`Health score and small-file count over ${trendData.length} scans. Latest score ${Number(trendData[trendData.length - 1]?.score ?? 0).toFixed(0)}.`}
+                    >
                       <ResponsiveContainer width="100%" height={260}>
                         <LineChart data={trendData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />

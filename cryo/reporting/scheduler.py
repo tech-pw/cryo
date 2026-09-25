@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from cryo.config import get_settings
 from cryo.db.models import ReportSendState, SlackConfig
 from cryo.db.session import SessionLocal
-from cryo.observability.logging import quiet_third_party_loggers
+from cryo.observability.logging import configure_process_logging
 from cryo.reporting import SlackClient, generate_daily_report
 from cryo.scheduler.cron import cron_is_due
 from cryo.security.crypto import decrypt_secret
@@ -308,11 +308,7 @@ def main() -> None:
     """Entry point for running the report scheduler."""
     import asyncio
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-    quiet_third_party_loggers()
+    configure_process_logging()
 
     scheduler = ReportScheduler()
 

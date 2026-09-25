@@ -119,7 +119,7 @@ export function ChartPanel({
           empty={empty}
           emptyTitle={emptyTitle}
           emptyDescription={emptyDescription}
-          ariaLabel={ariaLabel}
+          ariaLabel={ariaLabel ?? (title ? `${title}${description ? `. ${description}` : ""}` : undefined)}
           size={size}
         >
           {children}

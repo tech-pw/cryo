@@ -270,11 +270,11 @@ def _fallback_engine_config(
     of which catalog that table actually lives in, so its spark_k8s.catalog_uri/catalog_warehouse
     and top-level `catalog` are just a static default -- correct only for tables whose source
     happens to match it. Confirmed live, 2026-07-24: lms.silver_adminactions (source catalog_name
-    "hive", metastore thrift://trino-metastore-v2.penpencil.co:9083, warehouse
-    s3://pw-data-cdp-dev-bronze-layer/) fell back to this same destination as
+    "hive", metastore thrift://metastore-dev.example.invalid:9083, warehouse
+    s3://example-dev-bucket/) fell back to this same destination as
     cdp.mview.load_test_basefact, whose static config points at a completely different
-    metastore/warehouse (thrift://trino-prod-metastore.penpencil.co:9083,
-    s3://pw-data-cdp-prod-gold-layer/) under catalog name "cdp". Spark registered its Iceberg
+    metastore/warehouse (thrift://metastore.example.invalid:9083,
+    s3://example-prod-bucket/) under catalog name "cdp". Spark registered its Iceberg
     catalog plugin under the wrong name entirely, so `CALL hive.system.rewrite_data_files(...)`
     silently resolved against the builtin spark_catalog instead and failed with
     MISSING_CATALOG_ABILITY.PROCEDURES. The source's own uri/warehouse/catalog_name -- always

@@ -22,7 +22,7 @@ spec:
         # wave and blocks it for the full duration of the Spark job (minutes, not seconds,
         # for anything beyond a metadata-only op) -- Karpenter consolidating this pod
         # mid-wave ("Evicted pod: Underutilized") silently drops that in-flight dispatch
-        # and its cleanup. Confirmed live against data-platform-cluster, 2026-07-21.
+        # and its cleanup. Confirmed live against example-cluster, 2026-07-21.
         karpenter.sh/do-not-disrupt: "true"
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}

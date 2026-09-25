@@ -46,7 +46,11 @@ export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
   }
 
   return (
-    <div className="td-partition-histogram">
+    <div
+      className="td-partition-histogram"
+      role="img"
+      aria-label={`Top ${top.length} partitions by size. Largest is ${top[0]?.label ?? "unknown"} at ${formatGb(top[0]?.sizeGb ?? 0)}.`}
+    >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={top}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />

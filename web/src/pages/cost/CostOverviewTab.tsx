@@ -436,6 +436,10 @@ export const CostOverviewTab = () => {
               <CardContent>
                 {hasRealizedTrend ? (
                   <>
+                    <div
+                      role="img"
+                      aria-label={`Projected versus realized monthly savings across ${(data.trend ?? []).length} scans.`}
+                    >
                     <LineChart
                       data={data.trend ?? []}
                       height={220}
@@ -468,6 +472,7 @@ export const CostOverviewTab = () => {
                         name="Realized savings"
                       />
                     </LineChart>
+                    </div>
                     <ChartDataTable
                       caption="Monthly trend of projected vs realized savings by scan date."
                       columns={[
@@ -504,6 +509,10 @@ export const CostOverviewTab = () => {
               <CardContent>
                 {schemaCost.data && schemaCost.data.length ? (
                   <>
+                    <div
+                      role="img"
+                      aria-label={`Estimated monthly cost for the top ${Math.min((schemaCost.data ?? []).length, 8)} schemas.`}
+                    >
                     <BarChart
                       data={(schemaCost.data ?? []).slice(0, 8)}
                       height={220}
@@ -522,6 +531,7 @@ export const CostOverviewTab = () => {
                       <RechartsTooltip {...chartTooltipProps} />
                       <Bar dataKey="cost_usd" fill={cryoColors.primary} name="$ / mo" />
                     </BarChart>
+                    </div>
                     <ChartDataTable
                       caption="Estimated monthly S3 cost by schema, largest first."
                       columns={[

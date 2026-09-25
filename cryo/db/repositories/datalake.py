@@ -1114,6 +1114,36 @@ def create_scan_trigger(session: Session, payload: dict[str, Any]) -> dict[str, 
     }
 
 
+def realized_savings_for_run(session: Session, run_id: uuid.UUID) -> dict[str, int | None]:
+    """Sum measured reclaim for one run. Does not load audit rows.
+
+    ``realized_bytes_freed`` is None when no successful action reported bytes.
+    A SQL SUM of NULLs would otherwise look like a measured zero.
+    """
+    from cryo.reporting.impact_signals import _RECLAIM_ACTIONS, _SUCCESS_STATUSES
+
+    row = session.execute(
+        select(
+            func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
+            func.count(AuditLog.actual_bytes_freed),
+            func.count(AuditLog.id),
+        )
+        .select_from(AuditLog)
+        .join(MaintenanceJob, AuditLog.job_id == MaintenanceJob.id)
+        .where(
+            MaintenanceJob.run_id == run_id,
+            AuditLog.action.in_(_RECLAIM_ACTIONS),
+            AuditLog.status.in_(tuple(_SUCCESS_STATUSES)),
+        )
+    ).one()
+    measured = int(row[1] or 0)
+    return {
+        "realized_bytes_freed": int(row[0] or 0) if measured else None,
+        "realized_actions_measured": measured,
+        "realized_actions_succeeded": int(row[2] or 0),
+    }
+
+
 def run_jobs_snapshot(session: Session, run_id: uuid.UUID) -> dict[str, object] | None:
     run = session.scalar(
         select(MaintenanceRun)
@@ -1133,7 +1163,9 @@ def run_jobs_snapshot(session: Session, run_id: uuid.UUID) -> dict[str, object] 
             str(job.id),
         ),
     )
-    return {"run": presets.run_summary(run), "jobs": [presets.job_summary(job) for job in jobs]}
+    summary = presets.run_summary(run)
+    summary.update(realized_savings_for_run(session, run.id))
+    return {"run": summary, "jobs": [presets.job_summary(job) for job in jobs]}
 
 
 def _validate_scan_scope(session: Session, payload: dict[str, Any]) -> None:

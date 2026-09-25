@@ -4,63 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
-      day: monday
-    open-pull-request-limit: 10
-    commit-message:
-      prefix: chore
-    groups:
-      opentelemetry:
-        patterns:
-          - opentelemetry-*
-      pyiceberg:
-        patterns:
-          - pyiceberg
-      pyarrow:
-        patterns:
-          - pyarrow
-
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-request-limit: 5
-    commit-message:
-      prefix: chore
-
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
-      day: monday
-    open-pull-request-limit: 10
-    commit-message:
-      prefix: chore
-    groups:
-      antd:
-        patterns:
-          - antd
-      react-query:
-        patterns:
-          - "@tanstack/react-query"
-      recharts:
-        patterns:
-          - recharts
-
-  - package-ecosystem: gomod
-    directory: /engine-go
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
       interval: weekly
-      day: monday
-    open-pull-request-limit: 10
-    commit-message:
-      prefix: chore
-
-  - package-ecosystem: cargo
-    directory: /cryo-engine
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-request-limit: 10
-    commit-message:
-      prefix: chore

@@ -33,6 +33,7 @@ import type {
   PresetSimulationResponse,
   PresetWrite,
   RoleToken,
+  ExplorerViewRead,
   RunRead,
   ScannerConfigRead,
   ScannerConfigUpdate,
@@ -587,6 +588,20 @@ export const listRuns = (
       offset: args.offset
     }
   });
+export const listExplorerViews = (api: ApiOptions) =>
+  apiFetch<ExplorerViewRead[]>("/explorer-views", api);
+export const saveExplorerView = (
+  api: ApiOptions,
+  body: {
+    name: string;
+    filters: JsonObject;
+    sort?: string | null;
+    group_by?: string | null;
+    savings_view?: boolean;
+  }
+) => apiFetch<ExplorerViewRead>("/explorer-views", api, { method: "POST", body });
+export const deleteExplorerView = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/explorer-views/${id}`, api, { method: "DELETE" });
 export const getRun = (api: ApiOptions, id: UUID) => apiFetch<RunRead>(`/runs/${id}`, api);
 export const getRunJobs = (api: ApiOptions, id: UUID) =>
   apiFetch<{ jobs: JobRead[] }>(`/runs/${id}/jobs`, api).then((payload) => payload.jobs);
@@ -1614,6 +1629,15 @@ export const listPendingApprovals = (api: ApiOptions) =>
 
 export const listFleetAnomalies = (api: ApiOptions) =>
   apiFetch<AnomalyAlertRead[]>("/advanced/anomalies", api);
+
+export interface FleetAlertRead {
+  kind: "cost";
+  severity: "low" | "high";
+  summary: string;
+  explained: boolean;
+}
+
+export const listFleetAlerts = (api: ApiOptions) => apiFetch<FleetAlertRead[]>("/alerts", api);
 
 export interface SharedS3TableMember {
   source_id: string;

@@ -53,7 +53,11 @@ from sqlalchemy.orm import Session
 from cryo.config import get_settings
 from cryo.db.models import MaintenanceJob
 from cryo.reporting.health_check import ProductionHealthReport, run_production_health_checks
-from cryo.reporting.impact_signals import ImpactSignal, compute_impact_signal
+from cryo.reporting.impact_signals import (
+    ImpactSignal,
+    compute_impact_signal,
+    measured_reclaim_gb,
+)
 from cryo.reporting.trino_hot_cost_signal import TrinoHotCostSignal, compute_trino_hot_cost_signal
 
 VitalsStatus = Literal["HEALTHY", "DEGRADED", "CRITICAL"]
@@ -307,9 +311,9 @@ def cryo_vitals_to_payload(vitals: CryoVitals) -> dict[str, Any]:
             # entirely -- measurement_state makes that coverage explicit instead of silently
             # implied. See cryo/reporting/impact_signals.py::MeasurementState's docstring.
             "measurement_state": vitals.impact.measurement_state,
-            "gb_freed_yesterday": vitals.impact.today.gb_freed,
-            "dod_pct": vitals.impact.dod_pct,
-            "wow_pct": vitals.impact.wow_pct,
+            "gb_freed_yesterday": measured_reclaim_gb(vitals.impact),
+            "dod_pct": vitals.impact.dod_pct if vitals.impact.today.is_comparable_total else None,
+            "wow_pct": vitals.impact.wow_pct if vitals.impact.today.is_comparable_total else None,
         },
         "trino_hot_cost": (
             {
