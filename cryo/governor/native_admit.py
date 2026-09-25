@@ -21,12 +21,12 @@ from cryo.db.repositories.native_dispatch import (
     mark_dispatch_running,
 )
 from cryo.domain.enums import (
-    EngineType,
     FLEET_ADMISSION_RATE_CAP_DEFER_REASON,
-    JobStatus,
     METASTORE_CAPACITY_DEFER_REASON_PREFIX,
-    Mode,
     NATIVE_CLUSTER_CAPACITY_DEFER_REASON,
+    EngineType,
+    JobStatus,
+    Mode,
     OperationType,
 )
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan, Operation
@@ -81,7 +81,7 @@ logger = logging.getLogger(__name__)
 # creates its own engine/K8s client (no shared mutable state -- see SparkK8sClient,
 # create_engine), so running them concurrently is safe; bounding by the fallback
 # destination's slot_cap keeps it consistent with the capacity the operator configured.
-_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY = 6
+_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY = 2
 
 # Operations that mutate a table's snapshot/manifest state: expiring or removing files
 # changes which manifests are "live", and rewriting/optimizing data or manifests commits
@@ -547,14 +547,18 @@ def _fallback_dispatch_concurrency(
             fallback_destination = store.get_destination(fallback_id.strip())
             slot_cap = fallback_destination.config.get("slot_cap")
             if slot_cap:
-                return max(1, int(slot_cap))
+                from cryo.engines.spark.sizing import spark_slot_ceiling
+
+                return spark_slot_ceiling(max(1, int(slot_cap)))
         except Exception:
             logger.debug(
                 "Could not resolve slot_cap for fallback destination %s; using default %d",
                 fallback_id,
                 _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY,
             )
-    return _DEFAULT_FALLBACK_DISPATCH_CONCURRENCY
+    from cryo.engines.spark.sizing import spark_slot_ceiling
+
+    return spark_slot_ceiling(_DEFAULT_FALLBACK_DISPATCH_CONCURRENCY)
 
 
 def _run_fallback_dispatches_concurrently(

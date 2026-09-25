@@ -8,7 +8,12 @@ of the cryo namespace's cost as "unused" (reserved, not utilized) for exactly th
 
 from __future__ import annotations
 
-from cryo.engines.spark.sizing import ExecutorProfile, scale_executor_profile
+from cryo.engines.spark.sizing import (
+    ExecutorProfile,
+    cap_dispatch_profile,
+    scale_executor_profile,
+    spark_slot_ceiling,
+)
 
 _MAX = {
     "max_executor_instances": 24,
@@ -41,11 +46,12 @@ def test_huge_table_gets_the_full_configured_profile_unchanged() -> None:
     )
 
 
-def test_unknown_size_gets_the_full_configured_profile() -> None:
-    """A table Cryo has never scanned -- over-provision once rather than silently starve a
-    table that turns out to be genuinely large."""
+def test_unknown_size_uses_the_sub_50gb_tier_not_the_full_profile() -> None:
+    """An unscanned table must not inherit a 24-executor destination. That reservation
+    is what filled the untagged cost bucket."""
     profile = scale_executor_profile(total_size_gb=None, **_MAX)
-    assert profile.executor_instances == 24
+    assert profile.executor_instances == round(24 * 0.15)
+    assert profile.executor_instances < 24
 
 
 def test_tiers_are_monotonically_non_decreasing_with_size() -> None:
@@ -73,3 +79,41 @@ def test_scaled_values_never_go_below_a_usable_floor() -> None:
     assert profile.executor_mem_mib >= 1024
     assert profile.driver_cpu_milli >= 500
     assert profile.driver_mem_mib >= 1024
+
+
+def test_dispatch_cap_refuses_the_live_24_executor_destination() -> None:
+    profile = cap_dispatch_profile(
+        ExecutorProfile(
+            executor_instances=24,
+            executor_cpu_milli=3000,
+            executor_mem_mib=6144,
+            driver_cpu_milli=4000,
+            driver_mem_mib=16384,
+        )
+    )
+    assert profile == ExecutorProfile(
+        executor_instances=2,
+        executor_cpu_milli=1000,
+        executor_mem_mib=2048,
+        driver_cpu_milli=1000,
+        driver_mem_mib=2048,
+    )
+
+
+def test_expire_and_orphan_dispatch_as_one_small_executor() -> None:
+    huge = ExecutorProfile(24, 3000, 6144, 4000, 16384)
+    for operation in ("expire_snapshots", "remove_orphan_files", "optimize_manifests"):
+        profile = cap_dispatch_profile(huge, operation=operation)
+        assert profile.executor_instances == 1
+        assert profile.executor_mem_mib == 1024
+
+
+def test_slot_ceiling_is_a_no_op_without_the_env(monkeypatch) -> None:
+    monkeypatch.delenv("CRYO_SPARK_K8S_SLOT_CAP", raising=False)
+    assert spark_slot_ceiling(12) == 12
+
+
+def test_slot_ceiling_caps_a_destination_slot_cap(monkeypatch) -> None:
+    monkeypatch.setenv("CRYO_SPARK_K8S_SLOT_CAP", "2")
+    assert spark_slot_ceiling(12) == 2
+    assert spark_slot_ceiling(1) == 1

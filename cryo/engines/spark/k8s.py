@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     from kubernetes import client
 
 from cryo.engines.k8s_cost_labels import cost_attribution_labels
+from cryo.engines.spark.sizing import (
+    ExecutorProfile,
+    cap_deadline_seconds,
+    cap_dispatch_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +276,7 @@ class SparkK8sClient:
         destination_id: str | None = None,
         operation: str | None = None,
     ) -> str:
-        cfg = self._config
+        cfg = _capped_submit_config(self._config, operation=operation)
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
@@ -660,6 +665,28 @@ class SparkK8sClient:
         """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
         self.cleanup_driver_pod(job_id)
         self.cleanup_credentials_secret(job_id)
+
+
+def _capped_submit_config(cfg: SparkK8sConfig, *, operation: str | None) -> SparkK8sConfig:
+    profile = cap_dispatch_profile(
+        ExecutorProfile(
+            executor_instances=cfg.executor_instances,
+            executor_cpu_milli=cfg.executor_cpu_milli,
+            executor_mem_mib=cfg.executor_mem_mib,
+            driver_cpu_milli=cfg.driver_cpu_milli,
+            driver_mem_mib=cfg.driver_mem_mib,
+        ),
+        operation=operation,
+    )
+    return replace(
+        cfg,
+        executor_instances=profile.executor_instances,
+        executor_cpu_milli=profile.executor_cpu_milli,
+        executor_mem_mib=profile.executor_mem_mib,
+        driver_cpu_milli=profile.driver_cpu_milli,
+        driver_mem_mib=profile.driver_mem_mib,
+        active_deadline_seconds=cap_deadline_seconds(cfg.active_deadline_seconds),
+    )
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"

@@ -22,7 +22,7 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
 )
-from cryo.engines.spark.sizing import scale_executor_profile
+from cryo.engines.spark.sizing import scale_executor_profile, spark_slot_ceiling
 from cryo.engines.spark.sql import render
 from cryo.engines.spark.worker_guard import (
     footprint as spark_payload_footprint,
@@ -87,7 +87,9 @@ class SparkK8sEngine:
         self._client: SparkK8sClient | None = None
         catalog = self.config.get("catalog")
         self._catalog = str(catalog) if catalog else None
-        self._slot_cap = int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
+        self._slot_cap = spark_slot_ceiling(
+            int(self.config.get("slot_cap") or self.config.get("concurrent_jobs") or 3)
+        )
         destination_id = self.config.get("destination_id")
         self._destination_id = str(destination_id) if destination_id else None
         self._table_stats: Mapping[str, Any] | None = None

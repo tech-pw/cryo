@@ -174,7 +174,7 @@ def build_lane_objects(
         "spec": {
             "backoffLimit": 0,
             "activeDeadlineSeconds": max(60, active_deadline_seconds),
-            "ttlSecondsAfterFinished": 3600,
+            "ttlSecondsAfterFinished": 600,
             "template": {
                 "metadata": {
                     "labels": labels,

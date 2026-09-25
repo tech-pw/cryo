@@ -54,9 +54,11 @@ class Lane:
 
 
 # (largest single table rewrite GB strictly under, cpu_milli, mem_mib)
+# 16Gi/4 vCPU starts at 200GB, not 50GB. A 50GB rewrite was reserving a 16Gi lane for the
+# whole nightly window; the 16Gi tier stays for tables that actually need it.
 _SIZE_TIERS: tuple[tuple[float, int, int], ...] = (
     (5.0, 1000, 4096),
-    (50.0, 2000, 8192),
+    (200.0, 2000, 8192),
 )
 _LARGEST_TIER = (4000, 16384)
 
