@@ -69,7 +69,14 @@ against.
 Cryo sits where **LakeOps** does — a dedicated, self-hosted control plane rather than a managed
 platform — but keeps your telemetry on your own infrastructure, and treats Trino as a first-class
 engine rather than an afterthought. Against **Apache Amoro**, Cryo is lighter to operate (no
-Mixed-Iceberg coupling) and Trino-first rather than Flink-first. Against the managed clouds
+Mixed-Iceberg coupling, no JVM-as-sidecar dependency) and Trino-first rather than Flink-first.
+Cryo's own committed Helm defaults request 3.35 CPU cores and 6.00 GiB memory at steady-state
+idle across its full always-on control plane (API, worker, governor, scheduler, scanner) —
+reproduce with `make deployment-footprint`, which reads `deploy/helm/cryo/values.yaml` live so
+the number can't drift from what's actually shipped. This is not compared against a specific
+Amoro figure here: no document in this repo cites one, and inventing a number to compare
+against would be exactly the kind of unbacked claim this section is trying to avoid (see
+`scripts/deployment_footprint.py` for how to add one honestly). Against the managed clouds
 (Databricks Predictive Optimization, AWS S3 Tables, Snowflake), Cryo is the answer for teams who
 aren't consolidating onto a single vendor's compute.
 
