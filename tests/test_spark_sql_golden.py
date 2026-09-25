@@ -133,7 +133,8 @@ def test_spark_render_golden_operation_sql() -> None:
     assert [statement.sql for statement in render(plan)] == [
         (
             "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
-            "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 3)"
+            "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 3, "
+            "stream_results => true)"
         ),
         (
             "CALL iceberg.system.remove_orphan_files(table => 'iceberg.demo.events', "
