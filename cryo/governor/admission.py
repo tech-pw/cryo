@@ -49,6 +49,13 @@ class AdmissionConfig:
     # "disabled" sentinel for it -- None is unambiguous).
     min_moop_score: float | None = None
     fleet_budget_gb: float | None = None
+    # Amoro's "Balanced" scheduling policy borrowed: pure top-k pack (below) can starve a
+    # correctly-scored-but-lower table indefinitely if higher-scoring tables keep refilling the
+    # queue every wave -- there is no mechanism today for "it's been neglected" to matter on its
+    # own. Off by default (0.0 boost is a no-op) so existing deployments' admission order is
+    # unchanged until explicitly opted in. See docs/amoro-evaluation.md §3.1/§5 (Move 25a).
+    staleness_boost_days: float = 0.0
+    staleness_boost_max: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -155,15 +162,47 @@ def compute_admission_budget(
     return AdmissionBudget(replicas=tuple(budgets), reasons=tuple(reasons))
 
 
+def _staleness_boost(
+    job: AdmissionJob,
+    config: AdmissionConfig,
+    *,
+    now: datetime,
+) -> float:
+    """Amoro-style occupation-ratio fairness, borrowed narrowly: a bounded score boost for a
+    table that hasn't been maintained in a while, so it can eventually outrank a merely
+    higher-scoring table that gets maintained every wave. ``staleness_boost_days<=0`` disables
+    this entirely (returns 0.0, a pure no-op on the existing sort). A table with no
+    ``last_maintained_at`` at all (never maintained, or the field wasn't populated) gets the
+    full boost immediately -- it has been "starved" for its entire lifetime, not merely since
+    some baseline. The ramp is linear from 0 at ``staleness_boost_days`` to
+    ``staleness_boost_max`` at ``2 * staleness_boost_days``, then flat -- this is a tiebreak
+    against starvation, not a replacement for the underlying score; it must never be able to
+    push an unscored/zero-value table above a genuinely high-value one by an unbounded amount.
+    """
+    if config.staleness_boost_days <= 0:
+        return 0.0
+    if job.last_maintained_at is None:
+        return config.staleness_boost_max
+    idle_days = (_ensure_aware(now) - _ensure_aware(job.last_maintained_at)).total_seconds() / 86400
+    if idle_days <= config.staleness_boost_days:
+        return 0.0
+    ramp = (idle_days - config.staleness_boost_days) / config.staleness_boost_days
+    return min(config.staleness_boost_max, max(0.0, ramp) * config.staleness_boost_max)
+
+
 def pack_fleet_budget(
     jobs: Sequence[AdmissionJob],
     config: AdmissionConfig,
+    *,
+    now: datetime | None = None,
 ) -> dict[str, AdmissionDecision]:
     """AutoComp §A2 "Fleet Decide": greedy top-k GB-budget pack.
 
-    Sorts by moop_score (falling back to estimated_benefit_score, then unscored-last) DESC and
-    admits jobs while they fit ``config.fleet_budget_gb`` -- first-fit-decreasing, so a big job
-    that doesn't fit doesn't block smaller ones after it from using the remaining budget.
+    Sorts by moop_score (falling back to estimated_benefit_score, then unscored-last) DESC,
+    plus a bounded staleness boost (see ``_staleness_boost``) when
+    ``config.staleness_boost_days`` is set, and admits jobs while they fit
+    ``config.fleet_budget_gb`` -- first-fit-decreasing, so a big job that doesn't fit doesn't
+    block smaller ones after it from using the remaining budget.
 
     Returns a per-job_id decision; callers should treat "not admissible" here the same as any
     other ``decide_job_admission`` rejection (defer with the given reason). When
@@ -182,12 +221,18 @@ def pack_fleet_budget(
     if config.fleet_budget_gb is None:
         return {job.job_id: AdmissionDecision(True) for job in jobs}
 
+    current = _ensure_aware(now or datetime.now(UTC))
+
     def sort_key(job: AdmissionJob) -> float:
         if job.moop_score is not None:
-            return job.moop_score
-        if job.estimated_benefit_score is not None:
-            return job.estimated_benefit_score
-        return float("-inf")
+            base = job.moop_score
+        elif job.estimated_benefit_score is not None:
+            base = job.estimated_benefit_score
+        else:
+            base = float("-inf")
+        if base == float("-inf"):
+            return base
+        return base + _staleness_boost(job, config, now=current)
 
     decisions: dict[str, AdmissionDecision] = {}
     remaining = config.fleet_budget_gb

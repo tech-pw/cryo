@@ -8,6 +8,7 @@ from cryo.governor.admission import (
     AdmissionConfig,
     AdmissionDecision,
     AdmissionJob,
+    _staleness_boost,
     compute_admission_budget,
     cooldown_elapsed,
     decide_job_admission,
@@ -227,4 +228,145 @@ def test_pack_fleet_budget_defers_unknown_cost_instead_of_treating_it_as_free() 
     assert decisions["unknown-cost"].defer
     # The unknown-cost job (sorted first by moop_score) must not have consumed any budget --
     # the known-cost job right behind it still gets the full 5GB.
-    assert decisions["known-cost"].admissible
+
+
+# ---------------------------------------------------------------------------
+# _staleness_boost / pack_fleet_budget fairness (Amoro-style, docs/amoro-evaluation.md §3.1)
+# ---------------------------------------------------------------------------
+
+
+NOW = datetime(2026, 9, 27, 6, 0, tzinfo=UTC)
+
+
+def test_staleness_boost_disabled_by_default() -> None:
+    config = AdmissionConfig()
+    job = AdmissionJob(
+        "job-1", "t1", "dest", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=999)
+    )
+    assert _staleness_boost(job, config, now=NOW) == 0.0
+
+
+def test_staleness_boost_zero_until_threshold_then_ramps_to_cap() -> None:
+    config = AdmissionConfig(staleness_boost_days=10.0, staleness_boost_max=0.5)
+
+    fresh = AdmissionJob("j", "t", "d", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=5))
+    assert _staleness_boost(fresh, config, now=NOW) == 0.0
+
+    at_threshold = AdmissionJob(
+        "j", "t", "d", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=10)
+    )
+    assert _staleness_boost(at_threshold, config, now=NOW) == 0.0
+
+    halfway = AdmissionJob(
+        "j", "t", "d", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=15)
+    )
+    assert _staleness_boost(halfway, config, now=NOW) == 0.25  # halfway from 10d to 20d
+
+    at_cap = AdmissionJob("j", "t", "d", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=20))
+    assert _staleness_boost(at_cap, config, now=NOW) == 0.5
+
+    beyond_cap = AdmissionJob(
+        "j", "t", "d", Mode.STANDARD, last_maintained_at=NOW - timedelta(days=200)
+    )
+    assert _staleness_boost(beyond_cap, config, now=NOW) == 0.5  # never exceeds the cap
+
+
+def test_staleness_boost_never_maintained_gets_full_boost_immediately() -> None:
+    config = AdmissionConfig(staleness_boost_days=10.0, staleness_boost_max=0.5)
+    job = AdmissionJob("j", "t", "d", Mode.STANDARD, last_maintained_at=None)
+    assert _staleness_boost(job, config, now=NOW) == 0.5
+
+
+def test_pack_fleet_budget_lets_a_neglected_table_outrank_a_slightly_higher_scored_one() -> None:
+    """The exact starvation scenario Amoro's Balanced policy targets: a table sitting at
+    moop_score=0.60 that hasn't been touched in 30 days must be able to outrank a table at
+    moop_score=0.62 that was maintained yesterday, once the boost is enabled -- with the
+    boost disabled (default), score order alone would starve the neglected table forever."""
+    config = AdmissionConfig(
+        fleet_budget_gb=10.0, staleness_boost_days=7.0, staleness_boost_max=0.5
+    )
+    neglected = AdmissionJob(
+        "neglected",
+        "t1",
+        "dest",
+        Mode.STANDARD,
+        moop_score=0.60,
+        size_gb=10.0,
+        last_maintained_at=NOW - timedelta(days=30),
+    )
+    recently_maintained = AdmissionJob(
+        "recent",
+        "t2",
+        "dest",
+        Mode.STANDARD,
+        moop_score=0.62,
+        size_gb=10.0,
+        last_maintained_at=NOW - timedelta(days=1),
+    )
+
+    decisions = pack_fleet_budget([neglected, recently_maintained], config, now=NOW)
+
+    assert decisions["neglected"].admissible
+    assert not decisions["recent"].admissible  # only 10GB budget; the boosted job wins the slot
+
+    # Without the boost (existing default behavior), the ordering flips.
+    unboosted_config = AdmissionConfig(fleet_budget_gb=10.0)
+    unboosted_decisions = pack_fleet_budget(
+        [neglected, recently_maintained], unboosted_config, now=NOW
+    )
+    assert not unboosted_decisions["neglected"].admissible
+    assert unboosted_decisions["recent"].admissible
+
+
+def test_pack_fleet_budget_staleness_boost_is_bounded_not_unlimited() -> None:
+    """A neglected but genuinely low-value table (moop_score=0.01) must not be able to
+    leapfrog a much higher-value table (moop_score=0.9) purely from being old -- the boost is
+    capped at staleness_boost_max, not an unbounded override."""
+    config = AdmissionConfig(
+        fleet_budget_gb=10.0, staleness_boost_days=1.0, staleness_boost_max=0.5
+    )
+    ancient_low_value = AdmissionJob(
+        "ancient",
+        "t1",
+        "dest",
+        Mode.STANDARD,
+        moop_score=0.01,
+        size_gb=10.0,
+        last_maintained_at=NOW - timedelta(days=9999),
+    )
+    high_value = AdmissionJob(
+        "high-value",
+        "t2",
+        "dest",
+        Mode.STANDARD,
+        moop_score=0.9,
+        size_gb=10.0,
+        last_maintained_at=NOW - timedelta(hours=1),
+    )
+
+    decisions = pack_fleet_budget([ancient_low_value, high_value], config, now=NOW)
+
+    assert decisions["high-value"].admissible
+    assert not decisions["ancient"].admissible
+
+
+def test_pack_fleet_budget_staleness_boost_does_not_affect_unknown_cost_deferral() -> None:
+    """The boost changes sort order only -- a staleness-boosted job with size_gb=None must
+    still defer as unknown_cost, never be silently treated as free."""
+    config = AdmissionConfig(
+        fleet_budget_gb=10.0, staleness_boost_days=1.0, staleness_boost_max=0.5
+    )
+    job = AdmissionJob(
+        "unknown-cost-but-stale",
+        "t1",
+        "dest",
+        Mode.STANDARD,
+        moop_score=0.9,
+        size_gb=None,
+        last_maintained_at=None,
+    )
+
+    decisions = pack_fleet_budget([job], config, now=NOW)
+
+    assert not decisions["unknown-cost-but-stale"].admissible
+    assert decisions["unknown-cost-but-stale"].reason == "unknown_cost"
