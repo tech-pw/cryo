@@ -52,7 +52,10 @@ def test_trino_renderer_skips_set_when_no_protected_ids() -> None:
     assert "set_snapshots" not in expire.sql
 
 
-def test_spark_renderer_emits_set_snapshot_ref_then_expire() -> None:
+def test_spark_renderer_tags_the_protected_snapshot_before_expire() -> None:
+    """Iceberg has no set_snapshot_ref procedure; a tag is what expire_snapshots respects.
+    The tag DDL and the CALL must be separate ";\\n"-joined statements, the only separator
+    cryo_spark_runner.py splits on before handing each one to spark.sql()."""
     plan = build_plan(
         _stats(),
         [],
@@ -62,9 +65,12 @@ def test_spark_renderer_emits_set_snapshot_ref_then_expire() -> None:
     )
     rendered = render_spark(plan)
     expire = next(s for s in rendered if str(s.action).endswith("expire_snapshots"))
-    assert "set_snapshot_ref" in expire.sql
-    assert "cryo-protected-latest" in expire.sql
-    assert expire.sql.find("set_snapshot_ref") < expire.sql.find("expire_snapshots")
+    assert "set_snapshot_ref" not in expire.sql
+    tag_stmt, expire_stmt = expire.sql.split(";\n")
+    assert tag_stmt == (
+        "ALTER TABLE iceberg.s.t CREATE OR REPLACE TAG `cryo-protected-latest` AS OF VERSION 200"
+    )
+    assert expire_stmt.startswith("CALL iceberg.system.expire_snapshots(")
 
 
 def test_protected_ids_are_sorted_deduped() -> None:
