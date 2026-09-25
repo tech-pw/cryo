@@ -308,6 +308,154 @@ def test_trino_engine_reports_engine_ref_even_on_failure() -> None:
     assert observed == ["query_will_fail"]
 
 
+class FilesDiffCursor(FakeCursor):
+    """Fake cursor that answers a $files byte-sum SELECT with values from a queue, and any
+    other statement (session setup, the maintenance ALTER TABLE) with `rows`. Lets tests
+    control the before/after byte totals independently of the main statement's own result."""
+
+    def __init__(
+        self,
+        rows: list[tuple[object, ...]] | None = None,
+        *,
+        files_sums: list[int | None] | None = None,
+    ) -> None:
+        super().__init__(rows)
+        self._files_sums = list(files_sums or [])
+        self._last_was_files_query = False
+
+    def execute(self, sql: str) -> None:
+        self.executed.append(sql)
+        self._last_was_files_query = '"$files"' in sql
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("boom")
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        if self._last_was_files_query:
+            value = self._files_sums.pop(0) if self._files_sums else None
+            return (value,)
+        return self.rows[0] if self.rows else None
+
+
+def test_trino_engine_measures_bytes_freed_via_files_diff_for_optimize() -> None:
+    cursor = FilesDiffCursor([(3, 1)], files_sums=[1_000_000_000, 400_000_000])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+            metadata={"table_ref": "iceberg.demo.t"},
+        ),
+        ExecCtx(replica="localhost"),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed == 600_000_000
+    files_queries = [sql for sql in cursor.executed if '"$files"' in sql]
+    assert len(files_queries) == 2
+    assert all(
+        sql.startswith("SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM")
+        for sql in files_queries
+    )
+
+
+def test_trino_engine_clamps_negative_files_diff_to_zero() -> None:
+    """A concurrent writer landing between the before/after $files reads could make the after
+    total exceed the before total; must not report negative bytes freed."""
+    cursor = FilesDiffCursor([(1, 1)], files_sums=[500_000_000, 900_000_000])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.EXPIRE_SNAPSHOTS,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE expire_snapshots(retention_threshold => '7d')",
+            engine=EngineType.TRINO,
+            metadata={"table_ref": "iceberg.demo.t"},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed == 0
+
+
+def test_trino_engine_leaves_bytes_freed_unmeasured_for_remove_orphan_files() -> None:
+    """remove_orphan_files deletes files that are, by definition, absent from $files -- a
+    $files diff is always zero for this operation and would be a silent wrong answer, not a
+    measurement. Must stay None (honestly unmeasured), not report a fabricated 0."""
+    cursor = FilesDiffCursor([(1,)], files_sums=[999_999_999, 999_999_999])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.REMOVE_ORPHAN_FILES,
+            sql=(
+                "ALTER TABLE iceberg.demo.t "
+                "EXECUTE remove_orphan_files(retention_threshold => '7d')"
+            ),
+            engine=EngineType.TRINO,
+            metadata={"table_ref": "iceberg.demo.t"},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed is None
+    assert not any('"$files"' in sql for sql in cursor.executed)
+
+
+def test_trino_engine_bytes_freed_none_when_files_query_fails() -> None:
+    """A $files probe failure (permissions, connector quirk, transient error) must degrade to
+    unmeasured, never raise and never fail the maintenance statement itself."""
+    cursor = FilesDiffCursor([(2, 1)], files_sums=[None, 500_000_000])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+            metadata={"table_ref": "iceberg.demo.t"},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed is None
+
+
+def test_trino_engine_bytes_freed_none_without_table_ref_metadata() -> None:
+    """A RenderedStatement missing table_ref metadata (e.g. built by hand in a test, or an
+    older caller) must not attempt the $files query at all."""
+    cursor = FilesDiffCursor([(1, 1)])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
+            engine=EngineType.TRINO,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed is None
+    assert not any('"$files"' in sql for sql in cursor.executed)
+
+
 def test_trino_engine_works_without_on_engine_ref_callback() -> None:
     """ExecCtx with no on_engine_ref (or ctx=None entirely) must not break -- most callers
     historically don't pass one."""
