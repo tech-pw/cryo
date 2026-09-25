@@ -8,8 +8,11 @@ metadata:
 spec:
   schedule: {{ .Values.scanner.schedule | quote }}
   suspend: {{ .Values.scanner.suspend | default false }}
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 3600
       # Indexed, so each pod gets a distinct JOB_COMPLETION_INDEX to pass as --chunk-id.
       # Before 2026-09-22 this ran a single pod with no arguments, so cryo.scanner.run fell
       # back to its defaults (chunk_id=0, scan_num_chunks=4) and every run silently discarded
@@ -23,6 +26,8 @@ spec:
           labels:
             {{- include "cryo.selectorLabels" . | nindent 12 }}
             app.kubernetes.io/component: scanner
+            eks-workload-name: cryo-scanner
+            eks-workload-type: Job
         spec:
           restartPolicy: OnFailure
           {{- include "cryo.imagePullSecrets" . | nindent 10 }}

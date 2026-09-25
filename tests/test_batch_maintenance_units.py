@@ -111,6 +111,14 @@ def test_lane_is_sized_by_its_largest_table_and_never_above_the_ceiling() -> Non
     assert (small.cpu_milli, small.mem_mib) == (1000, 4096)
 
 
+def test_lane_under_200gb_does_not_take_the_16gib_tier() -> None:
+    mid = plan_lanes(_tables(80.0))
+    huge = plan_lanes(_tables(250.0))
+
+    assert (mid[0].cpu_milli, mid[0].mem_mib) == (2000, 8192)
+    assert (huge[0].cpu_milli, huge[0].mem_mib) == (4000, 16384)
+
+
 def test_packing_keeps_rank_order_within_each_lane() -> None:
     tables = _tables(300, 250, 200, 5, 4, 3)
     lanes = plan_lanes(tables, LaneLimits(max_lanes=2, target_gb_per_lane=100))

@@ -212,6 +212,12 @@ native:
 # an uncontested claim -- restore scannerWorker.replicas before leaving this enabled
 # long-term, or the two paths just race for the same queue (harmless, but pointless).
 scanner:
+  # Live 2026-09-25: 4 indexed pods requested 500m/1Gi and used ~160m/350Mi. These Jobs
+  # have no Deployment owner, so the reserved gap is the untagged cost row.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
   jobDispatch:
     enabled: true
     batchSize: 1
@@ -462,9 +468,14 @@ spark:
     driverMemMib: 1024
     executorCpuMilli: 1000
     executorMemMib: 2048
+    # Ceiling, not the live shape. spark-k8s-fallback in Postgres was 24×3000m×6144Mi,
+    # driver 4000m/16384Mi, deadline 14400s, slot_cap 12. Submit-time cap in
+    # cryo/engines/spark/sizing.py refuses that even if the destination row is restored.
+    # slotCap is the governor concurrency ceiling (CRYO_SPARK_K8S_SLOT_CAP).
     executorInstances: 2
+    slotCap: 2
     activeDeadlineSeconds: 7200
-    ttlSecondsAfterFinished: 3600
+    ttlSecondsAfterFinished: 600
 
 redis:
   image:
