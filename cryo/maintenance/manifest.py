@@ -40,6 +40,12 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "stats_compute_ndv": False,
     "delete_ratio_trigger": 0,
     "partition_write_idle_hours": 0,
+    # Lanes always run spark.k8s.image (Dockerfile.spark pins Iceberg 1.11), and this
+    # rewrite_data_files option needs Iceberg >= 1.7.
+    "remove_dangling_deletes": True,
+    # Optimize leaves files up to 10x target alone instead of rewriting them only to split
+    # them (LinkedIn OpenHouse's setting); see cryo/engines/spark/sql.py::_render_optimize.
+    "max_file_size_ratio": 10,
 }
 
 

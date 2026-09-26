@@ -44,6 +44,8 @@ class _Behaviour:
     die_on: set[uuid.UUID] = field(default_factory=set)
     # Lane pods that die before starting any table (bad image, catalog unreachable).
     die_at_start: bool = False
+    # Lane indexes whose pod the node takes away before the first table (spot reclaim).
+    node_lost_lanes: set[int] = field(default_factory=set)
 
 
 class _FakeLaneRunner:
@@ -73,6 +75,9 @@ class _FakeLaneRunner:
                 continue
             if self.behaviour.die_at_start:
                 lane.exit_reason = "Error (exit 1)"
+            if lane.spec.index in self.behaviour.node_lost_lanes:
+                lane.exit_reason = "lane pod deleted mid-run (spot reclaim); Job Failed"
+                lane.infra_loss = True
             for table in self.manifests[lane.spec.index]["tables"]:
                 if lane.exit_reason is not None:
                     break
@@ -345,6 +350,38 @@ def test_a_lane_that_dies_before_its_first_table_is_not_replaced(session_factory
     assert {jobs[i].status for i in ids} == {"skipped"}
     assert "Error (exit 1)" in (jobs[ids[0]].error or "")
     assert report.skipped == 3
+
+
+def test_a_lane_the_node_took_before_its_first_table_is_replaced(session_factory) -> None:
+    """A spot reclaim or drain says nothing about the next pod, unlike a bad image."""
+    ids = _seed(session_factory, tables=3)
+    h = _harness(session_factory, behaviour=_Behaviour(node_lost_lanes={0}))
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    lanes = h.runners[0].lanes
+    assert [lane.spec.index for lane in lanes] == [0, 1]
+    replacement = {uuid.UUID(t["table_id"]) for t in h.runners[0].manifests[1]["tables"]}
+    assert replacement == set(ids)
+    jobs = _jobs(session_factory)
+    assert {jobs[i].status for i in ids} == {"succeeded"}
+    assert report.lanes[-1]["replaces"] == 0
+    assert report.succeeded == 3
+
+
+def test_lane_sql_rewrites_only_scanner_small_files_and_runs_no_ndv_scan(session_factory) -> None:
+    _seed(session_factory, tables=2)
+    h = _harness(session_factory, settings=_settings(scan_small_file_mb=64.0))
+
+    h.coordinator.run(trigger="batch-cron")
+
+    statements = [
+        s for m in h.runners[0].manifests.values() for t in m["tables"] for s in t["statements"]
+    ]
+    optimize = [s["sql"] for s in statements if s["action"] == "optimize"]
+    pinned = f"'min-file-size-bytes', '{64 * 1024 * 1024}'"
+    assert optimize and all(pinned in sql for sql in optimize)
+    assert not any("compute_table_stats" in s["sql"] for s in statements)
 
 
 def test_a_table_locked_by_another_job_is_skipped_and_never_sent_to_spark(session_factory) -> None:

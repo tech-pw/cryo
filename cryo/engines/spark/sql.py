@@ -21,7 +21,8 @@ class UnsupportedPredicateError(ValueError):
 
 def render(plan: MaintenancePlan) -> list[RenderedStatement]:
     catalog, table_name = _spark_table(plan.table_ref)
-    return [_render_operation(catalog, table_name, operation) for operation in plan.operations]
+    rendered = (_render_operation(catalog, table_name, operation) for operation in plan.operations)
+    return [statement for statement in rendered if statement is not None]
 
 
 def render_predicate(
@@ -35,7 +36,9 @@ def render_predicate(
     return "(" + " AND ".join(_render_term(term) for term in predicate.terms) + ")"
 
 
-def _render_operation(catalog: str, table_name: str, operation: Operation) -> RenderedStatement:
+def _render_operation(
+    catalog: str, table_name: str, operation: Operation
+) -> RenderedStatement | None:
     if operation.type is OperationType.EXPIRE_SNAPSHOTS:
         sql = _render_expire(catalog, table_name, operation.params)
     elif operation.type is OperationType.REMOVE_ORPHAN_FILES:
@@ -45,14 +48,14 @@ def _render_operation(catalog: str, table_name: str, operation: Operation) -> Re
     elif operation.type is OperationType.CONVERT_DELETES:
         sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
-        sql = (
-            f"CALL {catalog}.system.rewrite_position_delete_files("
-            f"table => '{catalog}.{table_name}')"
-        )
+        sql = _render_rewrite_position_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
-        sql = _render_compute_statistics(catalog, table_name, operation.params)
+        stats_sql = _render_compute_statistics(catalog, table_name, operation.params)
+        if stats_sql is None:
+            return None
+        sql = stats_sql
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
     return RenderedStatement(
@@ -119,6 +122,21 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         f"'target-file-size-bytes', '{target_bytes}'",
         f"'min-input-files', '{min_input_files}'",
     ]
+    min_file_size_bytes = _min_file_size_bytes(operation.params, target_bytes)
+    if strategy == "binpack" and min_file_size_bytes is not None:
+        # Iceberg's default treats every file under 75% of the target (192 MB at 256 MB) as a
+        # rewrite candidate, while the planner picks tables and partitions by files under the
+        # scanner's small-file threshold (89.6 MB). The gap is what made a table with 11 small
+        # files rewrite 206 files / 23 GB in 40 minutes on 2026-09-24. Pinning the procedure's
+        # threshold to the planner's keeps the rewrite to the files that were counted.
+        options.append(f"'min-file-size-bytes', '{min_file_size_bytes}'")
+    max_file_size_bytes = _max_file_size_bytes(operation.params, target_bytes)
+    if strategy == "binpack" and max_file_size_bytes is not None:
+        # Files above max-file-size-bytes (default 180% of target) are rewritten on their own
+        # just to split them, which buys a reader nothing: a large file is still read in
+        # split-sized pieces. LinkedIn OpenHouse sets 10x target for the same reason. The read
+        # splits stay target-sized, so output files still land near the target.
+        options.append(f"'max-file-size-bytes', '{max_file_size_bytes}'")
 
     # Sort/Z-order configuration
     sort_columns = operation.params.get("sort_columns", [])
@@ -160,14 +178,16 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
         options.append("'rewrite-all', 'true'")
     if operation.params.get("partial_progress", True):
         options.append("'partial-progress.enabled', 'true'")
-        # Iceberg's own default (10) stops the whole rewrite after 10 commits regardless of
-        # table size -- see _render_convert_deletes for the same fix and the live incident
-        # that surfaced it (a 13.6k-file table's optimize fallback would otherwise touch a
-        # near-fixed handful of file groups no matter how far behind the table actually is).
+        # max-commits sets commit granularity, not how much gets rewritten: Iceberg commits
+        # ceil(file groups / max-commits) groups at a time and rewrites every planned group
+        # regardless (RewriteDataFilesSparkAction.doExecuteWithPartialProgress). A higher
+        # value persists progress in smaller steps and shrinks what one commit conflict
+        # throws away, at the cost of more snapshots for expire_snapshots to clean up.
         max_commits = operation.params.get("max_commits", 50)
         options.append(f"'partial-progress.max-commits', '{max_commits}'")
     max_concurrent = operation.params.get("max_concurrent_file_group_rewrites", 5)
     options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
+    options.append(f"'rewrite-job-order', '{_rewrite_job_order(operation.params)}'")
 
     args.append(f"options => map({', '.join(options)})")
     rewrite_call = f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
@@ -215,46 +235,80 @@ def _render_convert_deletes(catalog: str, table_name: str, operation: Operation)
         f"'partial-progress.enabled', '{str(partial_progress_enabled).lower()}'",
     ]
     if partial_progress_enabled:
-        # Iceberg's own defaults here (max-commits=10, max-concurrent-file-group-rewrites=1)
-        # are far too conservative for real fleet tables -- a single admission cycle only
-        # ever rewrites a handful of file groups regardless of how many delete files the
-        # table actually has, since partial-progress stops after max-commits commits no
-        # matter how much of the table remains. Confirmed live, 2026-07-22: one full run
-        # against a 13.6k-file, 12.7k-delete-file table touched only 46 files and removed
-        # zero deletes in that pass. Bump both unless the caller has explicitly tuned them;
-        # this still converges over repeated runs for very large tables, just far fewer of
-        # them are needed.
+        # Commit granularity and group parallelism, both overridable. max-commits does not cap
+        # how much is rewritten (see _render_optimize); the 2026-07-22 "46 of 13.6k files"
+        # pass was the unscoped where-clause above, not these values.
         max_commits = int(params.get("convert_deletes_max_commits", 50))
         max_concurrent_rewrites = int(params.get("convert_deletes_max_concurrent_rewrites", 5))
         options.append(f"'partial-progress.max-commits', '{max(1, max_commits)}'")
         options.append(f"'max-concurrent-file-group-rewrites', '{max(1, max_concurrent_rewrites)}'")
+    if params.get("remove_dangling_deletes", False):
+        # Rewriting a data file applies its deletes but leaves v2 position/equality delete
+        # files tracked as "dangling" until something removes them. All 59 convert_deletes
+        # statements of the 2026-09-24 nightly run reported removed_delete_files_count=0.
+        # This adds one commit (only when something is dangling) that drops delete files
+        # older than every live data file in their partition. Iceberg >= 1.7 only: older
+        # runtimes reject the option, so callers opt in (the batch path does).
+        options.append("'remove-dangling-deletes', 'true'")
+    options.append(f"'rewrite-job-order', '{_rewrite_job_order(params)}'")
     args.append(f"options => map({', '.join(options)})")
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
 
 
-def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, Any]) -> str:
+def _render_rewrite_position_deletes(catalog: str, table_name: str, operation: Operation) -> str:
+    """Minor delete compaction: merge small position-delete files, drop dangling rows.
+
+    Iceberg sizes each group's Spark tasks by bytes (FILE_OPEN_COST=0), so a partition of
+    thousands of tiny delete files is one or two tasks reading file after file. Partial
+    progress keeps finished groups when a later one fails, and files-desc starts with the
+    groups holding the most delete files.
+    """
+    params = operation.params
+    options: list[str] = []
+    if params.get("partial_progress_enabled", True):
+        max_commits = int(params.get("rewrite_position_deletes_max_commits", 10))
+        options += [
+            "'partial-progress.enabled', 'true'",
+            f"'partial-progress.max-commits', '{max(1, max_commits)}'",
+        ]
+    max_concurrent = int(params.get("rewrite_position_deletes_max_concurrent_rewrites", 5))
+    options.append(f"'max-concurrent-file-group-rewrites', '{max(1, max_concurrent)}'")
+    options.append(f"'rewrite-job-order', '{_rewrite_job_order(params)}'")
+    return (
+        f"CALL {catalog}.system.rewrite_position_delete_files("
+        f"table => '{catalog}.{table_name}', options => map({', '.join(options)}))"
+    )
+
+
+def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, Any]) -> str | None:
     """Render compute_table_stats CALL for Spark (Puffin NDV statistics).
 
     Spark uses: CALL system.compute_table_stats(table => '...', columns => ARRAY(...))
     This refreshes NDV Theta sketches stored in Puffin files, improving join ordering.
+    It is a full scan of every selected column (Iceberg's NDVSketchUtil aggregates a theta
+    sketch over the whole snapshot), so it is only rendered when ``compute_ndv`` is on.
+    None when there is nothing to do (NDV off and no bloom-filter columns).
 
     Bloom filter columns are configured via table properties — rendered separately.
     """
-    columns: list[str] = params.get("columns", [])
-    bloom_filter_columns: list[str] = params.get("bloom_filter_columns", [])
+    columns: list[str] = params.get("columns") or []
+    bloom_filter_columns: list[str] = params.get("bloom_filter_columns") or []
+    compute_ndv = params.get("compute_ndv", True) is not False
 
     statements = []
 
-    # Main stats computation
-    if columns:
-        cols_expr = ", ".join(f"'{c}'" for c in columns)
-        stats_sql = (
-            f"CALL {catalog}.system.compute_table_stats("
-            f"table => '{catalog}.{table_name}', columns => ARRAY({cols_expr}))"
-        )
-    else:
-        stats_sql = f"CALL {catalog}.system.compute_table_stats(table => '{catalog}.{table_name}')"
-    statements.append(stats_sql)
+    if compute_ndv:
+        if columns:
+            cols_expr = ", ".join(f"'{c}'" for c in columns)
+            stats_sql = (
+                f"CALL {catalog}.system.compute_table_stats("
+                f"table => '{catalog}.{table_name}', columns => ARRAY({cols_expr}))"
+            )
+        else:
+            stats_sql = (
+                f"CALL {catalog}.system.compute_table_stats(table => '{catalog}.{table_name}')"
+            )
+        statements.append(stats_sql)
 
     # Enable Bloom filters for high-cardinality columns via table properties
     for col in bloom_filter_columns:
@@ -263,6 +317,8 @@ def _render_compute_statistics(catalog: str, table_name: str, params: dict[str, 
             f"SET TBLPROPERTIES ('write.parquet.bloom-filter-enabled.column.{col}' = 'true')"
         )
 
+    if not statements:
+        return None
     # Multiple statements joined — executor must split on ";\n"
     return ";\n".join(statements)
 
@@ -482,6 +538,49 @@ def _spark_table(table_ref: str) -> tuple[str, str]:
     if len(parts) == 2:
         return "spark_catalog", table_ref
     raise ValueError("table_ref must be schema.table or catalog.schema.table")
+
+
+_REWRITE_JOB_ORDERS = frozenset({"bytes-asc", "bytes-desc", "files-asc", "files-desc", "none"})
+
+
+def _rewrite_job_order(params: dict[str, Any]) -> str:
+    # files-desc commits the groups that remove the most files first, so a rewrite cut short
+    # (deadline, lane death, a failed group) has already banked the biggest reductions.
+    order = str(params.get("rewrite_job_order") or "files-desc").lower()
+    return order if order in _REWRITE_JOB_ORDERS else "files-desc"
+
+
+def _min_file_size_bytes(params: dict[str, Any], target_bytes: int) -> int | None:
+    raw_bytes = params.get("min_file_size_bytes")
+    raw_mb = params.get("min_file_size_mb")
+    try:
+        if raw_bytes is not None:
+            value = int(raw_bytes)
+        elif raw_mb is not None:
+            value = int(float(raw_mb) * 1024 * 1024)
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    # Iceberg rejects min-file-size-bytes >= target-file-size-bytes at procedure time.
+    if value <= 0 or value >= target_bytes:
+        return None
+    return value
+
+
+def _max_file_size_bytes(params: dict[str, Any], target_bytes: int) -> int | None:
+    raw = params.get("max_file_size_ratio")
+    if raw is None:
+        return None
+    try:
+        ratio = float(raw)
+    except (TypeError, ValueError):
+        return None
+    # Iceberg requires max-file-size-bytes > target-file-size-bytes; at or under its own
+    # 1.8x default this would only make splitting more aggressive.
+    if ratio <= 1.8:
+        return None
+    return int(target_bytes * ratio)
 
 
 def _escape_sql_string(value: str) -> str:

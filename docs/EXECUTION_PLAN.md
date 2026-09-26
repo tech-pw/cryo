@@ -1,5 +1,11 @@
 # Cryo — Master Execution Plan
 
+> **Open-source portability (2026-09-25):** Follow
+> [the OSS launch plan](oss-launch-plan-2026-09-25.md) for removing organization-specific
+> assumptions, delivering an independently installable Helm release, and building adoption.
+> This is a proposed packaging/portability workstream, not completed implementation or a
+> replacement for the cost/reliability and production-safety gates below.
+
 > **Cost rescue priority (2026-09-11):** Follow
 > [CRYO_COST_REDUCTION_PLAN.md](CRYO_COST_REDUCTION_PLAN.md) for immediate reliability,
 > physical reclamation, and net-cost proof work before expanding features. It supersedes older

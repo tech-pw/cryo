@@ -24,11 +24,11 @@ pods could not fix that. The dispatch model itself was the waste.
 | Step | Code | What happens |
 |------|------|--------------|
 | Orphan gate | `coordinator._shared_location_ids` | Refreshes the shared-S3-path snapshot. If the refresh fails *and* the last snapshot is older than `maintenance_shared_snapshot_max_age_hours` (72), `remove_orphan_files` is dropped for **every** table in the run. |
-| Select | `selection.py` | Only stored scan stats are used. Tables are excluded if inactive, on a disabled source, unreadable at last scan, in a maintenance back-off window, not scanned within 3 days, or maintained successfully within the last 20 h. The source's schema allow-list applies. Eligible tables either need compaction or have ≥1% delete files. They are ranked by 0.45 × heat (Trino queries over 30 days) + 0.35 × need (small-file and delete ratios) + 0.20 × ROI (small files per rewrite GB, plus projected savings). Heat and ROI are rank-normalized. The top `maintenance_top_n` (500) are kept. |
-| Plan | `manifest.py` | `build_execution_plan` in deep mode, then the Spark renderer. That covers partition-aware chunking, protected snapshots, the shared-location gate and `CORRECT_ORDER`. The planner decides the operations; nothing in the batch path adds or removes any. |
+| Select | `selection.py` | Only stored scan stats are used. Tables are excluded if inactive, on a disabled source, unreadable at last scan, in a maintenance back-off window, not scanned within 3 days, or maintained successfully within `maintenance_cooldown_hours` (72 h in prod since 2026-09-26, so nights rotate through the fleet). The source's schema allow-list applies. Eligible tables either need compaction or have ≥1% delete files. They are ranked by 0.45 × heat (Trino queries over 30 days) + 0.35 × need (small-file and delete ratios) + 0.20 × ROI (small files per rewrite GB, plus projected savings). Heat and ROI are rank-normalized. The top `maintenance_top_n` are kept (prod: 1,500 on 12 lanes since 2026-09-26, up from 500 on 4; the run is bound by its GB·hr budget, not the count, so lanes are the real scope lever). |
+| Plan | `manifest.py` | `build_execution_plan` in deep mode, then the Spark renderer. That covers partition-aware chunking, protected snapshots, the shared-location gate and `CORRECT_ORDER`. The planner decides the operations; nothing in the batch path adds or removes any. The run pins Spark's `min-file-size-bytes` to the scanner's small-file threshold (`scan_small_file_mb`, 89.6 MB), so optimize rewrites only the files the table was picked for, and sets `max-file-size-bytes` to 10 × target (`max_file_size_ratio`), so large files aren't rewritten just to be split. `DEFAULT_PARAMS` keep `stats_compute_ndv: False`, so no `compute_table_stats` (a full-table NDV scan) is planned, and turn on `remove_dangling_deletes`, so convert_deletes also drops the delete files its rewrite leaves dangling. |
 | Lock | `coordinator._execute` | Redis per-table lock. A table locked by anything else is recorded as `skipped` and never sent to Spark. The coordinator also holds an owner lease on each of its jobs, so neither orphan recovery nor the stale-running reaper touches them. |
 | Lanes | `lanes.py` | Lane count is ceil(total rewrite GB, plus 0.5 GB overhead per table, ÷ 200), capped at 4 and at the table count. Tables are dealt in rank order to the least-loaded lane. Each lane is sized by its largest table: <5 GB → 1 vCPU / 4 GiB, <200 GB → 2 / 8 GiB, otherwise 4 / 16 GiB, never above the configured ceiling. |
-| Run | `k8s_lanes.py`, `cryo_spark_runner.py --manifest` | One Secret and one Job per lane. The Secret holds the gzip manifest and S3 keys (keys reach the pod only through `secretKeyRef`). The Job runs `spark-submit --master local[N]` in the Spark image, on on-demand nodes with `do-not-disrupt` set. Each table's statements run in order. A failed statement skips the rest of *that* table, and the lane moves on to the next table. No table starts in the last 20 minutes of the run budget. |
+| Run | `k8s_lanes.py`, `cryo_spark_runner.py --manifest` | One Secret and one Job per lane. The Secret holds the gzip manifest and S3 keys (keys reach the pod only through `secretKeyRef`). The Job runs `spark-submit --master local[N,3]` (three attempts per task) in the Spark image with `do-not-disrupt` set, a capped status store (the lane is one long-lived SparkContext), S3FileIO bulk deletes of 1,000 keys and 32 S3 retries (Iceberg's recommendation for throttled workloads). Lanes schedule on `maintenance_lane_capacity_types` (default `spot,on-demand`: spot preferred, on-demand fallback) in place of the on-demand pin inherited from `spark.k8s.nodeSelector`. Each table's statements run in order. A failed statement skips the rest of *that* table, and the lane moves on to the next table. No table starts in the last 20 minutes of the run budget. |
 | Record | `coordinator._apply` | The pod log is read every 30 s. Each `[cryo-result]` line becomes an `audit_log` row (action, OK/FAILED/SKIPPED, engine `spark_emr`, duration, metrics, actor `cryo-batch`). A job is finalized once all its statements have reported. |
 | Tear down | `LaneRunner.teardown` | Jobs, Secrets and any stray pods carrying the run label are deleted, whatever state they are in. |
 | Rescan | `run._rescan` | `run_scan(table_ids=..., num_chunks=1, full_scan=True)` runs on every table where at least one statement succeeded. `num_chunks=1` matters: `run_scan` otherwise defaults to chunk 0 of 4. |
@@ -94,9 +94,17 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   of the same size (the Slack "Spark pods" line marks it `(replacement)`), up to
   `CRYO_MAINTENANCE_MAX_LANE_RESPAWNS` (default 8) per run and only until 20 min before the
   deadline. A lane that dies before starting any table isn't replaced: that's a config or
-  image problem, and a replacement would die the same way. Before 2026-09-24 a dead lane
+  image problem, and a replacement would die the same way. The exception is a lane the node
+  took away (evicted pod, `DisruptionTarget` condition, or a pod deleted by a drain or spot
+  reclaim, which leaves the Job `Failed` with no pod): that says nothing about the next pod, so
+  it is replaced even before its first table. Until 2026-09-25 a deleted lane pod wasn't
+  noticed at all and its tables waited for the run's hard stop. Before 2026-09-24 a dead lane
   stranded all of its remaining tables; the first full run lost two of four lanes (~250
   tables) this way.
+- **Spot lanes.** An interruption costs the table in flight (recorded `failed`; its finished
+  partial-progress commits stay, and failed batch jobs start no back-off, so it runs again the
+  next night) plus a replacement pod for the rest. Set `maintenance.laneCapacityTypes:
+  "on-demand"` to go back to on-demand-only lanes.
 - **Lane JVM memory.** The heap is 60% of the pod limit. The rest covers off-heap memory and
   the Python runner; at 70% the kernel OOM-killed a 16 GiB lane. `MALLOC_ARENA_MAX=4` caps
   glibc's per-thread native arenas (Hadoop's YARN default). The JVM runs with
@@ -112,7 +120,9 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   planning failures, not run.
 - **Spark image.** The lane runs `/opt/cryo/cryo_spark_runner.py` from `spark.k8s.image`,
   which is pinned by digest separately from the app image. A runner change needs a Spark image
-  rebuild and a new pin.
+  rebuild and a new pin. The SQL and the `spark-submit` flags come from the app image, so
+  changes like [`SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`](./SPARK_ENGINE_OPTIMIZATION_2026-09-25.md)
+  deploy without one.
 
 - **Tables whose every data file carries deletes are slow on small lanes.** In the first prod
   canary, a single 1-vCPU lane took about 21 s per file group on a 3.4 GB table like that

@@ -167,6 +167,16 @@ class Settings(BaseSettings):
             "The table a lane died on is recorded as failed; the replacement takes the rest."
         ),
     )
+    maintenance_lane_capacity_types: str = Field(
+        default="spot,on-demand",
+        description=(
+            "Karpenter capacity types lane pods may run on, most preferred first. Replaces the "
+            "karpenter.sh/capacity-type pin lanes inherit from the Spark destination's node "
+            "selector; empty keeps that pin. Lanes tolerate node loss (partial-progress commits, "
+            "replacement lanes), so they don't need the on-demand-only rule the per-statement "
+            "Spark path has."
+        ),
+    )
     maintenance_max_runtime_minutes: int = Field(
         default=360,
         ge=15,
