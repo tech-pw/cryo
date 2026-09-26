@@ -274,6 +274,8 @@ Pre-run `table_stats_history` joined to `cryo.jobs.engine_ref` for run `25e8a39c
 | 2 | 2 vCPU / 8 GiB | 30.5 GB | already under the old 50 GB bar | unchanged |
 | 3 | 4 vCPU / 16 GiB | 62.7 GB | `curiousjr_bq.bronze_events_intraday` (234 GB) | 2 vCPU / 8 GiB |
 
+§1's 241 GB / 21 GB rewrite for that table is the optimize statement's audit (what Spark rewrote). The 234 GB / 62.7 GB here is the pre-run scanner estimate that sized the lane (`total_size_gb` × small-file ratio), not the same number.
+
 No per-lane peak RSS is stored in audit rows, and the lane pods are gone. The only
 memory figure in this doc is 7–12.7 GiB on the 16 GiB lanes. 7 GiB is already over
 70% of 8 GiB. All three lanes that ran at 16 GiB have a largest rewrite in

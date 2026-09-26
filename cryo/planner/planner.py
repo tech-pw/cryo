@@ -156,7 +156,19 @@ def build_plan(
         and params.get("compute_statistics", False)
         and any(op.type is OperationType.OPTIMIZE for op in operations)
     ):
-        operations.append(Operation(OperationType.COMPUTE_STATISTICS, _stats_params(params)))
+        stats_params = _stats_params(params)
+        if stats_params["compute_ndv"] or stats_params["bloom_filter_columns"]:
+            operations.append(Operation(OperationType.COMPUTE_STATISTICS, stats_params))
+        else:
+            # NDV is the only statistic either engine computes here, and it is a full scan of
+            # every column (Spark compute_table_stats / Trino ANALYZE). With NDV off and no
+            # bloom-filter columns the operation has nothing to do. Batch runs set exactly that
+            # and still paid 5.5 lane-hours a night (31% of statement time) for NDV scans
+            # until 2026-09-25, because nothing read the flag.
+            notes.append(
+                "Skipped compute_statistics: stats_compute_ndv is false and no "
+                "bloom_filter_columns are configured."
+            )
 
     # The blocks above append in mode/gating order, not execution order. Sorting here makes
     # guardrails.CORRECT_ORDER the single source of sequencing truth. The sort is stable, so
@@ -552,13 +564,18 @@ def _has_unreachable_delete_skew(
 
 
 def _rewrite_position_deletes_operation(params: Mapping[str, Any]) -> Operation:
-    return Operation(
-        OperationType.REWRITE_POSITION_DELETES,
-        {
-            "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
-            "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
-        },
-    )
+    op_params: dict[str, Any] = {
+        "delete_file_threshold": int(params.get("convert_deletes_file_threshold", 1)),
+        "partial_progress_enabled": bool(params.get("convert_deletes_partial_progress", True)),
+    }
+    for key in (
+        "rewrite_position_deletes_max_commits",
+        "rewrite_position_deletes_max_concurrent_rewrites",
+        "rewrite_job_order",
+    ):
+        if key in params:
+            op_params[key] = params[key]
+    return Operation(OperationType.REWRITE_POSITION_DELETES, op_params)
 
 
 def _convert_deletes_operation(
@@ -599,7 +616,12 @@ def _convert_deletes_operation(
         "convert_deletes_max_concurrent_rewrites": int(
             params.get("convert_deletes_max_concurrent_rewrites", 5)
         ),
+        # Iceberg >= 1.7 option; off unless the destination's runtime is known to have it
+        # (the batch lanes run Cryo's own Spark image and turn it on in DEFAULT_PARAMS).
+        "remove_dangling_deletes": bool(params.get("remove_dangling_deletes", False)),
     }
+    if "rewrite_job_order" in params:
+        convert_params["rewrite_job_order"] = params["rewrite_job_order"]
     predicates = _skewed_partition_predicates(stats, partitions, params, notes)
     notes.append(
         f"Planned convert_deletes: delete_file_pct {delete_pct:.2f}% >= threshold {threshold:.2f}%."

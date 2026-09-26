@@ -23,7 +23,14 @@ from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
-from cryo.maintenance.k8s_lanes import LaneRunner, LaneSpec, LaneState, PollUpdate, lane_names
+from cryo.maintenance.k8s_lanes import (
+    LaneRunner,
+    LaneSpec,
+    LaneState,
+    PollUpdate,
+    lane_names,
+    parse_capacity_types,
+)
 from cryo.maintenance.lanes import LaneLimits, LaneTable, lane_size, plan_lanes
 from cryo.maintenance.manifest import (
     DEFAULT_PARAMS,
@@ -286,7 +293,12 @@ class BatchMaintenance:
         self._settings = settings
         self._locks = lock_store
         self._lane_runner_factory = lane_runner_factory or (
-            lambda run_id, cfg, catalog: LaneRunner(run_id, cfg, catalog=catalog)
+            lambda run_id, cfg, catalog: LaneRunner(
+                run_id,
+                cfg,
+                catalog=catalog,
+                capacity_types=parse_capacity_types(settings.maintenance_lane_capacity_types),
+            )
         )
         self._load_table = load_table or self._default_load_table
         self._protected = protected_snapshot_ids or self._default_protected
@@ -334,6 +346,10 @@ class BatchMaintenance:
             raise RuntimeError(f"Spark destination {destination.id} has no `catalog` configured")
 
         params = dict(DEFAULT_PARAMS)
+        # Spark rewrites only the files the scanner counted as small (see
+        # cryo/engines/spark/sql.py::_render_optimize); selection and planning use the same
+        # threshold, so the work a table was chosen for is the work that runs.
+        params.setdefault("min_file_size_mb", settings.scan_small_file_mb)
         shared_ids = self._shared_location_ids(dry_run=dry_run, now=started, report=report)
         if report.orphan_gate_closed:
             params["skip_operations"] = [OperationType.REMOVE_ORPHAN_FILES.value]
@@ -789,10 +805,12 @@ class BatchMaintenance:
 
         The table the lane died on is closed as failed rather than retried: an OOM on a table
         repeats on the same pod size. A lane that died before starting any table (bad image,
-        unreachable catalog) isn't replaced, since the replacement would die the same way.
+        unreachable catalog) isn't replaced, since the replacement would die the same way --
+        unless the node took the pod away (eviction, drain, spot reclaim), which says nothing
+        about the next pod.
         """
         now = self._clock()
-        if not dead.started_tables or now >= deadline - _START_CUTOFF:
+        if (not dead.started_tables and not dead.infra_loss) or now >= deadline - _START_CUTOFF:
             return False
         mine = [o for o in outcomes.values() if o.lane == dead.spec.index and o.status is None]
         in_flight = [o for o in mine if o.results or o.table_id in dead.started_tables]

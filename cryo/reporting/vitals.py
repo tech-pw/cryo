@@ -59,6 +59,7 @@ from cryo.reporting.impact_signals import (
     measured_reclaim_gb,
 )
 from cryo.reporting.trino_hot_cost_signal import TrinoHotCostSignal, compute_trino_hot_cost_signal
+from cryo.reporting.work_picture import WorkPicture, compute_work_picture, work_picture_deductions
 
 VitalsStatus = Literal["HEALTHY", "DEGRADED", "CRITICAL"]
 
@@ -159,6 +160,7 @@ class CryoVitals:
     # working," not "is Cryo healthy" -- conflating the two would make disabling an optional
     # preset look like a health regression.
     trino_hot_cost: TrinoHotCostSignal | None = None
+    work: WorkPicture | None = None
 
     @property
     def headline(self) -> str:
@@ -219,6 +221,7 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
     impact = compute_impact_signal(session, now=now)
     heartbeat = _dispatch_heartbeat(session, now=now)
     success_rate = _success_rate_pulse(session, now=now)
+    work = compute_work_picture(session, now=now)
     trino_hot_cost = compute_trino_hot_cost_signal(
         session, preset_name=get_settings().trino_hot_preset_name, now=now
     )
@@ -238,6 +241,12 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
         deductions.append(
             VitalsDeduction(reason=f"dispatch_heartbeat: {heartbeat.summary}", points=_DISPATCH_HEARTBEAT_DEDUCTION)
         )
+
+    work_hits = work_picture_deductions(work)
+    work_severe = any(hit.severe for hit in work_hits)
+    for hit in work_hits:
+        score -= hit.points
+        deductions.append(VitalsDeduction(reason=hit.reason, points=hit.points))
 
     if success_rate.has_enough_signal:
         rate = success_rate.success_rate_pct or 0.0
@@ -268,10 +277,14 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
     if (
         health.critical_count > 0
         or heartbeat.is_stalled
-        or (success_rate.has_enough_signal and (success_rate.success_rate_pct or 0.0) < _SUCCESS_RATE_CRITICAL_PCT)
+        or work_severe
+        or (
+            success_rate.has_enough_signal
+            and (success_rate.success_rate_pct or 0.0) < _SUCCESS_RATE_CRITICAL_PCT
+        )
     ):
         status = "CRITICAL"
-    elif health.warning_count > 0 or (
+    elif health.warning_count > 0 or work_hits or (
         success_rate.has_enough_signal and (success_rate.success_rate_pct or 0.0) < _SUCCESS_RATE_WARN_PCT
     ):
         status = "DEGRADED"
@@ -288,7 +301,39 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
         success_rate=success_rate,
         deductions=deductions,
         trino_hot_cost=trino_hot_cost,
+        work=work,
     )
+
+
+def _north_star_payload(work: WorkPicture) -> dict[str, Any]:
+    return {
+        "question": "Did Cryo maintain the fleet yesterday, and can we see the bytes?",
+        "day": work.day.isoformat(),
+        "tables_maintained": work.tables_maintained,
+        "tables_baseline_median_7d": work.tables_baseline_median,
+        "coverage_ratio": None if work.coverage_ratio is None else round(work.coverage_ratio, 3),
+        "measured_gib": round(work.measured_gib, 2),
+        "byte_actions_succeeded": work.byte_actions_succeeded,
+        "byte_actions_measured": work.byte_actions_measured,
+        "measurement_ratio": (
+            None if work.measurement_ratio is None else round(work.measurement_ratio, 3)
+        ),
+        "by_action": [
+            {
+                "action": row.action,
+                "succeeded": row.succeeded,
+                "failed": row.failed,
+                "measured": row.measured,
+                "bytes_freed": row.bytes_freed,
+            }
+            for row in work.by_action
+        ],
+        "by_engine": [{"engine": engine, "succeeded": count} for engine, count in work.by_engine],
+        "expire_note": (
+            "expire_snapshots does not report sizes. Missing expire bytes are an Iceberg "
+            "procedure limit, not proof that nothing was expired."
+        ),
+    }
 
 
 def cryo_vitals_to_payload(vitals: CryoVitals) -> dict[str, Any]:
@@ -303,6 +348,7 @@ def cryo_vitals_to_payload(vitals: CryoVitals) -> dict[str, Any]:
             "critical_count": vitals.health.critical_count,
             "warning_count": vitals.health.warning_count,
         },
+        "north_star": _north_star_payload(vitals.work) if vitals.work is not None else None,
         "impact": {
             "direction": vitals.impact.direction,
             # Review finding F10, 2026-09-20: gb_freed alone (without this field) let a

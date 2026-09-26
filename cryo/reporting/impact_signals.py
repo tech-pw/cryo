@@ -17,11 +17,11 @@ same-day-range DoD/WoW comparisons only, never a partial period against a full o
 distinction produced a genuinely wrong answer once already, not just an imprecise one -- see
 that module's docstring).
 
-North-star metric: **net bytes reclaimed per day** (remove_orphan_files + optimize +
-convert_deletes' actual_bytes_freed, successful actions only) and, alongside it, **optimize's
-file-count reduction ratio** (input_files_count -> output_files_count) since bytes freed alone
-doesn't distinguish "we shrank fragmented tables" from "we deleted orphan garbage" -- both are
-real wins, but they're different kinds of win worth seeing separately.
+North star is no longer GB freed alone. GB freed is only quotable when the actions
+that can report a size actually did. The standing picture is in
+cryo/reporting/work_picture.py: tables maintained versus the prior week, measured
+bytes, and measurement coverage. This module still computes the byte signal, and
+refuses a trend when that signal is not a complete total.
 """
 
 from __future__ import annotations

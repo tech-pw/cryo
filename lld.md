@@ -666,15 +666,31 @@ Same plan → Spark SQL `CALL`s against the Iceberg catalog (`spark_catalog`/con
 CALL {cat}.system.rewrite_data_files(
   table => '{schema}.{table}',
   where => '{predicate sql}',
-  options => map('target-file-size-bytes','{bytes}', 'min-input-files','{min}')
+  options => map('target-file-size-bytes','{bytes}', 'min-input-files','{min}',
+                 ['min-file-size-bytes','{params.min_file_size_mb}',]   -- binpack, < target
+                 ['max-file-size-bytes','{target * params.max_file_size_ratio}',]  -- binpack, > 1.8x
+                 'partial-progress.enabled','true', 'partial-progress.max-commits','{n}',
+                 'max-concurrent-file-group-rewrites','{n}', 'rewrite-job-order','files-desc')
 )
--- expire
-CALL {cat}.system.expire_snapshots(table=>'{schema}.{table}', older_than => TIMESTAMP '{cutoff}', retain_last => {n})
+-- CONVERT_DELETES == rewrite_data_files(delete-file-threshold, ...[, 'remove-dangling-deletes','true'])
+--   remove-dangling-deletes needs Iceberg >= 1.7: rendered only when params ask (batch does)
+-- REWRITE_POSITION_DELETES
+CALL {cat}.system.rewrite_position_delete_files(table=>'{schema}.{table}',
+  options => map('partial-progress.enabled','true', 'partial-progress.max-commits','10',
+                 'max-concurrent-file-group-rewrites','5', 'rewrite-job-order','files-desc'))
+-- expire (protected snapshots: a tag, never a procedure; ";\n" = separate statement)
+[ALTER TABLE {cat}.{schema}.{table} CREATE OR REPLACE TAG `cryo-protected-latest` AS OF VERSION {id};]
+CALL {cat}.system.expire_snapshots(table=>'{schema}.{table}', older_than => TIMESTAMP '{cutoff}', retain_last => {n}, stream_results => true)
 -- orphan
 CALL {cat}.system.remove_orphan_files(table=>'{schema}.{table}', older_than => TIMESTAMP '{cutoff}')
 -- manifests
 CALL {cat}.system.rewrite_manifests(table=>'{schema}.{table}')
+-- COMPUTE_STATISTICS: compute_table_stats (a full-table NDV scan) only when compute_ndv is true;
+-- bloom-filter columns become ALTER TABLE ... SET TBLPROPERTIES; nothing left = no statement
 ```
+Every option key is checked by Iceberg against the action's valid-option set, so a renderer change
+must only use keys the pinned Iceberg version accepts (see
+`docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`).
 The **same** `PartitionPredicate`s render to Spark SQL `where` strings (Spark accepts plain SQL date
 literals: `col >= DATE '2025-05-18' AND col < DATE '2025-05-19'`, etc.). Chunking still applies
 (one `rewrite_data_files` CALL per chunk) so big tables stay bounded on Spark too.

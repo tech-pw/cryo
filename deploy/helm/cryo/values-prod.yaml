@@ -227,6 +227,14 @@ scanner:
 # spark-submit wrapper + driver + executors per SQL statement (~35k driver pods in 8 days).
 maintenance:
   enabled: true
+  # 2026-09-26: widened from 500 tables / 4 lanes / 20h cooldown. The 09-25 run spent its
+  # whole 363 GB·hr budget on 462 tables while 10,912 were eligible (4,025 needing
+  # compaction, ~45.8 TB of small files). 12 lanes triple the budget; the 72h cooldown makes
+  # successive nights rotate through the fleet instead of re-picking the same hot tables.
+  # Next step to 16 lanes only after a clean run (metastore commit load, lane cost).
+  topN: 1500
+  maxLanes: 12
+  cooldownHours: 72
 
 api:
   replicas: 2

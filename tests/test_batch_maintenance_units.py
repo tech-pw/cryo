@@ -18,7 +18,13 @@ import pytest
 
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.maintenance import results as results_mod
-from cryo.maintenance.k8s_lanes import LaneRunner, LaneSpec, build_lane_objects
+from cryo.maintenance.k8s_lanes import (
+    LaneRunner,
+    LaneSpec,
+    build_lane_objects,
+    lane_scheduling,
+    parse_capacity_types,
+)
 from cryo.maintenance.lanes import LaneLimits, LaneTable, lane_count, plan_lanes
 from cryo.maintenance.manifest import (
     DEFAULT_PARAMS,
@@ -210,11 +216,60 @@ def test_table_work_runs_every_needed_operation_in_canonical_order() -> None:
     actions = [s.action for s in work.statements]
     order = [op.value for op in CORRECT_ORDER]
     assert actions == sorted(actions, key=order.index)
-    assert {"optimize", "compute_statistics", "expire_snapshots", "remove_orphan_files"} <= set(
-        actions
-    )
+    assert {"optimize", "expire_snapshots", "remove_orphan_files"} <= set(actions)
     assert all(s.sql.startswith(("ALTER", "CALL")) for s in work.statements)
     assert work.table_ref == "cdp.demo.events"
+
+
+def test_batch_defaults_never_run_a_full_table_ndv_scan() -> None:
+    """DEFAULT_PARAMS turn compute_statistics on with stats_compute_ndv off. NDV is the only
+    statistic Spark computes, so nothing should run; until 2026-09-25 nothing read the flag
+    and every optimized table got a full-table compute_table_stats (5.5 lane-hours/night)."""
+    work = _work()
+
+    assert "compute_statistics" not in [s.action for s in work.statements]
+    assert not any("compute_table_stats" in s.sql for s in work.statements)
+    assert any("Skipped compute_statistics" in note for note in work.plan["notes"])
+
+
+def test_ndv_statistics_still_run_when_explicitly_requested() -> None:
+    work = _work(params={**DEFAULT_PARAMS, "stats_compute_ndv": True})
+
+    stats = [s for s in work.statements if s.action == "compute_statistics"]
+    assert len(stats) == 1 and "compute_table_stats" in stats[0].sql
+
+
+def test_batch_optimize_rewrites_only_files_the_scanner_counts_as_small() -> None:
+    work = _work(params={**DEFAULT_PARAMS, "min_file_size_mb": 89.6})
+
+    optimize = next(s for s in work.statements if s.action == "optimize")
+    assert f"'min-file-size-bytes', '{int(89.6 * 1024 * 1024)}'" in optimize.sql
+    assert "'rewrite-job-order', 'files-desc'" in optimize.sql
+    # DEFAULT_PARAMS: files up to 10x the 256 MB target are left alone rather than split.
+    assert f"'max-file-size-bytes', '{10 * 256 * 1024 * 1024}'" in optimize.sql
+
+
+def test_batch_convert_deletes_removes_the_delete_files_it_leaves_dangling() -> None:
+    delete_heavy = {
+        **_STATS,
+        "small_files_count": 0,
+        "total_delete_files": 400,
+        "position_delete_files": 400,
+        "delete_file_pct": 40.0,
+    }
+    work = build_table_work(
+        uuid.uuid4(),
+        load_table=lambda _tid: TableData(stats=delete_heavy, partitions=[]),
+        destination=_Destination(),
+        params={**DEFAULT_PARAMS, "force_convert_deletes": True},
+        protected_snapshot_ids=lambda _tid: [],
+        has_shared_location=lambda _tid: False,
+    )
+
+    assert work is not None
+    convert = [s for s in work.statements if s.action == "convert_deletes"]
+    assert len(convert) == 1
+    assert "'remove-dangling-deletes', 'true'" in convert[0].sql
 
 
 def test_shared_location_table_gets_no_orphan_removal() -> None:
@@ -275,10 +330,25 @@ def test_lane_objects_run_local_mode_sized_to_the_lane() -> None:
     pod = job["spec"]["template"]["spec"]
     container = pod["containers"][0]
     command = container["command"]
-    assert command[command.index("--master") + 1] == "local[2]"
+    # Three attempts per task: local[N] alone runs every task exactly once.
+    assert command[command.index("--master") + 1] == "local[2,3]"
     assert command[command.index("--driver-memory") + 1] == f"{int(8192 * 0.6)}m"
     java_options = command[command.index("--driver-java-options") + 1]
     assert "-XX:+UnlockDiagnosticVMOptions -XX:GCLockerRetryAllocationCount=100" in java_options
+    confs = {
+        command[i + 1].split("=", 1)[0]: command[i + 1].split("=", 1)[1]
+        for i, arg in enumerate(command)
+        if arg == "--conf"
+    }
+    assert confs["spark.ui.enabled"] == "false"
+    assert confs["spark.sql.shuffle.partitions"] == "8"
+    assert confs["spark.ui.retainedTasks"] == "5000"
+    assert confs["spark.sql.ui.retainedExecutions"] == "20"
+    assert confs["spark.sql.catalog.cdp.s3.delete.batch-size"] == "1000"
+    assert confs["spark.sql.catalog.cdp.s3.retry.num-retries"] == "32"
+    assert command.index("/opt/cryo/cryo_spark_runner.py") > max(
+        i for i, arg in enumerate(command) if arg == "--conf"
+    )
     assert {"name": "MALLOC_ARENA_MAX", "value": "4"} in container["env"]
     assert command[command.index("--catalog") + 1] == "cdp"
     assert command[command.index("--deadline-epoch") + 1] == "1800000000"
@@ -287,11 +357,72 @@ def test_lane_objects_run_local_mode_sized_to_the_lane() -> None:
     assert job["spec"]["backoffLimit"] == 0
     assert pod["restartPolicy"] == "Never"
     assert pod["nodeSelector"] == {"karpenter.sh/capacity-type": "on-demand"}
+    assert "affinity" not in pod
     assert job["spec"]["template"]["metadata"]["annotations"] == {
         "karpenter.sh/do-not-disrupt": "true"
     }
     assert job["metadata"]["labels"]["cryo/maintenance-run"] == str(run_id)
     assert base64.b64decode(secret["data"]["manifest.json.gz"]) == b"\x1f\x8bfake"
+
+
+def test_non_s3_warehouse_gets_no_s3fileio_tuning() -> None:
+    _, job = build_lane_objects(
+        uuid.uuid4(),
+        _spec(),
+        _cfg(catalog_warehouse="file:///warehouse"),
+        catalog="cdp",
+        deadline_epoch=0,
+        active_deadline_seconds=600,
+    )
+
+    command = job["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert not any("s3.delete.batch-size" in arg for arg in command)
+
+
+def test_lanes_trade_the_inherited_on_demand_pin_for_spot_with_on_demand_fallback() -> None:
+    _, job = build_lane_objects(
+        uuid.uuid4(),
+        _spec(),
+        _cfg(node_selector={"karpenter.sh/capacity-type": "on-demand", "pool": "general"}),
+        catalog="cdp",
+        deadline_epoch=0,
+        active_deadline_seconds=600,
+        capacity_types=parse_capacity_types(" Spot , on-demand "),
+    )
+
+    pod = job["spec"]["template"]["spec"]
+    assert pod["nodeSelector"] == {"pool": "general"}
+    affinity = pod["affinity"]["nodeAffinity"]
+    required = affinity["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
+    assert required == [
+        {
+            "matchExpressions": [
+                {
+                    "key": "karpenter.sh/capacity-type",
+                    "operator": "In",
+                    "values": ["spot", "on-demand"],
+                }
+            ]
+        }
+    ]
+    preferred = affinity["preferredDuringSchedulingIgnoredDuringExecution"]
+    assert preferred[0]["preference"]["matchExpressions"][0]["values"] == ["spot"]
+    assert job["spec"]["template"]["metadata"]["annotations"] == {
+        "karpenter.sh/do-not-disrupt": "true"
+    }
+
+
+def test_lane_scheduling_leaves_a_selector_without_a_capacity_pin_alone() -> None:
+    assert lane_scheduling({"nodegroup": "spark"}, ("spot", "on-demand")) == (
+        {"nodegroup": "spark"},
+        None,
+    )
+    pinned = {"karpenter.sh/capacity-type": "on-demand"}
+    assert lane_scheduling(pinned, ()) == (pinned, None)
+    selector, affinity = lane_scheduling(pinned, ("on-demand",))
+    assert selector == {}
+    assert affinity is not None
+    assert "preferredDuringSchedulingIgnoredDuringExecution" not in affinity["nodeAffinity"]
 
 
 def test_s3_keys_reach_the_pod_only_through_secret_refs() -> None:
@@ -367,6 +498,76 @@ def test_lane_runner_records_why_a_lane_pod_died() -> None:
     update = runner.poll()
 
     assert update.newly_finished[0].exit_reason == "OOMKilled (exit 137)"
+    assert update.newly_finished[0].infra_loss is False
+
+
+def test_lane_runner_notices_a_pod_the_node_took_away() -> None:
+    """Eviction, drain and spot reclaim delete the pod; with backoffLimit 0 the Job then
+    fails without a replacement. The lane used to stay "running" until the run's hard stop."""
+    core, batch = MagicMock(), MagicMock()
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
+    core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
+    failed = SimpleNamespace(type="Failed", status="True", reason="BackoffLimitExceeded")
+    batch.read_namespaced_job.return_value = SimpleNamespace(
+        status=SimpleNamespace(failed=1, succeeded=0, conditions=[failed])
+    )
+
+    update = runner.poll()
+
+    lane = update.newly_finished[0]
+    assert lane.finished and lane.infra_loss
+    assert lane.exit_reason is not None and "BackoffLimitExceeded" in lane.exit_reason
+    assert runner.all_finished
+
+
+def test_lane_runner_waits_while_the_job_has_not_created_its_pod_yet() -> None:
+    core, batch = MagicMock(), MagicMock()
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
+    core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
+    batch.read_namespaced_job.return_value = SimpleNamespace(
+        status=SimpleNamespace(failed=0, succeeded=0, active=1, conditions=None)
+    )
+
+    update = runner.poll()
+
+    assert update.newly_finished == [] and not runner.all_finished
+
+
+def test_lane_runner_does_not_call_the_run_deadline_an_infrastructure_loss() -> None:
+    core, batch = MagicMock(), MagicMock()
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
+    core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
+    batch.read_namespaced_job.return_value = SimpleNamespace(
+        status=SimpleNamespace(
+            failed=1,
+            succeeded=0,
+            conditions=[SimpleNamespace(type="Failed", status="True", reason="DeadlineExceeded")],
+        )
+    )
+
+    lane = runner.poll().newly_finished[0]
+
+    assert lane.infra_loss is False
+    assert lane.exit_reason == "run deadline reached (lane Job DeadlineExceeded)"
+
+
+def test_an_evicted_lane_pod_counts_as_an_infrastructure_loss() -> None:
+    core = MagicMock()
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=MagicMock(), core_api=core)
+    runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
+    evicted = SimpleNamespace(
+        metadata=SimpleNamespace(name="p0"),
+        status=SimpleNamespace(phase="Failed", reason="Evicted", container_statuses=[]),
+    )
+    core.list_namespaced_pod.return_value = SimpleNamespace(items=[evicted])
+    core.read_namespaced_pod_log.return_value = ""
+
+    lane = runner.poll().newly_finished[0]
+
+    assert lane.infra_loss is True and lane.exit_reason == "Evicted"
 
 
 def test_teardown_deletes_jobs_secrets_and_leftover_pods_and_tolerates_404() -> None:
