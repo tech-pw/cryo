@@ -225,6 +225,7 @@ class SparkK8sClient:
             job_name=job_name,
             destination_id=destination_id,
             operation=operation,
+            extra_confs=catalog_io_confs(catalog, cfg.catalog_warehouse),
         )
 
     def submit_repair_missing_files(
@@ -275,6 +276,7 @@ class SparkK8sClient:
         job_name: str,
         destination_id: str | None = None,
         operation: str | None = None,
+        extra_confs: Mapping[str, str] | None = None,
     ) -> str:
         cfg = _capped_submit_config(self._config, operation=operation)
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
@@ -367,6 +369,8 @@ class SparkK8sClient:
                 ]
             )
         spark_submit_cmd[1:1] = label_confs
+        for conf_key, conf_value in (extra_confs or {}).items():
+            spark_submit_cmd[1:1] = ["--conf", f"{conf_key}={conf_value}"]
 
         # Driver/executor pods must land on the same Karpenter on-demand capacity as
         # native-engine jobs (cryo.engines.native.job_dispatch._capacity_scheduling) --
@@ -665,6 +669,22 @@ class SparkK8sClient:
         """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
         self.cleanup_driver_pod(job_id)
         self.cleanup_credentials_secret(job_id)
+
+
+def catalog_io_confs(catalog: str, warehouse: str | None) -> dict[str, str]:
+    """Spark confs that tune the catalog's S3FileIO; empty unless the warehouse is on S3.
+
+    cryo_spark_runner.py only switches the catalog to S3FileIO for s3:// and s3a://
+    warehouses, so these keys mean nothing anywhere else. S3FileIO bulk-deletes expired and
+    orphaned files in DeleteObjects batches of 250 by default; 1000 is the S3 API maximum.
+    Its retry policy only retries throttling, 5xx and I/O errors (2-20 s backoff); Iceberg's
+    AWS docs recommend 32 attempts over the default 5 so a throttled rewrite waits for S3 to
+    scale instead of failing.
+    """
+    if not warehouse or not warehouse.startswith(("s3://", "s3a://")):
+        return {}
+    prefix = f"spark.sql.catalog.{catalog}"
+    return {f"{prefix}.s3.delete.batch-size": "1000", f"{prefix}.s3.retry.num-retries": "32"}
 
 
 def _capped_submit_config(cfg: SparkK8sConfig, *, operation: str | None) -> SparkK8sConfig:

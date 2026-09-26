@@ -406,6 +406,28 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
 - [~] Contract test against local Spark on seeded tables in pytest — covered by `make smoke-compact`,
       not yet in CI unit suite.
 
+### Spark engine efficiency pass — 2026-09-25
+
+Evidence, research and decisions: [docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md](docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md).
+
+- [x] Honor `stats_compute_ndv` (planner + Spark renderer): no more full-table
+      `compute_table_stats` on every optimized table (5.47 of 17.4 lane-hours on 2026-09-24).
+- [x] Batch optimize pins `min-file-size-bytes` to `scan_small_file_mb` and `max-file-size-bytes` to
+      10 × target (no splitting of large files); `rewrite-job-order=files-desc` on every rewrite;
+      `remove-dangling-deletes` on convert_deletes (0 of 59 removed any before).
+- [x] `rewrite_position_delete_files` honors partial progress/concurrency/job order;
+      `expire_snapshots` streams results; protected snapshots use a tag, not a missing procedure.
+- [x] Lanes: `local[N,3]`, capped status store, 1,000-key S3 bulk deletes, 32 S3 retries,
+      spot-preferred capacity, vanished-pod detection and replacement after infrastructure loss.
+- [ ] Deploy and verify on the next nightly run (queries in §5 of the doc).
+- [ ] Skip compaction (keep cleanup) for tables their writers rebuild daily — needs the scanner to
+      record the last data commit's added/deleted/total files.
+- [ ] Align AutoComp's cost/benefit estimates with the < `scan_small_file_mb` rewrite scope.
+- [ ] Work stealing between lanes; S3 Analytics Accelerator canary; `prefix_listing` canary;
+      run cleanup operations after a failed rewrite.
+- [ ] Carry NDV sketches across compaction (as Trino's OPTIMIZE does) instead of recomputing;
+      back off tables that fail every night (`maintenance_retry_after`); soft-delete orphans.
+
 ## P7 — Reporting, alerting & hardening
 - [x] Shared S3 warehouse-path anomalies: `/anomalies` page, catalog-native harvest (Hive/Glue/REST),
       10:00 IST Slack only when overlapping groups exist (`docs/shared-s3-anomalies.md`).

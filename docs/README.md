@@ -52,6 +52,11 @@ The authoritative architecture / contract docs live at the repo root:
 
 - [`operator-guide.md`](./operator-guide.md) — deployment + day-2 ops
   procedures (production deployment, runbooks).
+- [`BATCH_MAINTENANCE.md`](./BATCH_MAINTENANCE.md) — the nightly batch maintenance
+  pipeline (selection, Spark lanes, recording, failure modes).
+- [`SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`](./SPARK_ENGINE_OPTIMIZATION_2026-09-25.md) —
+  where the first nightly run's Spark time went, what Iceberg/competitors do, and the
+  rendering/lane changes that followed (NDV scans, min-file-size, dangling deletes, spot lanes).
 - [`GOVERNANCE.md`](./GOVERNANCE.md) — governance policy and process.
 - [`SUPPORT_POLICY.md`](./SUPPORT_POLICY.md) — release support, triage,
   safe diagnostics, and capability boundaries.

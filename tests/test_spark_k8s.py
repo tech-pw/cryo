@@ -144,6 +144,14 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert "spark.kubernetes.driver.label.cryo-engine=spark" in command
     script_idx = command.index("local:///opt/cryo/cryo_spark_runner.py")
     assert command.index("spark.kubernetes.driver.label.eks-workload-name=cryo-spark") < script_idx
+    # S3FileIO tuning for the catalog the SQL runs against, as spark-submit confs that must
+    # precede the script path to reach Spark rather than the runner's argv.
+    for conf in (
+        "spark.sql.catalog.cdp.s3.delete.batch-size=1000",
+        "spark.sql.catalog.cdp.s3.retry.num-retries=32",
+    ):
+        assert command.index(conf) < script_idx
+        assert command[command.index(conf) - 1] == "--conf"
 
 
 def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:

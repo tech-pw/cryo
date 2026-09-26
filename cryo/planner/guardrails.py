@@ -175,6 +175,12 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "max_bytes_per_group",
         "min_input_files",
         "target_file_size_bytes",
+        # Spark rewrite_data_files min-file-size-bytes; the batch path pins it to the
+        # scanner's small-file threshold (cryo/engines/spark/sql.py::_render_optimize).
+        "min_file_size_mb",
+        "min_file_size_bytes",
+        # Spark max-file-size-bytes as a multiple of the target (batch: 10).
+        "max_file_size_ratio",
         # Optional leftover; native derives chunk at runtime. Still validate if present.
         "chunk_size_gb",
     )
@@ -196,9 +202,26 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         ratio = float(params["delete_ratio_trigger"])
         if ratio > 100:
             errors.append("params.delete_ratio_trigger must be at most 100")
-    for key in ("compute_statistics", "stats_compute_ndv", "partial_progress"):
+    for key in (
+        "compute_statistics",
+        "stats_compute_ndv",
+        "partial_progress",
+        "remove_dangling_deletes",
+        "stream_results",
+    ):
         if key in params and not isinstance(params[key], bool):
             errors.append(f"params.{key} must be a boolean")
+    if "rewrite_job_order" in params and params["rewrite_job_order"] not in (
+        "bytes-asc",
+        "bytes-desc",
+        "files-asc",
+        "files-desc",
+        "none",
+    ):
+        errors.append(
+            "params.rewrite_job_order must be one of bytes-asc, bytes-desc, files-asc, "
+            "files-desc, none"
+        )
     if "metrics_mode" in params and not isinstance(params["metrics_mode"], str):
         errors.append("params.metrics_mode must be a string")
     if "compression_codec" in params and not isinstance(params["compression_codec"], str):

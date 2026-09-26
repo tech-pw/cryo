@@ -181,7 +181,14 @@ maintenance:
   maxLanes: 4
   laneMaxCpuMilli: 4000
   laneMaxMemMib: 16384
+  # Karpenter capacity types for lane pods, most preferred first. Replaces the
+  # karpenter.sh/capacity-type pin inherited from spark.k8s.nodeSelector; "" keeps that pin.
+  # Lanes survive node loss (partial-progress commits + replacement lanes), so spot is safe.
+  laneCapacityTypes: "spot,on-demand"
   maxRuntimeMinutes: 360
+  # Hours before a maintained table is eligible again. Longer than a day lets the ranking move
+  # past the hottest tables so the run rotates through the fleet instead of re-picking them.
+  cooldownHours: 20
   resources:
     requests:
       cpu: 250m

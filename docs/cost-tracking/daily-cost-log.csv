@@ -443,3 +443,10 @@ date,namespace,daily_cost_usd,source,checked_at
 2026-09-23,cryo,34.28,cur:grafana-mcp:split+unused,2026-09-24T12:09:42+00:00
 2026-09-23,cryo-unused,26.0,cur:grafana-mcp:unused,2026-09-24T12:09:42+00:00
 2026-09-23,cryo-used,8.29,cur:grafana-mcp:used,2026-09-24T12:09:42+00:00
+2026-09-24,cryo,7.06,cur:athena:split+unused,2026-09-25T06:55:00Z
+2026-09-24,cryo-unused,4.84,cur:athena:unused,2026-09-25T06:55:00Z
+2026-09-24,cryo-used,2.22,cur:athena:used,2026-09-25T06:55:00Z
+2026-09-24,trino-db,387.02,cur:athena:split+unused,2026-09-25T06:55:00Z
+2026-09-24,trino-db-unused,141.14,cur:athena:unused,2026-09-25T06:55:00Z
+2026-09-24,trino-db-used,245.88,cur:athena:used,2026-09-25T06:55:00Z
+

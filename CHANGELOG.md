@@ -16,10 +16,23 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Changed
 - `README.md`: license section now links to `LICENSE` instead of "TBD".
+- Spark maintenance lanes run `local[N,3]` (task retries), cap the long-lived driver's status
+  store, bulk-delete 1,000 S3 keys per request, retry throttled S3 calls 32 times, and may
+  schedule on spot capacity with on-demand fallback (`maintenance.laneCapacityTypes`). Batch
+  optimize rewrites only files under the scanner's small-file threshold and no longer splits
+  files up to 10× target, orders rewrite groups `files-desc`, and `convert_deletes` removes
+  the delete files it leaves dangling. See `docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`.
 
 ### Fixed
 - Docs-vs-code drift: `docs/GOVERNANCE.md` previously asserted an Apache-2.0 `LICENSE` link
   whose target file did not exist.
+- `stats_compute_ndv: false` was ignored, so batch runs paid for a full-table
+  `compute_table_stats` scan on every optimized table (31% of lane time).
+- The Spark renderer dropped every `rewrite_position_deletes` parameter (partial progress).
+- Spark `expire_snapshots` for tables with protected snapshots called a procedure Iceberg does
+  not have (`set_snapshot_ref`); it now tags the snapshot with `CREATE OR REPLACE TAG`.
+- A batch lane whose pod was deleted (eviction, drain, spot reclaim) was never noticed and
+  stranded its tables until the run deadline.
 
 ## [0.0.0] — Initial public release
 

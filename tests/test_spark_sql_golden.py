@@ -150,7 +150,7 @@ def test_spark_render_golden_operation_sql() -> None:
             "AND region = ''us'')', options => map('target-file-size-bytes', '268435456', "
             "'min-input-files', '10', 'partial-progress.enabled', 'true', "
             "'partial-progress.max-commits', '50', "
-            "'max-concurrent-file-group-rewrites', '5'))"
+            "'max-concurrent-file-group-rewrites', '5', 'rewrite-job-order', 'files-desc'))"
         ),
         "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.events')",
     ]
@@ -333,18 +333,177 @@ def test_spark_renders_compute_statistics_with_bloom_filters() -> None:
     assert "bloom-filter-enabled.column.user_id" in parts[1]
 
 
+def test_spark_compute_statistics_without_ndv_renders_only_bloom_filter_properties() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(
+                OperationType.COMPUTE_STATISTICS,
+                {"columns": [], "bloom_filter_columns": ["user_id"], "compute_ndv": False},
+            ),
+        ),
+    )
+    assert [s.sql for s in render(plan)] == [
+        "ALTER TABLE iceberg.demo.events SET TBLPROPERTIES "
+        "('write.parquet.bloom-filter-enabled.column.user_id' = 'true')"
+    ]
+
+
+def test_spark_compute_statistics_with_nothing_to_compute_renders_no_statement() -> None:
+    """compute_table_stats scans every column of the table. With NDV off and no bloom-filter
+    columns there is nothing to do, and a plan stored before the planner learned that must
+    not turn into a full scan either."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"older_than": "2025-05-01 00:00:00"}),
+            Operation(
+                OperationType.COMPUTE_STATISTICS,
+                {"columns": [], "bloom_filter_columns": [], "compute_ndv": False},
+            ),
+        ),
+    )
+    statements = render(plan)
+    assert [s.action for s in statements] == [OperationType.EXPIRE_SNAPSHOTS]
+
+
+def test_spark_optimize_pins_min_file_size_to_the_planner_threshold() -> None:
+    """Iceberg's default candidate threshold is 75% of the target (192 MB at 256 MB); the
+    planner counts small files under the scanner's 89.6 MB. On 2026-09-24 that gap rewrote
+    206 files / 23 GB of a table the planner had picked for its 11 small files."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {"file_size_mb": 256, "min_file_size_mb": 89.6, "persist_target_file_size": False},
+            ),
+        ),
+    )
+    sql = render(plan)[0].sql
+    assert f"'min-file-size-bytes', '{int(89.6 * 1024 * 1024)}'" in sql
+    assert sql.index("'min-input-files'") < sql.index("'min-file-size-bytes'")
+
+
+def test_spark_optimize_min_file_size_applies_to_binpack_only_and_below_target() -> None:
+    def optimize_sql(params: dict[str, object]) -> str:
+        plan = MaintenancePlan(
+            table_ref="iceberg.demo.events",
+            mode=Mode.STANDARD,
+            operations=(Operation(OperationType.OPTIMIZE, params),),
+        )
+        return render(plan)[0].sql
+
+    base = {"file_size_mb": 256, "persist_target_file_size": False}
+    assert "min-file-size-bytes" not in optimize_sql(base)
+    # A sort rewrite is about layout, not small files: every file stays a candidate.
+    assert "min-file-size-bytes" not in optimize_sql(
+        {**base, "strategy": "sort", "min_file_size_mb": 64}
+    )
+    # Iceberg rejects min-file-size-bytes >= target-file-size-bytes; drop it instead.
+    assert "min-file-size-bytes" not in optimize_sql({**base, "min_file_size_mb": 256})
+    assert "'min-file-size-bytes', '1048576'" in optimize_sql(
+        {**base, "min_file_size_bytes": 1048576}
+    )
+
+
+def test_spark_optimize_can_leave_large_files_unsplit() -> None:
+    """Iceberg rewrites any file over 180% of the target on its own just to split it;
+    OpenHouse raises that bound to 10x target because a reader splits large files anyway."""
+
+    def optimize_sql(params: dict[str, object]) -> str:
+        plan = MaintenancePlan(
+            table_ref="iceberg.demo.events",
+            mode=Mode.STANDARD,
+            operations=(Operation(OperationType.OPTIMIZE, params),),
+        )
+        return render(plan)[0].sql
+
+    base = {"file_size_mb": 256, "persist_target_file_size": False}
+    assert f"'max-file-size-bytes', '{10 * 256 * 1024 * 1024}'" in optimize_sql(
+        {**base, "max_file_size_ratio": 10}
+    )
+    assert "max-file-size-bytes" not in optimize_sql(base)
+    # At or under Iceberg's own 1.8x it would only split more; not a valid override here.
+    assert "max-file-size-bytes" not in optimize_sql({**base, "max_file_size_ratio": 1.5})
+    assert "max-file-size-bytes" not in optimize_sql(
+        {**base, "strategy": "sort", "max_file_size_ratio": 10}
+    )
+
+
+def test_spark_rewrite_job_order_defaults_to_files_desc_and_rejects_unknown_values() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.OPTIMIZE,
+                {"rewrite_job_order": "largest-first", "persist_target_file_size": False},
+            ),
+        ),
+    )
+    assert "'rewrite-job-order', 'files-desc'" in render(plan)[0].sql
+
+
+def test_spark_expire_snapshots_streaming_can_be_turned_off() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.LIGHT,
+        operations=(
+            Operation(
+                OperationType.EXPIRE_SNAPSHOTS,
+                {"older_than": "2025-05-01 00:00:00", "retain_last": 2, "stream_results": False},
+            ),
+        ),
+    )
+    assert render(plan)[0].sql == (
+        "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
+        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2)"
+    )
+
+
+def test_spark_expire_snapshots_streams_results_after_setting_the_protected_ref() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.LIGHT,
+        operations=(
+            Operation(
+                OperationType.EXPIRE_SNAPSHOTS,
+                {
+                    "older_than": "2025-05-01 00:00:00",
+                    "retain_last": 2,
+                    "protected_snapshot_ids": [11, 7],
+                },
+            ),
+        ),
+    )
+    assert render(plan)[0].sql == (
+        "ALTER TABLE iceberg.demo.events CREATE OR REPLACE TAG `cryo-protected-latest` "
+        "AS OF VERSION 11;\n"
+        "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
+        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "
+        "stream_results => true)"
+    )
+
+
 def test_spark_renders_convert_deletes_operation() -> None:
-    """Regression, 2026-07-22: without explicit max-commits/max-concurrent-file-group-rewrites
-    options, Iceberg's own defaults (10 commits, 1 concurrent rewrite) mean a single run on a
-    large delete-heavy table barely dents it -- confirmed live: 46/13,661 files touched, 0
-    deletes removed in one pass. Both must be present whenever partial-progress is enabled."""
+    """convert_deletes carries commit/parallelism tuning whenever partial progress is on, and
+    asks Iceberg to drop the delete files its rewrite left dangling when the caller opts in:
+    on 2026-09-24 all 59 convert_deletes statements reported removed_delete_files_count=0."""
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.STANDARD,
         operations=(
             Operation(
                 OperationType.CONVERT_DELETES,
-                {"delete_file_threshold": 2, "partial_progress_enabled": True},
+                {
+                    "delete_file_threshold": 2,
+                    "partial_progress_enabled": True,
+                    "remove_dangling_deletes": True,
+                },
             ),
         ),
     )
@@ -355,7 +514,8 @@ def test_spark_renders_convert_deletes_operation() -> None:
         "table => 'iceberg.demo.events', options => map("
         "'delete-file-threshold', '2', 'partial-progress.enabled', 'true', "
         "'partial-progress.max-commits', '50', "
-        "'max-concurrent-file-group-rewrites', '5'))"
+        "'max-concurrent-file-group-rewrites', '5', "
+        "'remove-dangling-deletes', 'true', 'rewrite-job-order', 'files-desc'))"
     )
 
 
@@ -413,7 +573,8 @@ def test_spark_renders_convert_deletes_scoped_to_partition_predicates() -> None:
         "CALL iceberg.system.rewrite_data_files(table => 'iceberg.demo.events', "
         "where => '(_date = DATE ''2026-02-01'') OR (_date = DATE ''2026-02-02'')', "
         "options => map('delete-file-threshold', '1', 'partial-progress.enabled', 'true', "
-        "'partial-progress.max-commits', '50', 'max-concurrent-file-group-rewrites', '5'))"
+        "'partial-progress.max-commits', '50', 'max-concurrent-file-group-rewrites', '5', "
+        "'rewrite-job-order', 'files-desc'))"
     )
 
 
@@ -434,22 +595,66 @@ def test_spark_renders_convert_deletes_without_partial_progress_omits_commit_tun
     assert statements[0].sql == (
         "CALL iceberg.system.rewrite_data_files("
         "table => 'iceberg.demo.events', options => map("
-        "'delete-file-threshold', '1', 'partial-progress.enabled', 'false'))"
+        "'delete-file-threshold', '1', 'partial-progress.enabled', 'false', "
+        "'rewrite-job-order', 'files-desc'))"
     )
+
+
+def test_spark_convert_deletes_leaves_dangling_deletes_unless_asked() -> None:
+    """remove-dangling-deletes exists only from Iceberg 1.7 and unknown options fail the
+    procedure, so the shared renderer never adds it on its own (EMR/local runtimes vary)."""
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.CONVERT_DELETES, {"delete_file_threshold": 1}),),
+    )
+    assert "remove-dangling-deletes" not in render(plan)[0].sql
 
 
 def test_spark_renders_rewrite_position_deletes_operation() -> None:
     """Okolnychyi (VLDB'24) minor delete compaction -- distinct from CONVERT_DELETES' full
-    rewrite_data_files call above."""
+    rewrite_data_files call above. The planner always asked for partial progress here, but
+    the renderer dropped every param until 2026-09-25; Iceberg's default is an all-or-nothing
+    rewrite, so one failed group threw away hours of work on 80k-delete-file tables."""
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",
         mode=Mode.STANDARD,
-        operations=(Operation(OperationType.REWRITE_POSITION_DELETES, {}),),
+        operations=(
+            Operation(
+                OperationType.REWRITE_POSITION_DELETES,
+                {"delete_file_threshold": 1, "partial_progress_enabled": True},
+            ),
+        ),
     )
     statements = render(plan)
     assert len(statements) == 1
     assert statements[0].sql == (
-        "CALL iceberg.system.rewrite_position_delete_files(table => 'iceberg.demo.events')"
+        "CALL iceberg.system.rewrite_position_delete_files(table => 'iceberg.demo.events', "
+        "options => map('partial-progress.enabled', 'true', "
+        "'partial-progress.max-commits', '10', 'max-concurrent-file-group-rewrites', '5', "
+        "'rewrite-job-order', 'files-desc'))"
+    )
+
+
+def test_spark_rewrite_position_deletes_respects_explicit_tuning() -> None:
+    plan = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(
+                OperationType.REWRITE_POSITION_DELETES,
+                {
+                    "partial_progress_enabled": False,
+                    "rewrite_position_deletes_max_concurrent_rewrites": 8,
+                    "rewrite_job_order": "bytes-desc",
+                },
+            ),
+        ),
+    )
+    assert render(plan)[0].sql == (
+        "CALL iceberg.system.rewrite_position_delete_files(table => 'iceberg.demo.events', "
+        "options => map('max-concurrent-file-group-rewrites', '8', "
+        "'rewrite-job-order', 'bytes-desc'))"
     )
 
 
