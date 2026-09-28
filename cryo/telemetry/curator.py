@@ -362,7 +362,7 @@ class QueryLogCurator:
                 QueryLog(
                     source_id=self._source.id,
                     table_id=table.id if table is not None else None,
-                    query_id=qid,
+                    query_id=row.get("query_id"),
                     engine=row.get("engine") or "trino",
                     query_text=row.get("query_text"),
                     query_type=row.get("query_type"),
@@ -382,6 +382,12 @@ class QueryLogCurator:
                         "state": row.get("state"),
                         "error_code": row.get("error_code"),
                         "query_ranges": _query_ranges(row.get("query_text")),
+                        # Real per-table identity from Trino's own query plan (inputs[]),
+                        # set only when fetch_stats_for_curated enriched this row -- see
+                        # enrich_row_with_query_stats. Kept alongside the SQL-text-derived
+                        # table_id above (not yet used to resolve it, see _resolve_table's
+                        # own note) so it's queryable/backfillable without re-fetching.
+                        "trino_inputs": row.get("_trino_inputs"),
                     },
                 )
             )
@@ -466,16 +472,39 @@ class QueryLogCurator:
     def _resolve_table(self, session: Session, row: dict[str, Any]) -> Any | None:
         """Resolve a query row's referenced table to a ``cryo.tables`` row, if known.
 
-        Implementation note: this is intentionally a no-op for destinations in the
-        bootstrap (the legacy test path expects every row to insert with table_id=None
-        when the table isn't in the DB). The full join lives in
-        ``cryo.telemetry.patterns`` which already has a working table-resolution
-        implementation we reuse when the curator's input is a curated Postgres row.
+        Prefers ``_trino_inputs`` (real per-table identity from Trino's own query plan,
+        set by enrich_row_with_query_stats when fetch_stats_for_curated is on) over
+        parsing query_text with a regex: the regex only matches the *first* table
+        reference in the SQL and breaks on joins/CTEs/subqueries, whereas Trino's own
+        ``inputs[]`` names every table the query actually touched. When a query joins
+        multiple tables, the first Iceberg-backed one is used -- Trino also reports
+        metadata-table reads (e.g. a table's ``$files``) as separate entries, which are
+        stripped here since they're not a real table a preset/candidate would match.
+        Falls back to the regex when no enrichment ran (fetch_stats_for_curated off, or
+        this particular fetch_query_stats call failed) -- unchanged from before, so a
+        destination without enrichment enabled keeps its existing (imperfect) behavior.
         """
         from sqlalchemy import select
 
         from cryo.db.models import Table as TableModel
         from cryo.telemetry.parser import extract_table_from_query
+
+        trino_inputs = row.get("_trino_inputs")
+        if isinstance(trino_inputs, list):
+            for entry in trino_inputs:
+                schema_name = entry.get("schema")
+                table_name = entry.get("table")
+                if not schema_name or not table_name or table_name.endswith("$files"):
+                    continue
+                match = session.scalar(
+                    select(TableModel).where(
+                        TableModel.schema_name == schema_name,
+                        TableModel.table_name == table_name,
+                        TableModel.is_active.is_(True),
+                    )
+                )
+                if match is not None:
+                    return match
 
         query_text = row.get("query_text") or ""
         schema_name, table_name = extract_table_from_query(query_text)

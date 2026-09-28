@@ -942,6 +942,187 @@ def test_curator_dedupe_across_multi_coordinator_poll() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _spill_curated's real Postgres path (source is not None) -- everything above uses
+# source=None specifically to avoid touching the DB, which meant a real bug (every row in
+# a multi-row curated batch getting the SAME query_id -- a stale closure-over-loop-variable
+# bug from the enrichment refactor) shipped to production undetected. These use the real
+# `session` fixture (Postgres-shaped) so QueryLog construction and _resolve_table's real
+# SELECT actually run.
+# ---------------------------------------------------------------------------
+
+
+def test_curated_rows_keep_their_own_query_id_not_the_last_rows(session) -> None:
+    """Regression: _spill_curated used to build `worthy_rows` in one loop (binding `qid`
+    as a loop-local) then construct QueryLog objects in a second loop still referencing
+    that same `qid` -- every row in the batch silently got the last row's query_id.
+    Confirmed live 2026-09-28: 55 curated rows, 1 distinct query_id, before this fix."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from cryo.db.models import Source
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    source = Source(id=uuid4(), name="s", type="rest", config={})
+    session.add(source)
+    session.flush()
+
+    destination = SimpleNamespace(
+        id=uuid4(), name="d", query_log_config={"enabled": True}, query_log_retention_days=30
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    now = datetime.now(UTC)
+    rows = [
+        {
+            "query_id": f"q{i}",
+            "query": "SELECT 1",
+            "query_text": "SELECT 1",
+            "executed_at": now,
+            "state": "FINISHED",
+        }
+        for i in range(5)
+    ]
+    fake_ingester = _FakeIngester(rows=rows)
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=source,
+        config=config,
+        trino_ingester=fake_ingester,
+        settings=CuratorSettings(curated_sample_rate=1.0),
+    )
+
+    inserted = asyncio.run(curator._spill_curated(session, rows))
+    session.flush()
+
+    assert inserted == 5
+    from cryo.db.models import QueryLog
+
+    stored_ids = {row.query_id for row in session.query(QueryLog).all()}
+    assert stored_ids == {f"q{i}" for i in range(5)}
+
+
+def test_resolve_table_prefers_trino_inputs_over_query_text_regex(session) -> None:
+    """A row enriched with real Trino inputs[] must resolve via that, not the fragile
+    first-table-in-SQL regex -- confirmed live that regex only matches the first table
+    reference and breaks on the multi-table queries this fleet actually runs (up to 100
+    inputs on one real production query)."""
+    from types import SimpleNamespace
+
+    from cryo.db.models import Source, Table as TableModel
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    source = Source(id=uuid4(), name="s", type="rest", config={})
+    session.add(source)
+    session.flush()
+    real_table = TableModel(
+        id=uuid4(), source_id=source.id, schema_name="pw_bq", table_name="silver_dbt_orders",
+        is_active=True,
+    )
+    session.add(real_table)
+    session.flush()
+
+    destination = SimpleNamespace(
+        id=uuid4(), name="d", query_log_config={"enabled": True}, query_log_retention_days=30
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=source,
+        config=config,
+        trino_ingester=_FakeIngester(rows=[]),
+        settings=CuratorSettings(),
+    )
+
+    row = {
+        # A join-shaped query text the regex would resolve to the WRONG table (the first
+        # one named), while _trino_inputs correctly names the real one queried.
+        "query_text": "SELECT * FROM wrong_schema.wrong_table JOIN pw_bq.silver_dbt_orders ON 1=1",
+        "_trino_inputs": [
+            {"catalog": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders$files"},
+            {"catalog": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders"},
+        ],
+    }
+    resolved = curator._resolve_table(session, row)
+    assert resolved is not None
+    assert resolved.id == real_table.id
+
+
+def test_resolve_table_skips_metadata_table_entries_in_trino_inputs(session) -> None:
+    """inputs[] includes Trino's own metadata-table reads (e.g. a table's $files) as
+    separate entries -- these must never be treated as the real table."""
+    from types import SimpleNamespace
+
+    from cryo.db.models import Source
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    source = Source(id=uuid4(), name="s", type="rest", config={})
+    session.add(source)
+    session.flush()
+
+    destination = SimpleNamespace(
+        id=uuid4(), name="d", query_log_config={"enabled": True}, query_log_retention_days=30
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=source,
+        config=config,
+        trino_ingester=_FakeIngester(rows=[]),
+        settings=CuratorSettings(),
+    )
+
+    row = {
+        "query_text": "",
+        "_trino_inputs": [{"catalog": "cdp", "schema": "s", "table": "t$files"}],
+    }
+    assert curator._resolve_table(session, row) is None
+
+
+def test_resolve_table_falls_back_to_query_text_when_no_trino_inputs(session) -> None:
+    """A row with no enrichment (fetch_stats_for_curated off) keeps the pre-existing
+    regex-based resolution -- this fix must not regress that destination's behavior."""
+    from types import SimpleNamespace
+
+    from cryo.db.models import Source, Table as TableModel
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    source = Source(id=uuid4(), name="s", type="rest", config={})
+    session.add(source)
+    session.flush()
+    real_table = TableModel(
+        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="orders",
+        is_active=True,
+    )
+    session.add(real_table)
+    session.flush()
+
+    destination = SimpleNamespace(
+        id=uuid4(), name="d", query_log_config={"enabled": True}, query_log_retention_days=30
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=source,
+        config=config,
+        trino_ingester=_FakeIngester(rows=[]),
+        settings=CuratorSettings(),
+    )
+
+    row = {"query_text": "SELECT * FROM analytics.orders"}
+    resolved = curator._resolve_table(session, row)
+    assert resolved is not None
+    assert resolved.id == real_table.id
+
+
+# ---------------------------------------------------------------------------
 # Auth plumbing (PDAE-8277): the curator must authenticate its fetch against
 # system.runtime.queries the same way every other Trino query against this destination
 # does, or a coordinator with basic/LDAP auth silently 401s on every tick.
