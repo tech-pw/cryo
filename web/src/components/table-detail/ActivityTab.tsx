@@ -65,6 +65,7 @@ export const ActivityTab = ({ entries }: ActivityTabProps) => {
                         ? <> · {item.input_files_count} → {item.output_files_count} files</>
                         : null}
                       {byteLabel(item)}
+                      {item.effect_status ? <> · {item.effect_status.replaceAll("_", " ")}</> : null}
                     </div>
                   </div>
                 </div>

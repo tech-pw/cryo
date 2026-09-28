@@ -579,6 +579,7 @@ export interface AuditEntry {
   input_files_count?: number | null;
   output_files_count?: number | null;
   actor?: string | null;
+  effect_status?: "failed" | "files_reported" | "bytes_reported" | "unverified";
 }
 
 export interface HistoryPoint {

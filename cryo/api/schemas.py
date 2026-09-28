@@ -771,6 +771,23 @@ class AuditLogRead(OrmModel):
     input_files_count: int | None = None
     output_files_count: int | None = None
     actor: str | None = None
+    effect_status: Literal[
+        "failed", "files_reported", "bytes_reported", "unverified"
+    ] = "unverified"
+
+    @model_validator(mode="after")
+    def classify_effect(self) -> AuditLogRead:
+        """A successful process is not a verified Iceberg commit."""
+        status = (self.status or "").lower()
+        if status in {"failed", "error"}:
+            self.effect_status = "failed"
+        elif self.input_files_count is not None and self.output_files_count is not None:
+            self.effect_status = "files_reported"
+        elif self.actual_bytes_freed is not None:
+            self.effect_status = "bytes_reported"
+        else:
+            self.effect_status = "unverified"
+        return self
 
 
 class TableAuditResponse(BaseModel):

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useRunLiveEvents } from "./useRunLiveEvents";
+import { isTerminalRunStatus, useRunLiveEvents } from "./useRunLiveEvents";
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
@@ -27,6 +27,11 @@ describe("useRunLiveEvents", () => {
   afterEach(() => {
     MockWebSocket.instances = [];
     vi.unstubAllGlobals();
+  });
+
+  it("treats a partial batch run as finished", () => {
+    expect(isTerminalRunStatus("partial")).toBe(true);
+    expect(isTerminalRunStatus("running")).toBe(false);
   });
 
   it("captures log lines and run snapshots from websocket messages", async () => {

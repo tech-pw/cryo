@@ -2162,6 +2162,7 @@ def get_run_dispatches(run_id: uuid.UUID, session: SessionDep) -> dict[str, obje
 _TERMINAL_RUN_STATUSES = {
     "succeeded",
     "failed",
+    "partial",
     "partial_failed",
     "cancelled",
 }
@@ -2327,13 +2328,16 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     run = session.get(MaintenanceRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    # A finished run's recorded outcome is immutable; only its leftover jobs can still be stopped.
+    run_finished = run.status in _TERMINAL_RUN_STATUSES
     if run.kind == "scan":
-        scanner_repo.request_scan_cancel(session, run)
-        session.commit()
-        session.refresh(run)
+        if not run_finished:
+            scanner_repo.request_scan_cancel(session, run)
+            session.commit()
+            session.refresh(run)
         return RunRead.model_validate(presets.run_summary(run))
     now = datetime.now(UTC)
-    if run.status != "cancelled":
+    if not run_finished:
         run.status = "cancelled"
         run.finished_at = now
     jobs = list(session.scalars(select(MaintenanceJob).where(MaintenanceJob.run_id == run_id)))
