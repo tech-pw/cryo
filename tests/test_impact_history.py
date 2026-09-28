@@ -222,6 +222,8 @@ class TestRecordDailyImpact:
         signal = compute_impact_signal(session, now=NOW)
         record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
         session.commit()
+        # The fixture keeps attributes across commits; expire so raw is re-read from JSON.
+        session.expire_all()
 
         persisted = session.execute(
             select(FleetImpactHistory).where(
@@ -235,6 +237,27 @@ class TestRecordDailyImpact:
             "native": {"bytes": 8 * 1024**3, "actions_measured": 2},
             "trino": {"bytes": 2 * 1024**3, "actions_measured": 1},
             "unknown": {"bytes": 1 * 1024**3, "actions_measured": 1},
+        }
+
+    def test_null_and_literal_unknown_engines_sum_into_one_entry(self, session) -> None:
+        _source, table = _seed_source_table(session)
+        _log(session, table, days_ago=1, bytes_freed=1 * 1024**3, engine=None)
+        _log(session, table, days_ago=1, bytes_freed=4 * 1024**3, engine="unknown")
+        session.commit()
+
+        signal = compute_impact_signal(session, now=NOW)
+        record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
+        session.commit()
+        session.expire_all()
+
+        persisted = session.execute(
+            select(FleetImpactHistory).where(
+                FleetImpactHistory.report_date == day_bounds(NOW, 1)[0].date()
+            )
+        ).scalar_one()
+        assert persisted.raw is not None
+        assert persisted.raw["bytes_freed_by_engine"] == {
+            "unknown": {"bytes": 5 * 1024**3, "actions_measured": 2}
         }
 
 
