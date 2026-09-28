@@ -7,6 +7,8 @@ const SUBJECT_STORAGE_KEY = "cryo.devSubject";
 const TOKEN_STORAGE_KEY = "cryo.accessToken";
 const REFRESH_STORAGE_KEY = "cryo.refreshToken";
 const AUTH_MODE_STORAGE_KEY = "cryo.authMode";
+export const OIDC_STATE_STORAGE_KEY = "cryo.oidc.state";
+const OIDC_VERIFIER_STORAGE_KEY = "cryo.oidc.verifier";
 const TOKENS: RoleToken[] = ["viewer", "operator", "admin"];
 
 export type AuthMode = "dev" | "oidc";
@@ -41,6 +43,7 @@ interface OidcPublicConfig {
 interface AuthConfigResponse {
   mode: AuthMode;
   dev_token_enabled: boolean;
+  dev_token_enabled_in_prod: boolean;
   oidc?: OidcPublicConfig | null;
 }
 
@@ -54,6 +57,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   authMode: AuthMode;
   devTokenEnabled: boolean;
+  devTokenEnabledInProd: boolean;
   signIn: (role: RoleToken, subject: string) => Promise<void>;
   startOidcSignIn: () => void;
   completeOidcSignIn: (code: string) => Promise<void>;
@@ -90,13 +94,24 @@ async function fetchAccessToken(role: RoleToken, subject: string): Promise<strin
   return payload.access_token;
 }
 
-async function exchangeOidcCode(code: string, redirectUri: string): Promise<TokenPayload> {
+async function exchangeOidcCode(
+  code: string,
+  redirectUri: string,
+  codeVerifier: string | null
+): Promise<TokenPayload> {
+  const body: { code: string; redirect_uri: string; code_verifier?: string } = {
+    code,
+    redirect_uri: redirectUri
+  };
+  if (codeVerifier) {
+    body.code_verifier = codeVerifier;
+  }
   let response: Response;
   try {
     response = await fetch("/api/v1/auth/oidc/exchange", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, redirect_uri: redirectUri })
+      body: JSON.stringify(body)
     });
   } catch {
     // fetch() rejects only on network/CORS failures, never on HTTP error status codes —
@@ -155,6 +170,36 @@ function decodeJwtSubject(token: string): string {
   }
 }
 
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function createPkceVerifier(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+async function pkceS256Challenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+export function oidcCallbackStateMatches(returnedState: string | null): boolean {
+  const stored = window.sessionStorage.getItem(OIDC_STATE_STORAGE_KEY);
+  window.sessionStorage.removeItem(OIDC_STATE_STORAGE_KEY);
+  const matches =
+    stored !== null && stored.length > 0 && returnedState !== null && stored === returnedState;
+  if (!matches) {
+    window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
+  }
+  return matches;
+}
+
 function decodeJwtRole(token: string): RoleToken {
   const parts = token.split(".");
   if (parts.length < 2) return "viewer";
@@ -186,6 +231,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [error, setError] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("dev");
   const [devTokenEnabled, setDevTokenEnabled] = useState(true);
+  const [devTokenEnabledInProd, setDevTokenEnabledInProd] = useState(false);
   const [oidcConfig, setOidcConfig] = useState<OidcPublicConfig | null>(null);
 
   const persistSession = (
@@ -229,15 +275,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setError("OIDC is not configured");
       return;
     }
+    const config = oidcConfig;
     const state = crypto.randomUUID();
-    window.sessionStorage.setItem("cryo.oidc.state", state);
-    const url = new URL(oidcConfig.authorization_endpoint);
-    url.searchParams.set("client_id", oidcConfig.client_id);
-    url.searchParams.set("redirect_uri", oidcConfig.redirect_uri);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid profile email offline_access");
-    url.searchParams.set("state", state);
-    window.location.assign(url.toString());
+    let verifier: string;
+    try {
+      verifier = createPkceVerifier();
+    } catch {
+      setError("OIDC sign-in could not start");
+      return;
+    }
+    void pkceS256Challenge(verifier).then(
+      (challenge) => {
+        window.sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, state);
+        window.sessionStorage.setItem(OIDC_VERIFIER_STORAGE_KEY, verifier);
+        const url = new URL(config.authorization_endpoint);
+        url.searchParams.set("client_id", config.client_id);
+        url.searchParams.set("redirect_uri", config.redirect_uri);
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("scope", "openid profile email offline_access");
+        url.searchParams.set("state", state);
+        url.searchParams.set("code_challenge", challenge);
+        url.searchParams.set("code_challenge_method", "S256");
+        window.location.assign(url.toString());
+      },
+      () => {
+        setError("OIDC sign-in could not start");
+      }
+    );
   };
 
   const completeOidcSignIn = async (code: string) => {
@@ -246,12 +310,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
     setLoading(true);
     setError(null);
+    const codeVerifier = window.sessionStorage.getItem(OIDC_VERIFIER_STORAGE_KEY);
     try {
-      const payload = await exchangeOidcCode(code, oidcConfig.redirect_uri);
+      const payload = await exchangeOidcCode(code, oidcConfig.redirect_uri, codeVerifier);
+      window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
       const nextSubject = decodeJwtSubject(payload.access_token);
       const nextRole = decodeJwtRole(payload.access_token);
       persistSession(nextRole, nextSubject, payload.access_token, "oidc", payload.refresh_token);
     } catch (err: unknown) {
+      if (!(err instanceof OidcExchangeError && err.kind === "network")) {
+        window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
+      }
       setError(err instanceof Error ? err.message : "OIDC sign-in failed");
       setAccessToken("");
       throw err;
@@ -270,6 +339,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     window.localStorage.removeItem(SUBJECT_STORAGE_KEY);
     window.localStorage.removeItem(ROLE_STORAGE_KEY);
     window.localStorage.removeItem(AUTH_MODE_STORAGE_KEY);
+    window.sessionStorage.removeItem(OIDC_STATE_STORAGE_KEY);
+    window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
   };
 
   useEffect(() => {
@@ -279,6 +350,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (cancelled) return;
         setAuthMode(config.mode);
         setDevTokenEnabled(config.dev_token_enabled);
+        setDevTokenEnabledInProd(config.dev_token_enabled_in_prod === true);
         setOidcConfig(config.oidc ?? null);
 
         const storedToken = window.localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -363,12 +435,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isAuthenticated: Boolean(accessToken && subject),
       authMode,
       devTokenEnabled,
+      devTokenEnabledInProd,
       signIn,
       startOidcSignIn,
       completeOidcSignIn,
       signOut
     }),
-    [role, subject, accessToken, loading, error, authMode, devTokenEnabled]
+    [role, subject, accessToken, loading, error, authMode, devTokenEnabled, devTokenEnabledInProd]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
