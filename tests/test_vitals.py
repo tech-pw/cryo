@@ -102,6 +102,32 @@ class TestDispatchHeartbeat:
         assert vitals.dispatch_heartbeat.minutes_since == 5.0
 
     def test_stale_activity_past_threshold_is_stalled(self, session) -> None:
+        """Threshold default is 26h (dispatch_heartbeat_stall_minutes), sized for the
+        once-daily maintenance CronJob's own idle gap -- a job finished 4h ago must NOT read
+        as stalled (that was the old, wrong 90min-threshold behavior); only a gap genuinely
+        past the daily schedule's own cadence should."""
+        source, table = _seed_source_table(session)
+        destination = _seed_destination(session)
+        run = _seed_run(session, created_at=NOW - timedelta(hours=30))
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="succeeded",
+            started_at=NOW - timedelta(hours=30),
+            finished_at=NOW - timedelta(hours=29),
+        )
+        session.commit()
+
+        vitals = compute_cryo_vitals(session, now=NOW)
+        assert vitals.dispatch_heartbeat.is_stalled is True
+
+    def test_activity_within_daily_cadence_gap_is_not_stalled(self, session) -> None:
+        """The exact false-positive confirmed live 2026-09-28: a job that finished several
+        hours ago, well within the ~18-26h gap between two nightly maintenance runs, must not
+        be flagged -- that quiet gap is the normal shape of a once-daily dispatch source, not
+        a stall."""
         source, table = _seed_source_table(session)
         destination = _seed_destination(session)
         run = _seed_run(session, created_at=NOW - timedelta(hours=5))
@@ -117,7 +143,7 @@ class TestDispatchHeartbeat:
         session.commit()
 
         vitals = compute_cryo_vitals(session, now=NOW)
-        assert vitals.dispatch_heartbeat.is_stalled is True
+        assert vitals.dispatch_heartbeat.is_stalled is False
 
     def test_stalled_heartbeat_forces_critical_status_even_with_clean_checklist(self, session) -> None:
         """A stalled dispatch heartbeat is exactly the multi-day-stall shape fixed 2026-08-31
