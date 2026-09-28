@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from cryo.config import get_settings
 from cryo.db.models import (
     MaintenanceJob,
     QueryLog,
@@ -165,7 +166,34 @@ def record_table_scan_outcome(
         table.last_scan_error = _json_safe(error)[:2000]
         table.last_scan_error_at = scanned_at
         table.last_scan_error_kind = error_kind
+        _deactivate_if_dead(session, table, now=scanned_at)
     return table
+
+
+def _deactivate_if_dead(session: Session, table: Table, *, now: datetime) -> None:
+    """Auto-deactivate a table whose scans keep failing AND that no one is querying.
+
+    Confirmed live 2026-09-28: 148 active tables sat past a 10-failure streak (some past 175)
+    with a "failed to load table: blob (key ...)" error -- stale metadata.json, not a
+    transient issue -- and zero cryo.query_logs rows in the trailing 30 days. Both conditions
+    must hold: a genuinely dead catalog entry never gets queried, but a failure streak alone
+    isn't enough evidence (a live table can fail scans for reasons unrelated to whether anyone
+    still reads it, e.g. a permissions change). Reactivation already happens automatically
+    on the success path above, so a false deactivation here self-heals on the next successful
+    scan rather than needing a manual undo.
+    """
+    settings = get_settings()
+    threshold = settings.scan_dead_table_failure_threshold
+    if (table.consecutive_scan_failures or 0) < threshold:
+        return
+    lookback = now - timedelta(days=settings.scan_dead_table_lookback_days)
+    has_recent_query = session.execute(
+        select(QueryLog.id)
+        .where(QueryLog.table_id == table.id, QueryLog.executed_at >= lookback)
+        .limit(1)
+    ).first()
+    if has_recent_query is None:
+        table.is_active = False
 
 
 def already_scanned_today(
