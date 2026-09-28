@@ -552,6 +552,55 @@ def test_send_run_snapshot_expunges_session_not_just_expires(monkeypatch: Any) -
     assert sent
 
 
+def test_run_watch_closes_once_the_run_is_partial(monkeypatch: Any) -> None:
+    """Regression, 2026-09-28: the batch path finishes nightly runs as "partial", which was not
+    a terminal status, so the run websocket kept sending full snapshots until the tab closed."""
+    import asyncio
+    from types import SimpleNamespace
+
+    run_id = uuid.uuid4()
+    statuses = iter(["running"])
+
+    def fake_snapshot(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "run": {
+                "id": run_id,
+                "kind": "adhoc",
+                "status": next(statuses, "partial"),
+                "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+            "jobs": [],
+        }
+
+    def no_event_stream() -> object:
+        raise RuntimeError("run event stream unavailable")
+
+    monkeypatch.setattr(routes.datalake, "run_jobs_snapshot", fake_snapshot)
+    monkeypatch.setattr(routes, "build_runtime_wiring", no_event_stream)
+
+    sent: list[dict[str, Any]] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload: dict[str, Any]) -> None:
+            sent.append(payload)
+
+    asyncio.run(
+        asyncio.wait_for(
+            routes._watch_run_with_session(
+                FakeWebSocket(),  # type: ignore[arg-type]
+                run_id,
+                SimpleNamespace(),  # type: ignore[arg-type]
+                once=False,
+                poll_interval_sec=0.01,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert [payload["type"] for payload in sent] == ["run_snapshot", "log_line", "run_snapshot"]
+    assert sent[-1]["run"]["status"] == "partial"
+
+
 def test_websocket_replays_log_line_events(monkeypatch: Any) -> None:
     run_id = uuid.uuid4()
     created_at = datetime(2026, 1, 1, tzinfo=UTC)
