@@ -317,6 +317,21 @@ class QueryLogConfig:
     # so a single missed tick never loses data to Trino's ``query.min-expire-age`` ring
     # buffer. Always >= pull_interval_seconds * 5 (typical: 15-25 min at default cadence).
     watermark_overlap_seconds: int = 900
+    # Opt-in: fetch real per-query scan-byte stats (bytes_read/rows_read/files_read) from
+    # Trino's per-query REST API for the curated subset only, before it's written to
+    # Postgres. Off by default -- it's one extra HTTP call per curated row (bounded by the
+    # curated subset size, never the full fetch), and system.runtime.queries has no stats
+    # columns on Trino versions like this deployment's, so bytes_read/files_read are
+    # otherwise always None (confirmed live 2026-09-28: 100% of query_logs rows had them
+    # null, silently disabling the curator's own LARGE_SCAN_BYTES curation criterion and
+    # starving every reader of this data -- ROIGate's benefit-cost ratio, query-driven
+    # layout recommendations, project_savings' query-request-savings term).
+    fetch_stats_for_curated: bool = False
+    # Cap on per-tick fetch_query_stats HTTP calls even with fetch_stats_for_curated=true --
+    # the curated subset can still be large on a chatty destination (curated_sample_rate
+    # alone lets ~10k rows/day through at 1M queries/day), and enrichment must never become
+    # the tick's own bottleneck.
+    max_stats_enrichment_per_tick: int = 200
 
 
 # Default floor on the overlap window. Trino's ``query.min-expire-age`` defaults to 15 min
@@ -399,6 +414,10 @@ def parse_query_log_config(
         # missed tick permanently leaves a gap. Floor enforced regardless of user input.
         overlap = max(_WATERMARK_OVERLAP_FLOOR_SECONDS, pull * _PULL_OVERLAP_MULTIPLIER)
 
+    max_stats_enrichment = _coerce_int(
+        raw.get("max_stats_enrichment_per_tick"), default=200, minimum=1, maximum=5000
+    )
+
     return QueryLogConfig(
         enabled=True,
         mode=mode,
@@ -411,6 +430,8 @@ def parse_query_log_config(
         pull_interval_seconds=pull,
         telemetry_coordinators=coordinators,
         watermark_overlap_seconds=overlap,
+        fetch_stats_for_curated=bool(raw.get("fetch_stats_for_curated", False)),
+        max_stats_enrichment_per_tick=max_stats_enrichment,
     )
 
 
@@ -570,6 +591,60 @@ def rows_from_trino_queries(
         }
         rows.append(row)
     return rows
+
+
+def enrich_row_with_query_stats(row: dict[str, Any], query_detail: dict[str, Any]) -> dict[str, Any]:
+    """Fill bytes_read/rows_read/files_read on a row (from rows_from_trino_queries) using
+    the real per-query stats from TrinoQueryIngester.fetch_query_stats's response.
+
+    Confirmed live 2026-09-28 against this Trino version's actual /v1/query/{id} response:
+    queryStats.physicalInputDataSize/physicalInputPositions are the real scan-byte/row
+    counts (system.runtime.queries has neither column at all on this deployment -- see
+    fetch_query_stats's own docstring). inputs[] carries real per-table catalog/schema/
+    table identity but is not 1:1 with the query's primary table for multi-table queries
+    (a 100-table UNION-shaped query has 100 entries) -- stored as-is in the row for callers
+    that want it, not used to override _resolve_table's single-table SQL-text match, which
+    already exists and handles the common single-table case correctly.
+
+    Returns a new dict (does not mutate row); a query_detail missing queryStats or with an
+    unparseable physicalInputDataSize leaves the row's stats fields as rows_from_trino_queries
+    already set them (None) rather than raising.
+    """
+    enriched = dict(row)
+    query_stats = query_detail.get("queryStats") or {}
+    bytes_read = _parse_trino_data_size(query_stats.get("physicalInputDataSize"))
+    if bytes_read is not None:
+        enriched["bytes_read"] = bytes_read
+    rows_read = _as_int(query_stats.get("physicalInputPositions"))
+    if rows_read is not None:
+        enriched["rows_read"] = rows_read
+    inputs = query_detail.get("inputs")
+    if isinstance(inputs, list):
+        enriched["files_read"] = len(inputs) or None
+        enriched["_trino_inputs"] = [
+            {"catalog": i.get("catalogName"), "schema": i.get("schema"), "table": i.get("table")}
+            for i in inputs
+            if isinstance(i, dict)
+        ]
+    return enriched
+
+
+def _parse_trino_data_size(value: Any) -> int | None:
+    """Trino renders DataSize stats as a string like "4536702B", "1.5MB", "2GB" -- every
+    real response observed live on this deployment used the plain-bytes "<int>B" form, but
+    Trino's DataSize.toString() can emit any of B/kB/MB/GB/TB depending on magnitude, so all
+    are handled rather than assuming the byte-only form always holds."""
+    if not isinstance(value, str) or not value:
+        return None
+    units = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4, "PB": 1024**5}
+    for suffix, multiplier in sorted(units.items(), key=lambda kv: -len(kv[0])):
+        if value.endswith(suffix):
+            number = value[: -len(suffix)]
+            try:
+                return int(float(number) * multiplier)
+            except ValueError:
+                return None
+    return None
 
 
 def _as_int(value: Any) -> int | None:
