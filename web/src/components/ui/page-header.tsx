@@ -23,7 +23,7 @@ export function PageHeader({ title, subtitle, actions, breadcrumbs, rootCrumb, c
       <div className="cryo-page-header__body">
         <div className="cryo-page-header__copy">
           <h1 className="cryo-page-header__title">{title}</h1>
-          {subtitle ? <p className="cryo-page-header__subtitle">{subtitle}</p> : null}
+          {subtitle ? <div className="cryo-page-header__subtitle">{subtitle}</div> : null}
         </div>
         {actions ? <div className="cryo-page-header__actions">{actions}</div> : null}
       </div>
