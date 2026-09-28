@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { CompactionTag, GradePill, PriorityTag, healthScoreColor } from "../status";
 import { formatBytesGb, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { TableDetailState } from "../../pages/table-detail/useTableDetail";
 import { Button } from "../ui/button";
@@ -55,7 +56,9 @@ export const AssetHeader = ({
   scan,
   queuedScanRunId,
   handleScanAction
-}: AssetHeaderProps) => (
+}: AssetHeaderProps) => {
+  const scanAccess = useWriteControl("triggerScan");
+  return (
   <>
     <div className="td-breadcrumbs">
       <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/")}>
@@ -140,7 +143,8 @@ export const AssetHeader = ({
           size="sm"
           loading={scan.isPending}
           onClick={handleScanAction}
-          disabled={!row}
+          disabled={!scanAccess.allowed || !row}
+          title={scanAccess.reason ?? undefined}
           className="td-refresh-btn text-xs font-medium text-muted-foreground"
           aria-label={scan.isPending ? "Refreshing stats" : queuedScanRunId ? "Open scan run" : "Refresh stats"}
         >
@@ -255,7 +259,8 @@ export const AssetHeader = ({
       </details>
     </section>
   </>
-);
+  );
+};
 
 const AttributionItem = ({
   icon,

@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { formatTime } from "../../lib/format";
+import { VIEWER_REASON } from "../../lib/permissions";
 import { AsyncBoundary } from "../AsyncBoundary";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -86,8 +87,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
               </dl>
             </AsyncBoundary>
 
-            {canEdit ? (
-              <form
+            {!canEdit ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
+            <form
                 className="space-y-1.5 border-t border-border pt-3"
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -101,14 +102,13 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
               >
                 <p className="text-xs font-medium text-muted-foreground">Protect snapshot</p>
                 <div className="flex gap-1.5">
-                  <Input name="snapshot_id" type="number" min={1} placeholder="Snapshot ID" className="w-28" required />
-                  <Input name="label" placeholder="Label (optional)" className="flex-1" />
-                  <Button type="submit" size="sm" loading={protect.isPending}>
+                  <Input name="snapshot_id" type="number" min={1} placeholder="Snapshot ID" className="w-28" required disabled={!canEdit} />
+                  <Input name="label" placeholder="Label (optional)" className="flex-1" disabled={!canEdit} />
+                  <Button type="submit" size="sm" loading={protect.isPending} disabled={!canEdit} title={canEdit ? undefined : VIEWER_REASON}>
                     Protect
                   </Button>
                 </div>
               </form>
-            ) : null}
 
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">Protected snapshots</p>
@@ -133,20 +133,23 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
 
           <section className="space-y-3 border-t border-border pt-6">
             <h4 className="text-sm font-semibold">Ownership</h4>
-            {canEdit ? (
-              <div className="flex gap-1.5">
-                <Input
-                  value={ownerEmailInput}
-                  onChange={(event) => setOwnerEmailInput(event.target.value)}
-                  placeholder="owner@example.com"
-                />
-                <Button size="sm" loading={setOwner.isPending} onClick={() => setOwner.mutate(ownerEmailInput.trim())}>
-                  Save
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{row?.owner_email || "No owner assigned"}</p>
-            )}
+            <div className="flex gap-1.5">
+              <Input
+                value={ownerEmailInput}
+                onChange={(event) => setOwnerEmailInput(event.target.value)}
+                placeholder={row?.owner_email || "owner@example.com"}
+                disabled={!canEdit}
+              />
+              <Button
+                size="sm"
+                loading={setOwner.isPending}
+                disabled={!canEdit}
+                title={canEdit ? undefined : VIEWER_REASON}
+                onClick={() => setOwner.mutate(ownerEmailInput.trim())}
+              >
+                Save
+              </Button>
+            </div>
           </section>
 
           <section className="space-y-3 border-t border-border pt-6">
@@ -165,6 +168,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                     className="h-6 w-6"
                     aria-label={`Remove subscriber ${sub.email}`}
                     loading={removeSubscriber.isPending}
+                    disabled={!canEdit}
+                    title={canEdit ? undefined : VIEWER_REASON}
                     onClick={() => removeSubscriber.mutate(sub.id)}
                   >
                     <X className="size-3" />
@@ -178,6 +183,7 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
             <div className="flex gap-1.5">
               <Input
                 value={newSubscriberEmail}
+                disabled={!canEdit}
                 onChange={(event) => setNewSubscriberEmail(event.target.value)}
                 placeholder="consumer@example.com"
                 onKeyDown={(event) => {
@@ -190,6 +196,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 size="sm"
                 variant="secondary"
                 loading={addSubscriber.isPending}
+                disabled={!canEdit}
+                title={canEdit ? undefined : VIEWER_REASON}
                 onClick={() => {
                   if (!newSubscriberEmail.trim()) return;
                   addSubscriber.mutate(newSubscriberEmail.trim());
