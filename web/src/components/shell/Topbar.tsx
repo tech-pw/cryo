@@ -33,7 +33,13 @@ export const Topbar = ({ onMenuClick }: TopbarProps) => {
   const cmdLabel = isMac ? "⌘K" : "Ctrl+K";
 
   return (
-    <header className="cryo-shell__topbar">
+    <header
+      className="cryo-shell__topbar"
+      style={{
+        background: "var(--color-bg)",
+        borderBottom: "1px solid var(--color-border-default)"
+      }}
+    >
       <div className="cryo-shell__topbar-left">
         <Button
           type="button"
