@@ -136,6 +136,39 @@ def test_packing_keeps_rank_order_within_each_lane() -> None:
     assert sum(len(lane.tables) for lane in lanes) == len(tables)
 
 
+def test_a_single_large_table_does_not_upsize_the_lane_carrying_small_tables() -> None:
+    """Regression, 2026-09-28: a 494-table run put 3 of 4 lanes at the 16Gi tier purely
+    because each lane happened to hold >=1 table over the top threshold, even though those
+    lanes averaged ~120 tables each -- most nowhere near that size. One 900GB outlier among
+    many <5GB tables must land its own dedicated large-tier lane(s), not force every small
+    table sharing its round-robin slot up to the same tier."""
+    tables = _tables(900, *([0.5] * 40))
+    lanes = plan_lanes(tables, LaneLimits(max_lanes=8, target_gb_per_lane=20))
+
+    small_lanes = [lane for lane in lanes if lane.largest_table_gb < 5.0]
+    big_lanes = [lane for lane in lanes if lane.largest_table_gb == 900]
+    assert big_lanes, "the 900GB table must be somewhere"
+    assert all((lane.cpu_milli, lane.mem_mib) == (1000, 4096) for lane in small_lanes)
+    assert all((lane.cpu_milli, lane.mem_mib) == (4000, 16384) for lane in big_lanes)
+    # The outlier's own lane(s) hold only itself (or itself plus overflow of its own tier),
+    # never diluted with the 40 small tables that belong in the small tier's lanes.
+    for lane in big_lanes:
+        assert all(t.rewrite_gb == 900 for t in lane.tables)
+
+
+def test_tier_lane_shares_are_proportional_to_each_tiers_own_work() -> None:
+    """A run with far more small-tier work than large-tier work should spend most of its lane
+    budget on the small tier, not split evenly regardless of load."""
+    tables = _tables(900, *([0.5] * 200))
+    lanes = plan_lanes(tables, LaneLimits(max_lanes=6, target_gb_per_lane=20))
+
+    small_lane_count = sum(1 for lane in lanes if lane.largest_table_gb < 5.0)
+    big_lane_count = sum(1 for lane in lanes if lane.largest_table_gb == 900)
+    assert small_lane_count > big_lane_count
+    assert small_lane_count + big_lane_count == len(lanes)
+    assert len(lanes) <= 6
+
+
 # -- ranking -------------------------------------------------------------------------------
 
 

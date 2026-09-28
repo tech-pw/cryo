@@ -9,6 +9,15 @@ Lane count follows the amount of work, not a fixed number: a quiet day gets one 
 Tables are dealt in rank order to the least-loaded lane, so the highest-ranked tables start
 first on every lane and lanes finish at roughly the same time. Each lane is then sized from
 the largest single table it holds, since that table sets the lane's peak memory need.
+
+Tables are first split by size tier (see _SIZE_TIERS) and dealt separately within each tier,
+so a lane's size reflects the tables it actually carries rather than one outlier dragging
+everything sharing its lane up to its own tier. Confirmed live 2026-09-28: a 494-table run
+put 3 of 4 lanes at the largest tier (4 vCPU/16Gi) purely because each lane happened to
+contain at least one table over the top threshold, even though those lanes averaged ~120
+tables each and most were nowhere near that size -- the K8s namespace's own "unused capacity"
+cost check flagged those lanes' pod-lifetime cost at 2-4x their measured usage as a result.
+Tier-first dealing means only the tables that actually need a large pod pay for one.
 """
 
 from __future__ import annotations
@@ -72,6 +81,15 @@ def lane_size(largest_gb: float, limits: LaneLimits) -> tuple[int, int]:
     return min(cpu, limits.max_cpu_milli), min(mem, limits.max_mem_mib)
 
 
+def _tier_index(rewrite_gb: float) -> int:
+    """Which _SIZE_TIERS bucket a table's rewrite size falls into -- index into _SIZE_TIERS,
+    or len(_SIZE_TIERS) for the largest (uncapped) tier."""
+    for i, (upper, _cpu, _mem) in enumerate(_SIZE_TIERS):
+        if rewrite_gb < upper:
+            return i
+    return len(_SIZE_TIERS)
+
+
 def lane_count(tables: Sequence[LaneTable], limits: LaneLimits) -> int:
     if not tables:
         return 0
@@ -81,17 +99,72 @@ def lane_count(tables: Sequence[LaneTable], limits: LaneLimits) -> int:
 
 
 def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) -> list[Lane]:
-    """``tables`` must already be in rank order; each lane keeps that relative order."""
+    """``tables`` must already be in rank order; each lane keeps that relative order.
+
+    Tables are dealt tier-first: split into groups by which _SIZE_TIERS bucket their
+    rewrite_gb falls into, lanes allocated to each group in proportion to its share of total
+    work (at least one lane per non-empty group, capped by max_lanes overall), then dealt
+    round-robin by load within that group only. A lane's size is fixed by the group it serves,
+    not derived after packing -- so a lane built entirely from sub-5GB tables gets the smallest
+    tier's pod even if the run also has a 2TB table, which lands in its own group's lane(s)
+    instead of dragging every lane it might otherwise have shared up to its own tier.
+    """
     limits = limits or LaneLimits()
-    count = lane_count(tables, limits)
-    lanes = [Lane(index=i) for i in range(count)]
-    if not lanes:
+    total_count = lane_count(tables, limits)
+    if total_count == 0:
         return []
-    loads = [0.0] * count
+
+    groups: dict[int, list[LaneTable]] = {}
     for table in tables:
-        target = min(range(count), key=lambda i: (loads[i], i))
-        lanes[target].tables.append(table)
-        loads[target] += table.rewrite_gb + limits.per_table_overhead_gb
-    for lane in lanes:
-        lane.cpu_milli, lane.mem_mib = lane_size(lane.largest_table_gb, limits)
+        groups.setdefault(_tier_index(table.rewrite_gb), []).append(table)
+
+    group_work = {
+        tier: sum(t.rewrite_gb + limits.per_table_overhead_gb for t in group)
+        for tier, group in groups.items()
+    }
+    group_max_lanes = {tier: len(group) for tier, group in groups.items()}
+    total_work = sum(group_work.values()) or 1.0
+    # Proportional share of the overall lane budget, at least 1 lane per non-empty tier
+    # (never more than that tier's own table count -- a lane needs >=1 table), total never
+    # exceeding what lane_count already decided the whole run gets.
+    raw_shares = {
+        tier: min(group_max_lanes[tier], max(1, round(total_count * (work / total_work))))
+        for tier, work in group_work.items()
+    }
+    while sum(raw_shares.values()) > total_count:
+        # Trim from the tier with the most lanes first -- the smallest, cheapest tier is the
+        # one that can most afford to lose a lane and still fit its tables via more work per
+        # pod, whereas the largest tier's lane count is closest to a hard per-table minimum
+        # (one table over the ceiling genuinely needs its own lane).
+        biggest = max(raw_shares, key=lambda t: (raw_shares[t], t))
+        if raw_shares[biggest] <= 1:
+            break
+        raw_shares[biggest] -= 1
+    while sum(raw_shares.values()) < total_count:
+        # Spare lanes (rounding gave fewer than the budget allows, or a tier's own table count
+        # capped it below its proportional share) go to the tier with the most work per
+        # already-assigned lane that still has table headroom to use another lane -- so the
+        # most work-starved group gets relief first, and capacity never sits unused because
+        # one small tier (e.g. a single outlier table) can't absorb more lanes than it has
+        # tables.
+        eligible = [t for t in raw_shares if raw_shares[t] < group_max_lanes[t]]
+        if not eligible:
+            break
+        neediest = max(eligible, key=lambda t: group_work[t] / raw_shares[t])
+        raw_shares[neediest] += 1
+
+    lanes: list[Lane] = []
+    for tier in sorted(groups):
+        group = groups[tier]
+        count = min(raw_shares[tier], len(group))
+        cpu, mem = lane_size(max(t.rewrite_gb for t in group), limits)
+        tier_lanes = [Lane(index=len(lanes) + i, cpu_milli=cpu, mem_mib=mem) for i in range(count)]
+        loads = [0.0] * count
+        for table in group:
+            target = min(range(count), key=lambda i: (loads[i], i))
+            tier_lanes[target].tables.append(table)
+            loads[target] += table.rewrite_gb + limits.per_table_overhead_gb
+        lanes.extend(tier_lanes)
+    for i, lane in enumerate(lanes):
+        lane.index = i
     return lanes

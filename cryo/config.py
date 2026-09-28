@@ -233,6 +233,18 @@ class Settings(BaseSettings):
     maintenance_poll_seconds: int = Field(default=30, ge=5)
     maintenance_rescan_enabled: bool = Field(default=True)
     maintenance_slack_enabled: bool = Field(default=True)
+    scan_freshness_excluded_schemas: str = Field(
+        default="temp",
+        description=(
+            "Comma-separated schema names excluded from scan_freshness/scan_failures (health "
+            "checks) -- for scratch/staging schemas whose tables are never queried, so a slow "
+            "scan cadence against them isn't a real signal. Confirmed live 2026-09-28: schema "
+            "'temp' (341 active tables) had zero query_logs rows ever, on any table, but "
+            "contributed 166 of 209 scan_freshness stale-table flags purely from losing out on "
+            "scan priority to tables that are actually read -- a real capacity tradeoff, not a "
+            "scanner problem worth alerting on. Empty string excludes nothing."
+        ),
+    )
     scan_dead_table_failure_threshold: int = Field(
         default=10,
         ge=1,
