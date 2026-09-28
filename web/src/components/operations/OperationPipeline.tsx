@@ -9,6 +9,7 @@ export interface PipelineStep {
   label: string;
   status: PipelineStepStatus;
   detail?: string;
+  statusText?: string;
 }
 
 const STEP_ICON: Record<PipelineStepStatus, ReactNode> = {
@@ -30,26 +31,55 @@ const MAINTENANCE_OPS = [
 
 const opLabel = (op: string) => op.replaceAll("_", " ");
 
+const NEUTRAL_STATUS_TEXT = new Set(["Not recorded", "Waiting"]);
+
+export interface MaintenanceStepOptions {
+  absentLabel?: string;
+  partialOps?: string[];
+  skippedOps?: string[];
+}
+
 export const maintenanceOpsToSteps = (
   operations: string[],
   activeOp?: string | null,
   completedOps: string[] = [],
-  failedOp?: string | null
+  failedOp?: string | null,
+  options?: MaintenanceStepOptions
 ): PipelineStep[] => {
   const ordered = operations.length ? operations : [...MAINTENANCE_OPS];
+  const partialOps = options?.partialOps ?? [];
+  const skippedOps = options?.skippedOps ?? [];
   return ordered.map((op) => {
     if (failedOp === op) {
       return { key: op, label: opLabel(op), status: "failed" as const };
     }
+    if (partialOps.includes(op)) {
+      return { key: op, label: opLabel(op), status: "succeeded" as const, detail: "partial" };
+    }
     if (completedOps.includes(op)) {
       return { key: op, label: opLabel(op), status: "succeeded" as const };
+    }
+    if (skippedOps.includes(op)) {
+      return { key: op, label: opLabel(op), status: "skipped" as const };
     }
     if (activeOp === op) {
       return { key: op, label: opLabel(op), status: "running" as const };
     }
-    return { key: op, label: opLabel(op), status: "pending" as const };
+    return {
+      key: op,
+      label: opLabel(op),
+      status: "pending" as const,
+      statusText: options?.absentLabel
+    };
   });
 };
+
+const scanStep = (key: string, label: string, status: PipelineStepStatus): PipelineStep => ({
+  key,
+  label,
+  status,
+  ...(status === "pending" ? { statusText: "queued" } : {})
+});
 
 export const scanPipelineSteps = (status?: string | null): PipelineStep[] => {
   const runStatus = (status ?? "").toLowerCase();
@@ -58,12 +88,36 @@ export const scanPipelineSteps = (status?: string | null): PipelineStep[] => {
     return phaseStatus;
   };
   const done = ["succeeded", "failed", "cancelled"].includes(runStatus);
+  const queueStatus: PipelineStepStatus =
+    done || runStatus === "running" ? "succeeded" : runStatus === "queued" || runStatus === "accepted" ? "running" : "pending";
+  const discoverStatus: PipelineStepStatus = done ? "succeeded" : runStatus === "running" ? "running" : "pending";
+  const scanStatus = phase(done ? "succeeded" : runStatus === "running" ? "running" : "pending");
+  const finalizeStatus: PipelineStepStatus = done
+    ? runStatus === "succeeded"
+      ? "succeeded"
+      : runStatus === "failed"
+        ? "failed"
+        : "skipped"
+    : "pending";
   return [
-    { key: "queue", label: "Queue", status: done || runStatus === "running" ? "succeeded" : runStatus === "queued" || runStatus === "accepted" ? "running" : "pending" },
-    { key: "discover", label: "Discover tables", status: done ? "succeeded" : runStatus === "running" ? "running" : "pending" },
-    { key: "scan", label: "Scan shards", status: phase(done ? "succeeded" : runStatus === "running" ? "running" : "pending") },
-    { key: "finalize", label: "Finalize", status: done ? (runStatus === "succeeded" ? "succeeded" : runStatus === "failed" ? "failed" : "skipped") : "pending" }
+    scanStep("queue", "Queue", queueStatus),
+    scanStep("discover", "Discover tables", discoverStatus),
+    scanStep("scan", "Scan shards", scanStatus),
+    scanStep("finalize", "Finalize", finalizeStatus)
   ];
+};
+
+const StepStatus = ({ step }: { step: PipelineStep }) => {
+  if (step.statusText && NEUTRAL_STATUS_TEXT.has(step.statusText)) {
+    return <span className="ops-pipeline__detail text-xs text-muted-foreground">{step.statusText}</span>;
+  }
+  if (step.statusText) {
+    return <StatusTag status={step.statusText} />;
+  }
+  if (step.detail) {
+    return <span className="ops-pipeline__detail text-xs text-muted-foreground">{step.detail}</span>;
+  }
+  return <StatusTag status={step.status} />;
 };
 
 export const OperationPipeline = ({
@@ -81,11 +135,7 @@ export const OperationPipeline = ({
           <div className="ops-pipeline__node flex flex-col items-center gap-1">
             {STEP_ICON[step.status]}
             <span className="ops-pipeline__label text-sm">{step.label}</span>
-            {step.detail ? (
-              <span className="ops-pipeline__detail text-xs text-muted-foreground">{step.detail}</span>
-            ) : (
-              <StatusTag status={step.status === "pending" ? "queued" : step.status} />
-            )}
+            <StepStatus step={step} />
           </div>
           {idx < steps.length - 1 ? <div className="ops-pipeline__connector" aria-hidden /> : null}
         </div>

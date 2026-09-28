@@ -1,10 +1,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Info } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { cancelRun, diagnoseRunFailure, forceAdmitJob, getRun, getRunJobs, listRuns } from "../../api/client";
-import type { JobRead } from "../../api/types";
+import type { JobRead, RunRead } from "../../api/types";
 import { PageHeader, StatStrip } from "../../components/common";
 import { ConfirmAction } from "../../components/confirm";
 import { ConsoleShell } from "../../components/operations/ConsoleShell";
@@ -25,9 +26,27 @@ import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
+import { Input } from "../../components/ui/input";
+import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { StatusTag, RunKindTag } from "../../components/status";
 import { useRunLiveEvents, isTerminalRunStatus } from "../../hooks/useRunLiveEvents";
 import { useAuth } from "../../lib/auth";
+import { SCAN_ONLY_REASON, VIEWER_REASON } from "../../lib/permissions";
+import { useWriteControl } from "../../lib/useWriteControl";
+import {
+  OVER_BUDGET_TOOLTIP,
+  batchCounts,
+  budgetLine,
+  failureRows,
+  filesTransition,
+  isBatchPipeline,
+  laneRows,
+  rewrittenBytes,
+  sizeTransition,
+  type FailureRow,
+  type LaneRow
+} from "../../lib/batchSummary";
+import { cn } from "../../lib/cn";
 import { formatEngineLabel } from "../../lib/engines";
 import { formatNumber, formatTime } from "../../lib/format";
 import {
@@ -47,6 +66,10 @@ const STALL_THRESHOLD_MS = 3 * 60 * 1000;
 const ACTIVE_RUN_STATUSES = new Set(["accepted", "queued", "running", "admitted"]);
 // Mirrors the cancellable job statuses in cryo/api/routes.py::cancel_run.
 const CANCELLABLE_JOB_STATUSES = new Set(["queued", "admitted", "running", "deferred"]);
+const JOB_PAGE_SIZE = 50;
+const JOB_CHIP_STATUSES = ["failed", "succeeded", "skipped", "deferred"] as const;
+const CHIP_STATUS_SET = new Set<string>(JOB_CHIP_STATUSES);
+const IN_PROGRESS_JOB_STATUSES = new Set(["running", "admitted", "queued", "deferred"]);
 
 const tableRef = (job: JobRead) => {
   const planRef = job.plan?.table_ref;
@@ -54,30 +77,86 @@ const tableRef = (job: JobRead) => {
   return job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
 };
 
+const planOperationNames = (plan: JobRead["plan"]): string[] => {
+  if (!plan) return [];
+  const names: string[] = [];
+  const ops = plan.operations;
+  if (Array.isArray(ops)) {
+    for (const op of ops) {
+      if (typeof op === "string" && op) names.push(op);
+      else if (op && typeof op === "object" && "type" in op) {
+        const type = (op as { type?: unknown }).type;
+        if (typeof type === "string" && type) names.push(type);
+      }
+    }
+  }
+  const single = plan.operation;
+  if (typeof single === "string" && single) names.push(single);
+  return names;
+};
+
+const jobHasOperation = (job: JobRead, op: string) => planOperationNames(job.plan).includes(op);
+
 const inferPipelineFromJobs = (jobs: JobRead[], operations: string[]) => {
   const completed: string[] = [];
+  const partial: string[] = [];
+  const skipped: string[] = [];
   let active: string | null = null;
   let failed: string | null = null;
   for (const op of operations) {
-    const opJobs = jobs.filter((job) => {
-      const planOps = job.plan?.operations;
-      if (Array.isArray(planOps)) return planOps.includes(op);
-      const opName = job.plan?.operation;
-      return opName === op;
-    });
-    if (opJobs.some((j) => j.status === "failed")) {
+    const opJobs = jobs.filter((job) => jobHasOperation(job, op));
+    if (opJobs.some((job) => job.status === "failed")) {
       failed = op;
       break;
     }
-    if (opJobs.some((j) => ["running", "admitted", "queued"].includes(j.status))) {
+    if (opJobs.some((job) => IN_PROGRESS_JOB_STATUSES.has(job.status))) {
       active = op;
       break;
     }
-    if (opJobs.length > 0 && opJobs.every((j) => j.status === "succeeded")) {
-      completed.push(op);
+    if (opJobs.length === 0) continue;
+    if (opJobs.every((job) => job.status === "skipped")) {
+      skipped.push(op);
+      continue;
     }
+    const settled = opJobs.every(
+      (job) => job.status === "succeeded" || job.status === "partial" || job.status === "skipped"
+    );
+    if (!settled) continue;
+    if (opJobs.some((job) => job.status === "partial")) partial.push(op);
+    else if (opJobs.some((job) => job.status === "succeeded")) completed.push(op);
   }
-  return { completed, active, failed };
+  return { completed, partial, skipped, active, failed };
+};
+
+const chipLabel = (status: string) => status.charAt(0).toUpperCase() + status.slice(1);
+
+const jobStatusChips = (jobs: JobRead[]): Array<{ status: string; count: number }> => {
+  const counts = new Map<string, number>();
+  for (const job of jobs) {
+    const status = job.status.toLowerCase();
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  const named = JOB_CHIP_STATUSES.map((status) => ({ status, count: counts.get(status) ?? 0 }));
+  const extras = [...counts.keys()]
+    .filter((status) => !CHIP_STATUS_SET.has(status))
+    .sort()
+    .map((status) => ({ status, count: counts.get(status) ?? 0 }));
+  return [...named, ...extras];
+};
+
+const failedFirst = (jobs: JobRead[]): JobRead[] => {
+  const failed: JobRead[] = [];
+  const rest: JobRead[] = [];
+  for (const job of jobs) {
+    if (job.status.toLowerCase() === "failed") failed.push(job);
+    else rest.push(job);
+  }
+  return failed.length === 0 ? jobs : [...failed, ...rest];
+};
+
+const matchesTableQuery = (job: JobRead, query: string) => {
+  if (!query) return true;
+  return `${tableRef(job)} ${job.table_name ?? ""} ${job.schema_name ?? ""}`.toLowerCase().includes(query);
 };
 
 const DescriptionGrid = ({
@@ -95,12 +174,121 @@ const DescriptionGrid = ({
   </dl>
 );
 
+const laneColumns: ColumnDef<LaneRow, unknown>[] = [
+  { id: "lane", header: "Lane", cell: ({ row }) => row.original.lane },
+  { id: "vcpu", header: "vCPU", cell: ({ row }) => row.original.vcpu },
+  { id: "memory", header: "Memory", cell: ({ row }) => row.original.memory },
+  { id: "tables", header: "Tables", cell: ({ row }) => row.original.tables }
+];
+
+const failureColumns: ColumnDef<FailureRow, unknown>[] = [
+  {
+    id: "table",
+    header: "Table",
+    cell: ({ row }) => <span className="break-all">{row.original.table}</span>
+  },
+  {
+    id: "error",
+    header: "Error",
+    cell: ({ row }) => {
+      const error = row.original.error;
+      const preview = error.length > 96 ? `${error.slice(0, 96)}…` : error;
+      return (
+        <details className="min-w-0">
+          <summary className="cursor-pointer break-all font-mono text-xs">{preview}</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs">{error}</pre>
+        </details>
+      );
+    }
+  }
+];
+
+const BatchRunSummary = ({ summary }: { summary: NonNullable<RunRead["summary"]> }) => {
+  const counts = batchCounts(summary);
+  const lanes = laneRows(summary);
+  const failures = failureRows(summary);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle>Batch summary</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <section aria-label="Batch summary" className="space-y-3">
+          <MetricGrid columns={5}>
+            <MetricTile label="Selected" value={counts.selected} />
+            <MetricTile label="Succeeded" value={counts.succeeded} />
+            <MetricTile label="Failed" value={counts.failed} />
+            <MetricTile label="Skipped" value={counts.skipped} />
+            <MetricTile
+              label="Over budget"
+              value={counts.overBudget}
+              hint={
+                <span
+                  title={OVER_BUDGET_TOOLTIP}
+                  aria-label={OVER_BUDGET_TOOLTIP}
+                  className="inline-flex cursor-help text-muted-foreground"
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </span>
+              }
+            />
+          </MetricGrid>
+          <MetricGrid columns={3}>
+            <MetricTile label="Files" value={filesTransition(summary)} />
+            <MetricTile label="Size" value={sizeTransition(summary)} />
+            <MetricTile label="Rewritten" value={rewrittenBytes(summary)} />
+          </MetricGrid>
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium">Lanes</h3>
+            {lanes == null ? (
+              <p className="text-sm text-muted-foreground">Unknown</p>
+            ) : (
+              <DataTable
+                columns={laneColumns}
+                data={lanes}
+                density="compact"
+                getRowId={(row) => row.id}
+                emptyTitle="No lanes"
+                emptyDescription="This run recorded no lanes."
+                tableClassName="table-fixed"
+              />
+            )}
+          </div>
+          <p className="text-sm">
+            Budget <span>{budgetLine(summary)}</span>
+          </p>
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium">Failures</h3>
+            {failures == null ? (
+              <p className="text-sm text-muted-foreground">Unknown</p>
+            ) : (
+              <DataTable
+                columns={failureColumns}
+                data={failures}
+                density="compact"
+                getRowId={(row) => row.id}
+                emptyTitle="No failures"
+                emptyDescription="This run recorded no table failures."
+                tableClassName="table-fixed"
+              />
+            )}
+          </div>
+        </section>
+      </CardContent>
+    </Card>
+  );
+};
+
 export const RunDetail = () => {
   const { runId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
+  const cancelAccess = useWriteControl("cancelRun");
   const [logJob, setLogJob] = useState<JobRead | null>(null);
+  const [tableQuery, setTableQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [jobPage, setJobPage] = useState(0);
 
   const { messages, snapshot, wsOpen, wsExhausted, runTerminal, reconnectAttempt, manualReconnect } =
     useRunLiveEvents(runId ?? "", token);
@@ -161,6 +349,23 @@ export const RunDetail = () => {
 
   const jobRows = useMemo(() => snapshot?.jobs ?? jobs.data ?? [], [snapshot?.jobs, jobs.data]);
   const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
+  const statusChips = useMemo(() => jobStatusChips(jobRows), [jobRows]);
+  const filteredJobs = useMemo(() => {
+    const query = tableQuery.trim().toLowerCase();
+    const matched = jobRows.filter((job) => {
+      if (statusFilter && job.status.toLowerCase() !== statusFilter) return false;
+      return matchesTableQuery(job, query);
+    });
+    return failedFirst(matched);
+  }, [jobRows, statusFilter, tableQuery]);
+  const jobPageCount = Math.max(1, Math.ceil(filteredJobs.length / JOB_PAGE_SIZE));
+  const safeJobPage = Math.min(jobPage, jobPageCount - 1);
+  const pageJobs = filteredJobs.slice(safeJobPage * JOB_PAGE_SIZE, (safeJobPage + 1) * JOB_PAGE_SIZE);
+  useEffect(() => {
+    setTableQuery("");
+    setStatusFilter(null);
+    setJobPage(0);
+  }, [runId]);
   const cancellableJobs = useMemo(
     () => jobRows.filter((job) => CANCELLABLE_JOB_STATUSES.has(job.status)).length,
     [jobRows]
@@ -178,9 +383,13 @@ export const RunDetail = () => {
   const pipelineSteps = useMemo(() => {
     if (scan) return scanPipelineSteps(runData?.status);
     const ops = ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
-    const { completed, active, failed } = inferPipelineFromJobs(jobRows, ops);
-    return maintenanceOpsToSteps(ops, active, completed, failed);
-  }, [jobRows, runData?.status, scan]);
+    const { completed, active, failed, partial, skipped } = inferPipelineFromJobs(jobRows, ops);
+    return maintenanceOpsToSteps(ops, active, completed, failed, {
+      absentLabel: runFinished ? "Not recorded" : "Waiting",
+      partialOps: partial,
+      skippedOps: skipped
+    });
+  }, [jobRows, runData?.status, runFinished, scan]);
 
   const jobLogMessages = useMemo(() => {
     if (!logJob) return [];
@@ -222,7 +431,7 @@ export const RunDetail = () => {
         if (status === "running" || status === "admitted") setAnnouncement("Run is now running.");
         else if (status === "succeeded") setAnnouncement("Run succeeded.");
         else if (status === "failed" || status === "partial_failed") setAnnouncement("Run failed.");
-        else if (status === "partial") setAnnouncement("Run finished; not every table completed.");
+        else if (status === "partial") setAnnouncement("Run finished; some tables failed");
         else if (status === "cancelled") setAnnouncement("Run cancelled.");
       }
       prevStatusRef.current = status;
@@ -243,9 +452,11 @@ export const RunDetail = () => {
       {
         id: "table",
         header: "Table",
-        size: 240,
         cell: ({ row }) => (
-          <Link to={`/tables/${row.original.table_id}`} className="identity-stack font-semibold hover:underline">
+          <Link
+            to={`/tables/${row.original.table_id}`}
+            className="identity-stack break-all font-semibold hover:underline"
+          >
             {tableRef(row.original)}
           </Link>
         )
@@ -253,13 +464,11 @@ export const RunDetail = () => {
       {
         id: "status",
         header: "Status",
-        size: 120,
         cell: ({ row }) => <StatusTag status={row.original.status} />
       },
       {
         id: "timeline",
         header: "Timeline",
-        size: 160,
         cell: ({ row }) => (
           <RunDurationBar
             startedAt={row.original.started_at}
@@ -273,21 +482,22 @@ export const RunDetail = () => {
       {
         id: "engine",
         header: "Engine",
-        size: 120,
-        cell: ({ row }) => formatEngineLabel(row.original.destination_engine) || row.original.destination_name || "—"
+        cell: ({ row }) => (
+          <span className="break-words">
+            {formatEngineLabel(row.original.destination_engine) || row.original.destination_name || "—"}
+          </span>
+        )
       },
       {
         id: "started",
         header: "Started",
-        size: 140,
-        cell: ({ row }) => formatTime(row.original.started_at)
+        cell: ({ row }) => <span className="whitespace-normal">{formatTime(row.original.started_at)}</span>
       },
       {
         id: "actions",
-        header: "",
-        size: 160,
+        header: "Detail",
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 w-full flex-wrap items-center gap-1">
             {STUCK_STATUSES.has(row.original.status) && !row.original.force_admit ? (
               <ConfirmAction title="Bypass scheduling gates?" onConfirm={() => forceAdmit.mutate(row.original.id)}>
                 <Button size="sm" variant="secondary" loading={forceAdmit.isPending}>
@@ -367,8 +577,14 @@ export const RunDetail = () => {
                 title="Cancel this run?"
                 description="Queued jobs will be stopped; jobs already running may finish."
                 onConfirm={() => cancel.mutate(false)}
+                disabled={!cancelAccess.allowed}
               >
-                <Button variant="danger" loading={cancel.isPending}>
+                <Button
+                  variant="danger"
+                  loading={cancel.isPending}
+                  disabled={!cancelAccess.allowed}
+                  title={cancelAccess.reason ?? undefined}
+                >
                   Cancel
                 </Button>
               </ConfirmAction>
@@ -377,11 +593,21 @@ export const RunDetail = () => {
                 title="Cancel the remaining jobs?"
                 description={`This run has finished and keeps its recorded outcome. This stops the ${formatNumber(cancellableJobs)} ${cancellableJobs === 1 ? "job" : "jobs"} still queued, deferred or running.`}
                 onConfirm={() => cancel.mutate(true)}
+                disabled={!cancelAccess.allowed}
               >
-                <Button variant="danger" loading={cancel.isPending}>
+                <Button
+                  variant="danger"
+                  loading={cancel.isPending}
+                  disabled={!cancelAccess.allowed}
+                  title={cancelAccess.reason ?? undefined}
+                >
                   Cancel remaining jobs ({formatNumber(cancellableJobs)})
                 </Button>
               </ConfirmAction>
+            ) : null}
+            {role === "viewer" ? <span className="text-xs text-muted-foreground">{VIEWER_REASON}</span> : null}
+            {cancelAccess.reason === SCAN_ONLY_REASON ? (
+              <span className="text-xs text-muted-foreground">{SCAN_ONLY_REASON}</span>
             ) : null}
             <Button variant="secondary" onClick={() => navigate("/operations?tab=runs")}>
               All runs
@@ -397,6 +623,8 @@ export const RunDetail = () => {
               <OperationPipeline steps={pipelineSteps} title={scan ? "Scan pipeline" : "Maintenance pipeline"} />
             </CardContent>
           </Card>
+
+          {isBatchPipeline(summary) ? <BatchRunSummary summary={summary} /> : null}
 
           {scan ? (
             <Card>
@@ -442,14 +670,67 @@ export const RunDetail = () => {
             <CardHeader className="pb-2">
               <CardTitle>Jobs</CardTitle>
             </CardHeader>
-            <CardContent className="p-0 pb-2">
+            <CardContent className="space-y-2 p-0 pb-2">
+              <div className="flex flex-col gap-2 px-3 pt-3">
+                <div role="group" aria-label="Job status" className="flex flex-wrap gap-2">
+                  {statusChips.map((chip) => {
+                    const selected = statusFilter === chip.status;
+                    return (
+                      <button
+                        key={chip.status}
+                        type="button"
+                        data-testid="job-status-chip"
+                        data-count={chip.count}
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setStatusFilter((current) => (current === chip.status ? null : chip.status));
+                          setJobPage(0);
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-medium",
+                          chip.status === "failed"
+                            ? "border-transparent bg-[color-mix(in_srgb,var(--color-status-danger)_14%,transparent)] text-[var(--color-status-danger)]"
+                            : "border-border bg-[var(--color-surface-sunken)] text-foreground",
+                          selected && "ring-2 ring-ring"
+                        )}
+                      >
+                        <span>{chipLabel(chip.status)}</span>
+                        <span className="tabular-nums">{formatNumber(chip.count)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <Input
+                  aria-label="Filter by table name"
+                  placeholder="Filter by table name"
+                  value={tableQuery}
+                  onChange={(event) => {
+                    setTableQuery(event.target.value);
+                    setJobPage(0);
+                  }}
+                  className="h-8 max-w-xs"
+                />
+              </div>
               <DataTable
                 columns={jobColumns}
-                data={jobRows}
+                data={pageJobs}
                 density="compact"
                 loading={jobs.isLoading && !snapshot?.jobs}
                 getRowId={(row) => row.id}
                 className="border-0"
+                tableClassName="table-fixed"
+                emptyTitle={tableQuery.trim() || statusFilter ? "No matching jobs" : "No rows to show"}
+                emptyDescription={
+                  tableQuery.trim() || statusFilter
+                    ? "No jobs match this filter."
+                    : "Adjust filters or run a scan to populate this table."
+                }
+                pagination={{
+                  pageIndex: safeJobPage,
+                  pageSize: JOB_PAGE_SIZE,
+                  totalRows: filteredJobs.length,
+                  onPageChange: setJobPage
+                }}
               />
             </CardContent>
           </Card>
