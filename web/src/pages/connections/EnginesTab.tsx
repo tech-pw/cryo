@@ -1,4 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useMemo } from "react";
 import { patchDestination } from "../../api/client";
@@ -8,8 +9,17 @@ import { HealthBadge } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { DataTable } from "../../components/ui/data-table";
-import { engineTagColor, formatEngineLabel } from "../../lib/engines";
+import {
+  engineTagColor,
+  formatEngineLabel,
+  nativeEngineOptionLabel,
+  nativeFleetDisabledRowLabel,
+  resolveNativeEngineImpl
+} from "../../lib/engines";
 import { isConnectionPendingScan } from "../../lib/connectionScanPrompt";
+import { getRuntimeFlags } from "../../lib/runtimeFlags";
+import { useAuth } from "../../lib/auth";
+import { VIEWER_REASON, writeAccess } from "../../lib/permissions";
 import { useConnectionsContext } from "./ConnectionsContext";
 
 const engineBadgeVariant = (engine: string): "default" | "warning" | "secondary" => {
@@ -29,6 +39,18 @@ export const EnginesTab = () => {
     purgeDestinationMutation,
     queryClient
   } = useConnectionsContext();
+  const { role } = useAuth();
+  const createAccess = writeAccess(role, "createDestination");
+  const patchAccess = writeAccess(role, "patchDestination");
+  const purgeAccess = writeAccess(role, "purgeDestination");
+  const testAccess = writeAccess(role, "testConnection");
+
+  const runtime = useQuery({
+    queryKey: ["runtime-flags", api.token],
+    queryFn: () => getRuntimeFlags(api)
+  });
+  const nativeEnabled = runtime.data?.native_engine_enabled;
+  const nativeFallback = runtime.data?.native_engine_fallback;
 
   const columns = useMemo<ColumnDef<DestinationRead, unknown>[]>(
     () => [
@@ -49,16 +71,22 @@ export const EnginesTab = () => {
         header: "Engine",
         cell: ({ row }) => (
           <Badge variant={engineBadgeVariant(row.original.engine)}>
-            {formatEngineLabel(row.original.engine, row.original.config)}
+            {row.original.engine === "native" && nativeEnabled !== undefined
+              ? nativeEngineOptionLabel(nativeEnabled, resolveNativeEngineImpl(row.original.config))
+              : formatEngineLabel(row.original.engine, row.original.config)}
           </Badge>
         )
       },
       {
         accessorKey: "enabled",
         header: "Enabled",
-        cell: ({ getValue }) => (
-          <HealthBadge healthy={Boolean(getValue())}>{getValue() ? "Enabled" : "Disabled"}</HealthBadge>
-        )
+        cell: ({ row }) => {
+          if (row.original.engine === "native" && nativeEnabled === false && nativeFallback) {
+            return <span className="text-sm">{nativeFleetDisabledRowLabel(nativeFallback)}</span>;
+          }
+          const enabled = Boolean(row.original.enabled);
+          return <HealthBadge healthy={enabled}>{enabled ? "Enabled" : "Disabled"}</HealthBadge>;
+        }
       },
       {
         id: "offpeak",
@@ -74,15 +102,30 @@ export const EnginesTab = () => {
         size: 300,
         cell: ({ row }) => (
           <div className="flex flex-wrap items-center gap-1">
-            <Button size="sm" variant="secondary" onClick={() => setDestinationDrawer(row.original)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!patchAccess.allowed}
+              title={patchAccess.reason ?? undefined}
+              onClick={() => setDestinationDrawer(row.original)}
+            >
               Edit
             </Button>
-            <Button size="sm" variant="secondary" loading={probe.isPending} onClick={() => probe.mutate(row.original)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={probe.isPending}
+              disabled={!testAccess.allowed}
+              title={testAccess.reason ?? undefined}
+              onClick={() => probe.mutate(row.original)}
+            >
               Test
             </Button>
             <Button
               size="sm"
               variant="secondary"
+              disabled={!patchAccess.allowed}
+              title={patchAccess.reason ?? undefined}
               onClick={() =>
                 patchDestination(api, row.original.id, { enabled: !row.original.enabled }).then(() =>
                   queryClient.invalidateQueries({ queryKey: ["destinations"] })
@@ -91,6 +134,7 @@ export const EnginesTab = () => {
             >
               {row.original.enabled ? "Disable" : "Enable"}
             </Button>
+            {purgeAccess.hidden ? null : (
             <ConfirmAction
               title={`Permanently delete "${row.original.name}"?`}
               description="This cannot be undone. If any presets or maintenance runs still reference this engine, deletion will fail until those are reassigned or removed. If you just want to pause it, use Disable instead."
@@ -100,11 +144,12 @@ export const EnginesTab = () => {
                 Delete
               </Button>
             </ConfirmAction>
+            )}
           </div>
         )
       }
     ],
-    [api, probe, purgeDestinationMutation, queryClient, setDestinationDrawer]
+    [api, nativeEnabled, nativeFallback, patchAccess.allowed, patchAccess.reason, probe, purgeAccess.hidden, purgeDestinationMutation, queryClient, setDestinationDrawer, testAccess.allowed, testAccess.reason]
   );
 
   return (
@@ -114,8 +159,14 @@ export const EnginesTab = () => {
         iceberg-rust subprocess engines. Presets and manual runs target one of these to do the real work
         (compaction, snapshot expiry, orphan cleanup).
       </p>
+      {role === "viewer" ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
       <div>
-        <Button variant="primary" onClick={() => setDestinationDrawer("new")}>
+        <Button
+          variant="primary"
+          disabled={!createAccess.allowed}
+          title={createAccess.reason ?? undefined}
+          onClick={() => setDestinationDrawer("new")}
+        >
           <Plus className="size-4" aria-hidden="true" />
           New engine
         </Button>

@@ -3,12 +3,16 @@ import {
   ENGINE_TYPE_OPTIONS,
   ENGINE_VIRTUAL_OPTIONS,
   engineTagColor,
+  engineTypeOptions,
   engineVirtualFromDestination,
+  engineVirtualOptions,
   formatDestinationLabel,
   formatEngineLabel,
   hasSqlFallbackConfigured,
   isNativeDestination,
   isNativeStatement,
+  nativeEngineOptionLabel,
+  nativeFleetDisabledRowLabel,
   nativeSupportsOperation,
   parseEngineVirtual,
   resolveNativeEngineImpl
@@ -51,6 +55,46 @@ describe("engines", () => {
     expect(formatEngineLabel("native", { engine_impl: "go" })).toBe("Native (iceberg-go)");
     expect(formatEngineLabel("native", { engine_impl: "rust" })).toBe("Native (iceberg-rust)");
     expect(formatEngineLabel(null)).toBe("—");
+    expect(formatEngineLabel("native", { engine_impl: "go" }, { nativeEnabled: true })).toBe(
+      "Native (iceberg-go)"
+    );
+    expect(formatEngineLabel("native", { engine_impl: "go" }, {})).toBe("Native (iceberg-go)");
+    expect(formatEngineLabel("native", { engine_impl: "rust" }, { nativeEnabled: false })).toBe(
+      "Native (iceberg-rust) (disabled fleet-wide)"
+    );
+  });
+
+  it("labels native disabled fleet-wide when the flag is false", () => {
+    expect(nativeEngineOptionLabel(false)).toBe("Native (iceberg-go) (disabled fleet-wide)");
+    expect(nativeEngineOptionLabel(false, "rust")).toContain("disabled fleet-wide");
+    expect(nativeEngineOptionLabel(true)).toBe("Native (iceberg-go)");
+    expect(nativeEngineOptionLabel(true, "rust")).toBe("Native (iceberg-rust)");
+    expect(engineTypeOptions().map((option) => option.label)).toEqual(
+      ENGINE_TYPE_OPTIONS.map((option) => option.label)
+    );
+    expect(engineTypeOptions({ nativeEnabled: true }).map((option) => option.label)).toEqual(
+      ENGINE_TYPE_OPTIONS.map((option) => option.label)
+    );
+    expect(engineTypeOptions({ nativeEnabled: false }).map((option) => option.label)).toEqual([
+      "Trino",
+      "Spark EMR",
+      "Native (iceberg-go) (disabled fleet-wide)",
+      "Native (iceberg-rust) (disabled fleet-wide)",
+      "Flink (config only)"
+    ]);
+    expect(engineVirtualOptions().map((option) => option.label)).toEqual(
+      ENGINE_VIRTUAL_OPTIONS.map((option) => option.label)
+    );
+    expect(engineVirtualOptions({ nativeEnabled: false }).map((option) => option.label)).toEqual([
+      "Trino",
+      "Spark EMR",
+      "Native (iceberg-go) (disabled fleet-wide)",
+      "Native (iceberg-rust) (disabled fleet-wide)",
+      "Flink (config only)"
+    ]);
+    expect(nativeFleetDisabledRowLabel("the configured Spark SQL fallback")).toBe(
+      "Disabled fleet-wide — work runs on the configured Spark SQL fallback"
+    );
   });
 
   it("resolves native implementation defaults", () => {
