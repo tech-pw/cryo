@@ -39,7 +39,8 @@ def bytes_freed_from_procedure(action: str, metrics: dict[str, Any] | None) -> i
         # Iceberg's expire procedure returns file counts, not sizes. Do not invent bytes.
         return None
     if action == "optimize":
-        return _optional_int(metrics.get("rewritten_bytes_count"))
+        # rewrite_data_files reports bytes rewritten, not freed, and has no added-bytes figure.
+        return None
     return None
 
 
