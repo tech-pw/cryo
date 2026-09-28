@@ -10,6 +10,8 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { DataTable } from "../../components/ui/data-table";
 import { isConnectionPendingScan } from "../../lib/connectionScanPrompt";
+import { useAuth } from "../../lib/auth";
+import { VIEWER_REASON, writeAccess } from "../../lib/permissions";
 import { useConnectionsContext } from "./ConnectionsContext";
 
 export const LakehousesTab = () => {
@@ -23,6 +25,10 @@ export const LakehousesTab = () => {
     purgeSourceMutation,
     queryClient
   } = useConnectionsContext();
+  const { role } = useAuth();
+  const createAccess = writeAccess(role, "createSource");
+  const patchAccess = writeAccess(role, "patchSource");
+  const purgeAccess = writeAccess(role, "purgeSource");
 
   const columns = useMemo<ColumnDef<SourceRead, unknown>[]>(
     () => [
@@ -63,7 +69,13 @@ export const LakehousesTab = () => {
         size: 320,
         cell: ({ row }) => (
           <div className="flex flex-wrap items-center gap-1">
-            <Button size="sm" variant="secondary" onClick={() => setSourceDrawer(row.original)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!patchAccess.allowed}
+              title={patchAccess.reason ?? undefined}
+              onClick={() => setSourceDrawer(row.original)}
+            >
               Edit
             </Button>
             <Button size="sm" variant="secondary" onClick={() => setLatencySource(row.original)}>
@@ -72,6 +84,8 @@ export const LakehousesTab = () => {
             <Button
               size="sm"
               variant="secondary"
+              disabled={!patchAccess.allowed}
+              title={patchAccess.reason ?? undefined}
               onClick={() =>
                 patchSource(api, row.original.id, { enabled: !row.original.enabled }).then(() =>
                   queryClient.invalidateQueries({ queryKey: ["sources"] })
@@ -80,6 +94,7 @@ export const LakehousesTab = () => {
             >
               {row.original.enabled ? "Disable" : "Enable"}
             </Button>
+            {purgeAccess.hidden ? null : (
             <ConfirmAction
               title={`Permanently delete "${row.original.name}"?`}
               description="This deletes the lakehouse and everything Cryo scanned from it -- all its tables, health/cost history, and tier policies. This cannot be undone. If you just want to pause it, use Disable instead."
@@ -89,11 +104,12 @@ export const LakehousesTab = () => {
                 Delete
               </Button>
             </ConfirmAction>
+            )}
           </div>
         )
       }
     ],
-    [api, awsStatuses, purgeSourceMutation, queryClient, setLatencySource, setSourceDrawer]
+    [api, awsStatuses, patchAccess.allowed, patchAccess.reason, purgeAccess.hidden, purgeSourceMutation, queryClient, setLatencySource, setSourceDrawer]
   );
 
   return (
@@ -103,8 +119,14 @@ export const LakehousesTab = () => {
         these to discover tables and scan health. Read-only: nothing here ever runs maintenance, it only tells
         Cryo what tables exist.
       </p>
+      {role === "viewer" ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
       <div>
-        <Button variant="primary" onClick={() => setSourceDrawer("new")}>
+        <Button
+          variant="primary"
+          disabled={!createAccess.allowed}
+          title={createAccess.reason ?? undefined}
+          onClick={() => setSourceDrawer("new")}
+        >
           <Plus className="size-4" aria-hidden="true" />
           New lakehouse
         </Button>

@@ -28,6 +28,7 @@ import { useState, type ReactNode } from "react";
 import type { BenefitScoreResponse, TableSignalRead, TableSignalsResponse } from "../../api/client";
 import type { TableCostRead } from "../../api/types";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { operationLabels } from "../../lib/theme";
 import { ConfirmAction } from "../confirm";
 import { QueryErrorAlert } from "../common";
@@ -184,6 +185,7 @@ export const ActNowSection = ({
   schedulePending,
   tableLabel
 }: ActNowSectionProps) => {
+  const runAccess = useWriteControl("runMaintenance");
   const [acting, setActing] = useState(false);
   const [scheduledFor, setScheduledFor] = useState<string | null>(null);
   const [pickerOpenFor, setPickerOpenFor] = useState<string | null>(null);
@@ -295,8 +297,9 @@ export const ActNowSection = ({
             title="Run maintenance now?"
             description={`This queues maintenance for ${tableLabel} using the assigned engine preset.`}
             onConfirm={handleRun}
+            disabled={!runAccess.allowed || !effectivePresetId}
           >
-            <Button size="sm" variant="primary" disabled={!effectivePresetId}>
+            <Button size="sm" variant="primary" disabled={!runAccess.allowed || !effectivePresetId} title={runAccess.reason ?? undefined}>
               Act now
             </Button>
           </ConfirmAction>

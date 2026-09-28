@@ -31,6 +31,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { MetricTile } from "../components/ui/stat";
 import { useCommitEventStream } from "../hooks/useCommitEventStream";
 import { useAuth } from "../lib/auth";
+import { VIEWER_REASON } from "../lib/permissions";
+import { useWriteControl } from "../lib/useWriteControl";
 import { formatPercent, formatTime } from "../lib/format";
 
 const TIERING_HELP_CONTENT = (
@@ -121,7 +123,10 @@ const DescriptionList = ({
 );
 
 export function SmartMaintenance() {
-  const { api, token } = useAuth();
+  const { api, token, role } = useAuth();
+  const approveAccess = useWriteControl("approveLayout");
+  const executeAccess = useWriteControl("executeLayout");
+  const dismissAccess = useWriteControl("dismissLayout");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -304,12 +309,13 @@ export function SmartMaintenance() {
               </span>
             }
             onConfirm={() => approve.mutate(row.original)}
-            disabled={row.original.status === "applied" || row.original.status === "approved"}
+            disabled={!approveAccess.allowed || row.original.status === "applied" || row.original.status === "approved"}
           >
             <Button
               size="sm"
               variant="outline"
-              disabled={row.original.status === "applied" || row.original.status === "approved"}
+              disabled={!approveAccess.allowed || row.original.status === "applied" || row.original.status === "approved"}
+              title={approveAccess.reason ?? undefined}
               loading={approve.isPending}
             >
               Approve
@@ -326,9 +332,15 @@ export function SmartMaintenance() {
               </span>
             }
             onConfirm={() => execute.mutate(row.original)}
-            disabled={row.original.status !== "approved"}
+            disabled={!executeAccess.allowed || row.original.status !== "approved"}
           >
-            <Button size="sm" variant="primary" disabled={row.original.status !== "approved"} loading={execute.isPending}>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!executeAccess.allowed || row.original.status !== "approved"}
+              title={executeAccess.reason ?? undefined}
+              loading={execute.isPending}
+            >
               Execute
             </Button>
           </ConfirmAction>
@@ -341,12 +353,13 @@ export function SmartMaintenance() {
               </span>
             }
             onConfirm={() => dismiss.mutate(row.original)}
-            disabled={row.original.status === "rejected" || row.original.status === "applied"}
+            disabled={!dismissAccess.allowed || row.original.status === "rejected" || row.original.status === "applied"}
           >
             <Button
               size="sm"
               variant="danger"
-              disabled={row.original.status === "rejected" || row.original.status === "applied"}
+              disabled={!dismissAccess.allowed || row.original.status === "rejected" || row.original.status === "applied"}
+              title={dismissAccess.reason ?? undefined}
               loading={dismiss.isPending}
             >
               Dismiss
@@ -423,6 +436,7 @@ export function SmartMaintenance() {
 
   return (
     <div>
+      {role === "viewer" ? <p className="mb-3 text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
       <PageHeader
         title="Smart Maintenance"
         subtitle="Workload-aware tiers and layout recommendations from scan telemetry."

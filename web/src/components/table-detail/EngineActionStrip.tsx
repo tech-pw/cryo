@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { Select } from "../ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { formatEngineLabel } from "../../lib/engines";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { provenanceLabel } from "./helpers";
 
 interface EngineActionStripProps {
@@ -33,6 +34,9 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
     setPreviewOpen,
     manifestRewrite
   } = useTableDetailContext();
+  const runAccess = useWriteControl("runMaintenance");
+  const manifestAccess = useWriteControl("manifestRewrite");
+  const assignAccess = useWriteControl("assignPreset");
 
   const presetLoading = assign.isPending || presets.isLoading || compatiblePresets.isLoading || unassign.isPending;
 
@@ -45,7 +49,8 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
         allowClear
         placeholder="Assign preset"
         value={effectivePreset.data?.preset_id ?? undefined}
-        disabled={!row || presetLoading}
+        disabled={!row || presetLoading || !assignAccess.allowed}
+        title={assignAccess.reason ?? undefined}
         onChange={(presetId) => {
           if (presetId) assign.mutate(presetId);
           else unassign.mutate();
@@ -80,11 +85,13 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
             title="Run maintenance?"
             description="Queues a real maintenance job using the assigned preset and destination."
             onConfirm={() => run.mutate()}
+            disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id}
           >
             <Button
               variant="primary"
               size="sm"
-              disabled={!row || !effectivePreset.data?.preset_id}
+              disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id}
+              title={runAccess.reason ?? undefined}
               aria-label="Run maintenance"
             >
               <Zap className="size-3.5" />
@@ -92,7 +99,7 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
             </Button>
           </ConfirmAction>
         )}
-        <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} disabled={!row || !effectivePreset.data?.preset_id}>
+        <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id} title={runAccess.reason ?? undefined}>
           <LayoutDashboard className="size-3.5" />
           Preview
         </Button>
@@ -100,8 +107,15 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
           title="Rewrite manifests?"
           description="Queues manifest-only maintenance without data file compaction."
           onConfirm={() => manifestRewrite.mutate()}
+          disabled={!manifestAccess.allowed || !row}
         >
-          <Button variant="secondary" size="sm" loading={manifestRewrite.isPending} disabled={!row}>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={manifestRewrite.isPending}
+            disabled={!manifestAccess.allowed || !row}
+            title={manifestAccess.reason ?? undefined}
+          >
             Manifest
           </Button>
         </ConfirmAction>
