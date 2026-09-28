@@ -22,16 +22,20 @@ from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
+from cryo.api.routes_alerts import router as alerts_router
+from cryo.api.routes_audit import router as audit_router
 from cryo.api.routes_cost_attribution import router as cost_attribution_router
 from cryo.api.routes_dark_tables import router as dark_tables_router
-from cryo.api.routes_alerts import router as alerts_router
 from cryo.api.routes_dedup import router as dedup_router
 from cryo.api.routes_explorer_views import router as explorer_views_router
+from cryo.api.routes_impact import router as impact_router
 from cryo.api.routes_partition_access import router as partition_access_router
 from cryo.api.routes_property_recommendations import router as property_recommendations_router
 from cryo.api.routes_quality_constraints import router as quality_constraints_router
 from cryo.api.routes_smart_maintenance import router as smart_maintenance_router
+from cryo.api.routes_snapshots import router as snapshots_router
 from cryo.api.routes_sources import router as sources_router
+from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.config import Settings, get_settings
@@ -181,6 +185,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(quality_constraints_router)
     app.include_router(explorer_views_router)
     app.include_router(alerts_router)
+    app.include_router(audit_router)
+    app.include_router(impact_router)
+    app.include_router(snapshots_router)
+    app.include_router(table_maintenance_router)
     instrument_fastapi(app)
 
     # Observation Lakehouse (SANER 2026): long-term archive of every actuation. Wired at startup

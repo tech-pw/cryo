@@ -1,3 +1,4 @@
+import { GitBranch, Wrench } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { PlanPreview } from "../../components/PlanPreview";
@@ -41,6 +42,12 @@ const LineageTabPanel = lazy(() =>
 const ActivityTabPanel = lazy(() =>
   import("../../components/table-detail/ActivityTabPanel").then((m) => ({ default: m.ActivityTabPanel }))
 );
+const SnapshotsTabPanel = lazy(() =>
+  import("./SnapshotsTab").then((m) => ({ default: m.SnapshotsTab }))
+);
+const MaintenanceTabPanel = lazy(() =>
+  import("./MaintenanceTab").then((m) => ({ default: m.MaintenanceTab }))
+);
 
 const TabFallback = () => (
   <AsyncBoundary isLoading skeleton={null}>
@@ -56,6 +63,20 @@ const lazyPanel = (Panel: React.LazyExoticComponent<React.ComponentType>) => (
 
 const tabTriggerClass =
   "relative rounded-none px-4 py-2 after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-transparent after:content-[''] data-[state=active]:after:bg-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none";
+
+const SnapshotsTabLabel = () => (
+  <span>
+    <GitBranch className="mr-1 inline size-3.5" />
+    Snapshots
+  </span>
+);
+
+const MaintenanceTabLabel = () => (
+  <span>
+    <Wrench className="mr-1 inline size-3.5" />
+    Maintenance
+  </span>
+);
 
 export const TableDetailShell = () => {
   const ctx = useTableDetail();
@@ -76,8 +97,6 @@ export const TableDetailShell = () => {
     handleScanAction,
     silentLoss,
     repairSilentLoss,
-    activeTab,
-    handleTabChange,
     previewOpen,
     setPreviewOpen,
     settingsOpen,
@@ -108,6 +127,19 @@ export const TableDetailShell = () => {
       </div>
     );
   }
+
+  const requestedTab = ctx.searchParams.get("tab");
+  const activeTab =
+    requestedTab === "snapshots" || requestedTab === "maintenance" ? requestedTab : ctx.activeTab;
+  const handleTabChange = (tabKey: string) => {
+    if (tabKey === "snapshots" || tabKey === "maintenance") {
+      const next = new URLSearchParams(ctx.searchParams);
+      next.set("tab", tabKey);
+      ctx.setSearchParams(next, { replace: true });
+      return;
+    }
+    ctx.handleTabChange(tabKey);
+  };
 
   return (
     <TableDetailProvider value={ctx}>
@@ -185,6 +217,12 @@ export const TableDetailShell = () => {
               <TabsTrigger value="activity" className={tabTriggerClass}>
                 <ActivityTabLabel />
               </TabsTrigger>
+              <TabsTrigger value="snapshots" className={tabTriggerClass}>
+                <SnapshotsTabLabel />
+              </TabsTrigger>
+              <TabsTrigger value="maintenance" className={tabTriggerClass}>
+                <MaintenanceTabLabel />
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="td-tab-content mt-0">
               {lazyPanel(OverviewTabPanel)}
@@ -203,6 +241,12 @@ export const TableDetailShell = () => {
             </TabsContent>
             <TabsContent value="activity" className="td-tab-content mt-0">
               {lazyPanel(ActivityTabPanel)}
+            </TabsContent>
+            <TabsContent value="snapshots" className="td-tab-content mt-0">
+              {lazyPanel(SnapshotsTabPanel)}
+            </TabsContent>
+            <TabsContent value="maintenance" className="td-tab-content mt-0">
+              {lazyPanel(MaintenanceTabPanel)}
             </TabsContent>
           </Tabs>
         </div>

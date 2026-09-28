@@ -28,8 +28,9 @@ from __future__ import annotations
 import math
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -120,8 +121,38 @@ class RankedCandidate:
     capped: bool = False
 
 
+# rank_candidates' default. Nightly selection does not pass a different bar.
+DEFAULT_MIN_DELETE_FILE_PCT = 1.0
+# Statuses that start the nightly cooldown. load_candidates and the status endpoint share this.
+COOLDOWN_JOB_STATUSES: tuple[str, ...] = (
+    JobStatus.SUCCEEDED.value,
+    JobStatus.PARTIAL.value,
+)
+
+
+def has_compaction_or_delete_work(
+    *,
+    needs_compaction: bool,
+    delete_file_pct: float,
+    min_delete_file_pct: float,
+) -> bool:
+    return needs_compaction or delete_file_pct >= min_delete_file_pct
+
+
 def is_eligible(candidate: Candidate, *, min_delete_file_pct: float) -> bool:
-    return candidate.needs_compaction or candidate.delete_file_pct >= min_delete_file_pct
+    return has_compaction_or_delete_work(
+        needs_compaction=candidate.needs_compaction,
+        delete_file_pct=candidate.delete_file_pct,
+        min_delete_file_pct=min_delete_file_pct,
+    )
+
+
+def schema_in_maintenance_allow_list(
+    schema_name: str, maintenance_schema_names: Sequence[str] | None
+) -> bool:
+    """Empty or missing allow-list means every schema is in scope."""
+    allowed = maintenance_schema_names or []
+    return not allowed or schema_name in allowed
 
 
 def compute_cost_gbhr(candidate: Candidate, params: AutoCompParams) -> float:
@@ -152,7 +183,7 @@ def rank_candidates(
     *,
     limit: int,
     params: AutoCompParams | None = None,
-    min_delete_file_pct: float = 1.0,
+    min_delete_file_pct: float = DEFAULT_MIN_DELETE_FILE_PCT,
     require_eligible: bool = True,
 ) -> list[RankedCandidate]:
     """require_eligible=False is for an operator-picked table list: they asked for these
@@ -216,7 +247,7 @@ def autocomp_trace(
     limit: int,
     params: AutoCompParams,
     budget_gbhr: float | None,
-    min_delete_file_pct: float = 1.0,
+    min_delete_file_pct: float = DEFAULT_MIN_DELETE_FILE_PCT,
 ) -> dict[str, Any]:
     """What the paper-only ranking (heat_weight = 0) would have picked next to what ran."""
     paper_params = replace(params, heat_weight=0.0)
@@ -268,7 +299,7 @@ def load_candidates(
     recently_maintained = (
         select(MaintenanceJob.table_id)
         .where(
-            MaintenanceJob.status.in_([JobStatus.SUCCEEDED.value, JobStatus.PARTIAL.value]),
+            MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
             MaintenanceJob.finished_at >= now - timedelta(hours=cooldown_hours),
         )
         .distinct()
@@ -311,8 +342,7 @@ def load_candidates(
 
     candidates: list[Candidate] = []
     for row in session.execute(stmt).all():
-        allowed_schemas = row.maintenance_schema_names or []
-        if allowed_schemas and row.schema_name not in allowed_schemas:
+        if not schema_in_maintenance_allow_list(row.schema_name, row.maintenance_schema_names):
             continue
         candidates.append(
             Candidate(
@@ -336,3 +366,301 @@ def load_candidates(
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+class MaintenanceBlock(StrEnum):
+    INACTIVE = "inactive"
+    SOURCE_DISABLED = "source_disabled"
+    STATS_STALE = "stats_stale"
+    COOLDOWN = "cooldown"
+    SCAN_RETRY_BACKOFF = "scan_retry_backoff"
+    NO_SMALL_FILE_OR_DELETE_WORK = "no_small_file_or_delete_work"
+    LAST_SCAN_ERROR = "last_scan_error"
+    MAINTENANCE_RETRY_BACKOFF = "maintenance_retry_backoff"
+    SCHEMA_NOT_ALLOWED = "schema_not_allowed"
+
+
+class MaintenancePredicate(StrEnum):
+    LOAD_CANDIDATES = "load_candidates"
+    IS_ELIGIBLE = "is_eligible"
+    SCAN_RETRY_DUE_AT = "scan_retry_due_at"
+
+
+@dataclass(frozen=True)
+class MaintenanceEligibilityFacts:
+    is_active: bool
+    source_enabled: bool
+    source_present: bool
+    last_scan_error_kind: str | None
+    maintenance_retry_after: datetime | None
+    stats_present: bool
+    scan_at: datetime | None
+    schema_name: str
+    maintenance_schema_names: Sequence[str] | None
+    needs_compaction: bool
+    delete_file_pct: float
+    last_successful_finished_at: datetime | None
+    consecutive_scan_failures: int
+    last_scan_error_at: datetime | None
+    # Value from scan_retry_due_at. This helper does not reimplement the ladder.
+    scan_retry_due_at: datetime | None
+
+
+@dataclass(frozen=True)
+class BlockingReason:
+    code: MaintenanceBlock
+    summary: str
+    predicate: MaintenancePredicate
+    blocks_nightly_selection: bool
+    until: datetime | None = None
+    values: dict[str, Any] = field(default_factory=dict)
+
+
+def maintenance_blocking_reasons(
+    facts: MaintenanceEligibilityFacts,
+    *,
+    now: datetime,
+    cooldown_hours: float,
+    max_stats_age_days: float,
+    min_delete_file_pct: float = DEFAULT_MIN_DELETE_FILE_PCT,
+) -> list[BlockingReason]:
+    """Per-table gates mirrored from nightly selection, plus scan-retry backoff.
+
+    ``blocks_nightly_selection`` is true only for predicates ``load_candidates`` applies
+    (and ``is_eligible``, which nightly ``rank_candidates`` applies when ``table_ids`` is
+    omitted). ``scan_retry_due_at`` is reported but does not fail selection by itself.
+    ``fit_budget`` is not evaluated here.
+    """
+    current = _as_utc(now)
+    reasons: list[BlockingReason] = []
+
+    if not facts.is_active:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.INACTIVE,
+                "Table is inactive (is_active=false)",
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={"is_active": False},
+            )
+        )
+
+    if not facts.source_present:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.SOURCE_DISABLED,
+                "Source row is missing (selection inner-joins an enabled source)",
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={"source_present": False, "source_enabled": False},
+            )
+        )
+    elif not facts.source_enabled:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.SOURCE_DISABLED,
+                "Source is disabled (enabled=false)",
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={"source_present": True, "source_enabled": False},
+            )
+        )
+
+    stats_cutoff = current - timedelta(days=max_stats_age_days)
+    if not facts.stats_present or facts.scan_at is None:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.STATS_STALE,
+                (f"No stored stats (selection requires a scan within {max_stats_age_days} days)"),
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={
+                    "max_stats_age_days": max_stats_age_days,
+                    "scan_at": None,
+                    "cutoff": stats_cutoff.isoformat(),
+                    "stats_present": False,
+                },
+            )
+        )
+    else:
+        scanned = _as_utc(facts.scan_at)
+        if scanned < stats_cutoff:
+            reasons.append(
+                _reason(
+                    MaintenanceBlock.STATS_STALE,
+                    (
+                        f"Stats are older than {max_stats_age_days} days "
+                        f"(scan_at={scanned.isoformat()}, cutoff={stats_cutoff.isoformat()})"
+                    ),
+                    MaintenancePredicate.LOAD_CANDIDATES,
+                    True,
+                    values={
+                        "max_stats_age_days": max_stats_age_days,
+                        "scan_at": scanned.isoformat(),
+                        "cutoff": stats_cutoff.isoformat(),
+                        "stats_present": True,
+                    },
+                )
+            )
+
+    finished = facts.last_successful_finished_at
+    if finished is not None:
+        finished_at = _as_utc(finished)
+        cooldown_cutoff = current - timedelta(hours=cooldown_hours)
+        if finished_at >= cooldown_cutoff:
+            until = finished_at + timedelta(hours=cooldown_hours)
+            reasons.append(
+                _reason(
+                    MaintenanceBlock.COOLDOWN,
+                    (
+                        f"Cooldown until {until.isoformat()} "
+                        f"(last succeeded or partial finish {finished_at.isoformat()}, "
+                        f"cooldown_hours={cooldown_hours})"
+                    ),
+                    MaintenancePredicate.LOAD_CANDIDATES,
+                    True,
+                    until=until,
+                    values={
+                        "cooldown_hours": cooldown_hours,
+                        "finished_at": finished_at.isoformat(),
+                        "until": until.isoformat(),
+                        "job_statuses": list(COOLDOWN_JOB_STATUSES),
+                        "scope": "nightly",
+                    },
+                )
+            )
+
+    due = facts.scan_retry_due_at
+    if due is not None and current < _as_utc(due):
+        until = _as_utc(due)
+        last_error_at = (
+            _as_utc(facts.last_scan_error_at).isoformat() if facts.last_scan_error_at else None
+        )
+        reasons.append(
+            _reason(
+                MaintenanceBlock.SCAN_RETRY_BACKOFF,
+                (
+                    f"Scan retry backoff until {until.isoformat()} "
+                    f"(consecutive_scan_failures={facts.consecutive_scan_failures}, "
+                    f"last_scan_error_at={last_error_at})"
+                ),
+                MaintenancePredicate.SCAN_RETRY_DUE_AT,
+                False,
+                until=until,
+                values={
+                    "until": until.isoformat(),
+                    "consecutive_scan_failures": facts.consecutive_scan_failures,
+                    "last_scan_error_at": last_error_at,
+                },
+            )
+        )
+
+    if (
+        facts.stats_present
+        and facts.scan_at is not None
+        and not has_compaction_or_delete_work(
+            needs_compaction=facts.needs_compaction,
+            delete_file_pct=facts.delete_file_pct,
+            min_delete_file_pct=min_delete_file_pct,
+        )
+    ):
+        reasons.append(
+            _reason(
+                MaintenanceBlock.NO_SMALL_FILE_OR_DELETE_WORK,
+                (
+                    "No small-file or delete work "
+                    f"(needs_compaction={str(facts.needs_compaction).lower()}, "
+                    f"delete_file_pct={facts.delete_file_pct}, "
+                    f"min_delete_file_pct={min_delete_file_pct})"
+                ),
+                MaintenancePredicate.IS_ELIGIBLE,
+                True,
+                values={
+                    "needs_compaction": facts.needs_compaction,
+                    "delete_file_pct": facts.delete_file_pct,
+                    "min_delete_file_pct": min_delete_file_pct,
+                },
+            )
+        )
+
+    if facts.last_scan_error_kind is not None:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.LAST_SCAN_ERROR,
+                (
+                    "Last scan could not read the table "
+                    f"(last_scan_error_kind={facts.last_scan_error_kind})"
+                ),
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={"last_scan_error_kind": facts.last_scan_error_kind},
+            )
+        )
+
+    retry_after = facts.maintenance_retry_after
+    if retry_after is not None and _as_utc(retry_after) > current:
+        until = _as_utc(retry_after)
+        reasons.append(
+            _reason(
+                MaintenanceBlock.MAINTENANCE_RETRY_BACKOFF,
+                (
+                    f"Maintenance retry backoff until {until.isoformat()} "
+                    f"(maintenance_retry_after={until.isoformat()})"
+                ),
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                until=until,
+                values={"maintenance_retry_after": until.isoformat()},
+            )
+        )
+
+    if facts.source_present and not schema_in_maintenance_allow_list(
+        facts.schema_name, facts.maintenance_schema_names
+    ):
+        allowed = list(facts.maintenance_schema_names or [])
+        reasons.append(
+            _reason(
+                MaintenanceBlock.SCHEMA_NOT_ALLOWED,
+                (
+                    f"Schema {facts.schema_name} is not in the source maintenance "
+                    f"allow-list ({allowed})"
+                ),
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
+                values={
+                    "schema_name": facts.schema_name,
+                    "maintenance_schema_names": allowed,
+                },
+            )
+        )
+
+    return reasons
+
+
+def nightly_selection_eligible(reasons: Sequence[BlockingReason]) -> bool:
+    return not any(reason.blocks_nightly_selection for reason in reasons)
+
+
+def _reason(
+    code: MaintenanceBlock,
+    summary: str,
+    predicate: MaintenancePredicate,
+    blocks_nightly_selection: bool,
+    *,
+    until: datetime | None = None,
+    values: dict[str, Any] | None = None,
+) -> BlockingReason:
+    return BlockingReason(
+        code=code,
+        summary=summary,
+        predicate=predicate,
+        blocks_nightly_selection=blocks_nightly_selection,
+        until=until,
+        values={} if values is None else values,
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
