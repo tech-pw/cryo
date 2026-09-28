@@ -26,6 +26,7 @@ from cryo.reporting.cost_signals import (
     compute_cost_signal,
     correlate_with_maintenance,
 )
+from cryo.reporting.impact_history import record_daily_impact
 from cryo.reporting.impact_signals import (
     ImpactSignal,
     compute_impact_signal,
@@ -90,6 +91,33 @@ class DailyReportData:
     action_items: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _todays_infra_cost_usd() -> float | None:
+    """Cryo's own K8s namespace spend (used+unused), same source and CUR-lag handling as
+    health_check.py's namespace_unused_cost check -- best-effort, None (not 0) on any failure
+    so a Grafana blip never gets recorded as "infra cost was free that day"."""
+    import os
+
+    token = os.environ.get("CRYO_GRAFANA_TOKEN")
+    if not token:
+        return None
+    try:
+        from cryo.config import get_settings
+        from cryo.reporting.cost_ceiling import fetch_latest_billed_namespace_cost
+
+        settings = get_settings()
+        check = fetch_latest_billed_namespace_cost(
+            grafana_url=settings.grafana_base_url,
+            grafana_token=token,
+            cluster_name=settings.cost_ceiling_cluster_name,
+            namespace=settings.cost_ceiling_namespace,
+            ceiling_usd=settings.cost_ceiling_daily_usd,
+        )
+        return check.total_cost_usd if check is not None else None
+    except Exception:  # noqa: BLE001 - infra-cost lookup is best-effort, never fatal
+        logger.warning("Could not fetch infra cost for fleet_impact_history", exc_info=True)
+        return None
+
+
 async def generate_daily_report(
     session: Session,
     slack_client: SlackClient | None = None,
@@ -110,6 +138,14 @@ async def generate_daily_report(
     logger.info("Generating daily fleet-health report")
 
     report_data = _collect_report_data(session, include_diagnostics=include_diagnostics)
+    try:
+        record_daily_impact(
+            session, report_data=report_data, infra_cost_usd=_todays_infra_cost_usd()
+        )
+        session.commit()
+    except Exception:  # noqa: BLE001 - history persistence must never break the daily report
+        logger.exception("Failed to persist fleet_impact_history row")
+        session.rollback()
 
     bottom_line = None
     if use_ai_summary:

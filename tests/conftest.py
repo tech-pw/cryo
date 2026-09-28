@@ -22,6 +22,7 @@ from cryo.db.models import (
     AWSInventoryObject,
     DarkTableCandidate,
     Destination,
+    FleetImpactHistory,
     LLMObservation,
     MaintenanceJob,
     MaintenanceRun,
@@ -82,6 +83,7 @@ _AUTOINCREMENT_ID_MODELS = (
     QueryLog,
     QueryPattern,
     QueryCostAttributionDaily,
+    FleetImpactHistory,
 )
 _next_autoincrement_id = itertools.count(1)
 

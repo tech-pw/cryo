@@ -528,6 +528,61 @@ class TableStatsHistory(Base):
     table: Mapped[Table] = relationship(back_populates="history")
 
 
+class FleetImpactHistory(Base):
+    """One row per calendar day: the fleet-wide numbers Cryo actually produced that day,
+    written once (idempotent upsert on ``report_date``) from the same data the daily report
+    already computes -- see cryo.reporting.impact_history.record_daily_impact.
+
+    Exists so "how much did Cryo reclaim/cost/fix" is a durable, queryable trend instead of
+    something re-derived by hand from AuditLog each time someone asks -- every number in this
+    session's management-report work (20.1 TiB reclaim, tables touched, measurement coverage)
+    came from one-off queries against raw tables with no persisted record of what was reported
+    on any given day. bytes_freed/measurement_state carry the same "unmeasured is not zero"
+    discipline as ImpactSignal itself (see impact_signals.py's own docstring) -- a NULL/
+    "unmeasured" day must never be summed as if it were a real zero.
+    """
+
+    __tablename__ = "fleet_impact_history"
+    __table_args__ = (UniqueConstraint("report_date", name="uq_fleet_impact_history_report_date"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # The calendar day this row reports on (compute_impact_signal's "yesterday", i.e. the day
+    # before the report ran) -- not the timestamp the report itself ran at.
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # Reclaim -- mirrors ImpactSignal.today / DailyImpact exactly.
+    bytes_freed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    measurement_state: Mapped[str] = mapped_column(Text, nullable=False)
+    actions_succeeded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tables_touched: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actions_with_bytes_evidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actions_without_bytes_evidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    optimize_files_in: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    optimize_files_out: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    # Fleet snapshot at report time (not the reporting day specifically -- these are current-
+    # state gauges, same source as the daily digest's own cost/health section).
+    active_tables: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tables_grade_d_or_f: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_size_tb: Mapped[float | None] = mapped_column(Float)
+    total_monthly_cost_usd: Mapped[float | None] = mapped_column(Float)
+    projected_savings_usd_month: Mapped[float | None] = mapped_column(Float)
+
+    # Reliability, same window/status semantics as MaintenanceJob.status.
+    jobs_succeeded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    jobs_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Cryo's own infra cost (K8s namespace, used+unused) for the reporting day, when available
+    # -- same source as cost_ceiling.py's circuit breaker. NULL, not 0, when the Grafana/CUR
+    # lookup wasn't available that day.
+    infra_cost_usd: Mapped[float | None] = mapped_column(Float)
+
+    raw: Mapped[JsonDict | None] = mapped_column(JSONB)
+
+
 class ProtectedSnapshot(Base):
     __tablename__ = "protected_snapshots"
     __table_args__ = (Index("ix_protected_snapshots_table", "table_id", "snapshot_id"),)
@@ -2559,6 +2614,7 @@ __all__ = [
     "ColumnStatsSketch",
     "DeletionTracking",
     "Destination",
+    "FleetImpactHistory",
     "GovernorBanditState",
     "IncidentCohort",
     "IncidentCohortMember",
