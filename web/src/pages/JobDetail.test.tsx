@@ -1,9 +1,18 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ArtifactBlock } from "./JobDetail";
+import { ArtifactBlock, formatJobFileCount } from "./JobDetail";
 
 const writeText = vi.fn();
+
+describe("JobDetail file counts", () => {
+  it("does not turn a missing file count into zero", () => {
+    expect(formatJobFileCount(null)).toBe("Not measured");
+    expect(formatJobFileCount(undefined)).toBe("Not measured");
+    expect(formatJobFileCount(0)).toBe("0");
+    expect(formatJobFileCount(4)).toBe("4");
+  });
+});
 
 describe("JobDetail ArtifactBlock", () => {
   beforeEach(() => {

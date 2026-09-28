@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   assignTables,
-  deriveCostDashboard,
   getCostDashboard,
   getCostModelEvaluate,
   getSchemaCost,
@@ -44,17 +43,27 @@ import type { Predicate } from "../../lib/predicate";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
 
 const OPPORTUNITY_FILTER: Predicate = savingsOpportunityFilter;
+const COST_UNAVAILABLE = "Cost data unavailable";
+const NOT_MEASURED = "Not measured";
+
+const displayCost = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? COST_UNAVAILABLE : formatCurrency(value);
+
+const displayBytes = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? NOT_MEASURED : formatBytesGb(value);
 
 const computeCostDelta30d = (trend: CostTrendPoint[] | undefined) => {
   if (!trend || trend.length < 2) return undefined;
   const sorted = [...trend].sort((a, b) => a.scan_at.localeCompare(b.scan_at));
   const latest = sorted[sorted.length - 1];
-  const latestCost = latest.current_monthly_cost_usd ?? 0;
+  const latestCost = latest.current_monthly_cost_usd;
+  if (latestCost == null || Number.isNaN(latestCost)) return undefined;
   const latestDate = new Date(latest.scan_at);
   const cutoff = new Date(latestDate);
   cutoff.setDate(cutoff.getDate() - 30);
   const baseline = sorted.find((point) => new Date(point.scan_at) <= cutoff) ?? sorted[0];
-  const baselineCost = baseline.current_monthly_cost_usd ?? latestCost;
+  const baselineCost = baseline.current_monthly_cost_usd;
+  if (baselineCost == null || Number.isNaN(baselineCost)) return undefined;
   const diff = latestCost - baselineCost;
   if (diff === 0) return { value: "No change vs 30d ago", tone: "neutral" as const };
   return {
@@ -80,7 +89,7 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
     id: "size",
     header: "Size",
     cell: ({ row }) =>
-      row.original.stats?.total_size_gb != null ? formatBytesGb(row.original.stats.total_size_gb) : "—"
+      row.original.stats?.total_size_gb != null ? formatBytesGb(row.original.stats.total_size_gb) : "Not measured"
   },
   {
     id: "reclaim",
@@ -88,12 +97,12 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
     cell: ({ row }) =>
       row.original.stats?.reclaimable_bytes != null
         ? formatBytesGb(row.original.stats.reclaimable_bytes)
-        : "—"
+        : "Not measured"
   },
   {
     id: "scan_at",
     header: "Last scan",
-    cell: ({ row }) => (row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "—")
+    cell: ({ row }) => (row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "Not scanned")
   }
 ];
 
@@ -113,11 +122,6 @@ export const CostOverviewTab = () => {
     queryFn: () => getCostDashboard(api),
     retry: 1
   });
-  const tables = useQuery({
-    queryKey: ["cost-fallback-tables", token],
-    queryFn: () => listTables(api, { limit: 500, offset: 0 }),
-    enabled: cost.isError
-  });
   const matchingTables = useQuery({
     queryKey: ["cost-matching-tables", token],
     queryFn: () => listTables(api, { predicate: OPPORTUNITY_FILTER, limit: 1, offset: 0 }),
@@ -136,29 +140,26 @@ export const CostOverviewTab = () => {
     retry: false
   });
 
-  const data: CostDashboard = cost.data ?? deriveCostDashboard(tables.data?.items ?? []);
-  const usingFallback = cost.isError;
-  const hasRealizedTrend = (data.trend ?? []).some((point) => (point.realized_usd_month ?? 0) > 0);
+  const data: CostDashboard | undefined = cost.data;
+  const hasRealizedTrend = (data?.trend ?? []).some((point) => (point.realized_usd_month ?? 0) > 0);
+  const precisionCoverage = data?.totals?.precision_coverage;
   const precisionTotal = useMemo(
-    () => Object.values(data.totals.precision_coverage ?? {}).reduce((sum, count) => sum + count, 0),
-    [data.totals.precision_coverage]
+    () => Object.values(precisionCoverage ?? {}).reduce((sum, count) => sum + count, 0),
+    [precisionCoverage]
   );
   const metadataCoverage =
     precisionTotal > 0
       ? formatNumber(
-          ((data.totals.precision_coverage?.metadata ?? 0) +
-            (data.totals.precision_coverage?.storage_truth ?? 0)) /
-            precisionTotal *
-            100
+          ((precisionCoverage?.metadata ?? 0) + (precisionCoverage?.storage_truth ?? 0)) / precisionTotal * 100
         )
       : "-";
   const dominantPrecision =
-    data.totals.precision_coverage?.storage_truth && data.totals.precision_coverage.storage_truth > 0
+    precisionCoverage?.storage_truth && precisionCoverage.storage_truth > 0
       ? "storage_truth"
-      : data.totals.precision_coverage?.metadata && data.totals.precision_coverage.metadata > 0
+      : precisionCoverage?.metadata && precisionCoverage.metadata > 0
         ? "metadata"
         : "heuristic";
-  const costDelta30d = computeCostDelta30d(data.trend);
+  const costDelta30d = computeCostDelta30d(data?.trend);
 
   const selectedRowKeys = Object.keys(rowSelection) as UUID[];
   const selection: BulkSelection | null =
@@ -167,14 +168,7 @@ export const CostOverviewTab = () => {
       ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
       : null);
 
-  const opportunityRows = useMemo(
-    () =>
-      (tables.data?.items ?? [])
-        .slice()
-        .sort((a, b) => (b.stats?.reclaimable_bytes ?? 0) - (a.stats?.reclaimable_bytes ?? 0))
-        .slice(0, 50),
-    [tables.data?.items]
-  );
+  const opportunityRows = useMemo(() => [] as TableRead[], []);
 
   const assign = useMutation({
     mutationFn: (presetId: UUID) => {
@@ -267,15 +261,20 @@ export const CostOverviewTab = () => {
     setBulkSelection(null);
   };
 
-  const isLoading = cost.isLoading || tables.isLoading;
+  const isLoading = cost.isLoading;
 
   return (
     <>
-      {usingFallback ? (
+      {cost.isError ? (
         <Alert
           className="page-alert mb-3"
-          variant="info"
-          title="Cost dashboard failed; showing a fallback view from /tables."
+          variant="error"
+          title="Dashboard unavailable"
+          description={
+            <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => void cost.refetch()}>
+              Retry
+            </Button>
+          }
         />
       ) : null}
       {isLoading ? (
@@ -287,7 +286,7 @@ export const CostOverviewTab = () => {
             ))}
           </MetricGrid>
         </div>
-      ) : (
+      ) : data ? (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <CostPrecisionBadge
@@ -309,23 +308,23 @@ export const CostOverviewTab = () => {
           <MetricGrid columns={4} className="mb-3">
             <MetricTile
               label="Total monthly S3 cost"
-              value={formatCurrency(data.totals.current_monthly_cost_usd)}
+              value={displayCost(data.totals.current_monthly_cost_usd)}
               emphasis
               delta={costDelta30d}
             />
             <MetricTile
               label="After maintenance"
-              value={formatCurrency(data.totals.projected_monthly_cost_usd)}
+              value={displayCost(data.totals.projected_monthly_cost_usd)}
               hint={
                 <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
                   ⓘ
                 </span>
               }
             />
-            <MetricTile label="Monthly savings" value={formatCurrency(data.totals.projected_savings_usd_month)} />
+            <MetricTile label="Monthly savings" value={displayCost(data.totals.projected_savings_usd_month)} />
             <MetricTile
               label="Saved to date"
-              value={formatCurrency(data.totals.total_realized_savings_usd ?? 0)}
+              value={displayCost(data.totals.total_realized_savings_usd)}
               hint={
                 <span title="Cumulative savings from completed maintenance runs." className="cursor-help">
                   ⓘ
@@ -336,7 +335,7 @@ export const CostOverviewTab = () => {
           <MetricGrid columns={2} className="mb-4">
             <MetricTile
               label="Reclaimable storage"
-              value={formatBytesGb(data.totals.reclaimable_bytes)}
+              value={displayBytes(data.totals.reclaimable_bytes)}
               hint={
                 <span title="Disk space maintenance would free up." className="cursor-help">
                   ⓘ
@@ -481,13 +480,13 @@ export const CostOverviewTab = () => {
                           key: "projected",
                           header: "Projected savings",
                           align: "right",
-                          render: (row) => formatCurrency(row.projected_savings_usd_month ?? 0)
+                          render: (row) => displayCost(row.projected_savings_usd_month)
                         },
                         {
                           key: "realized",
                           header: "Realized savings",
                           align: "right",
-                          render: (row) => formatCurrency(row.realized_usd_month ?? 0)
+                          render: (row) => displayCost(row.realized_usd_month)
                         }
                       ]}
                       rows={data.trend ?? []}
@@ -540,13 +539,13 @@ export const CostOverviewTab = () => {
                           key: "cost",
                           header: "Monthly cost",
                           align: "right",
-                          render: (row) => formatCurrency(row.cost_usd)
+                          render: (row) => displayCost(row.cost_usd)
                         },
                         {
                           key: "size",
                           header: "Size",
                           align: "right",
-                          render: (row) => formatBytesGb(row.size_gb)
+                          render: (row) => displayBytes(row.size_gb)
                         }
                       ]}
                       rows={schemaCost.data ?? []}
@@ -569,7 +568,9 @@ export const CostOverviewTab = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Badge>{matchingTables.data?.total ?? 0} candidates</Badge>
+                    <Badge>
+                      {matchingTables.data?.total == null ? "Not measured" : `${matchingTables.data.total} candidates`}
+                    </Badge>
                   </TooltipTrigger>
                   <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
                 </Tooltip>
@@ -614,7 +615,7 @@ export const CostOverviewTab = () => {
               if (!selection) throw new Error("No tables selected");
               setPreviewTables(
                 selection.mode === "filter"
-                  ? (tables.data?.items ?? []).slice(0, 25)
+                  ? []
                   : (
                       await listTables(api, {
                         predicate: { all: { ids: selection.ids } } as unknown as Predicate,
@@ -628,7 +629,7 @@ export const CostOverviewTab = () => {
 
           <PlanPreview open={previewOpen} onClose={() => setPreviewOpen(false)} tables={previewTables} />
         </>
-      )}
+      ) : null}
     </>
   );
 };

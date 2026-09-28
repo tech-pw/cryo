@@ -48,6 +48,34 @@ import { buildDiagnosisVerdict } from "../../components/TableDiagnosisPanel";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
 import { formatPartitionColumnLabel } from "../../components/table-detail/helpers";
+
+const finiteOrNull = (value: number | null | undefined): number | null =>
+  value == null || !Number.isFinite(value) ? null : value;
+
+export const firstFinite = (...values: Array<number | null | undefined>): number | null => {
+  for (const value of values) {
+    const finite = finiteOrNull(value);
+    if (finite != null) return finite;
+  }
+  return null;
+};
+
+export const tableSavingsDisplay = ({
+  hasStats,
+  hasCostView,
+  projectedSavingsUsd,
+  showLatencyBenefit
+}: {
+  hasStats: boolean;
+  hasCostView: boolean;
+  projectedSavingsUsd: number | null;
+  showLatencyBenefit: boolean;
+}): string => {
+  if (!hasStats && !hasCostView) return "Not scanned";
+  if (projectedSavingsUsd == null) return "Cost data unavailable";
+  if (showLatencyBenefit) return "Latency benefit";
+  return formatCurrency(projectedSavingsUsd);
+};
 import {
   formatEngineLabel,
   hasSqlFallbackConfigured,
@@ -486,39 +514,54 @@ export function useTableDetail() {
   );
   const costView = tableCost.data;
   const costByOperation = costView?.by_operation ?? [];
-  const currentCostUsd = costView?.current_monthly_cost_usd ?? stats?.estimated_monthly_s3_cost_usd ?? 0;
-  const projectedCostUsd =
-    costView?.projected_monthly_cost_usd ??
-    stats?.projected_monthly_s3_cost_usd ??
-    stats?.estimated_monthly_s3_cost_usd ??
-    0;
-  const projectedSavingsRaw =
-    costView?.projected_savings_usd_month ?? stats?.projected_savings_usd_month;
-  const hasProjectedSavings = typeof projectedSavingsRaw === "number";
+  const currentCostUsd = firstFinite(
+    costView?.current_monthly_cost_usd,
+    stats?.estimated_monthly_s3_cost_usd
+  );
+  const projectedCostUsd = firstFinite(
+    costView?.projected_monthly_cost_usd,
+    stats?.projected_monthly_s3_cost_usd
+  );
+  const projectedSavingsRaw = firstFinite(
+    costView?.projected_savings_usd_month,
+    stats?.projected_savings_usd_month
+  );
+  const hasProjectedSavings = projectedSavingsRaw != null;
   const savingsUsd = projectedSavingsRaw ?? 0;
   const showLatencyBenefit =
     hasProjectedSavings &&
-    savingsUsd === 0 &&
+    projectedSavingsRaw === 0 &&
     (Boolean(stats?.needs_compaction) || triggered.length > 0);
-  const savingsDisplay = !hasProjectedSavings
-    ? "Not estimated"
-    : showLatencyBenefit
-      ? "Latency benefit"
-      : formatCurrency(savingsUsd);
-  const reclaimableBytes = costView?.reclaimable_bytes ?? stats?.reclaimable_bytes ?? 0;
-  const storageBytes =
-    (costView?.live_bytes ?? 0) +
-    (costView?.dead_bytes ?? 0) +
-    (costView?.metadata_bytes ?? 0) +
-    (costView?.orphan_bytes ?? 0);
+  const savingsDisplay = tableSavingsDisplay({
+    hasStats: Boolean(stats),
+    hasCostView: Boolean(costView),
+    projectedSavingsUsd: projectedSavingsRaw,
+    showLatencyBenefit
+  });
+  const reclaimableBytes = firstFinite(costView?.reclaimable_bytes, stats?.reclaimable_bytes) ?? 0;
+  const storageParts = [
+    costView?.live_bytes,
+    costView?.dead_bytes,
+    costView?.metadata_bytes,
+    costView?.orphan_bytes
+  ];
+  const storageComplete = storageParts.every((value) => value != null && Number.isFinite(value));
+  const storageBytes = storageComplete
+    ? storageParts.reduce<number>((sum, value) => sum + Number(value), 0)
+    : null;
   const partitionColLabel = formatPartitionColumnLabel(stats?.partition_col);
   const hideSinglePartitionKpi =
     partitionColLabel === "Unpartitioned" && (stats?.total_partitions ?? 0) <= 1;
   const complianceNotFound = isNotFoundError(compliance.error);
-  const score = stats?.overall_score ?? 0;
+  const score = stats?.overall_score == null || Number.isNaN(stats.overall_score) ? 0 : stats.overall_score;
   const scoreFactors = useMemo(
-    () => buildHealthScoreFactors(stats, costView?.orphan_bytes ?? 0, storageBytes),
-    [stats, costView?.orphan_bytes, storageBytes]
+    () =>
+      buildHealthScoreFactors(
+        stats,
+        costView ? costView.orphan_bytes : null,
+        storageComplete ? storageBytes : null
+      ),
+    [stats, costView, storageComplete, storageBytes]
   );
 
   // Rendered as-is from cryo/scanner/health.py::compute_health_score, persisted into
