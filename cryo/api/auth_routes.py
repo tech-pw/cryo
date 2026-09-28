@@ -50,16 +50,22 @@ class OidcPublicConfig(BaseModel):
 class AuthConfigResponse(BaseModel):
     mode: Literal["dev", "oidc"]
     dev_token_enabled: bool
+    dev_token_enabled_in_prod: bool
     oidc: OidcPublicConfig | None = None
 
 
 class OidcExchangeRequest(BaseModel):
     code: str
     redirect_uri: str
+    code_verifier: str | None = None
 
 
 def _dev_token_enabled(settings: Settings) -> bool:
     return settings.environment != "prod" or settings.allow_dev_token_in_prod
+
+
+def _dev_token_enabled_in_prod(settings: Settings) -> bool:
+    return settings.environment == "prod" and settings.allow_dev_token_in_prod
 
 
 @router.get("/config", response_model=AuthConfigResponse)
@@ -67,6 +73,7 @@ def auth_config() -> AuthConfigResponse:
     """Expose auth mode for the UI (dev JWT vs production OIDC)."""
     settings = get_settings()
     dev_token_enabled = _dev_token_enabled(settings)
+    dev_token_enabled_in_prod = _dev_token_enabled_in_prod(settings)
     if oidc_enabled():
         endpoints = discover_oidc_endpoints()
         if endpoints is None:
@@ -78,6 +85,7 @@ def auth_config() -> AuthConfigResponse:
         return AuthConfigResponse(
             mode="oidc",
             dev_token_enabled=dev_token_enabled,
+            dev_token_enabled_in_prod=dev_token_enabled_in_prod,
             oidc=OidcPublicConfig(
                 client_id=settings.oidc_client_id or "",
                 authorization_endpoint=endpoints["authorization_endpoint"],
@@ -85,7 +93,12 @@ def auth_config() -> AuthConfigResponse:
                 redirect_uri=redirect_uri,
             ),
         )
-    return AuthConfigResponse(mode="dev", dev_token_enabled=dev_token_enabled, oidc=None)
+    return AuthConfigResponse(
+        mode="dev",
+        dev_token_enabled=dev_token_enabled,
+        dev_token_enabled_in_prod=dev_token_enabled_in_prod,
+        oidc=None,
+    )
 
 
 @router.post("/oidc/exchange", response_model=TokenResponse)
@@ -96,6 +109,7 @@ def exchange_oidc_token(payload: OidcExchangeRequest) -> TokenResponse:
     token_payload = exchange_authorization_code(
         code=payload.code,
         redirect_uri=payload.redirect_uri,
+        code_verifier=payload.code_verifier,
     )
     if token_payload is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code exchange failed")

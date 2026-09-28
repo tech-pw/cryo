@@ -65,3 +65,33 @@ def test_auth_config_reports_dev_token_enabled_matches_actual_gate() -> None:
         mock_settings.return_value = _settings(environment="prod", allow_dev_token_in_prod=True)
         opted_in_response = _client().get("/api/v1/auth/config")
     assert opted_in_response.json()["dev_token_enabled"] is True
+
+
+def test_auth_config_dev_token_enabled_in_prod_only_when_prod_and_opted_in() -> None:
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(environment="prod")
+        prod_response = _client().get("/api/v1/auth/config")
+    assert prod_response.status_code == 200
+    assert prod_response.json()["dev_token_enabled"] is False
+    assert prod_response.json()["dev_token_enabled_in_prod"] is False
+
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(environment="prod", allow_dev_token_in_prod=True)
+        opted_in_response = _client().get("/api/v1/auth/config")
+    assert opted_in_response.status_code == 200
+    assert opted_in_response.json()["dev_token_enabled"] is True
+    assert opted_in_response.json()["dev_token_enabled_in_prod"] is True
+
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(environment="dev", allow_dev_token_in_prod=True)
+        dev_response = _client().get("/api/v1/auth/config")
+    assert dev_response.status_code == 200
+    assert dev_response.json()["dev_token_enabled"] is True
+    assert dev_response.json()["dev_token_enabled_in_prod"] is False
+
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(environment="staging", allow_dev_token_in_prod=True)
+        staging_response = _client().get("/api/v1/auth/config")
+    assert staging_response.status_code == 200
+    assert staging_response.json()["dev_token_enabled"] is True
+    assert staging_response.json()["dev_token_enabled_in_prod"] is False

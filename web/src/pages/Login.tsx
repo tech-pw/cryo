@@ -14,7 +14,8 @@ const SIGN_IN_RECOVERY_HINT =
   "Check your username and role, then try again. Contact your administrator if this continues.";
 
 export const Login = () => {
-  const { signIn, startOidcSignIn, loading, error, authMode, devTokenEnabled } = useAuth();
+  const { signIn, startOidcSignIn, loading, error, authMode, devTokenEnabled, devTokenEnabledInProd } =
+    useAuth();
   const [subject, setSubject] = useState("operator");
   const [role, setRole] = useState<RoleToken>("operator");
   const errorRef = useRef<HTMLDivElement | null>(null);
@@ -34,8 +35,9 @@ export const Login = () => {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <p className="text-sm text-muted-foreground">
-              Production sign-in uses your organization identity provider. Dev token issuance is
-              disabled.
+              {devTokenEnabledInProd
+                ? "Production sign-in uses your organization identity provider. Development sign-in is enabled on this production install."
+                : "Production sign-in uses your organization identity provider. Dev token issuance is disabled."}
             </p>
             {error ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
@@ -77,8 +79,9 @@ export const Login = () => {
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <p className="text-sm text-muted-foreground">
-              Cryo uses signed JWTs from the API. In dev, choose a role and sign in; production
-              deployments disable the token endpoint and integrate your identity provider.
+              {devTokenEnabledInProd
+                ? "Development sign-in is enabled on this production install. Choose a role and sign in."
+                : "Cryo uses signed JWTs from the API. In dev, choose a role and sign in; production deployments disable the token endpoint and integrate your identity provider."}
             </p>
             {!devTokenEnabled ? (
               <Alert
