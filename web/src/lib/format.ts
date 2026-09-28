@@ -29,6 +29,7 @@ export const formatDecimal = (value?: number | null): string => {
 
 export const formatGb = (value?: number | null): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  if (value > 0 && value < 0.1) return `${decimalNumber.format(value * 1024)} MB`;
   if (value >= 1024) return `${decimalNumber.format(value / 1024)} TB`;
   return `${decimalNumber.format(value)} GB`;
 };
@@ -54,18 +55,23 @@ export const formatTime = (value?: string | null): string => {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
+  const includeYear = date.getFullYear() !== new Date().getFullYear();
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    year: includeYear ? "numeric" : undefined
   }).format(date);
 };
 
 export const bytesToGb = (bytes?: number | null): number =>
   bytes && Number.isFinite(bytes) ? bytes / 1024 ** 3 : 0;
 
-export const formatBytesGb = (bytes?: number | null): string => formatGb(bytesToGb(bytes));
+export const formatBytesGb = (bytes?: number | null): string => {
+  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "-";
+  return formatGb(bytes / 1024 ** 3);
+};
 
 export const formatPercent = (value?: number | null, digits = 0): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
