@@ -20,7 +20,7 @@ import {
   triggerScan,
   unassignTables
 } from "../../api/client";
-import type { ExplorerViewRead, Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
+import type { ExplorerViewRead, JsonObject, Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
 import { HintLabel, Sparkline } from "../../components/common";
@@ -400,7 +400,7 @@ export const TableExplorerSection = () => {
     };
     void saveExplorerView(api, {
       name: view.name,
-      filters: view.filters,
+      filters: view.filters as JsonObject,
       sort: view.sort,
       group_by: view.groupBy,
       savings_view: Boolean(view.savingsView)

@@ -48,6 +48,9 @@ const formatJobDuration = (seconds: number | null) => {
   return formatDuration(seconds * 1000);
 };
 
+export const formatJobFileCount = (count: number | null | undefined): string =>
+  count == null || Number.isNaN(count) ? "Not measured" : String(count);
+
 const STUCK_STATUSES = new Set(["queued", "deferred"]);
 
 const JobBreadcrumbs = ({
@@ -400,22 +403,28 @@ export const JobDetail = () => {
               />
               <MetricTile
                 label="Input Files"
-                value={data.input_files_count || 0}
+                value={formatJobFileCount(data.input_files_count)}
                 className="[&_p:nth-child(2)]:text-[#1890ff]"
               />
               <MetricTile
                 label="Output Files"
-                value={data.output_files_count || 0}
+                value={formatJobFileCount(data.output_files_count)}
                 className="[&_p:nth-child(2)]:text-[var(--color-status-success)]"
               />
               <MetricTile
                 label="Effectiveness Ratio"
-                value={data.effectiveness_ratio?.toFixed(1) || "—"}
-                suffix=":1"
+                value={
+                  data.effectiveness_ratio == null || Number.isNaN(data.effectiveness_ratio)
+                    ? "Not measured"
+                    : data.effectiveness_ratio.toFixed(1)
+                }
+                suffix={data.effectiveness_ratio == null ? undefined : ":1"}
                 className={cn(
-                  (data.effectiveness_ratio || 0) >= 10
-                    ? "[&_p:nth-child(2)]:text-[var(--color-status-success)]"
-                    : "[&_p:nth-child(2)]:text-[var(--color-status-warning)]"
+                  data.effectiveness_ratio == null
+                    ? ""
+                    : data.effectiveness_ratio >= 10
+                      ? "[&_p:nth-child(2)]:text-[var(--color-status-success)]"
+                      : "[&_p:nth-child(2)]:text-[var(--color-status-warning)]"
                 )}
               />
             </div>

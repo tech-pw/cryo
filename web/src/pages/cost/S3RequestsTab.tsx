@@ -79,19 +79,19 @@ const bucketColumns: ColumnDef<BucketRow, unknown>[] = [
     id: "count",
     header: "Requests (30d)",
     cell: ({ row }) =>
-      row.original.requestCount !== null ? formatNumber(row.original.requestCount) : "—",
+      row.original.requestCount !== null ? formatNumber(row.original.requestCount) : "Not measured",
     meta: { align: "right" }
   },
   {
     id: "tier1",
     header: "PUT/LIST (30d)",
-    cell: ({ row }) => (row.original.tier1Count !== null ? formatNumber(row.original.tier1Count) : "—"),
+    cell: ({ row }) => (row.original.tier1Count !== null ? formatNumber(row.original.tier1Count) : "Not measured"),
     meta: { align: "right" }
   },
   {
     id: "tier2",
     header: "GET (30d)",
-    cell: ({ row }) => (row.original.tier2Count !== null ? formatNumber(row.original.tier2Count) : "—"),
+    cell: ({ row }) => (row.original.tier2Count !== null ? formatNumber(row.original.tier2Count) : "Not measured"),
     meta: { align: "right" }
   },
   {
@@ -116,14 +116,14 @@ const bucketColumns: ColumnDef<BucketRow, unknown>[] = [
           </TooltipContent>
         </Tooltip>
       ) : (
-        "—"
+        "Cost data unavailable"
       ),
     meta: { align: "right" }
   },
   {
     id: "last_ingested",
     header: "Last ingest",
-    cell: ({ row }) => (row.original.lastIngestedAt ? formatTime(row.original.lastIngestedAt) : "—")
+    cell: ({ row }) => (row.original.lastIngestedAt ? formatTime(row.original.lastIngestedAt) : "Not measured")
   }
 ];
 
@@ -162,14 +162,27 @@ export const S3RequestsTab = () => {
     enabled: sources.isSuccess
   });
 
-  const fleetCount = (rollups.data ?? []).reduce(
-    (sum, r) => sum + (r.rollup?.total_request_count_30d ?? 0),
-    0
+  const rollupRows = rollups.data ?? [];
+  const measuredCounts = rollupRows.filter(
+    (row) => row.rollup?.total_request_count_30d != null && Number.isFinite(row.rollup.total_request_count_30d)
   );
-  const fleetCost = (rollups.data ?? []).reduce(
-    (sum, r) => sum + (r.rollup?.total_cost_usd_month ?? 0),
-    0
+  const measuredCosts = rollupRows.filter(
+    (row) => row.rollup?.total_cost_usd_month != null && Number.isFinite(row.rollup.total_cost_usd_month)
   );
+  const fleetCount = measuredCounts.reduce((sum, row) => sum + (row.rollup?.total_request_count_30d ?? 0), 0);
+  const fleetCost = measuredCosts.reduce((sum, row) => sum + (row.rollup?.total_cost_usd_month ?? 0), 0);
+  const fleetCountLabel =
+    rollupRows.length === 0 || measuredCounts.length === 0
+      ? "Not measured"
+      : measuredCounts.length < rollupRows.length
+        ? `${formatNumber(fleetCount)} (${measuredCounts.length} of ${rollupRows.length} measured)`
+        : formatNumber(fleetCount);
+  const fleetCostLabel =
+    rollupRows.length === 0 || measuredCosts.length === 0
+      ? "Cost data unavailable"
+      : measuredCosts.length < rollupRows.length
+        ? `${formatCurrency(fleetCost)} (${measuredCosts.length} of ${rollupRows.length} measured)`
+        : formatCurrency(fleetCost);
   const fleetBuckets = (rollups.data ?? []).reduce(
     (sum, r) => sum + r.buckets.filter((b) => b.enabled).length,
     0
@@ -215,11 +228,11 @@ export const S3RequestsTab = () => {
   });
 
   const barData = bucketRows
-    .filter((row) => row.costUsdMonth !== null)
+    .filter((row) => row.costUsdMonth != null && Number.isFinite(row.costUsdMonth))
     .map((row) => ({
       bucket: `${row.sourceName}/${row.bucket}`,
-      count: row.requestCount ?? 0,
-      cost: row.costUsdMonth ?? 0
+      count: row.requestCount,
+      cost: row.costUsdMonth as number
     }))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 12);
@@ -243,12 +256,12 @@ export const S3RequestsTab = () => {
         />
         <MetricTile
           label="Requests (30d, fleet)"
-          value={formatNumber(fleetCount)}
+          value={fleetCountLabel}
           loading={rollups.isLoading}
         />
         <MetricTile
           label="Estimated monthly request cost"
-          value={formatCurrency(fleetCost)}
+          value={fleetCostLabel}
           loading={rollups.isLoading}
           emphasis={fleetApproximate}
         />
@@ -263,7 +276,7 @@ export const S3RequestsTab = () => {
             <>
               <div
                 role="img"
-                aria-label={`Top buckets by 30-day S3 request cost. Highest is ${barData[0]?.bucket ?? "unknown"} at ${formatCurrency(barData[0]?.cost ?? 0)}.`}
+                aria-label={`Top buckets by 30-day S3 request cost. Highest is ${barData[0]?.bucket ?? "unknown"} at ${formatCurrency(barData[0]?.cost)}.`}
               >
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={barData} margin={{ top: 8, right: 16, bottom: 64, left: 0 }}>
@@ -287,7 +300,12 @@ export const S3RequestsTab = () => {
                 caption="Top buckets ranked by estimated 30-day S3 request cost, largest first."
                 columns={[
                   { key: "bucket", header: "Bucket", render: (row) => row.bucket },
-                  { key: "count", header: "Requests (30d)", align: "right", render: (row) => formatNumber(row.count) },
+                  {
+                    key: "count",
+                    header: "Requests (30d)",
+                    align: "right",
+                    render: (row) => (row.count == null ? "Not measured" : formatNumber(row.count))
+                  },
                   { key: "cost", header: "Cost (30d)", align: "right", render: (row) => formatCurrency(row.cost) }
                 ]}
                 rows={barData}

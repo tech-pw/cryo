@@ -962,14 +962,19 @@ export const deriveCostDashboard = (tables: TableRead[]): CostDashboard => {
   for (const table of tables) {
     const stats = table.stats;
     if (!stats) continue;
-    const cur = stats.estimated_monthly_s3_cost_usd ?? 0;
+    if (stats.reclaimable_bytes != null && Number.isFinite(stats.reclaimable_bytes)) {
+      reclaimable += stats.reclaimable_bytes;
+    }
+    if (stats.total_size_gb != null && Number.isFinite(stats.total_size_gb)) {
+      storage += stats.total_size_gb * 1024 ** 3;
+    }
+    const cur = stats.estimated_monthly_s3_cost_usd;
+    if (cur == null || !Number.isFinite(cur)) continue;
     const proj = stats.projected_monthly_s3_cost_usd ?? cur;
     const sav = stats.projected_savings_usd_month ?? Math.max(0, cur - proj);
     current += cur;
     projected += proj;
     savings += sav;
-    reclaimable += stats.reclaimable_bytes ?? 0;
-    storage += (stats.total_size_gb ?? 0) * 1024 ** 3;
     const row = bySchema.get(table.schema_name) ?? { current_usd: 0, projected_usd: 0, savings_usd: 0 };
     row.current_usd += cur;
     row.projected_usd += proj;

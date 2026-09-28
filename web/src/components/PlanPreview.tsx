@@ -29,6 +29,24 @@ interface Props {
   onRunTable?: (table: TableRead) => Promise<{ run_id: string }>;
 }
 
+export const formatMeasuredTotal = (
+  values: Array<number | null | undefined>,
+  formatValue: (value: number) => string,
+  emptyLabel: string
+): string => {
+  const measured = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (measured.length === 0) return emptyLabel;
+  const formatted = formatValue(measured.reduce((sum, value) => sum + value, 0));
+  if (measured.length < values.length) return `${formatted} (${measured.length} of ${values.length} measured)`;
+  return formatted;
+};
+
+const costText = (value: number | null | undefined): string =>
+  value == null || !Number.isFinite(value) ? "Cost data unavailable" : formatCurrency(value);
+
+const bytesText = (value: number | null | undefined): string =>
+  value == null || !Number.isFinite(value) ? "Not measured" : formatBytesGb(value);
+
 const savingsToByOperation = (savings?: SavingsProjectionRead | null): CostByOperation[] => {
   if (!savings?.by_operation) return [];
   return Object.entries(savings.by_operation)
@@ -118,22 +136,34 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: 
   const estimate = useMemo(() => {
     const statements = preview.data?.items.flatMap((item) => item.statements) ?? [];
     const savingsItems = preview.data?.items.map((item) => item.savings).filter(Boolean) ?? [];
-    const totalSavings = savingsItems.reduce(
-      (sum, item) => sum + (item?.projected_savings_usd_month ?? 0),
-      0
-    );
-    const totalReclaimable = savingsItems.reduce((sum, item) => sum + (item?.reclaimable_bytes ?? 0), 0);
+    const savingsValues = preview.data
+      ? preview.data.items.map((item) => item.savings?.projected_savings_usd_month)
+      : [];
+    const reclaimValues = preview.data
+      ? preview.data.items.map((item) => item.savings?.reclaimable_bytes)
+      : [];
+    const noneScanned = tables.every((table) => !table.stats);
+    const measuredSavings = savingsValues.filter((value): value is number => value != null && Number.isFinite(value));
     return {
       tables: tables.length,
       optimizeChunks: statements.filter((statement) => statement.action === "optimize").length,
       statements: statements.length,
-      partitions: tables.reduce((total, table) => total + (table.stats?.total_partitions ?? 0), 0),
-      sizeGb: tables.reduce((total, table) => total + (table.stats?.total_size_gb ?? 0), 0),
-      totalSavings,
-      totalReclaimable,
+      partitionsLabel: formatMeasuredTotal(
+        tables.map((table) => table.stats?.total_partitions),
+        (value) => formatNumber(value, true),
+        noneScanned ? "Not scanned" : "Not measured"
+      ),
+      sizeLabel: formatMeasuredTotal(
+        tables.map((table) => table.stats?.total_size_gb),
+        formatGb,
+        noneScanned ? "Not scanned" : "Not measured"
+      ),
+      savingsLabel: formatMeasuredTotal(savingsValues, formatCurrency, "Cost data unavailable"),
+      reclaimableLabel: formatMeasuredTotal(reclaimValues, formatBytesGb, "Not measured"),
+      hasMeasuredSavings: measuredSavings.some((value) => value > 0),
       precision: savingsItems[0]?.precision
     };
-  }, [preview.data?.items, tables]);
+  }, [preview.data, tables]);
 
   useEffect(() => {
     if (open && requestTables.length) preview.mutate();
@@ -198,7 +228,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: 
           <div className="mt-4 flex w-full flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <CostPrecisionBadge precision={estimate.precision} />
-              {estimate.totalSavings > 0 ? (
+              {estimate.hasMeasuredSavings ? (
                 <p className="text-sm text-muted-foreground">
                   Planned savings use persisted scan data for the selected operations only.
                 </p>
@@ -207,12 +237,12 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: 
             <StatStrip
               items={[
                 { label: "Tables", value: formatNumber(estimate.tables) },
-                { label: "Datalake size", value: formatGb(estimate.sizeGb) },
-                { label: "Partitions", value: formatNumber(estimate.partitions, true) },
+                { label: "Datalake size", value: estimate.sizeLabel },
+                { label: "Partitions", value: estimate.partitionsLabel },
                 { label: "Optimize chunks", value: formatNumber(estimate.optimizeChunks) },
                 { label: "Statements", value: formatNumber(estimate.statements) },
-                { label: "Planned savings", value: formatCurrency(estimate.totalSavings) },
-                { label: "Reclaimable", value: formatBytesGb(estimate.totalReclaimable) }
+                { label: "Planned savings", value: estimate.savingsLabel },
+                { label: "Reclaimable", value: estimate.reclaimableLabel }
               ]}
             />
             {planVerifier.data ? (
@@ -293,16 +323,16 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: 
                         size="small"
                         column={2}
                         items={[
-                          { label: "Now", children: formatCurrency(item.savings.current_monthly_cost_usd) },
+                          { label: "Now", children: costText(item.savings.current_monthly_cost_usd) },
                           {
                             label: "After maintenance",
-                            children: formatCurrency(item.savings.projected_monthly_cost_usd)
+                            children: costText(item.savings.projected_monthly_cost_usd)
                           },
                           {
                             label: "Savings / mo",
-                            children: formatCurrency(item.savings.projected_savings_usd_month)
+                            children: costText(item.savings.projected_savings_usd_month)
                           },
-                          { label: "Reclaimable", children: formatBytesGb(item.savings.reclaimable_bytes) },
+                          { label: "Reclaimable", children: bytesText(item.savings.reclaimable_bytes) },
                           ...(item.savings.query_request_savings_usd_month
                             ? [
                                 {
