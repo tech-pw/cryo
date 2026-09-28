@@ -146,6 +146,16 @@ _NAMESPACE_UNUSED_COST_RATIO_CRITICAL = 3.0  # unused 3x+ used is a severe right
 _EVOLVING_SUFFIX = "_evolving"
 
 
+def _excluded_schemas() -> tuple[str, ...]:
+    """Schema names scan_freshness/scan_failures skip entirely -- see
+    Settings.scan_freshness_excluded_schemas's own docstring for why (scratch/staging schemas
+    with zero query traffic losing out on scan priority isn't a scanner problem)."""
+    from cryo.config import get_settings
+
+    raw = get_settings().scan_freshness_excluded_schemas
+    return tuple(name.strip() for name in raw.split(",") if name.strip())
+
+
 @dataclass(frozen=True)
 class CheckResult:
     name: str
@@ -694,11 +704,16 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
     write) against a generous staleness window; a large cluster of active tables all stale
     together is the scanner-stalled shape (cron not firing, scan_queue backed up, go_scan
     binary erroring on startup), not individually slow tables."""
+    excluded = _excluded_schemas()
     active_total = int(
         session.execute(
             select(func.count())
             .select_from(Table)
-            .where(Table.is_active.is_(True), Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"))
+            .where(
+                Table.is_active.is_(True),
+                Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+                Table.schema_name.not_in(excluded) if excluded else True,
+            )
         ).scalar_one()
     )
     if active_total == 0:
@@ -717,6 +732,7 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
             .where(
                 Table.is_active.is_(True),
                 Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+                Table.schema_name.not_in(excluded) if excluded else True,
                 TableStats.scan_at >= cutoff,
             )
         ).scalar_one()
@@ -750,11 +766,13 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
     just steady-state individually-broken tables) is itself worth flagging -- it's the same
     "orphaned catalog entry" shape health_check.py's repeat_failures check catches on the job
     side, mirrored here on the scan side."""
+    excluded = _excluded_schemas()
     rows = session.execute(
         select(Table.id, Table.schema_name, Table.table_name, Table.consecutive_scan_failures)
         .where(
             Table.is_active.is_(True),
             Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+            Table.schema_name.not_in(excluded) if excluded else True,
             Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
         )
         .order_by(Table.consecutive_scan_failures.desc())
@@ -777,6 +795,7 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
             .where(
                 Table.is_active.is_(True),
                 Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
+                Table.schema_name.not_in(excluded) if excluded else True,
                 Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
             )
         ).scalar_one()
