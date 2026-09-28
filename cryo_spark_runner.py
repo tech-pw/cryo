@@ -216,6 +216,7 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
     with gzip.open(manifest_path, "rt", encoding="utf-8") as handle:
         manifest = json.load(handle)
     tables = manifest.get("tables") or []
+    measure_orphan_bytes = bool(manifest.get("measure_orphan_bytes"))
     succeeded_tables = 0
     for table in tables:
         table_id = table["table_id"]
@@ -234,6 +235,11 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
             if failed_reason is not None:
                 _emit(RESULT_PREFIX, {**base, "ok": False, "skipped": True, "error": failed_reason})
                 continue
+            measured = (
+                _orphan_bytes(spark, stmt["sql"])
+                if measure_orphan_bytes and stmt["action"] == "remove_orphan_files"
+                else None
+            )
             started = time.monotonic()
             try:
                 row_count, metrics = _run_statement(spark, stmt["sql"])
@@ -247,6 +253,8 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
                 table_ok = False
                 continue
             duration_ms = int((time.monotonic() - started) * 1000)
+            if measured is not None:
+                metrics["bytes_removed"] = measured
             _emit(
                 RESULT_PREFIX,
                 {

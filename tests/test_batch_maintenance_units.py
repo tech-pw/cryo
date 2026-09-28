@@ -328,6 +328,18 @@ def test_lane_manifest_is_reproducible_gzip_json() -> None:
     )
 
 
+def test_lane_manifest_tells_the_lane_whether_to_measure_orphan_bytes() -> None:
+    work = _work()
+    run_id = uuid.uuid4()
+
+    default = lane_manifest_bytes(run_id, 0, [work])
+    measured = lane_manifest_bytes(run_id, 0, [work], measure_orphan_bytes=True)
+
+    assert json.loads(gzip.decompress(default))["measure_orphan_bytes"] is False
+    assert json.loads(gzip.decompress(measured))["measure_orphan_bytes"] is True
+    assert measured == lane_manifest_bytes(run_id, 0, [work], measure_orphan_bytes=True)
+
+
 # -- lane Kubernetes objects ----------------------------------------------------------------
 
 
@@ -662,9 +674,9 @@ class _FakeSpark:
         return SimpleNamespace(collect=lambda: [_Row(rewritten_data_files_count=7)])
 
 
-def _manifest(tmp_path: Any, tables: list[dict[str, Any]]) -> str:
+def _manifest(tmp_path: Any, tables: list[dict[str, Any]], **extra: Any) -> str:
     path = tmp_path / "m.json.gz"
-    path.write_bytes(gzip.compress(json.dumps({"tables": tables}).encode()))
+    path.write_bytes(gzip.compress(json.dumps({"tables": tables, **extra}).encode()))
     return str(path)
 
 
@@ -726,3 +738,79 @@ def test_runner_starts_no_table_after_the_deadline(
     assert spark.executed == []
     [result] = _lines(capsys)
     assert result["skipped"] and "deadline" in result["error"]
+
+
+_ORPHAN_SQL = "CALL cdp.system.remove_orphan_files(table => 'cdp.demo.t')"
+
+
+def _orphan_manifest(tmp_path: Any, **extra: Any) -> str:
+    return _manifest(
+        tmp_path,
+        [
+            {
+                "table_id": "a",
+                "statements": [
+                    {"seq": 0, "action": "optimize", "sql": "CALL o(a)"},
+                    {"seq": 1, "action": "remove_orphan_files", "sql": _ORPHAN_SQL},
+                ],
+            }
+        ],
+        **extra,
+    )
+
+
+@pytest.mark.parametrize(
+    "extra", [{}, {"measure_orphan_bytes": False}], ids=["older-manifest", "flag-off"]
+)
+def test_runner_issues_no_orphan_dry_run_unless_the_manifest_asks(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str], extra: dict[str, Any]
+) -> None:
+    runner = _import_runner()
+    spark = _FakeSpark()
+
+    runner._run_manifest(spark, _orphan_manifest(tmp_path, **extra), deadline_epoch=None)
+
+    assert _ORPHAN_SQL in spark.executed
+    assert not any("dry_run" in sql for sql in spark.executed)
+    orphan = _lines(capsys)[1]
+    assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]
+
+
+def test_runner_sizes_orphans_before_removing_them_when_the_manifest_asks(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _import_runner()
+    spark = _FakeSpark()
+    probes: list[tuple[str, list[str]]] = []
+
+    def probe(_spark: Any, sql: str) -> int:
+        probes.append((sql, list(spark.executed)))
+        return 4096
+
+    monkeypatch.setattr(runner, "_orphan_bytes", probe)
+
+    runner._run_manifest(
+        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
+    )
+
+    # Probed once, for the orphan statement, while only optimize had run.
+    assert probes == [(_ORPHAN_SQL, ["CALL o(a)"])]
+    optimize, orphan = _lines(capsys)
+    assert "bytes_removed" not in optimize["metrics"]
+    assert orphan["ok"] and orphan["metrics"]["bytes_removed"] == 4096
+
+
+def test_a_failed_orphan_probe_leaves_the_removal_ok_and_unmeasured(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = _import_runner()
+    spark = _FakeSpark(fail_on="dry_run")
+
+    runner._run_manifest(
+        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
+    )
+
+    assert any("dry_run" in sql for sql in spark.executed)
+    assert spark.executed[-1] == _ORPHAN_SQL
+    orphan = _lines(capsys)[1]
+    assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]

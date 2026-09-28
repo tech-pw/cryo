@@ -28,7 +28,7 @@ from cryo.db.models import (
     Table,
     TableStats,
 )
-from cryo.maintenance.coordinator import BatchMaintenance, RunReport
+from cryo.maintenance.coordinator import BatchMaintenance, RunReport, TableOutcome, _audit_row
 from cryo.maintenance.k8s_lanes import LaneSpec, LaneState, PollUpdate, lane_names
 from cryo.maintenance.manifest import TableData
 from cryo.maintenance.results import StatementResult
@@ -666,3 +666,90 @@ def test_nothing_eligible_still_records_the_run_and_reports(session_factory) -> 
     assert report.selected == 0 and report.run_id is not None
     assert h.runners == []
     assert len(h.notified) == 1
+
+
+@pytest.mark.parametrize("measure", [False, True])
+def test_every_lane_manifest_carries_the_orphan_measurement_setting(
+    session_factory, measure: bool
+) -> None:
+    """Replacement lanes too: lane 0 is lost before its first table, so lane 1 replaces it."""
+    _seed(session_factory)
+    settings = _settings(maintenance_measure_orphan_bytes=True) if measure else _settings()
+    h = _harness(session_factory, behaviour=_Behaviour(node_lost_lanes={0}), settings=settings)
+
+    h.coordinator.run(trigger="batch-cron")
+
+    manifests = h.runners[0].manifests
+    assert sorted(manifests) == [0, 1]
+    assert [manifests[i]["measure_orphan_bytes"] for i in (0, 1)] == [measure, measure]
+
+
+def _outcome() -> TableOutcome:
+    return TableOutcome(
+        table_id=uuid.uuid4(),
+        name="demo.t0",
+        job_id=uuid.uuid4(),
+        lane=0,
+        statement_count=1,
+        before_size_gb=10.0,
+        before_files=1000,
+    )
+
+
+def test_audit_row_does_not_count_rewritten_bytes_as_freed() -> None:
+    outcome = _outcome()
+    metrics = {
+        "rewritten_data_files_count": 40,
+        "added_data_files_count": 2,
+        "rewritten_bytes_count": 2**30,
+    }
+    result = StatementResult(outcome.table_id, 0, "optimize", ok=True, rows=1, metrics=metrics)
+
+    row = _audit_row(outcome, result, "cryo-maint-lane-0")
+
+    assert row.status == "OK" and row.actual_bytes_freed is None
+    assert (row.input_files_count, row.output_files_count) == (40, 2)
+
+
+_EXPIRED_NOTHING = {
+    "deleted_data_files_count": 0,
+    "deleted_position_delete_files_count": 0,
+    "deleted_equality_delete_files_count": 0,
+    "deleted_manifest_files_count": 0,
+    "deleted_manifest_lists_count": 0,
+}
+
+
+@pytest.mark.parametrize(
+    ("action", "metrics", "freed"),
+    [
+        ("rewrite_position_deletes", {"rewritten_bytes_count": 100, "added_bytes_count": 40}, 60),
+        ("remove_orphan_files", {"bytes_removed": 7}, 7),
+        ("remove_orphan_files", {}, None),
+        ("expire_snapshots", _EXPIRED_NOTHING, 0),
+        ("expire_snapshots", {**_EXPIRED_NOTHING, "deleted_data_files_count": 3}, None),
+    ],
+)
+def test_audit_row_records_bytes_freed_only_as_measured(
+    action: str, metrics: dict[str, Any], freed: int | None
+) -> None:
+    outcome = _outcome()
+    result = StatementResult(outcome.table_id, 0, action, ok=True, rows=1, metrics=metrics)
+
+    assert _audit_row(outcome, result, None).actual_bytes_freed == freed
+
+
+def test_a_failed_statement_records_no_bytes_freed() -> None:
+    outcome = _outcome()
+    result = StatementResult(
+        outcome.table_id,
+        0,
+        "remove_orphan_files",
+        ok=False,
+        error="boom",
+        metrics={"bytes_removed": 7},
+    )
+
+    row = _audit_row(outcome, result, None)
+
+    assert row.status == "FAILED" and row.actual_bytes_freed is None

@@ -196,6 +196,14 @@ class Settings(BaseSettings):
             "than this, the run skips remove_orphan_files on every table."
         ),
     )
+    maintenance_measure_orphan_bytes: bool = Field(
+        default=False,
+        description=(
+            "Before each remove_orphan_files, run the same call as a dry run and sum the sizes "
+            "of the files it lists, so orphan removal's audit rows carry actual_bytes_freed. "
+            "Off by default: the dry run doubles the orphan LIST, which has OOM'd Spark before."
+        ),
+    )
     # AutoComp ranking (cryo/maintenance/selection.py). Weights must sum to 1, so the compute
     # cost weight is 1 - maintenance_autocomp_w_file_reduction; 0.7 is the paper's evaluation.
     maintenance_autocomp_w_file_reduction: float = Field(default=0.7, ge=0.0, le=1.0)

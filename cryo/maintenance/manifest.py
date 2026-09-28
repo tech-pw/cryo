@@ -107,10 +107,17 @@ def build_table_work(
     )
 
 
-def lane_manifest_bytes(run_id: uuid.UUID, lane_index: int, work: Sequence[TableWork]) -> bytes:
+def lane_manifest_bytes(
+    run_id: uuid.UUID,
+    lane_index: int,
+    work: Sequence[TableWork],
+    *,
+    measure_orphan_bytes: bool = False,
+) -> bytes:
     payload = {
         "run_id": str(run_id),
         "lane": lane_index,
+        "measure_orphan_bytes": measure_orphan_bytes,
         "tables": [
             {
                 "table_id": str(item.table_id),

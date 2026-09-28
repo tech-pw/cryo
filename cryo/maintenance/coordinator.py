@@ -22,6 +22,7 @@ from cryo.config import Settings
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, TableStats
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.spark.k8s import SparkK8sConfig
+from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
 from cryo.maintenance.k8s_lanes import (
     LaneRunner,
@@ -702,7 +703,12 @@ class BatchMaintenance:
                     index=lane.index,
                     cpu_milli=lane.cpu_milli,
                     mem_mib=lane.mem_mib,
-                    manifest=lane_manifest_bytes(run_id, lane.index, lane_work),
+                    manifest=lane_manifest_bytes(
+                        run_id,
+                        lane.index,
+                        lane_work,
+                        measure_orphan_bytes=self._settings.maintenance_measure_orphan_bytes,
+                    ),
                 )
             )
             report.lanes.append(
@@ -830,7 +836,12 @@ class BatchMaintenance:
             index=index,
             cpu_milli=dead.spec.cpu_milli,
             mem_mib=dead.spec.mem_mib,
-            manifest=lane_manifest_bytes(run_id, index, [work[o.table_id] for o in waiting]),
+            manifest=lane_manifest_bytes(
+                run_id,
+                index,
+                [work[o.table_id] for o in waiting],
+                measure_orphan_bytes=self._settings.maintenance_measure_orphan_bytes,
+            ),
         )
         name = lane_names(run_id, index)
         with self._session_factory() as session:
@@ -1060,6 +1071,9 @@ def _audit_row(outcome: TableOutcome, result: StatementResult, engine_ref: str |
         engine=_ENGINE,
         detail=detail[:4000],
         duration_ms=result.duration_ms,
+        actual_bytes_freed=bytes_freed_from_procedure(result.action, result.metrics)
+        if result.ok
+        else None,
         input_files_count=_metric_int(result.metrics, "rewritten_data_files_count")
         if optimize_like and result.ok
         else None,
