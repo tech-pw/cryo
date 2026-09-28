@@ -34,6 +34,8 @@ class GateDecision:
     threshold: float
     shadow: bool
     breakdown: BenefitCostBreakdown
+    # Advisory only: SKIP/DEFER is enforced solely by roi_gate_shadow_mode=False.
+    ready_for_enforcement: bool = False
 
 
 class ROIGate:
@@ -96,9 +98,6 @@ class ROIGate:
             self._settings.roi_min_bcr_streaming if is_streaming else self._settings.roi_min_bcr
         )
         bcr = breakdown.bcr
-        shadow_mode = bool(self._settings.roi_gate_shadow_mode)
-        if shadow_mode and _shadow_ready(stats, self._settings.roi_shadow_min_samples):
-            shadow_mode = False
 
         if bcr >= threshold:
             action = GateAction.PROCEED
@@ -115,8 +114,9 @@ class ROIGate:
             reason=reason,
             bcr=round(bcr, 6),
             threshold=threshold,
-            shadow=shadow_mode,
+            shadow=bool(self._settings.roi_gate_shadow_mode),
             breakdown=breakdown,
+            ready_for_enforcement=_shadow_ready(stats, self._settings.roi_shadow_min_samples),
         )
         if record:
             _persist_shadow_observation(stats, decision)
