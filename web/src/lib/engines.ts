@@ -28,6 +28,48 @@ export const ENGINE_VIRTUAL_OPTIONS = [
 
 export type EngineVirtualValue = (typeof ENGINE_VIRTUAL_OPTIONS)[number]["value"];
 
+export type EngineOptionFlags = {
+  nativeEnabled?: boolean;
+};
+
+export const nativeEngineOptionLabel = (
+  nativeEnabled: boolean,
+  impl: NativeEngineImpl = NATIVE_ENGINE_IMPL_DEFAULT
+): string => {
+  const base = `Native (${formatNativeImplLabel(impl)})`;
+  return nativeEnabled ? base : `${base} (disabled fleet-wide)`;
+};
+
+export const nativeFleetDisabledRowLabel = (fallback: string): string =>
+  `Disabled fleet-wide — work runs on ${fallback}`;
+
+export const engineTypeOptions = (flags: EngineOptionFlags = {}): EngineTypeOption[] => {
+  if (flags.nativeEnabled !== false) return ENGINE_TYPE_OPTIONS;
+  return ENGINE_TYPE_OPTIONS.map((option) =>
+    option.value === "native"
+      ? {
+          ...option,
+          label: nativeEngineOptionLabel(false, option.nativeImpl ?? NATIVE_ENGINE_IMPL_DEFAULT)
+        }
+      : option
+  );
+};
+
+export const engineVirtualOptions = (
+  flags: EngineOptionFlags = {}
+): { label: string; value: EngineVirtualValue }[] => {
+  if (flags.nativeEnabled !== false) return [...ENGINE_VIRTUAL_OPTIONS];
+  return ENGINE_VIRTUAL_OPTIONS.map((option) => {
+    if (option.value === "native:go") {
+      return { ...option, label: nativeEngineOptionLabel(false, "go") };
+    }
+    if (option.value === "native:rust") {
+      return { ...option, label: nativeEngineOptionLabel(false, "rust") };
+    }
+    return option;
+  });
+};
+
 export const NATIVE_UNSUPPORTED_OPS = [
   "convert_deletes",
   "optimize_manifests",
@@ -73,14 +115,17 @@ export const formatNativeImplLabel = (impl: NativeEngineImpl): string =>
 
 export const formatEngineLabel = (
   engine: string | null | undefined,
-  config?: JsonObject | null
+  config?: JsonObject | null,
+  flags?: EngineOptionFlags
 ): string => {
   if (!engine) return "—";
   if (engine === "trino") return "Trino";
   if (engine === "spark_emr") return "Spark EMR";
   if (engine === "flink") return "Flink (config only)";
   if (engine === "native") {
-    return `Native (${formatNativeImplLabel(resolveNativeEngineImpl(config))})`;
+    const impl = resolveNativeEngineImpl(config);
+    if (flags?.nativeEnabled === false) return nativeEngineOptionLabel(false, impl);
+    return `Native (${formatNativeImplLabel(impl)})`;
   }
   return engine.replace(/_/g, " ");
 };

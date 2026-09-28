@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useFieldArray } from "react-hook-form";
 import { toast } from "sonner";
@@ -23,10 +23,11 @@ import { Switch } from "../../components/ui/switch";
 import { Textarea } from "../../components/ui/textarea";
 import { useAuth } from "../../lib/auth";
 import {
-  ENGINE_VIRTUAL_OPTIONS,
   engineVirtualFromDestination,
+  engineVirtualOptions,
   parseEngineVirtual
 } from "../../lib/engines";
+import { getRuntimeFlags } from "../../lib/runtimeFlags";
 import { sourceCatalogName, type CatalogBindingFormValue } from "../../lib/catalogBindings";
 import { AWS_REGIONS } from "./constants";
 import {
@@ -72,7 +73,12 @@ export const DestinationDrawer = ({
   onClose: () => void;
   onSave: (body: DestinationWrite) => void;
 }) => {
-  const { api } = useAuth();
+  const { api, token } = useAuth();
+  const runtime = useQuery({
+    queryKey: ["runtime-flags", token],
+    queryFn: () => getRuntimeFlags(api)
+  });
+  const engineOptions = engineVirtualOptions({ nativeEnabled: runtime.data?.native_engine_enabled });
   const isEditing = value && value !== "new";
   const initialEngine = isEditing ? value.engine : "trino";
   const [engine, setEngine] = useState<EngineType>(initialEngine as EngineType);
@@ -211,7 +217,7 @@ export const DestinationDrawer = ({
                 <Select
                   value={String(field.value ?? "")}
                   onChange={(next) => field.onChange(next ?? "")}
-                  options={[...ENGINE_VIRTUAL_OPTIONS]}
+                  options={engineOptions}
                   onBlur={field.onBlur}
                   name={field.name}
                   ref={field.ref}
