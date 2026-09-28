@@ -17,6 +17,10 @@ def test_rewrite_position_deletes_nets_added_bytes() -> None:
     )
 
 
+def test_optimize_rewritten_bytes_are_not_freed_bytes() -> None:
+    assert bytes_freed_from_procedure("optimize", {"rewritten_bytes_count": 500}) is None
+
+
 def test_expire_with_deleted_files_is_not_invented_as_zero() -> None:
     assert (
         bytes_freed_from_procedure(
