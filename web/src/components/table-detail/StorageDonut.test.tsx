@@ -3,24 +3,22 @@ import { describe, expect, it } from "vitest";
 import { StorageDonut } from "./StorageDonut";
 
 describe("StorageDonut", () => {
-  it("does not treat an unmeasured orphan slice as 0 GB", () => {
-    const { rerender } = render(
-      <StorageDonut liveBytes={0} deadBytes={0} metadataBytes={0} orphanBytes={null} pricePerGbMonth={0.023} />
-    );
-    expect(screen.getByText("Not measured")).toBeInTheDocument();
-    expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
-
-    rerender(
+  it("names each byte measure and does not treat a null part as 0 GB", () => {
+    render(
       <StorageDonut
-        liveBytes={1024 ** 3}
+        liveBytes={null}
         deadBytes={0}
-        metadataBytes={0}
+        metadataBytes={1024 ** 3}
         orphanBytes={null}
         pricePerGbMonth={0.023}
       />
     );
-    expect(screen.getByText(/3 of 4 measured/)).toBeInTheDocument();
-    expect(screen.getByText("Not measured")).toBeInTheDocument();
-    expect(screen.queryByText(/^0 GB$/)).not.toBeInTheDocument();
+
+    expect(screen.getByText("2 of 4 measured")).toBeInTheDocument();
+    expect(screen.getByText("Data").closest("div")).toHaveTextContent("Not measured");
+    expect(screen.getByText("Data").closest("div")).not.toHaveTextContent("0 GB");
+    expect(screen.getByText("Orphan").closest("div")).toHaveTextContent("Not measured");
+    expect(screen.getByText("Delete").closest("div")).toHaveTextContent("0 GB");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 });

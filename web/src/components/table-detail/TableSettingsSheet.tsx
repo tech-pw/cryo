@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
-import { formatTime } from "../../lib/format";
-import { VIEWER_REASON } from "../../lib/permissions";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { AsyncBoundary } from "../AsyncBoundary";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -30,12 +30,9 @@ interface TableSettingsSheetProps {
 export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetProps) => {
   const {
     row,
-    role,
+    tableId,
     compliance,
     complianceNotFound,
-    protect,
-    protectedLocal,
-    protectedFromAudit,
     ownerEmailInput,
     setOwnerEmailInput,
     setOwner,
@@ -46,11 +43,7 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
     removeSubscriber
   } = useTableDetailContext();
 
-  const canEdit = role === "admin" || role === "operator";
-  const protectedItems: Array<{ snapshot_id: number; label?: string | null; ts?: string | null }> = [
-    ...protectedLocal,
-    ...protectedFromAudit
-  ];
+  const ownerAccess = useWriteControl("patchTable");
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -87,48 +80,13 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
               </dl>
             </AsyncBoundary>
 
-            {!canEdit ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
-            <form
-                className="space-y-1.5 border-t border-border pt-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const formData = new FormData(event.currentTarget);
-                  const snapshotId = Number(formData.get("snapshot_id"));
-                  const label = String(formData.get("label") || "");
-                  if (!snapshotId) return;
-                  protect.mutate({ snapshot_id: snapshotId, label: label || undefined });
-                  event.currentTarget.reset();
-                }}
-              >
-                <p className="text-xs font-medium text-muted-foreground">Protect snapshot</p>
-                <div className="flex gap-1.5">
-                  <Input name="snapshot_id" type="number" min={1} placeholder="Snapshot ID" className="w-28" required disabled={!canEdit} />
-                  <Input name="label" placeholder="Label (optional)" className="flex-1" disabled={!canEdit} />
-                  <Button type="submit" size="sm" loading={protect.isPending} disabled={!canEdit} title={canEdit ? undefined : VIEWER_REASON}>
-                    Protect
-                  </Button>
-                </div>
-              </form>
-
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground">Protected snapshots</p>
-              {protectedItems.filter((item) => item.snapshot_id > 0).length === 0 ? (
-                <p className="text-xs text-muted-foreground">No protected snapshots recorded yet.</p>
-              ) : (
-                protectedItems
-                  .filter((item) => item.snapshot_id > 0)
-                  .slice(0, 8)
-                  .map((item, index) => (
-                    <div key={`${item.snapshot_id}-${index}`} className="flex items-center justify-between text-xs">
-                      <span>
-                        #{item.snapshot_id}
-                        {item.label ? <span className="ml-1 text-muted-foreground">({item.label})</span> : null}
-                      </span>
-                      {item.ts ? <span className="text-muted-foreground">{formatTime(item.ts)}</span> : null}
-                    </div>
-                  ))
-              )}
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Snapshot exclusion lives on the{" "}
+              <Link className="underline" to={`/tables/${tableId}?tab=snapshots`}>
+                Snapshots
+              </Link>{" "}
+              tab. It excludes a snapshot from Cryo expiry only.
+            </p>
           </section>
 
           <section className="space-y-3 border-t border-border pt-6">
@@ -138,13 +96,13 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 value={ownerEmailInput}
                 onChange={(event) => setOwnerEmailInput(event.target.value)}
                 placeholder={row?.owner_email || "owner@example.com"}
-                disabled={!canEdit}
+                disabled={!ownerAccess.allowed}
               />
               <Button
                 size="sm"
                 loading={setOwner.isPending}
-                disabled={!canEdit}
-                title={canEdit ? undefined : VIEWER_REASON}
+                disabled={!ownerAccess.allowed}
+                title={ownerAccess.reason ?? undefined}
                 onClick={() => setOwner.mutate(ownerEmailInput.trim())}
               >
                 Save
@@ -168,8 +126,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                     className="h-6 w-6"
                     aria-label={`Remove subscriber ${sub.email}`}
                     loading={removeSubscriber.isPending}
-                    disabled={!canEdit}
-                    title={canEdit ? undefined : VIEWER_REASON}
+                    disabled={!ownerAccess.allowed}
+                    title={ownerAccess.reason ?? undefined}
                     onClick={() => removeSubscriber.mutate(sub.id)}
                   >
                     <X className="size-3" />
@@ -183,7 +141,7 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
             <div className="flex gap-1.5">
               <Input
                 value={newSubscriberEmail}
-                disabled={!canEdit}
+                disabled={!ownerAccess.allowed}
                 onChange={(event) => setNewSubscriberEmail(event.target.value)}
                 placeholder="consumer@example.com"
                 onKeyDown={(event) => {
@@ -196,8 +154,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 size="sm"
                 variant="secondary"
                 loading={addSubscriber.isPending}
-                disabled={!canEdit}
-                title={canEdit ? undefined : VIEWER_REASON}
+                disabled={!ownerAccess.allowed}
+                title={ownerAccess.reason ?? undefined}
                 onClick={() => {
                   if (!newSubscriberEmail.trim()) return;
                   addSubscriber.mutate(newSubscriberEmail.trim());

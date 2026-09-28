@@ -87,6 +87,27 @@ function layoutLineageGraph(data: LineageGraphRead): LayoutResult {
   return { nodes: positioned, edges, width, height };
 }
 
+function LineageList({ title, nodes }: { title: string; nodes: LineageNodeRead[] }) {
+  return (
+    <section aria-label={title}>
+      <h3 className="mb-1 text-sm font-medium">{title}</h3>
+      {nodes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">None</p>
+      ) : (
+        <ul className="m-0 list-none space-y-1 p-0 text-sm">
+          {nodes.map((node) => (
+            <li key={node.table_id}>
+              <Link to={`/tables/${node.table_id}`}>{node.table_name}</Link>
+              {node.depth != null ? <span className="text-muted-foreground"> · depth {node.depth}</span> : null}
+              {node.node_type ? <span className="text-muted-foreground"> · {node.node_type}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function toGraphNode(node: LineageNodeRead, role: "upstream" | "downstream"): GraphNode {
   return {
     id: node.table_id,
@@ -247,6 +268,10 @@ export const LineageGraph = ({ data, isLoading, error }: LineageGraphProps) => {
             </g>
           ))}
         </svg>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <LineageList title="Upstream" nodes={data.upstream ?? []} />
+          <LineageList title="Downstream" nodes={data.downstream ?? []} />
+        </div>
       </div>
 
       <Sheet open={selectedNode !== null} onOpenChange={(open) => !open && setSelectedNode(null)}>

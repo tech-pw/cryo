@@ -17,6 +17,118 @@ import { SectionNav } from "./SectionNav";
 import { StructureTabLabel } from "./tableDetailTabLabels";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { chartTooltipProps, cryoColors } from "../../lib/theme";
+
+const measuredNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const countText = (value: number | null): string => (value == null ? "Not measured" : value.toLocaleString());
+
+const sizeText = (value: number | null): string => (value == null ? "Not measured" : `${value.toFixed(1)} GB`);
+
+export interface StructureHistoryPoint {
+  timestamp: number;
+  small_files_count: number | null;
+  total_size_gb: number | null;
+}
+
+export const StructureStatsHistory = ({ points }: { points: StructureHistoryPoint[] }) => (
+  <div className="flex flex-col gap-4">
+    <section aria-label="Small-file count">
+      <h3 className="mb-1 text-sm font-medium">Small-file count</h3>
+      <div
+        className="chart-frame"
+        style={{ height: 180 }}
+        role="img"
+        aria-label={`Small-file count across ${points.length} scans.`}
+      >
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={points}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
+            <XAxis
+              dataKey="timestamp"
+              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tick={{ fontSize: 11 }}
+              stroke="var(--muted, #5c667a)"
+            />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
+            <RechartsTooltip
+              {...chartTooltipProps}
+              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              formatter={(value) => [countText(measuredNumber(value)), "Small files"]}
+            />
+            <Line
+              type="stepAfter"
+              dataKey="small_files_count"
+              stroke={cryoColors.chartPrimary}
+              strokeWidth={2}
+              connectNulls={false}
+              dot={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+    <section aria-label="Table size">
+      <h3 className="mb-1 text-sm font-medium">Size (GB)</h3>
+      <div
+        className="chart-frame"
+        style={{ height: 180 }}
+        role="img"
+        aria-label={`Table size in GB across ${points.length} scans.`}
+      >
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={points}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
+            <XAxis
+              dataKey="timestamp"
+              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tick={{ fontSize: 11 }}
+              stroke="var(--muted, #5c667a)"
+            />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
+            <RechartsTooltip
+              {...chartTooltipProps}
+              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              formatter={(value) => [sizeText(measuredNumber(value)), "Size"]}
+            />
+            <Line
+              type="stepAfter"
+              dataKey="total_size_gb"
+              stroke="var(--muted, #5c667a)"
+              strokeWidth={2}
+              connectNulls={false}
+              dot={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+    <ChartDataTable
+      caption="Table statistics by scan time"
+      rows={points}
+      getRowKey={(row, index) => `${row.timestamp}-${index}`}
+      columns={[
+        {
+          key: "time",
+          header: "Scan time",
+          render: (row) => new Date(row.timestamp).toLocaleString()
+        },
+        {
+          key: "small-files",
+          header: "Small files",
+          align: "right",
+          render: (row) => countText(row.small_files_count)
+        },
+        {
+          key: "size",
+          header: "Size",
+          align: "right",
+          render: (row) => sizeText(row.total_size_gb)
+        }
+      ]}
+    />
+  </div>
+);
 import { ChartDataTable } from "../ui/chart-data-table";
 
 export const StructureTabPanel = () => {
@@ -113,81 +225,12 @@ export const StructureTabPanel = () => {
             emptyTitle="No stats history yet"
             emptyDescription="History appears after multiple scans."
           >
-            <div
-              className="chart-frame"
-              style={{ height: 260 }}
-              role="img"
-              aria-label={`Small-file count and table size across ${historyPoints.length} scans.`}
-            >
-              <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={historyPoints}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
-                  <XAxis
-                    dataKey="timestamp"
-                    tickFormatter={(ts) =>
-                      new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-                    }
-                    tick={{ fontSize: 11 }}
-                    stroke="var(--muted, #5c667a)"
-                  />
-                  <YAxis yAxisId="left" tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: 11 }}
-                    stroke="var(--muted, #5c667a)"
-                  />
-                  <RechartsTooltip
-                    {...chartTooltipProps}
-                    labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
-                    formatter={(value, name) => {
-                      const n = Number(value ?? 0);
-                      if (String(name) === "total_size_gb") return [`${n.toFixed(1)} GB`, "Size"];
-                      return [n.toLocaleString(), String(name)];
-                    }}
-                  />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="small_files_count"
-                    stroke={cryoColors.chartPrimary}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="total_size_gb"
-                    stroke={cryoColors.gradeA}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <ChartDataTable
-              caption="Table statistics by scan time"
-              rows={historyPoints}
-              getRowKey={(row, index) => `${row.timestamp}-${index}`}
-              columns={[
-                {
-                  key: "time",
-                  header: "Scan time",
-                  render: (row) => new Date(row.timestamp).toLocaleString()
-                },
-                {
-                  key: "small-files",
-                  header: "Small files",
-                  align: "right",
-                  render: (row) => (row.small_files_count ?? 0).toLocaleString()
-                },
-                {
-                  key: "size",
-                  header: "Size",
-                  align: "right",
-                  render: (row) => `${(row.total_size_gb ?? 0).toFixed(1)} GB`
-                }
-              ]}
+            <StructureStatsHistory
+              points={historyPoints.map((point) => ({
+                timestamp: point.timestamp,
+                small_files_count: measuredNumber(point.small_files_count),
+                total_size_gb: measuredNumber(point.total_size_gb)
+              }))}
             />
           </AsyncBoundary>
         </ChartCard>

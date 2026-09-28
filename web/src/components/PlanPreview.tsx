@@ -27,6 +27,7 @@ interface Props {
   onClose: () => void;
   params?: JsonObject;
   onRunTable?: (table: TableRead) => Promise<{ run_id: string }>;
+  runDisabledReason?: string | null;
 }
 
 export const formatMeasuredTotal = (
@@ -54,7 +55,7 @@ const savingsToByOperation = (savings?: SavingsProjectionRead | null): CostByOpe
     .map(([operation, savings_usd_month]) => ({
       operation: operation as CostByOperation["operation"],
       savings_usd_month,
-      reclaimable_bytes: 0
+      reclaimable_bytes: null
     }));
 };
 
@@ -70,7 +71,7 @@ const buildDeterministicNarrative = (
   return `${tableRef ?? "Selected table"} executes ${opOrder}. ${noteSummary}. ${verifier}`;
 };
 
-export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: Props) => {
+export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable, runDisabledReason = null }: Props) => {
   const { api } = useAuth();
   const [engineVirtual, setEngineVirtual] = useState<EngineVirtualValue>("trino");
   const [mode, setMode] = useState<Mode>("deep");
@@ -307,11 +308,13 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable }: 
                 const tableKey = item.table_ref ?? `table-${tableIndex}`;
                 return (
                   <TabsContent key={tableKey} value={tableKey} className="space-y-3">
-                    {onRunTable ? (
+                    {onRunTable || runDisabledReason ? (
                       <Button
                         variant="primary"
                         size="sm"
                         loading={runTable.isPending}
+                        disabled={!onRunTable || Boolean(runDisabledReason)}
+                        title={runDisabledReason ?? undefined}
                         onClick={() => item.table_ref && queueRun(item.table_ref)}
                       >
                         Run this plan

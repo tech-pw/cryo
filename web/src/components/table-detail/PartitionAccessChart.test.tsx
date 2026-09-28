@@ -8,7 +8,7 @@ describe("PartitionAccessChart", () => {
     expect(screen.getByText("No partition access data yet.")).toBeInTheDocument();
   });
 
-  it("renders the accessible data-table companion with partition rows", () => {
+  it("renders plotted points and says Y is not time", () => {
     render(
       <PartitionAccessChart
         points={[
@@ -34,12 +34,34 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    // ChartDataTable renders behind a <details> disclosure -- its content is present in the
-    // DOM (not conditionally mounted on open), so a plain text query finds it directly.
-    expect(screen.getByText("dt=2026-08-19/")).toBeInTheDocument();
-    expect(screen.getByText("dt=2026-08-18/")).toBeInTheDocument();
+    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("dt=2026-08-19/").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("dt=2026-08-18/").length).toBeGreaterThan(0);
     expect(screen.getByText("Today")).toBeInTheDocument();
     expect(screen.getByText("1d ago")).toBeInTheDocument();
+    expect(screen.getAllByText("42").length).toBeGreaterThan(0);
+  });
+
+  it("does not plot a null request count as zero", () => {
+    render(
+      <PartitionAccessChart
+        points={[{ day: "2026-08-19", partition_path: "dt=a/", request_count: null }]}
+        partitions={[
+          {
+            partition_path: "dt=a/",
+            total_requests: null,
+            first_seen: "2026-08-19",
+            last_seen: "2026-08-19",
+            days_since_last_access: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Today")).not.toBeInTheDocument();
   });
 
   it("labels an empty partition_path as unpartitioned in the data table", () => {
@@ -58,6 +80,6 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    expect(screen.getByText("(unpartitioned)")).toBeInTheDocument();
+    expect(screen.getAllByText("(unpartitioned)").length).toBeGreaterThan(0);
   });
 });

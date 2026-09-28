@@ -29,6 +29,7 @@ import type { BenefitScoreResponse, TableSignalRead, TableSignalsResponse } from
 import type { TableCostRead } from "../../api/types";
 import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
 import { useWriteControl } from "../../lib/useWriteControl";
+import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { operationLabels } from "../../lib/theme";
 import { ConfirmAction } from "../confirm";
 import { QueryErrorAlert } from "../common";
@@ -186,20 +187,37 @@ export const ActNowSection = ({
   tableLabel
 }: ActNowSectionProps) => {
   const runAccess = useWriteControl("runMaintenance");
-  const [acting, setActing] = useState(false);
-  const [scheduledFor, setScheduledFor] = useState<string | null>(null);
+  const scheduleAccess = useWriteControl("scheduleMaintenance");
+  const { run: runMutation, schedule: scheduleMutation } = useTableDetailContext();
   const [pickerOpenFor, setPickerOpenFor] = useState<string | null>(null);
   const [pickedTime, setPickedTime] = useState<string>("");
+  const scheduleReason = !scheduleAccess.allowed
+    ? scheduleAccess.reason
+    : !effectivePresetId
+      ? "Assign a workflow before running maintenance"
+      : null;
+  const scheduleDisabled = Boolean(scheduleReason);
+  const runFailed = runMutation.isError && !runMutation.isPending;
+  const runBusy = runMutation.isPending || runPending;
+  const runQueued = Boolean(queuedMaintenanceRunId) && !runFailed && !runBusy;
+  const scheduleFailed = scheduleMutation.isError && !scheduleMutation.isPending;
+  const scheduleBusy = scheduleMutation.isPending || schedulePending;
+  const scheduledAt =
+    scheduleMutation.isSuccess &&
+    !scheduleBusy &&
+    !scheduleFailed &&
+    typeof scheduleMutation.variables === "string"
+      ? scheduleMutation.variables
+      : null;
 
   const handleRun = () => {
-    setActing(true);
+    if (!runAccess.allowed) return;
     onRun();
   };
 
   const handleSchedule = () => {
-    if (!pickedTime) return;
+    if (!pickedTime || scheduleDisabled) return;
     const iso = new Date(pickedTime).toISOString();
-    setScheduledFor(iso);
     setPickerOpenFor(null);
     setPickedTime("");
     onSchedule(iso);
@@ -217,16 +235,31 @@ export const ActNowSection = ({
     );
   }
 
-  const inFlight = acting || runPending || Boolean(queuedMaintenanceRunId);
-  if (inFlight) {
+  if (runFailed) {
+    return (
+      <ChartCard className="td-act-now-banner">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <XCircle className="size-3.5" style={{ color: "var(--error, #dc3545)" }} />
+          <span className="text-[13px] font-semibold">
+            Couldn&apos;t queue maintenance. {(runMutation.error as Error | null)?.message || "The run was not queued."}
+          </span>
+          <Button type="button" size="sm" variant="primary" onClick={onRun}>
+            Retry
+          </Button>
+        </div>
+      </ChartCard>
+    );
+  }
+
+  if (runBusy || runQueued) {
     return (
       <ChartCard className="td-act-now-banner">
         <div className="flex items-center gap-2.5">
           <Loader2 className="size-3.5 animate-spin" style={{ color: "var(--primary, #3d6fd4)" }} />
           <span className="text-[13px] font-semibold">
-            {runPending ? "Queueing maintenance run…" : "Maintenance run queued for this table"}
+            {runBusy ? "Queueing maintenance run…" : "Maintenance run queued for this table"}
           </span>
-          {queuedMaintenanceRunId ? (
+          {runQueued && queuedMaintenanceRunId ? (
             <Button size="sm" variant="primary" onClick={onOpenRun} className="ml-4">
               Open run
             </Button>
@@ -236,15 +269,39 @@ export const ActNowSection = ({
     );
   }
 
-  if (scheduledFor || schedulePending) {
+  if (scheduleFailed) {
+    return (
+      <ChartCard className="td-act-now-banner">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <XCircle className="size-3.5" style={{ color: "var(--error, #dc3545)" }} />
+          <span className="text-[13px] font-semibold">
+            Couldn&apos;t schedule maintenance.{" "}
+            {(scheduleMutation.error as Error | null)?.message || "The run was not scheduled."}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              if (typeof scheduleMutation.variables === "string") onSchedule(scheduleMutation.variables);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      </ChartCard>
+    );
+  }
+
+  if (scheduleBusy || scheduledAt) {
     return (
       <ChartCard className="td-act-now-banner">
         <div className="flex items-center gap-2.5">
           <Calendar className="size-3.5" style={{ color: "var(--primary, #3d6fd4)" }} />
           <span className="text-[13px] font-semibold">
-            {schedulePending
+            {scheduleBusy
               ? "Scheduling maintenance run…"
-              : `Maintenance run scheduled for ${formatTime(scheduledFor ?? "")}`}
+              : `Maintenance run scheduled for ${formatTime(scheduledAt ?? "")}`}
           </span>
         </div>
       </ChartCard>
@@ -306,12 +363,18 @@ export const ActNowSection = ({
           <Popover
             open={pickerOpenFor === "section"}
             onOpenChange={(open) => {
+              if (open && scheduleDisabled) return;
               setPickerOpenFor(open ? "section" : null);
               if (!open) setPickedTime("");
             }}
           >
             <PopoverTrigger asChild>
-              <Button size="sm" variant="secondary" disabled={!effectivePresetId}>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={scheduleDisabled}
+                title={scheduleReason ?? undefined}
+              >
                 <Calendar className="size-3.5" />
                 Schedule…
               </Button>
@@ -338,11 +401,13 @@ export const ActNowSection = ({
                       : "Pick a time first."
                   }
                   onConfirm={handleSchedule}
+                  disabled={scheduleDisabled || !pickedTime}
                 >
                   <Button
                     size="sm"
                     variant="primary"
-                    disabled={!pickedTime || !effectivePresetId}
+                    disabled={scheduleDisabled || !pickedTime}
+                    title={scheduleReason ?? undefined}
                     className="w-full"
                   >
                     Schedule
@@ -351,6 +416,7 @@ export const ActNowSection = ({
               </div>
             </PopoverContent>
           </Popover>
+          {scheduleReason ? <span className="text-[11px] text-muted-foreground">{scheduleReason}</span> : null}
         </div>
       </div>
       <div className="td-act-now-list">

@@ -2,7 +2,7 @@ import { formatCurrency, formatNumber } from "../../lib/format";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 interface RequestCostShareProps {
-  storageCostUsd: number;
+  storageCostUsd: number | null | undefined;
   requestCostUsd?: number | null;
   getRequests30d?: number | null;
   putRequests30d?: number | null;
@@ -10,11 +10,14 @@ interface RequestCostShareProps {
   pricingSource?: string | null;
 }
 
-/**
- * Storage/request cost-share breakdown (docs/s3-request-cost-tracking.md §9.2). request_cost_usd_month
- * is null (not 0) when no ingestion has run for this table yet -- that must not render as "0% requests",
- * so this renders nothing at all in that case rather than a misleading number.
- */
+const TITLE = "estimated storage $ vs measured request $ (30 d)";
+
+const measuredMoney = (value: number | null | undefined): number | null =>
+  value != null && Number.isFinite(value) ? value : null;
+
+const countLabel = (value: number | null | undefined): string =>
+  value != null && Number.isFinite(value) ? formatNumber(value) : "Not measured";
+
 export const RequestCostShare = ({
   storageCostUsd,
   requestCostUsd,
@@ -23,19 +26,18 @@ export const RequestCostShare = ({
   listRequests30d,
   pricingSource
 }: RequestCostShareProps) => {
-  if (requestCostUsd == null) {
-    return null;
-  }
-
-  const total = storageCostUsd + requestCostUsd;
-  const requestSharePct = total > 0 ? Math.round((requestCostUsd / total) * 100) : 0;
-  const storageSharePct = 100 - requestSharePct;
+  const storage = measuredMoney(storageCostUsd);
+  const requests = measuredMoney(requestCostUsd);
   const isApproximate = pricingSource != null && pricingSource !== "live" && pricingSource !== "aws_price_list_api";
+  const bothMeasured = storage != null && requests != null;
+  const total = bothMeasured ? storage + requests : 0;
+  const requestSharePct = bothMeasured && total > 0 ? Math.round((requests / total) * 100) : null;
+  const storageSharePct = requestSharePct == null ? null : 100 - requestSharePct;
 
   return (
     <div className="td-request-cost-share">
       <div className="td-chart-card-header" style={{ marginBottom: 8 }}>
-        <span className="td-chart-card-title">Storage vs. request cost</span>
+        <span className="td-chart-card-title">{TITLE}</span>
         {isApproximate ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -47,32 +49,36 @@ export const RequestCostShare = ({
           </Tooltip>
         ) : null}
       </div>
-      <div className="td-request-cost-bar">
-        <div
-          className="td-request-cost-bar-segment td-request-cost-bar-storage"
-          style={{ width: `${storageSharePct}%` }}
-        />
-        <div
-          className="td-request-cost-bar-segment td-request-cost-bar-requests"
-          style={{ width: `${requestSharePct}%` }}
-        />
-      </div>
-      <div className="td-request-cost-legend">
-        <span>
-          <span className="td-request-cost-swatch td-request-cost-swatch-storage" />
-          Storage {formatCurrency(storageCostUsd)} ({storageSharePct}%)
-        </span>
-        <span>
-          <span className="td-request-cost-swatch td-request-cost-swatch-requests" />
-          Requests {formatCurrency(requestCostUsd)} ({requestSharePct}%)
-        </span>
-      </div>
-      {getRequests30d != null || putRequests30d != null || listRequests30d != null ? (
-        <span className="mt-1.5 block text-xs text-muted-foreground">
-          Last 30 days: {formatNumber(getRequests30d ?? 0)} GET, {formatNumber(putRequests30d ?? 0)} PUT,{" "}
-          {formatNumber(listRequests30d ?? 0)} LIST
-        </span>
-      ) : null}
+      {!bothMeasured ? (
+        <p className="text-sm text-muted-foreground">Not measured</p>
+      ) : (
+        <>
+          <div className="td-request-cost-bar">
+            <div
+              className="td-request-cost-bar-segment td-request-cost-bar-storage"
+              style={{ width: `${storageSharePct}%` }}
+            />
+            <div
+              className="td-request-cost-bar-segment td-request-cost-bar-requests"
+              style={{ width: `${requestSharePct}%` }}
+            />
+          </div>
+          <div className="td-request-cost-legend">
+            <span>
+              <span className="td-request-cost-swatch td-request-cost-swatch-storage" />
+              Storage {formatCurrency(storage)} ({storageSharePct}%)
+            </span>
+            <span>
+              <span className="td-request-cost-swatch td-request-cost-swatch-requests" />
+              Requests {formatCurrency(requests)} ({requestSharePct}%)
+            </span>
+          </div>
+        </>
+      )}
+      <span className="mt-1.5 block text-xs text-muted-foreground">
+        Last 30 days: {countLabel(getRequests30d)} GET, {countLabel(putRequests30d)} PUT,{" "}
+        {countLabel(listRequests30d)} LIST
+      </span>
     </div>
   );
 };

@@ -54,6 +54,7 @@ class ProtectedSnapshotRepository:
                 self._session.refresh(existing)
             return existing
         row = ProtectedSnapshot(
+            id=uuid.uuid4(),
             table_id=table_id,
             snapshot_id=snapshot_id,
             label=label,

@@ -78,15 +78,23 @@ class FastPathFindingsResponse(BaseModel):
 def get_fast_path_findings(
     session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
+    table_id: Annotated[UUID | None, Query()] = None,
 ) -> FastPathFindingsResponse:
     """Current fast-path findings for newly discovered tables.
 
     On-read compute (cheap: Postgres stats + stored properties, no catalog I/O).
     Does not enqueue compaction and does not apply table properties.
-    """
-    from cryo.scanner.fast_path_check import run_fast_path_check
 
-    findings = run_fast_path_check(session, persist=False, respect_cooldown=False)
+    ``table_id`` evaluates that table only. The fleet sweep stays the default so
+    the health page does not change, and a missing id is 404 rather than an
+    empty fleet list.
+    """
+    from cryo.scanner.fast_path_check import FastPathTableNotFound, load_fast_path_findings
+
+    try:
+        findings = load_fast_path_findings(session, table_id=table_id)
+    except FastPathTableNotFound as exc:
+        raise HTTPException(status_code=404, detail="Table not found") from exc
     return FastPathFindingsResponse(
         findings=[
             FastPathFindingRead(

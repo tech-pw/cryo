@@ -3,16 +3,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Tag } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { protectSnapshot } from "../../api/client";
-import { listTableSnapshots, type SnapshotRef, type TableSnapshot } from "../../api/snapshots";
+import {
+  listTableSnapshots,
+  protectTableSnapshot,
+  type SnapshotRef,
+  type TableSnapshot
+} from "../../api/snapshots";
 import { QueryErrorAlert } from "../../components/common";
+import { ExcludedFromExpiry } from "../../components/table-detail/ExcludedFromExpiry";
+import { SnapshotSelection } from "../../components/table-detail/SnapshotSelection";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { useAuth } from "../../lib/auth";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
-import { writeAccess } from "../../lib/permissions";
 
 const PAGE_SIZE = 25;
 const RESTORE_REASON = "Restore is not enabled on this install";
@@ -43,6 +48,9 @@ const sizeLabel = (bytes: number | null | undefined): string => {
   if (bytes === null || bytes === undefined) return "Unknown";
   return formatBytesGb(bytes);
 };
+
+const sameSnapshotId = (left: string | null | undefined, right: string | null | undefined): boolean =>
+  typeof left === "string" && left === right;
 
 const retentionTitle = (ref: SnapshotRef): string | undefined => {
   const parts: string[] = [];
@@ -104,11 +112,11 @@ const SnapshotActions = ({
   pending,
   onProtect
 }: {
-  snapshotId: number;
+  snapshotId: string;
   protectAllowed: boolean;
   protectReason: string | null;
   pending: boolean;
-  onProtect: (snapshotId: number) => void;
+  onProtect: (snapshotId: string) => void;
 }) => {
   const [open, setOpen] = useState(false);
   return (
@@ -161,20 +169,19 @@ const SnapshotActions = ({
 
 export const SnapshotsTab = () => {
   const { tableId = "" } = useParams();
-  const { api, role } = useAuth();
+  const { api } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const page = pageFromUrl(searchParams.get("page"));
-  const protectAccess = writeAccess(role, "protectSnapshot");
-
   const snapshots = useQuery({
     queryKey: ["table-snapshots", tableId, api.token, page],
     queryFn: () => listTableSnapshots(api, tableId, { page, page_size: PAGE_SIZE }),
     enabled: tableId.length > 0
   });
 
+  const protectAccess = useWriteControl("protectSnapshot");
   const protect = useMutation({
-    mutationFn: (snapshotId: number) => protectSnapshot(api, tableId, { snapshot_id: snapshotId }),
+    mutationFn: (snapshotId: string) => protectTableSnapshot(api, tableId, snapshotId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
     }
@@ -188,8 +195,60 @@ export const SnapshotsTab = () => {
     setSearchParams(next, { replace: true });
   };
 
+  const data = snapshots.data;
+  const loadedIds = useMemo(
+    () => new Set((data?.snapshots ?? []).map((row) => row.snapshot_id)),
+    [data?.snapshots]
+  );
+  const currentSnapshotId = data?.current_snapshot_id ?? null;
   const columns = useMemo<ColumnDef<TableSnapshot, unknown>[]>(
     () => [
+      {
+        id: "snapshot_id",
+        header: "Snapshot",
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-1">
+            <span data-snapshot-id={row.original.snapshot_id}>{row.original.snapshot_id}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label={`Copy snapshot ${row.original.snapshot_id}`}
+              onClick={() => {
+                if (navigator.clipboard) void navigator.clipboard.writeText(row.original.snapshot_id);
+              }}
+            >
+              Copy
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label={`Select snapshot ${row.original.snapshot_id}`}
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.set("snapshot", row.original.snapshot_id);
+                setSearchParams(next, { replace: true });
+              }}
+            >
+              Select
+            </Button>
+          </span>
+        )
+      },
+      {
+        id: "parent_snapshot_id",
+        header: "Parent",
+        cell: ({ row }) => (
+          <span data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}>
+            {row.original.parent_snapshot_id
+              ? loadedIds.has(row.original.parent_snapshot_id)
+                ? row.original.parent_snapshot_id
+                : "Parent outside loaded history"
+              : "—"}
+          </span>
+        )
+      },
       {
         id: "timestamp",
         header: "Timestamp",
@@ -202,7 +261,7 @@ export const SnapshotsTab = () => {
             <time dateTime={row.original.committed_at ?? undefined} title={formatTime(row.original.committed_at)}>
               {formatTime(row.original.committed_at)}
             </time>
-            {row.original.is_current ? <Badge>Current</Badge> : null}
+            {sameSnapshotId(row.original.snapshot_id, currentSnapshotId) ? <Badge>Current</Badge> : null}
           </span>
         )
       },
@@ -257,7 +316,7 @@ export const SnapshotsTab = () => {
         cell: ({ row }) =>
           row.original.protected ? (
             <Badge variant="warning" title={row.original.protected_label ?? undefined}>
-              Protected
+              Excluded from Cryo expiry
             </Badge>
           ) : (
             <span className="text-muted-foreground">No</span>
@@ -277,10 +336,8 @@ export const SnapshotsTab = () => {
         )
       }
     ],
-    [protect, protectAccess.allowed, protectAccess.reason]
+    [currentSnapshotId, loadedIds, protect, searchParams, setSearchParams]
   );
-
-  const data = snapshots.data;
 
   return (
     <div>
@@ -293,12 +350,22 @@ export const SnapshotsTab = () => {
           oldest={data.oldest_committed_at}
         />
       ) : null}
+      <ExcludedFromExpiry tableId={tableId} />
+      <SnapshotSelection
+        snapshots={data?.snapshots ?? []}
+        selectedId={searchParams.get("snapshot")}
+        compareRaw={searchParams.get("compare")}
+      />
+      <p className="mb-3 text-xs text-muted-foreground">
+        Retention floor not recorded. Expiry preview is not evaluated. Exact file diff is not computed.
+        Cryo protection excludes a snapshot from Cryo expiry only.
+      </p>
       <DataTable
         columns={columns}
         data={data?.snapshots ?? []}
         loading={snapshots.isLoading}
         density="compact"
-        getRowId={(row) => String(row.snapshot_id)}
+        getRowId={(row) => row.snapshot_id}
         emptyTitle="No live snapshots"
         emptyDescription="Catalog metadata has no snapshots for this table."
         pagination={

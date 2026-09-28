@@ -1,13 +1,18 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { getTableRuns } from "../../api/client";
+import type { TableRunRead } from "../../api/types";
 import {
   getTableMaintenanceStatus,
   type BlockingReasonRead,
   type MaintenanceActionReceipt,
   type MaintenanceStatusRead
 } from "../../api/maintenanceStatus";
+import { CompactionAnalysis } from "../../components/table-detail/maintenance/CompactionAnalysis";
+import { EffectiveSettings } from "../../components/table-detail/maintenance/EffectiveSettings";
+import { MaintenanceHistory, RECENT_RUNS_LIMIT } from "../../components/table-detail/maintenance/MaintenanceHistory";
 import { QueryErrorAlert } from "../../components/common";
 import { StatusTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
@@ -17,6 +22,7 @@ import { EmptyState } from "../../components/ui/empty-state";
 import { useAuth } from "../../lib/auth";
 import { auditBytesLabel, auditFilesLabel } from "../../lib/auditFeed";
 import { formatDuration, formatTime } from "../../lib/format";
+import { tableKeys } from "./tableKeys";
 
 const BYTE_KEYS = new Set([
   "actual_bytes_freed",
@@ -25,6 +31,8 @@ const BYTE_KEYS = new Set([
   "bytes_rewritten",
   "size_bytes"
 ]);
+
+const PENDING_WORK = new Set(["queued", "admitted", "running", "waiting", "deferred"]);
 
 export const formatMaintenanceValue = (key: string, value: unknown): string => {
   if (value === null || value === undefined || value === "") return "Unknown";
@@ -52,6 +60,17 @@ const eligibilityLabel = (eligible: boolean | null | undefined): string => {
   if (eligible === false) return "Not eligible for nightly selection";
   return "Eligibility unknown";
 };
+
+export const nowWorkLabel = (status: string): string => {
+  const key = status.trim().toLowerCase();
+  if (key === "running") return "Running";
+  if (key === "queued") return "Queued";
+  if (key === "waiting" || key === "admitted") return "Waiting for engine capacity";
+  if (key === "deferred") return "Deferred";
+  return status || "not reported";
+};
+
+const isPendingWork = (status: string): boolean => PENDING_WORK.has(status.trim().toLowerCase());
 
 const ReasonValues = ({ reason }: { reason: BlockingReasonRead }) => {
   const entries = Object.entries(reason.values ?? {});
@@ -166,22 +185,92 @@ const LastActions = ({ status }: { status: MaintenanceStatusRead }) => {
   );
 };
 
+const NowSection = ({ tableId }: { tableId: string }) => {
+  const { api, token } = useAuth();
+  const runs = useQuery({
+    queryKey: tableKeys.runs(tableId, token, RECENT_RUNS_LIMIT, 0),
+    queryFn: () => getTableRuns(api, tableId, { limit: RECENT_RUNS_LIMIT, offset: 0 }),
+    enabled: tableId.length > 0,
+    retry: false
+  });
+  const pending = (runs.data ?? []).filter((run) => isPendingWork(run.status));
+
+  return (
+    <section className="mb-6" aria-labelledby="maintenance-now">
+      <h3 id="maintenance-now" className="mb-2 text-sm font-semibold text-foreground">
+        Now
+      </h3>
+      <QueryErrorAlert error={runs.error} title="Couldn't load pending work" />
+      {runs.isLoading ? <p className="text-sm text-muted-foreground">Loading pending work</p> : null}
+      {!runs.isLoading && pending.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No pending or running work.</p>
+      ) : null}
+      {pending.length > 0 ? (
+        <ul className="space-y-2">
+          {pending.map((run) => (
+            <PendingWork key={run.job_id || run.run_id} run={run} />
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+};
+
+const PendingWork = ({ run }: { run: TableRunRead }) => {
+  const label = nowWorkLabel(run.status);
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-sm">
+      <span>{label}</span>
+      {run.run_id ? (
+        <Link to={`/runs/${run.run_id}`} className="text-primary hover:underline">
+          Open run
+        </Link>
+      ) : (
+        <span className="text-muted-foreground">Run id not recorded</span>
+      )}
+    </li>
+  );
+};
+
+const WhySection = ({ status }: { status: MaintenanceStatusRead }) => {
+  const first = (status.blocking_reasons ?? []).find((reason) => reason.blocks_nightly_selection) ?? null;
+  const selected =
+    status.eligible === true ? "selected" : status.eligible === false ? "not selected" : "unknown";
+  return (
+    <section className="mb-6" aria-labelledby="maintenance-why">
+      <h3 id="maintenance-why" className="mb-2 text-sm font-semibold text-foreground">
+        Why / why not
+      </h3>
+      <p className="text-sm text-foreground">
+        Current evaluation: {selected}
+        {first ? `. First gate: ${first.code}.` : ". No failing gate on this evaluation."}
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground">History not recorded yet</p>
+    </section>
+  );
+};
+
 export const MaintenanceTab = () => {
   const { tableId = "" } = useParams();
-  const { api } = useAuth();
+  const { api, token } = useAuth();
   const status = useQuery({
-    queryKey: ["table-maintenance-status", tableId, api.token],
+    queryKey: tableKeys.maintenanceStatus(tableId, token),
     queryFn: () => getTableMaintenanceStatus(api, tableId),
     enabled: tableId.length > 0
   });
   const data = status.data;
+  const scanBackoff = (data?.blocking_reasons ?? []).find((reason) => reason.code === "scan_retry_backoff");
 
   return (
     <div>
       <QueryErrorAlert error={status.error} title="Couldn't load maintenance status" />
       {!data && status.isLoading ? <p className="text-sm text-muted-foreground">Loading maintenance status</p> : null}
+      <NowSection tableId={tableId} />
       {data ? (
-        <>
+        <section className="mb-6" aria-labelledby="maintenance-tonight">
+          <h3 id="maintenance-tonight" className="mb-2 text-sm font-semibold text-foreground">
+            Tonight
+          </h3>
           <Card className="mb-4">
             <div className="p-4">
               <p className="text-xs text-muted-foreground">Nightly selection</p>
@@ -202,6 +291,11 @@ export const MaintenanceTab = () => {
               </span>
             </div>
           </Card>
+          {scanBackoff ? (
+            <p className="mb-4 text-sm text-muted-foreground">
+              Scan backoff until {scanBackoff.until ? formatTime(scanBackoff.until) : "not recorded"}.
+            </p>
+          ) : null}
 
           <section className="mb-6" aria-labelledby="maintenance-checklist">
             <h3 id="maintenance-checklist" className="mb-2 text-sm font-semibold text-foreground">
@@ -233,8 +327,18 @@ export const MaintenanceTab = () => {
               </ul>
             </section>
           ) : null}
-        </>
+        </section>
       ) : null}
+      {data ? <WhySection status={data} /> : null}
+      <section className="mb-6" aria-labelledby="maintenance-lanes">
+        <h3 id="maintenance-lanes" className="mb-2 text-sm font-semibold text-foreground">
+          Last 30 days
+        </h3>
+        <p className="text-sm text-muted-foreground">History not recorded yet</p>
+      </section>
+      <MaintenanceHistory tableId={tableId} />
+      <EffectiveSettings tableId={tableId} />
+      <CompactionAnalysis tableId={tableId} />
     </div>
   );
 };

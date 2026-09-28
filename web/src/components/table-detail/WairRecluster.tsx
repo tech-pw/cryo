@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { analyzeWairBoundaries } from "../../api/client";
 import type { WairBoundaryReport } from "../../api/types";
 import { useAuth } from "../../lib/auth";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -82,6 +83,7 @@ export const WairReport = ({ report }: { report: WairBoundaryReport }) => {
 export const WairRecluster = () => {
   const { tableId } = useTableDetailContext();
   const { api } = useAuth();
+  const analyzeAccess = useWriteControl("wairAnalyze");
   const analyze = useMutation({
     mutationFn: () => analyzeWairBoundaries(api, tableId),
     onError: (error: Error) => toast.error(error.message)
@@ -101,10 +103,23 @@ export const WairRecluster = () => {
           Finds files that straddle the ranges this table is queried by, and sort-rewrites them only
           when the query CPU saved outweighs the rewrite (WAIR, SIGMOD 2026).
         </p>
-        <div>
-          <Button size="sm" variant="primary" loading={analyze.isPending} onClick={() => analyze.mutate()}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="primary"
+            loading={analyze.isPending}
+            disabled={!analyzeAccess.allowed}
+            title={analyzeAccess.reason ?? undefined}
+            onClick={() => {
+              if (!analyzeAccess.allowed) return;
+              analyze.mutate();
+            }}
+          >
             {analyze.data ? "Re-analyze" : "Analyze"}
           </Button>
+          {analyzeAccess.reason ? (
+            <span className="text-[11px] text-muted-foreground">{analyzeAccess.reason}</span>
+          ) : null}
         </div>
         {analyze.data ? <WairReport report={analyze.data} /> : null}
       </CardContent>

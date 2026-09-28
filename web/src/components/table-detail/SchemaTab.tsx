@@ -62,6 +62,9 @@ export const SchemaTab = ({ columns, loading, highlightColumn }: SchemaTabProps)
   const sortedColumns = useMemo(() => {
     const copy = [...columns];
     copy.sort((a, b) => {
+      const aKnown = a.nullRate != null && Number.isFinite(a.nullRate);
+      const bKnown = b.nullRate != null && Number.isFinite(b.nullRate);
+      if (aKnown !== bKnown) return aKnown ? -1 : 1;
       if (sortKey === "name") {
         return sortAsc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
       }
@@ -145,8 +148,9 @@ export const SchemaTab = ({ columns, loading, highlightColumn }: SchemaTabProps)
                     const isHighlighted =
                       normalizedHighlight != null &&
                       item.name.toLowerCase() === normalizedHighlight;
-                    const rate = item.nullRate != null ? item.nullRate * 100 : 0;
-                    const popRate = 100 - rate;
+                    const nullKnown = item.nullRate != null && Number.isFinite(item.nullRate);
+                    const rate = nullKnown ? item.nullRate! * 100 : null;
+                    const popRate = rate == null ? null : 100 - rate;
                     const hasBounds =
                       item.lowerBound !== undefined &&
                       item.upperBound !== undefined &&
@@ -182,19 +186,33 @@ export const SchemaTab = ({ columns, loading, highlightColumn }: SchemaTabProps)
                           </span>
                         </td>
                         <td>
-                          <div className="td-schema-null-wrap">
-                            <div className="td-schema-null-bar-container">
-                              <div className="td-schema-null-bar-pop" style={{ width: `${popRate}%` }} />
-                              <div className="td-schema-null-bar-null" style={{ width: `${rate}%` }} />
+                          {rate == null || popRate == null ? (
+                            <div className="td-schema-null-wrap">
+                              <div
+                                className="td-schema-null-bar-container"
+                                data-testid="schema-null-hatch"
+                                style={{
+                                  backgroundImage:
+                                    "repeating-linear-gradient(-45deg, transparent, transparent 2px, currentColor 2px, currentColor 3px)"
+                                }}
+                              />
+                              <span className="td-schema-null-text">Not measured</span>
                             </div>
-                            <span className="td-schema-null-text">{rate.toFixed(1)}% Null</span>
-                            {item.dqNullSpike ? (
-                              <Badge variant="danger" className="td-schema-badge-spike">
-                                <AlertTriangle className="mr-0.5 inline size-3" />
-                                Spike
-                              </Badge>
-                            ) : null}
-                          </div>
+                          ) : (
+                            <div className="td-schema-null-wrap">
+                              <div className="td-schema-null-bar-container">
+                                <div className="td-schema-null-bar-pop" style={{ width: `${popRate}%` }} />
+                                <div className="td-schema-null-bar-null" style={{ width: `${rate}%` }} />
+                              </div>
+                              <span className="td-schema-null-text">{rate.toFixed(1)}% Null</span>
+                              {item.dqNullSpike ? (
+                                <Badge variant="danger" className="td-schema-badge-spike">
+                                  <AlertTriangle className="mr-0.5 inline size-3" />
+                                  Spike
+                                </Badge>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                         <td>
                           {!hasBounds ? (

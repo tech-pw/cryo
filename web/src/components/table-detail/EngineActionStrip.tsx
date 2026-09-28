@@ -39,6 +39,10 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
   const assignAccess = useWriteControl("assignPreset");
 
   const presetLoading = assign.isPending || presets.isLoading || compatiblePresets.isLoading || unassign.isPending;
+  const missingPreset = !effectivePreset.data?.preset_id;
+  const presetReason = missingPreset ? "Assign a workflow before running maintenance" : null;
+  const runReason = !runAccess.allowed ? runAccess.reason : presetReason;
+  const manifestReason = !manifestAccess.allowed ? manifestAccess.reason : presetReason;
 
   return (
     <div className="td-engine-strip flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
@@ -85,13 +89,13 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
             title="Run maintenance?"
             description="Queues a real maintenance job using the assigned preset and destination."
             onConfirm={() => run.mutate()}
-            disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id}
+            disabled={!runAccess.allowed || !row || missingPreset}
           >
             <Button
               variant="primary"
               size="sm"
-              disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id}
-              title={runAccess.reason ?? undefined}
+              disabled={!runAccess.allowed || !row || missingPreset}
+              title={runReason ?? undefined}
               aria-label="Run maintenance"
             >
               <Zap className="size-3.5" />
@@ -99,7 +103,7 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
             </Button>
           </ConfirmAction>
         )}
-        <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} disabled={!runAccess.allowed || !row || !effectivePreset.data?.preset_id} title={runAccess.reason ?? undefined}>
+        <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} disabled={!runAccess.allowed || !row || missingPreset} title={runReason ?? undefined}>
           <LayoutDashboard className="size-3.5" />
           Preview
         </Button>
@@ -107,18 +111,22 @@ export const EngineActionStrip = ({ onOpenSettings }: EngineActionStripProps) =>
           title="Rewrite manifests?"
           description="Queues manifest-only maintenance without data file compaction."
           onConfirm={() => manifestRewrite.mutate()}
-          disabled={!manifestAccess.allowed || !row}
+          disabled={!manifestAccess.allowed || !row || !effectivePreset.data?.preset_id}
         >
           <Button
             variant="secondary"
             size="sm"
             loading={manifestRewrite.isPending}
-            disabled={!manifestAccess.allowed || !row}
-            title={manifestAccess.reason ?? undefined}
+            disabled={!manifestAccess.allowed || !row || !effectivePreset.data?.preset_id}
+            title={
+              manifestAccess.reason ??
+              (!effectivePreset.data?.preset_id ? "Assign a workflow before running maintenance" : undefined)
+            }
           >
             Manifest
           </Button>
         </ConfirmAction>
+        {manifestReason ? <span className="text-[11px] text-muted-foreground">{manifestReason}</span> : null}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Table settings" onClick={onOpenSettings}>

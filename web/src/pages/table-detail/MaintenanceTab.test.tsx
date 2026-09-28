@@ -3,14 +3,65 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MaintenanceStatusRead } from "../../api/maintenanceStatus";
-import { MaintenanceTab } from "./MaintenanceTab";
+import { MaintenanceTab, nowWorkLabel } from "./MaintenanceTab";
 
-const { getTableMaintenanceStatus } = vi.hoisted(() => ({
-  getTableMaintenanceStatus: vi.fn()
+const { getTableMaintenanceStatus, getTableRuns, listPresets, listDestinations } = vi.hoisted(() => ({
+  getTableMaintenanceStatus: vi.fn(),
+  getTableRuns: vi.fn().mockResolvedValue([]),
+  getTableAudit: vi.fn().mockResolvedValue([]),
+  getEffectiveParams: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    preset_params: {},
+    param_overrides: {},
+    effective_params: {}
+  }),
+  getEffectivePreset: vi.fn().mockResolvedValue({ table_id: "table-1", provenance: "none" }),
+  listPresets: vi.fn().mockResolvedValue([]),
+  listDestinations: vi.fn().mockResolvedValue([]),
+  listCompatiblePresets: vi.fn().mockResolvedValue([]),
+  assignTables: vi.fn(),
+  unassignTables: vi.fn(),
+  patchTableParamOverrides: vi.fn(),
+  getAutoCompCandidates: vi.fn().mockResolvedValue({ items: [], skipped: [], compare: {} }),
+  getCompactionCandidates: vi.fn().mockResolvedValue({ candidates: [] }),
+  getTableSignals: vi.fn().mockResolvedValue({
+    signals: [],
+    any_triggered: false,
+    checked_at: "2026-09-28T12:00:00Z"
+  }),
+  getTable: vi.fn().mockResolvedValue(null),
+  updateTableBenefitScores: vi.fn()
 }));
 
 vi.mock("../../api/maintenanceStatus", () => ({
   getTableMaintenanceStatus
+}));
+
+vi.mock("../../api/client", () => ({
+  getTableRuns,
+  getTableAudit: vi.fn().mockResolvedValue([]),
+  getEffectiveParams: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    preset_params: {},
+    param_overrides: {},
+    effective_params: {}
+  }),
+  getEffectivePreset: vi.fn().mockResolvedValue({ table_id: "table-1", provenance: "none" }),
+  listPresets,
+  listDestinations,
+  listCompatiblePresets: vi.fn().mockResolvedValue([]),
+  assignTables: vi.fn(),
+  unassignTables: vi.fn(),
+  patchTableParamOverrides: vi.fn(),
+  getAutoCompCandidates: vi.fn().mockResolvedValue({ items: [], skipped: [], compare: {} }),
+  getCompactionCandidates: vi.fn().mockResolvedValue({ candidates: [] }),
+  getTableSignals: vi.fn().mockResolvedValue({
+    signals: [],
+    any_triggered: false,
+    checked_at: "2026-09-28T12:00:00Z"
+  }),
+  getTable: vi.fn().mockResolvedValue(null),
+  updateTableBenefitScores: vi.fn()
 }));
 
 vi.mock("../../lib/auth", () => ({
@@ -20,6 +71,10 @@ vi.mock("../../lib/auth", () => ({
     role: "viewer",
     subject: "viewer"
   })
+}));
+
+vi.mock("../../lib/useWriteControl", () => ({
+  useWriteControl: () => ({ allowed: false, reason: "viewer", hidden: false })
 }));
 
 const base = (): MaintenanceStatusRead => ({
@@ -62,6 +117,10 @@ const renderTab = () => {
 describe("MaintenanceTab", () => {
   beforeEach(() => {
     getTableMaintenanceStatus.mockReset();
+    getTableRuns.mockReset();
+    getTableRuns.mockResolvedValue([]);
+    listPresets.mockClear();
+    listDestinations.mockClear();
   });
 
   it("shows a clear eligible state and does not invent last-action rows", async () => {
@@ -77,9 +136,35 @@ describe("MaintenanceTab", () => {
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
 
+    expect(screen.getAllByText("History not recorded yet").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("engine default")).not.toBeInTheDocument();
+
     await waitFor(() => {
       expect(getTableMaintenanceStatus).toHaveBeenCalledWith({ token: "test-token" }, "table-1");
     });
+    expect(listPresets).not.toHaveBeenCalled();
+    expect(listDestinations).not.toHaveBeenCalled();
+  });
+
+  it("does not label waiting work as Running", async () => {
+    getTableMaintenanceStatus.mockResolvedValue(base());
+    getTableRuns.mockResolvedValue([
+      {
+        job_id: "job-9",
+        run_id: "run-9",
+        status: "waiting",
+        mode: "execute",
+        steps: []
+      }
+    ]);
+    renderTab();
+
+    expect(await screen.findByText("Waiting for engine capacity")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open run" })).toHaveAttribute("href", "/runs/run-9");
+    expect(nowWorkLabel("waiting")).toBe("Waiting for engine capacity");
+    expect(nowWorkLabel("admitted")).not.toBe("Running");
+    expect(nowWorkLabel("running")).toBe("Running");
   });
 
   it("shows each blocking reason with its values and keeps unknown bytes unknown", async () => {
