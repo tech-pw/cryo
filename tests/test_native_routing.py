@@ -11,6 +11,7 @@ from cryo.engines.native.routing import (
     NATIVE_DELETE_FILES_DETAIL,
     NATIVE_MANIFESTS_DETAIL,
     NATIVE_V3_PARTITIONED_DV_DETAIL,
+    fallback_is_spark,
     has_nonzero_delete_files,
     has_v3_partitioned_deletion_vectors,
     is_mor_table,
@@ -31,6 +32,11 @@ def _deep_plan() -> MaintenancePlan:
             Operation(OperationType.OPTIMIZE_MANIFESTS, {}),
         ),
     )
+
+
+def test_disabled_native_fallback_is_spark_only() -> None:
+    assert fallback_is_spark("spark_emr") is True
+    assert fallback_is_spark("trino") is False
 
 
 def test_is_mor_table_detects_delete_files() -> None:

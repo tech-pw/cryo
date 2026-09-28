@@ -119,6 +119,9 @@ class InMemoryMaintenanceQueue:
         self._sequence = 0
 
     def enqueue(self, job_id: str, destination_id: str, priority: int = 0) -> None:
+        from cryo.maintenance.writes import ensure_maintenance_writes_enabled
+
+        ensure_maintenance_writes_enabled()
         self._sequence += 1
         self._entries[job_id] = QueueEntry(job_id, destination_id, priority)
         self._statuses[job_id] = JobStatus.QUEUED
@@ -278,6 +281,9 @@ class RedisMaintenanceQueue:
         self._group_ready = False
 
     def enqueue(self, job_id: str, destination_id: str, priority: int = 0) -> None:
+        from cryo.maintenance.writes import ensure_maintenance_writes_enabled
+
+        ensure_maintenance_writes_enabled()
         pipe = self._redis.pipeline()
         pipe.hset(
             self._job_key(job_id), mapping={"destination_id": destination_id, "status": "queued"}

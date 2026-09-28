@@ -372,12 +372,19 @@ def _dispatch_fallback_operations(
 ) -> None:
     """Best-effort synchronous dispatch of native-unsupported ops to a SQL fallback.
 
+    A read-only install must not reach ``execute`` or ``submit`` on this path.
+
     Runs inline in the admission wave (unlike native Jobs, which are fire-and-forget
     and watched separately) -- acceptable because fallback-eligible tables are the
     rare/occasional exception, not the routine hot path. Exceptions are caught and
     logged, never raised: a fallback failure must not affect the native Job this
     table's native-supported operations are about to run in.
     """
+    from cryo.maintenance.writes import maintenance_writes_enabled
+
+    if not maintenance_writes_enabled():
+        logger.info("%s: maintenance writes are disabled; SQL fallback not dispatched", table_ref)
+        return
     if not fallback_operations:
         return
     fallback_id = destination_config.get("sql_fallback_destination_id") or destination_config.get(

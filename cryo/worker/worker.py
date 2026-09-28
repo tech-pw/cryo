@@ -409,6 +409,10 @@ class Worker:
         self._quiet_max_wait_sec = quiet_max_wait_sec
 
     def process_next(self) -> MaintenanceJobRecord | None:
+        from cryo.maintenance.writes import maintenance_writes_enabled
+
+        if not maintenance_writes_enabled():
+            return None
         job_id = self._queue.claim_admitted()
         if job_id is None:
             return None
@@ -568,7 +572,10 @@ class Worker:
                             self._store, fallback_id.strip()
                         )
                         if fallback_destination is not None:
-                            engine_destination = fallback_destination
+                            from cryo.engines.native.routing import fallback_is_spark
+
+                            if fallback_is_spark(fallback_destination.engine):
+                                engine_destination = fallback_destination
 
             engine = self._engine_factory(engine_destination)
             if hasattr(engine, "with_source_config") and table_data.source_config:

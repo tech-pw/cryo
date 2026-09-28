@@ -241,6 +241,10 @@ class Settings(BaseSettings):
     maintenance_poll_seconds: int = Field(default=30, ge=5)
     maintenance_rescan_enabled: bool = Field(default=True)
     maintenance_slack_enabled: bool = Field(default=True)
+    maintenance_writes_enabled: bool = Field(
+        default=True,
+        description="When false, maintenance cannot enqueue or execute Iceberg writes.",
+    )
     scan_freshness_excluded_schemas: str = Field(
         default="temp",
         description=(

@@ -339,6 +339,12 @@ class BatchMaintenance:
         settings = self._settings
         started = self._clock()
         report = RunReport(run_id=None, trigger=trigger, dry_run=dry_run, started_at=started)
+        if not dry_run and not settings.maintenance_writes_enabled:
+            from cryo.maintenance.writes import MaintenanceWritesDisabled
+
+            raise MaintenanceWritesDisabled(
+                "maintenance writes are disabled; this install can scan and report only"
+            )
         deadline = started + timedelta(minutes=settings.maintenance_max_runtime_minutes)
 
         destination = self._resolve_destination()

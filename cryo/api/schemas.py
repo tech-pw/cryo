@@ -768,6 +768,8 @@ class AuditLogRead(OrmModel):
     detail: str | None = None
     duration_ms: int | None = None
     actual_bytes_freed: int | None = None
+    input_files_count: int | None = None
+    output_files_count: int | None = None
     actor: str | None = None
 
 

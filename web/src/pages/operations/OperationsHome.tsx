@@ -20,6 +20,7 @@ import { formatNumber, formatTime } from "../../lib/format";
 import { formatPresetSummary } from "../../lib/presetForm";
 import {
   ACTIVE_RUN_STATUSES,
+  realizedSavingsLabel,
   shortRunId,
   targetLabel
 } from "../../lib/operations";
@@ -230,6 +231,12 @@ export const OperationsHome = () => {
         header: "Trigger",
         size: 120,
         cell: ({ row }) => row.original.trigger ?? "manual"
+      },
+      {
+        id: "evidence",
+        header: "Evidence",
+        size: 220,
+        cell: ({ row }) => realizedSavingsLabel(row.original) ?? "—"
       },
       {
         id: "created",
