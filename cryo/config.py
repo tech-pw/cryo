@@ -233,6 +233,17 @@ class Settings(BaseSettings):
     maintenance_poll_seconds: int = Field(default=30, ge=5)
     maintenance_rescan_enabled: bool = Field(default=True)
     maintenance_slack_enabled: bool = Field(default=True)
+    dispatch_heartbeat_stall_minutes: int = Field(
+        default=1560,
+        ge=1,
+        description=(
+            "Minutes since the last MaintenanceJob admitted/started/finished before "
+            "vitals.dispatch_heartbeat calls dispatch stalled. Cryo's only dispatch source is "
+            "the once-daily maintenance CronJob (default 26h gap, schedule permitting), not a "
+            "continuously-draining queue -- this must exceed that gap plus the run's own "
+            "max_runtime_minutes, or every quiet hour between runs reads as an outage."
+        ),
+    )
     scan_parallel_tables: int = Field(
         default=0,
         ge=0,

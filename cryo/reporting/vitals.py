@@ -70,13 +70,21 @@ VitalsStatus = Literal["HEALTHY", "DEGRADED", "CRITICAL"]
 _CRITICAL_DEDUCTION = 20.0
 _WARNING_DEDUCTION = 6.0
 
-# Dispatch heartbeat: the scheduler's tick() should produce *something* -- a job admitted,
-# started, or finished -- far more often than this window on any fleet with a non-empty
-# backlog. This is deliberately generous (90min) vs. _STUCK_JOB_HOURS's 6h in health_check.py:
-# that check catches jobs stuck *mid-flight*; this one catches dispatch itself going quiet,
-# the exact shape of the multi-day stall fixed earlier this same day (2026-08-31) in
-# scheduler/service.py and scheduler/cron.py.
-_DISPATCH_HEARTBEAT_MINUTES = 90
+# Dispatch heartbeat: catches dispatch itself going quiet for longer than Cryo's own schedule
+# ever leaves it quiet -- the exact shape of the multi-day stall fixed earlier this same day
+# (2026-08-31) in scheduler/service.py and scheduler/cron.py.
+#
+# Originally a fixed 90min, written assuming a continuously-draining queue ("the scheduler's
+# tick() should produce *something* far more often than this window on any fleet with a
+# non-empty backlog"). That assumption doesn't hold for Cryo's real dispatch source: the
+# once-daily cryo-maintenance CronJob (deploy/helm/cryo/values.yaml's maintenance.schedule).
+# Confirmed live 2026-09-28: every quiet hour between two nightly runs scored a false
+# "dispatch_heartbeat: stalled" CRITICAL deduction, even with the previous night's run having
+# succeeded on 1,494/1,500 tables -- 90min is shorter than the ~18h idle gap between runs, so
+# the check fired for most of every single day by construction, not because anything was wrong.
+# Now driven by settings.dispatch_heartbeat_stall_minutes (default 1560min = 26h), sized to
+# clear the daily schedule's own gap plus its max_runtime_minutes with room to spare, so a run
+# that's merely running long doesn't trip this on top of health_check.py's own stuck-job check.
 _DISPATCH_HEARTBEAT_DEDUCTION = 25.0
 
 # Success-rate pulse over a real rolling window -- long enough that one bad hour of transient
@@ -96,6 +104,7 @@ class DispatchHeartbeat:
     last_activity_at: datetime | None
     minutes_since: float | None
     is_stalled: bool
+    stall_threshold_minutes: int
 
     @property
     def summary(self) -> str:
@@ -104,7 +113,7 @@ class DispatchHeartbeat:
         if self.is_stalled:
             return (
                 f"No job admitted/started/finished in {self.minutes_since:.0f}min "
-                f"(threshold {_DISPATCH_HEARTBEAT_MINUTES}min)"
+                f"(threshold {self.stall_threshold_minutes}min)"
             )
         return f"Dispatch active -- last job activity {self.minutes_since:.0f}min ago"
 
@@ -167,7 +176,9 @@ class CryoVitals:
         return f"{self.status} — {self.score:.0f}/100"
 
 
-def _dispatch_heartbeat(session: Session, *, now: datetime) -> DispatchHeartbeat:
+def _dispatch_heartbeat(
+    session: Session, *, now: datetime, stall_minutes: int
+) -> DispatchHeartbeat:
     """Most recent timestamp across started_at/finished_at -- either means dispatch (or a
     watcher finalizing dispatch's output) did something recently. A fleet that's fully caught
     up (empty queue, nothing to dispatch) will still show finished_at activity from the last
@@ -177,7 +188,12 @@ def _dispatch_heartbeat(session: Session, *, now: datetime) -> DispatchHeartbeat
     last_finished = session.execute(select(func.max(MaintenanceJob.finished_at))).scalar_one()
     candidates = [t for t in (last_started, last_finished) if t is not None]
     if not candidates:
-        return DispatchHeartbeat(last_activity_at=None, minutes_since=None, is_stalled=True)
+        return DispatchHeartbeat(
+            last_activity_at=None,
+            minutes_since=None,
+            is_stalled=True,
+            stall_threshold_minutes=stall_minutes,
+        )
 
     last_activity = max(candidates)
     last_activity_aware = last_activity if last_activity.tzinfo is not None else last_activity.replace(
@@ -187,7 +203,8 @@ def _dispatch_heartbeat(session: Session, *, now: datetime) -> DispatchHeartbeat
     return DispatchHeartbeat(
         last_activity_at=last_activity_aware,
         minutes_since=minutes_since,
-        is_stalled=minutes_since > _DISPATCH_HEARTBEAT_MINUTES,
+        is_stalled=minutes_since > stall_minutes,
+        stall_threshold_minutes=stall_minutes,
     )
 
 
@@ -217,13 +234,16 @@ def _success_rate_pulse(session: Session, *, now: datetime) -> SuccessRatePulse:
 def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> CryoVitals:
     now = now or datetime.now(UTC)
 
+    settings = get_settings()
     health = run_production_health_checks(session, now=now)
     impact = compute_impact_signal(session, now=now)
-    heartbeat = _dispatch_heartbeat(session, now=now)
+    heartbeat = _dispatch_heartbeat(
+        session, now=now, stall_minutes=settings.dispatch_heartbeat_stall_minutes
+    )
     success_rate = _success_rate_pulse(session, now=now)
     work = compute_work_picture(session, now=now)
     trino_hot_cost = compute_trino_hot_cost_signal(
-        session, preset_name=get_settings().trino_hot_preset_name, now=now
+        session, preset_name=settings.trino_hot_preset_name, now=now
     )
 
     score = 100.0
