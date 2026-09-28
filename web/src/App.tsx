@@ -53,6 +53,7 @@ const SmartMaintenance = lazy(() =>
   import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
 );
 const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
+const Impact = lazy(() => import("./pages/Impact").then((m) => ({ default: m.Impact })));
 const ControlRoom = lazy(() =>
   import("./pages/ControlRoom").then((m) => ({ default: m.ControlRoom }))
 );
@@ -104,6 +105,7 @@ const AuthenticatedRoutes = () => (
         <Routes>
             <Route path="/" element={<Navigate to="/health" replace />} />
             <Route path="/health" element={<DatalakeHealth />} />
+            <Route path="/impact" element={<Impact />} />
             <Route path="/catalogs" element={<Catalog />} />
             <Route path="/cost" element={<Cost />} />
             <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
